@@ -36,15 +36,45 @@ nonisolated struct SearchQueryEncoding: Sendable, Equatable {
     let embedding: [Float]?
 }
 
+/// What a query asks to be read (ADR 0048): the text, the user's search languages, the people
+/// they have named, and, for a search a scene-label chip started, the label it searches for.
+nonisolated struct SearchQueryRequest: Hashable, Sendable {
+    let text: String
+    let languages: [String]
+    let people: [SearchPerson]
+    /// The Vision identifier a chip searches for (`baseball_hat`): read as its English name, with
+    /// no language to recognise and no facts, so a chip always finds its own label.
+    let label: String?
+
+    init(text: String, languages: [String] = [], people: [SearchPerson] = [], label: String? = nil) {
+        self.text = text
+        self.languages = languages
+        self.people = people
+        self.label = label
+    }
+}
+
 /// The facts a query names (ADR 0048): when, where, and who.
 nonisolated struct SearchFacts: Hashable, Sendable {
-    var date: SearchDateSpan?
+    var date: SearchDate?
     var place: SearchPlace?
     var people: [PersonID] = []
 
     var isEmpty: Bool {
         date == nil && place == nil && people.isEmpty
     }
+
+    /// What the Store is asked when the query is answered: the date as a span of `now`'s calendar.
+    func filter(at now: Date, in calendar: Calendar) -> SearchFactFilter {
+        SearchFactFilter(dateSpan: date?.span(at: now, in: calendar), place: place, people: people)
+    }
+}
+
+/// The facts as the Store answers them (`searchFactMatches`).
+nonisolated struct SearchFactFilter: Hashable, Sendable {
+    var dateSpan: SearchDateSpan?
+    var place: SearchPlace?
+    var people: [PersonID] = []
 }
 
 /// A person the user named, as search matches them in a query.
@@ -75,9 +105,13 @@ nonisolated struct SearchPerson: Hashable, Sendable {
 ///
 /// A failed translation is an error, not a fallback: the query is not answered with a
 /// reading the user did not get. The tokenizer, the model (87 MB, memory-mapped token table)
-/// load on first use and stay on this actor's serial queue,
-/// because every step blocks (ADR 0032 rule 6). Recent encodings are kept, so a projection
-/// pass that asks again for the same text costs a lookup.
+/// load on first use and stay on this actor's serial queue, because every step blocks (ADR
+/// 0032 rule 6). Only what does not change with time or with the Mac is kept between calls: a
+/// text's translation from a language, a text's embedding, and Maps' answer for a name (found,
+/// or no place; a failed lookup is not kept). Recognition, which packs are installed, the
+/// facts and the glossary are read on each call, and a date is kept as the rule the query
+/// names (`SearchDate`), so a pack the user installs counts on the next reading and "today"
+/// is the day the query is answered. `SearchQueryReader` calls it, one query at a time.
 actor SearchQueryEncoder {
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.search.query", qos: .userInitiated)
     private let bundle: Bundle
@@ -87,9 +121,8 @@ actor SearchQueryEncoder {
     private var places: [String: SearchPlace?] = [:]
     private var glossaries: [String: SearchGlossary?] = [:]
     private var installed: Set<NLLanguage> = []
-    private var recent: [String: SearchQueryEncoding] = [:]
-    private var recentOrder: [String] = []
-    private static let recentLimit = 32
+    private var translations = RecentValues<TranslationKey, String>(limit: 64)
+    private var embeddings = RecentValues<String, [Float]>(limit: 64)
 
     nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
@@ -99,20 +132,16 @@ actor SearchQueryEncoder {
         self.bundle = bundle
     }
 
-    /// `preferred`: the languages the user searches in (`NLLanguage` raw values), which
-    /// recognition favours. `people`: the people the user has named, matched in the typed
-    /// text before anything translates it, because translation mangles names.
-    func encode(
-        _ text: String,
-        preferring preferred: [String] = [],
-        people: [SearchPerson] = []
-    ) async throws -> SearchQueryEncoding {
-        let key = ([text] + preferred + people.map { "\($0.id.rawValue)=\($0.name)" }).joined(separator: "\u{0}")
-        if let known = recent[key] {
-            return known
+    /// `request.languages`: the languages the user searches in (`NLLanguage` raw values), which
+    /// recognition favours. `request.people`: the people the user has named, matched in the
+    /// typed text before anything translates it, because translation mangles names.
+    func encode(_ request: SearchQueryRequest) async throws -> SearchQueryEncoding {
+        if let label = request.label {
+            return try englishEncoding(of: SceneLabelNames.englishName(label), shown: request.text)
         }
+        let text = request.text, preferred = request.languages
         let start = ContinuousClock.now
-        let (named, typedRest) = Self.takePeople(people, from: text)
+        let (named, typedRest) = Self.takePeople(request.people, from: text)
         var rest = typedRest
         if supported == nil {
             supported = await Self.supportedLanguages()
@@ -121,6 +150,7 @@ actor SearchQueryEncoder {
         var language: NLLanguage?
         var reading = SearchQueryEncoding.Reading.english
         var modelText = ""
+        var writer = SearchQueryParser.Writer.user
         // A language the user searches in that Translation cannot read (Estonian) is not even
         // recognised: the recogniser takes it for a neighbour and translation garbles it. Its
         // month names, from Foundation, say the query is in it; the rest is then read as typed.
@@ -132,9 +162,9 @@ actor SearchQueryEncoder {
             }
             untranslatable.append(code)
         }
-        var nativeMonth: SearchDateSpan?
+        var nativeMonth: SearchDate?
         if let native = SearchQueryParser.takeNativeMonth(rest, languages: untranslatable) {
-            nativeMonth = native.span
+            nativeMonth = native.month
             rest = native.rest
             reading = .asTyped
             modelText = rest
@@ -152,8 +182,9 @@ actor SearchQueryEncoder {
             } else if language == .english {
                 modelText = rest
             } else if let language, let source = candidates[language], await isInstalled(language, source) {
-                modelText = try await Self.translate(rest, from: source)
+                modelText = try await translation(of: rest, from: source)
                 reading = .translated
+                writer = .translation(source: rest, language: source.minimalIdentifier)
             } else {
                 reading = .asTyped
                 modelText = rest
@@ -162,7 +193,6 @@ actor SearchQueryEncoder {
         // A query not translated, from a user with a language nothing recognises, may be in
         // that language, where the English tagger finds no whole name.
         let mayBeUnrecognised = reading != .translated && !untranslatable.isEmpty
-        let writer: SearchQueryParser.Writer = reading == .translated ? .translation : .user
         var parse = SearchQueryParser.parse(modelText, places: mayBeUnrecognised ? .capitalised : .tagged, writtenBy: writer)
         var place: SearchPlace?
         if let name = parse.placeName {
@@ -190,7 +220,6 @@ actor SearchQueryEncoder {
             text: text, language: language?.rawValue, reading: reading, modelText: modelText,
             facts: facts, pictureText: pictureText, embedding: embedding
         )
-        remember(encoding, as: key)
         OtosLog.catalog.noticeOperation("search.encode", phase: "done", fields: [
             "language": language?.rawValue ?? "none",
             "reading": reading.rawValue,
@@ -203,7 +232,16 @@ actor SearchQueryEncoder {
         return encoding
     }
 
-    /// A place is asked of Maps once per name; a name that is nowhere is remembered too.
+    /// `english` read as English, with no facts: what a scene-label chip searches for (its
+    /// label's English name), and what a test of the index compares. `shown` is the text the
+    /// search field holds.
+    func englishEncoding(of english: String, shown: String? = nil) throws -> SearchQueryEncoding {
+        try SearchQueryEncoding(
+            text: shown ?? english, language: NLLanguage.english.rawValue, reading: .english, modelText: english,
+            facts: SearchFacts(), pictureText: english, embedding: embed(english)
+        )
+    }
+
     /// The recognised language, unless it is outside the user's languages while one of theirs
     /// cannot be translated: nothing recognises that one, so the query is most likely in it
     /// ("jäätis", Estonian ice cream, recognised as Finnish and translated "I froze"). Nil
@@ -213,13 +251,23 @@ actor SearchQueryEncoder {
         return recognised
     }
 
+    /// A place is asked of Maps once per name; Maps' answer that a name is nowhere is
+    /// remembered too. A lookup that failed is not: the name searches the picture this time and
+    /// is asked again the next time it is read.
     private func locate(_ name: String) async -> SearchPlace? {
         if let known = places[name] {
             return known
         }
-        let found = await SearchPlaces.locate(name)
-        places[name] = .some(found)
-        return found
+        do {
+            let found = try await SearchPlaces.locate(name)
+            places[name] = .some(found)
+            return found
+        } catch {
+            OtosLog.catalog.errorOperation("search.place", phase: "lookupFailed", fields: [
+                "error": String(describing: error),
+            ])
+            return nil
+        }
     }
 
     /// The people whose names `text` holds as whole words, ignoring case and diacritics, and
@@ -283,13 +331,35 @@ actor SearchQueryEncoder {
     }
 
     private func embed(_ text: String) throws -> [Float] {
+        if let known = embeddings[text] {
+            return known
+        }
         if tokenizer == nil {
             tokenizer = try SearchTextTokenizer(bundle: bundle)
         }
         if model == nil {
             model = try SearchTextModel(bundle: bundle)
         }
-        return try model!.embedding(of: tokenizer!.tokenIDs(for: text))
+        let embedding = try model!.embedding(of: tokenizer!.tokenIDs(for: text))
+        embeddings[text] = embedding
+        return embedding
+    }
+
+    /// `text` in English, translated from `source` once and kept; a failed translation keeps
+    /// nothing.
+    private func translation(of text: String, from source: Locale.Language) async throws -> String {
+        let key = TranslationKey(source: source.minimalIdentifier, text: text)
+        if let known = translations[key] {
+            return known
+        }
+        let english = try await Self.translate(text, from: source)
+        translations[key] = english
+        return english
+    }
+
+    private struct TranslationKey: Hashable {
+        let source: String
+        let text: String
     }
 
     /// A session per query: `TranslationSession` is not `Sendable`, so it is made, used and
@@ -331,14 +401,6 @@ actor SearchQueryEncoder {
             options: [.regularExpression, .caseInsensitive]
         ) else { return english }
         return String(english[range.upperBound...])
-    }
-
-    private func remember(_ encoding: SearchQueryEncoding, as key: String) {
-        recent[key] = encoding
-        recentOrder.append(key)
-        if recentOrder.count > Self.recentLimit {
-            recent.removeValue(forKey: recentOrder.removeFirst())
-        }
     }
 
     private static let english = Locale.Language(identifier: "en")
@@ -410,5 +472,34 @@ actor SearchQueryEncoder {
         }
         recognizer.processString(text)
         return recognizer.dominantLanguage
+    }
+}
+
+/// The most recent `limit` values by key: a cache of what does not change, bounded so a long
+/// session's queries do not accumulate.
+nonisolated struct RecentValues<Key: Hashable, Value> {
+    private var values: [Key: Value] = [:]
+    private var order: [Key] = []
+    let limit: Int
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    subscript(key: Key) -> Value? {
+        get { values[key] }
+        set {
+            guard let newValue else {
+                values.removeValue(forKey: key)
+                order.removeAll { $0 == key }
+                return
+            }
+            if values.updateValue(newValue, forKey: key) == nil {
+                order.append(key)
+                if order.count > limit {
+                    values.removeValue(forKey: order.removeFirst())
+                }
+            }
+        }
     }
 }

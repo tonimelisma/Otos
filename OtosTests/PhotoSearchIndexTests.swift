@@ -20,8 +20,9 @@ struct PhotoSearchIndexTests {
         let assets: [MediaAsset]
     }
 
-    /// A library of two stills whose stored thumbnails are a red and a blue picture.
-    private func makeCatalog() async throws -> Catalog {
+    /// A library of two stills whose stored thumbnails are a red and a blue picture, and with
+    /// `broken`, a third, the newest, whose stored thumbnail does not decode.
+    private func makeCatalog(broken: Bool = false) async throws -> Catalog {
         let temp = try makeTestDirectory()
         let library = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let thumbnails = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
@@ -31,25 +32,32 @@ struct PhotoSearchIndexTests {
         try writeCatalogStoreFile(library.appending(path: "blue.jpg"), contents: "jpeg blue")
         try Self.writeJPEG(SearchModelTests.solid(red: 1, green: 0, blue: 0), to: thumbnails.appending(path: "red-thumb.jpg"))
         try Self.writeJPEG(SearchModelTests.solid(red: 0, green: 0, blue: 1), to: thumbnails.appending(path: "blue-thumb.jpg"))
+        if broken {
+            try writeCatalogStoreFile(library.appending(path: "broken.jpg"), contents: "jpeg broken")
+            try Data("not an image".utf8).write(to: thumbnails.appending(path: "broken-thumb.jpg"))
+        }
+        let count = broken ? 3 : 2
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: library)
-        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == count }
         var ids: [String: MediaAssetID] = [:]
         for asset in scanned.testAssets {
             let name = asset.id.relativePath.rawValue.replacingOccurrences(of: ".jpg", with: "")
             ids[name] = asset.id
-            try await enrich(store, asset, thumbnail: "\(name)-thumb.jpg")
+            // The broken one is the newest (2096), so it heads every page of one.
+            let captured = name == "broken" ? Date(timeIntervalSince1970: 4_000_000_000) : nil
+            try await enrich(store, asset, thumbnail: "\(name)-thumb.jpg", captured: captured)
         }
         return try Catalog(
             store: store, thumbnails: thumbnails, red: #require(ids["red"]), blue: #require(ids["blue"]), assets: scanned.testAssets
         )
     }
 
-    private func enrich(_ store: CatalogStore, _ asset: MediaAsset, thumbnail: String) async throws {
+    private func enrich(_ store: CatalogStore, _ asset: MediaAsset, thumbnail: String, captured: Date? = nil) async throws {
         _ = await store.applyEnrichmentBatch([EnrichmentResult(
             id: asset.id,
-            metadata: AssetMetadata(),
+            metadata: AssetMetadata.absoluteCapture(instant: captured),
             enrichedKind: .image,
             thumbnailPath: thumbnail,
             sourceSize: asset.byteSize ?? 0,
@@ -106,16 +114,26 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
-    /// A thumbnail that does not decode is recorded with no embedding: it is not offered
-    /// again, and it matches nothing.
-    @Test func anUndecodableThumbnailIsNotOfferedAgain() async throws {
-        let catalog = try await makeCatalog()
+    /// A thumbnail that does not decode is no reading: nothing is recorded, it stays owed, and
+    /// a pass pages past it, so the newest asset failing does not stop the rest being read.
+    @Test func anUndecodableThumbnailStaysOwedAndDoesNotHoldUpTheRest() async throws {
+        let catalog = try await makeCatalog(broken: true)
         let store = catalog.store
-        let red = try #require(try await store.searchEmbeddingCandidates(limit: 10).first { $0.id == catalog.red })
-        _ = try await store.applySearchEmbeddings([SearchEmbeddingResult(id: red.id, source: red.source, embedding: nil)])
+        let broken = try #require(catalog.assets.first { $0.id.relativePath.rawValue == "broken.jpg" })
+        #expect(try await store.searchEmbeddingCandidates(limit: 1).map(\.id) == [broken.id])
+        #expect(try await store.searchEmbeddingCandidates(limit: 1, excluding: [broken.id]).count == 1)
 
-        #expect(try await store.searchEmbeddingCandidates(limit: 10).map(\.id) == [catalog.blue])
-        #expect(try await store.currentSearchEmbeddings().isEmpty)
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
+            pageSize: 1, cutoff: .none, backoff: (.seconds(86400), .seconds(86400))
+        )
+        await index.start()
+        try await waitUntil { await index.retriesScheduled > 0 }
+        #expect(await index.embeddedCount == 2)
+        #expect(try await store.searchEmbeddingCandidates(limit: 10).map(\.id) == [broken.id])
+        #expect(try await store.searchEmbeddingPendingCount() == 1)
+        #expect(try await store.photoInfoOverlay(for: broken.id)?.sceneLabels == nil)
+        await index.shutdown()
         await store.shutdown()
     }
 
@@ -167,13 +185,35 @@ struct PhotoSearchIndexTests {
             break
         }
 
-        let matches = try await index.matches(for: "a red picture")
+        let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "a red picture")
+        let matches = try await index.matches(query, among: [catalog.red, catalog.blue])
         #expect(matches.searchedCount == 2)
-        #expect(matches.encoding.reading == .english)
         let red = try #require(matches.scores?[catalog.red])
         let blue = try #require(matches.scores?[catalog.blue])
         #expect(red > blue)
         #expect(try await catalog.store.searchEmbeddingPendingCount() == 0)
+        await index.shutdown()
+        await catalog.store.shutdown()
+    }
+
+    /// The cut follows the best match in the scope searched, not in the library: a scope whose
+    /// best photo scores below the library's best still shows it.
+    @Test func theCutFollowsTheBestMatchInTheScope() async throws {
+        let catalog = try await makeCatalog()
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001)
+        )
+        let changes = await index.changes()
+        await index.start()
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "a red picture")
+        #expect(try await index.matches(query, among: [catalog.red, catalog.blue]).scores.map { Set($0.keys) } == [catalog.red])
+        let blueOnly = try await index.matches(query, among: [catalog.blue])
+        #expect(blueOnly.scores.map { Set($0.keys) } == [catalog.blue])
+        #expect(blueOnly.searchedCount == 1)
         await index.shutdown()
         await catalog.store.shutdown()
     }
@@ -183,10 +223,13 @@ struct PhotoSearchIndexTests {
     @Test func aSearchNarrowsThePublishedGrid() async throws {
         let catalog = try await makeCatalog()
         let bundle = Bundle(for: CatalogWindowViewModel.self)
+        // Read as English: the window's path is under test, not the Mac's recogniser.
+        let encoder = SearchQueryEncoder(bundle: bundle)
+        let english: SearchQueryReader.Encode = { try await encoder.englishEncoding(of: $0.text) }
         // A margin this small keeps only the best photo.
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
-            cutoff: SearchCutoff(floor: -1, margin: 0.0001)
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: SearchQueryReader(encode: english)
         )
         let changes = await index.changes()
         await index.start()
@@ -214,7 +257,7 @@ struct PhotoSearchIndexTests {
 
         let nothing = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
-            cutoff: SearchCutoff(floor: 2, margin: 0)
+            cutoff: SearchCutoff(floor: 2, margin: 0), queries: SearchQueryReader(encode: english)
         )
         let nothingChanges = await nothing.changes()
         await nothing.start()
@@ -232,6 +275,59 @@ struct PhotoSearchIndexTests {
         _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 && $0.last?.queryDescriptor.search == nil }
         await index.shutdown()
         await nothing.shutdown()
+        await catalog.store.shutdown()
+    }
+
+    /// A query whose reading does not answer (a wedged Translation) never holds the window:
+    /// past the reader's deadline the scope shows unsearched, never the last query's results,
+    /// and ending the search publishes at once.
+    @Test func aQueryThatDoesNotAnswerNeverHoldsTheWindow() async throws {
+        let catalog = try await makeCatalog()
+        let bundle = Bundle(for: CatalogWindowViewModel.self)
+        let encoder = SearchQueryEncoder(bundle: bundle)
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let reader = SearchQueryReader(deadline: .zero) { request in
+            if request.text == "järvi" {
+                for await _ in gate {
+                    break
+                }
+            }
+            return try await encoder.englishEncoding(of: request.text)
+        }
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader
+        )
+        let changes = await index.changes()
+        await index.start()
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        let projection = CatalogProjection(cadence: .milliseconds(10))
+        await projection.attachSearchIndex(index)
+        let stream = await projection.states(store: catalog.store, initialDescriptor: .default)
+        let recorder = AsyncValueRecorder<CatalogWindowState>()
+        let recording = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer { recording.cancel() }
+        let red = catalog.red
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "a red picture")))
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [red] }
+
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "järvi")))
+        let unanswered = await recorder.waitForValues {
+            $0.last?.queryDescriptor.search?.text == "järvi" && $0.last?.mediaGrid.orderedAssetIDs.count == 2
+        }.last
+        #expect(unanswered?.mediaGrid.orderedAssetIDs.count == 2)
+
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia))
+        _ = await recorder.waitForValues { $0.last?.queryDescriptor.search == nil && $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
+        open.yield()
+        open.finish()
+        await index.shutdown()
         await catalog.store.shutdown()
     }
 
@@ -258,7 +354,8 @@ struct PhotoSearchIndexTests {
         for await _ in changes where await index.embeddedCount == 2 {
             break
         }
-        let matches = try await index.matches(for: "insurance")
+        let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "insurance")
+        let matches = try await index.matches(query, among: [catalog.red, catalog.blue])
         let scores = try #require(matches.scores)
         #expect(try #require(scores[catalog.blue]) > PhotoSearchIndex.textMatchScore - 1)
         #expect(try #require(scores[catalog.blue]) > (scores[catalog.red] ?? -1))

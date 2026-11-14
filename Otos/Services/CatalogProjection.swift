@@ -93,6 +93,7 @@ actor CatalogProjection {
     /// not search), and a search then publishes nothing.
     private(set) var searchIndex: PhotoSearchIndex?
     private var searchTask: Task<Void, Never>?
+    private var searchQueryTask: Task<Void, Never>?
     private var duplicatesTask: Task<Void, Never>?
     /// Bumped by every catalog change and by a new subscription: the duplicate groups and
     /// People may differ.
@@ -187,15 +188,24 @@ actor CatalogProjection {
     }
 
     /// Uses `index` for searches from now on. A change to what it holds asks for a
-    /// publication while a search is shown.
+    /// publication while a search is shown, on the cadence; a query its reader has read, or
+    /// given up waiting for, asks for one at once.
     func attachSearchIndex(_ index: PhotoSearchIndex) async {
         searchTask?.cancel()
+        searchQueryTask?.cancel()
         searchIndex = index
         let changes = await index.changes()
+        let readings = await index.queries.readings()
         searchTask = Task { [weak self] in
             for await _ in changes {
                 guard let self else { return }
                 await searchIndexDidChange()
+            }
+        }
+        searchQueryTask = Task { [weak self] in
+            for await _ in readings {
+                guard let self else { return }
+                await searchQueryDidRead()
             }
         }
     }
@@ -388,6 +398,12 @@ private extension CatalogProjection {
         requestPublication(.structural, ringNow: false)
     }
 
+    /// The answer to a user's query: published now, not on the cadence.
+    func searchQueryDidRead() {
+        guard queryRequest.descriptor.search != nil else { return }
+        requestPublication(.structural, ringNow: true)
+    }
+
     func storeDidChange(_ change: CatalogStoreChange) {
         // A remove and same-path add can coalesce into a final snapshot where the
         // path exists again. Store's typed removal signal preserves that transient
@@ -504,6 +520,14 @@ private extension CatalogProjection {
         } catch is CancellationError {
             // Teardown (`removeContinuation`) already reset the counters; this pass
             // belongs to a subscription that no longer exists.
+            return
+        } catch is CatalogProjectionSearchStillReading {
+            // Owed, not failed: the query's reading rings the loop when it lands.
+            pendingKind = max(pendingKind, kind)
+            OtosLog.catalog.noticeOperation("projection.publish", phase: "searchReading", fields: [
+                "projection": diagnosticID,
+                "generation": "\(selectedRequest.generation)",
+            ])
             return
         } catch {
             // The work is still owed: `covered` stays put and the severity is

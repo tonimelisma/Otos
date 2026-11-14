@@ -27,14 +27,14 @@ struct InThisPhotoRefreshTests {
             model.openLoupe(id: id)
             model.toggleInspector(.info)
             try await waitUntil { model.photoInfo?.id == id }
-            #expect(model.photoInfo?.recognized == PhotoInfo.Recognized(labels: nil, text: nil))
+            #expect(model.photoInfo?.recognized?.labels == nil)
 
             let candidate = try #require(try await library.store.searchEmbeddingCandidates(limit: 10).first)
             _ = try await library.store.applySearchEmbeddings([SearchEmbeddingResult(
                 id: id, source: candidate.source, embedding: [Float](repeating: 1, count: SearchEmbedding.dimensions),
                 labels: ["pool": 0.88], confidentLabels: ["pool"]
             )])
-            let named = try await model.sceneLabelNames.names(of: ["pool"], in: Locale.current.language)
+            let named = try await model.sceneLabelNames.labels(of: ["pool"], in: Locale.current.language)
             model.recognizedDoorbell?.yield()
             try await waitUntil { model.photoInfo?.recognized?.labels == named }
             #expect(model.photoInfo?.id == id)

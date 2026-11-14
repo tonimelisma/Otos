@@ -60,11 +60,20 @@ primary location and Places (ADR 0040); confirmed faces (ADR 0047); how search r
   identified in the image, show text only with confidence, in the Mac's language, a label
   click searches, no sidebar row for text). Between People and Location, the section holds:
   - the scene labels that pass Vision's high-precision test, stored with the search
-    embedding (ADR 0048), most confident first, each a small bordered button that calls the
-    search field's own intent (`setSearchText`) with its name;
+    embedding (ADR 0048), most confident first, each name once (every language names some
+    pairs of labels alike: Finnish "koira" for dog and canine), each a small bordered button
+    that searches for the label itself (`searchForLabel`): its English name read as English,
+    with no language to recognise and no facts, so a chip finds its own label whatever the
+    Mac's language and whether its Translation pack is installed; the field shows the chip's
+    name. A chip is never wider than the pane; a long name truncates;
   - under `Text`, the lines of the still's text reading at full confidence, selectable.
   `CatalogStore.photoInfoOverlay` reads both from the current readings only, so a reading
-  still owed reads `Not Checked Yet` and a new thumbnail or preview hides the old one. While
+  still owed reads `Not Checked Yet` and a new thumbnail or preview hides the old one. The
+  text is read after every embedding is made, so labels often arrive first: then the labels
+  show over `Text` · `Not Checked Yet`, and `Nothing Recognized` is said only when both
+  readings are made and found nothing (a movie has no text reading). A thumbnail or preview
+  that does not decode is no reading: nothing is stored for it, and it stays `Not Checked
+  Yet` rather than being shown as read and empty. While
   the pane shows an item, each announcement of new readings from search's index re-reads
   this section alone for it (`startRecognizedRefresh`), so a photo read while it is shown
   fills in without reselecting it and the place lookup is not restarted. Each Info read rings

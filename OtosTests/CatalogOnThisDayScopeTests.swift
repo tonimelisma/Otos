@@ -229,8 +229,9 @@ struct CatalogOnThisDayScopeTests {
         _ = try await store.setMediaChoice(.disliked, for: [id("2022-disliked.jpg")])
         let screen = try #require(try await store.searchEmbeddingCandidates(limit: 10).first { $0.id == id("2023-screen.png") })
         var changes = await store.changeNotifications().makeAsyncIterator()
+        let vector = [Float](repeating: 0, count: SearchEmbedding.dimensions)
         let written = try await store.applySearchEmbeddings([
-            SearchEmbeddingResult(id: screen.id, source: screen.source, embedding: nil, confidentLabels: ["screenshot"]),
+            SearchEmbeddingResult(id: screen.id, source: screen.source, embedding: vector, confidentLabels: ["screenshot"]),
         ])
         #expect(written.count == 1)
         // The label takes the photo out of On This Day, so the scope is read again.

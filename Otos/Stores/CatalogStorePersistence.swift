@@ -310,6 +310,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.unreadThumbnailsMigrationIdentifier) { db in
+            for statement in CatalogSchema.unreadThumbnailsStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

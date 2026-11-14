@@ -41,6 +41,16 @@ actor SceneLabelNames {
         }
     }
 
+    /// `identifiers` as the Info pane's chips, named in `language`, in order, each name once:
+    /// every language names some pairs of Vision's labels alike (Finnish "koira" for canine and
+    /// dog), and the chip keeps the first, most confident one's identifier.
+    func labels(of identifiers: [String], in language: Locale.Language) throws -> [PhotoInfo.Recognized.Label] {
+        var seen: Set<String> = []
+        return try zip(identifiers, names(of: identifiers, in: language)).compactMap { identifier, name in
+            seen.insert(name).inserted ? PhotoInfo.Recognized.Label(identifier: identifier, name: name) : nil
+        }
+    }
+
     /// Vision's identifier as English words: `baseball_hat` → `baseball hat`.
     static func englishName(_ identifier: String) -> String {
         identifier.replacingOccurrences(of: "_", with: " ")

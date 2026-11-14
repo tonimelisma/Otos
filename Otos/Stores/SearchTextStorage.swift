@@ -7,7 +7,8 @@ import Foundation
 /// preview; the 256 px thumbnail is too small to read text from. The row names the preview and
 /// the recognition revision it was read from (`currentSource`), so a new preview makes it
 /// stale; a preview with no text is recorded with no lines and not read again until it
-/// changes.
+/// changes. A preview that does not decode is not read, so nothing is recorded for it and it
+/// stays owed.
 ///
 /// `lines` is the reading as JSON: each recognised line with the confidence Vision gave it
 /// (`RecognizedTextLine`), so search can match every line and the Info pane show the certain
@@ -29,6 +30,19 @@ nonisolated enum SearchTextStorage {
           AND a.pending_trash_batch_unix_ms IS NULL
           AND a.trash_path IS NULL
           AND t.source IS NOT \(currentSource("a"))
+        """
+    }
+
+    /// The current, non-empty readings in `rootCount` roots (bound in order): the asset's key,
+    /// then its lines when `lines`. Each row is found by the text table's key and its asset by
+    /// the asset's (`CatalogStoreQueryPlanTests`).
+    static func currentReadingsSQL(rootCount: Int, lines: Bool) -> String {
+        """
+        SELECT t.library_root_id, t.relative_path\(lines ? ", t.lines" : "")
+        FROM search_text AS t
+        JOIN media_asset AS a ON a.library_root_id = t.library_root_id AND a.relative_path = t.relative_path
+        WHERE t.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", "))) AND t.lines <> '[]'
+          AND t.source = \(currentSource("a"))
         """
     }
 
@@ -54,8 +68,8 @@ nonisolated struct SearchTextCandidate: Equatable, Sendable {
     let source: String
 }
 
-/// What reading one preview found: its lines, empty when it holds none or did not decode — so
-/// it is not offered again until it changes.
+/// What reading one preview found: its lines, empty when it holds none — so it is not offered
+/// again until it changes.
 nonisolated struct SearchTextResult: Equatable, Sendable {
     let id: MediaAssetID
     let source: String

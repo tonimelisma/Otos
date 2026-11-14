@@ -63,30 +63,44 @@ nonisolated enum SearchTextReading {
     }
 
     /// Whether every word of `query` appears in `text` at the start of a word, ignoring case
-    /// and diacritics. A word in a script written without spaces (Chinese, Japanese) matches
-    /// anywhere. A query with no word of two or more characters matches nothing.
+    /// and diacritics (`SearchTextQuery`).
     static func matches(query: String, in text: String) -> Bool {
-        let words: [String] = folded(query).split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        SearchTextQuery(query).matches(folded: folded(text))
+    }
+
+    /// A text as matching compares it: case, diacritics and width folded. The index keeps each
+    /// reading folded, so a query folds only itself.
+    static func folded(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+    }
+}
+
+/// A query's words as text matching reads them: folded, each of two or more characters. A
+/// word matches at the start of a word of the text; a word in a script written without spaces
+/// (Chinese, Japanese) matches anywhere. A query with no such word matches nothing.
+nonisolated struct SearchTextQuery: Sendable {
+    private let words: [(word: String, unspaced: Bool)]
+
+    init(_ query: String) {
+        words = SearchTextReading.folded(query).split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .map(String.init)
             .filter { $0.count >= 2 }
+            .map { ($0, $0.unicodeScalars.contains(where: Self.isUnspacedScript)) }
+    }
+
+    /// Whether every word appears in `folded`, a text already folded (`SearchTextReading.folded`).
+    func matches(folded haystack: String) -> Bool {
         guard !words.isEmpty else { return false }
-        let haystack = folded(text)
-        return words.allSatisfy { word in
+        return words.allSatisfy { word, unspaced in
             var searchRange = haystack.startIndex ..< haystack.endIndex
             while let found = haystack.range(of: word, range: searchRange) {
-                if found.lowerBound == haystack.startIndex || !haystack[haystack.index(before: found.lowerBound)].isLetter
-                    || word.unicodeScalars.contains(where: isUnspacedScript)
-                {
+                if unspaced || found.lowerBound == haystack.startIndex || !haystack[haystack.index(before: found.lowerBound)].isLetter {
                     return true
                 }
                 searchRange = found.upperBound ..< haystack.endIndex
             }
             return false
         }
-    }
-
-    static func folded(_ text: String) -> String {
-        text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
     }
 
     private static func isUnspacedScript(_ scalar: Unicode.Scalar) -> Bool {
@@ -108,9 +122,9 @@ actor SearchTextReader {
         queue.asUnownedSerialExecutor()
     }
 
-    /// One result per candidate. A preview that does not decode is recorded as holding no
-    /// text; a recognition that fails records nothing, so the still stays owed and is read
-    /// again after the index's backoff.
+    /// One result per candidate read. A preview that does not decode, or a recognition that
+    /// fails, is no reading: it has no result, so the still stays owed and is read again after
+    /// the index's backoff.
     func read(_ page: [SearchTextCandidate], directory: URL?) -> [SearchTextResult] {
         guard let directory else { return [] }
         return page.compactMap { candidate in
@@ -118,7 +132,10 @@ actor SearchTextReader {
             guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
             else {
-                return SearchTextResult(id: candidate.id, source: candidate.source, lines: [])
+                OtosLog.thumbnails.errorOperation("search.text", phase: "undecodable", fields: [
+                    "id": candidate.id.relativePath.rawValue,
+                ])
+                return nil
             }
             do {
                 return try SearchTextResult(id: candidate.id, source: candidate.source, lines: SearchTextReading.read(image))

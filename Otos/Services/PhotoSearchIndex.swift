@@ -33,7 +33,7 @@ nonisolated struct SearchMatches: Sendable, Equatable {
     let scores: [MediaAssetID: Float]?
     /// The assets the query's facts allow (when, where, who); nil when it names none.
     let allowed: Set<MediaAssetID>?
-    /// The assets compared: those with a current embedding.
+    /// The scope's assets compared: those with a current embedding.
     let searchedCount: Int
 }
 
@@ -55,8 +55,13 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///   change, so without it a hidden Otos would stop reading until relaunch.
 /// - **Memory** is every current embedding as one row-major matrix, so a query is one
 ///   matrix–vector product (about 3 ms over 19,000 photos) and never touches SQLite.
-/// - **A query** goes through `SearchQueryEncoder` (language, translation, text tower); the
-///   photos `SearchCutoff` keeps match.
+/// - **A query** is read by `queries` (`SearchQueryReader`, which owns `SearchQueryEncoder`:
+///   language, translation, text tower) and answered here from its encoding, among the scope's
+///   assets: the cut follows the best match in the scope, so a folder whose best photo of a
+///   dog scores below the library's best still shows it.
+/// - **A read that cannot be made** (a thumbnail or preview that does not decode, a prediction
+///   that fails) records nothing, so the asset stays owed; a pass pages past it to the rest and
+///   tries it again after the backoff.
 ///
 /// `changes` yields after memory gains or loses embeddings, so a projection showing results
 /// can ask again. The forwarder and the loop hold this actor weakly and end with it.
@@ -64,7 +69,8 @@ actor PhotoSearchIndex {
     private let store: CatalogStore
     private let thumbnailDirectory: URL?
     private let embedder: SearchImageEmbedder
-    private let encoder: SearchQueryEncoder
+    /// Reads what the user searches for, off the window's publication loop.
+    nonisolated let queries: SearchQueryReader
     private let pageSize: Int
     private let cutoff: SearchCutoff
 
@@ -74,7 +80,8 @@ actor PhotoSearchIndex {
     /// Each row's scene labels, index-paired with `ids`.
     private var labels: [[String: Float]] = []
     private var vocabulary: SearchLabelVocabulary?
-    /// Every non-empty text reading, by asset (`SearchTextReading`).
+    /// Every non-empty text reading, by asset, folded once for matching
+    /// (`SearchTextReading.folded`).
     private var texts: [MediaAssetID: String] = [:]
     private let textReader = SearchTextReader()
     private let bundle: Bundle
@@ -96,7 +103,8 @@ actor PhotoSearchIndex {
         bundle: Bundle,
         pageSize: Int = 16,
         cutoff: SearchCutoff = .calibrated,
-        backoff: (first: Duration, last: Duration) = (.seconds(30), .seconds(900))
+        backoff: (first: Duration, last: Duration) = (.seconds(30), .seconds(900)),
+        queries: SearchQueryReader? = nil
     ) {
         self.store = store
         self.backoff = backoff
@@ -105,7 +113,8 @@ actor PhotoSearchIndex {
         self.cutoff = cutoff
         self.thumbnailDirectory = thumbnailDirectory
         embedder = SearchImageEmbedder(bundle: bundle)
-        encoder = SearchQueryEncoder(bundle: bundle)
+        let encoder = SearchQueryEncoder(bundle: bundle)
+        self.queries = queries ?? SearchQueryReader { try await encoder.encode($0) }
         self.pageSize = pageSize
     }
 
@@ -133,7 +142,8 @@ actor PhotoSearchIndex {
     }
 
     /// Ends the loop now — a test's teardown; in the app, the loops end with the actor.
-    func shutdown() {
+    func shutdown() async {
+        await queries.shutdown()
         forwarder?.cancel()
         loop?.cancel()
         retry?.cancel()
@@ -158,26 +168,26 @@ actor PhotoSearchIndex {
         return stream
     }
 
-    /// The assets `text` matches among those with a current embedding.
-    /// `preferring`: the languages the user searches in, favoured when recognising the text's.
-    func matches(for text: String, preferring languages: [String] = []) async throws -> SearchMatches {
-        let people = try await store.namedPeople()
-        let encoding = try await encoder.encode(text, preferring: languages, people: people)
+    /// The assets of `scope` that `encoding` matches, among those with a current embedding. The
+    /// cut and the label gate's near-best band follow the best match in the scope, not the
+    /// library's: the scope is what the user asked to be searched.
+    func matches(_ encoding: SearchQueryEncoding, among scope: [MediaAssetID]) async throws -> SearchMatches {
         let start = ContinuousClock.now
-        let count = ids.count
+        let inScope = Set(scope)
+        let rows = scope.compactMap { rowOf[$0] }
         var matched: [MediaAssetID: Float]?
         var named: [String] = []
         var textMatches = 0
         if let query = encoding.embedding {
-            let scores = Self.scores(vectors, count: count, query: query)
-            let best = scores.max() ?? 0
+            let scores = Self.scores(vectors, count: ids.count, query: query)
+            let best = rows.lazy.map { scores[$0] }.max() ?? 0
             let threshold = cutoff.threshold(best: best)
             named = labelVocabulary()?.labels(namedBy: query) ?? []
             var picture: [MediaAssetID: Float] = [:]
-            for (row, score) in scores.enumerated()
-                where score >= threshold && SearchLabelGate.keeps(score: score, best: best, labels: labels[row], named: named)
+            for row in rows
+                where scores[row] >= threshold && SearchLabelGate.keeps(score: scores[row], best: best, labels: labels[row], named: named)
             {
-                picture[ids[row]] = score
+                picture[ids[row]] = scores[row]
             }
             // A photo showing the words matches, whatever the cut. A query naming no scene label
             // ("according", "presenting") is about the words, so those photos rank first; one
@@ -185,18 +195,17 @@ actor PhotoSearchIndex {
             // its picture's place (research §9: word queries 0.13 → 0.84 recall@10, picture
             // queries unchanged at 0.846). The words are tried as typed and as the English.
             let lift = named.isEmpty ? Self.textMatchScore : 0
-            for (id, reading) in texts
-                where SearchTextReading.matches(query: encoding.text, in: reading)
-                || SearchTextReading.matches(query: encoding.pictureText, in: reading)
-            {
+            let typed = SearchTextQuery(encoding.text), english = SearchTextQuery(encoding.pictureText)
+            for (id, folded) in texts where inScope.contains(id) && (typed.matches(folded: folded) || english.matches(folded: folded)) {
                 picture[id] = lift + (rowOf[id].map { scores[$0] } ?? 0)
                 textMatches += 1
             }
             matched = picture
         }
-        let allowed = encoding.facts.isEmpty ? nil : try await store.searchFactMatches(encoding.facts)
+        let allowed = encoding.facts.isEmpty ? nil : try await store.searchFactMatches(encoding.facts.filter(at: Date(), in: .current))
         OtosLog.catalog.noticeOperation("search.match", phase: "done", fields: [
-            "searched": "\(count)",
+            "scope": "\(scope.count)",
+            "searched": "\(rows.count)",
             "matched": "\(matched.map { "\($0.count)" } ?? "unnarrowed")",
             "allowed": "\(allowed.map { "\($0.count)" } ?? "unnarrowed")",
             "labels": "\(named.count)",
@@ -204,7 +213,7 @@ actor PhotoSearchIndex {
             "reading": encoding.reading.rawValue,
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
-        return SearchMatches(encoding: encoding, scores: matched, allowed: allowed, searchedCount: count)
+        return SearchMatches(encoding: encoding, scores: matched, allowed: allowed, searchedCount: rows.count)
     }
 
     /// Added to a text match's picture score for a query about words, so it ranks above every
@@ -241,9 +250,9 @@ actor PhotoSearchIndex {
         var settled = false
         do {
             try await reconcile()
-            let embedded = try await drain()
+            let embedding = try await drain()
             try await reconcileTexts()
-            settled = try await drainTexts() && embedded
+            settled = try await drainTexts(unreadThumbnails: embedding.unread) && embedding.settled
         } catch {
             OtosLog.thumbnails.errorOperation("search.index", phase: "failed", fields: [
                 "error": String(describing: error),
@@ -306,81 +315,101 @@ actor PhotoSearchIndex {
     }
 
     /// Embeds every asset whose thumbnail has no current embedding, a page at a time, until
-    /// none is left or a page wrote nothing (a model or a prediction failed, or its
-    /// thumbnails all changed meanwhile). True when none is left.
-    private func drain() async throws -> Bool {
+    /// none is left. An asset whose read made no embedding (a thumbnail that does not decode, a
+    /// prediction that failed) or whose write was refused (its thumbnail changed meanwhile) is
+    /// paged past for the rest of the pass, so it cannot hold up the assets after it; a model
+    /// that does not load ends the pass. Settled when nothing is owed; `unread` is what was
+    /// paged past, still owed.
+    private func drain() async throws -> (settled: Bool, unread: Set<MediaAssetID>) {
         var embedded = 0
+        var unread: Set<MediaAssetID> = []
         let start = ContinuousClock.now
+        defer { logEmbedded(embedded, unread: unread.count, since: start) }
         while !Task.isCancelled {
-            let page = try await store.searchEmbeddingCandidates(limit: pageSize)
+            let page = try await store.searchEmbeddingCandidates(limit: pageSize, excluding: unread)
             guard !page.isEmpty else {
-                logEmbedded(embedded, since: start)
-                return true
+                return (unread.isEmpty, unread)
             }
-            let results = await embedder.embed(page, thumbnailDirectory: thumbnailDirectory)
+            guard let results = await embedder.embed(page, thumbnailDirectory: thumbnailDirectory) else {
+                return (false, unread)
+            }
             let written = try await store.applySearchEmbeddings(results)
-            guard !written.isEmpty else { break }
-            let stored = written.compactMap { result in
-                result.embedding.map { StoredSearchEmbedding(id: result.id, embedding: $0, labels: result.labels) }
+            unread.formUnion(Set(page.map(\.id)).subtracting(written.map(\.id)))
+            let stored = written.map { StoredSearchEmbedding(id: $0.id, embedding: $0.embedding, labels: $0.labels) }
+            if !stored.isEmpty {
+                remove(Set(stored.map(\.id)))
+                insert(stored)
+                announce()
             }
-            remove(Set(stored.map(\.id)))
-            insert(stored)
-            announce()
             embedded += written.count
         }
-        logEmbedded(embedded, since: start)
-        return false
+        return (false, unread)
     }
 
-    private func logEmbedded(_ embedded: Int, since start: ContinuousClock.Instant) {
-        guard embedded > 0 else { return }
+    private func logEmbedded(_ embedded: Int, unread: Int, since start: ContinuousClock.Instant) {
+        guard embedded > 0 || unread > 0 else { return }
         OtosLog.thumbnails.noticeOperation("search.index", phase: "embedded", fields: [
             "count": "\(embedded)",
+            "unread": "\(unread)",
             "total": "\(ids.count)",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
     }
 
+    /// Brings the text readings in memory in line with the catalog's: the ids first, without
+    /// the lines, and only the readings memory lacks are decoded.
     private func reconcileTexts() async throws {
-        let current = try await store.currentSearchTexts()
-        guard current != texts else { return }
-        texts = current
+        let current = try await store.currentSearchTextIDs()
+        let gone = Set(texts.keys).subtracting(current)
+        let missing = current.subtracting(texts.keys)
+        guard !gone.isEmpty || !missing.isEmpty else { return }
+        for id in gone {
+            texts.removeValue(forKey: id)
+        }
+        for (id, text) in try await store.currentSearchTexts(for: missing) {
+            texts[id] = SearchTextReading.folded(text)
+        }
         announce()
     }
 
     /// Reads every owed preview for text, a page at a time, after every embedding is made: a
-    /// photo is searchable by picture first, and a reading costs far more. True when none is
-    /// left, or when it stops for new embeddings (whose thumbnail's change rang already);
-    /// false when a page wrote nothing.
-    private func drainTexts() async throws -> Bool {
+    /// photo is searchable by picture first, and a reading costs far more. A preview whose
+    /// reading failed is paged past for the rest of the pass. Settled when none is left, or
+    /// when it stops for new embeddings (whose thumbnail's change rang already);
+    /// `unreadThumbnails`, the thumbnails the embedding pass could not read, are no new ones.
+    private func drainTexts(unreadThumbnails: Set<MediaAssetID>) async throws -> Bool {
         var read = 0, withText = 0
+        var unread: Set<MediaAssetID> = []
         var settled = false
         let start = ContinuousClock.now
         while !Task.isCancelled {
-            let page = try await store.searchTextCandidates(limit: 8)
+            let page = try await store.searchTextCandidates(limit: 8, excluding: unread)
             guard !page.isEmpty else {
-                settled = true
+                settled = unread.isEmpty
                 break
             }
             let results = await textReader.read(page, directory: thumbnailDirectory)
             let written = try await store.applySearchTexts(results)
-            guard !written.isEmpty else { break }
+            unread.formUnion(Set(page.map(\.id)).subtracting(written.map(\.id)))
             for result in written {
-                texts[result.id] = result.lines.isEmpty ? nil : SearchTextReading.searchable(result.lines)
+                texts[result.id] = result.lines.isEmpty ? nil : SearchTextReading.folded(SearchTextReading.searchable(result.lines))
                 withText += result.lines.isEmpty ? 0 : 1
             }
-            announce()
+            if !written.isEmpty {
+                announce()
+            }
             read += written.count
             // New embeddings come first: a thumbnail written meanwhile is embedded before more
             // previews are read.
-            if try await !store.searchEmbeddingCandidates(limit: 1).isEmpty {
+            if try await !store.searchEmbeddingCandidates(limit: 1, excluding: unreadThumbnails).isEmpty {
                 settled = true
                 break
             }
         }
-        if read > 0 {
+        if read > 0 || !unread.isEmpty {
             OtosLog.thumbnails.noticeOperation("search.text", phase: "read", fields: [
-                "count": "\(read)", "withText": "\(withText)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+                "count": "\(read)", "withText": "\(withText)", "unread": "\(unread.count)",
+                "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
             ])
         }
         return settled
@@ -446,11 +475,11 @@ actor SearchImageEmbedder {
         self.bundle = bundle
     }
 
-    /// One result per candidate: its embedding and scene labels, or none when its thumbnail
-    /// does not decode.
-    /// A model that does not load embeds nothing and records nothing, so the candidates stay
-    /// owed.
-    func embed(_ page: [SearchEmbeddingCandidate], thumbnailDirectory: URL?) -> [SearchEmbeddingResult] {
+    /// One result per candidate read: its embedding and scene labels. A thumbnail that does not
+    /// decode, or a prediction that fails, is no reading of the picture: it has no result, so
+    /// it stays owed. Nil when the model does not load (or no thumbnail directory is known), so
+    /// the pass ends with every candidate owed.
+    func embed(_ page: [SearchEmbeddingCandidate], thumbnailDirectory: URL?) -> [SearchEmbeddingResult]? {
         do {
             if model == nil {
                 model = try SearchImageModel(bundle: bundle)
@@ -459,15 +488,18 @@ actor SearchImageEmbedder {
             OtosLog.thumbnails.errorOperation("search.model", phase: "loadFailed", fields: [
                 "error": String(describing: error),
             ])
-            return []
+            return nil
         }
-        guard let model, let thumbnailDirectory else { return [] }
+        guard let model, let thumbnailDirectory else { return nil }
         return page.compactMap { candidate in
             let url = thumbnailDirectory.appending(path: candidate.thumbnailPath)
             guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
             else {
-                return SearchEmbeddingResult(id: candidate.id, source: candidate.source, embedding: nil)
+                OtosLog.thumbnails.errorOperation("search.embed", phase: "undecodable", fields: [
+                    "id": candidate.id.relativePath.rawValue,
+                ])
+                return nil
             }
             do {
                 let scene = try SearchSceneLabels.classify(image)

@@ -1481,6 +1481,24 @@ extension CatalogWindowViewModel {
             search: search
         ))
     }
+
+    /// An In This Photo chip (ADR 0050): searches for the Vision label `identifier` itself, by
+    /// its English name, so the chip finds its own label whatever the Mac's language; the field
+    /// shows the name the chip shows. Editing the field searches for what it then holds.
+    func searchForLabel(_ identifier: String) {
+        let name = photoInfo?.recognized?.labels?.first { $0.identifier == identifier }?.name
+            ?? SceneLabelNames.englishName(identifier)
+        searchText = name
+        let order = queryDescriptor.search?.order ?? .relevance
+        let search = CatalogSearch(text: name, order: order, languages: searchLanguages, label: identifier)
+        guard search != queryDescriptor.search else { return }
+        setQueryDescriptor(CatalogQueryDescriptor(
+            scope: queryDescriptor.scope,
+            filter: queryDescriptor.filter,
+            sort: queryDescriptor.sort,
+            search: search
+        ))
+    }
 }
 
 // MARK: - Sidebar selection policy

@@ -1184,6 +1184,15 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// A thumbnail that did not decode is no reading of the picture (ADR 0048): the rows
+    /// recorded for one with no embedding go, so each such asset is owed again, and the Info
+    /// pane no longer reads it as recognised with nothing in it.
+    static let unreadThumbnailsMigrationIdentifier = "v51_search_unread_thumbnails"
+
+    static let unreadThumbnailsStatements: [String] = [
+        "DELETE FROM search_embedding WHERE embedding IS NULL",
+    ]
+
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"
 

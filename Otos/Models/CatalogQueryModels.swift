@@ -314,20 +314,24 @@ nonisolated struct CatalogSearch: Hashable, Sendable {
         case sort
     }
 
-    /// What the user typed, trimmed; never empty.
+    /// What the search field shows, trimmed; never empty.
     let text: String
     var order: Order
     /// The languages the user searches in (`SearchLanguages`), which recognising the text's
     /// language favours; part of the search, so changing them searches again.
     var languages: [String]
+    /// The Vision scene label a chip in the Info pane searches for (`baseball_hat`); `text` is
+    /// then its name as the chip shows it. Nil for typed text.
+    let label: String?
 
     /// Nil for text that is only white space: an empty field is no search.
-    init?(text: String, order: Order = .relevance, languages: [String] = []) {
+    init?(text: String, order: Order = .relevance, languages: [String] = [], label: String? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         self.text = trimmed
         self.order = order
         self.languages = languages
+        self.label = label
     }
 }
 

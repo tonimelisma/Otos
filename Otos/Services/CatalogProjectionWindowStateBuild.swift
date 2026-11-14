@@ -22,6 +22,13 @@ extension CatalogProjection {
             allRoots: allRoots,
             importBatches: importBatches
         )
+        // The query is read by the index's own owner; a pass only takes what it has read, so
+        // it never waits on Translation or Maps. A query still being read publishes nothing
+        // yet: its reading rings the loop when it lands.
+        let searchStatus = try await searchStatus(for: resolvedDescriptor.effectiveSearch, store: store)
+        if searchStatus == .reading {
+            throw CatalogProjectionSearchStillReading()
+        }
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
         let orderedAssetIDs: [MediaAssetID]
         let dayBuckets: [Date?]
@@ -71,8 +78,8 @@ extension CatalogProjection {
             ordered: (orderedAssetIDs, dayBuckets, coordinates),
             orderQueryMs: orderQueryMs
         )
-        if let search = resolvedDescriptor.effectiveSearch {
-            try await applySearch(search, to: &unsearched, store: store)
+        if let search = resolvedDescriptor.effectiveSearch, let searchStatus {
+            try await applySearch(search, status: searchStatus, to: &unsearched, store: store)
         }
         Self.collapseStacks(stacks, expanded: request.expandedStacks, in: &unsearched)
         Self.capAnniversaries(in: &unsearched)
@@ -148,13 +155,42 @@ extension CatalogProjection {
         }
     }
 
-    /// Narrows the scope to what `search` matches (ADR 0048). With no index there is no
-    /// answer, so the build fails and publishes nothing rather than an empty grid.
-    private func applySearch(_ search: CatalogSearch, to facts: inout CatalogProjectionBuildFacts, store: CatalogStore) async throws {
+    /// What the index's query reader holds for `search` (ADR 0048); nil with no search, when
+    /// the reader lets its last answer go. With no index there is no answer, so the build fails
+    /// and publishes nothing rather than an empty grid.
+    private func searchStatus(for search: CatalogSearch?, store: CatalogStore) async throws -> SearchQueryStatus? {
+        guard let search else {
+            await searchIndex?.queries.forget()
+            return nil
+        }
         guard let searchIndex else {
             throw CatalogProjectionSearchUnavailable()
         }
-        let matches = try await searchIndex.matches(for: search.text, preferring: search.languages)
+        let request = try await SearchQueryRequest(
+            text: search.text, languages: search.languages, people: store.namedPeople(), label: search.label
+        )
+        return await searchIndex.queries.status(for: request)
+    }
+
+    /// Narrows the scope to what `search` matches (ADR 0048), among the scope's own assets.
+    /// A query the reader could not answer (a failed reading waiting for its retry, or one past
+    /// its deadline) leaves the scope unsearched, never narrowed by another query's results.
+    private func applySearch(
+        _ search: CatalogSearch,
+        status: SearchQueryStatus,
+        to facts: inout CatalogProjectionBuildFacts,
+        store: CatalogStore
+    ) async throws {
+        guard case let .read(encoding) = status else {
+            OtosLog.catalog.noticeOperation("projection.search", phase: "unanswered", fields: [
+                "scope": "\(facts.scopedAssetIDs.count)",
+            ])
+            return
+        }
+        guard let searchIndex else {
+            throw CatalogProjectionSearchUnavailable()
+        }
+        let matches = try await searchIndex.matches(encoding, among: facts.scopedAssetIDs)
         let unsearched = facts.scopedAssetIDs.count
         let searched = CatalogWindowPolicy.searched(
             ids: facts.scopedAssetIDs,
@@ -296,3 +332,7 @@ extension CatalogProjection {
 
 /// A search was asked of a projection that has no index to answer it.
 nonisolated struct CatalogProjectionSearchUnavailable: Error {}
+
+/// The search's query is still being read (`SearchQueryReader`): the pass publishes nothing
+/// yet, and the reading rings the loop when it lands.
+nonisolated struct CatalogProjectionSearchStillReading: Error {}

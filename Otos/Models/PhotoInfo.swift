@@ -91,22 +91,58 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         let rows: [Row]
     }
 
-    /// What search recognised in the item, each part nil while its reading is owed: the
-    /// confident scene labels named in the Mac's language (`SceneLabelNames`), and the lines of
+    /// What search recognised in the item: the confident scene labels named in the Mac's
+    /// language (`SceneLabelNames`), nil while the thumbnail's reading is owed, and the lines of
     /// text Vision is certain of (`SearchTextReading.certain`). Only a still's preview is read
-    /// for text.
+    /// for text, so a movie has no text reading at all.
     nonisolated struct Recognized: Equatable, Sendable {
-        var labels: [String]?
-        var text: [String]?
+        /// A scene label as a chip shows it: Vision's identifier, which the chip searches for,
+        /// and its name.
+        nonisolated struct Label: Equatable, Sendable {
+            let identifier: String
+            let name: String
+        }
 
-        init(labels: [String]?, text: [String]?) {
+        /// The item's text reading.
+        nonisolated enum Text: Equatable, Sendable {
+            /// A still whose preview has not been read yet.
+            case owed
+            /// The certain lines, empty when the preview holds none.
+            case read([String])
+            /// A movie: nothing reads it for text.
+            case none
+
+            /// The line count for a log line: a count, `owed` or `none`.
+            var diagnosticCount: String {
+                switch self {
+                case .owed: "owed"
+                case let .read(lines): "\(lines.count)"
+                case .none: "none"
+                }
+            }
+        }
+
+        var labels: [Label]?
+        var text: Text
+
+        init(labels: [Label]?, text: Text) {
             self.labels = labels
             self.text = text
         }
 
-        /// The overlay's readings, its labels already named.
-        init(overlay: PhotoInfoOverlay?, labelNames: [String]?) {
-            self.init(labels: labelNames, text: overlay?.textLines)
+        /// The overlay's readings, its labels already named. `readsText`: whether the item is a
+        /// still, whose preview is read for text.
+        init(overlay: PhotoInfoOverlay?, labels: [Label]?, readsText: Bool) {
+            self.init(labels: labels, text: readsText ? overlay?.textLines.map(Text.read) ?? .owed : .none)
+        }
+
+        /// Both readings are made and found nothing: the only time the section says so.
+        var foundNothing: Bool {
+            labels?.isEmpty == true && (text == .none || text == .read([]))
+        }
+
+        var readsText: Bool {
+            text != .none
         }
 
         /// A label's name as a chip shows it: its first letter capitalised in `locale`.
@@ -190,7 +226,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         var locality: OriginalLocality?
         var editRecipe: EditRecipe?
         /// The overlay's confident scene labels, named in the Mac's language.
-        var labelNames: [String]?
+        var labelNames: [Recognized.Label]?
     }
 
     /// Everything Otos holds for one item, as the pane shows it.
@@ -215,7 +251,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             placeName: nil,
             editRecipe: source.editRecipe,
             uprightSize: source.nativePixelSize,
-            recognized: Recognized(overlay: source.overlay, labelNames: source.labelNames),
+            recognized: Recognized(overlay: source.overlay, labels: source.labelNames, readsText: resolvedKind != .video),
             sectionRows: rows,
             sectionOrder: order
         )

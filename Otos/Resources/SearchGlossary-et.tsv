@@ -1,8 +1,11 @@
 # Search glossary: Estonian to English (ADR 0048). Written for Otos from Vision's scene-label
 # names, the vocabulary search already reads photos with, then common words of a photo
-# search (below). A line is an English reading, then
-# the Estonian forms that mean it: nominative, then genitive (the stem compounds and case
-# endings build on). Where a form means several readings, the one it is listed earlier for wins.
+# search (below). A line is an English reading, then the Estonian forms that mean it:
+# nominative, then genitive (the stem compounds and case endings build on). A form is listed
+# once, on the line of the sense it reads as: where it has several, the one a photo search
+# means most often ("kell" is a clock before a bell, "aed" a garden before a fence), and the
+# glossary does not load with a form listed twice. A form of three letters or fewer is read
+# only as a whole word, so "kuus" (six) is not the moon ("kuu") with an ending.
 @endings	d,l,s,t,de,ee,el,es,ga,id,il,ks,le,lt,na,ni,st,ta,te,ele,est,ile,sid,sse
 abacus	arvelaud,arvelaua
 accordion	akordion,akordioni
@@ -95,9 +98,7 @@ beekeeping	mesindus,mesinduse
 beer	õlu,õlle
 beet	peet,peedi
 begonia	begoonia
-bell	kell,kella
 bell pepper	paprika
-belltower	kellatorn,kellatorni
 bellydance	kõhutants,kõhutantsu
 bench	pink,pingi
 berry	mari,marja
@@ -152,7 +153,6 @@ building	hoone,ehitis,ehitise
 bulldog	buldog,buldogi
 bulldozer	buldooser,buldooseri
 bus	buss,bussi
-butter	või
 butterfly	liblikas,liblika
 cabinet	kapp,kapi
 cableway	köisraudtee
@@ -170,9 +170,8 @@ candy	komm,kommi,kompvek,kompveki
 candy cane	suhkrupulk,suhkrupulga
 canine	koerlane,koerlase
 canoe	kanuu
-cantaloupe	melon,meloni
 canyon	kanjon,kanjoni
-car	auto,sõiduauto
+car	sõiduauto
 car seat	turvahäll,turvahälli,turvatool,turvatooli
 caramel	karamell,karamelli
 cardboard box	papikast,papikasti,pappkast,pappkasti
@@ -180,7 +179,7 @@ carnation	nelk,nelgi
 carnival	karneval,karnevali
 carousel	karussell,karusselli
 carrot	porgand,porgandi
-cart	käru,vanker,vankri
+cart	käru
 cashew	kašupähkel,kašupähkli
 casino	kasiino
 cassette	kassett,kasseti
@@ -190,7 +189,7 @@ caterpillar	röövik,rööviku
 cauliflower	lillkapsas,lillkapsa
 cave	koobas,koopa
 cd	plaat,plaadi
-celebration	pidu,peo,tähistamine,tähistamise
+celebration	tähistamine,tähistamise
 celery	seller,selleri
 cellar	kelder,keldri
 cello	tšello
@@ -212,7 +211,7 @@ chess	male
 chestnut	kastan,kastani
 chewing gum	närimiskumm,närimiskummi
 chihuahua	tšihuahua
-child	laps,lapse,lapsed,laste
+child	laps,lapse
 chimney	korsten,korstna
 chocolate	šokolaad,šokolaadi
 chopsticks	söögipulgad,söögipulkade
@@ -231,11 +230,11 @@ cliff	kalju,pank,panga
 cloak	keep,keebi
 clock	kell,kella
 clock tower	kellatorn,kellatorni
-closet	kapp,kapi,riidekapp,riidekapi
+closet	riidekapp,riidekapi
 clothesline	pesunöör,pesunööri
 clothespin	pesulõks,pesulõksu
 clothing	riided,riiete,rõivad,rõivaste
-cloudy	pilvine,pilvise,pilv,pilve
+cloudy	pilvine,pilvise
 clover	ristik,ristiku
 clown	kloun,klouni
 clownfish	klounkala
@@ -248,15 +247,14 @@ collie	kolli
 compass	kompass,kompassi
 computer	arvuti
 computer keyboard	klaviatuur,klaviatuuri
-computer monitor	monitor,monitori,ekraan,ekraani
+computer monitor	monitor,monitori
 computer mouse	hiir,hiire
 concert	kontsert,kontserdi
 condiment	maitseaine
 conference	konverents,konverentsi
 container	anum,anuma,konteiner,konteineri
 convertible	kabriolett,kabrioleti
-cookie	küpsis,küpsise
-cookware	pott,poti,nõud,nõude
+cookware	pott,poti
 coral reef	korallrahu
 cord	nöör,nööri,juhe,juhtme
 corgi	korgi
@@ -275,18 +273,16 @@ crane	kraana
 crate	kast,kasti
 credit card	krediitkaart,krediitkaardi,pangakaart,pangakaardi
 creek	oja
-crepe	pannkook,pannkoogi
 crib	võrevoodi,hällivoodi
 cricket	kriket,kriketi
 croissant	sarvesai,sarvesaia,croissant
-crosswalk	ülekäigurada,ülekäiguraja,sebra
+crosswalk	ülekäigurada,ülekäiguraja
 crowd	rahvahulk,rahvahulga,rahvas,rahva
 cruise ship	kruiisilaev,kruiisilaeva
 crutch	kark,kargu
 cucumber	kurk,kurgi
 cup	tass,tassi
-cupcake	tassikook,tassikoogi,muffin,muffini
-currency	raha
+cupcake	tassikook,tassikoogi
 curry	karri
 curtain	kardin,kardina
 cutting board	lõikelaud,lõikelaua
@@ -295,17 +291,16 @@ dachshund	taksikoer,taksikoera,taks,taksi
 daffodil	nartsiss,nartsissi
 dahlia	daalia
 daisy	karikakar,karikakra
-dam	tamm,tammi,pais,paisu
+dam	tammi,pais,paisu
 dancing	tantsimine,tantsimise,tants,tantsu
 dandelion	võilill,võilille
 dartboard	noolemäng,noolemängu
 dashboard	armatuurlaud,armatuurlaua
-daytime	päev,päeva
 deck	laevatekk,laevateki
 decoration	kaunistus,kaunistuse,dekoratsioon,dekoratsiooni
 decorative plant	toataim,toataime
 deejay	diskor,diskori
-deer	hirv,hirve,põder
+deer	hirv,hirve
 desert	kõrb,kõrbe
 desk	kirjutuslaud,kirjutuslaua
 dessert	magustoit,magustoidu
@@ -325,12 +320,10 @@ dog	koer,koera,kutsu,kutsika
 doll	nukk,nuku
 dolphin	delfiin,delfiini
 dome	kuppel,kupli
-domicile	kodu,maja
 domino	doomino
 donkey	eesel,eesli
 donut	sõõrik,sõõriku
 door	uks,ukse
-dove	tuvi
 dragonfly	kiil,kiili
 drink	jook,joogi
 drinking glass	klaas,klaasi
@@ -347,7 +340,6 @@ eggplant	baklažaan,baklažaani
 electric fan	ventilaator,ventilaatori
 elephant	elevant,elevandi
 elevator	lift,lifti
-elk	põder,põdra
 embers	söed,söe,süsi
 engine	mootor,mootori
 envelope	ümbrik,ümbriku
@@ -355,10 +347,9 @@ equestrian	ratsutamine,ratsutamise
 escalator	eskalaator,eskalaatori
 evergreen	okaspuu
 extinguisher	tulekustuti
-eyeglasses	prillid,prillide
 fairground	laat,laada
 farm	talu,farm,farmi
-fence	aed,aia,tara
+fence	tara
 fencing	vehklemine,vehklemise
 ferns	sõnajalg,sõnajala
 ferris wheel	vaateratas,vaateratta
@@ -371,7 +362,6 @@ firetruck	tuletõrjeauto
 fireworks	ilutulestik,ilutulestiku
 fish	kala
 fishing	kalapüük,kalapüügi,kalastamine,kalastamise
-fishtank	akvaarium,akvaariumi
 flag	lipp,lipu
 flagpole	lipumast,lipumasti
 flame	leek,leegi
@@ -396,7 +386,7 @@ fries	friikartulid,friikartulite
 frog	konn,konna
 frozen	külmunud
 frozen dessert	külmmagustoit,külmmagustoidu
-fruit	puuvili,puuvilja,vili,vilja
+fruit	puuvili,puuvilja
 furniture	mööbel,mööbli
 gamepad	mängupult,mängupuldi
 games	mäng,mängu,mängud,mängude
@@ -425,7 +415,7 @@ graffiti	grafiti
 grain	vili,vilja,teravili,teravilja
 grape	viinamari,viinamarja
 grapefruit	greip,greibi
-grass	rohi,rohu,muru
+grass	rohi,rohu
 grater	riiv,riivi
 grave	haud,haua
 green beans	aeduba,aedoa
@@ -451,12 +441,11 @@ headphones	kõrvaklapid,kõrvaklappide
 health club	jõusaal,jõusaali
 hedgehog	siil,siili
 helicopter	helikopter,helikopteri
-helmet	kiiver,kiivri
 herb	ürt,ürdi,maitsetaim,maitsetaime
 heron	haigur,haigru
 high chair	söögitool,söögitooli
 hiking	matkamine,matkamise,matk,matka
-hill	küngas,künka,mägi,mäe
+hill	küngas,künka
 hippopotamus	jõehobu
 hockey	hoki,jäähoki
 holly	astelpaju
@@ -479,7 +468,7 @@ ice skating	uisutamine,uisutamise
 iceberg	jäämägi,jäämäe
 igloo	iglu
 iguana	iguaan,iguaani
-illustrations	illustratsioon,illustratsiooni,joonistus,joonistuse
+illustrations	illustratsioon,illustratsiooni
 insect	putukas,putuka
 interior room	tuba,toa,ruum,ruumi
 interior shop	pood,poe,kauplus,kaupluse
@@ -503,12 +492,10 @@ kangaroo	känguru
 karaoke	karaoke
 kayak	süst,süsta,kajak,kajaki
 kebab	kebab,kebabi,šašlõkk,šašlõki
-kettle	veekeetja,teekann
-keypad	klaviatuur,klaviatuuri
+kettle	veekeetja
 kimono	kimono
 kitchen	köök,köögi
 kitchen countertop	tööpind,tööpinna
-kitchen oven	ahi,ahju
 kitchen sink	kraanikauss,kraanikausi
 kite	tuulelohe,lohe
 kitten	kassipoeg,kassipoja,kiisu
@@ -529,12 +516,11 @@ leash	rihm,rihma,jalutusrihm
 leek	porrulauk,porrulaugu
 lemon	sidrun,sidruni
 leopard	leopard,leopardi
-lettuce	salat,salati
 library	raamatukogu
 license plate	numbrimärk,numbrimärgi
 lifejacket	päästevest,päästevesti
-light	valgus,valguse,tuli,tule
-light bulb	pirn,pirni,lambipirn
+light	valgus,valguse
+light bulb	lambipirn
 lighthouse	tuletorn,tuletorni
 lightning	välk,välgu
 lily	liilia
@@ -545,8 +531,7 @@ lizard	sisalik,sisaliku
 llama	laama
 lobster	homaar,homaari
 lollipop	pulgakomm,pulgakommi
-luggage	pagas,pagasi,kohver,kohvri
-lynx	ilves,ilvese
+luggage	pagas,pagasi
 machine	masin,masina
 magazine	ajakiri,ajakirja
 mailbox	postkast,postkasti
@@ -599,7 +584,7 @@ nut	pähkel,pähkli
 oak tree	tamm,tamme
 oar	aer,aeru
 oatmeal	kaerahelbepuder,puder,pudru
-ocean	ookean,ookeani,meri,mere
+ocean	ookean,ookeani
 office supplies	kontoritarbed,kontoritarvete
 omelet	omlett,omleti
 onion	sibul,sibula
@@ -625,7 +610,7 @@ panda	panda
 paper bag	paberkott,paberkoti
 parachute	langevari,langevarju
 parade	paraad,paraadi,rongkäik,rongkäigu
-parakeet	papagoi,viirpapagoi
+parakeet	viirpapagoi
 park	park,pargi
 parking lot	parkla,parkimisplats
 parrot	papagoi
@@ -641,14 +626,14 @@ pear	pirn,pirni
 pelican	pelikan,pelikani
 pen	pastakas,pastaka,sulepea
 penguin	pingviin,pingviini
-people	inimesed,inimeste,inimene,inimese
-pepper	pipar,pipra,paprika
+people	inimesed,inimeste
+pepper	pipar,pipra
 pepperoni	pepperoni
 phone	telefon,telefoni,mobiil,mobiili
 piano	klaver,klaveri
 pickle	hapukurk,hapukurgi
 pie	pirukas,piruka,pirukad
-pier	kai,muul,muuli
+pier	muul,muuli
 pig	siga,sea,põrsas,põrsa
 pigeon	tuvi
 piggybank	hoiupõrsas,hoiupõrsa
@@ -670,9 +655,9 @@ poodle	puudel,puudli
 pool	bassein,basseini,ujula
 popcorn	popkorn,popkorni
 popsicle	pulgajäätis,pulgajäätise
-porch	veranda,trepp
+porch	veranda
 portal	värav,värava
-pot	pott,poti,kastrul,kastruli
+pot	kastrul,kastruli
 potato	kartul,kartuli
 power saw	saag,sae
 pretzel	kringel,kringli
@@ -683,9 +668,9 @@ pudding	puding,pudingi
 puffin	lunn,lunni
 pug	mops,mopsi
 pumpkin	kõrvits,kõrvitsa
-puppet	nukk,nuku,käpiknukk
+puppet	käpiknukk
 purse	rahakott,rahakoti,käekott
-puzzles	pusle,mõistatus
+puzzles	mõistatus
 pyramid	püramiid,püramiidi
 rabbit	jänes,jänese,küülik,küüliku
 raccoon	pesukaru
@@ -699,7 +684,7 @@ raspberry	vaarikas,vaarika
 rat	rott,roti
 raven	ronk,ronga,vares,varese
 receipt	tšekk,tšeki,kviitung
-record	plaat,plaadi,vinüülplaat
+record	vinüülplaat
 refrigerator	külmkapp,külmkapi
 reptile	roomaja
 restaurant	restoran,restorani
@@ -712,7 +697,7 @@ river	jõgi,jõe
 road	tee,maantee
 rock climbing	kaljuronimine,kaljuronimise,ronimine,ronimise
 rocket	rakett,raketi
-rocks	kivid,kivide,kivi
+rocks	kivid,kivide
 rodent	näriline,närilise
 rodeo	rodeo
 rollerskates	rulluisud,rulluiskude
@@ -723,7 +708,6 @@ rosemary	rosmariin,rosmariini
 rowboat	sõudepaat,sõudepaadi
 rugby	ragbi
 ruins	varemed,varemete,vare
-sack	kott,koti
 saddle	sadul,sadula
 sailboat	purjekas,purjeka,purjepaat
 salad	salat,salati
@@ -749,7 +733,7 @@ screwdriver	kruvikeeraja
 seafood	mereannid,mereandide
 seahorse	merihobu
 seal	hüljes,hülge
-seashell	merekarp,merekarbi,karp,karbi
+seashell	merekarp,merekarbi
 seat	iste,istme
 seaweed	merevetikas,merevetika,vetikas,vetika
 seed	seeme,seemne
@@ -758,8 +742,7 @@ sewing	õmblemine,õmblemise
 shark	hai
 shed	kuur,kuuri
 sheep	lammas,lamba
-sheepdog	lambakoer,lambakoera
-shoes	kingad,kingade,jalanõud
+shoes	kingad,kingade
 shopping cart	ostukäru
 shore	kallas,kalda,rannik,ranniku
 shower	dušš,duši
@@ -770,7 +753,6 @@ singer	laulja
 skateboard	rula,rulaga
 skateboarding	rulatamine,rulatamise
 skatepark	rulapark,rulapargi
-skating	uisutamine,uisutamise
 skeleton	luustik,luustiku,skelett,skeleti
 skiing	suusatamine,suusatamise,suusad,suuskade
 skull	kolju
@@ -790,7 +772,6 @@ snowboard	lumelaud,lumelaua
 snowboarding	lumelauasõit,lumelauasõidu
 snowman	lumememm,lumememme
 snowmobile	mootorkelk,mootorkelgu
-soccer	jalgpall,jalgpalli
 sock	sokk,soki
 soda	limonaad,limonaadi
 sofa	diivan,diivani
@@ -815,7 +796,7 @@ stadium	staadion,staadioni
 stained glass	vitraaž,vitraaži
 stairs	trepp,trepi
 starfish	meritäht,meritähe
-statue	kuju,skulptuur,skulptuuri
+statue	skulptuur,skulptuuri
 steak	steik,steigi,praad,prae
 stool	taburet,taburetti
 storefront	vaateaken,vaateakna,poeesine
@@ -827,7 +808,7 @@ strawberry	maasikas,maasika
 street	tänav,tänava
 street sign	tänavasilt,tänavasildi
 streetcar	tramm,trammi
-stroller	lapsevanker,lapsevankri,vanker,vankri
+stroller	lapsevanker,lapsevankri
 stuffed animals	mänguloom,mängulooma,kaisuloom,kaisulooma,kaisukaru
 submarine	allveelaev,allveelaeva
 suit	ülikond,ülikonna
@@ -851,7 +832,6 @@ table	laud,laua
 tableware	nõud,nõude
 taco	tako
 tattoo	tätoveering,tätoveeringu
-tea	tee
 teapot	teekann,teekannu
 teen	teismeline,teismelise,nooruk,noorukid
 telescope	teleskoop,teleskoobi
@@ -878,12 +858,12 @@ tower	torn,torni
 toy	mänguasi,mänguasja,mänguasjad
 tractor	traktor,traktori
 traffic light	foor,foori,valgusfoor
-trail	rada,raja,matkarada,matkaraja
+trail	matkarada,matkaraja
 train	rong,rongi
 train station	rongijaam,rongijaama,raudteejaam,raudteejaama
 train	mängurong,mängurongi
 trampoline	batuut,batuudi
-tramway	trammitee,tramm,trammi
+tramway	trammitee
 trash can	prügikast,prügikasti
 treadmill	jooksulint,jooksulindi
 tree	puu
@@ -897,7 +877,6 @@ trumpet	trompet,trompeti
 tulip	tulp,tulbi
 tuna	tuunikala
 tunnel	tunnel,tunneli
-turtle	kilpkonn,kilpkonna
 tuxedo	smoking,smokingu
 typewriter	kirjutusmasin,kirjutusmasina
 ukulele	ukulele
@@ -905,7 +884,7 @@ umbrella	vihmavari,vihmavarju
 underwater	veealune
 utensil	söögiriist,söögiriista
 vacuum	tolmuimeja
-van	kaubik,kaubiku,buss
+van	kaubik,kaubiku
 vase	vaas,vaasi
 vegetable	köögivili,köögivilja,juurvili
 vegetation	taimestik,taimestiku
@@ -919,7 +898,6 @@ volleyball	võrkpall,võrkpalli
 vulture	raisakotkas,raisakotka
 waffle	vahvel,vahvli
 wagon	vanker,vankri
-wallet	rahakott,rahakoti
 walrus	morsk,morsa
 warship	sõjalaev,sõjalaeva
 watch	käekell,käekella
@@ -936,8 +914,7 @@ wedding dress	pruutkleit,pruutkleidi
 wetland	raba,soo
 whale	vaal,vaala
 wheat	nisu
-wheel	ratas,ratta
-wheelbarrow	käru,aiakäru
+wheelbarrow	aiakäru
 wheelchair	ratastool,ratastooli
 whisk	vispel,vispli
 whiteboard	valgetahvel,valgetahvli
@@ -957,7 +934,7 @@ wreath	pärg,pärja
 wrench	mutrivõti,mutrivõtme
 wrestling	maadlus,maadluse
 xylophone	ksülofon,ksülofoni
-yacht	jaht,jahi,purjejaht
+yacht	purjejaht
 yarn	lõng,lõnga
 yoga	jooga
 yogurt	jogurt,jogurti
@@ -971,18 +948,18 @@ man	mees,mehe
 woman	naine,naise
 boy	poiss,poisi
 girl	tüdruk,tüdruku
-grandmother	vanaema,vanaema
-grandfather	vanaisa,vanaisa
-mother	ema,ema
-father	isa,isa
-family	pere,pere,perekond,perekonna
+grandmother	vanaema
+grandfather	vanaisa
+mother	ema
+father	isa
+family	pere,perekond,perekonna
 friend	sõber,sõbra,sõbrad
 person	inimene,inimese
 kids	lapsed,laste
 twins	kaksikud,kaksikute
 couple	paar,paari
 group	grupp,grupi,seltskond,seltskonna
-portrait	portree,portree
+portrait	portree
 face	nägu,näo
 hand	käsi,käe
 foot	jalg,jala
@@ -992,27 +969,26 @@ red	punane,punase
 blue	sinine,sinise
 green	roheline,rohelise
 yellow	kollane,kollase
-white	valge,valge
+white	valge
 black	must,musta
 orange	oranž,oranži
-pink	roosa,roosa
-purple	lilla,lilla
+pink	roosa
+purple	lilla
 brown	pruun,pruuni
 gray	hall,halli
 gold	kuldne,kuldse
-colorful	värviline,värvilise,kirju,kirju
-old	vana,vana
+colorful	värviline,värvilise,kirju
+old	vana
 new	uus,uue
 big	suur,suure
 small	väike,väikese
 little	pisike,pisikese
-tall	kõrge,kõrge
+tall	kõrge
 long	pikk,pika
 beautiful	ilus,ilusa
 happy	rõõmus,rõõmsa,õnnelik,õnneliku
 funny	naljakas,naljaka
 wet	märg,märja
-dirty	must,musta
 empty	tühi,tühja
 full	täis
 dark	pime,pimeda,tume,tumeda
@@ -1020,7 +996,7 @@ bright	hele,heleda
 sunny	päikeseline,päikeselise
 rainy	vihmane,vihmase
 snowy	lumine,lumise
-foggy	udune,udune
+foggy	udune
 windy	tuuline,tuulise
 cold	külm,külma
 hot	kuum,kuuma
@@ -1030,49 +1006,41 @@ first	esimene,esimese
 field	põld,põllu,väli,välja
 meadow	niit,niidu,aas,aasa
 yard	õu,õue,hoov,hoovi
-home	kodu,kodu
+home	kodu
 city	linn,linna
 town	alev,aleviku
-village	küla,küla
-country	maa,maa
-countryside	maal
+village	küla
 school	kool,kooli
 kindergarten	lasteaed,lasteaia
 church	kirik,kiriku
-shop	pood,poe
 market	turg,turu
 cafe	kohvik,kohviku
 hotel	hotell,hotelli
-room	tuba,toa
-house	maja,maja
-summer house	suvila,suvila
+summer house	suvila
 sauna	saun,sauna
-lawn	muru,muru
+lawn	muru
 sea	meri,mere
 bay	laht,lahe
-wave	laine,laine
-sky	taevas,taeva
+wave	laine
 cloud	pilv,pilve
 star	täht,tähe
-stone	kivi,kivi
+stone	kivi
 leaf	leht,lehe
 paper	paber,paberi
 screen	ekraan,ekraani
 picture	pilt,pildi
-photo	foto,foto
+photo	foto
 drawing	joonistus,joonistuse
 presentation	esitlus,esitluse,ettekanne,ettekande
 heart	süda,südame
-toy	mänguasi,mänguasja
 present	kink,kingi
 party	pidu,peo
 holiday	puhkus,puhkuse
-trip	reis,reisi,matk,matka
-vacation	puhkus,puhkuse
+trip	reis,reisi
 day	päev,päeva
-night	öö,öö
+night	öö
 morning	hommik,hommiku
-evening	õhtu,õhtu
+evening	õhtu
 spring	kevad,kevade
 summer	suvi,suve
 autumn	sügis,sügise
@@ -1082,7 +1050,6 @@ easter	lihavõtted,lihavõtete
 midsummer	jaanipäev,jaanipäeva,jaanid
 birthday	sünnipäev,sünnipäeva
 new year	aastavahetus,aastavahetuse,uusaasta
-wedding	pulm,pulma
 sleeping	magav,magab,magamas,magamine,magama
 eating	sööv,sööb,söömas,söömine,sööma
 drinking	joov,joob,joomas,joomine
@@ -1103,7 +1070,7 @@ crying	nuttev,nutab,nutmas
 sitting	istuv,istub,istumas
 standing	seisev,seisab,seismas
 jumping	hüppav,hüppab,hüppamas,hüppamine,hüpe,hüppe
-climbing	roniv,ronib,ronimas,ronimine
+climbing	roniv,ronib,ronimas
 skiing	suusatav,suusatab,suusatamas
 skating	uisutav,uisutab,uisutamas
 fishing	kalastav,kalastab,kalastamas,kalal
@@ -1113,7 +1080,6 @@ wearing	kandev,kannab,kandmas
 holding	hoidev,hoiab,hoidmas
 sunbathing	päevitav,päevitab,päevitamas
 writing	kirjutav,kirjutab,kirjutamas
-working	töötav,töötab,töötamas,töö,töö
-dress	kleit,kleidi
+working	töötav,töötab,töötamas,töö
 glasses	prillid,prillide
 view	vaade,vaate

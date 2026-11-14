@@ -14,17 +14,27 @@ import Foundation
 /// end to end, the last one followed by nothing or one case ending: "metsas" is "metsa" + "s",
 /// "sünnipäevatort" is one form, "kõrvitsapõllul" would need "põld" in the glossary. A
 /// compound's parts keep their order, modifier before head as in English: "rannapall" →
-/// "beach ball". A whole form wins over a shorter one and an ending. A form shorter than three letters is never matched: it would read too many
-/// words ("oa", a bean, inside "koa…").
+/// "beach ball". A whole form wins over a shorter one and an ending.
+///
+/// - **One sense a form.** A form is listed once, on the line of the sense a photo search means
+///   by it ("kell" is a clock, not a bell); a glossary that lists a form twice does not load
+///   (`GlossaryError.listedTwice`), so the file, not the order of its lines, says which.
+/// - **Short forms are whole words.** A form of `wholeWordLength` letters or fewer is read only
+///   as the whole typed word, never inside a compound or before an ending: it would read too
+///   many words ("kuus", six, is not "kuu", moon, with an ending; "seal", there, is not "sea",
+///   pig).
 nonisolated struct SearchGlossary: Sendable {
     let language: String
     private let readings: [String: String]
+    /// The forms read only as a whole word.
+    private let wholeWords: [String: String]
     private let endings: [String]
     private let longestForm: Int
-    private static let shortestForm = 3
+    static let wholeWordLength = 3
 
     enum GlossaryError: Error, Equatable {
         case malformed(line: Int)
+        case listedTwice(form: String, line: Int)
     }
 
     /// The glossary for `language`, nil when Otos has none for it.
@@ -36,7 +46,8 @@ nonisolated struct SearchGlossary: Sendable {
     }
 
     init(language: String, contents: String) throws {
-        var readings: [String: (reading: String, rank: Int)] = [:]
+        var readings: [String: String] = [:]
+        var wholeWords: [String: String] = [:]
         var endings: [String] = []
         for (index, line) in contents.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
             where !line.isEmpty && !line.hasPrefix("#")
@@ -50,15 +61,20 @@ nonisolated struct SearchGlossary: Sendable {
                 endings = values
                 continue
             }
-            for (rank, form) in values.enumerated() where form.count >= Self.shortestForm {
-                if let known = readings[form], known.rank <= rank {
-                    continue
+            for form in values {
+                guard readings[form] == nil, wholeWords[form] == nil else {
+                    throw GlossaryError.listedTwice(form: form, line: index + 1)
                 }
-                readings[form] = (String(fields[0]), rank)
+                if form.count > Self.wholeWordLength {
+                    readings[form] = String(fields[0])
+                } else {
+                    wholeWords[form] = String(fields[0])
+                }
             }
         }
         self.language = language
-        self.readings = readings.mapValues(\.reading)
+        self.readings = readings
+        self.wholeWords = wholeWords
         self.endings = [""] + endings.sorted { $0.count > $1.count }
         longestForm = readings.keys.map(\.count).max() ?? 0
     }
@@ -82,18 +98,22 @@ nonisolated struct SearchGlossary: Sendable {
         return read ? words.joined(separator: " ") : nil
     }
 
-    /// The fewest forms that cover `word` end to end, the last followed by a case ending, in
-    /// English.
+    /// A short form typed whole, else the fewest longer forms that cover `word` end to end, the
+    /// last followed by a case ending, in English.
     private func reading(ofWord word: String) -> String? {
+        if let whole = wholeWords[word] {
+            return whole
+        }
         let letters = Array(word)
+        let shortestForm = Self.wholeWordLength + 1
         // fewest[i]: the shortest run of readings covering letters[..<i].
         var fewest: [[String]?] = Array(repeating: nil, count: letters.count + 1)
         fewest[0] = []
         for start in 0 ..< letters.count {
             guard let before = fewest[start] else { continue }
             let last = min(letters.count, start + longestForm)
-            guard start + Self.shortestForm <= last else { continue }
-            for end in start + Self.shortestForm ... last {
+            guard start + shortestForm <= last else { continue }
+            for end in start + shortestForm ... last {
                 guard let english = readings[String(letters[start ..< end])] else { continue }
                 if let known = fewest[end], known.count <= before.count + 1 {
                     continue

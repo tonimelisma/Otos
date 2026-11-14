@@ -1,4 +1,5 @@
 import Foundation
+import MapKit
 import NaturalLanguage
 @testable import OtosKit
 import Testing
@@ -15,11 +16,11 @@ struct SearchQueryFactsTests {
     private static let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 10))!
 
     private func parse(_ text: String) -> SearchQueryParse {
-        SearchQueryParser.parse(text, now: Self.now, calendar: Self.calendar)
+        SearchQueryParser.parse(text)
     }
 
-    private func month(_ span: SearchDateSpan?) -> DateComponents? {
-        span.map { Self.calendar.dateComponents([.year, .month], from: $0.start) }
+    private func month(_ date: SearchDate?) -> DateComponents? {
+        date?.span(at: Self.now, in: Self.calendar).map { Self.calendar.dateComponents([.year, .month], from: $0.start) }
     }
 
     @Test func aMonthNarrowsToItsMostRecentOccurrence() {
@@ -37,8 +38,9 @@ struct SearchQueryFactsTests {
     @Test func yearsAndRelativeSpans() throws {
         let year = parse("pool 2025")
         #expect(year.pictureText == "pool")
-        #expect(try Self.calendar.component(.year, from: #require(year.date?.start)) == 2025)
-        #expect(try Self.calendar.component(.month, from: #require(year.date?.end)) == 1)
+        let span = try #require(year.date?.span(at: Self.now, in: Self.calendar))
+        #expect(Self.calendar.component(.year, from: span.start) == 2025)
+        #expect(Self.calendar.component(.month, from: span.end) == 1)
         let lastMonth = parse("pumpkins last month")
         #expect(month(lastMonth.date) == DateComponents(year: 2026, month: 10))
         #expect(lastMonth.pictureText == "pumpkins")
@@ -47,10 +49,32 @@ struct SearchQueryFactsTests {
 
     /// A query no translation reads is searched for the month in the user's own languages.
     @Test func anUntranslatedMonthIsReadInTheUsersLanguage() {
-        let found = SearchQueryParser.takeNativeMonth("rand septembris", languages: ["et"], now: Self.now, calendar: Self.calendar)
-        #expect(month(found?.span) == DateComponents(year: 2026, month: 9))
+        let found = SearchQueryParser.takeNativeMonth("rand septembris", languages: ["et"])
+        #expect(month(found?.month) == DateComponents(year: 2026, month: 9))
         #expect(found?.rest == "rand")
-        #expect(SearchQueryParser.takeNativeMonth("rand septembris", languages: ["ja"], now: Self.now, calendar: Self.calendar) == nil)
+        #expect(SearchQueryParser.takeNativeMonth("rand septembris", languages: ["ja"]) == nil)
+        #expect(month(SearchQueryParser.takeNativeMonth("koer mais", languages: ["et"])?.month) == DateComponents(year: 2026, month: 5))
+        #expect(month(SearchQueryParser.takeNativeMonth("ranta syyskuussa", languages: ["fi"])?.month) == DateComponents(year: 2026, month: 9))
+        #expect(month(SearchQueryParser.takeNativeMonth("märtsis", languages: ["et"])?.month) == DateComponents(year: 2026, month: 3))
+    }
+
+    /// A month name is a whole word in the user's language, never the start of another word:
+    /// Estonian "mai" is not "mail" or "main", Dutch "mei" is not "meisje", French "mars" is not
+    /// "marsh" or "maison".
+    @Test(arguments: [
+        ("mail", "et"), ("main street", "et"), ("Maine lighthouse", "et"), ("meisje", "nl"),
+        ("maison", "fr"), ("marsh", "fr"), ("augusti", "nl"),
+    ])
+    func aWordAMonthOnlyBeginsIsNoMonth(text: String, language: String) {
+        #expect(SearchQueryParser.takeNativeMonth(text, languages: [language]) == nil)
+    }
+
+    /// "Today" is the day the query is answered, not the day it was read.
+    @Test func aRelativeDateIsAnsweredOnTheDayItIsAsked() throws {
+        let today = try #require(parse("today").date)
+        let tomorrow = try #require(Self.calendar.date(byAdding: .day, value: 1, to: Self.now))
+        #expect(today.span(at: Self.now, in: Self.calendar)?.start == Self.now)
+        #expect(today.span(at: tomorrow, in: Self.calendar)?.start == tomorrow)
     }
 
     /// "May" is a word as well as a month: it is the month only beside "in", "of" or a year.
@@ -59,18 +83,21 @@ struct SearchQueryFactsTests {
         #expect(month(parse("beach in May").date) == DateComponents(year: 2026, month: 5))
     }
 
-    /// Translation capitalises a month it translates and writes the same word lower-case when
-    /// it means something else: Swedish "tåg" (train) comes back "march".
-    @Test func aTranslatedMonthIsACapitalisedName() {
-        func translated(_ text: String) -> SearchQueryParse {
-            SearchQueryParser.parse(text, writtenBy: .translation, now: Self.now, calendar: Self.calendar)
+    /// A month Translation wrote is a month only when the text it translated names that month
+    /// in its language. Translation capitalises a caption's first word, so case says nothing:
+    /// Swedish "tåg" (train) can come back "March".
+    @Test func aTranslatedMonthIsOneTheSourceNames() {
+        func translated(_ text: String, from source: String, in language: String) -> SearchQueryParse {
+            SearchQueryParser.parse(text, writtenBy: .translation(source: source, language: language))
         }
-        let train = translated("march")
+        let train = translated("March", from: "tåg", in: "sv")
         #expect(train.date == nil)
-        #expect(train.pictureText == "march")
+        #expect(train.pictureText == "March")
         // Finnish "toukokuu" → "May": a month, though "may" typed alone is not.
-        #expect(month(translated("May").date) == DateComponents(year: 2026, month: 5))
-        #expect(month(translated("beach in March").date) == DateComponents(year: 2026, month: 3))
+        #expect(month(translated("May", from: "toukokuu", in: "fi").date) == DateComponents(year: 2026, month: 5))
+        #expect(month(translated("beach in September", from: "ranta syyskuussa", in: "fi").date) == DateComponents(year: 2026, month: 9))
+        #expect(month(translated("sea in March", from: "мор в марте", in: "ru").date) == DateComponents(year: 2026, month: 3))
+        #expect(month(translated("beach in March", from: "海 3月", in: "ja").date) == DateComponents(year: 2026, month: 3))
         #expect(month(parse("march").date) == DateComponents(year: 2026, month: 3))
     }
 
@@ -107,6 +134,23 @@ struct SearchQueryFactsTests {
         #expect(trampoline.pictureText == "batuut")
         #expect(SearchQueryParser.parse("rand septembris", places: .capitalised).placeName == nil)
         #expect(SearchQueryParser.parse("Dog in San Francisco", places: .capitalised).placeName == "San Francisco")
+    }
+
+    /// Read as typed, a capitalised word is a place under the same rules as a tagged name: not
+    /// the first half of a compound, and not a sentence's first word alone.
+    @Test(arguments: ["Ferris wheel", "Christmas tree", "Orange cat", "Nice sunset", "Teddy bear at home"])
+    func aCapitalisedWordBeforeANounOrAtTheStartIsNoPlace(text: String) {
+        let parse = SearchQueryParser.parse(text, places: .capitalised)
+        #expect(parse.placeName == nil)
+        #expect(parse.pictureText == text)
+    }
+
+    /// Maps saying a name is nowhere is a fact; any other error is a lookup that failed, which
+    /// the encoder does not remember.
+    @Test func onlyMapsNotFindingANameMakesItNoPlace() {
+        #expect(SearchPlaces.isNowhere(NSError(domain: MKErrorDomain, code: Int(MKError.Code.placemarkNotFound.rawValue))))
+        #expect(!SearchPlaces.isNowhere(NSError(domain: MKErrorDomain, code: Int(MKError.Code.serverFailure.rawValue))))
+        #expect(!SearchPlaces.isNowhere(NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)))
     }
 
     @Test func mapsNamesAPlaceWithItsCaseEnding() {
@@ -169,8 +213,8 @@ struct SearchQueryFactsTests {
         let captured = try #require(asset.captureLocalTime?.presentationDate() ?? asset.createdAt)
         let around = SearchDateSpan(start: captured.addingTimeInterval(-60), end: captured.addingTimeInterval(60))
         let before = SearchDateSpan(start: captured.addingTimeInterval(-7200), end: captured.addingTimeInterval(-3600))
-        #expect(try await store.searchFactMatches(SearchFacts(date: around)) == [asset.id])
-        #expect(try await store.searchFactMatches(SearchFacts(date: before)).isEmpty)
+        #expect(try await store.searchFactMatches(SearchFactFilter(dateSpan: around)) == [asset.id])
+        #expect(try await store.searchFactMatches(SearchFactFilter(dateSpan: before)).isEmpty)
         #expect(try await store.namedPeople().isEmpty)
         await store.shutdown()
     }

@@ -47,4 +47,21 @@ struct SceneLabelNamesTests {
         let finnish = try await names.names(of: ["people", "adult"], in: Locale.Language(identifier: "fi"))
         #expect(finnish.allSatisfy { !$0.isEmpty })
     }
+
+    /// Every language names some of Vision's labels alike (Finnish "koira" for dog and canine):
+    /// the chips show each name once, keeping the first label's identifier for the search.
+    @Test func chipsNameEachNameOnce() async throws {
+        let names = SceneLabelNames(bundle: Bundle(for: CatalogWindowViewModel.self))
+        let finnish = Locale.Language(identifier: "fi")
+        let identifiers = ["dog", "canine", "pool"]
+        let named = try await names.names(of: identifiers, in: finnish)
+        let chips = try await names.labels(of: identifiers, in: finnish)
+        #expect(chips.map(\.name) == named.reduce(into: [String]()) {
+            if !$0.contains($1) {
+                $0.append($1)
+            }
+        })
+        #expect(chips.first?.identifier == "dog")
+        #expect(Set(chips.map(\.identifier)).count == chips.count)
+    }
 }

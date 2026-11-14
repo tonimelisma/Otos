@@ -155,10 +155,27 @@ struct PhotoInfoTests {
             companionFileNames: [], importedAt: nil, isEdited: false,
             sceneLabels: ["document", "screenshot"], textLines: ["BRIDGE CLOSED AHEAD"]
         )
-        let read = PhotoInfo.make(PhotoInfo.Source(id: still, overlay: overlay, kind: .image, labelNames: ["asiakirja", "kuvakaappaus"]))
-        #expect(read.recognized == PhotoInfo.Recognized(labels: ["asiakirja", "kuvakaappaus"], text: ["BRIDGE CLOSED AHEAD"]))
+        let labels = [
+            PhotoInfo.Recognized.Label(identifier: "document", name: "asiakirja"),
+            PhotoInfo.Recognized.Label(identifier: "screenshot", name: "kuvakaappaus"),
+        ]
+        let read = PhotoInfo.make(PhotoInfo.Source(id: still, overlay: overlay, kind: .image, labelNames: labels))
+        #expect(read.recognized == PhotoInfo.Recognized(labels: labels, text: .read(["BRIDGE CLOSED AHEAD"])))
         let owed = PhotoInfo.make(PhotoInfo.Source(id: still, overlay: PhotoInfoOverlay(companionFileNames: [], importedAt: nil, isEdited: false)))
-        #expect(owed.recognized == PhotoInfo.Recognized(labels: nil, text: nil))
+        #expect(owed.recognized == PhotoInfo.Recognized(labels: nil, text: .owed))
+        // Labels read and none found, text still owed: not "nothing recognised" yet.
+        let textOwed = PhotoInfo.Recognized(overlay: PhotoInfoOverlay(
+            companionFileNames: [], importedAt: nil, isEdited: false, sceneLabels: []
+        ), labels: [], readsText: true)
+        #expect(textOwed.text == .owed)
+        #expect(!textOwed.foundNothing)
+        #expect(PhotoInfo.Recognized(labels: [], text: .read([])).foundNothing)
+        // A movie has no text reading: its labels alone say whether anything was found.
+        let movie = PhotoInfo.make(PhotoInfo.Source(id: still, overlay: PhotoInfoOverlay(
+            companionFileNames: [], importedAt: nil, isEdited: false, sceneLabels: []
+        ), kind: .video, labelNames: []))
+        #expect(movie.recognized?.text == PhotoInfo.Recognized.Text.none)
+        #expect(movie.recognized?.foundNothing == true)
         #expect(PhotoInfo.none(itemCount: 2).recognized == nil)
         #expect(PhotoInfo.Recognized.chipTitle("baseball hat", locale: Locale(identifier: "en_US")) == "Baseball hat")
         #expect(PhotoInfo.Recognized.chipTitle("iltapäivä", locale: Locale(identifier: "fi_FI")) == "Iltapäivä")

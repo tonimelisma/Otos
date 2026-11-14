@@ -13,8 +13,8 @@ import GRDB
 /// (`source`, `StoredThumbnailSQL.identity` then `|s` and `SearchEmbedding.revision`).
 /// When enrichment writes a new thumbnail, or the model changes, the row's source no longer
 /// matches and the asset is offered again; no thumbnail write site knows search exists. A
-/// thumbnail that does not decode is recorded with no embedding, so it is not offered
-/// again until it changes.
+/// thumbnail that does not decode is not read: nothing is recorded for it, so it stays owed
+/// (and the Info pane reads `Not Checked Yet`, not `Nothing Recognized`).
 ///
 /// An embedding is `SearchEmbedding.dimensions` little-endian Float32 values. The row also
 /// holds the thumbnail's scene labels, Vision's classification of the same picture, as
@@ -42,6 +42,21 @@ nonisolated enum SearchEmbeddingStorage {
           AND a.trash_path IS NULL
           AND NOT \(LivePhotoSQL.isPairedMotion("a"))
           AND e.source IS NOT \(currentSource("a"))
+        """
+    }
+
+    /// The current embeddings in `rootCount` roots (bound in order): the asset's key, then its
+    /// vector and loose labels when `vectors`. Each row is found by the embedding table's key and
+    /// its asset by the asset's (`CatalogStoreQueryPlanTests`).
+    static func currentEmbeddingsSQL(rootCount: Int, vectors: Bool) -> String {
+        """
+        SELECT e.library_root_id, e.relative_path\(vectors ? ", e.embedding, e.labels" : "")
+        FROM search_embedding AS e
+        JOIN media_asset AS a
+            ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path
+        WHERE e.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
+          AND e.embedding IS NOT NULL
+          AND e.source = \(currentSource("a"))
         """
     }
 
@@ -88,12 +103,11 @@ nonisolated struct SearchEmbeddingCandidate: Equatable, Sendable {
     let source: String
 }
 
-/// What reading one candidate's thumbnail produced: the embedding, or nil when the thumbnail
-/// could not be decoded.
+/// What reading one candidate's thumbnail produced: its embedding and scene labels.
 nonisolated struct SearchEmbeddingResult: Equatable, Sendable {
     let id: MediaAssetID
     let source: String
-    let embedding: [Float]?
+    let embedding: [Float]
     var labels: [String: Float] = [:]
     var confidentLabels: [String] = []
 }

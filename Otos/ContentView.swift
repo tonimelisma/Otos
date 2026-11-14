@@ -41,7 +41,7 @@ struct ContentView: View {
                     perform: viewModel.performMediaItemCommand,
                     hover: viewModel.outlineFaces
                 ),
-                search: viewModel.setSearchText
+                search: viewModel.searchForLabel
             )
         case .edit:
             EditPanelView(

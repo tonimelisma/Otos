@@ -71,9 +71,11 @@ has a location to show, as a control whose subject does not exist is omitted (DE
   its only faces are a hidden person's. A photo checked while it is shown fills in without
   being reselected.
 - **In This Photo:** `Not Checked Yet` until search has read the item's thumbnail;
-  `Nothing Recognized` when it found no confident label and no certain text; the labels,
-  then `Text` and its lines when there are any (only a still's preview is read for text, so
-  a movie never has them). With no single item, `—`. A photo read while it is shown fills
+  `Nothing Recognized` only when both readings are made and found no confident label and no
+  certain text (only a still's preview is read for text, so a movie has only its labels to
+  read); otherwise the labels, then `Text` and its lines when there are any, or `Text` over
+  `Not Checked Yet` while the still's preview is unread (text is read after every picture's
+  labels). A thumbnail or preview that does not decode stays `Not Checked Yet`. With no single item, `—`. A photo read while it is shown fills
   in without being reselected.
 - **A read failed:** the pane keeps what it showed for the same item, or empties for
   another, and the next refresh reads again (APP-041).
@@ -85,8 +87,10 @@ scene labels and the text in it. The owner asked for both to be listed, and for 
 shown only as far as Vision is sure of it (2026-11-12).
 
 - **Labels** are named in the Mac's language (`SceneLabelNames`, ADR 0050), or in English
-  where no checked name exists. A label is a button: clicking it searches for its name, as
-  typing it into the toolbar field does, and its tooltip says `Search for “pool”`.
+  where no checked name exists, each name once. A label is a button: clicking it searches for
+  that label itself, whatever the Mac's language, and the toolbar field shows its name; its
+  tooltip says `Search for “pool”`. A chip is never wider than the pane: a long name
+  truncates on its one line.
 - **Text** is the lines Vision read with full confidence, in reading order, selectable so a
   line can be copied. No line is shown that Vision was unsure of; search still matches those.
 - There is no sidebar row for text (owner, 2026-11-12): finding photos by their text is the

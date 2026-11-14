@@ -91,7 +91,8 @@ struct SearchReadingTests {
         #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: "stale", lines: open)]).isEmpty)
         #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: candidate.source, lines: open)]).count == 1)
         #expect(try await store.searchTextCandidates(limit: 10).isEmpty)
-        #expect(try await store.currentSearchTexts() == [asset.id: "OPEN\n0p3n"])
+        #expect(try await store.currentSearchTextIDs() == [asset.id])
+        #expect(try await store.currentSearchTexts(for: [asset.id]) == [asset.id: "OPEN\n0p3n"])
         #expect(try await store.photoInfoOverlay(for: asset.id)?.textLines == ["OPEN"])
         await store.shutdown()
     }

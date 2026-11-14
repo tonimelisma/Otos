@@ -7993,8 +7993,9 @@ extension CatalogStore {
     /// Assets whose stored thumbnail has no current search embedding (ADR 0048), newest
     /// capture first so the photos a person is likeliest to look for are searchable first.
     /// Every available root is read: search covers whatever scope is shown. A Live Photo's
-    /// movie is left out, because its still stands for the item.
-    func searchEmbeddingCandidates(limit: Int) async throws -> [SearchEmbeddingCandidate] {
+    /// movie is left out, because its still stands for the item. `excluding`: assets a pass
+    /// already tried and could not read, which it pages past.
+    func searchEmbeddingCandidates(limit: Int, excluding: Set<MediaAssetID> = []) async throws -> [SearchEmbeddingCandidate] {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty else {
             return []
@@ -8010,15 +8011,15 @@ extension CatalogStore {
                 ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path
                 LIMIT ?
                 """,
-                arguments: StatementArguments(rootIDs + [limit])
-            ).compactMap { row in
+                arguments: StatementArguments(rootIDs + [limit + excluding.count])
+            ).compactMap { row -> SearchEmbeddingCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
-                return SearchEmbeddingCandidate(
-                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
-                    thumbnailPath: row["thumbnail_path"],
-                    source: row["source"]
-                )
+                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
+                guard !excluding.contains(id) else { return nil }
+                return SearchEmbeddingCandidate(id: id, thumbnailPath: row["thumbnail_path"], source: row["source"])
             }
+            .prefix(limit)
+            .map(\.self)
         }
     }
 
@@ -8075,7 +8076,7 @@ extension CatalogStore {
                         confident_labels = excluded.confident_labels
                     """,
                     arguments: [
-                        rootID, path, result.source, result.embedding.map(SearchEmbeddingStorage.data),
+                        rootID, path, result.source, SearchEmbeddingStorage.data(result.embedding),
                         SearchEmbeddingStorage.labelsText(result.labels),
                         SearchEmbeddingStorage.confidentLabelsText(result.confidentLabels),
                     ]
@@ -8110,19 +8111,10 @@ extension CatalogStore {
             return []
         }
         let pathsByRowID = roots.pathsByRowID
-        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
         return try await database().read { db in
             let rows = try Row.fetchCursor(
                 db,
-                sql: """
-                SELECT e.library_root_id, e.relative_path\(vectors ? ", e.embedding, e.labels" : "")
-                FROM search_embedding AS e
-                JOIN media_asset AS a
-                    ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path
-                WHERE e.library_root_id IN (\(placeholders))
-                  AND e.embedding IS NOT NULL
-                  AND e.source = \(SearchEmbeddingStorage.currentSource("a"))
-                """,
+                sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: rootIDs.count, vectors: vectors),
                 arguments: StatementArguments(rootIDs)
             )
             var out: [StoredSearchEmbedding] = []
@@ -8158,13 +8150,13 @@ extension CatalogStore {
 
     /// The assets in available roots that `facts` allow (ADR 0048): captured within the date
     /// span, located within the place, holding a face confirmed as every person named.
-    func searchFactMatches(_ facts: SearchFacts) async throws -> Set<MediaAssetID> {
+    func searchFactMatches(_ facts: SearchFactFilter) async throws -> Set<MediaAssetID> {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty else { return [] }
         let pathsByRowID = roots.pathsByRowID
         var clauses = ["a.library_root_id IN (\(Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")))"]
         var arguments: [DatabaseValue] = rootIDs.map(\.databaseValue)
-        if let date = facts.date {
+        if let date = facts.dateSpan {
             // The span is days on this Mac's calendar, so its ends are the readings of its
             // clock at them: a photo taken that day anywhere matches it.
             clauses.append("a.best_capture_local >= ? AND a.best_capture_local < ?")
@@ -8213,8 +8205,9 @@ extension CatalogStore {
         }
     }
 
-    /// Stills whose stored preview has no current text reading (ADR 0048), newest first.
-    func searchTextCandidates(limit: Int) async throws -> [SearchTextCandidate] {
+    /// Stills whose stored preview has no current text reading (ADR 0048), newest first, but
+    /// those in `excluding`, which a pass already tried and could not read.
+    func searchTextCandidates(limit: Int, excluding: Set<MediaAssetID> = []) async throws -> [SearchTextCandidate] {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty else { return [] }
         let pathsByRowID = roots.pathsByRowID
@@ -8227,15 +8220,15 @@ extension CatalogStore {
                 ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path
                 LIMIT ?
                 """,
-                arguments: StatementArguments(rootIDs + [limit])
-            ).compactMap { row in
+                arguments: StatementArguments(rootIDs + [limit + excluding.count])
+            ).compactMap { row -> SearchTextCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
-                return SearchTextCandidate(
-                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
-                    previewPath: row["preview_path"],
-                    source: row["source"]
-                )
+                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
+                guard !excluding.contains(id) else { return nil }
+                return SearchTextCandidate(id: id, previewPath: row["preview_path"], source: row["source"])
             }
+            .prefix(limit)
+            .map(\.self)
         }
     }
 
@@ -8270,30 +8263,37 @@ extension CatalogStore {
         }
     }
 
-    /// The current, non-empty text readings in available roots, as search matches them
-    /// (`SearchTextReading.searchable`).
-    func currentSearchTexts() async throws -> [MediaAssetID: String] {
+    /// The assets in available roots with a current, non-empty text reading, without the
+    /// lines: what `PhotoSearchIndex` reconciles its memory against after a catalog change.
+    func currentSearchTextIDs() async throws -> Set<MediaAssetID> {
+        try await Set(readSearchTexts(lines: false).keys)
+    }
+
+    /// The current, non-empty text readings of `ids`, as search matches them
+    /// (`SearchTextReading.searchable`); only theirs are decoded.
+    func currentSearchTexts(for ids: Set<MediaAssetID>) async throws -> [MediaAssetID: String] {
+        guard !ids.isEmpty else { return [:] }
+        return try await readSearchTexts(lines: true, only: ids)
+    }
+
+    private func readSearchTexts(lines: Bool, only ids: Set<MediaAssetID>? = nil) async throws -> [MediaAssetID: String] {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty else { return [:] }
         let pathsByRowID = roots.pathsByRowID
-        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
         return try await database().read { db in
             let rows = try Row.fetchCursor(
                 db,
-                sql: """
-                SELECT t.library_root_id, t.relative_path, t.lines
-                FROM search_text AS t
-                JOIN media_asset AS a ON a.library_root_id = t.library_root_id AND a.relative_path = t.relative_path
-                WHERE t.library_root_id IN (\(placeholders)) AND t.lines <> '[]'
-                  AND t.source = \(SearchTextStorage.currentSource("a"))
-                """,
+                sql: SearchTextStorage.currentReadingsSQL(rootCount: rootIDs.count, lines: lines),
                 arguments: StatementArguments(rootIDs)
             )
             var texts: [MediaAssetID: String] = [:]
             while let row = try rows.next() {
                 guard let root = pathsByRowID[row[0]] else { continue }
-                let text = try SearchTextReading.searchable(SearchTextStorage.lines(fromJSON: row[2]))
-                texts[MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1]))] = text
+                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1]))
+                if let ids, !ids.contains(id) {
+                    continue
+                }
+                texts[id] = lines ? try SearchTextReading.searchable(SearchTextStorage.lines(fromJSON: row[2])) : ""
             }
             return texts
         }

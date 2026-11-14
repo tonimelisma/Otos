@@ -151,10 +151,10 @@ extension CatalogWindowViewModel {
     }
 
     /// A photo's scene labels named in the Mac's language (`Locale.current`, as place names
-    /// are, ADR 0051); nil while the reading is owed.
-    private nonisolated static func name(_ labels: [String]?, labelNames: SceneLabelNames) async throws -> [String]? {
+    /// are, ADR 0051), each name once; nil while the reading is owed.
+    private nonisolated static func name(_ labels: [String]?, labelNames: SceneLabelNames) async throws -> [PhotoInfo.Recognized.Label]? {
         guard let labels else { return nil }
-        return try await labelNames.names(of: labels, in: Locale.current.language)
+        return try await labelNames.labels(of: labels, in: Locale.current.language)
     }
 
     /// The item In This Photo describes, while the Info pane shows one.
@@ -196,11 +196,12 @@ extension CatalogWindowViewModel {
                         }
                         continue
                     }
+                    let readsText = self?.photoInfo?.recognized?.readsText ?? true
                     let recognized: PhotoInfo.Recognized
                     do {
                         let overlay = try await store.photoInfoOverlay(for: id)
                         recognized = try await PhotoInfo.Recognized(
-                            overlay: overlay, labelNames: Self.name(overlay?.sceneLabels, labelNames: labelNames)
+                            overlay: overlay, labels: Self.name(overlay?.sceneLabels, labelNames: labelNames), readsText: readsText
                         )
                     } catch {
                         OtosLog.ui.errorOperation("photo.info.recognized", phase: "readFailed", fields: [
@@ -219,7 +220,7 @@ extension CatalogWindowViewModel {
                     OtosLog.ui.debugOperation("photo.info.recognized", phase: "applied", fields: [
                         "id": id.relativePath.rawValue,
                         "labels": recognized.labels.map { "\($0.count)" } ?? "owed",
-                        "lines": recognized.text.map { "\($0.count)" } ?? "owed",
+                        "lines": recognized.text.diagnosticCount,
                     ])
                 }
                 group.cancelAll()

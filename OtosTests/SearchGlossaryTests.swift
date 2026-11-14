@@ -34,23 +34,54 @@ struct SearchGlossaryTests {
         # comment
         @endings\ts,st
         cat\tkass,kassi
-        bell\tkell,kella
-        clock\tkella,kell
+        clock\tkell,kella
+        moon\tkuu
+        night\töö
         """)
         #expect(glossary.reading(of: "kassist") == "cat")
-        // A form means what it is listed earliest for.
-        #expect(glossary.reading(of: "kell") == "bell")
-        #expect(glossary.reading(of: "kella") == "clock")
+        #expect(glossary.reading(of: "kell") == "clock")
+        // A short form is a whole word: "kuus" (six) is not the moon with an ending.
+        #expect(glossary.reading(of: "kuu") == "moon")
+        #expect(glossary.reading(of: "kuus") == nil)
+        #expect(glossary.reading(of: "kuukass") == nil)
+        #expect(glossary.reading(of: "öö") == "night")
         #expect(throws: SearchGlossary.GlossaryError.malformed(line: 2)) {
             try SearchGlossary(language: "et", contents: "cat\tkass\nbroken")
         }
+    }
+
+    /// A form has one sense, and the file says which: one listed for two is refused, so the
+    /// order of the lines never decides it.
+    @Test func aFormListedTwiceDoesNotLoad() {
+        #expect(throws: SearchGlossary.GlossaryError.listedTwice(form: "kell", line: 2)) {
+            try SearchGlossary(language: "et", contents: "bell\tkell,kella\nclock\tkell")
+        }
+        #expect(throws: SearchGlossary.GlossaryError.listedTwice(form: "kodu", line: 1)) {
+            try SearchGlossary(language: "et", contents: "home\tkodu,kodu")
+        }
+    }
+
+    /// The shipped glossary reads a word in the sense a photo search means by it.
+    @Test func theShippedGlossaryReadsTheSenseASearchMeans() throws {
+        let glossary = try #require(try SearchGlossary(language: "et", bundle: Self.bundle))
+        #expect(glossary.reading(of: "aed") == "garden")
+        #expect(glossary.reading(of: "kell") == "clock")
+        #expect(glossary.reading(of: "kodu") == "home")
+        #expect(glossary.reading(of: "päev") == "day")
+        #expect(glossary.reading(of: "pidu") == "party")
+        #expect(glossary.reading(of: "prillid") == "glasses")
+        #expect(glossary.reading(of: "öö") == "night")
+        #expect(glossary.reading(of: "või") == nil)
+        #expect(glossary.reading(of: "võit") == nil)
+        #expect(glossary.reading(of: "seal") == nil)
+        #expect(glossary.reading(of: "kuus") == nil)
     }
 
     /// Estonian, which Translation does not offer, is glossed after its facts are read: the
     /// picture is searched for in English.
     @Test func anEstonianQueryIsSearchedInEnglish() async throws {
         let encoder = SearchQueryEncoder(bundle: Self.bundle)
-        let encoding = try await encoder.encode("koer rannas", preferring: ["et", "en"])
+        let encoding = try await encoder.encode(SearchQueryRequest(text: "koer rannas", languages: ["et", "en"]))
         #expect(encoding.reading == .glossed)
         #expect(encoding.language == "et")
         #expect(encoding.modelText == "koer rannas")
@@ -69,7 +100,7 @@ struct SearchGlossaryTests {
         ("garden tools", .english, "garden tools"),
     ])
     func englishSpellingDecidesAWordNothingRecognises(typed: String, reading: SearchQueryEncoding.Reading, picture: String) async throws {
-        let encoding = try await SearchQueryEncoder(bundle: Self.bundle).encode(typed, preferring: ["et", "en"])
+        let encoding = try await SearchQueryEncoder(bundle: Self.bundle).encode(SearchQueryRequest(text: typed, languages: ["et", "en"]))
         #expect(encoding.reading == reading)
         #expect(encoding.pictureText == picture)
     }

@@ -65,12 +65,45 @@ model reached 68%, and a multilingual text encoder distilled into CLIP's space r
    glossary is written for Otos: Vision's 1,303 scene-label names, then about 150 common words
    of a photo search (people, colours, qualities, places, times, actions with their verb
    forms), nominative and genitive, with the language's case endings; a typed word is read when
-   forms cover it end to end.
+   forms cover it end to end. A form is listed once, for the sense a photo search means by it
+   ("kell" a clock, not a bell; "aed" a garden, not a fence), and a glossary listing a form twice
+   does not load: 125 Estonian forms meant two readings, and the order of the lines had chosen.
+   A form of three letters or fewer is read only as the whole word, never with an ending or in
+   a compound ("kuus", six, is not the moon; "seal", there, is not a pig), which also lets
+   "öö" (night) be listed; "või" (butter, and the word for "or") is not listed.
 4. **Fall back to the text as typed** for every other word, and for a language with no
    installed pack and no glossary, or none recognised. SigLIP 2's own multilingual tower
    reads it.
 
+### Who reads a query: its own owner, never the window's loop
+
+`SearchQueryReader` reads what the user searches for, through `SearchQueryEncoder`, one query
+at a time on one loop woken by a doorbell (ADR 0032): the newest query is read next, and a
+reading in flight is never cancelled, because a Translation session killed mid-request can
+stall Translation for many minutes. `CatalogProjection` only asks it what it holds for the
+query shown (`status(for:)`), so the window's publication never waits on Translation or Maps:
+- **Being read:** the window keeps what it shows; the reading rings the projection when it
+  lands. A reading takes about 40 ms in English and 0.35 s translated.
+- **Not answered:** a reading still in flight after 1 s (ADR 0033 `time: deadline`; nothing
+  reports that Translation or Maps stopped answering), or one that failed, shows the scope
+  unsearched — never another query's results — until its answer lands. A failed reading is
+  read again after a backoff, 2 s doubling to a minute (`time: backoff`), not by the
+  window's cadence. The search design names no state for a query still being read, so the
+  unsearched scope is what shows; meanwhile ending the search, or a scope, filter or catalog
+  change, publishes.
+- **What is kept:** only what does not change with time or with the Mac — a text's
+  translation from a language, a text's embedding, Maps' answer for a name (found, or no place;
+  a failed lookup is not kept). Recognition, which packs are installed and the facts are read
+  on each reading; a date is kept as the rule the query names (`SearchDate`: "today", "last
+  week", "September") and becomes a span when the query is answered, so a window left open
+  past midnight answers "today" for the new day. The reader holds one answer, for the query
+  shown, and lets it go when the field empties, so a query typed again is read again and a
+  pack installed meanwhile counts.
+
 Rejected:
+- **Awaiting the encoding inside the projection's pass.** One publication loop serves the whole
+  window: a wedged Translation or a hanging Maps request held every publication, and a failed
+  translation re-ran the pass, and Translation, once a second.
 - **A cross-lingual embedding instead of translation.** It scored 44–68, against 78.
 - **A word-by-word translation model.** A sentence translator already handles a single word.
 - **For a language Translation lacks:** the system language model (Foundation Models)
@@ -101,8 +134,11 @@ against 77.3, 85 in English for both), and every asset has one.
   (`SearchEmbeddingStorage.currentSource`, built on `StoredThumbnailSQL.identity`, which
   render signatures also use). A new thumbnail or a new revision makes it stale, and no
   thumbnail writer knows search exists (ADR 0009).
-- **Undecodable thumbnails:** recorded with no vector, so they are not retried until the
-  thumbnail changes.
+- **Undecodable thumbnails:** no reading. Nothing is recorded, so the asset stays owed and is
+  tried again after the index's backoff; a pass pages past it, and past a prediction that
+  failed, so neither holds up the assets after it, nor the text readings after every
+  embedding. Recording one as an empty reading had the Info pane say `Nothing Recognized` for
+  a picture nothing had read (ADR 0050). A preview that does not decode for text is the same.
 
 ### The index: one owner, in memory
 
@@ -112,14 +148,18 @@ against 77.3, 85 in English for both), and every asset has one.
   time, on `SearchImageEmbedder`'s queue.
 - **Memory:** every current embedding as one matrix. A query is one matrix–vector product
   (about 3 ms over 19,000 photos), with no SQLite read.
-- **Answers:** `CatalogProjection` asks it when the descriptor carries a search, and narrows
-  the scope to the matches. The index's `changes` stream asks for a new publication while a
+- **Answers:** `CatalogProjection` hands it the query's encoding and the scope's assets, and
+  shows the matches. The index's `changes` stream asks for a new publication while a
   search is shown.
 
 ### Where results stop: a cutoff relative to the best match
 
 A photo matches when its cosine is at least the best photo's minus 0.04, and at least 0.08
-(`SearchCutoff.calibrated`). Scores depend on the query: a short word scores lower than a
+(`SearchCutoff.calibrated`). The best photo is the best in the scope searched (the folder,
+source, person or filter shown), not in the library: a folder whose best photo of a dog scores
+below the library's best still shows it. The label gate's near-best band follows the same
+best. It was calibrated over the whole library, which is also a scope; within a narrower scope
+the cut is no stricter than the scope's own photos warrant. Scores depend on the query: a short word scores lower than a
 precise phrase, so a single cosine either cuts good queries short or floods weak ones.
 Measured on the judged queries in 16 languages:
 
@@ -178,24 +218,39 @@ A query is read for facts before the picture (`SearchQueryParser`, `SearchPlaces
   mangles names), as whole words ignoring case and diacritics.
 - **When:** from the English reading, a month (the most recent), a month and year, a year, or
   today, yesterday, this or last week, month or year. In what the user typed, "may" is the
-  month only beside "in", "of" or a year. In a translation, a month is a capitalised name:
-  Translation capitalises the months it translates ("toukokuu" → "May") and writes the same
-  word in lower case when it means something else (Swedish "tåg", train → "march"), which had
-  made a train query a filter to March with no picture. Joining words ("in", "at") are trimmed
-  only beside a fact taken out, so Turkish "at" (horse), recognised as English, is not
-  emptied. A language Translation cannot read (Estonian) has its months found by
-  Foundation's month names in the user's languages, on the stem, before recognition.
-- **Where:** the first name `NLTagger` finds in the English reading (it often calls a place a
-  person), located by Apple Maps (`MKLocalSearch`, addresses and areas): a place only when Maps
-  names it so, a case ending of up to three letters aside ("San Franciscos", Estonian for in
+  month only beside "in", "of" or a year. In a translation, a month counts only when the text
+  it was translated from names that month in its language, by Foundation's two month names as
+  far as they agree ("syyskuu" covers "syyskuussa"): Translation reads Swedish "tåg" (train) as
+  "march", and a query is translated as a caption whose first word Translation capitalises
+  ("Photo: Lake"), so case says nothing. Joining words ("in", "at") are trimmed only beside a
+  fact taken out, so Turkish "at" (horse), recognised as English, is not emptied. A language
+  Translation cannot read now (Estonian; any whose pack is not installed) has its months found
+  before recognition by Foundation's month names in the user's languages as whole words, or
+  one of the case forms Otos knows for the language (Estonian genitive and in, from, into and
+  until cases: "septembris", "maist"; Finnish on the standalone name: "syyskuussa"). A prefix
+  match made "mail", "main" and "Maine" a May filter with Estonian among the languages, and
+  Dutch "meisje" and French "maison" months.
+- **Where:** the first name `NLTagger` calls a place or a person in the English reading (it
+  often calls a place a person; an organisation's name is not a candidate, which no measured
+  query needed), located by Apple Maps (`MKLocalSearch`, addresses and areas): a place only
+  when Maps names it so, a case ending of up to three letters aside ("San Franciscos", Estonian for in
   San Francisco), and it covers 0.03° or more, a photo in it within 1.5 times the area's
   half-diagonal and at least 15 km. A name that is nowhere stays a picture word, and so does a
   one-word name an ordinary word follows ("Ferris wheel", which Maps places in Texas,
   "Christmas tree"); a longer one before a noun is a place ("San Francisco skyline"). "Paris
   cafe" is searched as a picture with the compounds, the milder miss. A query
   that may be in a language nothing recognises (not translated, from a user with such a
-  language) takes the run of capitalised words around the tagger's first name, or the first
-  such run, because the English tagger finds only "San" in "koer San Franciscos".
+  language) takes the run of capitalised words around the tagger's name, or the first such
+  run that is not a lone first word (a sentence's capital: "Orange cat", "Nice sunset"), under
+  the same compound rule, because the English tagger finds only "San" in "koer San
+  Franciscos".
+- **What is sent to Maps:** that one name, as the query holds it (typed, or as translated),
+  and nothing else of the query. Maps answering that nothing is called so (`MKError`
+  `placemarkNotFound`) is remembered; a lookup that fails (offline, a server error) is not, and
+  the name searches the picture for that reading. Maps names what it finds in the Mac's
+  language and `MKLocalSearch.Request` has no language to ask in, so on a Mac in another
+  language a place may be named otherwise than the query names it ("Lontoo" for "London") and
+  be refused; that is unmeasured.
 
 The Store answers the facts (`searchFactMatches`: capture time, GPS, confirmed faces); the rest
 of the query searches the picture, and a query of facts only keeps the scope's order and day
@@ -251,7 +306,8 @@ relaunch. Nothing reports when a full disk or a failed Core ML load clears.
 - **App size:** about 380 MB more.
 - **First indexing:** about 20 minutes for 15,000 items in the dev build, newest first, then
   their previews' text, while hidden too.
-- **Network:** a query naming a place asks Apple Maps where it is; offline, the name searches
+- **Network:** a query holding a name the tagger calls a place or a person (or, read as typed,
+  a capitalised run) sends that name, and only it, to Apple Maps; offline, the name searches
   the picture instead.
 - **Unread items:** until indexing finishes, a search shows only what has been read. The
   empty state counts what has not.

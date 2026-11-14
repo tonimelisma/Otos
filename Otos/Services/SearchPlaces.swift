@@ -24,19 +24,32 @@ nonisolated struct SearchPlace: Hashable, Sendable {
 /// within 1.5 times the area's half-diagonal, at least 15 km, because Maps' area for a lake
 /// or a mountain is its town, not the shore or the slopes the photos were taken on.
 ///
-/// Asking needs the network. A name Maps cannot place, or a lookup that fails, is no place:
-/// its words stay part of what the picture is searched for.
+/// Asking needs the network. Only the name is sent, as the query holds it. A name Maps cannot
+/// place is no place (nil), a fact the encoder remembers; a lookup that fails (offline, a
+/// server error, throttling) throws, is not remembered, and the encoder searches the name's
+/// words in the picture for that reading only.
+///
+/// Maps names what it finds in the Mac's language, and `MKLocalSearch.Request` has no
+/// language or locale to ask in, so on a Mac in another language a place may be named
+/// otherwise than the query names it ("Lontoo" for "London") and be refused here; that is
+/// unmeasured.
 nonisolated enum SearchPlaces {
     static let minimumSpanDegrees = 0.03
     static let minimumRadiusMeters = 15000.0
 
+    /// The place `name` is; nil when Maps says it is no place. Throws when the lookup failed.
     @concurrent
-    static func locate(_ name: String) async -> SearchPlace? {
+    static func locate(_ name: String) async throws -> SearchPlace? {
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = name
         request.resultTypes = [.address]
-        guard let response = try? await MKLocalSearch(request: request).start(),
-              let item = response.mapItems.first,
+        let response: MKLocalSearch.Response
+        do {
+            response = try await MKLocalSearch(request: request).start()
+        } catch let error as NSError where isNowhere(error) {
+            return nil
+        }
+        guard let item = response.mapItems.first,
               let found = item.name,
               names(found, as: name)
         else {
@@ -70,4 +83,10 @@ nonisolated enum SearchPlaces {
     }
 
     static let maximumEnding = 3
+
+    /// Maps' answer that nothing is called `name`: `MKError.placemarkNotFound`. Every other
+    /// error is a lookup that failed.
+    static func isNowhere(_ error: NSError) -> Bool {
+        error.domain == MKErrorDomain && error.code == Int(MKError.Code.placemarkNotFound.rawValue)
+    }
 }

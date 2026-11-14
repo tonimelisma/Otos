@@ -9,7 +9,7 @@ import SwiftUI
 /// Passive: it renders the `PhotoInfo` it is given. Its rows keep their place for every item
 /// of a kind (DES-053); with no single item they read `—`. Which sections are folded is the
 /// person's, remembered across launches like the Edit pane's. A scene label in In This Photo
-/// is a button that searches for its name, through the toolbar field's own intent (`search`).
+/// is a button that searches for its label, and the toolbar field shows its name (`search`).
 struct InfoPaneView: View {
     let info: PhotoInfo?
     let people: InfoPanePeople?
@@ -153,51 +153,73 @@ struct InfoPaneView: View {
 }
 
 /// The In This Photo section: Vision's confident scene labels as buttons that search for
-/// them, then the text it is certain of, selectable. A reading still owed reads `Not Checked
-/// Yet`; one that found nothing, `Nothing Recognized`; with no single item, `—`.
+/// them, then the text it is certain of, selectable. `Not Checked Yet` while the thumbnail's
+/// reading is owed; `Nothing Recognized` only when both readings are made and found nothing (a
+/// movie has no text reading); `Text` reads `Not Checked Yet` while the preview's reading is
+/// owed; with no single item, `—`.
 private struct InfoPaneRecognizedSection: View {
     let recognized: PhotoInfo.Recognized?
+    /// Searches for a label, by its Vision identifier.
     let search: (String) -> Void
     @Environment(\.locale) private var locale
 
     var body: some View {
         if let recognized {
-            if let labels = recognized.labels, !labels.isEmpty || !(recognized.text ?? []).isEmpty {
+            if recognized.foundNothing {
+                Text("Nothing Recognized")
+                    .foregroundStyle(.secondary)
+            } else if recognized.labels == nil, !Self.hasLines(recognized.text) {
+                Text("Not Checked Yet")
+                    .foregroundStyle(.secondary)
+            } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    if !labels.isEmpty {
+                    if let labels = recognized.labels, !labels.isEmpty {
                         ChipFlowLayout(spacing: 4) {
-                            ForEach(labels, id: \.self) { name in
-                                let title = PhotoInfo.Recognized.chipTitle(name, locale: locale)
-                                Button(title) { search(name) }
+                            ForEach(labels, id: \.identifier) { label in
+                                Button(PhotoInfo.Recognized.chipTitle(label.name, locale: locale)) { search(label.identifier) }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
                                     .lineLimit(1)
-                                    .help("Search for “\(name)”")
+                                    .help("Search for “\(label.name)”")
                             }
                         }
                     }
-                    if let text = recognized.text, !text.isEmpty {
+                    switch recognized.text {
+                    case let .read(lines) where !lines.isEmpty:
                         Text("Text")
                             .foregroundStyle(.secondary)
-                        Text(text.joined(separator: "\n"))
+                        Text(lines.joined(separator: "\n"))
                             .foregroundStyle(.primary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                    case .owed:
+                        Text("Text")
+                            .foregroundStyle(.secondary)
+                        Text("Not Checked Yet")
+                            .foregroundStyle(.secondary)
+                    case .read, .none:
+                        EmptyView()
                     }
                 }
-            } else {
-                Text(recognized.labels == nil ? "Not Checked Yet" : "Nothing Recognized")
-                    .foregroundStyle(.secondary)
             }
         } else {
             Text(PhotoInfo.notApplicable)
                 .foregroundStyle(.secondary)
         }
     }
+
+    private static func hasLines(_ text: PhotoInfo.Recognized.Text) -> Bool {
+        if case let .read(lines) = text {
+            return !lines.isEmpty
+        }
+        return false
+    }
 }
 
-/// Lays chips out in rows, left to right, wrapping when the next one would not fit.
+/// Lays chips out in rows, left to right, wrapping when the next one would not fit. A chip
+/// wider than the pane is offered the pane's width, so its one line truncates rather than
+/// running past the edge.
 private struct ChipFlowLayout: Layout {
     let spacing: CGFloat
 
@@ -213,12 +235,19 @@ private struct ChipFlowLayout: Layout {
         for row in rows(for: subviews, width: bounds.width) {
             var x = bounds.minX
             for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
+                let size = Self.size(of: subviews[index], within: bounds.width)
                 subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
             y += row.height + spacing
         }
+    }
+
+    /// A chip's own size, but no wider than `width`.
+    private static func size(of subview: LayoutSubview, within width: CGFloat) -> CGSize {
+        let ideal = subview.sizeThatFits(.unspecified)
+        guard ideal.width > width else { return ideal }
+        return subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
     }
 
     private struct Row {
@@ -231,7 +260,7 @@ private struct ChipFlowLayout: Layout {
         var rows: [Row] = []
         var current = Row()
         for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
+            let size = Self.size(of: subviews[index], within: width)
             let needed = current.indices.isEmpty ? size.width : current.width + spacing + size.width
             if needed > width, !current.indices.isEmpty {
                 rows.append(current)

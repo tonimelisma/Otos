@@ -302,6 +302,43 @@ struct CatalogStoreQueryPlanTests {
         #expect(!plan.contains("SCAN still"))
     }
 
+    /// Search's reads (ADR 0048): what is owed walks each root's assets by an index and looks
+    /// each up in the reading table by its key; what is current is read by the reading table's
+    /// key, each asset looked up by its own. Nothing scans a table whole.
+    @Test func searchReadsSeekByKeyAndRootIndexes() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let roots: [DatabaseValue] = [rootID1.databaseValue, rootID2.databaseValue]
+        let order = "ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path LIMIT 16"
+        let plans = try await dbQueue.read { db in
+            try [
+                "owedEmbeddings": explainPlan(
+                    db, sql: "SELECT a.relative_path \(SearchEmbeddingStorage.owedFrom(rootCount: 2)) \(order)",
+                    arguments: StatementArguments(roots)
+                ),
+                "owedTexts": explainPlan(
+                    db, sql: "SELECT a.relative_path \(SearchTextStorage.owedFrom(rootCount: 2)) \(order)",
+                    arguments: StatementArguments(roots)
+                ),
+                "currentEmbeddings": explainPlan(
+                    db, sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: 2, vectors: false),
+                    arguments: StatementArguments(roots)
+                ),
+                "currentTexts": explainPlan(
+                    db, sql: SearchTextStorage.currentReadingsSQL(rootCount: 2, lines: false), arguments: StatementArguments(roots)
+                ),
+            ]
+        }
+        for (name, plan) in plans.sorted(by: { $0.key < $1.key }) {
+            let lines = plan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            #expect(!lines.contains { $0.hasPrefix("SCAN ") }, "\(name): \(plan)")
+        }
+    }
+
     /// On This Day's left-out photos are read from their own partial index, whose condition
     /// the clause states in the same text, never by a scan of every search row.
     @Test func onThisDaysLeftOutPhotosAreReadFromTheirPartialIndex() async throws {
