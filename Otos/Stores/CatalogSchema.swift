@@ -973,8 +973,8 @@ nonisolated enum CatalogSchema {
     /// whose centers are valid coordinates — and indexed, so the reads of the unnamed cells
     /// and of the Places filter's options walk the index instead of computing every row's
     /// cell. The text is frozen here; a test holds `PlaceCell.init` to it. `place_cell.locale`
-    /// becomes `language` (`PlaceNameLanguage`): names stored under a full locale identifier
-    /// are another language's, so the reader names those cells again once.
+    /// becomes `language` (`PlaceNameLanguage`); v45 turns the full locale identifiers it
+    /// held into language keys (`convertPlaceNameLanguages`).
     static let placeCellMigrationIdentifier = "v43_place_cell_columns"
 
     static var placeCellStatements: [String] {
@@ -1008,6 +1008,25 @@ nonisolated enum CatalogSchema {
     static let undecodableIndexStatements: [String] = [
         "CREATE INDEX idx_media_asset_undecodable ON media_asset(undecodable_by) WHERE undecodable_by IS NOT NULL",
     ]
+
+    /// Place names stored before v43 carry the full locale they were read in (`en_US`);
+    /// the reader keys them by language (`PlaceNameLanguage`, `en-Latn`). Each distinct stored
+    /// value is converted by the reader's own function, so an upgrade asks Maps nothing it
+    /// already holds in the Mac's language. A value with no language keeps its text and its
+    /// cells are named again.
+    static let placeNameLanguageMigrationIdentifier = "v45_place_name_language_keys"
+
+    static func convertPlaceNameLanguages(db: Database) throws {
+        let stored = try String.fetchAll(db, sql: "SELECT DISTINCT language FROM place_cell")
+        for value in stored {
+            let language = PlaceNameLanguage(Locale(identifier: value)).identifier
+            guard !language.isEmpty, language != value else { continue }
+            try db.execute(
+                sql: "UPDATE place_cell SET language = ? WHERE language = ?",
+                arguments: [language, value]
+            )
+        }
+    }
 
     /// The absolute time an item without a wall clock is placed by, as SQL over `media_asset`.
     static let absoluteCaptureSQL = "COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)"

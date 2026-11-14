@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import MapKit
 @testable import OtosKit
 import Synchronization
@@ -128,6 +129,42 @@ struct PlaceNamesTests {
         let options = try await library.store.filterOptions(availableLibraryPaths: [library.rootPath])
         #expect(options.countries.map(\.name) == ["Suomi"])
         await library.store.shutdown()
+    }
+
+    /// v45: names stored before v43 under a full locale (`en_US`) are keyed by the language the
+    /// reader computes for it, so an upgraded catalog asks an English Mac's Maps for nothing.
+    @Test func namesStoredUnderAFullLocaleSurviveTheUpgrade() async throws {
+        let databaseURL = try makeTestDirectory().appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.continuousFrameMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            for (name, coordinate) in [("helsinki.jpg", Self.helsinki), ("sydney.jpg", Self.sydney)] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key)
+                    VALUES (1, ?, ?, ?, ?)
+                    """,
+                    arguments: [name, name, name, name]
+                )
+                try db.execute(
+                    sql: "INSERT INTO asset_metadata (library_root_id, relative_path, primary_latitude, primary_longitude) VALUES (1, ?, ?, ?)",
+                    arguments: [name, coordinate.latitude, coordinate.longitude]
+                )
+                let cell = PlaceCell(coordinate)
+                try db.execute(
+                    sql: "INSERT INTO place_cell (cell_latitude, cell_longitude, country, town, locale) VALUES (?, ?, 'Somewhere', NULL, 'en_US')",
+                    arguments: [cell.latitude, cell.longitude]
+                )
+            }
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        #expect(try await store.unnamedPlaceCells(language: PlaceNameLanguage(Locale(identifier: "en_GB")), limit: 10).isEmpty)
+        #expect(try await store.unnamedPlaceCells(language: PlaceNameLanguage(Locale(identifier: "fi_FI")), limit: 10).count == 2)
+        await store.shutdown()
     }
 
     /// Every place the filter holds has a row: a held town under its country even while the

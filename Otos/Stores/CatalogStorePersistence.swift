@@ -284,6 +284,9 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.placeNameLanguageMigrationIdentifier) { db in
+            try CatalogSchema.convertPlaceNameLanguages(db: db)
+        }
         return migrator
     }
 

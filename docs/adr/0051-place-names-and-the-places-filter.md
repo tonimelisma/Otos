@@ -56,7 +56,9 @@ descriptor (APP-013, ADR 0011); the owner-state rules the reader follows (ADR 00
   language's, then names every cell again. So the filter never offers one place under two
   names with split counts, and a place held in the filter under its old name matches
   nothing and keeps its row (below) until the user clears it, rather than matching a
-  dwindling share of its photos.
+  dwindling share of its photos. Names stored before the key was a language carry a full
+  locale (`en_US`); migration v45 converts each with `PlaceNameLanguage` itself, so an
+  upgrade asks Maps for nothing it already holds in the Mac's language.
 - **Only an answer is stored (ADR 0032 rule 4).** `MKReverseGeocodingRequest` documents no
   list of the errors it throws. A cell is stored with no names only when Maps's answer means
   there are none: `MKError.placemarkNotFound`, a result with no map item, or a coordinate

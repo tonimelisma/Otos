@@ -207,6 +207,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.continuousFrameMigrationIdentifier,
             CatalogSchema.placeCellMigrationIdentifier,
             CatalogSchema.undecodableIndexMigrationIdentifier,
+            CatalogSchema.placeNameLanguageMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
