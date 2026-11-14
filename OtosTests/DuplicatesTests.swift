@@ -163,23 +163,24 @@ struct DuplicatesTests {
         #expect(DuplicatesSession().resolution(of: inAccount)?.moving == [])
         #expect(DuplicateGroupPresentation.map(inAccount, session: DuplicatesSession()).reason
             == "Otos never removes copies in “Family”")
-        // An account's copies are one folder, and a folder no rule can empty has no row.
+        // An account's copies are one folder, and a folder no rule can empty offers none.
         #expect(DuplicateFolderSet(inAccount).folders.count == 1)
-        #expect(DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: [inAccount])).isEmpty)
+        let bucket = try #require(CatalogDuplicatesState(groups: [inAccount]).layout.buckets.first)
+        #expect(DuplicateFolderBucketPresentation.map(bucket, session: DuplicatesSession(), withLibrary: false).rule == nil)
     }
 
-    /// A library folder that mirrors an account is one rule row; keeping the library's
+    /// A library folder that mirrors an account is one folder header; keeping the library's
     /// side would move the account's copies, so it is not offered, and the row says why.
     @Test func aRuleRowNeverOffersToRemoveAnAccountsCopies() throws {
         let groups = try ["IMG_1.jpg", "IMG_2.jpg"].enumerated().map { index, name in
             try Self.onlyGroup([Self.copy("2026/08/\(name)"), Self.copy("a\(index)/\(name)", in: Self.family)])
         }
-        let summaries = DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: groups))
-        let pair = try #require(summaries.first)
-        #expect(summaries.count == 1)
-        #expect(pair.groupCount == 2)
-        let row = DuplicateFolderRulePresentation.map(pair, rule: nil, noun: .photos, withLibrary: true)
-        #expect(row.options.map(\.title) == ["Family", "Both"])
+        let buckets = CatalogDuplicatesState(groups: groups).layout.buckets
+        let pair = try #require(buckets.first)
+        #expect(buckets.count == 1)
+        #expect(pair.groups.count == 2)
+        let row = DuplicateFolderBucketPresentation.map(pair, session: DuplicatesSession(), withLibrary: true)
+        #expect(row.rule?.options.map(\.title) == ["Family", "Both"])
         #expect(row.detail == "2 photos in both · Otos never removes copies in “Family”")
     }
 
@@ -220,7 +221,8 @@ struct DuplicatesTests {
         session.picks[waiting.id] = Self.copy("y.jpg").copy.id
         let decided = session.tally(in: state)
         #expect(decided.needingChoice == 0)
-        #expect(decided.itemsToMove == [Self.copy("b/IMG_1 copy.jpg").copy.id, Self.copy("x.jpg").copy.id])
+        // The group only a click decides is listed first.
+        #expect(decided.itemsToMove == [Self.copy("x.jpg").copy.id, Self.copy("b/IMG_1 copy.jpg").copy.id])
 
         // A pick is forgotten once its copy has left the group.
         session.forgetPicks(absentFrom: CatalogDuplicatesState(groups: [preselected]))
@@ -246,8 +248,8 @@ struct DuplicatesTests {
         session.rules[pair] = .folder(imports)
         #expect(session.resolution(of: mirrored)?.keep == [Self.copy("Imports/b.jpg").copy.id])
 
-        let summaries = DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: [one, mirrored]))
-        #expect(Set(summaries.map(\.folderSet)) == [oneFolder, pair])
+        let buckets = CatalogDuplicatesState(groups: [one, mirrored]).layout.buckets
+        #expect(Set(buckets.map(\.id)) == [.folders(oneFolder), .folders(pair)])
     }
 
     @Test func theBarNamesTheActAndKeepsItsTitleWhenDisabled() {
@@ -406,26 +408,149 @@ struct DuplicatesTests {
         #expect(order.target(from: ids[2], .down) == ids[4])
         #expect(order.target(from: ids[4], .up) == ids[1])
         #expect(order.target(from: ids[4], .down) == nil)
+
+        // An exact-copy group's names sit under one another: ↑ and ↓ move a line, and
+        // from photos they land on the nearest line.
+        let mixed = DuplicatesTileOrder(groups: [
+            .init(copies: [ids[0], ids[1]], stacked: false),
+            .init(copies: [ids[2], ids[3]], stacked: true),
+            .init(copies: [ids[4]], stacked: true),
+        ])
+        #expect(mixed.target(from: ids[1], .down) == ids[2])
+        #expect(mixed.target(from: ids[2], .down) == ids[3])
+        #expect(mixed.target(from: ids[3], .down) == ids[4])
+        #expect(mixed.target(from: ids[2], .up) == ids[1])
+        #expect(mixed.target(from: ids[3], .right) == ids[4])
     }
 
-    /// A folder rule row offers what fits its folders: two folders, either one or the
-    /// default; one folder, how to choose within it.
+    /// A folder's header offers what fits its folders: two folders, either one or the
+    /// default; one folder, how to choose within it. It says how many, how much and why.
     @Test func aFolderRowOffersWhatFitsItsFolders() throws {
         let mirrored = try Self.onlyGroup([Self.copy("2026/08/b.jpg"), Self.copy("Imports/b.jpg")])
-        let pair = try #require(DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: [mirrored])).first)
-        let row = DuplicateFolderRulePresentation.map(pair, rule: nil, noun: .photos, withLibrary: false)
+        let pair = try #require(CatalogDuplicatesState(groups: [mirrored]).layout.buckets.first)
+        let row = DuplicateFolderBucketPresentation.map(pair, session: DuplicatesSession(), withLibrary: false)
         #expect(row.title == "2026/08 and Imports")
-        #expect(row.detail == "1 photo in both")
-        #expect(row.prompt == "Keep the copies in")
-        #expect(row.options.map(\.title) == ["2026/08", "Imports", "Otos decides"])
-        #expect(row.selected == .automatic)
+        #expect(row.detail == "1 photo in both · 1 KB in extra copies")
+        #expect(row.summary == "Alike in every way, so keeping the first by name")
+        #expect(row.rule?.prompt == "Keep the copies in")
+        #expect(row.rule?.options.map(\.title) == ["2026/08", "Imports", "Otos decides"])
+        #expect(row.rule?.selected == .automatic)
 
         let twice = try Self.onlyGroup([Self.copy("2026/10/a.jpg"), Self.copy("2026/10/a_001.jpg")])
-        let one = try #require(DuplicateFolderSetSummary.summaries(of: CatalogDuplicatesState(groups: [twice])).first)
-        let oneRow = DuplicateFolderRulePresentation.map(one, rule: .oldest, noun: .photos, withLibrary: false)
-        #expect(oneRow.detail == "1 photo saved twice in this folder")
-        #expect(oneRow.options.map(\.title) == ["Best copy", "Original name", "Oldest", "Largest"])
-        #expect(oneRow.selected == .oldest)
+        let older = try DuplicateGroupPolicy.group(
+            id: .identical(#require(XXH3Digest128(data: Data(repeating: 3, count: 16)))),
+            copies: [Self.copy("2026/10/b.jpg", born: 10).copy, Self.copy("2026/10/c.jpg", born: 90).copy],
+            keptPairs: []
+        )
+        let one = try #require(CatalogDuplicatesState(groups: [twice, older]).layout.buckets.first)
+        var session = DuplicatesSession()
+        let automatic = DuplicateFolderBucketPresentation.map(one, session: session, withLibrary: false)
+        #expect(automatic.detail == "2 photos saved twice in this folder · 2 KB in extra copies")
+        // The folder is audited as a whole: its groups' reasons, counted.
+        #expect(Set(automatic.summary?.components(separatedBy: " · ") ?? []) == ["1 keeping the original name", "1 keeping the older file"])
+        session.rules[DuplicateFolderSet(twice)] = .oldest
+        let oneRow = DuplicateFolderBucketPresentation.map(one, session: session, withLibrary: false)
+        #expect(oneRow.summary == "Keeping the oldest, as the folder rule says")
+        #expect(oneRow.rule?.options.map(\.title) == ["Best copy", "Original name", "Oldest", "Largest"])
+        #expect(oneRow.rule?.selected == .oldest)
+        session.picks[twice.id] = Self.copy("2026/10/a_001.jpg").copy.id
+        #expect(DuplicateFolderBucketPresentation.map(one, session: session, withLibrary: false).summary
+            == "1 chosen by you · 1 keeping the oldest, as the folder rule says")
+    }
+
+    private static func samePhoto(_ paths: [String], bytes: [Int64], edited: Bool = false) -> DuplicateGroup {
+        let ids = paths.map { MediaAssetID(libraryRootPath: photos, relativePath: MediaRelativePath(rawValue: $0)) }
+        return DuplicateGroupPolicy.group(
+            id: .samePhoto(ids),
+            copies: zip(ids, bytes).map { id, size in
+                DuplicateCopy(
+                    id: id, libraryDisplayName: "Photos", libraryKind: .library, kind: .image,
+                    captureLocalTime: CaptureLocalTime(seconds: 1_600_000_000), byteSize: size, createdAt: nil,
+                    pixelWidth: size > 1_000_000 ? 4000 : 1000, pixelHeight: size > 1_000_000 ? 3000 : 750,
+                    mediaChoice: .notRated, isEdited: edited, hasCompanions: false
+                )
+            },
+            keptPairs: [], originals: [ids[0]]
+        )
+    }
+
+    /// The list is three sections by the attention a group needs: what only a click
+    /// decides, files of one photo, then exact copies under their folders, the folder with
+    /// the most groups first and three or more folders last.
+    @Test func theListPutsWhatNeedsAttentionFirst() throws {
+        func identical(_ seed: UInt8, _ copies: [DuplicateCopyFacts]) throws -> DuplicateGroup {
+            try DuplicateGroupPolicy.group(
+                id: .identical(#require(XXH3Digest128(data: Data(repeating: seed, count: 16)))),
+                copies: copies.map(\.copy), keptPairs: []
+            )
+        }
+        let twins = try identical(1, [Self.copy("2026/10/a.jpg"), Self.copy("2026/10/a_001.jpg")])
+        let moreTwins = try identical(2, [Self.copy("2026/10/b.jpg", captured: 1_800_000_000), Self.copy("2026/10/b_001.jpg")])
+        let mirrored = try identical(3, [Self.copy("2026/08/c.jpg"), Self.copy("Imports/c.jpg")])
+        let scattered = try identical(4, [Self.copy("x/d.jpg"), Self.copy("y/d.jpg"), Self.copy("z/d.jpg")])
+        let conflict = try identical(5, [Self.copy("2026/10/e.jpg", edited: true), Self.copy("2026/10/e_001.jpg", edited: true)])
+        let resized = Self.samePhoto(["2026/10/f.jpg", "2026/10/f small.jpg"], bytes: [11_000_000, 400_000])
+
+        let state = CatalogDuplicatesState(groups: [scattered, mirrored, twins, resized, moreTwins, conflict])
+        #expect(state.layout.choose.map(\.id) == [conflict.id])
+        #expect(state.layout.different.map(\.id) == [resized.id])
+        #expect(state.layout.buckets.map(\.id) == [
+            .folders(DuplicateFolderSet(twins)), .folders(DuplicateFolderSet(mirrored)), .scattered,
+        ])
+        // Inside a folder: largest first, then newest.
+        #expect(state.layout.buckets.first?.groups.map(\.id) == [moreTwins.id, twins.id])
+        #expect(state.groups.map(\.id) == [conflict.id, resized.id, moreTwins.id, twins.id, mirrored.id, scattered.id])
+        #expect(DuplicatesSectionPresentation.map(.exact, in: state.layout)?.count == "4 photos")
+        #expect(DuplicatesSectionPresentation.map(.choose, in: CatalogDuplicatesState(groups: [twins]).layout) == nil)
+
+        // No rule could decide a group in three or more folders.
+        let last = try #require(state.layout.buckets.last)
+        let lastRow = DuplicateFolderBucketPresentation.map(last, session: DuplicatesSession(), withLibrary: false)
+        #expect(lastRow.title == "In three or more folders")
+        #expect(lastRow.rule == nil)
+
+        // A group keeps its section when its copies are kept whole or one is picked: a
+        // click never moves the group out from under the pointer.
+        let ids = conflict.copies.map(\.id)
+        let keptConflict = try DuplicateGroupPolicy.group(
+            id: .identical(#require(XXH3Digest128(data: Data(repeating: 5, count: 16)))),
+            copies: conflict.copies, keptPairs: [DuplicateKeptPair(ids[0], ids[1])]
+        )
+        #expect(keptConflict.isKept)
+        #expect(keptConflict.section == .choose)
+    }
+
+    /// A folder's rule governs the exact copies under its header; files of one photo
+    /// differ in their pixels and are decided by their own photos.
+    @Test func aFolderRuleLeavesFilesOfOnePhotoToTheirPhotos() {
+        let resized = Self.samePhoto(["2026/10/f.jpg", "2026/10/f small.jpg"], bytes: [11_000_000, 400_000])
+        var session = DuplicatesSession()
+        let original = resized.copies[0].id
+        #expect(session.resolution(of: resized)?.keep == [original])
+        session.rules[DuplicateFolderSet(resized)] = .oldest
+        #expect(session.resolution(of: resized)?.reason == .automatic(.criterion(.cameraOriginal)))
+        // What differs is under each photo, not in a tooltip.
+        let tiles = DuplicateGroupPresentation.map(resized, session: session).tiles
+        #expect(tiles.map(\.caption) == ["4000 × 3000 · Camera original", "1000 × 750"])
+    }
+
+    /// An exact-copy group is one picture beside its copies' names: what the copies share
+    /// is said once, and each line carries what tells its copy apart and the work it holds.
+    @Test func exactCopiesAreToldApartByNameOrFolder() throws {
+        let twins = try Self.onlyGroup([Self.copy("2026/08/a.jpg", choice: .liked), Self.copy("2026/08/a copy.jpg")])
+        let row = DuplicateGroupPresentation.map(twins, session: DuplicatesSession(), style: .names)
+        #expect(row.reason == "1 KB each · Keeping the copy you liked")
+        #expect(row.picture == Self.copy("2026/08/a.jpg").copy.id)
+        #expect(row.tiles.map(\.label) == ["a.jpg", "a copy.jpg"])
+        #expect(row.tiles.map(\.caption) == ["Liked", nil])
+        #expect(row.tiles.map(\.fate) == [.keep, .trash])
+
+        let mirrored = try Self.onlyGroup([Self.copy("2026/08/b.jpg"), Self.copy("Imports/b.jpg")])
+        #expect(Set(DuplicateGroupPresentation.map(mirrored, session: DuplicatesSession(), style: .names).tiles.map(\.label))
+            == ["2026/08", "Imports"])
+        let renamed = try Self.onlyGroup([Self.copy("2026/08/b.jpg"), Self.copy("Imports/b (1).jpg")])
+        #expect(Set(DuplicateGroupPresentation.map(renamed, session: DuplicatesSession(), style: .names).tiles.map(\.label))
+            == ["2026/08 ▸ b.jpg", "Imports ▸ b (1).jpg"])
     }
 
     @Test func theStoreGroupsVisibleCopiesWithCurrentDigestsAndRemembersKeepAll() async throws {

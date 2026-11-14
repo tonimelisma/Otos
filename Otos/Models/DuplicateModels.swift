@@ -171,51 +171,159 @@ nonisolated struct DuplicateGroup: Equatable, Sendable, Identifiable {
         copies.first { $0.captureLocalTime != nil }?.captureLocalTime
     }
 
-    /// Display order: files of one photo first — the groups that need eyes — then identical
-    /// copies, each newest first by capture date, the grid's order, undated groups last,
-    /// then by the first copy's path so the order is total.
-    struct ListKey: Comparable {
-        let identical: Bool
-        /// Negated seconds, so newest sorts first; undated groups after every dated one.
-        let newestFirst: Double
-        let orderKey: String
-
-        init(_ group: DuplicateGroup) {
-            identical = !group.id.isSamePhoto
-            newestFirst = group.captureLocalTime.map { -$0.seconds } ?? .greatestFiniteMagnitude
-            orderKey = group.copies.first?.id.duplicateOrderKey ?? ""
-        }
-
-        static func < (lhs: Self, rhs: Self) -> Bool {
-            if lhs.identical != rhs.identical {
-                return !lhs.identical
-            }
-            if lhs.newestFirst != rhs.newestFirst {
-                return lhs.newestFirst < rhs.newestFirst
-            }
-            return lhs.orderKey < rhs.orderKey
+    /// The copies of one library hold work no single copy can: two edits, two sets of
+    /// companion files, two different choices. Read from the copies, not from the default,
+    /// so a group the user kept whole or picked a copy in keeps its place in the list.
+    var holdsConflictingWork: Bool {
+        switch `default` {
+        case .waits:
+            true
+        case .keep:
+            false
+        case .kept:
+            Dictionary(grouping: copies, by: \.id.libraryRootPath).values
+                .contains { DuplicateGroupPolicy.workConflict($0) != nil }
         }
     }
 
-    static func precedesInList(_ left: DuplicateGroup, _ right: DuplicateGroup) -> Bool {
-        ListKey(left) < ListKey(right)
+    /// Where the list puts the group: by how much of the user's attention it needs.
+    var section: DuplicatesSection {
+        if holdsConflictingWork {
+            return .choose
+        }
+        return id.isSamePhoto ? .different : .exact
+    }
+
+    /// The largest copy's size: what an exact-copy group is ranked by, since its copies
+    /// share one size and the largest are the space a visitor came for.
+    var largestByteSize: Int64 {
+        copies.compactMap(\.byteSize).max() ?? 0
+    }
+}
+
+/// The list's three sections, in order of the attention a group needs (owner direction,
+/// 2026-11-14; `docs/design/duplicates.md`).
+nonisolated enum DuplicatesSection: Int, CaseIterable, Comparable, Sendable {
+    /// The copies hold work that cannot be combined: only a click decides.
+    case choose
+    /// Files of one photo whose pixels, format or bytes differ: decided, and worth a look.
+    case different
+    /// The same bytes stored more than once: decided, and told apart only by name or folder.
+    case exact
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+/// Where an exact-copy group's copies sit, which is what its bucket is: one folder with
+/// files saved twice, two folders that mirror each other, or three or more folders, which
+/// no folder rule decides.
+nonisolated enum DuplicateFolderPlace: Hashable, Sendable {
+    case folders(DuplicateFolderSet)
+    case scattered
+
+    init(_ group: DuplicateGroup) {
+        let set = DuplicateFolderSet(group)
+        self = set.folders.count <= 2 ? .folders(set) : .scattered
+    }
+
+    /// The folder set a rule can decide: one or two folders, at least one of which Otos may
+    /// move copies out of (never an Immich account's alone, ADR 0046 §8).
+    var ruleFolderSet: DuplicateFolderSet? {
+        guard case let .folders(set) = self, set.folders.contains(where: \.canMoveToTrash) else {
+            return nil
+        }
+        return set
+    }
+}
+
+/// The exact-copy groups of one place, under one header that carries the place's rule.
+nonisolated struct DuplicateFolderBucket: Equatable, Sendable, Identifiable {
+    let id: DuplicateFolderPlace
+    /// Largest first, then newest, kept groups in their place among them.
+    let groups: [DuplicateGroup]
+
+    var activeGroups: [DuplicateGroup] {
+        groups.filter { !$0.isKept }
+    }
+}
+
+/// The groups as the list lays them out: what needs a click, what differs, then exact
+/// copies by folder.
+nonisolated struct DuplicatesLayout: Equatable, Sendable {
+    /// Newest first.
+    let choose: [DuplicateGroup]
+    /// Newest first.
+    let different: [DuplicateGroup]
+    /// The place with the most groups first; three or more folders last.
+    let buckets: [DuplicateFolderBucket]
+
+    static let empty = DuplicatesLayout(choose: [], different: [], buckets: [])
+
+    func groups(in section: DuplicatesSection) -> [DuplicateGroup] {
+        switch section {
+        case .choose: choose
+        case .different: different
+        case .exact: buckets.flatMap(\.groups)
+        }
     }
 }
 
 /// Projection's answer for duplicates, published in every scope so the sidebar row
 /// knows whether it exists; the list itself draws only under `.duplicates`.
 nonisolated struct CatalogDuplicatesState: Equatable, Sendable {
-    /// Every group, in list order (`DuplicateGroup.precedesInList`).
+    /// Every group, in the list's order: `layout`, read section by section.
     let groups: [DuplicateGroup]
+    let layout: DuplicatesLayout
 
     static let empty = CatalogDuplicatesState(groups: [])
 
     init(groups: [DuplicateGroup]) {
         // One key per group and a sort of indices, so no group struct moves per comparison:
         // a comparator that re-derived the keys was a measurable share of a build.
-        let keys = groups.map(DuplicateGroup.ListKey.init)
-        let order = groups.indices.sorted { keys[$0] < keys[$1] }
-        self.groups = order.map { groups[$0] }
+        let dateKeys = groups.map { group in
+            (group.captureLocalTime.map { -$0.seconds } ?? .greatestFiniteMagnitude, group.copies.first?.id.duplicateOrderKey ?? "")
+        }
+        func newestFirst(_ indices: [Int]) -> [DuplicateGroup] {
+            indices.sorted { dateKeys[$0] < dateKeys[$1] }.map { groups[$0] }
+        }
+        var choose: [Int] = []
+        var different: [Int] = []
+        var byPlace: [DuplicateFolderPlace: [Int]] = [:]
+        for index in groups.indices {
+            switch groups[index].section {
+            case .choose: choose.append(index)
+            case .different: different.append(index)
+            case .exact: byPlace[DuplicateFolderPlace(groups[index]), default: []].append(index)
+            }
+        }
+        let sizes = groups.map(\.largestByteSize)
+        let buckets = byPlace.map { place, indices in
+            DuplicateFolderBucket(
+                id: place,
+                groups: indices.sorted { left, right in
+                    sizes[left] != sizes[right] ? sizes[left] > sizes[right] : dateKeys[left] < dateKeys[right]
+                }.map { groups[$0] }
+            )
+        }.sorted(by: Self.bucketPrecedes)
+        layout = DuplicatesLayout(choose: newestFirst(choose), different: newestFirst(different), buckets: buckets)
+        self.groups = layout.choose + layout.different + buckets.flatMap(\.groups)
+    }
+
+    /// Bucket order: three or more folders last; else the most groups first, then by the
+    /// folders' own order so the order is total. Counts every group, kept ones too, so
+    /// Keep All Copies moves no bucket.
+    private static func bucketPrecedes(_ left: DuplicateFolderBucket, _ right: DuplicateFolderBucket) -> Bool {
+        switch (left.id, right.id) {
+        case (.scattered, _): return false
+        case (_, .scattered): return true
+        case let (.folders(leftSet), .folders(rightSet)):
+            if left.groups.count != right.groups.count {
+                return left.groups.count > right.groups.count
+            }
+            return leftSet.folders.lexicographicallyPrecedes(rightSet.folders)
+        }
     }
 
     /// Groups that still need something: not kept.
@@ -692,8 +800,14 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
     /// user leaves the list.
     var receipt: DuplicatesReceipt?
 
+    /// A folder's rule governs the exact copies listed under that folder's header. Files
+    /// of one photo differ in their pixels, so each is decided by its own photos.
     func resolution(of group: DuplicateGroup) -> DuplicateResolution? {
-        DuplicateResolution.of(group, pick: picks[group.id], rule: rules[DuplicateFolderSet(group)])
+        DuplicateResolution.of(
+            group,
+            pick: picks[group.id],
+            rule: group.id.isSamePhoto ? nil : rules[DuplicateFolderSet(group)]
+        )
     }
 
     /// Drops picks whose copy no group holds any more, so a copy that comes back starts
@@ -723,35 +837,6 @@ nonisolated struct DuplicatesSession: Equatable, Sendable {
             ),
             needingChoice: groups.count { !$0.isKept && resolution(of: $0) == nil }
         )
-    }
-}
-
-/// A folder set the list offers a rule for: one folder with copies saved twice in it, or
-/// two folders that mirror each other, with how many groups it covers.
-nonisolated struct DuplicateFolderSetSummary: Equatable, Sendable, Identifiable {
-    let folderSet: DuplicateFolderSet
-    let groupCount: Int
-    var id: DuplicateFolderSet {
-        folderSet
-    }
-
-    /// The folder sets of the active groups, largest first; sets of three or more folders
-    /// are decided group by group, and a set whose copies Otos may not move (an Immich
-    /// account's alone) has nothing a rule could decide.
-    static func summaries(of state: CatalogDuplicatesState) -> [DuplicateFolderSetSummary] {
-        var counts: [DuplicateFolderSet: Int] = [:]
-        for group in state.activeGroups {
-            let set = DuplicateFolderSet(group)
-            if set.folders.count <= 2, set.folders.contains(where: \.canMoveToTrash) {
-                counts[set, default: 0] += 1
-            }
-        }
-        return counts.map { DuplicateFolderSetSummary(folderSet: $0.key, groupCount: $0.value) }
-            .sorted { left, right in
-                left.groupCount != right.groupCount
-                    ? left.groupCount > right.groupCount
-                    : (left.folderSet.folders.first?.folder ?? "") < (right.folderSet.folders.first?.folder ?? "")
-            }
     }
 }
 
@@ -807,7 +892,8 @@ nonisolated enum DuplicateItemNoun: Equatable, Sendable {
         switch self {
         case .photos: count == 1 ? "photo" : "photos"
         case .videos: count == 1 ? "video" : "videos"
-        case .photosAndVideos: "photos and videos"
+        // One thing is never both.
+        case .photosAndVideos: count == 1 ? "photo or video" : "photos and videos"
         case .items: count == 1 ? "item" : "items"
         }
     }

@@ -2,11 +2,13 @@ import Foundation
 
 // Duplicates presentation (ADR 0042, `docs/design/duplicates.md`)
 //
-// Pure mappings from the published groups and the session's picks and rules to what the
-// list and the bar draw: a rule row for each folder that holds duplicates, then each group
-// as its date and why it keeps what it keeps over its copies' photos, each tagged Keep or
-// Trash. Every string on the surface is composed here, so the view is passive and the
-// words are testable without a view.
+// Pure mappings from the published layout and the session's picks and rules to what the
+// list and the bar draw: three sections by the attention a group needs. Groups only a
+// click decides and files of one photo are a date and why over their copies' photos, each
+// tagged Keep or Trash; exact copies sit under their folder's header, which carries the
+// folder's rule, each group one picture beside its copies' names. Every string on the
+// surface is composed here, so the view is passive and the words are testable without a
+// view.
 
 /// What the duplicates bar draws (DES-018): *what* (L1 over one L3 clause) · *the middle
 /// zone* (the receipt of the last move, the groups that wait, or the legend) · *the act*.
@@ -21,7 +23,7 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
         case legend(String)
     }
 
-    static let legend = "Click a photo to keep it, or set a rule for a whole folder above."
+    static let legend = "Click a photo or a name to keep it, or set a rule for a whole folder."
 
     let primaryLine: String
     /// `221 copies go to the Trash · 53.9 GB`: what the act moves, the count the button
@@ -89,76 +91,188 @@ nonisolated enum DuplicateFolderName {
     }
 }
 
-/// One rule row: a folder (or two) that holds duplicates, how many, and the rule for all of
-/// them as a segmented choice.
-nonisolated struct DuplicateFolderRulePresentation: Equatable, Sendable, Identifiable {
+/// A section's header: what its groups have in common, how many, and what to do with them.
+nonisolated struct DuplicatesSectionPresentation: Equatable, Sendable, Identifiable {
+    let id: DuplicatesSection
+    /// `Only you can choose`, `Different files of one photo`, `Exact copies`.
+    let title: String
+    /// `6 photos`: the section's active groups, in the bar's noun.
+    let count: String
+    let detail: String
+
+    /// Nil for a section with no group.
+    static func map(_ section: DuplicatesSection, in layout: DuplicatesLayout) -> DuplicatesSectionPresentation? {
+        let groups = layout.groups(in: section)
+        guard !groups.isEmpty else {
+            return nil
+        }
+        let active = groups.filter { !$0.isKept }
+        let noun = DuplicateItemNoun.covering(groups.flatMap(\.copies).map(\.kind))
+        let (title, detail) = switch section {
+        case .choose:
+            ("Only you can choose", "The copies hold different edits, ratings or .xmp files. Click the one to keep.")
+        case .different:
+            ("Different files of one photo", "Otos keeps the best file of each. Click another to keep it instead.")
+        case .exact:
+            ("Exact copies", "The same file stored more than once. Set a rule for a folder, or click a name to keep it.")
+        }
+        return DuplicatesSectionPresentation(
+            id: section,
+            title: title,
+            count: "\(active.count) \(noun.string(count: active.count))",
+            detail: detail
+        )
+    }
+}
+
+/// One folder header in Exact copies: the folder (or two) its groups sit in, how many and
+/// how much, why they keep what they keep, and the folder's rule as a segmented choice.
+nonisolated struct DuplicateFolderBucketPresentation: Equatable, Sendable, Identifiable {
     struct Option: Equatable, Sendable {
         let rule: DuplicateFolderRule
         let title: String
     }
 
-    let folderSet: DuplicateFolderSet
-    /// `2026/08 and Imports/Aug 2026`, or `2026/10`.
-    let title: String
-    /// `412 photos in both`, `38 photos saved twice in this folder`.
-    let detail: String
-    /// `Keep the copies in`, `Keep the`.
-    let prompt: String
-    let options: [Option]
-    let selected: DuplicateFolderRule
-    var id: DuplicateFolderSet {
-        folderSet
+    /// The folder's rule: nil where no rule could decide anything (three or more folders,
+    /// an Immich account's copies alone, or every group kept).
+    struct Rule: Equatable, Sendable {
+        let folderSet: DuplicateFolderSet
+        /// `Keep the copies in`, `Keep the`.
+        let prompt: String
+        let options: [Option]
+        let selected: DuplicateFolderRule
     }
 
+    let id: DuplicateFolderPlace
+    /// `2026/08 and Imports/Aug 2026`, `2026/10`, or `In three or more folders`.
+    let title: String
+    /// `412 photos in both · 31 GB in extra copies`, `38 photos saved twice in this folder`.
+    let detail: String
+    /// Why the folder's groups keep what they keep, counted by reason, so the folder is
+    /// audited as a whole: `Keeping the original name`, or `96 keeping the original name ·
+    /// 14 keeping the older file`. Nil when nothing in it is decided.
+    let summary: String?
+    let rule: Rule?
+    let isTwoFolders: Bool
+
     static func map(
-        _ summary: DuplicateFolderSetSummary,
-        rule: DuplicateFolderRule?,
-        noun: DuplicateItemNoun,
+        _ bucket: DuplicateFolderBucket,
+        session: DuplicatesSession,
         withLibrary: Bool
-    ) -> DuplicateFolderRulePresentation {
-        let folders = summary.folderSet.folders
-        let names = folders.map { DuplicateFolderName.string($0, withLibrary: withLibrary) }
-        let count = summary.groupCount
+    ) -> DuplicateFolderBucketPresentation {
+        let active = bucket.activeGroups
+        let resolutions = active.compactMap(session.resolution(of:))
+        let noun = DuplicateItemNoun.covering(bucket.groups.flatMap(\.copies).map(\.kind))
+        let count = active.count
         let things = "\(count) \(noun.string(count: count))"
+        let bytes = PartialByteCount(
+            knownBytes: resolutions.reduce(0) { $0 + $1.bytes.knownBytes },
+            unknownCount: resolutions.reduce(0) { $0 + $1.bytes.unknownCount }
+        )
+        let moving = resolutions.reduce(0) { $0 + $1.moving.count }
+        let extra = moving > 0 ? ImportBarByteFormat.phrase(bytes).map { "\($0) in extra copies" } : nil
+        let summary = summary(of: active, session: session, withLibrary: withLibrary)
+        guard case let .folders(set) = bucket.id else {
+            return DuplicateFolderBucketPresentation(
+                id: bucket.id,
+                title: "In three or more folders",
+                detail: ([count == 0 ? "Every copy kept" : things] + [extra].compactMap(\.self)).joined(separator: " · "),
+                summary: summary, rule: nil, isTwoFolders: false
+            )
+        }
+        let folders = set.folders
+        let names = folders.map { DuplicateFolderName.string($0, withLibrary: withLibrary) }
+        let selected = session.rules[set] ?? .automatic
+        let offersRule = bucket.id.ruleFolderSet != nil && count > 0
         if folders.count == 2 {
             let spansLibraries = folders[0].library != folders[1].library
             // Keeping one folder's copies moves the other's to the Trash, which Otos never
             // does to an Immich account's copies (ADR 0046 §8): that choice is not offered,
-            // and the row says why.
+            // and the header says why.
             let keepable = folders.indices.filter { folders[1 - $0].canMoveToTrash }
             let staying = folders.filter { !$0.canMoveToTrash }.map(\.libraryDisplayName)
-            let refusal = staying.isEmpty ? nil : "Otos never removes copies in \(Self.quoted(staying))"
-            return DuplicateFolderRulePresentation(
-                folderSet: summary.folderSet,
+            let refusal = staying.isEmpty ? nil : "Otos never removes copies in \(DuplicatesWords.quoted(staying))"
+            return DuplicateFolderBucketPresentation(
+                id: bucket.id,
                 title: "\(names[0]) and \(names[1])",
-                detail: (["\(things) in both"] + [refusal].compactMap(\.self)).joined(separator: " · "),
-                prompt: "Keep the copies in",
-                options: keepable.map { Option(rule: .folder(folders[$0]), title: names[$0]) } + [
-                    // Across libraries the keeper rule keeps each library's copy.
-                    Option(rule: .automatic, title: spansLibraries ? "Both" : "Otos decides"),
-                ],
-                selected: rule ?? .automatic
+                detail: ([count == 0 ? "Every copy kept" : "\(things) in both"] + [extra, refusal].compactMap(\.self))
+                    .joined(separator: " · "),
+                summary: summary,
+                rule: offersRule ? Rule(
+                    folderSet: set,
+                    prompt: "Keep the copies in",
+                    options: keepable.map { Option(rule: .folder(folders[$0]), title: names[$0]) } + [
+                        // Across libraries the keeper rule keeps each library's copy.
+                        Option(rule: .automatic, title: spansLibraries ? "Both" : "Otos decides"),
+                    ],
+                    selected: selected
+                ) : nil,
+                isTwoFolders: true
             )
         }
-        return DuplicateFolderRulePresentation(
-            folderSet: summary.folderSet,
+        let staying = folders.filter { !$0.canMoveToTrash }.map(\.libraryDisplayName)
+        let refusal = staying.isEmpty ? nil : "Otos never removes copies in \(DuplicatesWords.quoted(staying))"
+        return DuplicateFolderBucketPresentation(
+            id: bucket.id,
             title: names.first ?? "",
-            detail: "\(things) saved twice in this folder",
-            prompt: "Keep the",
-            options: [
-                Option(rule: .automatic, title: "Best copy"),
-                Option(rule: .originalName, title: "Original name"),
-                Option(rule: .oldest, title: "Oldest"),
-                Option(rule: .largest, title: "Largest"),
-            ],
-            selected: rule ?? .automatic
+            detail: ([count == 0 ? "Every copy kept" : "\(things) saved twice in this folder"] + [extra, refusal].compactMap(\.self))
+                .joined(separator: " · "),
+            summary: summary,
+            rule: offersRule ? Rule(
+                folderSet: set,
+                prompt: "Keep the",
+                options: [
+                    Option(rule: .automatic, title: "Best copy"),
+                    Option(rule: .originalName, title: "Original name"),
+                    Option(rule: .oldest, title: "Oldest"),
+                    Option(rule: .largest, title: "Largest"),
+                ],
+                selected: selected
+            ) : nil,
+            isTwoFolders: false
         )
+    }
+
+    /// The groups' reasons, counted: one reason reads as a group's own line does; several
+    /// read `96 keeping the original name · 14 keeping the older file`, the two most
+    /// common, then `5 more`, so the line fits beside the folder's rule.
+    private static func summary(of groups: [DuplicateGroup], session: DuplicatesSession, withLibrary: Bool) -> String? {
+        var counts: [String: Int] = [:]
+        var order: [String] = []
+        for group in groups {
+            guard let resolution = session.resolution(of: group), !resolution.moving.isEmpty else {
+                continue
+            }
+            let reason = resolution.reason == .picked
+                ? "Chosen by you"
+                : DuplicateGroupPresentation.reasonText(resolution, in: group, withLibrary: withLibrary)
+            guard !reason.isEmpty else {
+                continue
+            }
+            if counts[reason] == nil {
+                order.append(reason)
+            }
+            counts[reason, default: 0] += 1
+        }
+        guard order.count > 1 else {
+            return order.first
+        }
+        let ranked = order.enumerated().sorted { left, right in
+            let (leftCount, rightCount) = (counts[left.element] ?? 0, counts[right.element] ?? 0)
+            return leftCount != rightCount ? leftCount > rightCount : left.offset < right.offset
+        }.map(\.element)
+        var parts = ranked.prefix(2).map { "\(counts[$0] ?? 0) \($0.prefix(1).lowercased() + $0.dropFirst())" }
+        let rest = ranked.dropFirst(2).reduce(0) { $0 + (counts[$1] ?? 0) }
+        if rest > 0 {
+            parts.append("\(rest) more")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
-extension DuplicateFolderRulePresentation {
+nonisolated enum DuplicatesWords {
     /// Library names as a list reads them: `“Family”`, `“Family” and “Work”`.
-    nonisolated static func quoted(_ names: [String]) -> String {
+    static func quoted(_ names: [String]) -> String {
         let quoted = names.map { "“\($0)”" }
         guard quoted.count > 1, let last = quoted.last else {
             return quoted.first ?? ""
@@ -176,11 +290,21 @@ nonisolated enum DuplicateCopyFate: Equatable, Sendable {
     case undecided
 }
 
-/// One copy's photo: its fate, its size over the picture, and the rest in its tooltip.
+/// One copy, as a photo or as a line of text: its fate, what tells it apart from the
+/// group's other copies, and the rest in its tooltip.
 nonisolated struct DuplicateCopyTilePresentation: Equatable, Sendable, Identifiable {
     let id: MediaAssetID
     let kind: MediaKind?
     let fate: DuplicateCopyFate
+    /// What tells this copy from the others where their pictures cannot: its file name
+    /// when the copies share a folder, its folder when they share a name, else both. An
+    /// exact copy's line reads it.
+    let label: String
+    /// What else differs, or is the user's own, under a photo or after a name: the
+    /// dimensions and format when the group's files differ in them, `Camera original` when
+    /// not every file is one, then the work the copy holds (`Liked`, `Edited in Otos`, `Has
+    /// an .xmp or .srt file`). Nil when there is nothing to say.
+    let caption: String?
     /// The copy's folder, under its photo, when the group's copies sit in more than one
     /// folder: which folder a copy is in is then what tells the copies apart.
     let folder: String?
@@ -199,20 +323,34 @@ nonisolated struct DuplicateCopyTilePresentation: Equatable, Sendable, Identifia
 }
 
 /// One group as the list draws it: its date and why it keeps what it keeps, over its
-/// photos; kept, `Kept all N copies` with Review Again.
+/// photos or beside its copies' names; kept, `Kept all N copies` with Review Again.
 nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable {
+    /// How the group is drawn, which decides what its line of facts must carry.
+    enum Style: Equatable, Sendable {
+        /// Photos side by side: the line names the folder every copy shares.
+        case photos
+        /// One picture beside the copies' names, under a folder header that already names
+        /// the folder: the line gives the size the copies share instead.
+        case names
+    }
+
     let id: DuplicateGroupID
     /// The capture date: `October 4, 2026`.
     let title: String
-    /// `2026/10 · Keeping the original name`, `You chose this one`, or what to choose.
+    /// `2026/10 · Keeping the original name`, `4.1 MB each · You chose this one`, or what
+    /// to choose.
     let reason: String
     let isKept: Bool
+    /// The copy whose picture stands for an exact-copy group: its first, the kept one.
+    let picture: MediaAssetID?
+    let pictureKind: MediaKind?
     let tiles: [DuplicateCopyTilePresentation]
     let accessibilityLabel: String
 
     static func map(
         _ group: DuplicateGroup,
         session: DuplicatesSession,
+        style: Style = .photos,
         withLibrary: Bool = false,
         calendar: Calendar = .current
     ) -> DuplicateGroupPresentation {
@@ -224,88 +362,35 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
         if group.isKept {
             let note = count == 2 ? "Kept both copies" : "Kept all \(count) copies"
             return DuplicateGroupPresentation(
-                id: group.id, title: title, reason: note, isKept: true, tiles: [],
+                id: group.id, title: title, reason: note, isKept: true,
+                picture: copies.first?.id, pictureKind: copies.first?.kind, tiles: [],
                 accessibilityLabel: "\(title), \(note)"
             )
         }
         let resolution = session.resolution(of: group)
-        let folders = DuplicateFolderSet(group).folders
-        let place = folders.count == 1 ? DuplicateFolderName.string(folders[0], withLibrary: withLibrary) : nil
-        let why: String = if let resolution {
-            reasonText(resolution, in: group, withLibrary: withLibrary)
-        } else if case let .waits(conflict) = group.default {
-            waitingText(conflict)
-        } else {
-            ""
-        }
-        // A copy Otos may not move stays whatever was chosen (ADR 0046 §8), and the header
-        // says so; when nothing moves, that is the whole of why.
-        var staying: [String] = []
-        for copy in copies where resolution?.stays.contains(copy.id) == true && !staying.contains(copy.libraryDisplayName) {
-            staying.append(copy.libraryDisplayName)
-        }
-        let stay: String? = staying.isEmpty
-            ? nil
-            : "Otos never removes copies in \(DuplicateFolderRulePresentation.quoted(staying))"
-        // When nothing moves because of it, the refusal is the whole line: it names the
-        // library already, so the folder is not repeated before it.
-        let decided: [String?] = resolution?.moving.isEmpty == true && stay != nil ? [stay] : [place, why, stay]
-        let reason = decided.compactMap(\.self).filter { !$0.isEmpty }.joined(separator: " · ")
-
-        let dates = DuplicateDateFormat(calendar: calendar)
-        let sizes = DuplicateTileFacts.distinguishingSizes(of: copies)
-        let births = copies.compactMap(\.createdAt)
+        let words = DuplicateCopyWords(group: group, withLibrary: withLibrary, calendar: calendar)
+        let reason = reasonLine(group, resolution: resolution, shared: words.shared(style), withLibrary: withLibrary)
         let tiles = copies.map { copy -> DuplicateCopyTilePresentation in
             let fate: DuplicateCopyFate = if let resolution {
                 resolution.keep.contains(copy.id) ? .keep : .trash
             } else {
                 .undecided
             }
-            var facts: [String] = []
-            if let dimensions = DuplicateTileFacts.dimensions(of: copy) {
-                facts.append(dimensions)
-            }
-            if let size = sizes[copy.id] {
-                facts.append(size)
-            }
-            if let born = copy.createdAt, Set(births).count > 1 {
-                facts.append("File created \(dates.string(for: born, among: births))")
-            }
-            if group.cameraOriginals.contains(copy.id), group.cameraOriginals.count < count {
-                facts.append("Camera original")
-            }
-            switch copy.mediaChoice {
-            case .liked: facts.append("Liked")
-            case .disliked: facts.append("Disliked")
-            case .notRated: break
-            }
-            if copy.isEdited {
-                facts.append("Edited in Otos")
-            }
-            if copy.hasCompanions {
-                facts.append("Has an .xmp or .srt file")
-            }
-            if !copy.canMoveToTrash {
-                facts.append("Removed only in Immich")
-            }
-            let inside = [copy.folder, copy.id.relativePath.fileName].filter { !$0.isEmpty }.joined(separator: "/")
-            let location = "\(copy.libraryDisplayName) ▸ \(inside)"
-            let fateWords = switch fate {
-            case .keep: "keep"
-            case .trash: "goes to the Trash"
-            case .undecided: "not chosen yet"
-            }
+            let facts = words.facts(of: copy)
+            let caption = words.caption(of: copy)
             return DuplicateCopyTilePresentation(
                 id: copy.id,
                 kind: copy.kind,
                 fate: fate,
-                folder: folders.count > 1 ? DuplicateFolderName.string(DuplicateFolder(copy), withLibrary: withLibrary) : nil,
-                size: sizes[copy.id],
+                label: words.label(of: copy),
+                caption: caption.isEmpty ? nil : caption.joined(separator: " · "),
+                folder: words.folders.count > 1 ? DuplicateFolderName.string(DuplicateFolder(copy), withLibrary: withLibrary) : nil,
+                size: words.sizes[copy.id],
                 choice: copy.mediaChoice,
                 canKeep: !(resolution.map { $0.keep.contains(copy.id) && !$0.stays.contains(copy.id) } ?? false),
                 canMoveToTrash: copy.canMoveToTrash,
-                help: ([location] + [facts.joined(separator: " · ")].filter { !$0.isEmpty }).joined(separator: "\n"),
-                accessibilityLabel: ([copy.id.relativePath.fileName, fateWords] + facts).joined(separator: ", ")
+                help: ([words.location(of: copy)] + [facts.joined(separator: " · ")].filter { !$0.isEmpty }).joined(separator: "\n"),
+                accessibilityLabel: ([copy.name, fate.spoken] + facts).joined(separator: ", ")
             )
         }
         return DuplicateGroupPresentation(
@@ -313,14 +398,46 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
             title: title,
             reason: reason,
             isKept: false,
+            picture: copies.first?.id,
+            pictureKind: copies.first?.kind,
             tiles: tiles,
             accessibilityLabel: [title, reason].filter { !$0.isEmpty }.joined(separator: ", ")
         )
     }
 
+    /// The group's line: what its copies share, why it keeps what it keeps, and the copies
+    /// Otos may not move.
+    private static func reasonLine(
+        _ group: DuplicateGroup,
+        resolution: DuplicateResolution?,
+        shared: String?,
+        withLibrary: Bool
+    ) -> String {
+        let why: String = if let resolution {
+            reasonText(resolution, in: group, withLibrary: withLibrary)
+        } else if case let .waits(conflict) = group.default {
+            waitingText(conflict)
+        } else {
+            ""
+        }
+        // A copy Otos may not move stays whatever was chosen (ADR 0046 §8), and the line
+        // says so; when nothing moves, that is the whole of why.
+        var staying: [String] = []
+        for copy in group.copies where resolution?.stays.contains(copy.id) == true && !staying.contains(copy.libraryDisplayName) {
+            staying.append(copy.libraryDisplayName)
+        }
+        let stay: String? = staying.isEmpty
+            ? nil
+            : "Otos never removes copies in \(DuplicatesWords.quoted(staying))"
+        // When nothing moves because of it, the refusal is the whole line: it names the
+        // library already, so the folder is not repeated before it.
+        let decided: [String?] = resolution?.moving.isEmpty == true && stay != nil ? [stay] : [shared, why, stay]
+        return decided.compactMap(\.self).filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
     /// Why the group keeps what it keeps, in words: the click, the folder's rule, or the
     /// keeper rule's deciding criterion.
-    private static func reasonText(_ resolution: DuplicateResolution, in group: DuplicateGroup, withLibrary: Bool) -> String {
+    static func reasonText(_ resolution: DuplicateResolution, in group: DuplicateGroup, withLibrary: Bool) -> String {
         let copyNoun = group.id.isSamePhoto ? "file" : "copy"
         switch resolution.reason {
         case .picked:
@@ -368,7 +485,139 @@ nonisolated struct DuplicateGroupPresentation: Equatable, Sendable, Identifiable
     }
 }
 
+private nonisolated extension DuplicateCopyFate {
+    /// What VoiceOver reads for the fate.
+    var spoken: String {
+        switch self {
+        case .keep: "keep"
+        case .trash: "goes to the Trash"
+        case .undecided: "not chosen yet"
+        }
+    }
+}
+
+/// What one group's copies read as: derived once per group, then asked per copy. What the
+/// copies share is said once on the group's line; what differs goes on each copy.
+private nonisolated struct DuplicateCopyWords {
+    let group: DuplicateGroup
+    let withLibrary: Bool
+    let folders: [DuplicateFolder]
+    let sizes: [MediaAssetID: String]
+    private let dates: DuplicateDateFormat
+    private let births: [Date]
+    private let sameName: Bool
+    private let dimensionsDiffer: Bool
+    private let formatsDiffer: Bool
+
+    init(group: DuplicateGroup, withLibrary: Bool, calendar: Calendar) {
+        self.group = group
+        self.withLibrary = withLibrary
+        let copies = group.copies
+        folders = DuplicateFolderSet(group).folders
+        sizes = DuplicateTileFacts.distinguishingSizes(of: copies)
+        dates = DuplicateDateFormat(calendar: calendar)
+        births = copies.compactMap(\.createdAt)
+        sameName = Set(copies.map(\.name)).count == 1
+        dimensionsDiffer = Set(copies.map(DuplicateTileFacts.dimensions(of:))).count > 1
+        formatsDiffer = Set(copies.map(DuplicateTileFacts.format(of:))).count > 1
+    }
+
+    /// What the copies share, said once: under photos the folder; beside names, where the
+    /// folder's header already names it, the size.
+    func shared(_ style: DuplicateGroupPresentation.Style) -> String? {
+        switch style {
+        case .photos:
+            return folders.count == 1 ? DuplicateFolderName.string(folders[0], withLibrary: withLibrary) : nil
+        case .names:
+            guard Set(group.copies.map(\.byteSize)).count == 1, let bytes = group.copies.first?.byteSize else {
+                return nil
+            }
+            return "\(ImportBarByteFormat.string(bytes: bytes)) each"
+        }
+    }
+
+    /// What tells this copy from the others in text: its file name when the copies share a
+    /// folder, its folder when they share a name, else both.
+    func label(of copy: DuplicateCopy) -> String {
+        if folders.count == 1 {
+            return copy.name
+        }
+        let folder = DuplicateFolderName.string(DuplicateFolder(copy), withLibrary: withLibrary)
+        return sameName ? folder : "\(folder) ▸ \(copy.name)"
+    }
+
+    func location(of copy: DuplicateCopy) -> String {
+        let inside = [copy.folder, copy.name].filter { !$0.isEmpty }.joined(separator: "/")
+        return "\(copy.libraryDisplayName) ▸ \(inside)"
+    }
+
+    private func isOriginalAmongOthers(_ copy: DuplicateCopy) -> Bool {
+        group.cameraOriginals.contains(copy.id) && group.cameraOriginals.count < group.copies.count
+    }
+
+    /// Every fact, for the tooltip and VoiceOver.
+    func facts(of copy: DuplicateCopy) -> [String] {
+        var facts: [String] = []
+        if let dimensions = DuplicateTileFacts.dimensions(of: copy) {
+            facts.append(dimensions)
+        }
+        if let size = sizes[copy.id] {
+            facts.append(size)
+        }
+        if let born = copy.createdAt, Set(births).count > 1 {
+            facts.append("File created \(dates.string(for: born, among: births))")
+        }
+        if isOriginalAmongOthers(copy) {
+            facts.append("Camera original")
+        }
+        return facts + DuplicateTileFacts.work(of: copy)
+    }
+
+    /// What differs besides the picture and the size, then the work the copy holds.
+    func caption(of copy: DuplicateCopy) -> [String] {
+        var caption: [String] = []
+        if dimensionsDiffer, let dimensions = DuplicateTileFacts.dimensions(of: copy) {
+            caption.append(dimensions)
+        }
+        if formatsDiffer, let format = DuplicateTileFacts.format(of: copy) {
+            caption.append(format)
+        }
+        if isOriginalAmongOthers(copy) {
+            caption.append("Camera original")
+        }
+        return caption + DuplicateTileFacts.work(of: copy)
+    }
+}
+
 nonisolated enum DuplicateTileFacts {
+    /// The work the copy holds: what the user would not want to lose with it.
+    static func work(of copy: DuplicateCopy) -> [String] {
+        var work: [String] = []
+        switch copy.mediaChoice {
+        case .liked: work.append("Liked")
+        case .disliked: work.append("Disliked")
+        case .notRated: break
+        }
+        if copy.isEdited {
+            work.append("Edited in Otos")
+        }
+        if copy.hasCompanions {
+            work.append("Has an .xmp or .srt file")
+        }
+        if !copy.canMoveToTrash {
+            work.append("Removed only in Immich")
+        }
+        return work
+    }
+
+    /// The file's format as its name gives it: `HEIC`, `JPG`.
+    static func format(of copy: DuplicateCopy) -> String? {
+        let name = copy.name
+        guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return nil }
+        let ext = name[name.index(after: dot)...]
+        return ext.isEmpty ? nil : ext.uppercased()
+    }
+
     static func dimensions(of copy: DuplicateCopy) -> String? {
         guard let width = copy.pixelWidth, let height = copy.pixelHeight else { return nil }
         return "\(width) × \(height)"
@@ -420,41 +669,60 @@ nonisolated struct DuplicateDateFormat {
 }
 
 /// The list's copies in reading order, by group: what ⇧-click ranges over and the arrow
-/// keys walk. ← and → step through every copy across groups; ↑ and ↓ move to the copy at
-/// the same place in the previous or next group, or that group's last copy when it is
-/// shorter.
+/// keys walk. ← and → step through every copy across groups. Among photos, ↑ and ↓ move to
+/// the copy at the same place in the previous or next group, or that group's last copy when
+/// it is shorter; among an exact-copy group's names, which stack, they move a line.
 nonisolated struct DuplicatesTileOrder: Equatable, Sendable {
     enum Direction: Equatable, Sendable {
         case left, right, up, down
     }
 
-    let groups: [[MediaAssetID]]
+    struct Group: Equatable, Sendable {
+        let copies: [MediaAssetID]
+        /// The copies are lines under one another, not photos side by side.
+        let stacked: Bool
+    }
+
+    let groups: [Group]
+
+    init(groups: [Group]) {
+        self.groups = groups
+    }
+
+    /// Groups of photos side by side.
+    init(groups: [[MediaAssetID]]) {
+        self.groups = groups.map { Group(copies: $0, stacked: false) }
+    }
 
     var copies: [MediaAssetID] {
-        groups.flatMap(\.self)
+        groups.flatMap(\.copies)
     }
 
     /// Where `direction` goes from `current`; the first copy when nothing is current or
     /// `current` has left the list, nil at an edge.
     func target(from current: MediaAssetID?, _ direction: Direction) -> MediaAssetID? {
         guard let current,
-              let groupIndex = groups.firstIndex(where: { $0.contains(current) }),
-              let index = groups[groupIndex].firstIndex(of: current)
+              let groupIndex = groups.firstIndex(where: { $0.copies.contains(current) }),
+              let index = groups[groupIndex].copies.firstIndex(of: current)
         else {
             return copies.first
         }
-        switch direction {
-        case .left, .right:
+        let forward = direction == .right || direction == .down
+        let alongTheCopies = direction == .left || direction == .right || groups[groupIndex].stacked
+        if alongTheCopies {
             let flat = copies
             guard let position = flat.firstIndex(of: current) else { return nil }
-            let next = direction == .right ? position + 1 : position - 1
+            let next = forward ? position + 1 : position - 1
             return flat.indices.contains(next) ? flat[next] : nil
-        case .up, .down:
-            let nextGroup = direction == .down ? groupIndex + 1 : groupIndex - 1
-            guard groups.indices.contains(nextGroup), let last = groups[nextGroup].indices.last else {
-                return nil
-            }
-            return groups[nextGroup][min(index, last)]
         }
+        let nextGroup = forward ? groupIndex + 1 : groupIndex - 1
+        guard groups.indices.contains(nextGroup), let last = groups[nextGroup].copies.indices.last else {
+            return nil
+        }
+        // Into stacked names: the line nearest the photos it came from.
+        if groups[nextGroup].stacked {
+            return groups[nextGroup].copies[forward ? 0 : last]
+        }
+        return groups[nextGroup].copies[min(index, last)]
     }
 }

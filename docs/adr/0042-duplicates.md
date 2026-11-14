@@ -64,8 +64,24 @@ rule.
 - **The default records why.** `DuplicateDefault` records the criterion that separated the
   kept copy from the copy it beat last (birth times compared at whole seconds), that each
   library keeps its own, or which work conflicts and in which library; a waiting group's
-  header names the conflict. Groups are listed versions first, then identical copies, each
-  newest first by the kept copy's capture date.
+  header names the conflict.
+
+**The list is laid out by the attention a group needs** (owner, 2026-11-14,
+`docs/research/2026-11-14-duplicates-by-attention.md`). `CatalogDuplicatesState` publishes
+the groups as a `DuplicatesLayout`, built once per build, off the main actor:
+
+- groups whose copies hold work that cannot be combined, newest first by the kept copy's
+  capture date;
+- versions of one photo, newest first;
+- identical copies in a bucket per folder set (`DuplicateFolderPlace`): the set with the
+  most groups first, groups in three or more folders in one last bucket, and inside a
+  bucket the largest first.
+
+A group's section is read from its copies (`DuplicateGroup.section`), never from the
+session or from Keep All Copies, so no act of the user's moves a group in the list. A
+folder rule decides the identical copies of its folder set and nothing else: versions of
+one photo differ in their pixels, the list shows them as photos for that reason, and a rule
+set on a header must not change what a photo in another section keeps.
 
 **The one durable fact is Keep All Copies,** remembered per pair of paths in
 `duplicate_kept_pair` (schema v11). It is overlay on both copies:
@@ -125,6 +141,8 @@ file, not a copy of another.
 | A duplicate-group table with IDs | A second identity for facts the digests already state; it would go stale with every scan. |
 | Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). A library goes only when the user picks it in its folder rule. |
 | Let groups with authored work, or versions of the same photo, wait without a default | Nothing in the act's count until the user decides each group; competitors default every group (Photos, Lightroom web, PhotoSweeper, Mylio). Carrying the work makes a default safe (owner, 2026-11-01). |
+| One list of every group, newest first, with the folder rules in a block above it (2026-11-04 to 2026-11-14) | Date is a browsing order: the few groups that need a person sat among hundreds that need nobody, a rule sat a scroll away from what it decided, and identical copies drew the same picture twice with the one thing that differed, the name, in a tooltip. |
+| A folder rule that also decides versions of one photo in that folder | The rule's control sits on the exact copies' header; reaching into another section is action at a distance, on the groups whose files differ most. |
 | A Keep checkbox per copy (the 2026-11-02 design) | Shipped as a list of rows, then as tiles; the owner rejected both on sight. A tag on the photo and a click on it say the same thing with nothing to read. |
 | Photos' Merge (built 2026-11-04, never merged) | It hides which copy stays and offers no way to choose it short of a context menu; the owner asked for a clean way to choose. |
 | Library pair summary rows | A folder set covers them: two folders in two libraries are one of its cases, with `Both` as the default. |

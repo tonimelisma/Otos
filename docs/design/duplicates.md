@@ -9,15 +9,29 @@ under the pointer.
 
 The owner's direction (2026-11-04; `docs/research/2026-11-04-duplicates-layout.md`): a
 really clean way to choose which photo to keep, and a rule that decides a whole folder of
-duplicates at once. So every group shows its copies as photos side by side, as Photos lays
-them out, each tagged **Keep** or **Trash**; one click on a photo keeps that one; and each
-folder that holds duplicates has one rule row at the top.
+duplicates at once. A second direction (2026-11-14;
+`docs/research/2026-11-14-duplicates-by-attention.md`): the list is ordered by the
+attention a group needs, not by date, and it shows what differs — photos where the
+pictures differ, names where only the names do. So the list is three sections; a click on
+a photo or a name keeps that copy; and each folder that holds exact copies is one header
+carrying its rule, over the groups the rule decides.
 
 ## L1 primary fact
 
 How many items have duplicates: `110 videos with duplicates`, `140 photos with
 duplicates`, `312 items with duplicates` when the groups hold both or a kind is not yet
 read, or `No duplicates`. The sidebar row's count is the same number (DES-017).
+
+## Who comes here, and for what
+
+| Visitor | Wants | What answers it |
+| --- | --- | --- |
+| Reclaiming space | The total, one button, the biggest first | The bar; each folder's `… in extra copies`; exact copies largest first |
+| Fixing a double import | That folder, in one decision | The folder's header and its rule |
+| Consolidating two folders or a backup library | One side, once | The two-folder header: `Keep the copies in` |
+| Reviewing with care | Each group, which copy stays and why | Every group's line; photos and names tagged Keep or Trash |
+| Arriving from the sidebar count | What this is, and whether it is safe | Each section's one sentence; the bar's legend |
+| Settling what only they can | Just those groups | `Only you can choose`, first |
 
 ## Zones
 
@@ -27,46 +41,33 @@ list area says why: `Nothing Otos has checked is stored twice.` The window shows
 `Filtered` subtitle here: the list ignores the filter. The list's backdrop is `content`
 (DES-022); everything in it shares the 12 pt section inset (DES-060).
 
-**Folders with duplicates** (`.subheadline` L3 caption), first: one row per folder set,
-largest first, each with a hairline under it (DES-023):
+**Sections.** Three, in this order, each present only while it holds a group. A section's
+header is its title in `.headline` (DES-011) with its count beside it (`.subheadline` L3,
+`6 photos`: its groups not kept), over one L3 sentence; a hairline and space above every
+header but the first.
 
-- **Two folders that mirror each other** (an import folder and the dated folder, a backup
-  library and the main one): leading `folder.badge.questionmark`; `.body` `2026/08 and
-  Imports/Aug 2026` (each name its folder inside the library, with the library's name
-  first when the list spans libraries); `.subheadline` L3 `412 photos in both`; trailing,
-  L3 `Keep the copies in` beside a segmented control: `2026/08` | `Imports/Aug 2026` |
-  `Otos decides` (`Both` when the folders are in different libraries, since the keeper
-  rule then keeps each library's copy).
-- **One folder with files saved twice in it** (`Blue.heic` and `Blue_001.heic`): leading
-  `folder`; `.body` the folder; L3 `38 photos saved twice in this folder`; trailing `Keep
-  the` beside `Best copy` | `Original name` | `Oldest` | `Largest`.
-- A group whose copies sit in three or more folders has no row: it is decided by its own
-  photos.
-- **An Immich account's copies** are never moved (ADR 0046 §8). The account counts as one
-  folder, named by the account, since its folders are asset IDs. A set with a library
-  folder offers only the account's side and `Both`: keeping the library's side would move
-  the account's copies. Its L3 says why: `412 photos in both · Otos never removes copies
-  in “Family”`. A set that is all account copies has no row: no rule could move anything.
-- The rule applies at once to every group in that set; the photos re-tag as it changes.
-  A click on one photo still outranks the rule for that group. A group whose copies hold
-  work that cannot be combined (two edits, two with `.xmp` / `.srt` files, a like and a
-  dislike) is never decided by a rule: Otos will not choose between two people's work on
-  someone's behalf.
+| Section | Holds | Its sentence | Drawn as |
+| --- | --- | --- | --- |
+| `Only you can choose` | Groups whose copies hold work that cannot be combined: two edits, two with `.xmp` / `.srt` files, a like and a dislike | `The copies hold different edits, ratings or .xmp files. Click the one to keep.` | Photos |
+| `Different files of one photo` | Files of one capture whose pixels, format or bytes differ | `Otos keeps the best file of each. Click another to keep it instead.` | Photos |
+| `Exact copies` | The same bytes stored more than once | `The same file stored more than once. Set a rule for a folder, or click a name to keep it.` | Folders, then names |
 
-**Groups**, then: files of one photo first, then identical copies, each newest first by
-capture date, undated last, kept groups in their place among them. A hairline separates
-groups, never above the first.
+A group's section is a fact about its copies, never about what the user has done to it: a
+group stays where it is when a copy is clicked, when a rule changes and when it is kept
+whole, so nothing moves out from under the pointer.
 
-- **The header**: the capture date, `.headline`, long style (`October 4, 2026`; `No
-  Date` when none is known), then `.subheadline` L3 one line, middle-truncated: the
-  folder when every copy shares one, then why the group keeps what it keeps — `Keeping
-  the original name`, `Keeping the older file`, `Keeping the camera original` (the keeper
-  rule's deciding criterion, ADR 0042); `Keeping the original name, as the folder rule
-  says`; `You chose this one`; or, for a group that waits, `The copies have different
-  edits: click the one to keep`. When a copy in an Immich account stays though another was
-  chosen, the line ends `Otos never removes copies in “Family”`; when nothing moves, it
-  reads that alone. A kept group (Keep All Copies) reads `Kept both copies`
-  with a `Review Again` link, and shows no photos.
+**A group of photos** (the first two sections), newest first by capture date, undated
+last, a hairline between groups:
+
+- **The header**: the capture date, `.body` (`October 4, 2026`; `No Date` when none is
+  known), then `.subheadline` L3 one line, middle-truncated: the folder when every copy
+  shares one, then why the group keeps what it keeps — `Keeping the camera original`,
+  `Keeping the file with the most pixels`, `Keeping the largest file` (the keeper rule's
+  deciding criterion, ADR 0042); `You chose this one`; or, for a group that waits, `The
+  copies have different edits: click the one to keep`. When a copy in an Immich account
+  stays though another was chosen, the line ends `Otos never removes copies in “Family”`;
+  when nothing moves, it reads that alone. A kept group (Keep All Copies) reads `Kept both
+  copies` with a `Review Again` link, and shows no photos.
 - **The photos**: one per copy, 8 pt apart (DES-060), wrapping only when the pane is
   narrower than the group. Each is a 180 pt square cell with the copy's own thumbnail
   aspect-fit in it (DES-060A), radius 4, edged with a DES-023 hairline.
@@ -79,25 +80,74 @@ groups, never above the first.
     DES-005A) and the Like or Dislike glyph at the left.
   - Tags and badges appear only once the picture has painted (DES-062); the DES-063 kind
     glyph stands in the cell before then, and its slash variant once a decode has failed.
-  - When the group's copies sit in more than one folder, under each photo its folder,
-    `folder` glyph and `.subheadline` L3, one line middle-truncated: which folder a copy
-    is in is what a folder rule chooses between, so the photos say it without a hover.
-  - No file name on screen: where a copy is and what else differs is its tooltip
-    (`Camera Roll ▸ 2026/10/IMG_1.HEIC`, then `6192 × 4128 · 39.13 MB · File created … ·
-    Camera original · Liked · Edited in Otos`).
-  - **A click keeps that copy** and tags every other copy of its group Trash. It also
-    selects the photo (DES-061's 3 pt accent border). A double-click opens the group.
-  - Context menu: `Keep This Copy`, `Keep All Copies`, then `Move to Trash Now` — the
-    ordinary act on this one copy, now. An Immich account's copy is always tagged
-    **Keep**. Its `Move to Trash Now` is disabled, its tooltip adds `Removed only in
-    Immich`, and its location reads `Family ▸ IMG_1.HEIC`, with no asset folder.
+  - Under each photo, `.subheadline` L3, one line: what else differs, and the work the
+    copy holds — the dimensions and the format when the group's files differ in them,
+    `Camera original` when not every file is one, then `Liked` / `Disliked`, `Edited in
+    Otos`, `Has an .xmp or .srt file` (`6192 × 4128 · Camera original`). What the choice
+    turns on is read without a hover.
+  - When the group's copies sit in more than one folder, under that its folder, `folder`
+    glyph and `.subheadline` L3, one line middle-truncated.
+  - The file's location and every fact are its tooltip (`Camera Roll ▸
+    2026/10/IMG_1.HEIC`, then `6192 × 4128 · 39.13 MB · File created … · Camera original ·
+    Liked · Edited in Otos`).
+
+**Exact copies** are listed by where they sit. One header per folder set, the set with
+the most groups first; then `In three or more folders`, last, for groups no folder rule
+could decide. A header is closed until clicked, so the folders read as a list — open when
+it is the only one. A selection made elsewhere (Show, Undo) opens the header that holds it.
+
+- **A folder's header**, with a hairline under it (DES-023): a disclosure chevron; `folder`
+  (`folder.badge.questionmark` for two folders); `.body` the folder, or `2026/08 and
+  Imports/Aug 2026` (each name its folder inside the library, with the library's name
+  first when the list spans libraries); then L3 lines:
+  - how many and how much: `412 photos in both · 31 GB in extra copies`, `38 photos saved
+    twice in this folder · 1.2 GB in extra copies` (the bytes its groups would move; left
+    out while nothing would), `Every copy kept` when every group is kept;
+  - why, for the folder as a whole: one reason when its groups share it (`Keeping the
+    original name`), else the two most common, counted (`96 keeping the original name ·
+    14 keeping the older file · 5 more`; `3 chosen by you`). A folder is trusted by
+    reading one line, not three hundred.
+  - Trailing, the folder's rule: L3 `Keep the copies in` beside a segmented control
+    `2026/08` | `Imports/Aug 2026` | `Otos decides` (`Both` when the folders are in
+    different libraries, since the keeper rule then keeps each library's copy); or, for one
+    folder, `Keep the` beside `Best copy` | `Original name` | `Oldest` | `Largest`.
+- **An Immich account's copies** are never moved (ADR 0046 §8). The account counts as one
+  folder, named by the account, since its folders are asset IDs. A set with a library
+  folder offers only the account's side and `Both`: keeping the library's side would move
+  the account's copies. Its line says why: `412 photos in both · Otos never removes copies
+  in “Family”`. A set that is all account copies has a header and no rule: no rule could
+  move anything.
+- The rule applies at once to every exact-copy group under the header; their names re-tag
+  as it changes. A click on one name still outranks the rule for that group. A folder's
+  rule never reaches the other two sections: files of one photo differ in their pixels and
+  are decided by their own photos, and no rule chooses between two people's work.
+- **A group under an open header**, largest first, then newest, kept groups in their place,
+  a hairline under each, indented past the chevron:
+  - one picture, 56 pt, the kept copy's — the copies are one picture, and two of it say
+    nothing one does not;
+  - the capture date, `.body`, then L3: the size the copies share (`4.1 MB each`) and why
+    the group keeps what it keeps (`Keeping the original name`, `…, as the folder rule
+    says`, `You chose this one`); a kept group reads `Kept both copies` with `Review
+    Again` and lists no names;
+  - **one line per copy**, at one left edge so the names compare down a column: its fate
+    tag (**Keep** / **Trash**, as on a photo), then what tells it from the others — its
+    file name when the copies share a folder, its folder when they share a name, else
+    `folder ▸ name` — in `.body`, L3 colour for a copy that goes; then the work it holds,
+    L3 (`Liked · Edited in Otos`).
+
+**A click keeps that copy** — a photo or a name — and tags every other copy of its group
+Trash. It also selects it (DES-061's 3 pt accent border, on the photo or around the line).
+A double-click opens the group. Context menu: `Keep This Copy`, `Keep All Copies`, then
+`Move to Trash Now` — the ordinary act on this one copy, now. An Immich account's copy is
+always tagged **Keep**. Its `Move to Trash Now` is disabled, its tooltip adds `Removed only
+in Immich`, and its location reads `Family ▸ IMG_1.HEIC`, with no asset folder.
 
 **Bar.** Three zones at one fixed height (DES-018, DES-053):
 
 | Zone | Content |
 | --- | --- |
 | What | L1, as above, over one L3 clause: `221 copies go to the Trash · 53.9 GB` — the count the button repeats and the bytes it does not carry; blank space while nothing would move. |
-| Middle, behind a hairline | One of three, never blank: the **receipt** of the last move, `221 copies moved to the Trash · 53.9 GB`, written once the Store has hidden the copies, with `Undo` while that move is the window's last change, over `Empty the Trash in Finder to free the space`, until a click or rule changes, a later move replaces it, or the user leaves the list; else the **choices**, `6 photos need your choice` with `Show`, while any group waits (Show selects its first photo); else the **legend**, `Click a photo to keep it, or set a rule for a whole folder above.` |
+| Middle, behind a hairline | One of three, never blank: the **receipt** of the last move, `221 copies moved to the Trash · 53.9 GB`, written once the Store has hidden the copies, with `Undo` while that move is the window's last change, over `Empty the Trash in Finder to free the space`, until a click or rule changes, a later move replaces it, or the user leaves the list; else the **choices**, `6 photos need your choice` with `Show`, while any group waits (Show selects its first photo); else the **legend**, `Click a photo or a name to keep it, or set a rule for a whole folder.` |
 | Act | `Move 221 Copies to Trash`, a plain bordered button with no Return equivalent (DES-052's deviation), tooltip `Moves every copy tagged Trash to the Trash. Edit ▸ Undo puts them back.` Disabled, it reads `Move Copies to Trash`. No confirmation (DES-076): every Keep and Trash is on screen before the click, the act is undoable, and the receipt says what happened. |
 
 Moved copies go to the Trash through the ordinary Move to Trash, carrying their likes and
@@ -121,26 +171,31 @@ copy leaves the group.
 
 ## Keyboard and VoiceOver
 
-Photos are the selection. The rule rows' segmented controls are Tab stops, as are `Show`,
-`Undo` and the bar's button; the photos and the header links are not (DES-080).
+Copies are the selection, as photos or as names. The folder headers and their segmented
+controls are Tab stops, as are `Show`, `Undo` and the bar's button; the copies and the
+`Review Again` links are not (DES-080).
 
 **Commands**, on the selected photo: **Photo ▸ Keep This Copy**, **Keep All Copies**,
 **Review Again**, and **Move Duplicates to Trash** (the bar's act). There are no bare-key
 equivalents: P, U and X already mean curation.
 
 **Keys.**
-- **←** and **→** select the previous and next copy in the list's order, across groups;
-  **↑** and **↓** the copy at the same place in the previous and next group. The list
-  scrolls the selected photo into view.
-- **Space** keeps the selected photo, as a click does.
+- **←** and **→** select the previous and next copy in the list's order, across groups.
+  Among photos, **↑** and **↓** select the copy at the same place in the previous and next
+  group; among an exact-copy group's names, the line above and below. The keys walk what
+  is on screen: a closed folder's groups are skipped. The list scrolls the selected copy's
+  group into view.
+- **Space** keeps the selected copy, as a click does.
 - **Return** opens the selected photo's group in Compare (two copies) or Loupe, with the
   group as the filmstrip. **Back to Duplicates** returns.
 - **⌘⌫** (Photo ▸ Move to Trash) moves the selected groups' copies tagged Trash — never a
   kept one — so Select All then ⌘⌫ is the bar's act for what is selected.
 
 **VoiceOver.**
-- A header reads its date and why it keeps what it keeps.
-- A photo is one button reading its file name, its fate (`keep`, `goes to the Trash`,
+- A section's header reads its title, its count and its sentence; a folder's header its
+  name, its lines and `expanded` or `collapsed`. A group's header reads its date and why
+  it keeps what it keeps.
+- A copy is one button reading its file name, its fate (`keep`, `goes to the Trash`,
   `not chosen yet`), then its facts (DES-082); its action keeps it.
 
 ## Undo

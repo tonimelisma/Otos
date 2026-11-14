@@ -1,13 +1,16 @@
 import AppKit
 import SwiftUI
 
-// The detail pane for the `.duplicates` scope (ADR 0042, `docs/design/duplicates.md`): a
-// rule row for each folder that holds duplicates, so a whole folder is decided at once;
-// then each group as its date and why it keeps what it keeps, over its copies' photos side
-// by side, each tagged Keep or Trash — a click on a photo keeps that one; then a
-// fixed-height bar stating what will move and offering the one act. Passive: every string
-// comes from `DuplicatesPresentation`, and every control calls a view-model intent; the
-// picks, rules and counts are `DuplicatesSession`'s.
+// The detail pane for the `.duplicates` scope (ADR 0042, `docs/design/duplicates.md`): the
+// groups in three sections, by the attention each needs. Groups only a click decides and
+// files of one photo are a date and why over their copies' photos side by side, each tagged
+// Keep or Trash. Exact copies sit under a header for each folder that holds them, which
+// carries that folder's rule and opens to its groups, each one picture beside its copies'
+// names. A click on a photo or a name keeps that copy. Under the list, a fixed-height bar
+// states what will move and offers the one act. Passive: every string comes from
+// `DuplicatesPresentation`, and every control calls a view-model intent; the picks, rules
+// and counts are `DuplicatesSession`'s. Which folder headers are open is local control
+// state.
 
 struct DuplicatesView: View {
     let duplicates: CatalogDuplicatesState
@@ -22,10 +25,14 @@ struct DuplicatesView: View {
     /// The copy the arrow keys move from: the last one clicked or reached by a key. Local
     /// control state; the selection itself is the view model's.
     @State private var cursor: MediaAssetID?
+    /// The folder headers the user opened or closed, against where they start: closed, so
+    /// the folders read as a list, or open when there is only one.
+    @State private var toggled: Set<DuplicateFolderPlace> = []
     @FocusState private var listFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let tally = session.tally(in: duplicates)
         VStack(spacing: 0) {
             if duplicates.groups.isEmpty {
                 // The bar is the status surface and carries the L1 `No duplicates`; the
@@ -44,7 +51,7 @@ struct DuplicatesView: View {
                 .fill(DesignPalette.hairline(for: colorScheme))
                 .frame(height: 1)
             DuplicatesStatusBar(
-                presentation: .map(session.tally(in: duplicates), receipt: session.receipt, canUndoMove: canUndoMove),
+                presentation: .map(tally, receipt: session.receipt, canUndoMove: canUndoMove),
                 actions: actions
             )
         }
@@ -57,29 +64,83 @@ struct DuplicatesView: View {
         Set(duplicates.groups.flatMap(\.copies).map(\.id.libraryRootPath)).count > 1
     }
 
+    private func isExpanded(_ place: DuplicateFolderPlace) -> Bool {
+        (duplicates.layout.buckets.count == 1) != toggled.contains(place)
+    }
+
+    private func toggle(_ place: DuplicateFolderPlace) {
+        toggled.formSymmetricDifference([place])
+    }
+
+    /// The list's rows, top to bottom: each section's header, then its groups; in Exact
+    /// copies each folder's header, then its groups while it is open.
+    private var rows: [DuplicatesRow] {
+        let layout = duplicates.layout
+        let withLibrary = withLibrary
+        var rows: [DuplicatesRow] = []
+        for section in DuplicatesSection.allCases {
+            guard let header = DuplicatesSectionPresentation.map(section, in: layout) else {
+                continue
+            }
+            rows.append(.section(header, isFirst: rows.isEmpty))
+            switch section {
+            case .choose, .different:
+                rows += layout.groups(in: section).enumerated().map { DuplicatesRow.photos($1, isFirst: $0 == 0) }
+            case .exact:
+                for bucket in layout.buckets {
+                    let open = isExpanded(bucket.id)
+                    rows.append(.bucket(.map(bucket, session: session, withLibrary: withLibrary), isExpanded: open))
+                    if open {
+                        rows += bucket.groups.map(DuplicatesRow.names)
+                    }
+                }
+            }
+        }
+        return rows
+    }
+
     /// The copies on screen in reading order, by group: what the arrow keys walk. A kept
-    /// group shows no photos, so it has none.
-    private var tileOrder: DuplicatesTileOrder {
-        DuplicatesTileOrder(groups: duplicates.groups.filter { !$0.isKept }.map { $0.copies.map(\.id) })
+    /// group shows no copies, and a closed folder none of its groups.
+    private static func tileOrder(of rows: [DuplicatesRow]) -> DuplicatesTileOrder {
+        DuplicatesTileOrder(groups: rows.compactMap { row -> DuplicatesTileOrder.Group? in
+            switch row {
+            case let .photos(group, _) where !group.isKept:
+                DuplicatesTileOrder.Group(copies: group.copies.map(\.id), stacked: false)
+            case let .names(group) where !group.isKept:
+                DuplicatesTileOrder.Group(copies: group.copies.map(\.id), stacked: true)
+            default:
+                nil
+            }
+        })
+    }
+
+    private func group(containing id: MediaAssetID) -> DuplicateGroup? {
+        duplicates.groups.first { group in group.copies.contains { $0.id == id } }
     }
 
     private var list: some View {
-        let tally = session.tally(in: duplicates)
-        let rules = DuplicateFolderSetSummary.summaries(of: duplicates).map {
-            DuplicateFolderRulePresentation.map($0, rule: session.rules[$0.folderSet], noun: tally.noun, withLibrary: withLibrary)
-        }
+        let rows = rows
+        let tileOrder = Self.tileOrder(of: rows)
+        let withLibrary = withLibrary
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if !rules.isEmpty {
-                        DuplicateFolderRules(rules: rules, actions: actions)
-                            .padding(.bottom, 20)
-                    }
-                    ForEach(Array(duplicates.groups.enumerated()), id: \.element.id) { index, group in
-                        groupSection(group, isFirst: index == 0)
+                    ForEach(rows) { row in
+                        switch row {
+                        case let .section(header, isFirst):
+                            DuplicatesSectionHeader(header: header, isFirst: isFirst)
+                        case let .photos(group, isFirst):
+                            photosRow(group, isFirst: isFirst, order: tileOrder, withLibrary: withLibrary)
+                        case let .bucket(bucket, isExpanded):
+                            DuplicateFolderHeader(bucket: bucket, isExpanded: isExpanded, actions: actions) {
+                                toggle(bucket.id)
+                            }
+                        case let .names(group):
+                            namesRow(group, order: tileOrder, withLibrary: withLibrary)
+                        }
                     }
                 }
-                // DES-060's section inset: one left edge for every row, header and photo.
+                // DES-060's section inset: one left edge for every header, row and photo.
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
                 .padding(.bottom, 16)
@@ -95,10 +156,12 @@ struct DuplicatesView: View {
                 }
                 cursor = target
                 actions.select(target, press.modifiers.contains(.shift) ? .shift : [], tileOrder.copies)
-                proxy.scrollTo(target)
+                if let group = group(containing: target) {
+                    proxy.scrollTo(DuplicatesRow.ID.group(group.id))
+                }
                 return .handled
             }
-            // Space keeps the photo under the cursor, as a click does.
+            // Space keeps the copy under the cursor, as a click does.
             .onKeyPress(.space) {
                 guard let cursor else { return .ignored }
                 actions.keep(cursor)
@@ -110,20 +173,39 @@ struct DuplicatesView: View {
             }
             .onChange(of: selection) { _, selected in
                 // A selection made elsewhere — Show, Undo's reveal — is scrolled to and
-                // becomes where the arrow keys start.
+                // becomes where the arrow keys start; a closed folder holding it opens.
                 if let cursor, selected.contains(cursor) {
                     return
                 }
-                if let first = tileOrder.copies.first(where: selected.contains) {
-                    cursor = first
-                    proxy.scrollTo(first)
+                guard let group = duplicates.groups.first(where: { group in
+                    !group.isKept && group.copies.contains { selected.contains($0.id) }
+                }) else {
+                    return
+                }
+                cursor = group.copies.first { selected.contains($0.id) }?.id
+                let place = DuplicateFolderPlace(group)
+                if group.section == .exact, !isExpanded(place) {
+                    // The group's row exists only once its folder is open: bring the
+                    // folder's header into view, with the group under it.
+                    toggle(place)
+                    proxy.scrollTo(DuplicatesRow.ID.bucket(place), anchor: .top)
+                } else {
+                    proxy.scrollTo(DuplicatesRow.ID.group(group.id))
                 }
             }
         }
     }
 
+    /// A click on a copy, as a photo or as a name: it is selected and kept.
+    private func keep(_ id: MediaAssetID, order: DuplicatesTileOrder) {
+        listFocused = true
+        cursor = id
+        actions.select(id, [], order.copies)
+        actions.keep(id)
+    }
+
     @ViewBuilder
-    private func groupSection(_ group: DuplicateGroup, isFirst: Bool) -> some View {
+    private func photosRow(_ group: DuplicateGroup, isFirst: Bool, order: DuplicatesTileOrder, withLibrary: Bool) -> some View {
         let presentation = DuplicateGroupPresentation.map(group, session: session, withLibrary: withLibrary)
         VStack(alignment: .leading, spacing: 8) {
             DuplicateGroupSeam(isFirst: isFirst)
@@ -147,20 +229,85 @@ struct DuplicatesView: View {
                             thumbnailDirectory: thumbnailDirectory,
                             detailReader: detailReader,
                             actions: actions,
-                            keep: {
-                                listFocused = true
-                                cursor = tile.id
-                                actions.select(tile.id, [], tileOrder.copies)
-                                actions.keep(tile.id)
-                            }
+                            keep: { keep(tile.id, order: order) }
                         )
-                        .id(tile.id)
                     }
                 }
             }
         }
-        .padding(.top, isFirst ? 0 : 4)
         .padding(.bottom, 16)
+    }
+
+    /// An exact-copy group: one picture, since its copies are one picture, beside its date,
+    /// the size the copies share and why it keeps what it keeps, over a line per copy.
+    @ViewBuilder
+    private func namesRow(_ group: DuplicateGroup, order: DuplicatesTileOrder, withLibrary: Bool) -> some View {
+        let presentation = DuplicateGroupPresentation.map(group, session: session, style: .names, withLibrary: withLibrary)
+        HStack(alignment: .top, spacing: 12) {
+            if let picture = presentation.picture {
+                DuplicateThumbnail(
+                    id: picture,
+                    kind: presentation.pictureKind,
+                    edge: DuplicateCopyLine.pictureEdge,
+                    fate: .undecided,
+                    size: nil,
+                    choice: .notRated,
+                    isSelected: false,
+                    tileContentStore: tileContentStore,
+                    thumbnailDirectory: thumbnailDirectory,
+                    detailReader: detailReader
+                )
+                .onTapGesture(count: 2) {
+                    actions.openGroupContaining(picture)
+                }
+                .accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                DuplicateGroupHeader(group: group, presentation: presentation, actions: actions)
+                ForEach(presentation.tiles) { tile in
+                    DuplicateCopyLine(
+                        tile: tile,
+                        group: group,
+                        isSelected: selection.contains(tile.id),
+                        actions: actions,
+                        keep: { keep(tile.id, order: order) }
+                    )
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 8)
+        // Under its folder's header, past the header's disclosure mark.
+        .padding(.leading, DuplicateFolderHeader.indent)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(DesignPalette.hairline(for: colorScheme))
+                .frame(height: 1)
+                .padding(.leading, DuplicateFolderHeader.indent)
+        }
+    }
+}
+
+/// One row of the list. Rows are the lazy stack's own children, so the list can scroll to
+/// one that has not been drawn yet.
+private enum DuplicatesRow: Identifiable {
+    enum ID: Hashable {
+        case section(DuplicatesSection)
+        case group(DuplicateGroupID)
+        case bucket(DuplicateFolderPlace)
+    }
+
+    case section(DuplicatesSectionPresentation, isFirst: Bool)
+    case photos(DuplicateGroup, isFirst: Bool)
+    case bucket(DuplicateFolderBucketPresentation, isExpanded: Bool)
+    case names(DuplicateGroup)
+
+    var id: ID {
+        switch self {
+        case let .section(header, _): .section(header.id)
+        case let .photos(group, _), let .names(group): .group(group.id)
+        case let .bucket(bucket, _): .bucket(bucket.id)
+        }
     }
 }
 
@@ -171,7 +318,7 @@ struct DuplicatesActions {
     let select: @MainActor (MediaAssetID?, NSEvent.ModifierFlags, [MediaAssetID]) -> Void
     /// A click on a photo, or Space: this copy stays and the rest of its group goes.
     let keep: @MainActor (MediaAssetID) -> Void
-    /// A folder rule row's choice.
+    /// A folder header's rule.
     let setRule: @MainActor (DuplicateFolderRule, DuplicateFolderSet) -> Void
     let keepAll: @MainActor (DuplicateGroup) -> Void
     let reviewAgain: @MainActor ([DuplicateGroup]) -> Void
@@ -184,64 +331,122 @@ struct DuplicatesActions {
     let revealNeedingChoice: @MainActor () -> Void
 }
 
-/// The folders that hold duplicates, each with its rule as a segmented choice: one click
-/// decides every group in that folder, or in that pair of folders.
-private struct DuplicateFolderRules: View {
-    let rules: [DuplicateFolderRulePresentation]
-    let actions: DuplicatesActions
+/// A section's header (DES-011: a group header inside content): its title with how many
+/// it holds, over what to do with them; a hairline and space above every one but the first.
+private struct DuplicatesSectionHeader: View {
+    let header: DuplicatesSectionPresentation
+    let isFirst: Bool
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Folders with duplicates")
+        VStack(alignment: .leading, spacing: 2) {
+            if !isFirst {
+                Rectangle()
+                    .fill(DesignPalette.hairline(for: colorScheme))
+                    .frame(height: 1)
+                    .padding(.top, 8)
+                    .padding(.bottom, 14)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(header.title)
+                    .font(.headline)
+                    .foregroundStyle(DesignPalette.label(for: colorScheme))
+                Text(header.count)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                    .monospacedDigit()
+            }
+            Text(header.detail)
                 .font(.subheadline)
                 .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                .padding(.bottom, 4)
-            ForEach(rules) { rule in
-                HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: rule.folderSet.folders.count == 2 ? "folder.badge.questionmark" : "folder")
+        }
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// A folder's header in Exact copies: a disclosure mark, the folder (or two), how many and
+/// how much, why its groups keep what they keep, and the folder's rule as a segmented
+/// choice — one click decides every group under it.
+private struct DuplicateFolderHeader: View {
+    /// The disclosure mark's column: a folder's groups start past it.
+    static let indent: CGFloat = 22
+
+    let bucket: DuplicateFolderBucketPresentation
+    let isExpanded: Bool
+    let actions: DuplicatesActions
+    let toggle: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Button(action: toggle) {
+                HStack(alignment: .center, spacing: 0) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
+                        .frame(width: Self.indent, alignment: .leading)
+                    Image(systemName: bucket.isTwoFolders ? "folder.badge.questionmark" : "folder")
+                        .foregroundStyle(.secondary)
+                        .padding(.trailing, 10)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(rule.title)
+                        Text(bucket.title)
                             .font(.body)
                             .foregroundStyle(DesignPalette.label(for: colorScheme))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Text(rule.detail)
+                        Text(bucket.detail)
                             .font(.subheadline)
                             .foregroundStyle(DesignPalette.l3(for: colorScheme))
                             .monospacedDigit()
-                    }
-                    Spacer(minLength: 12)
-                    Text(rule.prompt)
-                        .font(.subheadline)
-                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                    Picker(rule.prompt, selection: Binding(
-                        get: { rule.selected },
-                        set: { actions.setRule($0, rule.folderSet) }
-                    )) {
-                        ForEach(rule.options, id: \.rule) { option in
-                            Text(option.title).tag(option.rule)
+                            .lineLimit(1)
+                        if let summary = bucket.summary {
+                            Text(summary)
+                                .font(.subheadline)
+                                .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                                .monospacedDigit()
+                                .lineLimit(1)
                         }
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
+                    Spacer(minLength: 0)
                 }
-                .padding(.vertical, 8)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(DesignPalette.hairline(for: colorScheme))
-                        .frame(height: 1)
-                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel([bucket.title, bucket.detail, bucket.summary].compactMap(\.self).joined(separator: ", "))
+            .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+            if let rule = bucket.rule {
+                Text(rule.prompt)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                Picker(rule.prompt, selection: Binding(
+                    get: { rule.selected },
+                    set: { actions.setRule($0, rule.folderSet) }
+                )) {
+                    ForEach(rule.options, id: \.rule) { option in
+                        Text(option.title).tag(option.rule)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+        }
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(DesignPalette.hairline(for: colorScheme))
+                .frame(height: 1)
         }
     }
 }
 
-/// A hairline between groups (DES-023): drawn above every card but the list's first.
+/// A hairline between groups of photos (DES-023): drawn above every one but its section's
+/// first.
 private struct DuplicateGroupSeam: View {
     let isFirst: Bool
     @Environment(\.colorScheme) private var colorScheme
@@ -256,8 +461,9 @@ private struct DuplicateGroupSeam: View {
     }
 }
 
-/// A group's header: its date, then why it keeps what it keeps — the click, the folder's
-/// rule, or the keeper rule — or what to choose. Kept, `Kept both copies` with Review Again.
+/// A group's header: its date, then what its copies share and why it keeps what it keeps —
+/// the click, the folder's rule, or the keeper rule — or what to choose. Kept, `Kept both
+/// copies` with Review Again.
 private struct DuplicateGroupHeader: View {
     let group: DuplicateGroup
     let presentation: DuplicateGroupPresentation
@@ -268,11 +474,12 @@ private struct DuplicateGroupHeader: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(presentation.title)
-                .font(.headline)
+                .font(.body)
                 .foregroundStyle(DesignPalette.label(for: colorScheme))
             Text(presentation.reason)
                 .font(.subheadline)
                 .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                .monospacedDigit()
                 .lineLimit(1)
                 .truncationMode(.middle)
             if presentation.isKept {
@@ -289,9 +496,118 @@ private struct DuplicateGroupHeader: View {
     }
 }
 
+/// What a copy offers under the pointer, as a photo or as a name: a click keeps it, a
+/// double-click opens its group, and its context menu carries the per-copy commands.
+private struct DuplicateCopyControls: ViewModifier {
+    let tile: DuplicateCopyTilePresentation
+    let group: DuplicateGroup
+    let isSelected: Bool
+    let actions: DuplicatesActions
+    let keep: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .onTapGesture(perform: keep)
+            // The first click keeps it at once; the second also opens the group (HIG Lists).
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                actions.openGroupContaining(tile.id)
+            })
+            .help(tile.help)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(tile.accessibilityLabel)
+            .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+            .accessibilityAction { keep() }
+            .contextMenu {
+                Button("Keep This Copy", action: keep)
+                    .disabled(!tile.canKeep)
+                Button("Keep All Copies") { actions.keepAll(group) }
+                Divider()
+                Button("Move to Trash Now") { actions.moveToTrashNow(tile.id) }
+                    .disabled(!tile.canMoveToTrash)
+            }
+    }
+}
+
+/// `Keep` or `Trash`, a word and a glyph on a capsule (DES-029); nothing while the group
+/// waits.
+private struct DuplicateFateTag: View {
+    let fate: DuplicateCopyFate
+
+    var body: some View {
+        switch fate {
+        case .keep:
+            Label("Keep", systemImage: "checkmark")
+                .font(.callout)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .foregroundStyle(.white)
+                .background(Capsule().fill(Color.accentColor))
+                .accessibilityHidden(true)
+        case .trash:
+            Label("Trash", systemImage: "trash")
+                .font(.callout)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .foregroundStyle(.white)
+                .background(Capsule().fill(.black.opacity(0.55)))
+                .accessibilityHidden(true)
+        case .undecided:
+            EmptyView()
+        }
+    }
+}
+
+/// One exact copy as a line: its fate, then what tells it from the group's other copies —
+/// its name, or its folder — and the work it holds. The names of a group sit under one
+/// another at one left edge, so they compare down a column. A click keeps it; selection is
+/// DES-061's accent border.
+private struct DuplicateCopyLine: View {
+    /// The group's one picture.
+    static let pictureEdge: CGFloat = 56
+    /// The fate tags' column, so every name starts at one edge.
+    private static let tagWidth: CGFloat = 74
+
+    let tile: DuplicateCopyTilePresentation
+    let group: DuplicateGroup
+    let isSelected: Bool
+    let actions: DuplicatesActions
+    let keep: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 6) {
+            DuplicateFateTag(fate: tile.fate)
+                .frame(width: Self.tagWidth, alignment: .leading)
+            Text(tile.label)
+                .font(.body)
+                .foregroundStyle(tile.fate == .trash ? DesignPalette.l3(for: colorScheme) : DesignPalette.label(for: colorScheme))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let caption = tile.caption {
+                Text(caption)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(Color.accentColor, lineWidth: 3)
+            }
+        }
+        .modifier(DuplicateCopyControls(tile: tile, group: group, isSelected: isSelected, actions: actions, keep: keep))
+    }
+}
+
 /// One copy's photo: a square cell with its picture, tagged Keep (and bright) or Trash (and
-/// dimmed), its size and its Like or Dislike over the bottom of the picture. A click keeps
-/// it; where it is and what else differs is its tooltip.
+/// dimmed), its size and its Like or Dislike over the bottom of the picture; under it what
+/// else differs, and its folder when the group spans folders. A click keeps it; where it is
+/// goes in its tooltip.
 private struct DuplicateCopyTile: View {
     static let edge: CGFloat = 180
     /// DES-060's 8 pt gutter between tiles.
@@ -322,8 +638,16 @@ private struct DuplicateCopyTile: View {
                 thumbnailDirectory: thumbnailDirectory,
                 detailReader: detailReader
             )
-            // Which folder this copy is in, when the group spans folders: what a folder
-            // rule chooses between, so the photos say it without a hover.
+            // What differs besides the picture and the size, so the choice needs no hover.
+            if let caption = tile.caption {
+                Text(caption)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(width: Self.edge, alignment: .leading)
+            }
+            // Which folder this copy is in, when the group spans folders.
             if let folder = tile.folder {
                 Label(folder, systemImage: "folder")
                     .font(.subheadline)
@@ -333,25 +657,7 @@ private struct DuplicateCopyTile: View {
                     .frame(width: Self.edge, alignment: .leading)
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: keep)
-        // The first click keeps it at once; the second also opens the group (HIG Lists).
-        .simultaneousGesture(TapGesture(count: 2).onEnded {
-            actions.openGroupContaining(tile.id)
-        })
-        .help(tile.help)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(tile.accessibilityLabel)
-        .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
-        .accessibilityAction { keep() }
-        .contextMenu {
-            Button("Keep This Copy", action: keep)
-                .disabled(!tile.canKeep)
-            Button("Keep All Copies") { actions.keepAll(group) }
-            Divider()
-            Button("Move to Trash Now") { actions.moveToTrashNow(tile.id) }
-                .disabled(!tile.canMoveToTrash)
-        }
+        .modifier(DuplicateCopyControls(tile: tile, group: group, isSelected: isSelected, actions: actions, keep: keep))
     }
 }
 
@@ -401,7 +707,7 @@ private struct DuplicateThumbnail: View {
                         badges
                     }
                     .overlay(alignment: .topLeading) {
-                        fateTag
+                        DuplicateFateTag(fate: fate)
                             .padding(6)
                     }
                     .overlay {
@@ -454,31 +760,6 @@ private struct DuplicateThumbnail: View {
         .shadow(color: .black.opacity(0.6), radius: 2)
         .padding(.bottom, 5)
         .accessibilityHidden(true)
-    }
-
-    /// `Keep` or `Trash`, a word and a glyph on a capsule; nothing while the group waits.
-    @ViewBuilder
-    private var fateTag: some View {
-        switch fate {
-        case .keep:
-            Label("Keep", systemImage: "checkmark")
-                .font(.callout)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .foregroundStyle(.white)
-                .background(Capsule().fill(Color.accentColor))
-                .accessibilityHidden(true)
-        case .trash:
-            Label("Trash", systemImage: "trash")
-                .font(.callout)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .foregroundStyle(.white)
-                .background(Capsule().fill(.black.opacity(0.55)))
-                .accessibilityHidden(true)
-        case .undecided:
-            EmptyView()
-        }
     }
 
     private var choiceSymbol: String? {
