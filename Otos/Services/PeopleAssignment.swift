@@ -100,10 +100,13 @@ actor PeopleAssignment {
         }
     }
 
-    /// The catalog may have changed: People is owed a pass.
-    func request() {
+    /// The catalog may have changed: People is owed a pass. Returns the request, which every
+    /// state built by a pass that started after it carries as `covers`.
+    @discardableResult
+    func request() -> UInt64 {
         requested &+= 1
         doorbell.yield()
+        return requested
     }
 
     /// Rows were only added: the unchecked tally is owed a read, and nothing else.
@@ -166,8 +169,9 @@ actor PeopleAssignment {
         // publishing what covers it.
         covered = startedFrom
         switch outcome {
-        case let .publish(built, read, ranker):
-            // What it publishes carries the tally it read.
+        case .publish(var built, let read, let ranker):
+            // What it publishes carries the tally it read, and the request it covers.
+            built.covers = startedFrom
             tallyCovered = tallyStartedFrom
             if let read {
                 snapshot = read

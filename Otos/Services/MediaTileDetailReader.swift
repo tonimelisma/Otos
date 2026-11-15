@@ -13,17 +13,26 @@ import OSLog
 /// it and leaves its request to be asked again. The reader logs every failure once
 /// (`op=tileDetail.read phase=failed`), so callers do not log it again; a cancelled read
 /// throws `CancellationError` and is not logged.
+///
+/// Every answer carries the choices the window holds and the catalog has not recorded yet
+/// (`MediaChoiceOverlay`): the read is numbered as it starts and answered through the overlay
+/// after its one await, so a read that started before a choice's write landed shows the
+/// choice, and one that started after retires it.
 struct MediaTileDetailReader {
     private let store: CatalogStore
+    private let choices: MediaChoiceOverlay
 
-    init(store: CatalogStore) {
+    init(store: CatalogStore, choices: MediaChoiceOverlay = MediaChoiceOverlay()) {
         self.store = store
+        self.choices = choices
     }
 
     /// The rows for `ids`; an ID the catalog holds no row for is absent from the map.
     func details(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaTileDetail] {
+        let started = choices.readStarted()
         do {
-            return try await store.mediaTileDetails(for: ids)
+            let details = try await store.mediaTileDetails(for: ids)
+            return choices.answer(details, asked: ids, startedAt: started)
         } catch {
             if !(error is CancellationError) {
                 OtosLog.catalog.errorOperation("tileDetail.read", phase: "failed", fields: [

@@ -311,13 +311,19 @@ everything expensive happens on an actor off the main thread.
   to Not Rated" resolution, so the AppKit tile and the SwiftUI Loupe/Compare control
   stay two renderers of one intent. Neutral keeps its keyboard, menu, and VoiceOver
   paths.
+- **An act shown first** (DES-120): a choice is held in `MediaChoiceOverlay`, which every
+  `MediaTileDetailReader` read answers through, shown on the tile store's tiles (the grid
+  reconfigures the visible ones, `TileChoiceChange`) and in Projection's `choose` hold; a
+  People act is laid over People by `PendingPeopleActs` until a build covers its write
+  (`CatalogPeopleState.covers`); an expansion is published by `CatalogProjection.showExpansion`.
 - **Which pane shows**: `CatalogWindowViewModel.detailPane` (`CatalogDetailPane`) — the
   selected scope's surface from the click on, waiting (`ScopeWaitingView`) until its state
   is applied (DES-118).
 - **Move to Trash**: `CatalogWindowViewModelTrash.swift` resolves the current browser
   target, takes it off the window at once through `CatalogProjection.hide` (one lossless
   `CatalogProjectionIntent` stream with the queries), moves the selection and registers
-  undo in the same step, then marks it on the trash intent stream; `MediaTrashCoordinator` owns the durable
+  undo in the same step, then marks it on the trash intent stream (a `WindowHold`, beside a
+  choice's); `MediaTrashCoordinator` owns the durable
   queue of pending items (resume on launch, downloads without the lease, retry,
   free-space floor, delete-immediately decisions) and reports to `TrashStatusBar`; `CatalogStore` supplies catalog-proven companions and
   reconciles only successful paths. The shared typed namespace-mutation lease excludes

@@ -41,6 +41,7 @@ struct CompareView: View {
     /// The outlined faces' boxes by photo (ADR 0047): the filmstrip's tiles draw them, and
     /// each pane draws its photo's through the edit its decode shows.
     var faceOutlineBoxes: [MediaAssetID: [CGRect]] = [:]
+    var tileChoiceChange = TileChoiceChange()
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -201,6 +202,7 @@ struct CompareView: View {
             onMediaChoice: onMediaChoice,
             contextMenu: contextMenu,
             faceOutlines: faceOutlineBoxes,
+            tileChoiceChange: tileChoiceChange,
             focusTargetID: focusTargetID
         )
     }

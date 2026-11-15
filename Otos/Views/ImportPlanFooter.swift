@@ -14,6 +14,8 @@ struct ImportPlanFooter: View {
     let fixedLibraries: [CatalogLibraryState]
     let sourceDisplayName: String
     let isCancelling: Bool
+    /// The user's Import click, before the coordinator's presentation draws it (DES-120).
+    var isImportClickHeld = false
     let importPreferences: ImportPreferences
     let setDestination: (LibraryRootPath) -> Void
     let queueImport: () -> Void
@@ -46,7 +48,8 @@ struct ImportPlanFooter: View {
             presentation: presentation,
             preferences: effectivePreferences,
             sourceDisplayName: sourceDisplayName,
-            isCancelling: isCancelling
+            isCancelling: isCancelling,
+            isImportClickHeld: isImportClickHeld
         )
     }
 

@@ -644,7 +644,7 @@ than hidden.
 | Current string | Replacement |
 | --- | --- |
 | `Inventory…`, `Planning…`, `Waiting for metadata (12/139)`, `Source changed — replanning…` | `Checking the card…` + L3 `12 of 139 items` |
-| `Import queued — finishing metadata…` | `Checking the card…` + L3 `12 of 139 items`, `Import` disabled — the held click changes nothing else |
+| `Import queued — finishing metadata…` | `Checking the card…` + L3 `12 of 139 items`, `Import` disabled — the held click changes nothing else; the window draws it from the click on, before the coordinator has it (DES-120) |
 | `Importing 12/139` | `Importing 12 of 139` + L3 `19 MB of 68 MB · about 40 seconds left` |
 | `12 copy · 4 preexisting · 3 companion · 1 blocked · 521 MB · 2 skipped packages` | `12 new items · 521 MB` + L3 `4 already in Summer Photos` (attention count moves to state D) |
 | `Cleanup/eject withheld while blocked or skipped-package attention remains` | Nothing — the erase checkbox disables with a tooltip (DES-038) |

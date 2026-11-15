@@ -15,7 +15,7 @@ struct CatalogWindowViewModelUndoTests {
         try await withCatalogedLibrary(fileCount: 2) { library in
             let model = makeUndoModel(store: library.store)
             model.applyState(undoWindowState(ids: library.ids))
-            model.startMediaChoiceForwarding(store: library.store)
+            model.startMediaChoiceForwarding(writer: .store(library.store))
             defer { model.mediaChoiceForwardingTask?.cancel() }
             model.selectAll()
             #expect(!model.undoMenuState.canUndo)
@@ -43,7 +43,7 @@ struct CatalogWindowViewModelUndoTests {
         try await withCatalogedLibrary(fileCount: 3) { library in
             let model = makeUndoModel(store: library.store)
             model.applyState(undoWindowState(ids: library.ids))
-            model.startMediaChoiceForwarding(store: library.store)
+            model.startMediaChoiceForwarding(writer: .store(library.store))
             defer { model.mediaChoiceForwardingTask?.cancel() }
             let ids = library.ids
 
@@ -69,7 +69,7 @@ struct CatalogWindowViewModelUndoTests {
         try await withCatalogedLibrary(fileCount: 1) { library in
             let model = makeUndoModel(store: library.store)
             model.applyState(undoWindowState(ids: library.ids))
-            model.startMediaChoiceForwarding(store: library.store)
+            model.startMediaChoiceForwarding(writer: .store(library.store))
             defer { model.mediaChoiceForwardingTask?.cancel() }
             model.selectAll()
 
@@ -87,7 +87,7 @@ struct CatalogWindowViewModelUndoTests {
         try await withCatalogedLibrary(fileCount: 3) { library in
             let model = makeUndoModel(store: library.store)
             model.applyState(undoWindowState(ids: library.ids))
-            model.startMediaChoiceForwarding(store: library.store)
+            model.startMediaChoiceForwarding(writer: .store(library.store))
             defer { model.mediaChoiceForwardingTask?.cancel() }
             model.setAdvanceAfterMediaChoice(true)
             let ids = library.ids

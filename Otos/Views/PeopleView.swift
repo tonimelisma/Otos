@@ -206,16 +206,16 @@ struct PeopleMergeAlert: ViewModifier {
     }
 }
 
-/// A merge the user answered that the store refused when it applied it: the act could not
-/// stay a disabled control, since an act submitted before it changed the state it was judged
-/// in, so its reason is said here, in the words the disabled act uses (DES-038).
-struct PeopleMergeRefusalAlert: ViewModifier {
-    let refusal: PeopleMergeRefusal?
+/// An act the window showed that the store refused or could not write: a merge the user
+/// answered that an act submitted before it made impossible, said in the words the disabled
+/// act uses (DES-038), or any act whose write failed, named as back as it was (DES-120).
+struct PeopleRefusalAlert: ViewModifier {
+    let refusal: PeopleActRefusal?
     let dismiss: () -> Void
 
     func body(content: Content) -> some View {
         content.alert(
-            "Couldn't Merge These People",
+            refusal?.title ?? "",
             isPresented: Binding(
                 get: { refusal != nil },
                 set: {

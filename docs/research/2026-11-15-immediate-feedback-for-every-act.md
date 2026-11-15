@@ -81,18 +81,19 @@ or its catalog.
 
 ### Every other act
 
-| Act | Same frame today | Waits on | Verdict |
+| Act | Same frame (after DES-120) | Waits on | Verdict |
 | --- | --- | --- | --- |
-| Like / Dislike / Not Rated | nothing: pane previews, tile icons, the toolbar control and the advance all follow the store write; tile icons follow the detail refresh after it | `setMediaChoices` (writer queue) | Result knowable locally; not fixed here — needs a pending-choice owner the tile detail reads consult (no such mechanism exists to reuse) |
-| Expand / collapse a stack | nothing until Projection re-collapses | a Projection pass (no read: the order is reused) | Waits on the loop, not a read; not fixed |
-| Filter, sort | the old content, same scope | a Projection read | Not knowable locally (a new order); the scope stays, as today — no status surface |
+| Like / Dislike / Not Rated | the tiles' badges (in place), the panes, the toolbar control, the advance, `Undo Like`, and a photo leaving a choice filter it no longer matches | — (the write follows on the choice stream) | Fixed (DES-120, APP-086): `MediaChoiceOverlay` beside the one tile-detail read, Projection's `choose` hold |
+| Expand / collapse a stack | the members shown or hidden, from the collapse held | — (no read, no wait for a pass in flight) | Fixed (DES-120, APP-088): `CatalogProjection.showExpansion` |
+| Filter, sort | the control's new choice and `Filtered` in the subtitle; the grid keeps its items, still acting | a Projection read | Status shown at once; the content needs the read (a new order), as search's does — owner decision listed in the PR |
 | Search text | `Searching…` subtitle | the search reader | Status shown at once (ADR 0048) |
 | Select a library / import / any scope | the selected scope waiting | the scope's read | Fixed (DES-118) |
-| Name / rename a person, merge, hide/unhide, favourite, make key photo, This Is Not a Face | nothing until People rebuilds | the people write and a People build | Knowable locally for name/favourite/hide; not fixed — People has only `PendingPeopleActs` for merges |
+| New name, merge | nothing until the store answers and People rebuilds | the People write and a build | A new person's ID and a merge's result are the store's; not shown ahead |
+| Name / rename a person, hide/unhide, favourite, make key photo, This Is Not a Face, Not <Person>, assign / change to a person | the gallery (its order by the builder's rule, the Hidden section, the cover), the photo menus and the Info pane, and the undo entry | — (the People write and build follow) | Fixed (DES-120, APP-087): `PendingPeopleActs` lays each act over People until a build covers its write |
 | Edit sliders, Rotate / Flip, Revert | the live render in the loupe at once | — | Already render-first |
 | Undo of Move to Trash | items return when the store's withdrawal is read | the queue's undo, then a read | Now read at once instead of on the cadence (`hideWithdrawn(storeChanged:)`) |
 | Eject | the source's row marks ejecting at once | — | Already immediate |
-| Start an import | the bar's state changes when the coordinator publishes | the import coordinator's next presentation | Not measured as slow; not fixed |
+| Start an import | `Import` disabled, as a held click is | — | Measured not in the click's step (two hops: the intent stream, then the coordinator's presentation); fixed (APP-088, `heldImportClicks`) |
 | Cancel an import | `Stopping…` at once | — | Already immediate |
 
 ## Benchmarks
@@ -105,6 +106,20 @@ or its catalog.
 | `grid.hideApply.days5000.mainThread` | 138.0 | 116.3 | The grid's main-thread apply of that removal (and, alternating, its return) |
 | `grid.structuralApply.days5000.mainThread` | 136.1 | 109.3 | For comparison: a whole-grid structural apply |
 | `grid.reorderApply.days5000.mainThread` | 297.8 | 356.1 | For comparison: the 200-photo reorder |
+
+The acts DES-120 shows first, `script/bench.sh run` on 652d4b54 (same harness):
+
+| Case | M instructions | Median ms | What it is |
+| --- | --- | --- | --- |
+| `grid.choiceReconfigure.days5000.mainThread` | 6.0 | 0.7 | A choice on 5 visible tiles of 158,000: the tile store and an in-place reconfigure on the main thread, no structural apply |
+| `people.overlayFavourite.people2000` | 62.1 | 4.2 | Add to Favorites laid over 2,000 people and re-sorted by the builder's order, on the main actor |
+| `projection.expandHeld.days5000` | 1866.7 | 133.8 | Projection re-collapses the held 158,000-photo order (1,580 pairs) with one pair expanded, off the main actor: the same pure collapse a pass makes, without the wait for a pass |
+
+- A choice costs the visible tiles it changes, not the library.
+- A People act costs the people (a sort of 2,000 with the locale's name order), not the photos.
+- An expansion no longer waits behind a pass in flight, but its collapse walks the whole held
+  order, as every pass's does, and its grid apply is the grid structure's (the reorder-build work
+  in flight). Making the collapse cost in the stack's members is not done here.
 
 - The hide itself is cheap and in proportion to the change past one copy of the order.
 - The grid's removal of a few items is not: its main-thread apply costs about what a

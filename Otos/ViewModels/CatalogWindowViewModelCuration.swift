@@ -3,21 +3,30 @@ import OSLog
 
 /// Curation intent guide
 ///
-/// A curation command is captured on the MainActor, then delivered losslessly to the
-/// Store's one-row-update owner. The command carries the display/query facts needed to
-/// reject stale post-await navigation; it never carries a catalog row or a filesystem
-/// fact. Grid, loupe, compare, menu, keyboard, accessibility, context menu and inline
-/// controls all call `submitMediaChoice(_:target:origin:)`.
+/// The result first (DES-120, APP-086). A Like, Dislike or Not Rated shows in the step that
+/// handles it, before the catalog records it: the choice is held in `MediaChoiceOverlay`, the
+/// tiles, panes and toolbar control of its targets show it at once (`showChoices`), the
+/// selection advances when Advance After Choice is on, Edit ▸ Undo names the act, and
+/// Projection takes a target out of a choice filter it no longer matches
+/// (`CatalogProjectionIntent.choose`). The write follows on the one media-choice stream, to
+/// the one writer (`MediaChoiceWriter`, the Store's one-row-update owner). Grid, loupe,
+/// compare, menu, keyboard, accessibility, context menu and inline controls all call
+/// `submitMediaChoice(_:target:origin:)`.
 ///
-/// Undo (APP-039). A user command's inverse is registered on `windowUndoManager`
-/// when the Store confirms the write and reports the prior choice per asset — the
-/// prior is catalog truth, so it is read where truth lives, never guessed from a tile
-/// cache. Undo and redo enqueue the same command type through the same serial stream
-/// (so they order after any user choice still in flight), carry per-asset assignments
-/// because a batch may have held mixed priors, never advance the selection, and
-/// register their own inverse synchronously at fire time so the manager files it on
-/// the opposite stack. Move to Trash is not registered here: Finder's Put Back is its
-/// undo (ADR 0022).
+/// The stream's consumer applies the Store's answer in submission order: a write that landed
+/// is reported to the overlay and to Projection, which keep the choice until a read that
+/// started after it covers it; a write that found no row, or changed nothing, takes the act's
+/// undo entry back off the stack; a write that failed withdraws the choice — the targets show
+/// what they showed before, are selected, and the failure alert says so (DES-076's form).
+///
+/// Undo (APP-039). An act's undo is registered as it is shown, under a record of it
+/// (`MediaChoiceUndoRecord`) the consumer fills with the prior choice per asset the Store
+/// reports — catalog truth, read where truth lives. Undo and redo enqueue a restore of that
+/// record on the same stream, so one pressed before the act's write lands is written after
+/// it, from the priors the write reported; what an undo shows at once is those priors when
+/// they are known, else what the window showed before the act. Undo and redo never advance
+/// the selection and register their opposite entry synchronously at fire time, so the manager
+/// files it on the other stack. Move to Trash is not registered here (ADR 0022).
 nonisolated enum MediaTarget: Equatable {
     case current
     case item(MediaAssetID)
@@ -33,36 +42,105 @@ nonisolated enum MediaChoiceOrigin: String, Equatable {
     case contextMenu
     case undo
     case redo
+}
 
-    /// Undo and redo restore recorded values; only a user's own choice registers an
-    /// inverse at completion or advances the selection.
-    var isUserChoice: Bool {
-        switch self {
-        case .undo, .redo: false
-        default: true
+/// The one write of curation: the Store's in production, a held or failing one in tests.
+struct MediaChoiceWriter {
+    let write: @Sendable ([MediaAssetID: MediaChoice]) async throws -> CatalogStore.MediaChoiceMutationResult
+
+    static func store(_ store: CatalogStore) -> MediaChoiceWriter {
+        MediaChoiceWriter { assignments in try await store.setMediaChoices(assignments) }
+    }
+}
+
+/// One user choice and everything its undo and redo need: what it assigned, what the window
+/// showed before it, and — once its write answers — what each asset held in the catalog.
+/// Also the act's undo target, so an act whose write changed nothing or failed takes back
+/// exactly its own entries. Only the media-choice consumer writes `previous`, in submission
+/// order, so a restore always finds what the act's write reported.
+@MainActor
+final class MediaChoiceUndoRecord {
+    let assignments: [MediaAssetID: MediaChoice]
+    let shownBefore: [MediaAssetID: MediaChoice]
+    let actionName: String
+    /// The catalog's choice per asset before the act's write; nil until it answers, and
+    /// for good when it failed.
+    var previous: [MediaAssetID: MediaChoice]?
+
+    init(assignments: [MediaAssetID: MediaChoice], shownBefore: [MediaAssetID: MediaChoice], actionName: String) {
+        self.assignments = assignments
+        self.shownBefore = shownBefore
+        self.actionName = actionName
+    }
+
+    /// What the act changed in the catalog: each asset whose prior differed from its new value.
+    var changedPriors: [MediaAssetID: MediaChoice]? {
+        previous.map { previous in previous.filter { assignments[$0.key] != $0.value } }
+    }
+
+    /// What an undo writes (the priors of what changed) or a redo writes (the act again, for
+    /// what changed). Nil before the act's write answered.
+    func restore(undoing: Bool) -> [MediaAssetID: MediaChoice]? {
+        guard let changed = changedPriors else { return nil }
+        return undoing ? changed : assignments.filter { changed[$0.key] != nil }
+    }
+
+    /// What an undo or redo shows the moment it is pressed: what it will write when that is
+    /// known, else what the window showed before the act, or the act itself.
+    func shown(undoing: Bool) -> [MediaAssetID: MediaChoice] {
+        restore(undoing: undoing) ?? (undoing ? shownBefore : assignments)
+    }
+}
+
+struct MediaChoiceCommand {
+    enum Write {
+        case assign([MediaAssetID: MediaChoice])
+        /// Undo (`undoing`) or redo of `record`, resolved when the consumer reaches it.
+        case restore(MediaChoiceUndoRecord, undoing: Bool)
+    }
+
+    let write: Write
+    /// The overlay command holding what this write shows, and the items it holds them for.
+    let held: UInt64
+    let heldIDs: [MediaAssetID]
+    /// The act's record, for a user choice; its undo and redo carry it in `write`.
+    let record: MediaChoiceUndoRecord?
+    let origin: MediaChoiceOrigin
+
+    /// What the write assigns, read when the consumer reaches it: a restore's priors are
+    /// known only once the act's own write, ahead of it on the stream, has answered.
+    var assignments: [MediaAssetID: MediaChoice]? {
+        switch write {
+        case let .assign(assignments): assignments
+        case let .restore(record, undoing): record.restore(undoing: undoing)
         }
     }
 }
 
-struct MediaChoiceCommand: Equatable {
-    /// The choice per asset. A user choice assigns one value to every target; an undo
-    /// or redo restores whatever each asset held.
-    let assignments: [MediaAssetID: MediaChoice]
-    /// Targets in display order — the order the batch was resolved in.
-    let ids: [MediaAssetID]
-    /// Menu title for the undo entry: `Like`, `Dislike`, `Mark as Not Rated`.
-    let actionName: String
-    let target: MediaTarget
-    let mode: BrowserViewMode
-    let descriptor: CatalogQueryDescriptor
-    let queryGeneration: UInt64
-    let orderedIDs: [MediaAssetID]
-    let selection: GridSelection
-    let comparePair: ComparePair
-    let comparePane: PanePosition
-    let advanceFrom: MediaAssetID?
-    let advanceTo: MediaAssetID?
-    let origin: MediaChoiceOrigin
+/// What a write of choices came to, applied on the main actor after its await.
+enum MediaChoiceOutcome {
+    case written(CatalogStore.MediaChoiceMutationResult)
+    /// A restore whose act's write failed, or changed nothing: nothing to write.
+    case nothingToWrite
+    case failed(any Error)
+}
+
+/// The failure alert for a choice the catalog could not record (DES-076's form).
+nonisolated struct MediaChoiceFailure: Equatable {
+    let count: Int
+
+    var title: String {
+        count == 1 ? "This Choice Couldn't Be Saved" : "These Choices Couldn't Be Saved"
+    }
+
+    static let message = "The affected items are back as they were and selected."
+}
+
+/// What the tiles on screen must show again, after a choice changed what some of them hold:
+/// the grid reconfigures the visible ones among `ids` in place, never applying its structure.
+nonisolated struct TileChoiceChange: Equatable {
+    var revision: UInt64 = 0
+    var ids: Set<MediaAssetID> = []
 }
 
 /// What Edit ▸ Undo / Redo render. Published by the ViewModel after every registration,
@@ -83,12 +161,12 @@ extension CatalogWindowViewModel {
         !targetIDs(.current).isEmpty
     }
 
-    /// Reads the current targets' choices once per target change (and once after a
-    /// confirmed write) and publishes the one value they share, or nil.
+    /// Reads the current targets' choices once per target change and publishes the one value
+    /// they share, or nil. The read answers through the overlay, so a choice held for them is
+    /// what it reports.
     ///
     /// A failed read publishes no choice: the value on display belongs to the previous
-    /// targets, or to the state before the write that asked again, so it is retracted to
-    /// nil (unknown) and the next target change or confirmed write reads again.
+    /// targets, so it is retracted to nil (unknown) and the next target change reads again.
     func refreshCurrentTargetChoice() {
         currentTargetChoiceTask?.cancel()
         let ids = targetIDs(.current)
@@ -125,6 +203,7 @@ extension CatalogWindowViewModel {
         preferences.set(enabled, forKey: Self.advanceAfterMediaChoiceDefaultsKey)
     }
 
+    /// Like, Dislike and Mark as Not Rated, from every surface: shown now, written after.
     func submitMediaChoice(
         _ choice: MediaChoice,
         target: MediaTarget = .current,
@@ -137,53 +216,66 @@ extension CatalogWindowViewModel {
         guard !ids.isEmpty else {
             return
         }
-        let orderedIDs = state.mediaGrid.orderedAssetIDs
-        let advanceFrom = ids.last
-        let advanceTo: MediaAssetID? = advanceFrom.flatMap { id in
-            guard let index = orderedIDs.firstIndex(of: id) else {
-                return nil
-            }
-            return orderedIDs.dropFirst(index + 1).first
-        }
-        enqueueMediaChoice(
-            assignments: Dictionary(uniqueKeysWithValues: ids.map { ($0, choice) }),
-            ids: ids,
-            actionName: choice.actionLabel,
-            target: target,
-            advanceFrom: advanceFrom,
-            advanceTo: advanceTo,
-            origin: origin
+        let assignments = Dictionary(uniqueKeysWithValues: ids.map { ($0, choice) })
+        let record = MediaChoiceUndoRecord(
+            assignments: assignments,
+            shownBefore: Dictionary(uniqueKeysWithValues: ids.map { ($0, shownChoice(for: $0)) }),
+            actionName: choice.actionLabel
         )
+        let held = holdChoices(assignments)
+        registerMediaChoiceUndo(record)
+        advanceAfterChoice(from: ids.last)
+        enqueueMediaChoice(MediaChoiceCommand(
+            write: .assign(assignments), held: held, heldIDs: ids, record: record, origin: origin
+        ))
         OtosLog.ui.notice(
             "op=mediaChoice.submit choice=\(choice.rawValue, privacy: .public) count=\(ids.count, privacy: .public) origin=\(origin.rawValue, privacy: .public)"
         )
     }
 
-    private func enqueueMediaChoice(
-        assignments: [MediaAssetID: MediaChoice],
-        ids: [MediaAssetID],
-        actionName: String,
-        target: MediaTarget,
-        advanceFrom: MediaAssetID?,
-        advanceTo: MediaAssetID?,
-        origin: MediaChoiceOrigin
-    ) {
-        let command = MediaChoiceCommand(
-            assignments: assignments,
-            ids: ids,
-            actionName: actionName,
-            target: target,
-            mode: viewMode,
-            descriptor: queryDescriptor,
-            queryGeneration: queryGeneration,
-            orderedIDs: state.mediaGrid.orderedAssetIDs,
-            selection: gridSelection,
-            comparePair: comparePair,
-            comparePane: activeComparePane,
-            advanceFrom: advanceFrom,
-            advanceTo: advanceTo,
-            origin: origin
-        )
+    /// The choice the window shows for `id` now: one held, else what its tile last read.
+    private func shownChoice(for id: MediaAssetID) -> MediaChoice {
+        mediaChoiceOverlay.choice(for: id) ?? tileContentStore.content(for: id)?.detail.mediaChoice ?? .default
+    }
+
+    /// Holds `assignments` until the catalog's word on them is read, and shows them now.
+    private func holdChoices(_ assignments: [MediaAssetID: MediaChoice]) -> UInt64 {
+        let held = mediaChoiceOverlay.submit(assignments, shown: shownChoice(for:))
+        showChoices(assignments)
+        // Command: Projection takes a target out of a choice filter before it hears the
+        // write landed.
+        projectionIntentContinuation.yield(.choose(assignments, request: held))
+        return held
+    }
+
+    /// Shows `choices` on every surface that draws them, in this step: the tiles in the tile
+    /// store (the grid reconfigures the visible ones among them), the loupe and compare panes,
+    /// and the toolbar control when they decide the targets' shared value.
+    private func showChoices(_ choices: [MediaAssetID: MediaChoice]) {
+        var changed = Set<MediaAssetID>()
+        for (id, choice) in choices where tileContentStore.setMediaChoice(choice, for: id) {
+            changed.insert(id)
+        }
+        if !changed.isEmpty {
+            tileChoiceChange = TileChoiceChange(revision: tileChoiceChange.revision &+ 1, ids: changed)
+        }
+        updatePaneMediaChoices(choices)
+        let targets = targetIDs(.current)
+        let shared = Set(targets.compactMap { choices[$0] })
+        if !targets.isEmpty, targets.count <= Self.currentTargetChoiceLimit, targets.allSatisfy({ choices[$0] != nil }),
+           shared.count == 1
+        {
+            currentTargetChoiceTask?.cancel()
+            currentTargetChoiceTask = nil
+            if currentTargetChoice != shared.first {
+                currentTargetChoice = shared.first
+            }
+        } else if targets.contains(where: { choices[$0] != nil }) {
+            refreshCurrentTargetChoice()
+        }
+    }
+
+    private func enqueueMediaChoice(_ command: MediaChoiceCommand) {
         submittedMediaChoiceCount += 1
         mediaChoiceContinuation.yield(command)
     }
@@ -231,37 +323,86 @@ extension CatalogWindowViewModel {
         }
     }
 
-    func startMediaChoiceForwarding(store: CatalogStore) {
-        mediaChoiceForwardingTask = Task { [weak self, mediaChoiceStream, store] in
+    /// The one consumer of choice writes, in submission order: each write goes to `writer`
+    /// and its answer is applied when the await returns (`applyMediaChoiceOutcome`). A
+    /// restore's assignments are read as the consumer reaches it, before the await. Holds the
+    /// view model weakly across each wait and ends with the stream.
+    func startMediaChoiceForwarding(writer: MediaChoiceWriter) {
+        mediaChoiceForwardingTask = Task { [weak self, mediaChoiceStream, writer] in
             for await command in mediaChoiceStream {
                 defer { self?.handledMediaChoiceCount += 1 }
                 guard !Task.isCancelled else {
                     break
                 }
-                do {
-                    let result = try await store.setMediaChoices(command.assignments)
-                    guard result.accepted else {
-                        OtosLog.ui.notice(
-                            "op=mediaChoice.persist outcome=noRows origin=\(command.origin.rawValue, privacy: .public)"
-                        )
-                        continue
+                let outcome: MediaChoiceOutcome
+                if let assignments = command.assignments, !assignments.isEmpty {
+                    do {
+                        outcome = try await .written(writer.write(assignments))
+                    } catch {
+                        outcome = .failed(error)
                     }
-                    guard let self else {
-                        break
-                    }
-                    updatePaneMediaChoices(command.assignments)
-                    completeMediaChoice(command)
-                    refreshCurrentTargetChoice()
-                    if command.origin.isUserChoice {
-                        registerUndo(inverseOf: command, previous: result.previous)
-                    }
-                } catch {
-                    OtosLog.persistence.error(
-                        "op=mediaChoice.persist failed=\(String(describing: error), privacy: .public)"
-                    )
+                } else {
+                    outcome = .nothingToWrite
                 }
+                guard let self else {
+                    break
+                }
+                applyMediaChoiceOutcome(outcome, of: command)
             }
         }
+    }
+
+    /// The Store's answer to one write, in submission order.
+    func applyMediaChoiceOutcome(_ outcome: MediaChoiceOutcome, of command: MediaChoiceCommand) {
+        switch outcome {
+        case let .written(result) where result.accepted:
+            command.record?.previous = result.previous
+            if let record = command.record, record.changedPriors?.isEmpty != false {
+                // The act changed nothing: there is nothing to undo.
+                removeMediaChoiceUndo(record)
+            }
+            mediaChoiceOverlay.landed(command.held, ids: command.heldIDs)
+            projectionIntentContinuation.yield(.choicesLanded(request: command.held))
+            OtosLog.ui.noticeOperation("mediaChoice.persist", phase: "landed", fields: [
+                "origin": command.origin.rawValue,
+                "changed": "\(result.changedCount)",
+            ])
+        case .written:
+            // No row exists for any target: they left the catalog, and their reads show it.
+            withdrawChoices(command)
+            command.record.map(removeMediaChoiceUndo)
+            OtosLog.ui.noticeOperation("mediaChoice.persist", phase: "noRows", fields: ["origin": command.origin.rawValue])
+        case .nothingToWrite:
+            withdrawChoices(command)
+            OtosLog.ui.noticeOperation("mediaChoice.persist", phase: "nothingToWrite", fields: ["origin": command.origin.rawValue])
+        case let .failed(error):
+            withdrawChoices(command)
+            let record: MediaChoiceUndoRecord? = switch command.write {
+            case .assign: command.record
+            case let .restore(record, _): record
+            }
+            record.map(removeMediaChoiceUndo)
+            let shown = state.mediaGrid.orderedAssetIDs.filter(Set(command.heldIDs).contains)
+            selectAssets(shown)
+            mediaChoiceFailure = MediaChoiceFailure(count: command.heldIDs.count)
+            OtosLog.persistence.errorOperation("mediaChoice.persist", phase: "failed", fields: [
+                "origin": command.origin.rawValue,
+                "count": "\(command.heldIDs.count)",
+                "error": String(describing: error),
+            ])
+        }
+    }
+
+    /// The write did not land: its choices come off every surface, which show what they
+    /// showed before, and Projection puts back what it took out of a choice filter.
+    private func withdrawChoices(_ command: MediaChoiceCommand) {
+        let shown = mediaChoiceOverlay.withdraw(command.held, ids: command.heldIDs)
+        showChoices(shown)
+        projectionIntentContinuation.yield(.choicesWithdrawn(request: command.held))
+    }
+
+    func dismissMediaChoiceFailure() {
+        mediaChoiceFailure = nil
     }
 
     // MARK: - Undo
@@ -285,50 +426,48 @@ extension CatalogWindowViewModel {
         OtosLog.ui.noticeOperation("redo", phase: "applied", fields: ["action": name])
     }
 
-    /// Registers the inverse of a confirmed user choice: restore each asset the write
-    /// actually changed to the value the Store reported it held.
-    private func registerUndo(inverseOf command: MediaChoiceCommand, previous: [MediaAssetID: MediaChoice]) {
-        let restored = previous.filter { command.assignments[$0.key] != $0.value }
-        guard !restored.isEmpty else { return }
-        let inverse = command.assignments.filter { restored[$0.key] != nil }
-        let name = command.actionName
-        // Explicit groups: registration happens on a store completion, not inside an
-        // AppKit event, so the manager's per-event grouping has nothing to close.
+    /// Registers the act's undo as it is shown. The handler holds the record; the manager
+    /// holds its target unretained.
+    private func registerMediaChoiceUndo(_ record: MediaChoiceUndoRecord) {
+        // Explicit group: a choice from a menu or the keyboard is inside the user's event, a
+        // VoiceOver action or a test is not, and the entry must be one group either way.
         windowUndoManager.beginUndoGrouping()
-        windowUndoManager.registerUndo(withTarget: self) { model in
-            model.restoreMediaChoices(restored, inverse: inverse, actionName: name)
+        windowUndoManager.registerUndo(withTarget: record) { [weak self, record] _ in
+            self?.flipMediaChoices(record)
         }
-        windowUndoManager.setActionName(name)
+        windowUndoManager.setActionName(record.actionName)
         windowUndoManager.endUndoGrouping()
         publishUndoState()
     }
 
-    /// Runs inside `UndoManager.undo()` / `redo()`: files the opposite entry
-    /// synchronously — the manager is undoing or redoing right now, so the entry
-    /// lands on the other stack — then enqueues the restore through the serial lane.
-    private func restoreMediaChoices(
-        _ assignments: [MediaAssetID: MediaChoice],
-        inverse: [MediaAssetID: MediaChoice],
-        actionName: String
-    ) {
-        let origin: MediaChoiceOrigin = windowUndoManager.isUndoing ? .undo : .redo
-        windowUndoManager.registerUndo(withTarget: self) { model in
-            model.restoreMediaChoices(inverse, inverse: assignments, actionName: actionName)
+    /// Takes the act's entries, undo or redo, back off the stack.
+    private func removeMediaChoiceUndo(_ record: MediaChoiceUndoRecord) {
+        windowUndoManager.removeAllActions(withTarget: record)
+        publishUndoState()
+    }
+
+    /// Runs inside `UndoManager.undo()` / `redo()`: files the opposite entry synchronously —
+    /// the manager is undoing or redoing right now, so the entry lands on the other stack —
+    /// shows the restore at once, and enqueues it through the serial lane.
+    private func flipMediaChoices(_ record: MediaChoiceUndoRecord) {
+        let undoing = windowUndoManager.isUndoing
+        windowUndoManager.registerUndo(withTarget: record) { [weak self, record] _ in
+            self?.flipMediaChoices(record)
         }
-        windowUndoManager.setActionName(actionName)
-        let ids = state.mediaGrid.orderedAssetIDs.filter { assignments[$0] != nil }
+        windowUndoManager.setActionName(record.actionName)
+        let shown = record.shown(undoing: undoing)
+        let ids = state.mediaGrid.orderedAssetIDs.filter { shown[$0] != nil }
         revealUndoneChange(ids)
-        enqueueMediaChoice(
-            assignments: assignments,
-            ids: ids,
-            actionName: actionName,
-            target: .current,
-            advanceFrom: nil,
-            advanceTo: nil,
-            origin: origin
-        )
+        let held = holdChoices(shown)
+        enqueueMediaChoice(MediaChoiceCommand(
+            write: .restore(record, undoing: undoing),
+            held: held,
+            heldIDs: Array(shown.keys),
+            record: nil,
+            origin: undoing ? .undo : .redo
+        ))
         OtosLog.ui.notice(
-            "op=mediaChoice.restore count=\(assignments.count, privacy: .public) origin=\(origin.rawValue, privacy: .public)"
+            "op=mediaChoice.restore count=\(shown.count, privacy: .public) origin=\(undoing ? "undo" : "redo", privacy: .public)"
         )
     }
 
@@ -356,48 +495,33 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private func completeMediaChoice(_ command: MediaChoiceCommand) {
-        // A story moves itself; a choice made while it plays leaves its position alone.
-        guard command.origin.isUserChoice,
-              advanceAfterMediaChoice,
-              story == nil,
-              let advanceTo = command.advanceTo,
-              viewMode == command.mode,
-              queryDescriptor == command.descriptor,
-              queryGeneration == command.queryGeneration,
-              state.mediaGrid.orderedAssetIDs.contains(advanceTo)
+    /// Advance After Choice: the item after the last target becomes the target, in the step
+    /// the choice is shown in. A story moves itself; a choice made while it plays leaves its
+    /// position alone.
+    private func advanceAfterChoice(from last: MediaAssetID?) {
+        let orderedIDs = state.mediaGrid.orderedAssetIDs
+        guard advanceAfterMediaChoice, story == nil, let last,
+              let index = orderedIDs.firstIndex(of: last), index + 1 < orderedIDs.count
         else {
             return
         }
-
-        switch command.mode {
+        let next = orderedIDs[index + 1]
+        switch viewMode {
         case .grid:
-            guard gridSelection == command.selection else { return }
-            gridSelection = gridSelection.plainClick(advanceTo)
+            gridSelection = gridSelection.plainClick(next)
         case .loupe:
-            guard focusedAssetID == command.ids.first else { return }
-            gridSelection = gridSelection.plainClick(advanceTo)
-            setFocus(advanceTo)
+            gridSelection = gridSelection.plainClick(next)
+            setFocus(next)
         case .compare:
-            guard comparePair == command.comparePair,
-                  activeComparePane == command.comparePane
-            else { return }
-            let next = ComparePairPolicy.click(
-                advanceTo,
-                replacing: command.comparePane,
-                pair: comparePair,
-                orderedIDs: state.mediaGrid.orderedAssetIDs
-            )
-            applyComparePair(next, orderedIDs: state.mediaGrid.orderedAssetIDs)
+            let pair = ComparePairPolicy.click(next, replacing: activeComparePane, pair: comparePair, orderedIDs: orderedIDs)
+            applyComparePair(pair, orderedIDs: orderedIDs)
         }
-        OtosLog.ui.notice(
-            "op=mediaChoice.advance phase=completed moved=1"
-        )
+        OtosLog.ui.notice("op=mediaChoice.advance phase=completed moved=1")
     }
 
     private func updatePaneMediaChoices(_ assignments: [MediaAssetID: MediaChoice]) {
         for slot in PaneSlot.allCases {
-            guard let preview = panePreviews[slot], let choice = assignments[preview.id] else {
+            guard let preview = panePreviews[slot], let choice = assignments[preview.id], preview.mediaChoice != choice else {
                 continue
             }
             panePreviews[slot] = PanePreview(

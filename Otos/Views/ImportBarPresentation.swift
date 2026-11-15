@@ -105,7 +105,8 @@ nonisolated enum ImportBarPresentation {
         presentation: MediaOperationSourcePresentation,
         preferences: ImportPreferences,
         sourceDisplayName: String,
-        isCancelling: Bool = false
+        isCancelling: Bool = false,
+        isImportClickHeld: Bool = false
     ) -> ImportBarDrawnState {
         let drawn = mapState(
             presentation: presentation,
@@ -117,8 +118,10 @@ nonisolated enum ImportBarPresentation {
         // exactly what it would otherwise say, and the Import button — the
         // control that took the click — is disabled until the coordinator
         // begins the run. Nothing else changes, so the determinate count and
-        // the choices stay where they were.
-        guard presentation.importRequested, drawn.primaryAction == .importNewItems, drawn.primaryEnabled else {
+        // the choices stay where they were. The window draws its own click so
+        // from the click on (`isImportClickHeld`), before the coordinator's
+        // presentation of it arrives (DES-120).
+        guard presentation.importRequested || isImportClickHeld, drawn.primaryAction == .importNewItems, drawn.primaryEnabled else {
             return drawn
         }
         return ImportBarDrawnState(

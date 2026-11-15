@@ -1009,6 +1009,27 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
     let renderedSourceMTimeSeconds: Int?
     let mediaChoice: MediaChoice
 
+    /// This detail with another choice: what a tile shows while a choice the catalog has not
+    /// recorded yet is held (`MediaChoiceOverlay`).
+    func with(mediaChoice choice: MediaChoice) -> MediaTileDetail {
+        MediaTileDetail(
+            libraryRootPath: libraryRootPath,
+            relativePath: relativePath,
+            byteSize: byteSize,
+            thumbnailPath: thumbnailPath,
+            previewPath: previewPath,
+            nativePixelWidth: nativePixelWidth,
+            nativePixelHeight: nativePixelHeight,
+            editRecipe: editRecipe,
+            renderedRevision: renderedRevision,
+            bestKind: bestKind,
+            durationSeconds: durationSeconds,
+            renderedSourceSize: renderedSourceSize,
+            renderedSourceMTimeSeconds: renderedSourceMTimeSeconds,
+            mediaChoice: choice
+        )
+    }
+
     init(
         libraryRootPath: LibraryRootPath,
         relativePath: MediaRelativePath,
@@ -1198,6 +1219,18 @@ nonisolated struct CatalogMediaGridState: Equatable {
         }
         var shown = self
         shown.content = removed
+        return shown
+    }
+
+    /// This grid, its descriptor and detail refresh kept, showing another collapse of its
+    /// stacks (`CatalogProjection.expanding`).
+    func replacingContent(
+        orderedAssetIDs: [MediaAssetID],
+        dayBuckets: [Date?],
+        stacks: CatalogGridStacks
+    ) -> CatalogMediaGridState {
+        var shown = self
+        shown.content = CatalogGridContent(orderedAssetIDs: orderedAssetIDs, dayBuckets: dayBuckets, stacks: stacks)
         return shown
     }
 

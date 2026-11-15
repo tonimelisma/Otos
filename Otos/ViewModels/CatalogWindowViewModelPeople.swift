@@ -77,26 +77,44 @@ struct PeopleSession: Equatable {
     var cursor: PersonID?
     var sheet: PersonSheetRequest?
     var mergeQuestion: PeopleMergeQuestion?
-    /// A merge the store refused after the user answered Merge, with its reason (DES-038).
-    var mergeRefusal: PeopleMergeRefusal?
+    /// An act the store refused or could not write, with its title and reason (DES-038).
+    var refusal: PeopleActRefusal?
 }
 
-/// Why a merge the user answered was refused when the store applied it: the question was
-/// judged against the state it was asked in, and an act submitted earlier, still in the
-/// stream, can change what the store finds.
-nonisolated struct PeopleMergeRefusal: Equatable, Sendable {
+/// An act the window showed that the store refused or could not write: a merge the user
+/// answered, judged against the state it was asked in while an act submitted earlier, still
+/// in the stream, changed what the store finds; or any act whose write failed. What it showed
+/// is withdrawn, and this says so.
+nonisolated struct PeopleActRefusal: Equatable, Sendable {
+    let title: String
     let reason: String
+
+    static let mergeTitle = "Couldn't Merge These People"
+    static let failedTitle = "This Change Couldn't Be Saved"
+
+    /// The words for an act other than a merge: its name on the undo stack, back as it was.
+    static func failed(_ title: String) -> PeopleActRefusal {
+        PeopleActRefusal(title: failedTitle, reason: "\u{201C}\(title)\u{201D} is back as it was.")
+    }
 }
 
-/// The People writes the window submitted — acts, and the undo and redo of each — that the
-/// store has not yet answered, each under the number its submission took (ADR 0032 rule 2: a
-/// request is a counter, and the store's answer names the request it is for). A merge, and
-/// the redo of one, which is that merge, takes a person away; while it is outstanding that
-/// person is the merge's to answer for: the store commits the write and rings the projection
-/// before its answer reaches the window, so a People state that no longer lists them can
-/// arrive first. Such a state leaves the window showing and filtering them; the store's
-/// confirmation takes the window to the person merged into (`didMerge`), and a refusal or a
-/// failed redo hands them back to the published state.
+/// The People writes the window submitted — acts, and the undo and redo of each — that People
+/// has not been built with yet, each under the number its submission took (ADR 0032 rule 2: a
+/// request is a counter, and the store's answer names the request it is for). The one overlay
+/// of People (DES-120):
+/// - **What an act shows.** An act whose result is known without a build — a name, a birthday,
+///   a favourite, hidden or not, a key photo, a face given to a person, to no one, or found not
+///   to be a face — is shown from its submission (`effect`, laid over the published state by
+///   `CatalogPeopleState.overlaying`). It stays shown until a People state built after its write
+///   landed arrives: the store's answer carries the request People must cover
+///   (`CatalogProjection.requestPeopleBuild`), and a state whose `covers` reaches it has the act
+///   in it. A write the store refused or failed is withdrawn at its answer.
+/// - **A merge in flight.** A merge, and the redo of one, takes a person away; while it is
+///   outstanding that person is the merge's to answer for: the store commits the write and
+///   rings the projection before its answer reaches the window, so a People state that no
+///   longer lists them can arrive first. Such a state leaves the window showing and filtering
+///   them; the store's confirmation takes the window to the person merged into (`didMerge`),
+///   and a refusal or a failed redo hands them back to the published state.
 nonisolated struct PendingPeopleActs: Equatable, Sendable {
     /// One person a write merges into another.
     nonisolated struct Merge: Equatable, Sendable {
@@ -104,25 +122,113 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
         let into: PersonID
     }
 
+    /// What one write shows until People is built with it.
+    private struct Shown: Equatable, Sendable {
+        let effect: PeopleOverlayEffect
+        /// The People request a build must cover to show the write; nil until it landed.
+        var covers: UInt64?
+    }
+
     private(set) var submitted: UInt64 = 0
     /// Each outstanding merge, by its request.
     private var merges: [UInt64: Merge] = [:]
+    /// Each write's effect, by its request, until People is built with it.
+    private var shown: [UInt64: Shown] = [:]
 
-    /// Numbers a write's submission; `merge` is the merge it makes, if it makes one.
-    mutating func submit(merging merge: Merge?) -> UInt64 {
+    /// Numbers a write's submission; `merge` is the merge it makes, if it makes one, and
+    /// `effect` what it shows until People is built with it.
+    mutating func submit(merging merge: Merge?, showing effect: PeopleOverlayEffect = .none) -> UInt64 {
         submitted &+= 1
         merges[submitted] = merge
+        if !effect.isEmpty {
+            shown[submitted] = Shown(effect: effect)
+        }
         return submitted
     }
 
-    /// The store answered `request`: the merge it was making, if it was one still outstanding.
-    mutating func answer(_ request: UInt64) -> Merge? {
-        merges.removeValue(forKey: request)
+    /// The store answered `request`: wrote it, and a People build covering `covers` has it; or
+    /// did not (`covers` nil), and what it shows is withdrawn. Returns the merge it was making,
+    /// if it was one still outstanding.
+    mutating func answer(_ request: UInt64, covers: UInt64?) -> Merge? {
+        if let covers {
+            shown[request]?.covers = covers
+        } else {
+            shown[request] = nil
+        }
+        return merges.removeValue(forKey: request)
+    }
+
+    /// A People state covering `covers` arrived: every write it has stops being shown over it.
+    /// True when one did.
+    mutating func retire(coveredBy covers: UInt64) -> Bool {
+        let before = shown.count
+        shown = shown.filter { ($0.value.covers ?? .max) > covers }
+        return shown.count != before
+    }
+
+    /// What every write still held shows, in the order they were submitted.
+    var effect: PeopleOverlayEffect {
+        shown.sorted { $0.key < $1.key }.reduce(PeopleOverlayEffect.none) { $0.then($1.value.effect) }
     }
 
     /// Whether an outstanding merge is taking `person` away.
     func isMergingAway(_ person: PersonID) -> Bool {
         merges.values.contains { $0.from == person }
+    }
+}
+
+nonisolated extension PeopleAct {
+    /// What the act shows before People is built with it, and what its undo shows: the act's
+    /// own result and the state it replaces, both read from `people`, the state the window
+    /// shows. An act whose result needs a build — a new person, a merge — shows nothing ahead.
+    func overlay(in people: CatalogPeopleState) -> (after: PeopleOverlayEffect, before: PeopleOverlayEffect) {
+        var after = PeopleOverlayEffect()
+        var before = PeopleOverlayEffect()
+        func person(_ id: PersonID, _ change: (inout PersonEdit, PersonSummary) -> PersonEdit) {
+            guard let summary = people.person(id) else { return }
+            var edit = PersonEdit()
+            before.people[id] = change(&edit, summary)
+            after.people[id] = edit
+        }
+        func faces(_ ids: [FaceID], _ override: PhotoFaceOverride) {
+            for id in ids {
+                guard let face = people.face(id) else { continue }
+                after.faces[id] = override
+                before.faces[id] = .person(face.person)
+            }
+        }
+        switch self {
+        case let .edit(id, name, birthday):
+            person(id) { edit, summary in
+                edit.name = .some(name)
+                edit.birthday = .some(birthday)
+                return PersonEdit(name: .some(summary.name), birthday: .some(summary.birthday))
+            }
+        case let .setFavorite(id, favorite):
+            person(id) { edit, summary in
+                edit.isFavorite = favorite
+                return PersonEdit(isFavorite: summary.isFavorite)
+            }
+        case let .setHidden(id, hidden):
+            person(id) { edit, summary in
+                edit.isHidden = hidden
+                return PersonEdit(isHidden: summary.isHidden)
+            }
+        case let .makeKeyPhoto(face, id):
+            person(id) { edit, summary in
+                edit.keyFace = face
+                return PersonEdit(keyFace: summary.cover?.id)
+            }
+        case let .notAFace(ids):
+            faces(ids, .removed)
+        case let .removeName(ids):
+            faces(ids, .person(nil))
+        case let .move(ids, to):
+            faces(ids, .person(to))
+        case .moveToNewPerson, .merge:
+            break
+        }
+        return (after, before)
     }
 }
 
@@ -138,20 +244,20 @@ extension PeopleAct {
 /// A People act on its way to the store, or an undo or redo of one; `request` is its
 /// `PendingPeopleActs` number.
 nonisolated enum PeopleIntent: Sendable {
-    /// `title` is the act's name on the undo stack, decided when the act is submitted, from
-    /// the state it changes (`undoTitle(for:)`).
-    case perform(PeopleAct, title: String, request: UInt64)
+    /// `record` is the act's undo, registered as the act was shown; the store's answer fills it.
+    case perform(PeopleAct, record: PeopleUndoRecord, request: UInt64)
     /// Undo or redo: writes `record` back. `act` and `undoing` name it.
     case flip(PeopleUndoRecord, act: PeopleAct, undoing: Bool, request: UInt64)
 }
 
 /// What the store did with one `PeopleIntent`, applied on the main actor once the store's
-/// await returns (ADR 0032 rule 1).
+/// await returns (ADR 0032 rule 1). A write that landed carries `covers`, the People request
+/// a build must cover to have it.
 enum PeopleIntentEvent {
-    case performed(PeopleAct, title: String, request: UInt64, outcome: PeopleActOutcome)
-    case refused(PeopleAct, request: UInt64, error: any Error)
+    case performed(PeopleAct, record: PeopleUndoRecord, request: UInt64, outcome: PeopleActOutcome, covers: UInt64)
+    case refused(PeopleAct, record: PeopleUndoRecord, request: UInt64, error: any Error)
     /// A flip wrote `record`'s restore back; `redo` is what that write replaced.
-    case flipped(PeopleUndoRecord, act: PeopleAct, undoing: Bool, request: UInt64, redo: PeopleRestore)
+    case flipped(PeopleUndoRecord, act: PeopleAct, undoing: Bool, request: UInt64, redo: PeopleRestore, covers: UInt64)
     case flipFailed(PeopleUndoRecord, act: PeopleAct, undoing: Bool, request: UInt64, error: any Error)
     /// An earlier flip of the act failed, so this one had nothing to write.
     case flipSkipped(act: PeopleAct, undoing: Bool, request: UInt64)
@@ -168,9 +274,15 @@ enum PeopleIntentEvent {
 @MainActor
 final class PeopleUndoRecord {
     var restore: PeopleRestore?
+    let title: String
+    /// What the act showed, and what its undo shows, before People is built with them.
+    let shown: (after: PeopleOverlayEffect, before: PeopleOverlayEffect)
 
-    init(_ restore: PeopleRestore) {
-        self.restore = restore
+    /// The act's record from its submission: what it writes back is set when the store
+    /// answers the act, ahead of any undo of it on the stream.
+    init(title: String, shown: (after: PeopleOverlayEffect, before: PeopleOverlayEffect)) {
+        self.title = title
+        self.shown = shown
     }
 }
 
@@ -335,7 +447,7 @@ nonisolated extension CatalogPeopleState {
 
     /// A face of the published People state.
     func face(_ id: FaceID) -> PhotoFace? {
-        photoFaces[id.asset]?.first { $0.id == id }
+        faces(of: id.asset).first { $0.id == id }
     }
 }
 
@@ -392,16 +504,21 @@ extension CatalogWindowViewModel {
 
     // MARK: - State
 
-    /// The published People state, and its lookups and rules; empty until the first build.
+    /// The People every surface shows, its lookups and rules: the published state with the
+    /// window's writes People has not been built with yet (`showPendingPeopleActs`); empty
+    /// until the first build.
     var peopleState: CatalogPeopleState {
-        state.people ?? .empty
+        shownPeople ?? .empty
     }
 
     /// A new People state: selections, the sheet and the filter forget people who are gone
     /// or hidden, the toolbar menu of a person's photos is built again, and the targets'
     /// faces are ranked again.
     func applyPeopleState(previous: CatalogWindowState, next: CatalogWindowState) {
-        guard let people = next.people, people != previous.people else { return }
+        guard let published = next.people, published != previous.people else { return }
+        _ = pendingPeopleActs.retire(coveredBy: published.covers)
+        shownPeople = published.overlaying(pendingPeopleActs.effect)
+        let people = peopleState
         let kept = peopleSession.selectedPeople.filter { people.person($0) != nil }
         if kept != peopleSession.selectedPeople {
             peopleSession.selectedPeople = kept
@@ -431,7 +548,7 @@ extension CatalogWindowViewModel {
     /// answers (`PendingPeopleActs`). Called for every new People state and every answer to a
     /// merge.
     private func reconcileShownPeople() {
-        guard let people = state.people else { return }
+        guard let people = shownPeople else { return }
         let visible = Set(people.visiblePeople.map(\.id))
         let pending = pendingPeopleActs
         let stays = { (person: PersonID) in visible.contains(person) || pending.isMergingAway(person) }
@@ -497,7 +614,7 @@ extension CatalogWindowViewModel {
     /// The arrow keys on the gallery, `columns` people to a row: the person the key reaches
     /// (`PeopleGalleryStep.target`).
     func moveGalleryCursor(_ step: PeopleGalleryStep, columns: Int, extending: Bool) -> PersonID? {
-        let people = state.people ?? .empty
+        let people = peopleState
         let sections = [people.visiblePeople.map(\.id), people.hiddenPeople.map(\.id)].filter { !$0.isEmpty }
         guard let target = step.target(from: peopleSession.cursor, columns: columns, sections: sections) else { return nil }
         selectPeople(target, modifiers: extending ? .shift : [])
@@ -626,12 +743,20 @@ extension CatalogWindowViewModel {
     /// or not. The one place an answer reaches what the window shows: a merge it wrote — the
     /// act or its redo — takes the window to the person merged into; a merge it did not write
     /// hands the person it would have taken back to the published state.
-    private func didAnswerPeopleWrite(_ request: UInt64, wrote: Bool) {
-        guard let merge = pendingPeopleActs.answer(request) else { return }
-        if wrote {
+    /// `covers` is the People request a build must cover to have the write; nil when the store
+    /// did not write it, and what it showed is withdrawn.
+    private func didAnswerPeopleWrite(_ request: UInt64, covers: UInt64?) {
+        let merge = pendingPeopleActs.answer(request, covers: covers)
+        if let merge, covers != nil {
             didMerge(merge.from, into: merge.into)
         }
-        reconcileShownPeople()
+        // A write the store did not make no longer shows; one it made shows until a build has it.
+        if covers == nil {
+            showPendingPeopleActs()
+        }
+        if merge != nil {
+            reconcileShownPeople()
+        }
     }
 
     /// The store merged `from` into `into`: the person they became is selected, and takes
@@ -656,20 +781,41 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// The store refused an act. A merge the user answered says why, and the person it would
-    /// have merged away is the published state's again; every other act is offered only while
-    /// its rules allow it, so its refusal is a race the log records.
-    private func didRefusePeopleAct(_ act: PeopleAct, request: UInt64, error: any Error) {
+    /// The store refused an act, or could not write it: what it showed is withdrawn and the
+    /// window says so. A merge the user answered says why, in the words its disabled act uses,
+    /// and the person it would have merged away is the published state's again; any other act
+    /// is offered only while its rules allow it, so it is back as it was, by name.
+    private func didRefusePeopleAct(_ act: PeopleAct, title: String, request: UInt64, error: any Error) {
         OtosLog.ui.errorOperation("people.act", phase: "refused", fields: [
             "act": act.logName, "faces": "\(act.faceCount)", "error": String(describing: error),
         ])
-        didAnswerPeopleWrite(request, wrote: false)
-        guard case let .merge(from, into) = act, let violation = error as? PeopleRuleViolation else { return }
-        peopleSession.mergeRefusal = PeopleMergeRefusal(reason: peopleState.mergeRefusal(violation, from: from, into: into))
+        didAnswerPeopleWrite(request, covers: nil)
+        if case let .merge(from, into) = act, let violation = error as? PeopleRuleViolation {
+            peopleSession.refusal = PeopleActRefusal(
+                title: PeopleActRefusal.mergeTitle,
+                reason: peopleState.mergeRefusal(violation, from: from, into: into)
+            )
+        } else {
+            peopleSession.refusal = .failed(title)
+        }
     }
 
-    func dismissMergeRefusal() {
-        peopleSession.mergeRefusal = nil
+    func dismissPeopleRefusal() {
+        peopleSession.refusal = nil
+    }
+
+    /// Lays the writes People has not been built with over the published state, as the one
+    /// People every surface reads (`peopleState`), and reconciles what the window shows and
+    /// filters with it. Called when an act is submitted or answered and for every new People
+    /// state; costs the people, never the photos (`CatalogPeopleState.overlaying`).
+    func showPendingPeopleActs() {
+        let shown = state.people.map { $0.overlaying(pendingPeopleActs.effect) }
+        if shownPeople != shown {
+            shownPeople = shown
+            reconcileShownPeople()
+            rebuildShownPersonMenu()
+            rebuildTargetFaceMenu()
+        }
     }
 
     // MARK: - A person's settings menu
@@ -793,7 +939,7 @@ extension CatalogWindowViewModel {
     /// The faces of the targeted photos, with the people each could be once ranked.
     private var targetFaces: SelectionFaces {
         let photos = targetIDs(.current)
-        var faces = (state.people ?? .empty).selectionFaces(for: photos)
+        var faces = peopleState.selectionFaces(for: photos)
         if faceCandidates.photos == photos {
             faces.candidates = faceCandidates.candidates
         }
@@ -819,7 +965,7 @@ extension CatalogWindowViewModel {
         rebuildTargetFaceMenu()
         facesReadDoorbell?.yield()
         faceCandidatesTask?.cancel()
-        guard !photos.isEmpty, !(state.people ?? .empty).selectionFaces(for: photos).faces.isEmpty else {
+        guard !photos.isEmpty, !peopleState.selectionFaces(for: photos).faces.isEmpty else {
             faceCandidates = .none
             faceCandidatesTask = nil
             return
@@ -965,14 +1111,20 @@ extension CatalogWindowViewModel {
 
     // MARK: - Delivery
 
-    /// Hands an act to the one consumer, numbered in `pendingPeopleActs`.
+    /// Hands an act to the one consumer, numbered in `pendingPeopleActs`, and shows it now:
+    /// what it changes is laid over People until a build has it (DES-120), and its undo is
+    /// on the stack before the store answers.
     private func submitPeopleAct(_ act: PeopleAct) {
-        let title = undoTitle(for: act)
-        let request = pendingPeopleActs.submit(merging: act.merge)
+        let shown = act.overlay(in: peopleState)
+        let record = PeopleUndoRecord(title: undoTitle(for: act), shown: shown)
+        let request = pendingPeopleActs.submit(merging: act.merge, showing: shown.after)
         OtosLog.ui.noticeOperation("people.act", phase: "submit", fields: [
             "act": act.logName, "faces": "\(act.faceCount)", "request": "\(request)",
+            "shown": "\(!shown.after.isEmpty)",
         ])
-        submitPeopleIntent(.perform(act, title: title, request: request), request: request)
+        registerPeopleUndo(record, act: act)
+        showPendingPeopleActs()
+        submitPeopleIntent(.perform(act, record: record, request: request), request: request)
     }
 
     /// The act's name on the undo stack, in the words of the item that made it and the
@@ -983,9 +1135,7 @@ extension CatalogWindowViewModel {
         case let .move(faces, _), let .moveToNewPerson(faces, _, _):
             return FaceActTitle.name(MediaCount(tiles: faces.compactMap(tile(of:))))
         case let .removeName(faces):
-            let person = faces.first.flatMap { face in
-                state.people?.photoFaces[face.asset]?.first { $0.id == face }?.person
-            }
+            let person = faces.first.flatMap { face in peopleState.face(face)?.person }
             return person.flatMap(peopleState.givenName).map(FaceActTitle.notPerson) ?? FaceActTitle.notTheSamePerson
         case .notAFace:
             return FaceActTitle.notAFace
@@ -1006,7 +1156,7 @@ extension CatalogWindowViewModel {
     }
 
     /// Hands `intent`, numbered `request`, to the stream. An intent the stream never takes is
-    /// never answered, so its number is answered here.
+    /// never answered, so its number is answered here, as not written.
     private func submitPeopleIntent(_ intent: PeopleIntent, request: UInt64) {
         switch peopleIntentContinuation.yield(intent) {
         case .enqueued:
@@ -1016,7 +1166,8 @@ extension CatalogWindowViewModel {
         @unknown default:
             OtosLog.ui.error("op=people.intent phase=unknownYield")
         }
-        _ = pendingPeopleActs.answer(request)
+        _ = pendingPeopleActs.answer(request, covers: nil)
+        showPendingPeopleActs()
     }
 
     /// The one consumer of People acts and their undo, in submission order: each intent goes
@@ -1027,9 +1178,10 @@ extension CatalogWindowViewModel {
         guard peopleIntentTask == nil else { return }
         let intents = peopleIntentStream
         let store = catalogStore
-        peopleIntentTask = Task { [weak self, store] in
+        let projection = catalogProjection
+        peopleIntentTask = Task { [weak self, store, projection] in
             for await intent in intents {
-                let event = await Self.runPeopleIntent(intent, store: store)
+                let event = await Self.runPeopleIntent(intent, store: store, projection: projection)
                 guard let self else { return }
                 applyPeopleIntentEvent(event)
             }
@@ -1037,20 +1189,27 @@ extension CatalogWindowViewModel {
     }
 
     /// One intent through the store. Touches no window state: it reads the flip's record as
-    /// its input before the await and returns what the store did. Every People state the
-    /// store's write publishes can reach the window while this is suspended.
-    static func runPeopleIntent(_ intent: PeopleIntent, store: CatalogStore) async -> PeopleIntentEvent {
+    /// its input before the await and returns what the store did, with the People request a
+    /// build must cover to have a write that landed. Every People state the store's write
+    /// publishes can reach the window while this is suspended.
+    static func runPeopleIntent(
+        _ intent: PeopleIntent, store: CatalogStore, projection: CatalogProjection
+    ) async -> PeopleIntentEvent {
         switch intent {
-        case let .perform(act, title, request):
+        case let .perform(act, record, request):
             do {
-                return try await .performed(act, title: title, request: request, outcome: store.perform(act))
+                let outcome = try await store.perform(act)
+                let covers = await projection.requestPeopleBuild()
+                return .performed(act, record: record, request: request, outcome: outcome, covers: covers)
             } catch {
-                return .refused(act, request: request, error: error)
+                return .refused(act, record: record, request: request, error: error)
             }
         case let .flip(record, act, undoing, request):
             guard let restore = record.restore else { return .flipSkipped(act: act, undoing: undoing, request: request) }
             do {
-                return try await .flipped(record, act: act, undoing: undoing, request: request, redo: store.restore(restore))
+                let redo = try await store.restore(restore)
+                let covers = await projection.requestPeopleBuild()
+                return .flipped(record, act: act, undoing: undoing, request: request, redo: redo, covers: covers)
             } catch {
                 return .flipFailed(record, act: act, undoing: undoing, request: request, error: error)
             }
@@ -1060,59 +1219,74 @@ extension CatalogWindowViewModel {
     /// What the store did with one intent, applied in the order the intents were submitted.
     func applyPeopleIntentEvent(_ event: PeopleIntentEvent) {
         switch event {
-        case let .performed(act, title, request, outcome):
-            didPerformPeopleAct(act, title: title, request: request, outcome: outcome)
-        case let .refused(act, request, error):
-            didRefusePeopleAct(act, request: request, error: error)
-        case let .flipped(record, act, undoing, request, redo):
+        case let .performed(act, record, request, outcome, covers):
+            record.restore = outcome.restore
+            OtosLog.ui.noticeOperation("people.act", phase: "performed", fields: [
+                "act": act.logName, "request": "\(request)", "covers": "\(covers)",
+            ])
+            didAnswerPeopleWrite(request, covers: covers)
+        case let .refused(act, record, request, error):
+            removePeopleUndo(record)
+            didRefusePeopleAct(act, title: record.title, request: request, error: error)
+        case let .flipped(record, act, undoing, request, redo, covers):
             record.restore = redo
             OtosLog.ui.noticeOperation("people.act", phase: undoing ? "undone" : "redone", fields: [
-                "act": act.logName, "request": "\(request)",
+                "act": act.logName, "request": "\(request)", "covers": "\(covers)",
             ])
-            didAnswerPeopleWrite(request, wrote: true)
+            didAnswerPeopleWrite(request, covers: covers)
         case let .flipFailed(record, act, undoing, request, error):
             record.restore = nil
+            removePeopleUndo(record)
             OtosLog.ui.errorOperation("people.act", phase: "\(undoing ? "undone" : "redone").failed", fields: [
                 "act": act.logName, "request": "\(request)", "error": String(describing: error),
             ])
-            didAnswerPeopleWrite(request, wrote: false)
+            didAnswerPeopleWrite(request, covers: nil)
+            peopleSession.refusal = .failed(record.title)
         case let .flipSkipped(act, undoing, request):
             OtosLog.ui.errorOperation("people.act", phase: "\(undoing ? "undone" : "redone").skipped", fields: [
                 "act": act.logName, "request": "\(request)", "reason": "earlierFlipFailed",
             ])
-            didAnswerPeopleWrite(request, wrote: false)
+            didAnswerPeopleWrite(request, covers: nil)
         }
     }
 
-    /// Registers the act's undo. Explicit groups: registration happens on a store
-    /// completion, not inside an AppKit event, so the manager's per-event grouping has
-    /// nothing to close.
-    private func didPerformPeopleAct(_ act: PeopleAct, title: String, request: UInt64, outcome: PeopleActOutcome) {
-        didAnswerPeopleWrite(request, wrote: true)
-        let record = PeopleUndoRecord(outcome.restore)
+    /// Registers the act's undo as it is shown. Explicit groups: a VoiceOver action or a test
+    /// is outside any AppKit event, and the entry must be one group either way. The record is
+    /// the target, so an act the store refuses takes back exactly its own entries; the handler
+    /// holds it, since the manager does not retain its target.
+    private func registerPeopleUndo(_ record: PeopleUndoRecord, act: PeopleAct) {
         windowUndoManager.beginUndoGrouping()
-        windowUndoManager.registerUndo(withTarget: self) { model in
-            model.flipPeopleAct(record, act: act, title: title)
+        windowUndoManager.registerUndo(withTarget: record) { [weak self, record] _ in
+            self?.flipPeopleAct(record, act: act)
         }
-        windowUndoManager.setActionName(title)
+        windowUndoManager.setActionName(record.title)
         windowUndoManager.endUndoGrouping()
+        publishUndoState()
+    }
+
+    private func removePeopleUndo(_ record: PeopleUndoRecord) {
+        windowUndoManager.removeAllActions(withTarget: record)
         publishUndoState()
     }
 
     /// Runs inside `UndoManager.undo()` and `redo()`: files the opposite entry synchronously
     /// — the manager is undoing or redoing right now, so it lands on the other stack and the
-    /// rest of that stack is kept — then writes the act's record back through the serial
-    /// lane. Undo and redo are the same write: each restores what the last one replaced. A
-    /// redo is the act, so it is numbered as the act was and a redone merge is answered as the
-    /// merge is (`didAnswerPeopleWrite`); an undo puts back the person a merge took and takes
-    /// no one away.
-    private func flipPeopleAct(_ record: PeopleUndoRecord, act: PeopleAct, title: String) {
+    /// rest of that stack is kept — shows what the flip restores, then writes the act's record
+    /// back through the serial lane. Undo and redo are the same write: each restores what the
+    /// last one replaced. A redo is the act, so it is numbered as the act was and a redone
+    /// merge is answered as the merge is (`didAnswerPeopleWrite`); an undo puts back the person
+    /// a merge took and takes no one away.
+    private func flipPeopleAct(_ record: PeopleUndoRecord, act: PeopleAct) {
         let undoing = windowUndoManager.isUndoing
-        windowUndoManager.registerUndo(withTarget: self) { model in
-            model.flipPeopleAct(record, act: act, title: title)
+        windowUndoManager.registerUndo(withTarget: record) { [weak self, record] _ in
+            self?.flipPeopleAct(record, act: act)
         }
-        windowUndoManager.setActionName(title)
-        let request = pendingPeopleActs.submit(merging: undoing ? nil : act.merge)
+        windowUndoManager.setActionName(record.title)
+        let request = pendingPeopleActs.submit(
+            merging: undoing ? nil : act.merge,
+            showing: undoing ? record.shown.before : record.shown.after
+        )
+        showPendingPeopleActs()
         submitPeopleIntent(.flip(record, act: act, undoing: undoing, request: request), request: request)
     }
 
@@ -1146,9 +1320,9 @@ extension CatalogWindowViewModel {
         return boxes
     }
 
-    /// A face's tile, while its photo's faces are published.
+    /// A face's tile, while its photo's faces are shown.
     func tile(of face: FaceID) -> FaceTile? {
-        state.people?.photoFaces[face.asset]?.first { $0.id == face }?.tile
+        peopleState.face(face)?.tile
     }
 
     // MARK: - The People filter
@@ -1160,7 +1334,7 @@ extension CatalogWindowViewModel {
     var peopleFilterControls: PeopleFilterControls {
         let checked = queryDescriptor.filter.people
         return PeopleFilterControls(
-            people: (state.people?.visiblePeople ?? []).filter { $0.name != nil || checked.contains($0.id) },
+            people: peopleState.visiblePeople.filter { $0.name != nil || checked.contains($0.id) },
             setPerson: { [weak self] person, included in self?.setPeopleFilter(person, included: included) },
             setUnidentified: { [weak self] included in self?.setUnidentifiedFilter(included) }
         )

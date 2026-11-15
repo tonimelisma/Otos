@@ -169,6 +169,7 @@ struct ContentView: View {
                         sourceDisplayName: viewModel.state.removableSources
                             .first { $0.path == presentation.sourcePath }?.displayName ?? "",
                         isCancelling: viewModel.cancellingImportSources.contains(presentation.sourcePath),
+                        isImportClickHeld: viewModel.heldImportClicks.contains(presentation.sourcePath),
                         importPreferences: viewModel.importPreferences,
                         setDestination: { destination in
                             viewModel.setImportDestination(destination, for: presentation.sourcePath)
@@ -417,9 +418,9 @@ struct ContentView: View {
             name: { viewModel.peopleState.name($0) },
             answer: { viewModel.answerMerge($0) }
         ))
-        .modifier(PeopleMergeRefusalAlert(
-            refusal: viewModel.peopleSession.mergeRefusal,
-            dismiss: { viewModel.dismissMergeRefusal() }
+        .modifier(PeopleRefusalAlert(
+            refusal: viewModel.peopleSession.refusal,
+            dismiss: { viewModel.dismissPeopleRefusal() }
         ))
         .sheet(
             isPresented: Binding(
@@ -483,6 +484,12 @@ struct ContentView: View {
                 Text(message)
             }
         }
+        // A choice the catalog could not record (DES-120): its targets show what they showed
+        // before and are selected, as a failed Move to Trash's are (DES-076).
+        .modifier(MediaChoiceFailureAlert(
+            failure: viewModel.mediaChoiceFailure,
+            dismiss: { viewModel.dismissMediaChoiceFailure() }
+        ))
         .alert(
             viewModel.trashAlertMessage ?? "Move to Trash",
             isPresented: Binding(
@@ -579,7 +586,7 @@ struct ContentView: View {
             )
         } else if viewModel.showsPeopleList {
             // Until People is first built the pane claims nothing (APP-044).
-            if let people = viewModel.state.people {
+            if let people = viewModel.shownPeople {
                 PeopleView(
                     people: people,
                     session: viewModel.peopleSession,
@@ -684,7 +691,7 @@ struct ContentView: View {
                 .onThisDay(viewModel.today)
             }
         case .people:
-            .people(viewModel.state.people)
+            .people(viewModel.shownPeople)
         case .duplicates:
             .duplicates(
                 viewModel.state.duplicates.map { duplicates in
@@ -725,6 +732,7 @@ struct ContentView: View {
                 onStackBadge: { viewModel.toggleStack(shownBy: $0) },
                 contextMenu: viewModel.makeMediaItemContextMenu,
                 faceOutlines: viewModel.outlinedFaceBoxes,
+                tileChoiceChange: viewModel.tileChoiceChange,
                 focusTargetID: viewModel.focusedAssetID,
                 dismissedCameraBannerIdentities: viewModel.dismissedCameraBannerIdentities,
                 onDismissCameraBanner: { viewModel.dismissCameraConnectionBanner($0.identity) }
@@ -770,6 +778,7 @@ struct ContentView: View {
                 isPickingNeutral: viewModel.isPickingNeutral,
                 onPickNeutral: viewModel.pickNeutral(at:),
                 faceOutlineBoxes: viewModel.outlinedFaceBoxes,
+                tileChoiceChange: viewModel.tileChoiceChange,
                 cropEditor: viewModel.isCropping
                     ? viewModel.editCropBase.map { base in
                         CropEditorInput(
@@ -824,7 +833,8 @@ struct ContentView: View {
                 activePane: viewModel.activeComparePane,
                 onPaneActivated: viewModel.activateComparePane,
                 contextMenu: viewModel.makeMediaItemContextMenu,
-                faceOutlineBoxes: viewModel.outlinedFaceBoxes
+                faceOutlineBoxes: viewModel.outlinedFaceBoxes,
+                tileChoiceChange: viewModel.tileChoiceChange
             )
         }
     }
@@ -922,5 +932,30 @@ private struct PersonToolbarMenu: View {
             Label(person.displayName, systemImage: "person.crop.circle")
         }
         .help("\(person.displayName)'s settings")
+    }
+}
+
+/// A choice the catalog could not record (DES-120), in DES-076's form: its items are back as
+/// they were and selected.
+private struct MediaChoiceFailureAlert: ViewModifier {
+    let failure: MediaChoiceFailure?
+    let dismiss: () -> Void
+
+    func body(content: Content) -> some View {
+        content.alert(
+            failure?.title ?? "",
+            isPresented: Binding(
+                get: { failure != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        dismiss()
+                    }
+                }
+            )
+        ) {
+            Button("OK", action: dismiss)
+        } message: {
+            Text(MediaChoiceFailure.message)
+        }
     }
 }

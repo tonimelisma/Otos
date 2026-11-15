@@ -147,6 +147,18 @@ final class TileContentStore {
         return changes
     }
 
+    /// Shows `choice` on the tile of `id`, if one is held, without touching its image: a
+    /// choice is not part of the image key. True when the tile's choice changed.
+    @discardableResult
+    func setMediaChoice(_ choice: MediaChoice, for id: MediaAssetID) -> Bool {
+        guard var entry = entries[id], entry.content.detail.mediaChoice != choice else {
+            return false
+        }
+        entry.content.detail = entry.content.detail.with(mediaChoice: choice)
+        entries[id] = entry
+        return true
+    }
+
     /// Inserts a decoded image only when `key` still matches the store's current key for
     /// that asset. The store, not the tile, owns this stale-completion check.
     @discardableResult

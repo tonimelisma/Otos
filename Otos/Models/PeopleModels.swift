@@ -302,19 +302,41 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     let visibleNames: [String]
     /// Each person's index in `people`.
     private let positions: [PersonID: Int]
-    /// Each photo's faces of visible people and unidentified faces, in reading order: what
-    /// the photo menus and the Info pane show, at once.
-    var photoFaces: [MediaAssetID: [PhotoFace]]
+    /// Each photo's faces of visible people and unidentified faces, in reading order, as
+    /// built: what the photo menus and the Info pane show, at once, read through
+    /// `faces(of:)` so the acts the window holds (`faceOverrides`) are laid over them.
+    private let photoFaces: [MediaAssetID: [PhotoFace]]
+    /// What the window's held People acts do to single faces until People is built with them
+    /// (`overlaying`): small, so a held act never copies `photoFaces`.
+    private let faceOverrides: [FaceID: PhotoFaceOverride]
     /// Read with every pass, and alone when rows were only added (`PeopleAssignment`).
     var unchecked: MediaCount
     /// Faces found that are still faces (not marked `This Is Not a Face`).
     let faceCount: Int
+    /// The `PeopleAssignment` request the build covers: a People act the window holds is
+    /// shown by every build that covers the request its write asked for (ADR 0032 rule 2).
+    var covers: UInt64
 
     init(
         people: [PersonSummary],
         photoFaces: [MediaAssetID: [PhotoFace]] = [:],
         unchecked: MediaCount,
-        faceCount: Int
+        faceCount: Int,
+        covers: UInt64 = 0
+    ) {
+        self.init(
+            people: people, photoFaces: photoFaces, faceOverrides: [:],
+            unchecked: unchecked, faceCount: faceCount, covers: covers
+        )
+    }
+
+    private init(
+        people: [PersonSummary],
+        photoFaces: [MediaAssetID: [PhotoFace]],
+        faceOverrides: [FaceID: PhotoFaceOverride],
+        unchecked: MediaCount,
+        faceCount: Int,
+        covers: UInt64
     ) {
         self.people = people
         visiblePeople = people.filter { !$0.isHidden }
@@ -322,21 +344,60 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
         visibleNames = visiblePeople.compactMap(\.name)
         positions = Dictionary(uniqueKeysWithValues: people.enumerated().map { ($1.id, $0) })
         self.photoFaces = photoFaces
+        self.faceOverrides = faceOverrides
         self.unchecked = unchecked
         self.faceCount = faceCount
+        self.covers = covers
     }
 
     /// The derived lists are functions of `people`, so they are not compared again.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.faceCount == rhs.faceCount && lhs.unchecked == rhs.unchecked && lhs.people == rhs.people
-            && lhs.photoFaces == rhs.photoFaces
+            && lhs.covers == rhs.covers && lhs.faceOverrides == rhs.faceOverrides && lhs.photoFaces == rhs.photoFaces
     }
 
     static let empty = CatalogPeopleState(people: [], unchecked: MediaCount(), faceCount: 0)
 
+    /// The faces of `photo`, in reading order, with what held acts do to them.
+    func faces(of photo: MediaAssetID) -> [PhotoFace] {
+        let built = photoFaces[photo] ?? []
+        guard !faceOverrides.isEmpty else {
+            return built
+        }
+        return built.compactMap { face in
+            switch faceOverrides[face.id] {
+            case nil: face
+            case .removed: nil
+            case let .person(person): PhotoFace(tile: face.tile, person: person)
+            }
+        }
+    }
+
     /// The faces of `photos`, in their order.
     func selectionFaces(for photos: [MediaAssetID]) -> SelectionFaces {
-        SelectionFaces(photos: photos, faces: photos.flatMap { photoFaces[$0] ?? [] })
+        SelectionFaces(photos: photos, faces: photos.flatMap(faces(of:)))
+    }
+
+    /// This state with `effect` laid over it: the window's People acts the store has answered
+    /// or will answer, shown before a build has them (`PendingPeopleActs`). The people it edits
+    /// are re-sorted by the builder's own gallery order (`PeopleStateBuilder.galleryOrder`);
+    /// a person's photo count, which a face leaving them may change, keeps its build's value
+    /// until the next build. Costs the people and the faces it changes, never the photos.
+    func overlaying(_ effect: PeopleOverlayEffect) -> CatalogPeopleState {
+        guard !effect.isEmpty else {
+            return self
+        }
+        var faceOverrides = faceOverrides
+        faceOverrides.merge(effect.faces) { _, new in new }
+        var people = people
+        if !effect.people.isEmpty {
+            people = people.map { summary in effect.people[summary.id].map { summary.editing($0, faces: self) } ?? summary }
+                .sorted(by: PeopleStateBuilder.galleryOrder)
+        }
+        return CatalogPeopleState(
+            people: people, photoFaces: photoFaces, faceOverrides: faceOverrides,
+            unchecked: unchecked, faceCount: faceCount, covers: covers
+        )
     }
 
     func person(_ id: PersonID) -> PersonSummary? {

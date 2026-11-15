@@ -14,7 +14,7 @@ struct CatalogWindowViewModelCurationTests {
             let model = makeCurationModel()
             model.applyState(curationWindowState(ids: library.ids))
             _ = model.applyGridClick(hit: library.ids[0], modifiers: [], orderedIDs: library.ids)
-            model.startMediaChoiceForwarding(store: library.store)
+            model.startMediaChoiceForwarding(writer: .store(library.store))
             defer { model.mediaChoiceForwardingTask?.cancel() }
 
             model.submitMediaChoice(.liked, origin: .keyboard)
@@ -34,7 +34,7 @@ struct CatalogWindowViewModelCurationTests {
             model.applyState(curationWindowState(ids: library.ids))
             _ = model.applyGridClick(hit: library.ids[0], modifiers: [], orderedIDs: library.ids)
             model.setAdvanceAfterMediaChoice(true)
-            model.startMediaChoiceForwarding(store: library.store)
+            model.startMediaChoiceForwarding(writer: .store(library.store))
             defer { model.mediaChoiceForwardingTask?.cancel() }
 
             model.submitMediaChoice(.notRated, origin: .keyboard)
@@ -52,7 +52,7 @@ struct CatalogWindowViewModelCurationTests {
             model.applyState(curationWindowState(ids: library.ids))
             _ = model.applyGridClick(hit: library.ids[1], modifiers: [], orderedIDs: library.ids)
             model.setAdvanceAfterMediaChoice(true)
-            model.startMediaChoiceForwarding(store: library.store)
+            model.startMediaChoiceForwarding(writer: .store(library.store))
             defer { model.mediaChoiceForwardingTask?.cancel() }
 
             model.submitMediaChoice(.liked, origin: .keyboard)
@@ -77,7 +77,7 @@ struct CatalogWindowViewModelCurationTests {
             )
             let ids = library.ids
             model.applyState(curationWindowState(ids: ids))
-            model.startMediaChoiceForwarding(store: library.store)
+            model.startMediaChoiceForwarding(writer: .store(library.store))
             defer { model.mediaChoiceForwardingTask?.cancel() }
 
             _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
@@ -102,7 +102,10 @@ struct CatalogWindowViewModelCurationTests {
         }
     }
 
-    @Test func rejectedStoreMutationNeverAdvances() async throws {
+    /// A choice on items the catalog no longer holds is shown and advances, then the Store
+    /// finds no row: the choice is withdrawn and its undo taken off the stack, with no alert,
+    /// since the items left the catalog and its next read shows it.
+    @Test func aChoiceOnItemsTheCatalogNoLongerHoldsIsWithdrawnWithoutAnAlert() async throws {
         let model = makeCurationModel()
         let ids = ["choice-0.jpg", "choice-1.jpg"].map {
             MediaAssetID(
@@ -113,13 +116,17 @@ struct CatalogWindowViewModelCurationTests {
         model.applyState(curationWindowState(ids: ids))
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         model.setAdvanceAfterMediaChoice(true)
-        model.startMediaChoiceForwarding(store: model.catalogStore)
+        model.startMediaChoiceForwarding(writer: .store(model.catalogStore))
         defer { model.mediaChoiceForwardingTask?.cancel() }
 
         model.submitMediaChoice(.liked, origin: .keyboard)
+        #expect(model.gridSelection.selection == [ids[1]])
+        #expect(model.undoMenuState.canUndo)
         try await waitUntil { model.hasSettledMediaChoices }
 
-        #expect(model.gridSelection.selection == [ids[0]])
+        #expect(model.mediaChoiceOverlay.isEmpty)
+        #expect(!model.undoMenuState.canUndo)
+        #expect(model.mediaChoiceFailure == nil)
     }
 }
 

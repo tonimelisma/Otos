@@ -564,6 +564,89 @@ struct BenchmarkTests {
         }
     }
 
+    /// An act shown in the step that handles it (DES-120), at the owner's size. A choice on five
+    /// visible tiles reconfigures them in place on the main thread, never through a structural
+    /// apply; an expansion re-collapses the held order off the main actor; a favourite lays
+    /// over 2,000 people and re-sorts them by the builder's order.
+    @Test func shownFirstCases() async throws {
+        let owner = Self.dayGroupedGrid(prefix: "s/", photos: 158_000, days: 5000)
+        let ids = owner.orderedAssetIDs
+        // One RAW+JPEG pair every 100 photos: the RAW is the photo after its JPEG.
+        let pairs = stride(from: 0, to: ids.count - 1, by: 100).map { index in
+            PhotoStack(
+                id: PhotoStackID(kind: .pair, libraryRootPath: ids[index].libraryRootPath, key: "\(index)"),
+                members: [ids[index], ids[index + 1]],
+                key: ids[index],
+                keyChoice: .notRated,
+                rawMembers: [ids[index + 1]],
+                photos: [ids[index]]
+            )
+        }
+        let stacks = CatalogStacks(pairs)
+        let collapsed = PhotoStackCollapse.collapse(
+            ids: ids, dayBuckets: owner.dayBuckets, coordinates: [], stacks: stacks, expanded: []
+        )
+        let held = CatalogProjectionReads.Collapse(
+            ids: ids, dayBuckets: owner.dayBuckets, coordinates: [], stacks: stacks, expanded: [], result: collapsed
+        )
+        let window = CatalogWindowState(
+            title: "All Media",
+            libraries: [],
+            removableSources: [],
+            mediaGrid: owner.replacingContent(
+                orderedAssetIDs: collapsed.ids, dayBuckets: collapsed.dayBuckets, stacks: collapsed.grid
+            ),
+            filterOptions: .empty,
+            resolvedSidebarSelection: .allMedia,
+            mediaEmptyState: nil,
+            deviceConnectionBanner: nil
+        )
+        let expanded: Set<PhotoStackID> = [pairs[pairs.count / 2].id]
+        try await Benchmark.measure("projection.expandHeld.days5000") {
+            let shown = try #require(CatalogProjection.expanding(window, held: held, to: expanded))
+            #expect(shown.state.mediaGrid.orderedAssetIDs.count == collapsed.ids.count + 1)
+        }
+        let people = (0 ..< 2000).map { index in
+            PersonSummary(
+                id: PersonID(rawValue: Int64(index)), name: "Person \(index)", birthday: nil, isHidden: false,
+                isFavorite: false, media: MediaCount(items: [(ids[index], false)]), cover: nil, userFaces: []
+            )
+        }
+        let state = CatalogPeopleState(people: people, unchecked: MediaCount(), faceCount: 2000)
+        var favourite = PeopleOverlayEffect()
+        favourite.people[PersonID(rawValue: 1999)] = PersonEdit(isFavorite: true)
+        try await Benchmark.measure("people.overlayFavourite.people2000") {
+            #expect(state.overlaying(favourite).people.first?.id == PersonID(rawValue: 1999))
+        }
+        try await Self.measureOwnerScaleChoice(owner)
+    }
+
+    @MainActor
+    private static func measureOwnerScaleChoice(_ owner: CatalogMediaGridState) async throws {
+        let controller = MediaGridViewController()
+        _ = controller.view
+        let window = orderedInTestWindow(width: 1200, height: 800, contentView: controller.view)
+        defer { window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        controller.receive(owner)
+        try await awaitGridShows(controller, owner)
+        controller.collectionView.layoutSubtreeIfNeeded()
+        let chosen = Array(controller.visibleAssetIDs().prefix(5))
+        for id in chosen {
+            controller.tileContents.mergeDetail(MediaTileDetail(libraryRootPath: id.libraryRootPath, relativePath: id.relativePath))
+        }
+        var change = TileChoiceChange()
+        var choice = MediaChoice.liked
+        try await Benchmark.measure("grid.choiceReconfigure.days5000.mainThread", counting: .mainThread) {
+            for id in chosen {
+                controller.tileContents.setMediaChoice(choice, for: id)
+            }
+            change = TileChoiceChange(revision: change.revision &+ 1, ids: Set(chosen))
+            controller.receiveTileChoiceChange(change)
+            choice = choice == .liked ? .notRated : .liked
+        }
+    }
+
     /// The two orders alternated, so every iteration moves the same 200 photos one way or
     /// back, the same query each time: the apply the projection publishes as capture days
     /// arrive. Measured twice: the whole process, and the main thread alone, which is the

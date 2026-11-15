@@ -40,6 +40,7 @@ struct LoupeView: View {
     /// The outlined faces' boxes by photo (ADR 0047): the filmstrip's tiles draw them, and
     /// the pane draws its photo's through the edit its decode shows.
     var faceOutlineBoxes: [MediaAssetID: [CGRect]] = [:]
+    var tileChoiceChange = TileChoiceChange()
     /// While the crop tool is on: the whole frame it draws over, and the crop.
     var cropEditor: CropEditorInput?
     var videoTrimCommand: VideoTrimCommand?
@@ -246,6 +247,7 @@ struct LoupeView: View {
             onMediaChoice: onMediaChoice,
             contextMenu: contextMenu,
             faceOutlines: faceOutlineBoxes,
+            tileChoiceChange: tileChoiceChange,
             focusTargetID: focusedAssetID
         )
     }

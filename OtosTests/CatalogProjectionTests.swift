@@ -545,7 +545,7 @@ struct CatalogProjectionTests {
             try await waitForProjectionQuiescence(projection)
             let settled = try #require(await recorder.snapshot().last)
             #expect(settled.mediaGrid.orderedAssetIDs == [order[0], order[2]])
-            #expect(await projection.hiddenItems.isEmpty, "the read of the mark retired the hide")
+            #expect(await projection.holdsNothing, "the read of the mark retired the hide")
             #expect(settled.mediaGrid.sharesContent(with: hiddenGrid), "no read after the hide moved the grid")
         }
     }

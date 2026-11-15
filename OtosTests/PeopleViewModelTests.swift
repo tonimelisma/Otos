@@ -315,7 +315,7 @@ struct PeopleViewModelTests {
         let people = try await fixture.people()
         let photo = fixture.like.asset
         fixture.show(people, scope: .allMedia, grid: [photo])
-        let box = try #require(people.photoFaces[photo]?.first { $0.id == fixture.like }?.tile.box)
+        let box = try #require(people.faces(of: photo).first { $0.id == fixture.like }?.tile.box)
 
         fixture.model.outlineFaces([fixture.like])
         #expect(fixture.model.outlinedFaceBoxes == [photo: [box]])
@@ -469,7 +469,7 @@ struct PeopleViewModelTests {
         try await Self.waitForUndo(fixture.model, title: "Undo Merge")
         #expect(fixture.model.queryDescriptor.filter.people == [fixture.sam])
         #expect(fixture.model.peopleSession.selectedPeople == [fixture.sam])
-        #expect(fixture.model.peopleSession.mergeRefusal == nil)
+        #expect(fixture.model.peopleSession.refusal == nil)
         await fixture.store.shutdown()
     }
 
@@ -490,12 +490,12 @@ struct PeopleViewModelTests {
         fixture.model.answerMerge(true)
         try await Self.waitForMergeRefusal(fixture.model)
 
-        #expect(fixture.model.peopleSession.mergeRefusal?.reason == "Unnamed Person and Sam are both in 1 photo")
+        #expect(fixture.model.peopleSession.refusal?.reason == "Unnamed Person and Sam are both in 1 photo")
         #expect(fixture.model.queryDescriptor.scope == .person(other))
         #expect(fixture.model.queryDescriptor.filter.people == [other])
         #expect(try await fixture.assignment(of: fixture.stranger) == .user(other))
-        fixture.model.dismissMergeRefusal()
-        #expect(fixture.model.peopleSession.mergeRefusal == nil)
+        fixture.model.dismissPeopleRefusal()
+        #expect(fixture.model.peopleSession.refusal == nil)
         await fixture.store.shutdown()
     }
 
@@ -518,7 +518,9 @@ struct PeopleViewModelTests {
         try #require(fixture.model.peopleSession.mergeQuestion != nil)
         fixture.model.answerMerge(true)
         let merge = try #require(await intents.next())
-        let answer = await CatalogWindowViewModel.runPeopleIntent(merge, store: fixture.store)
+        let answer = await CatalogWindowViewModel.runPeopleIntent(
+            merge, store: fixture.store, projection: fixture.model.catalogProjection
+        )
         let merged = try await fixture.people()
         #expect(merged.person(other) == nil)
         fixture.show(merged, scope: .person(other))
@@ -547,12 +549,16 @@ struct PeopleViewModelTests {
         fixture.model.askMerge(other, into: fixture.sam)
         fixture.model.answerMerge(true)
         let merge = try #require(await intents.next())
-        await fixture.model.applyPeopleIntentEvent(CatalogWindowViewModel.runPeopleIntent(merge, store: fixture.store))
+        await fixture.model.applyPeopleIntentEvent(CatalogWindowViewModel.runPeopleIntent(
+            merge, store: fixture.store, projection: fixture.model.catalogProjection
+        ))
         try await Self.waitForUndo(fixture.model, title: "Undo Merge")
 
         fixture.model.undoLastChange()
         let undo = try #require(await intents.next())
-        await fixture.model.applyPeopleIntentEvent(CatalogWindowViewModel.runPeopleIntent(undo, store: fixture.store))
+        await fixture.model.applyPeopleIntentEvent(CatalogWindowViewModel.runPeopleIntent(
+            undo, store: fixture.store, projection: fixture.model.catalogProjection
+        ))
         let unmerged = try await fixture.people()
         #expect(unmerged.person(other) != nil)
         fixture.show(unmerged, scope: .people)
@@ -562,7 +568,9 @@ struct PeopleViewModelTests {
 
         fixture.model.redoLastChange()
         let redo = try #require(await intents.next())
-        let answer = await CatalogWindowViewModel.runPeopleIntent(redo, store: fixture.store)
+        let answer = await CatalogWindowViewModel.runPeopleIntent(
+            redo, store: fixture.store, projection: fixture.model.catalogProjection
+        )
         let merged = try await fixture.people()
         #expect(merged.person(other) == nil)
         fixture.show(merged, scope: .person(other))
@@ -594,13 +602,15 @@ struct PeopleViewModelTests {
         fixture.model.peopleSession.mergeQuestion = PeopleMergeQuestion(from: other, into: fixture.sam)
         fixture.model.answerMerge(true)
         let merge = try #require(await intents.next())
-        let answer = await CatalogWindowViewModel.runPeopleIntent(merge, store: fixture.store)
+        let answer = await CatalogWindowViewModel.runPeopleIntent(
+            merge, store: fixture.store, projection: fixture.model.catalogProjection
+        )
         _ = try await fixture.store.perform(.setHidden(other, true))
         try await fixture.show(fixture.people(), scope: .person(other))
         #expect(fixture.model.queryDescriptor.scope == .person(other))
 
         fixture.model.applyPeopleIntentEvent(answer)
-        #expect(fixture.model.peopleSession.mergeRefusal?.reason == "Unnamed Person and Sam are both in 1 photo")
+        #expect(fixture.model.peopleSession.refusal?.reason == "Unnamed Person and Sam are both in 1 photo")
         #expect(fixture.model.queryDescriptor.scope == .people)
         #expect(fixture.model.queryDescriptor.filter.people.isEmpty)
         await fixture.store.shutdown()
@@ -863,7 +873,7 @@ struct PeopleViewModelTests {
     /// Waits for a refused merge to be reported.
     static func waitForMergeRefusal(_ model: CatalogWindowViewModel) async throws {
         let refusals = Observations { @MainActor [weak model] in
-            model?.peopleSession.mergeRefusal
+            model?.peopleSession.refusal
         }
         for await refusal in refusals where refusal != nil {
             return

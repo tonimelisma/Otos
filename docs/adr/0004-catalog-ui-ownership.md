@@ -138,6 +138,32 @@ undo (`hideWithdrawn`). Rejected: removing the items in the view model's copy of
 actor); waiting for the mark (a write that queues behind background writers, seconds
 under load); re-reading the catalog for the hide (the read is the cost being avoided).
 
+Every other act is shown first too (DES-120). What decides the owner is what the act
+changes. A choice changes a tile's detail, which no publication carries: the grid, the panes,
+the toolbar control and the Info pane each read it through the one tile-detail read
+(`MediaTileDetailReader`). So the choices submitted and not read back are held beside that
+read, in `MediaChoiceOverlay`, which the view model submits to, lands and withdraws in the
+steps that handle the intent and the Store's answer, and which answers every read: a read
+numbers its start, a landing records the number reached, and a choice retires when a read
+that started after its landing answers for its item (ADR 0032 rule 2), so a read from before
+the write can never take it back. The tiles on screen take the choice from the tile store in
+the same step and the grid reconfigures the visible ones in place
+(`TileChoiceChange`), never applying its structure. What a choice does to what is shown —
+a photo leaving a choice filter it no longer matches — is Projection's, on the same lossless
+intent stream as the hide (`CatalogProjectionIntent.choose`), kept as a hold beside the
+hide's until a pass that read the landed write covers it; both are `WindowHold`s. A People act
+changes People, which the projection publishes as built by `PeopleAssignment`: the one People
+overlay (`PendingPeopleActs`) lays each act's known effect over the published state with the
+builder's own gallery order (`CatalogPeopleState.overlaying`), and retires it when a state
+whose build covers the request the write's answer named arrives (`CatalogPeopleState.covers`,
+`CatalogProjection.requestPeopleBuild`). An expansion is the collapse of an order Projection
+holds, so Projection shows it inside the intent that asks for it (`showExpansion`) instead of
+waiting for the loop, and a pass in flight publishes with it. Rejected: a pending-choice map in
+the view model's copy of the window state (a second owner of what is shown, and no answer for a
+read already in flight); writing the choice into the tile store alone (a read from before the
+write lands puts the old value back); a People overlay that retires at the Store's answer (the
+gallery would revert until the next build).
+
 ## Alternatives Considered
 
 ### Alternative A: Single-Window Catalog ViewModel

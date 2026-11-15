@@ -8,7 +8,8 @@ import OSLog
 nonisolated enum ImportIntent: Sendable {
     case setDestination(LibraryRootPath, source: LibraryRootPath)
     case setSessionPreferences(ImportPreferences, source: LibraryRootPath)
-    case queueImport(source: LibraryRootPath)
+    /// `click` numbers the click per source, so the window knows when the coordinator has it.
+    case queueImport(source: LibraryRootPath, click: UInt64)
     case cancelImport(source: LibraryRootPath)
     case retryPlanning(source: LibraryRootPath)
     case preferencesDidChange
@@ -108,10 +109,12 @@ extension CatalogWindowViewModel {
             await coordinator.setDestination(destination, for: source)
         case let .setSessionPreferences(prefs, source):
             await coordinator.setSessionPreferences(prefs, for: source)
-        case let .queueImport(source):
+        case let .queueImport(source, click):
             // Returns when the intent is applied, not when the run ends: the next intent
-            // (Cancel, above all) must not wait behind a copy.
+            // (Cancel, above all) must not wait behind a copy. The coordinator has published
+            // the held click by then, so the next presentation applied shows it.
             await coordinator.submitImport(for: source)
+            deliveredImportClicks[source] = click
         case let .cancelImport(source):
             await coordinator.cancelImport(for: source)
         case let .retryPlanning(source):
@@ -181,6 +184,12 @@ extension CatalogWindowViewModel {
             ])
         }
         importPresentations = presentations
+        // A held click is drawn from the click on (DES-120) until a presentation the
+        // coordinator published after it took the click arrives: that one draws it itself. The
+        // presentation stream keeps only the newest, so any applied after the delivery is it.
+        for source in heldImportClicks where (deliveredImportClicks[source] ?? 0) >= (submittedImportClicks[source] ?? 0) {
+            heldImportClicks.remove(source)
+        }
         for presentation in presentations {
             if let batchID = presentation.batchID,
                case .executing = presentation.state,
@@ -261,8 +270,13 @@ extension CatalogWindowViewModel {
         guard mediaOperationCoordinator != nil else {
             return
         }
+        // The click is drawn at once: the bar's Import is disabled in this step, as a held
+        // click is (`import-bar.md` row 7), until the coordinator's presentation draws it.
+        let click = (submittedImportClicks[source] ?? 0) &+ 1
+        submittedImportClicks[source] = click
+        heldImportClicks.insert(source)
         // Command: ordered after any destination or preference change made before it.
-        submitImportIntent(.queueImport(source: source))
+        submitImportIntent(.queueImport(source: source, click: click))
     }
 
     func cancelImport(for source: LibraryRootPath) {

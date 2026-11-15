@@ -194,6 +194,9 @@ final class CatalogWindowViewModel {
     var outlinedFaces: [FaceID] = []
     /// The People acts submitted that the store has not answered (`PendingPeopleActs`).
     @ObservationIgnored var pendingPeopleActs = PendingPeopleActs()
+    /// People as every surface shows it: the published state with `pendingPeopleActs` laid
+    /// over it (`showPendingPeopleActs`); nil until People is first published.
+    var shownPeople: CatalogPeopleState?
     /// Face crops decoded this process, shared by every face tile (DES-110).
     @ObservationIgnored let faceTileImages = FaceTileImages()
 
@@ -429,6 +432,13 @@ final class CatalogWindowViewModel {
     /// controller, owns it so loupe/compare panes hit the grid's decoded cache
     /// without re-decoding. Injected so a test can give it a small budget.
     @ObservationIgnored let tileContentStore: TileContentStore
+    /// The choices submitted that the catalog has not been read back with (DES-120): every
+    /// tile-detail read answers through it.
+    @ObservationIgnored let mediaChoiceOverlay: MediaChoiceOverlay
+    /// The tiles a choice just changed, which the grid reconfigures in place.
+    var tileChoiceChange = TileChoiceChange()
+    /// A choice the catalog could not record, while its alert shows.
+    var mediaChoiceFailure: MediaChoiceFailure?
 
     var tileDetailReader: MediaTileDetailReader {
         mediaTileDetailReader
@@ -529,6 +539,12 @@ final class CatalogWindowViewModel {
     /// `cancelImport` is called and cleared once that source's presentation
     /// leaves `.executing` (`applyImportPresentations`).
     var cancellingImportSources: Set<LibraryRootPath> = []
+    /// Sources whose Import the user clicked and whose coordinator presentation has not drawn
+    /// the click yet (DES-120): drawn as a held click from the click on.
+    var heldImportClicks: Set<LibraryRootPath> = []
+    /// Import clicks per source, numbered as submitted and as the coordinator took them.
+    @ObservationIgnored var submittedImportClicks: [LibraryRootPath: UInt64] = [:]
+    @ObservationIgnored var deliveredImportClicks: [LibraryRootPath: UInt64] = [:]
     /// The plan the confirmation dialog shows, or nil when it is not shown. Confirming
     /// runs exactly this library at exactly this revision.
     var reorganizationConfirmation: ReorganizationConfirmation?
@@ -778,7 +794,9 @@ final class CatalogWindowViewModel {
         exportSettings = ExportSettingsStore.load(defaults: preferences)
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
-        mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
+        let mediaChoiceOverlay = MediaChoiceOverlay()
+        self.mediaChoiceOverlay = mediaChoiceOverlay
+        mediaTileDetailReader = MediaTileDetailReader(store: catalogStore, choices: mediaChoiceOverlay)
         let deviceStagingRegistry = DeviceStagingRegistry()
         self.deviceStagingRegistry = deviceStagingRegistry
         let immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore, volumeCapacity: volumeCapacity) : nil)
@@ -1092,7 +1110,7 @@ extension CatalogWindowViewModel {
         // handoff is a change of which files are copies.
         submitCatalogMutation(.setDuplicatesReach(duplicatesReach))
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
-        startMediaChoiceForwarding(store: store)
+        startMediaChoiceForwarding(writer: .store(store))
         startStackKeyForwarding(store: store)
         startEditing(store: store)
         startHandOff(store: store)

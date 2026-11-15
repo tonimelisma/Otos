@@ -84,6 +84,9 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var contextMenu: () -> NSMenu? = { nil }
     /// The outlined faces' boxes by photo, as fractions of the upright photo (ADR 0047).
     var faceOutlines: [MediaAssetID: [CGRect]] = [:]
+    /// The tiles a choice just changed in the tile store (DES-120): the visible ones among them
+    /// are reconfigured in place, never through a structural apply.
+    var tileChoiceChange = TileChoiceChange()
     /// Asset to keep centered (loupe focus, compare newest member, or grid return focus).
     var focusTargetID: MediaAssetID?
 
@@ -113,6 +116,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.onStackBadge = onStackBadge
         controller.contextMenu = contextMenu
         controller.receiveFaceOutlines(faceOutlines)
+        controller.receiveTileChoiceChange(tileChoiceChange)
         controller.applyPresentation(presentation)
         if case .grid = presentation {
             controller.receiveColumnCount(columnCount)
@@ -173,6 +177,8 @@ final class MediaGridViewController: NSViewController {
     /// The outlined faces' boxes by photo (ADR 0047), owned by the view model; each visible
     /// tile draws its own, re-asserted on every render like hover.
     private var faceOutlines: [MediaAssetID: [CGRect]] = [:]
+    /// The last `TileChoiceChange` rendered, so a SwiftUI update re-renders a change once.
+    private var lastTileChoiceRevision: UInt64 = 0
     /// How the last received grid state shows its stacks (ADR 0052).
     private var gridStacks: CatalogGridStacks = .empty
     private var scrollBoundsTickCount = 0
@@ -1066,6 +1072,29 @@ extension MediaGridViewController {
             let id = collectionView.indexPath(for: item).flatMap { structure.id(at: $0) }
             item.setFaceOutlines(id.flatMap { faceOutlines[$0] } ?? [])
         }
+    }
+
+    /// Re-renders the visible tiles among `change.ids` from the tile store, once per change:
+    /// a choice changes a tile's badge and its accessibility value, never its image or place.
+    func receiveTileChoiceChange(_ change: TileChoiceChange) {
+        guard change.revision != lastTileChoiceRevision else {
+            return
+        }
+        lastTileChoiceRevision = change.revision
+        var rendered = 0
+        for case let item as MediaGridItem in collectionView.visibleItems() {
+            guard let id = collectionView.indexPath(for: item).flatMap({ structure.id(at: $0) }),
+                  change.ids.contains(id)
+            else {
+                continue
+            }
+            renderItem(item, assetID: id, change: .detailOnly)
+            rendered += 1
+        }
+        OtosLog.ui.debugOperation("ui.mediaGrid.choice", phase: "reconfigured", fields: [
+            "changed": "\(change.ids.count)",
+            "rendered": "\(rendered)",
+        ])
     }
 
     func applyHoverToVisibleTiles() {
