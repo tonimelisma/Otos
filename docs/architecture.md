@@ -147,12 +147,17 @@ everything expensive happens on an actor off the main thread.
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
   is the single arbiter of structural applies and zoom swaps; inside its in-flight slot
   a structural apply builds the next `MediaGridStructure` (ordered identities, day
-  sections as contiguous ranges, identity → position index) off the main actor
+  sections as contiguous ranges, identity lookups through the publication's
+  `CatalogGridContent` index) off the main actor
   (`buildStructure`) and hands it to AppKit on the main actor (`commitStructure`): `reloadData`
   for query and large membership changes, `performBatchUpdates` with the derived
   `MediaGridBatchUpdates` otherwise. The controller is the collection view's plain
   `NSCollectionViewDataSource` over that one value, which the layout, day bar, headers,
-  selection, drag, prefetch, zoom and scroll anchoring also read. Pointer hover has the
+  selection, drag, prefetch, zoom and scroll anchoring also read. The grid's layout is
+  Otos's own `MediaGridLayout`, arithmetic over the section counts
+  (`MediaGridLayoutGeometry`: one pass at `prepare()`, a rect query by binary search),
+  so an apply's layout cost is the sections' count, not a per-section solve; the
+  filmstrip keeps a one-section compositional layout. Pointer hover has the
   same single-owner shape as mouse selection: `MediaGridCollectionView` answers only
   the geometry question (which item is under the cursor) through one grid-wide
   tracking area, and the bridge owns what hover means, assigning the curation control

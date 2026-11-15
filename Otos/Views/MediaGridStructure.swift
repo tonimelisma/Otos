@@ -17,10 +17,10 @@ import AppKit
 /// pass, off the main actor, inside the mutation gate's exclusive slot
 /// (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`).
 ///
-/// `positions` is the inverse of `orderedIDs`, built in the same pass: index-path lookup
-/// by identity (selection, focus, anchoring, drag) and the membership test the apply
-/// policy needs both read it. It is part of the value, not a cache: it is never updated
-/// apart from the order it inverts.
+/// Index-path lookup by identity (selection, focus, anchoring, drag) and the membership test
+/// the apply policy needs both read the position index of the `CatalogGridContent` the order
+/// came in: one shared, immutable value per publication, whose index Projection builds off
+/// the main actor at publication, so a structure never builds a second one.
 nonisolated struct MediaGridStructure: Sendable {
     /// What a section is. `.day(nil)` is the "no known capture date" bucket, still a day
     /// section with its own header rather than folded into `.ungrouped`. A section's
@@ -46,21 +46,32 @@ nonisolated struct MediaGridStructure: Sendable {
         }
     }
 
-    let orderedIDs: [MediaAssetID]
     let sections: [Section]
-    private let positions: [MediaAssetID: Int]
+    /// The order and its position index.
+    private let content: CatalogGridContent
+
+    var orderedIDs: [MediaAssetID] {
+        content.orderedAssetIDs
+    }
 
     /// No sections at all: what the collection view shows before its first apply.
-    static let empty = MediaGridStructure(orderedIDs: [], sections: [], positions: [:])
+    static let empty = MediaGridStructure(
+        content: CatalogGridContent(orderedAssetIDs: [], dayBuckets: [], stacks: .empty),
+        sections: []
+    )
 
-    private init(orderedIDs: [MediaAssetID], sections: [Section], positions: [MediaAssetID: Int]) {
-        self.orderedIDs = orderedIDs
+    private init(content: CatalogGridContent, sections: [Section]) {
+        self.content = content
         self.sections = sections
-        self.positions = positions
     }
 
     init(grid: CatalogMediaGridState) {
-        self.init(orderedIDs: grid.orderedAssetIDs, dayBuckets: grid.dayBuckets)
+        self.init(content: grid.content)
+    }
+
+    /// An order and its day buckets outside a publication, as a test or a fixture holds them.
+    init(orderedIDs: [MediaAssetID], dayBuckets: [Date?] = []) {
+        self.init(content: CatalogGridContent(orderedAssetIDs: orderedIDs, dayBuckets: dayBuckets, stacks: .empty))
     }
 
     /// One ungrouped section when `dayBuckets` does not pair 1:1 with `orderedIDs` (any
@@ -68,18 +79,11 @@ nonisolated struct MediaGridStructure: Sendable {
     /// a new day section each time the bucket changes while walking the already date-sorted
     /// order, so section order is the order days are first met, wherever the query placed
     /// the unknown-date run.
-    init(orderedIDs: [MediaAssetID], dayBuckets: [Date?] = []) {
-        var positions: [MediaAssetID: Int] = [:]
-        positions.reserveCapacity(orderedIDs.count)
-        for (position, id) in orderedIDs.enumerated() {
-            positions[id] = position
-        }
+    private init(content: CatalogGridContent) {
+        let orderedIDs = content.orderedAssetIDs
+        let dayBuckets = content.dayBuckets
         guard dayBuckets.count == orderedIDs.count, !orderedIDs.isEmpty else {
-            self.init(
-                orderedIDs: orderedIDs,
-                sections: [Section(key: .ungrouped, items: 0 ..< orderedIDs.count)],
-                positions: positions
-            )
+            self.init(content: content, sections: [Section(key: .ungrouped, items: 0 ..< orderedIDs.count)])
             return
         }
         var sections: [Section] = []
@@ -90,7 +94,7 @@ nonisolated struct MediaGridStructure: Sendable {
                 runStart = position
             }
         }
-        self.init(orderedIDs: orderedIDs, sections: sections, positions: positions)
+        self.init(content: content, sections: sections)
     }
 
     var numberOfSections: Int {
@@ -107,7 +111,12 @@ nonisolated struct MediaGridStructure: Sendable {
     }
 
     func contains(_ id: MediaAssetID) -> Bool {
-        positions[id] != nil
+        content.contains(id)
+    }
+
+    /// Where `id` sits in `orderedIDs`; `nil` when it is not in the structure.
+    func position(of id: MediaAssetID) -> Int? {
+        content.position(of: id)
     }
 
     func id(at indexPath: IndexPath) -> MediaAssetID? {
@@ -123,7 +132,7 @@ nonisolated struct MediaGridStructure: Sendable {
     }
 
     func indexPath(of id: MediaAssetID) -> IndexPath? {
-        positions[id].map(indexPath(atPosition:))
+        content.position(of: id).map(indexPath(atPosition:))
     }
 
     /// The index path of the item at `position` in `orderedIDs`: the section holding it, by
@@ -195,45 +204,64 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
             updates.insertedSections.insert(index)
         }
 
+        // Per-position and per-section facts as flat arrays, so the walk below does one
+        // identity lookup per item and builds index paths only for what it reports.
+        var oldSectionOfPosition = [Int](repeating: 0, count: old.orderedIDs.count)
+        for (index, section) in old.sections.enumerated() {
+            for position in section.items {
+                oldSectionOfPosition[position] = index
+            }
+        }
+        // The new index of each old section, or -1 for a deleted one.
+        let newIndexOfOldSection = old.sections.map { newSectionIndex[$0.key] ?? -1 }
+        var oldPositionSurvives = [Bool](repeating: false, count: old.orderedIDs.count)
+
         // Survivors whose old and new sections both survive, in new order, with their old
         // position: the candidates for staying put.
-        var survivors: [(newPath: IndexPath, oldPath: IndexPath, oldPosition: Int)] = []
+        var survivorNewSection: [Int] = []
+        var survivorNewItem: [Int] = []
+        var survivorOldPosition: [Int] = []
         for (newSection, section) in new.sections.enumerated() {
             let newSectionSurvives = !updates.insertedSections.contains(newSection)
             for position in section.items {
-                let newPath = IndexPath(item: position - section.items.lowerBound, section: newSection)
-                let id = new.orderedIDs[position]
-                guard let oldPath = old.indexPath(of: id) else {
+                let newItem = position - section.items.lowerBound
+                guard let oldPosition = old.position(of: new.orderedIDs[position]) else {
                     if newSectionSurvives {
-                        updates.insertedItems.insert(newPath)
+                        updates.insertedItems.insert(IndexPath(item: newItem, section: newSection))
                     }
                     continue
                 }
-                let oldSectionSurvives = !updates.deletedSections.contains(oldPath.section)
-                switch (oldSectionSurvives, newSectionSurvives) {
+                oldPositionSurvives[oldPosition] = true
+                let oldSection = oldSectionOfPosition[oldPosition]
+                switch (newIndexOfOldSection[oldSection] >= 0, newSectionSurvives) {
                 case (true, true):
-                    let oldPosition = old.sections[oldPath.section].items.lowerBound + oldPath.item
-                    survivors.append((newPath, oldPath, oldPosition))
+                    survivorNewSection.append(newSection)
+                    survivorNewItem.append(newItem)
+                    survivorOldPosition.append(oldPosition)
                 case (true, false):
-                    updates.deletedItems.insert(oldPath)
+                    updates.deletedItems.insert(old.indexPath(atPosition: oldPosition))
                 case (false, true):
-                    updates.insertedItems.insert(newPath)
+                    updates.insertedItems.insert(IndexPath(item: newItem, section: newSection))
                 case (false, false):
                     break
                 }
             }
         }
-        for (oldSection, section) in old.sections.enumerated() where !updates.deletedSections.contains(oldSection) {
-            for position in section.items where !new.contains(old.orderedIDs[position]) {
+        for (oldSection, section) in old.sections.enumerated() where newIndexOfOldSection[oldSection] >= 0 {
+            for position in section.items where !oldPositionSurvives[position] {
                 updates.deletedItems.insert(IndexPath(item: position - section.items.lowerBound, section: oldSection))
             }
         }
 
-        let staying = longestIncreasingRun(survivors.map(\.oldPosition))
-        for (index, survivor) in survivors.enumerated() {
-            let sameSection = old.sections[survivor.oldPath.section].key == new.sections[survivor.newPath.section].key
-            if !staying.contains(index) || !sameSection {
-                updates.movedItems.append(Move(from: survivor.oldPath, to: survivor.newPath))
+        let staying = longestIncreasingRun(survivorOldPosition)
+        for index in survivorOldPosition.indices {
+            let oldPosition = survivorOldPosition[index]
+            let sameSection = newIndexOfOldSection[oldSectionOfPosition[oldPosition]] == survivorNewSection[index]
+            if !staying[index] || !sameSection {
+                updates.movedItems.append(Move(
+                    from: old.indexPath(atPosition: oldPosition),
+                    to: IndexPath(item: survivorNewItem[index], section: survivorNewSection[index])
+                ))
             }
         }
         return updates
@@ -256,9 +284,9 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
         return indexByKey
     }
 
-    /// The indices into `values` of one longest strictly increasing subsequence
+    /// Which indices into `values` belong to one longest strictly increasing subsequence
     /// (patience sorting, O(n log n)).
-    private static func longestIncreasingRun(_ values: [Int]) -> Set<Int> {
+    private static func longestIncreasingRun(_ values: [Int]) -> [Bool] {
         var tails: [Int] = []
         var predecessor = [Int](repeating: -1, count: values.count)
         for (index, value) in values.enumerated() {
@@ -281,10 +309,10 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
                 tails[low] = index
             }
         }
-        var run = Set<Int>()
+        var run = [Bool](repeating: false, count: values.count)
         var cursor = tails.last ?? -1
         while cursor >= 0 {
-            run.insert(cursor)
+            run[cursor] = true
             cursor = predecessor[cursor]
         }
         return run

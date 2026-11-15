@@ -9,6 +9,10 @@ extension MediaGridViewController {
         /// When the gate admitted the apply, so `applyMs` includes the off-main build.
         let applyStart: ContinuousClock.Instant
         let applyCallStart: ContinuousClock.Instant
+        /// The main thread's synchronous share of the apply: from taking the built
+        /// structure to handing AppKit the reload or the batch, layout included. The
+        /// completion is timed apart, as `completionMs`.
+        let commit: CommitDuration
         let diffPolicyMs: Int
         let structureBuildMs: Int
         let batchUpdatesMs: Int
@@ -23,6 +27,29 @@ extension MediaGridViewController {
         let sectionCount: Int
         let heldDuringScroll: Bool
         let signpost: OSSignpostIntervalState
+    }
+
+    /// The commit's end, taken when it returns or when its completion starts, whichever
+    /// comes first: a reload calls the completion itself, and AppKit may run a batch's
+    /// completion before `performBatchUpdates` returns, so either can be first.
+    final class CommitDuration {
+        private let start: ContinuousClock.Instant
+        private var milliseconds: Int?
+
+        init(start: ContinuousClock.Instant) {
+            self.start = start
+        }
+
+        /// The commit's duration in milliseconds, fixed by the first call.
+        @discardableResult
+        func end() -> Int {
+            if let milliseconds {
+                return milliseconds
+            }
+            let measured = DiagnosticsTiming.milliseconds(since: start)
+            milliseconds = measured
+            return measured
+        }
     }
 
     /// How the collection view took a new structure (diagnostics).
@@ -130,6 +157,7 @@ extension MediaGridViewController {
         applyStart: ContinuousClock.Instant
     ) {
         let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
+        let commitDuration = CommitDuration(start: .now)
         let summary = built.summary
         let scrollAnchor = captureScrollAnchor(change: change, nextOrderedIDs: grid.orderedAssetIDs)
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
@@ -145,6 +173,7 @@ extension MediaGridViewController {
             change: change,
             applyStart: applyStart,
             applyCallStart: applyCallStart,
+            commit: commitDuration,
             diffPolicyMs: built.diffPolicyMs,
             structureBuildMs: built.structureBuildMs,
             batchUpdatesMs: built.batchUpdatesMs,
@@ -199,6 +228,7 @@ extension MediaGridViewController {
         // `restoreScrollAnchor`), and an animated batch's completion lands only after the
         // motion, so a header would show its old day for the length of it.
         renderVisibleDayHeaders()
+        commitDuration.end()
     }
 
     /// An animated apply keeps its true-diff path but runs with a zero duration when the
@@ -479,6 +509,7 @@ extension MediaGridViewController {
         operation: MainRunLoopOperationToken?,
         stallMonitor: MainRunLoopStallMonitor?
     ) {
+        let commitMs = context.commit.end()
         let applyCallMs = DiagnosticsTiming.milliseconds(since: context.applyCallStart)
         let completionStart = ContinuousClock.now
         OtosSignpost.ui.endInterval("MediaGridStructuralApply", context.signpost)
@@ -506,6 +537,7 @@ extension MediaGridViewController {
         logFinishedStructuralApply(
             context,
             applyMs: applyMs,
+            commitMs: commitMs,
             applyCallMs: applyCallMs,
             completionMs: completionMs,
             visibleDetailRequestCount: visibleDetailRequestCount,
@@ -514,6 +546,7 @@ extension MediaGridViewController {
         recordStructuralApplyDiagnostics(
             context,
             applyMs: applyMs,
+            commitMs: commitMs,
             applyCallMs: applyCallMs,
             completionMs: completionMs,
             visibleDetailRequestCount: visibleDetailRequestCount,
@@ -572,6 +605,7 @@ extension MediaGridViewController {
     private func logFinishedStructuralApply(
         _ context: StructuralApplyCompletionContext,
         applyMs: Int,
+        commitMs: Int,
         applyCallMs: Int,
         completionMs: Int,
         visibleDetailRequestCount: Int,
@@ -595,6 +629,7 @@ extension MediaGridViewController {
             batchUpdatesMs=\(context.batchUpdatesMs, privacy: .public) \
             appliedBy=\(context.appliedBy.rawValue, privacy: .public) \
             sections=\(context.sectionCount, privacy: .public) \
+            commitMs=\(commitMs, privacy: .public) \
             applyCallMs=\(applyCallMs, privacy: .public) \
             completionMs=\(completionMs, privacy: .public) \
             applyMs=\(applyMs, privacy: .public)
@@ -605,6 +640,7 @@ extension MediaGridViewController {
     private func recordStructuralApplyDiagnostics(
         _ context: StructuralApplyCompletionContext,
         applyMs: Int,
+        commitMs: Int,
         applyCallMs: Int,
         completionMs: Int,
         visibleDetailRequestCount: Int,
@@ -632,6 +668,7 @@ extension MediaGridViewController {
                 "batchUpdatesMs": "\(context.batchUpdatesMs)",
                 "appliedBy": context.appliedBy.rawValue,
                 "sections": "\(context.sectionCount)",
+                "commitMs": "\(commitMs)",
                 "applyCallMs": "\(applyCallMs)",
                 "completionMs": "\(completionMs)",
                 "applyMs": "\(applyMs)",

@@ -59,6 +59,13 @@ final class MediaGridCollectionView: NSCollectionView {
         }
     }
 
+    /// The grid layout rounds every frame to this view's backing pixels; a move to a
+    /// screen of another scale changes them, and nothing else would invalidate it then.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        collectionViewLayout?.invalidateLayout()
+    }
+
     /// A plain mouse-down on a selected tile whose selection change is waiting for
     /// mouse-up, in case the gesture becomes a drag (`MediaGridClickDecision`).
     private var deferredPlainClick: (hit: IndexPath, modifiers: NSEvent.ModifierFlags)?

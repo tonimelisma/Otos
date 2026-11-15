@@ -55,7 +55,13 @@ reloadData teardown, not how often applies run.
 2. `NSCollectionViewFlowLayout`: reusable cells, but requires manual column
    sizing and resize invalidation.
 3. `NSCollectionViewCompositionalLayout`: reusable cells plus native fractional
-   groups.
+   groups, but it solves every section on each invalidation, about 0.5 M instructions
+   a section: 2.7 G instructions and about 320 ms of main thread for every reload and
+   every batch at the owner's 4,816 days, and enrichment publishes a reorder every few
+   seconds. Used until 2026-11-15; replaced by Otos's own `MediaGridLayout`, which
+   keeps its pixel geometry exactly
+   (`docs/research/2026-11-15-grid-layout-without-compositional-solve.md`). The
+   filmstrip, one section solved once, keeps it.
 5. `NSCollectionViewDiffableDataSource` over the compositional layout: identity
    diffing for free, but its snapshot costs days × items to build (13–15 s at the
    owner's 158,000 items over 5,000 days) and macOS has no section snapshot or
@@ -67,10 +73,18 @@ reloadData teardown, not how often applies run.
 ## Decision
 
 Use a narrow `NSViewControllerRepresentable` containing `NSCollectionView`,
-`NSCollectionViewCompositionalLayout`, and the controller as its
+`MediaGridLayout`, and the controller as its
 `NSCollectionViewDataSource` over one `MediaGridStructure` value.
-The layout has one full-width group with square fractional items sized from the
-current column count, 12-point section insets, and 8-point effective gaps.
+The layout is arithmetic: square tiles in equal columns sized from the current column
+count, 12-point section insets, 4-point tile insets (8-point effective gaps), and a
+fixed-height full-width day header per day section. `MediaGridLayoutGeometry` holds
+the sections' unrounded start positions (one pass over the section counts at
+`prepare()`), answers any frame directly, and answers a rect query by binary search
+over sections and arithmetic over rows, so its cost is the elements returned, not the
+grid's size. Frames are rounded to backing pixels as the compositional layout it
+replaced rounded them, and `MediaGridLayoutTests` keeps that layout's measured frames
+as its oracle. Scrolling never invalidates it; a width change or a backing-scale
+change does.
 Column count is user-selected, 3–9, default 6 (APP-006) — not an invariant six
 — owned by `CatalogWindowViewModel.gridColumnCount` and persisted across
 launches; the AppKit controller only ever renders the published value through
@@ -89,17 +103,17 @@ never a continuous interactive transition: macOS exposes
 (that API is UIKit-only, verified against the Xcode 27 beta SDK), so there is no
 documented way to drive a transition incrementally from a pinch gesture.
 
-Under Date sort the grid groups into day sections (DES-069, APP-030) via a
-`sectionProvider` closure on `NSCollectionViewCompositionalLayout` rather than a
-fixed `section:`, so `.day` and `.ungrouped` sections can differ in whether they
-carry a header without rebuilding the layout object on a data change. Which sections
-carry one is answered from the controller's `MediaGridStructure`, the one value the
+Under Date sort the grid groups into day sections (DES-069, APP-030). The layout asks,
+at each `prepare()`, which sections carry a header, so `.day` and `.ungrouped`
+sections can differ in whether they carry one without rebuilding the layout object on
+a data change. Which sections carry one is answered from the controller's `MediaGridStructure`, the one value the
 collection view's data source, the layout, the day bar, the headers, selection, drag,
 prefetch, zoom and scroll anchoring all read. The structure is built fresh from
 `CatalogMediaGridState.orderedAssetIDs` plus a parallel `dayBuckets: [Date?]` on every
 structural apply, in one pass: sections are contiguous ranges of the order, keyed by day
-(`.day(nil)` for the unknown-date run, `.ungrouped` for any other sort), with an identity
-→ position index for lookups. It is pure and independent of AppKit. An animated apply
+(`.day(nil)` for the unknown-date run, `.ungrouped` for any other sort); identity lookups
+read the position index of the publication's shared `CatalogGridContent`, which Projection
+builds off the main actor, so the structure builds no index of its own. It is pure and independent of AppKit. An animated apply
 matches sections by key to derive its batch; nothing else compares sections across
 applies, so there is no section-level invalidation to go stale.
 
@@ -191,11 +205,14 @@ that is the teardown path. Separately, `MediaGridMutationGate`
 holds same-descriptor structural-apply *adoption* while scroll is live
 (`scrollHold`, released after the same 250 ms quiet threshold): enrichment
 reorders park newest-wins and apply once on quiet; descriptor-changed grids
-bypass the hold; zoom swaps are unaffected. A `MediaGridAnimatedLayout` fades and
-shrinks only the index paths a given apply batch actually inserted or deleted,
-leaving every other appearing/disappearing item (scroll dequeue, a future zoom
-swap) — and every moved item in a move-only batch — at `super`'s unmodified
-attributes so moves animate as plain position changes. Reorder-only completion
+bypass the hold; zoom swaps are unaffected. AppKit's base layout supplies the
+attributes a batch animates between (a survivor from its old frame to its new one, an
+insert fading in, a delete fading out — measured identical to what the compositional
+layout supplied), and `MediaGridLayout` additionally shrinks only the index paths a
+given apply batch actually inserted or deleted, leaving every other
+appearing/disappearing item (scroll dequeue, a zoom swap) — and every moved item in a
+move-only batch — at `super`'s unmodified attributes so moves animate as plain
+position changes. Reorder-only completion
 skips `TileContentStore.prune` (membership identical by definition). The
 apply-policy summary reads membership from the previous structure's own identity
 index, so no apply rebuilds a set of the identities on screen.
@@ -241,8 +258,10 @@ instructions for 158,000 items over 5,000 days, where the diffable snapshot it r
 took 54 G (13–15 s on the owner's library), because AppKit's snapshot copies its whole
 item set on every mutating call and has no call that appends to more than one section
 (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). The apply call
-stays on the main actor and still grows with days: compositional layout re-solves every
-section on a reload, measured in the same note. Reset scroll and selection only when the sidebar scope changes; a filter or
+stays on the main actor; with the arithmetic layout its layout share is a pass over the
+section counts, and what remains of a batch is AppKit's own update bookkeeping, about
+20 ms at the owner's 158,765 items plus about 0.4 M instructions a move
+(`docs/research/2026-11-15-grid-layout-without-compositional-solve.md`). Reset scroll and selection only when the sidebar scope changes; a filter or
 sort change keeps the user's place by anchoring on a visible selected tile or the top tile's
 nearest survivor (APP-042); same-descriptor
 structural applies restore surviving selected identities through the minimal
@@ -256,10 +275,12 @@ over a tuned duration rather than snapping.
 
 The verified table failure justifies leaving SwiftUI for this one rendering
 surface. Collection view supplies the required bounded reuse and identity
-lifecycle without a custom renderer. Compositional layout directly expresses a
-responsive column count and removes flow-layout width bookkeeping; rebuilding
-the same layout type with a new column count is what makes zoom a small,
-data-driven change rather than a new rendering mechanism.
+lifecycle without a custom renderer. The grid's geometry is a uniform square grid with
+one fixed-height header a section, so the smallest correct layout is that arithmetic
+itself: a general solver has nothing to solve, and at the owner's thousands of days its
+per-section solve was the main thread's largest cost. Rebuilding the same layout type
+with a new column count is what makes zoom a small, data-driven change rather than a
+new rendering mechanism.
 
 ## Consequences
 
@@ -312,7 +333,10 @@ data-driven change rather than a new rendering mechanism.
 - Apple, [UTType.movie](https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/movie)
 - `NSDiffableDataSource.h` (macOS 27 SDK): single-section mutators only, no section
   snapshot; `docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`.
-- Implemented in `Otos/Views/MediaGrid*.swift`, `Otos/Views/MediaGrid*.swift`,
+- Apple, [NSCollectionViewLayout](https://developer.apple.com/documentation/appkit/nscollectionviewlayout);
+  `docs/research/2026-11-15-grid-layout-without-compositional-solve.md` (the
+  compositional layout's geometry and animation measured against `MediaGridLayout`).
+- Implemented in `Otos/Views/MediaGrid*.swift` (the layout in `MediaGridLayout.swift`),
   `Otos/Views/MediaAssetTileView.swift`, `Otos/Views/GridSelection.swift`,
   `Otos/Views/MediaGridDayHeaderView.swift`,
   `Otos/ViewModels/CatalogWindowViewModelSelection.swift`;

@@ -334,6 +334,84 @@ struct BenchmarkTests {
             owner,
             other: Self.dayGroupedGrid(prefix: "b/", photos: 158_000, days: 5000)
         )
+
+        // The enrichment trickle at the owner's size: 200 photos learn a capture day far
+        // from the one they were shown under, so each leaves its day for another. The pure
+        // half (structure, policy and batch derivation, off the main actor), then the whole
+        // apply through the controller in a window, where it is a `performBatchUpdates`.
+        let reordered = Self.withPhotosMovedBetweenDays(owner, moving: 200, days: 5000)
+        let ownerStructure = MediaGridStructure(grid: owner)
+        try await Benchmark.measure("grid.reorderBuild.days5000") {
+            let built = await MediaGridViewController.buildStructure(
+                for: reordered, descriptorChanged: false, previous: ownerStructure
+            )
+            #expect(built.summary.reorderOnly)
+            #expect(built.batchUpdates?.movedItems.count ?? 0 >= 200)
+        }
+        try await Self.measureOwnerScaleReorder(owner, reordered: reordered)
+    }
+
+    /// The two orders alternated, so every iteration moves the same 200 photos one way or
+    /// back, the same query each time: the apply the projection publishes as capture days
+    /// arrive. Measured twice: the whole process, and the main thread alone, which is the
+    /// share a user can feel as a hang (the build runs off it).
+    @MainActor
+    private static func measureOwnerScaleReorder(
+        _ owner: CatalogMediaGridState,
+        reordered: CatalogMediaGridState
+    ) async throws {
+        let controller = MediaGridViewController()
+        _ = controller.view
+        let window = orderedInTestWindow(width: 1200, height: 800, contentView: controller.view)
+        defer { window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        controller.receive(owner)
+        try await awaitGridShows(controller, owner)
+        var next = reordered
+        for (name, counted) in [
+            ("grid.reorderApply.days5000", Benchmark.Counted.process),
+            ("grid.reorderApply.days5000.mainThread", .mainThread),
+        ] {
+            try await Benchmark.measure(name, counting: counted) {
+                controller.receive(next)
+                try await awaitGridShows(controller, next)
+                controller.collectionView.layoutSubtreeIfNeeded()
+                #expect(controller.collectionView.numberOfSections == 5000)
+                next = next.orderedAssetIDs == owner.orderedAssetIDs ? reordered : owner
+            }
+        }
+    }
+
+    /// `grid` with `count` photos, spread evenly through it, each moved to the day half the
+    /// library away from its own and shown first in that day, as Date sort places it.
+    private static func withPhotosMovedBetweenDays(
+        _ grid: CatalogMediaGridState,
+        moving count: Int,
+        days: Int
+    ) -> CatalogMediaGridState {
+        let photos = grid.orderedAssetIDs.count
+        let stride = photos / count
+        var entries = grid.orderedAssetIDs.indices.map { index in
+            (id: grid.orderedAssetIDs[index], day: days - index * days / photos, moved: false, position: index)
+        }
+        for index in Swift.stride(from: stride / 2, to: photos, by: stride).prefix(count) {
+            entries[index].day = (entries[index].day + days / 2) % days + 1
+            entries[index].moved = true
+        }
+        entries.sort { lhs, rhs in
+            if lhs.day != rhs.day {
+                return lhs.day > rhs.day
+            }
+            if lhs.moved != rhs.moved {
+                return lhs.moved
+            }
+            return lhs.position < rhs.position
+        }
+        return CatalogMediaGridState(
+            scope: grid.scope,
+            orderedAssetIDs: entries.map(\.id),
+            dayBuckets: entries.map { Optional(Date(timeIntervalSince1970: Double($0.day) * 86400)) }
+        )
     }
 
     /// The window's apply of a publication at the owner's size (158,000 tiles, a tenth of them
@@ -490,7 +568,8 @@ struct BenchmarkTests {
     }
 
     /// Two libraries of the owner's size, alternated, so every iteration replaces the whole
-    /// grid as a sidebar switch does.
+    /// grid as a sidebar switch does. Measured for the whole process and for the main
+    /// thread alone.
     @MainActor
     private static func measureOwnerScaleApply(
         _ owner: CatalogMediaGridState,
@@ -502,12 +581,17 @@ struct BenchmarkTests {
         defer { window.close() }
         controller.view.layoutSubtreeIfNeeded()
         var next = owner
-        try await Benchmark.measure("grid.structuralApply.days5000") {
-            controller.receive(next)
-            try await awaitGridShows(controller, next)
-            controller.collectionView.layoutSubtreeIfNeeded()
-            #expect(controller.collectionView.numberOfSections == 5000)
-            next = next.orderedAssetIDs == owner.orderedAssetIDs ? other : owner
+        for (name, counted) in [
+            ("grid.structuralApply.days5000", Benchmark.Counted.process),
+            ("grid.structuralApply.days5000.mainThread", .mainThread),
+        ] {
+            try await Benchmark.measure(name, counting: counted) {
+                controller.receive(next)
+                try await awaitGridShows(controller, next)
+                controller.collectionView.layoutSubtreeIfNeeded()
+                #expect(controller.collectionView.numberOfSections == 5000)
+                next = next.orderedAssetIDs == owner.orderedAssetIDs ? other : owner
+            }
         }
     }
 

@@ -34,23 +34,34 @@ enum Benchmark {
         let minimumMilliseconds: Double
     }
 
+    /// Whose instructions a case counts.
+    enum Counted {
+        /// The whole process: a case whose work hops between actors and frameworks' threads.
+        case process
+        /// The main thread alone, for a case that asks what the main thread spends: work
+        /// off it does not enter the count. The case's body runs on the main actor.
+        case mainThread
+    }
+
     /// Runs `body` once to warm up, then `iterations` times measured, and records the case.
     @discardableResult
     static func measure(
         _ name: String,
         iterations: Int = 5,
+        counting counted: Counted = .process,
         _ body: () async throws -> Void
     ) async throws -> Result {
         try await body()
         var instructions: [UInt64] = []
         var milliseconds: [Double] = []
         let clock = ContinuousClock()
+        let count = counted == .process ? retiredInstructions : mainThreadInstructions
         for _ in 0 ..< iterations {
-            let startInstructions = try retiredInstructions()
+            let startInstructions = try count()
             let start = clock.now
             try await body()
             let elapsed = start.duration(to: clock.now)
-            try instructions.append(retiredInstructions() - startInstructions)
+            try instructions.append(count() - startInstructions)
             milliseconds.append(
                 Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
             )
@@ -69,6 +80,23 @@ enum Benchmark {
         )
         try record(result)
         return result
+    }
+
+    /// Instructions the main thread has retired so far. A call off it throws: a count of
+    /// any other thread would answer a different question.
+    private static func mainThreadInstructions() throws -> UInt64 {
+        guard Thread.isMainThread else {
+            throw POSIXError(.EPERM)
+        }
+        // `thread_selfcounts(THSC_CPI)`: the calling thread's instructions, then cycles.
+        var counts: (instructions: UInt64, cycles: UInt64) = (0, 0)
+        let status = withUnsafeMutablePointer(to: &counts) {
+            threadSelfCounts(1, $0, MemoryLayout<(UInt64, UInt64)>.size)
+        }
+        guard status == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EINVAL)
+        }
+        return counts.instructions
     }
 
     /// Instructions this process has retired so far. Process-wide, because a case's work
@@ -320,3 +348,7 @@ struct BenchmarkPairLibrary {
         }
     }
 }
+
+/// libsystem exports it; the public SDK headers do not declare it.
+@_silgen_name("thread_selfcounts")
+private func threadSelfCounts(_ type: Int32, _ buffer: UnsafeMutableRawPointer, _ size: Int) -> Int32

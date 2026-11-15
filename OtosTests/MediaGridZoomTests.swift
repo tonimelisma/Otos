@@ -56,6 +56,7 @@ struct MediaGridZoomTests {
             change: .unchanged,
             applyStart: .now,
             applyCallStart: .now,
+            commit: .init(start: .now),
             diffPolicyMs: 0,
             structureBuildMs: 0,
             batchUpdatesMs: 0,

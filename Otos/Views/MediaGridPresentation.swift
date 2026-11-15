@@ -32,92 +32,29 @@ extension MediaGridViewController {
     func makeLayout(presentation: MediaGridPresentation) -> NSCollectionViewLayout {
         switch presentation {
         case let .grid(columnCount):
-            makeGridLayout(columnCount: columnCount)
+            makeLayout(columnCount: columnCount)
         case let .strip(tileEdge):
             Self.makeStripLayout(tileEdge: tileEdge)
         }
     }
 
-    /// Backward-compatible entry used by zoom swaps (grid only).
-    func makeLayout(columnCount: Int) -> MediaGridAnimatedLayout {
-        makeGridLayout(columnCount: columnCount)
-    }
-
-    /// A `sectionProvider` closure (not a fixed `section:`) so `.day` and
-    /// `.ungrouped` sections — which never coexist in one snapshot, but alternate as
-    /// the sort changes — can differ in whether they carry a day header, without
-    /// rebuilding this layout object on a data change.
+    /// The grid layout for `columnCount` columns; a zoom swap installs a new one
+    /// (`MediaGridZoom.swift`), since the column count is the one geometry input a data
+    /// change never moves.
     ///
-    /// Which sections carry one is answered from `structure`, which AppKit took in the
-    /// same synchronous region that invalidated this layout.
-    ///
-    /// Column-count changes still replace the whole layout object via the zoom-swap
-    /// path (`MediaGridZoom.swift`); this closure only varies per-section header
-    /// presence within one such object.
-    private func makeGridLayout(columnCount: Int) -> MediaGridAnimatedLayout {
-        MediaGridAnimatedLayout(
-            sectionProvider: { [weak self] sectionIndex, _ in
-                Self.gridLayoutSection(
-                    columnCount: columnCount,
-                    showsDayHeader: self?.sectionShowsDayHeader(at: sectionIndex) ?? false
-                )
-            },
-            configuration: NSCollectionViewCompositionalLayoutConfiguration()
-        )
-    }
-
-    private func sectionShowsDayHeader(at sectionIndex: Int) -> Bool {
-        structure.day(inSection: sectionIndex) != nil
-    }
-
-    private static func gridLayoutSection(columnCount: Int, showsDayHeader: Bool) -> NSCollectionLayoutSection {
-        let itemSize = NSCollectionLayoutSize(
-            widthDimension: .fractionalWidth(1),
-            heightDimension: .fractionalHeight(1)
-        )
-        let item = NSCollectionLayoutItem(layoutSize: itemSize)
-        item.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4)
-
-        let groupSize = NSCollectionLayoutSize(
-            widthDimension: .fractionalWidth(1),
-            heightDimension: .fractionalWidth(1.0 / CGFloat(columnCount))
-        )
-        let group = NSCollectionLayoutGroup.horizontal(
-            layoutSize: groupSize,
-            subitem: item,
-            count: columnCount
-        )
-        let section = NSCollectionLayoutSection(group: group)
-        section.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
-        if showsDayHeader {
-            // The header spans the section's full width rather than its inset content
-            // width, because the bar that carries the same label spans the viewport.
-            // Measured: following the insets puts the header at x=12 w=876 against the
-            // bar's x=0 w=900, so the label jumped 12 pt sideways at every handoff.
-            // Vertical already agrees — the section's top inset lands below the
-            // header, between it and the tiles.
-            section.supplementariesFollowContentInsets = false
-            // DES-069: an in-flow header at the label's one height (blank or not, so
-            // the first row sits below the bar), scrolling with its own run.
-            // Deliberately **not** `pinToVisibleBounds` — `MediaGridDayLabel.swift`
-            // records what pinning actually does and why `MediaGridDayBarView` holds the
-            // current day instead.
-            let header = NSCollectionLayoutBoundarySupplementaryItem(
-                layoutSize: NSCollectionLayoutSize(
-                    widthDimension: .fractionalWidth(1),
-                    heightDimension: .absolute(MediaGridDayHeaderView.height)
-                ),
-                elementKind: MediaGridDayHeaderView.elementKind,
-                alignment: .top
-            )
-            section.boundarySupplementaryItems = [header]
+    /// Which sections carry a day header is answered from `structure`, which AppKit took
+    /// in the same synchronous region that invalidated this layout: `.day` and
+    /// `.ungrouped` sections never coexist in one structure, but alternate as the sort
+    /// changes, without rebuilding the layout object.
+    func makeLayout(columnCount: Int) -> MediaGridLayout {
+        MediaGridLayout(columnCount: columnCount) { [weak self] section in
+            self?.structure.day(inSection: section) != nil
         }
-        return section
     }
 
-    /// Horizontal filmstrip: plain compositional layout (no animated subclass). The strip
-    /// needs no insert/remove choreography, and horizontal `scrollDirection` on the
-    /// animated subclass was rejected after SIGSEGV during test teardown.
+    /// Horizontal filmstrip: a plain compositional layout. The strip is one section, which
+    /// the compositional layout solves once, so it has none of the per-section cost that
+    /// moved the grid onto `MediaGridLayout`; it needs no insert/remove choreography.
     private static func makeStripLayout(tileEdge: CGFloat) -> NSCollectionViewCompositionalLayout {
         let edge = max(MediaGridPresentation.minStripTileEdge, tileEdge)
         let itemSize = NSCollectionLayoutSize(

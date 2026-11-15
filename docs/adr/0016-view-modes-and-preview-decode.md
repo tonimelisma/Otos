@@ -110,11 +110,12 @@ placeholder).
   swapping exchanges the two asset identities while preserving the active
   position. `MediaChoice` remains attached to each asset across the swap.
 - The filmstrip uses a horizontal `NSCollectionViewCompositionalLayout`
-  configuration (plain layout, not `MediaGridAnimatedLayout`) so the outer clip
+  configuration (not the grid's `MediaGridLayout`) so the outer clip
   view scrolls horizontally. Orthogonal section scrolling was rejected: an
   embedded orthogonal scroller never posts the controller's clip-view bounds
-  changes, which starves scroll-driven detail queries and preheat. The animated
-  subclass stays grid-only — the strip needs no insert/remove choreography.
+  changes, which starves scroll-driven detail queries and preheat. The strip is one
+  section, which the compositional layout solves once, and needs no insert/remove
+  choreography.
 - Same-session file-content staleness (original bytes change while a cache entry
   remains) is an accepted limitation; no stamp plumbing.
 - Requirements APP-020 / APP-021 / APP-022 / APP-023 record loupe/compare entry,

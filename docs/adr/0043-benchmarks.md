@@ -49,6 +49,10 @@ The tooling found:
     a user waits for.
   - Counting is process-wide because a case's work hops between actors and into Apple's
     frameworks' threads. The suite is serialized so no other test adds to the count.
+    A case that asks what the main thread alone spends (`Benchmark.Counted.mainThread`,
+    the `….mainThread` grid cases) counts the main thread's own instructions
+    (`thread_selfcounts`) instead, so work its body awaits off the main actor does not
+    enter the count (2026-11-15).
   - **Why several processes (2026-11-11):** a case's count differs from one process to the
     next by more than its samples vary inside one. A process's allocator (xzone malloc)
     takes different paths in each process, and its switches are locked on a release macOS.

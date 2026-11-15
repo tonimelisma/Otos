@@ -138,8 +138,8 @@ tile, 6 small control, 7 push button, 9–11 window and card.
 
 | ID | Rule | Check |
 | --- | --- | --- |
-| DES-060 | Tiles shall use radius 4, a 4 pt inset per item (8 pt gutters), and a 12 pt section inset — the current built geometry. | `Otos/Views/MediaGridPresentation.swift` |
-| DES-060A | The photograph shall never be cropped to fit its tile. Cells are uniform and rows are even — the current built geometry — and the thumbnail face is aspect-fit within its cell, so a portrait frame is narrower than its cell and a landscape frame is shorter, showing the frame the photographer took. Nothing else paints in the leftover cell area. | Given a mixed-orientation run, no thumbnail is center-cropped and no row is ragged. `Otos/Views/MediaGridPresentation.swift`, `Otos/Views/MediaAssetTilePresentation.swift` |
+| DES-060 | Tiles shall use radius 4, a 4 pt inset per item (8 pt gutters), and a 12 pt section inset — the current built geometry. | `Otos/Views/MediaGridLayout.swift`, `OtosTests/MediaGridLayoutTests.swift` |
+| DES-060A | The photograph shall never be cropped to fit its tile. Cells are uniform and rows are even — the current built geometry — and the thumbnail face is aspect-fit within its cell, so a portrait frame is narrower than its cell and a landscape frame is shorter, showing the frame the photographer took. Nothing else paints in the leftover cell area. | Given a mixed-orientation run, no thumbnail is center-cropped and no row is ragged. `Otos/Views/MediaGridLayout.swift`, `Otos/Views/MediaAssetTilePresentation.swift` |
 | DES-061 | Selection shall be a 3 pt accent border on the thumbnail face, never a fill or tint over the photograph. The same outline marks Compare's active pane (DES-096). | — |
 | DES-062 | Badges shall be bottom-right, black 55%, radius 3, and shall appear only after a real thumbnail has painted. Broken or unavailable tiles shall carry no corner badge. | `Otos/Views/MediaAssetTilePresentation.swift` |
 | DES-063 | Placeholders shall use the kind glyph at tertiary strength; failures use the slash variant. No spinner in a tile. | — |

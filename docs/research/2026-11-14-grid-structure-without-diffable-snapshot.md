@@ -92,7 +92,9 @@ cost of every reload and every batch at the owner's 5,000 days.
 
 The remaining ~0.5 M instructions per section are the compositional layout's own section
 solve. Removing them needs a different layout model (one section with day headers drawn as
-decorations, or a custom layout), which the owner declined; it stays.
+decorations, or a custom layout). The owner declined that here, then ordered it on
+2026-11-15: `2026-11-15-grid-layout-without-compositional-solve.md` replaces the layout
+and supersedes this paragraph and the conclusion's second point.
 
 ### Most large applies were reorders of the whole grid
 
@@ -139,8 +141,8 @@ logged. The installed app's log after install is the owner-scale confirmation.
   `reloadData`; small and same-query reorder applies run `performBatchUpdates` with the
   inserts, deletes and moves derived from the two structures (sections matched by day,
   the longest run already in order left in place). The diffable data source is gone.
-- The layout resolve stays in AppKit's compositional layout (the owner declined replacing
-  it). Headers take the label's fixed height, which halves the resolve and gives the blank
+- The layout resolve stayed in AppKit's compositional layout here (superseded on
+  2026-11-15 by Otos's own arithmetic layout, see above). Headers take the label's fixed height, which halves the resolve and gives the blank
   first header its reserved space; the per-section solve that remains is the main thread's
   share of a large apply.
 
