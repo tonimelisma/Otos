@@ -98,6 +98,72 @@ struct CatalogStoreQueryPlanTests {
         #expect(!usesTemporarySort(plans.globalEnrichment))
     }
 
+    /// A scope that names its rows by a key — an import batch, a set of identical copies, a
+    /// stack's members — reads them by that key and sorts the few it finds. Walking the order
+    /// index for them instead read every row of the owner's catalog: an import batch's
+    /// 210 rows took 16 s, one group of identical copies 36 s
+    /// (`docs/research/2026-11-15-keyed-scope-query-plans.md`). The place options of a keyed
+    /// scope start from its rows the same way, not from every named cell.
+    @Test func keyedScopesSeekTheirOwnRowsInsteadOfWalkingTheOrder() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let roots = [rootID1, rootID2]
+        let digest = try #require(ContentDigest(data: Data(repeating: 7, count: ContentDigest.byteCount)))
+        let keyed: [(name: String, scope: CatalogScopePredicate, index: String)] = [
+            ("batch", CatalogScopePredicate(rootIDs: roots, importBatchUnixMs: 1_700_000_000_000),
+             "idx_media_asset_import_batch"),
+            ("batchOneRoot", CatalogScopePredicate(rootIDs: [rootID1], importBatchUnixMs: 1_700_000_000_000),
+             "idx_media_asset_import_batch"),
+            ("identical", CatalogScopePredicate(rootIDs: roots, content: .identical(digest)),
+             "idx_media_asset_content_sha1"),
+            ("members", CatalogScopePredicate(rootIDs: roots, content: .members([
+                CatalogScopePredicate.MemberKey(rootID: rootID1, relativePath: "a.jpg"),
+            ])), "sqlite_autoindex_media_asset_1"),
+        ]
+        let sorts = [
+            MediaSortOrder(field: .bestDate, direction: .descending),
+            MediaSortOrder(field: .name, direction: .ascending),
+            MediaSortOrder(field: .size, direction: .descending),
+        ]
+
+        let plans = try await dbQueue.read { db in
+            try keyed.map { name, scope, index in
+                let orders = try sorts.map { sort in
+                    let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                        descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort),
+                        scope: scope,
+                        db: db
+                    ))
+                    return try explainPlan(db, query: query)
+                }
+                let places = try #require(try CatalogQueryGateway.placeOptionsQuery(
+                    scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
+                ))
+                return try (name, index, orders, explainPlan(db, query: places))
+            }
+        }
+
+        for (name, index, orders, places) in plans {
+            for order in orders {
+                #expect(order.contains("SEARCH media_asset USING") && order.contains(index), "\(name): \(order)")
+                #expect(!order.contains("SCAN media_asset"), "\(name): \(order)")
+            }
+            let lines = places.split(separator: "\n")
+            #expect(lines.first?.contains("SEARCH media_asset") == true && places.contains(index), "\(name): \(places)")
+            // A stack's members are read from their JSON argument, a scan of that argument.
+            for table in ["media_asset", "place_metadata", "place_cell"] {
+                #expect(!places.contains("SCAN \(table)"), "\(name): \(places)")
+            }
+        }
+    }
+
     /// The Places scopes join `asset_metadata` for the coordinate (ADR 0040). The order
     /// must still come from the capture index — a walk, never a temporary sort — and the
     /// join must be a primary-key lookup per row, which is what makes the deferred
@@ -467,7 +533,9 @@ struct CatalogStoreQueryPlanTests {
             for table in ["media_asset", "place_metadata", "asset_metadata", "search_embedding", "face"] {
                 #expect(!lines.contains { $0 == "SCAN \(table)" || $0.hasPrefix("SCAN \(table) ") }, "\(name): \(plan)")
             }
-            if name.hasSuffix(".places") {
+            // A keyed scope's places start from its own rows instead
+            // (`keyedScopesSeekTheirOwnRowsInsteadOfWalkingTheOrder`).
+            if name.hasSuffix(".places"), !name.hasPrefix("importBatch") {
                 #expect(plan.contains("SEARCH place_metadata USING INDEX idx_asset_metadata_place_cell"), "\(name): \(plan)")
             }
         }

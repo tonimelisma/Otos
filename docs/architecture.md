@@ -188,7 +188,8 @@ everything expensive happens on an actor off the main thread.
 - **Sidebar/sources**: `SidebarSelectionPolicy` (pure) decides default/attach
   selection and All-Media visibility; eject is unmount-driven and honest (ADR 0014).
   An import moves the selection from the card's row to its batch once, when the
-  batch's row first exists (`followRunsIntoTheirBatches`), and a selected removable
+  applied window state first carries the batch's row (`followRunsIntoTheirBatches`,
+  run on every presentation and every state apply), and a selected removable
   row that stops existing resolves to the policy default. `barOwnsStatus` places the import bar on
   the card's row only, and decides which sidebar row carries the progress indicator
   when the bar is off screen.

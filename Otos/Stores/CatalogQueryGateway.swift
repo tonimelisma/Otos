@@ -111,10 +111,13 @@ nonisolated enum CatalogQueryGateway {
             : ""
         // Read by position in `fetchOrderedAssetIDRows`: keep this column order.
         let likedColumn = scope.isAnniversary ? ", media_asset.media_choice = 'liked' AS is_liked" : ""
+        // A wide scope walks the order's index, which hands its rows over in order. A keyed
+        // scope seeks its own rows by their key and sorts the few it finds: walking the order
+        // index for them reads every row of the catalog (`ScopeClause.keyIndex`).
         return SQLQuery(
             sql: """
             SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_local\(locationColumns)\(likedColumn)
-            FROM media_asset INDEXED BY \(order.indexName)\(scopeClause.join)
+            FROM media_asset INDEXED BY \(scopeClause.keyIndex ?? order.indexName)\(scopeClause.join)
             WHERE \(scopeClause.sql)\(filterSQL)
             ORDER BY \(order.orderBy)
             """,
@@ -200,10 +203,14 @@ nonisolated enum CatalogQueryGateway {
         }
     }
 
-    /// The options' read, from the named cells: each country and town's cells, their located
-    /// rows through `idx_asset_metadata_place_cell`, and each row's scope by its key — work in
-    /// the located rows of named cells, not in every row of the scope. The join order is
-    /// fixed (`CROSS JOIN`) because the planner otherwise starts from the scope's rows.
+    /// The options' read. The join order is fixed (`CROSS JOIN`) by the scope's width, because
+    /// the planner cannot tell a wide scope from a keyed one. A wide scope starts from the named
+    /// cells: each country and town's cells, their located rows through
+    /// `idx_asset_metadata_place_cell`, and each row's scope by its key — work in the located
+    /// rows of named cells, not in every row of the scope. A keyed scope (`ScopeClause.keyIndex`)
+    /// starts from its own rows, each row's metadata and cell by key: walking every named cell
+    /// for an import batch's 210 rows read 21 s on the owner's catalog, its rows first 20 ms
+    /// (`docs/research/2026-11-15-keyed-scope-query-plans.md`).
     static func placeOptionsQuery(
         scope: CatalogScopePredicate,
         language: PlaceNameLanguage,
@@ -212,9 +219,18 @@ nonisolated enum CatalogQueryGateway {
         guard let scopeClause = try scopeClause(scope, db: db) else {
             return nil
         }
-        return SQLQuery(
-            sql: """
-            SELECT place_cell.country, place_cell.town, COUNT(*) AS items
+        let from = if let keyIndex = scopeClause.keyIndex {
+            """
+            FROM media_asset INDEXED BY \(keyIndex)\(scopeClause.join)
+            CROSS JOIN asset_metadata AS place_metadata
+              ON place_metadata.library_root_id = media_asset.library_root_id
+              AND place_metadata.relative_path = media_asset.relative_path
+            CROSS JOIN place_cell
+              ON place_cell.cell_latitude = place_metadata.place_cell_latitude
+              AND place_cell.cell_longitude = place_metadata.place_cell_longitude
+            """
+        } else {
+            """
             FROM place_cell
             CROSS JOIN asset_metadata AS place_metadata
               ON place_metadata.place_cell_latitude = place_cell.cell_latitude
@@ -222,6 +238,12 @@ nonisolated enum CatalogQueryGateway {
             CROSS JOIN media_asset
               ON media_asset.library_root_id = place_metadata.library_root_id
               AND media_asset.relative_path = place_metadata.relative_path\(scopeClause.join)
+            """
+        }
+        return SQLQuery(
+            sql: """
+            SELECT place_cell.country, place_cell.town, COUNT(*) AS items
+            \(from)
             WHERE place_cell.language = ? AND place_cell.country IS NOT NULL AND \(scopeClause.sql)
             GROUP BY place_cell.country, place_cell.town
             """,
@@ -856,7 +878,24 @@ private nonisolated func scopeClause(
     }
 }
 
-private typealias ScopeClause = (join: String, sql: String, arguments: [any DatabaseValueConvertible])
+/// A resolved scope's `FROM` join and `WHERE` fragment, and how its reads reach its rows.
+private nonisolated struct ScopeClause {
+    let join: String
+    let sql: String
+    let arguments: [any DatabaseValueConvertible]
+    /// The index that seeks the scope's rows by the key that names them — a stack's members,
+    /// a set of identical copies, an import batch — or nil for a scope that spans whole
+    /// libraries. A keyed scope is a few hundred rows of a catalog of hundreds of thousands,
+    /// so its reads start from this index; a read that walks an order index or every named
+    /// place cell first reads the whole catalog to find them (16–36 s on the owner's catalog,
+    /// `docs/research/2026-11-15-keyed-scope-query-plans.md`). A wide scope's reads keep
+    /// their own fixed plans.
+    let keyIndex: String?
+}
+
+/// `media_asset`'s primary key, `(library_root_id, relative_path)`: what a stack's members are
+/// named by. SQLite names a constraint's index itself, and `INDEXED BY` accepts that name.
+private nonisolated let mediaAssetKeyIndexName = "sqlite_autoindex_media_asset_1"
 
 /// The stacks On This Day's match judges a stack's files by (`OnThisDayPicks.shows`): the
 /// ones the read already built from its own transaction, or none yet, built from the same
@@ -959,9 +998,13 @@ private nonisolated func scopeClause(
       AND \(CatalogVisibilitySQL.isPresent("media_asset"))
       AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
     """
+    // The narrowest key the scope names its rows by; a content key below names fewer rows
+    // than a batch, so it takes over.
+    var keyIndex: String?
     if let importBatchUnixMs = scope.importBatchUnixMs {
         arguments.append(importBatchUnixMs)
         predicate += "\n  AND media_asset.import_batch_unix_ms = ?"
+        keyIndex = "idx_media_asset_import_batch"
     }
     // A combined scope shows one copy of each set of identical copies (ADR 0054): a row
     // whose shown copy is in a root of the scope stands aside for it. `shown_copy_root_id`
@@ -1004,6 +1047,7 @@ private nonisolated func scopeClause(
     case let .identical(digest):
         predicate += "\n  AND \(ContentDigestSQL.isCurrent("media_asset"))\n  AND media_asset.content_sha1 = ?"
         arguments.append(digest.data)
+        keyIndex = ContentDigestSQL.indexName
     case let .members(keys):
         guard !keys.isEmpty else {
             return nil
@@ -1018,6 +1062,7 @@ private nonisolated func scopeClause(
           )
         """
         try arguments.append(CatalogScopePredicate.MemberKey.json(keys))
+        keyIndex = mediaAssetKeyIndexName
     case .withPerson:
         predicate += """
 
@@ -1067,7 +1112,7 @@ private nonisolated func scopeClause(
         predicate += "\n  AND asset_metadata.primary_latitude BETWEEN ? AND ?"
         predicate += "\n  AND (asset_metadata.primary_longitude >= ? \(longitude) asset_metadata.primary_longitude <= ?)"
     }
-    return (join, predicate, arguments)
+    return ScopeClause(join: join, sql: predicate, arguments: arguments, keyIndex: keyIndex)
 }
 
 private nonisolated let locationJoin = """

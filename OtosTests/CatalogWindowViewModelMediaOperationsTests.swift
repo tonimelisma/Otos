@@ -83,40 +83,81 @@ struct CatalogWindowViewModelMediaOperationsTests {
     // MARK: - An import moves the user to its batch, once
 
     /// `import-bar.md` row 6: the selection leaves the card's row for the batch the run
-    /// is copying into as soon as that batch's row exists — the presentation carries
-    /// `batchID` only after its first item landed.
-    @Test func pressingImportMovesTheUserToTheBatchOnceItExists() {
+    /// is copying into once the sidebar draws that batch's row. The presentation names the
+    /// batch as soon as its first item is in the catalog; the row exists only once a window
+    /// state carrying it is applied, which on a loaded machine came 20 s later (2026-11-15):
+    /// selecting it before then highlighted nothing and kept the card's photos on screen
+    /// without the bar.
+    @Test func pressingImportMovesTheUserToTheBatchOnceItsRowExists() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))
         model.selectSidebar(.library(Self.cardPath))
 
-        // Preparing and the first frames of the run have no batch row yet.
+        // Preparing and the first frames of the run have no batch yet.
         model.applyImportPresentations([Self.presentation(batchID: nil)])
         #expect(model.sidebarSelection == .library(Self.cardPath))
 
+        // The run names its batch before the sidebar draws the batch's row.
         model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+        #expect(model.selectedImportPresentation?.batchID == Self.batchID)
+
+        model.applyState(Self.attachedState(model, importBatches: [
+            ImportBatchSummary(batchID: Self.batchID, assetCount: 1),
+        ]))
         #expect(model.sidebarSelection == .importBatch(Self.batchID))
         #expect(model.selectedImportPresentation == nil)
     }
 
-    @Test func aUserWhoReturnsToTheCardIsNotPulledBackToTheBatch() {
+    /// A short run can finish, and stop naming its batch, before the batch's row is drawn;
+    /// the row's first appearance still moves the user.
+    @Test func aRunThatFinishesBeforeItsRowAppearsStillMovesTheUser() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))
         model.selectSidebar(.library(Self.cardPath))
         model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyImportPresentations([Self.presentation(batchID: nil, state: .completed(
+            summary: Self.stoppedTotals,
+            skippedForeignCount: 0,
+            failedCount: 0,
+            incompleteItems: []
+        ))])
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+
+        model.applyState(Self.attachedState(model, importBatches: [
+            ImportBatchSummary(batchID: Self.batchID, assetCount: 5),
+        ]))
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
+    }
+
+    @Test func aUserWhoReturnsToTheCardIsNotPulledBackToTheBatch() {
+        let model = makeModel()
+        let withRow = [ImportBatchSummary(batchID: Self.batchID, assetCount: 1)]
+        model.applyState(Self.attachedState(model, importBatches: withRow))
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
         model.selectSidebar(.library(Self.cardPath))
 
         model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyState(Self.attachedState(model, importBatches: withRow))
 
         #expect(model.sidebarSelection == .library(Self.cardPath))
         #expect(model.selectedImportPresentation?.batchID == Self.batchID)
     }
 
-    @Test func aUserElsewhereWhenTheBatchAppearsStaysThereAndIsNeverPulledLater() {
+    @Test func aUserElsewhereWhenTheRowAppearsStaysThereAndIsNeverPulledLater() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))
         model.selectSidebar(.library(Self.libraryPath))
         model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyState(Self.state(
+            resolvedSidebarSelection: .library(Self.libraryPath),
+            importBatches: [ImportBatchSummary(batchID: Self.batchID, assetCount: 1)],
+            queryGeneration: model.queryGeneration,
+            libraries: [Self.library(Self.libraryPath)],
+            removableSources: [Self.card(Self.cardPath)]
+        ))
         #expect(model.sidebarSelection == .library(Self.libraryPath))
 
         model.selectSidebar(.library(Self.cardPath))

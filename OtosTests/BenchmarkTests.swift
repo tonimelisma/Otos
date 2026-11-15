@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage
 import Foundation
+import GRDB
 @testable import OtosKit
 import Testing
 
@@ -12,7 +13,8 @@ import Testing
 @Suite(.serialized, .testDirectory, .enabled(if: Benchmark.isEnabled))
 struct BenchmarkTests {
     @Test func catalogCases() async throws {
-        let library = try await BenchmarkLibrary.make(in: makeTestDirectory())
+        let directory = try makeTestDirectory()
+        let library = try await BenchmarkLibrary.make(in: directory)
         let store = library.store
         let libraries = library.libraries
 
@@ -72,6 +74,37 @@ struct BenchmarkTests {
             }
             #expect(metrics.reuse == CatalogProjectionReuse(order: true, filterOptions: true, collapse: true))
             #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
+        }
+
+        // Opening an import batch: a few hundred rows of the catalog, read by the batch's key
+        // and sorted (`docs/research/2026-11-15-keyed-scope-query-plans.md`). The batch is
+        // stamped on the catalog file the way an import stamps it.
+        let batch = ImportBatchID(unixMilliseconds: 1_800_000_000_000)
+        let batchSize = 210
+        let stamp = try DatabaseQueue(path: directory.appending(path: "db/catalog.sqlite").path(percentEncoded: false))
+        try await stamp.write { db in
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET import_batch_unix_ms = ?
+                WHERE rowid IN (SELECT rowid FROM media_asset ORDER BY relative_path LIMIT ?)
+                """,
+                arguments: [batch.unixMilliseconds, batchSize]
+            )
+        }
+        try stamp.close()
+        let batchRequest = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: .importBatch(batch)), generation: 0)
+        try await Benchmark.measure("projection.windowState.importBatch") {
+            guard case let .built(state, _, _, _) = try await projection.buildWindowState(
+                store: store,
+                libraries: libraries,
+                request: batchRequest,
+                reads: .none,
+                revisions: CatalogFactRevisions()
+            ) else {
+                Issue.record("nothing is searched, so nothing waits on a reading")
+                return
+            }
+            #expect(state.mediaGrid.orderedAssetIDs.count == batchSize)
         }
 
         // On This Day's publication (ADR 0049) on the day a year after the fixture's, where
