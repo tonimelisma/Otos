@@ -484,8 +484,10 @@ final class CatalogWindowViewModel {
     /// and each creates its own actor-owned instance.
     @ObservationIgnored let preferences: any PreferenceStore
     @ObservationIgnored let preferencesDomain: PreferencesDomain
-    @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
-    @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
+    /// Queries and Move to Trash's hides, in the order the user acted, to Projection's one
+    /// consumer (`CatalogProjectionIntent`).
+    @ObservationIgnored private let projectionIntentStream: AsyncStream<CatalogProjectionIntent>
+    @ObservationIgnored let projectionIntentContinuation: AsyncStream<CatalogProjectionIntent>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
     @ObservationIgnored let mutationContinuation: AsyncStream<CatalogMutationIntent>.Continuation
     @ObservationIgnored let mediaChoiceStream: AsyncStream<MediaChoiceCommand>
@@ -574,7 +576,18 @@ final class CatalogWindowViewModel {
     /// accepted, refused or failed. Equal means every choice's outcome has been applied.
     @ObservationIgnored var submittedMediaChoiceCount = 0
     @ObservationIgnored var handledMediaChoiceCount = 0
-    @ObservationIgnored var mediaTrashTask: Task<Void, Never>?
+    /// The large-download question's sizing read (APP-045), the one Move to Trash step that can
+    /// wait: a second command waits for it rather than racing it.
+    @ObservationIgnored var trashSizingTask: Task<Void, Never>?
+    /// One undo target per Move to Trash command, so a command whose mark failed or hid
+    /// nothing takes exactly its own entry off the undo stack. `UndoManager` does not retain
+    /// targets, so they are kept here for the window's life: one small object per command.
+    @ObservationIgnored var trashUndoTargets: [MediaTrashBatchID: TrashUndoTarget] = [:]
+    /// Tests hold the Store's mark at its suspension, or fail it, here; nil in the app.
+    @ObservationIgnored let trashMarkHook: (@Sendable () async throws -> Void)?
+    /// The scope whose waiting pane has had a frame presented (`waitingFramePresented()`):
+    /// its indicator shows. Cleared by every scope intent.
+    private(set) var waitingFramePresentedScope: SidebarSelection?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
     @ObservationIgnored var deviceStagingSweepTask: Task<Void, Never>?
@@ -689,8 +702,10 @@ final class CatalogWindowViewModel {
         calendarNotificationCenter: NotificationCenter = .default,
         tileContentStore: TileContentStore = TileContentStore(),
         volumeCapacity: @escaping VolumeCapacityReader,
-        trashFiles: MediaTrashCoordinator.FileOperations
+        trashFiles: MediaTrashCoordinator.FileOperations,
+        trashMarkHook: (@Sendable () async throws -> Void)? = nil
     ) {
+        self.trashMarkHook = trashMarkHook
         self.volumeCapacity = volumeCapacity
         self.workspace = workspace
         self.tileContentStore = tileContentStore
@@ -700,8 +715,10 @@ final class CatalogWindowViewModel {
         // Curation undo entries are registered from store completions, outside any
         // AppKit event; groups are opened and closed explicitly (APP-039).
         windowUndoManager.groupsByEvent = false
-        let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
-            bufferingPolicy: .bufferingNewest(1)
+        // Lossless: a hide must reach Projection before the report that its mark landed, and
+        // a query is applied in turn (each is cheap; a pass builds the newest).
+        let (projectionIntentStream, projectionIntentContinuation) = AsyncStream<CatalogProjectionIntent>.makeStream(
+            bufferingPolicy: .unbounded
         )
         // Selection may discard obsolete pending values, but every accepted
         // add/remove command must survive until the serial consumer handles it.
@@ -878,8 +895,8 @@ final class CatalogWindowViewModel {
         } else {
             self.videoLoader = VideoPreviewLoader(materializationRequester: materializationCoordinator)
         }
-        self.queryStream = queryStream
-        self.queryContinuation = queryContinuation
+        self.projectionIntentStream = projectionIntentStream
+        self.projectionIntentContinuation = projectionIntentContinuation
         self.mutationStream = mutationStream
         self.mutationContinuation = mutationContinuation
         self.importIntentStream = importIntentStream
@@ -951,7 +968,7 @@ final class CatalogWindowViewModel {
         exportTask?.cancel()
         immichIntentTask?.cancel()
         immichStatusTask?.cancel()
-        mediaTrashTask?.cancel()
+        trashSizingTask?.cancel()
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
         duplicatesIntentTask?.cancel()
@@ -987,7 +1004,7 @@ final class CatalogWindowViewModel {
             task.cancel()
         }
         paneRequestTasks.removeAll()
-        queryContinuation.finish()
+        projectionIntentContinuation.finish()
         mutationContinuation.finish()
         importIntentContinuation.finish()
         mediaTrashIntentContinuation.finish()
@@ -1057,9 +1074,8 @@ extension CatalogWindowViewModel {
             stallMonitor.start()
         }
 
-        // This is the sole query-intent task. AsyncStream provides ordered
-        // delivery and bufferingNewest prevents obsolete clicks from building a
-        // queue while Projection is busy publishing a large state.
+        // The sole Projection-intent task: queries and Move to Trash's hides, in order. Each
+        // query is applied in turn, cheaply; a pass builds only the newest.
         let projection = catalogProjection
         let store = catalogStore
         let initialRequest = CatalogQueryRequest(
@@ -1134,13 +1150,15 @@ extension CatalogWindowViewModel {
             "Catalog query changed vm=\(vm, privacy: .public) generation=\(generation, privacy: .public) descriptor=\(descriptor.diagnosticDescription, privacy: .public)"
         )
         if scopeChanged {
+            // A new wait: its indicator waits for its own first presented frame.
+            waitingFramePresentedScope = nil
             stallMonitor.beginIntentToPaint(scope: descriptor.scope)
         }
-        queryContinuation.yield(CatalogQueryRequest(
+        projectionIntentContinuation.yield(.query(CatalogQueryRequest(
             descriptor: descriptor,
             generation: queryGeneration,
             expandedStacks: expandedStacks
-        ))
+        )))
     }
 
     /// The one writer of `expandedStacks`: Photo ▸ Expand Stack / Collapse Stack, S and a
@@ -1154,11 +1172,11 @@ extension CatalogWindowViewModel {
             "expanded": "\(stacks.count)",
             "generation": "\(queryGeneration)",
         ])
-        queryContinuation.yield(CatalogQueryRequest(
+        projectionIntentContinuation.yield(.query(CatalogQueryRequest(
             descriptor: queryDescriptor,
             generation: queryGeneration,
             expandedStacks: stacks
-        ))
+        )))
     }
 
     /// The AppKit grid reports its visible identities here as the user scrolls. This is a
@@ -1209,13 +1227,13 @@ extension CatalogWindowViewModel {
     }
 
     private func startQueryForwarding(projection: CatalogProjection) {
-        queryForwardingTask = Task { [projection, queryStream, photoSearchIndex] in
+        queryForwardingTask = Task { [projection, projectionIntentStream, photoSearchIndex] in
             // Before the first request, so no search reaches a projection without its index.
             if let photoSearchIndex {
                 await projection.attachSearchIndex(photoSearchIndex)
             }
-            for await request in queryStream {
-                await projection.updateQueryRequest(request)
+            for await intent in projectionIntentStream {
+                await projection.apply(intent)
             }
         }
     }
@@ -1598,10 +1616,17 @@ extension CatalogWindowViewModel {
     }
 
     /// The window's title, the one every scope is named by: the person a person's photos
-    /// show, else the title Projection published for the scope shown
-    /// (`CatalogWindowPolicy.title(for:libraries:)`).
+    /// show, else the selected scope's (`CatalogWindowPolicy.title(for:libraries:)`) — the
+    /// one Projection published once the scope's state is applied, and the same policy's
+    /// answer from the click until then (DES-118).
     var windowTitle: String {
-        shownPerson?.displayName ?? state.title
+        if let person = shownPerson {
+            return person.displayName
+        }
+        guard !showsSelectedScope else {
+            return state.title
+        }
+        return CatalogWindowPolicy.title(for: queryDescriptor.scope, libraries: state.libraries + state.removableSources)
     }
 
     /// The window's subtitle, under its title (DES-012 L3, DES-034): `Filtered` while a filter
@@ -1610,7 +1635,8 @@ extension CatalogWindowViewModel {
     /// query is being read and the window keeps what it showed (ADR 0048). The duplicates
     /// list and People ignore the filter, so they never claim to be filtered.
     var windowSubtitle: String {
-        let filtered = queryDescriptor.filter.isActive && !showsDuplicatesList && !showsPeopleList
+        let ignoresFilter = detailPane.surface == .duplicates || detailPane.surface == .people
+        let filtered = queryDescriptor.filter.isActive && !ignoresFilter
         let searching = state.searchPhase == .reading && queryDescriptor.search != nil
         return [filtered ? "Filtered" : nil, searching ? "Searching\u{2026}" : nil]
             .compactMap(\.self)
@@ -1750,16 +1776,47 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Whether the pane shows the scope the sidebar has selected. From a selection intent
-    /// until Projection publishes that scope, the pane still shows the scope the user left;
-    /// nothing on it is the user's to act on, because one user action acts on the scope the
-    /// user sees selected. Every act on the pane's content reads this: the targets
-    /// (`targetIDs`), the edit controls (`canEdit`), the Info pane's face acts, drag-out, a
-    /// stack badge, opening the loupe or compare, the duplicates list's and the People
-    /// gallery's acts and the menu bar's person items, the map's stacks and Play Story. How
-    /// the pane looks meanwhile is unchanged: no design rule covers it.
+    /// Whether the selected scope's state has been applied. From a selection intent until
+    /// Projection publishes that scope, the pane shows the selected scope waiting
+    /// (`detailPane`, DES-118) and draws nothing of the scope left. Every act on the pane's
+    /// content still reads this, as a defence for anything that keeps state of the scope
+    /// left: the targets (`targetIDs`), the edit controls (`canEdit`), the Info pane's face
+    /// acts, drag-out, a stack badge, opening the loupe or compare, the duplicates list's and
+    /// the People gallery's acts and the menu bar's person items, the map's stacks and Play
+    /// Story.
     var showsSelectedScope: Bool {
         state.resolvedSidebarSelection == queryDescriptor.scope
+    }
+
+    /// What the detail pane draws (DES-118): the selected scope's surface from the click on,
+    /// waiting until its state is applied. Its indicator is shown once a frame has been
+    /// presented while waiting (`waitingFramePresented()`), never before: a scope whose
+    /// state arrives within the frame of the click shows none.
+    var detailPane: CatalogDetailPane {
+        let scope = queryDescriptor.scope
+        guard !showsSelectedScope else {
+            return CatalogDetailPane(surface: scope.detailSurface, content: .shown)
+        }
+        return CatalogDetailPane(
+            surface: scope.detailSurface,
+            content: .waiting(showsIndicator: waitingFramePresentedScope == scope)
+        )
+    }
+
+    /// The waiting pane reports that a frame showing it was presented: the selected scope's
+    /// state did not arrive within the frame of the click, so its indicator appears. A report
+    /// for a scope no longer waited on changes nothing.
+    func waitingFramePresented() {
+        let scope = queryDescriptor.scope
+        guard !showsSelectedScope, waitingFramePresentedScope != scope else {
+            return
+        }
+        waitingFramePresentedScope = scope
+        OtosLog.ui.noticeOperation("ui.detailPane", phase: "indicator", fields: [
+            "vm": diagnosticID,
+            "scope": scope.diagnosticDescription,
+            "generation": "\(queryGeneration)",
+        ])
     }
 
     /// The All Media row, while two or more fixed libraries exist. The sidebar draws no row

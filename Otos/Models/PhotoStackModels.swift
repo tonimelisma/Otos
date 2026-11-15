@@ -350,6 +350,25 @@ nonisolated struct CatalogGridStacks: Equatable, Sendable {
     func files(reachedThrough id: MediaAssetID) -> [MediaAssetID] {
         tiles[id]?.collapsed?.members ?? [id]
     }
+
+    /// These stacks without the tiles of `hidden` and without the hidden files they mapped;
+    /// a stack still shown by another tile keeps its members until the next read of the
+    /// collapse (`CatalogWindowState.hidingItems`). The same value when none is here.
+    func removing(_ hidden: Set<MediaAssetID>) -> CatalogGridStacks {
+        guard hidden.contains(where: { tiles[$0] != nil || shownForHiddenMember[$0] != nil }) else {
+            return self
+        }
+        var tiles = tiles
+        var shownFor = shownForHiddenMember
+        for id in hidden {
+            tiles[id] = nil
+            shownFor[id] = nil
+        }
+        if shownFor.values.contains(where: hidden.contains) {
+            shownFor = shownFor.filter { !hidden.contains($0.value) }
+        }
+        return CatalogGridStacks(tiles: tiles, shownForHiddenMember: shownFor)
+    }
 }
 
 /// The pure collapse pass.

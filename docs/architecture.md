@@ -308,8 +308,13 @@ everything expensive happens on an actor off the main thread.
   to Not Rated" resolution, so the AppKit tile and the SwiftUI Loupe/Compare control
   stay two renderers of one intent. Neutral keeps its keyboard, menu, and VoiceOver
   paths.
+- **Which pane shows**: `CatalogWindowViewModel.detailPane` (`CatalogDetailPane`) — the
+  selected scope's surface from the click on, waiting (`ScopeWaitingView`) until its state
+  is applied (DES-118).
 - **Move to Trash**: `CatalogWindowViewModelTrash.swift` resolves the current browser
-  target and owns stale-navigation checks; `MediaTrashCoordinator` owns the durable
+  target, takes it off the window at once through `CatalogProjection.hide` (one lossless
+  `CatalogProjectionIntent` stream with the queries), moves the selection and registers
+  undo in the same step, then marks it on the trash intent stream; `MediaTrashCoordinator` owns the durable
   queue of pending items (resume on launch, downloads without the lease, retry,
   free-space floor, delete-immediately decisions) and reports to `TrashStatusBar`; `CatalogStore` supplies catalog-proven companions and
   reconciles only successful paths. The shared typed namespace-mutation lease excludes

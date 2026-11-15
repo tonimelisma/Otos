@@ -349,6 +349,31 @@ nonisolated struct CatalogDuplicatesState: Equatable, Sendable {
         }
     }
 
+    /// These groups without the copies in `hidden`: a group left with one copy is resolved
+    /// and leaves the list, as the next build would have it. The same value when no copy
+    /// is hidden.
+    func hiding(_ hidden: Set<MediaAssetID>) -> CatalogDuplicatesState {
+        guard groups.contains(where: { $0.copies.contains { hidden.contains($0.id) } }) else {
+            return self
+        }
+        let kept = groups.compactMap { group -> DuplicateGroup? in
+            guard group.copies.contains(where: { hidden.contains($0.id) }) else {
+                return group
+            }
+            let copies = group.copies.filter { !hidden.contains($0.id) }
+            guard copies.count > 1 else {
+                return nil
+            }
+            return DuplicateGroup(
+                id: group.id,
+                copies: copies,
+                default: group.default,
+                cameraOriginals: group.cameraOriginals.subtracting(hidden)
+            )
+        }
+        return CatalogDuplicatesState(groups: kept)
+    }
+
     /// Groups that still need something: not kept.
     var activeGroups: [DuplicateGroup] {
         groups.filter { !$0.isKept }

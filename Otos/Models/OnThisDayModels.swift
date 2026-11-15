@@ -56,6 +56,34 @@ nonisolated struct CatalogOnThisDayState: Equatable, Sendable {
     var isYears: Bool {
         anniversaries.allSatisfy { $0.day.month == day.month }
     }
+
+    /// The anniversaries over `order`, which is `previous` without `hidden`: each run shorter
+    /// by what it lost, an emptied one gone, and a run whose key item left keyed by its new
+    /// first item — the next Liked photo or newest capture, as the run is ordered.
+    func keeping(
+        _ order: [MediaAssetID],
+        from previous: CatalogGridContent,
+        hidden: Set<MediaAssetID>
+    ) -> CatalogOnThisDayState {
+        var removedBefore = 0
+        var kept: [OnThisDayAnniversary] = []
+        for anniversary in anniversaries where anniversary.indexes.upperBound <= previous.orderedAssetIDs.count {
+            let removedHere = previous.orderedAssetIDs[anniversary.indexes].count(where: hidden.contains)
+            let first = anniversary.firstIndex - removedBefore
+            removedBefore += removedHere
+            let count = anniversary.count - removedHere
+            guard count > 0, first < order.count else {
+                continue
+            }
+            kept.append(OnThisDayAnniversary(
+                day: anniversary.day,
+                keyItem: hidden.contains(anniversary.keyItem) ? order[first] : anniversary.keyItem,
+                firstIndex: first,
+                count: count
+            ))
+        }
+        return CatalogOnThisDayState(day: day, anniversaries: kept)
+    }
 }
 
 /// The story playing over On This Day: how far its item has got. The item itself is the

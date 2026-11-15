@@ -266,14 +266,15 @@ private struct MapMouseDownMonitor: NSViewRepresentable {
 
 /// The surface's one fact (DES-010): how much of the collection is on the map. Fixed
 /// height in every state (DES-053); digits are monospaced because enrichment moves the
-/// number while the user watches (DES-005).
-private struct PlacesMapBar: View {
-    let locatedCount: Int
+/// number while the user watches (DES-005). `nil` while the scope's state has not arrived
+/// (DES-118): the count is not known, so the line holds its height and says nothing.
+struct PlacesMapBar: View {
+    let locatedCount: Int?
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(primary)
+            Text(primary ?? " ")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(DesignPalette.label(for: colorScheme))
                 .monospacedDigit()
@@ -287,9 +288,11 @@ private struct PlacesMapBar: View {
         }
     }
 
-    private var primary: String {
-        let count = locatedCount.formatted()
-        return locatedCount == 1 ? "1 item on the map" : "\(count) items on the map"
+    private var primary: String? {
+        guard let locatedCount else {
+            return nil
+        }
+        return locatedCount == 1 ? "1 item on the map" : "\(locatedCount.formatted()) items on the map"
     }
 }
 

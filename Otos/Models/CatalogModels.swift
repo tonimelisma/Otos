@@ -1191,6 +1191,16 @@ nonisolated struct CatalogMediaGridState: Equatable {
         content.sharesOrder(with: other.content)
     }
 
+    /// This grid without `hidden`: the same grid, content and all, when it holds none of them.
+    func hiding(_ hidden: Set<MediaAssetID>) -> CatalogMediaGridState {
+        guard let removed = content.removing(hidden) else {
+            return self
+        }
+        var shown = self
+        shown.content = removed
+        return shown
+    }
+
     /// This grid holding `previous`'s content when its own is equal to it, or `previous`'s
     /// order with its own stacks when only the stacks differ. Compares the order, days and
     /// stacks: Projection calls it off the main actor, at publication.
@@ -1289,6 +1299,31 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
     /// merely equal ones. Constant time.
     func sharesOrder(with other: CatalogGridContent) -> Bool {
         order === other.order
+    }
+
+    /// This content without `hidden`, or nil when it holds none of them. A tile's stack goes
+    /// with its tile, and a hidden file that was shown for a stack takes that stack's other
+    /// files' mapping with it; the files of a collapsed stack are hidden together, since Move
+    /// to Trash moves them together (`CatalogGridStacks.files(reachedThrough:)`).
+    func removing(_ hidden: Set<MediaAssetID>) -> CatalogGridContent? {
+        let positions = withIndex { index in hidden.compactMap { index[$0] } }
+        guard !positions.isEmpty else {
+            return nil
+        }
+        // The runs between removed positions are copied whole.
+        var ids: [MediaAssetID] = []
+        ids.reserveCapacity(orderedAssetIDs.count - positions.count)
+        var buckets: [Date?] = []
+        buckets.reserveCapacity(dayBuckets.isEmpty ? 0 : orderedAssetIDs.count - positions.count)
+        var start = 0
+        for position in positions.sorted() + [orderedAssetIDs.count] {
+            ids.append(contentsOf: orderedAssetIDs[start ..< position])
+            if !dayBuckets.isEmpty {
+                buckets.append(contentsOf: dayBuckets[start ..< position])
+            }
+            start = position + 1
+        }
+        return CatalogGridContent(orderedAssetIDs: ids, dayBuckets: buckets, stacks: stacks.removing(hidden))
     }
 
     var orderedIDs: [MediaAssetID] {

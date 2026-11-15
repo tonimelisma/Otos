@@ -291,7 +291,7 @@ struct ContentView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 ViewModePicker(
                     // The map and On This Day are not view modes: no segment is selected.
-                    viewMode: viewModel.showsPlacesMap || viewModel.showsOnThisDay ? nil : viewModel.viewMode,
+                    viewMode: viewModel.showsViewModeSegment ? viewModel.viewMode : nil,
                     setViewMode: viewModel.setViewMode
                 )
                 // The duplicates list has one presentation (DES-053: disabled, never removed).
@@ -569,7 +569,15 @@ struct ContentView: View {
 
     @ViewBuilder
     var detailContent: some View {
-        if viewModel.showsPeopleList {
+        // The selected scope from the click on (DES-118): until its state is applied, its
+        // surface waits, drawing nothing of the scope left.
+        if case let .waiting(showsIndicator) = viewModel.detailPane.content {
+            ScopeWaitingView(
+                bar: waitingBar,
+                showsIndicator: showsIndicator,
+                framePresented: viewModel.waitingFramePresented
+            )
+        } else if viewModel.showsPeopleList {
             // Until People is first built the pane claims nothing (APP-044).
             if let people = viewModel.state.people {
                 PeopleView(
@@ -659,6 +667,35 @@ struct ContentView: View {
             )
         } else {
             browserContent
+        }
+    }
+
+    /// The waiting surface's bar, with what the window holds without the scope's read.
+    private var waitingBar: ScopeWaitingBar {
+        switch viewModel.detailPane.surface {
+        case nil:
+            .none
+        case .placesMap:
+            .places
+        case .onThisDay:
+            if case let .onThisDay(day) = viewModel.sidebarSelection {
+                .onThisDay(day)
+            } else {
+                .onThisDay(viewModel.today)
+            }
+        case .people:
+            .people(viewModel.state.people)
+        case .duplicates:
+            .duplicates(
+                viewModel.state.duplicates.map { duplicates in
+                    DuplicatesBarPresentation.map(
+                        viewModel.duplicatesSession.tally(in: duplicates),
+                        receipt: viewModel.duplicatesSession.receipt,
+                        canUndoMove: viewModel.canUndoDuplicatesMove
+                    ).waiting
+                },
+                viewModel.duplicatesActions
+            )
         }
     }
 

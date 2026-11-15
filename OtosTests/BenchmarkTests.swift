@@ -521,6 +521,49 @@ struct BenchmarkTests {
         try await Self.measureOwnerScaleReorder(owner, reordered: reordered)
     }
 
+    /// Move to Trash's visible half at the owner's size (DES-119): Projection takes 5 photos
+    /// off the held window (`hidingItems`, off the main actor), and the grid applies their
+    /// removal on the main thread. The apply alternates removal and return, as a Move to
+    /// Trash and its undo do, so each iteration applies the same five.
+    @Test func hideCases() async throws {
+        let owner = Self.dayGroupedGrid(prefix: "a/", photos: 158_000, days: 5000)
+        let window = CatalogWindowState(
+            title: "All Media",
+            libraries: [],
+            removableSources: [],
+            mediaGrid: owner,
+            filterOptions: .empty,
+            resolvedSidebarSelection: .allMedia,
+            mediaEmptyState: nil,
+            deviceConnectionBanner: nil
+        ).sharingUnchanged(with: nil)
+        let ids = owner.orderedAssetIDs
+        let trashed = Set(stride(from: 1000, to: 158_000, by: 31000).map { ids[$0] })
+        try await Benchmark.measure("projection.hide.days5000") {
+            let hidden = window.hidingItems(trashed)
+            #expect(hidden.mediaGrid.orderedAssetIDs.count == 158_000 - trashed.count)
+        }
+        try await Self.measureOwnerScaleHide(owner, hidden: window.hidingItems(trashed).mediaGrid)
+    }
+
+    @MainActor
+    private static func measureOwnerScaleHide(_ owner: CatalogMediaGridState, hidden: CatalogMediaGridState) async throws {
+        let controller = MediaGridViewController()
+        _ = controller.view
+        let window = orderedInTestWindow(width: 1200, height: 800, contentView: controller.view)
+        defer { window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        controller.receive(owner)
+        try await awaitGridShows(controller, owner)
+        var next = hidden
+        try await Benchmark.measure("grid.hideApply.days5000.mainThread", counting: .mainThread) {
+            controller.receive(next)
+            try await awaitGridShows(controller, next)
+            controller.collectionView.layoutSubtreeIfNeeded()
+            next = next.orderedAssetIDs.count == owner.orderedAssetIDs.count ? hidden : owner
+        }
+    }
+
     /// The two orders alternated, so every iteration moves the same 200 photos one way or
     /// back, the same query each time: the apply the projection publishes as capture days
     /// arrive. Measured twice: the whole process, and the main thread alone, which is the

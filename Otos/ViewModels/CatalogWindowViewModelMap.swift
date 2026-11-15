@@ -18,21 +18,27 @@ import OSLog
 // a pass; the loop simply runs again. Cancellation is for teardown only.
 
 extension CatalogWindowViewModel {
-    /// Whether the detail pane is the Places map rather than a view mode of the grid.
+    /// Whether the detail pane draws the Places map, with its state applied, rather than a
+    /// view mode of the grid.
     ///
-    /// Read from the published scope, not from `sidebarSelection`: the pane's content
-    /// is `state`, and the intent runs ahead of it until Projection publishes. Deciding
-    /// the presentation from the intent mounted the grid over the previous scope's
-    /// items — entering a place from the map drew all of Places, scrolled to the focus
-    /// inside them, then diffed down to the place. The map stays until the place
-    /// arrives, as every scope keeps its old content until the new one is ready.
+    /// The pane follows the intent (`detailPane`, DES-118) but draws a surface's content only
+    /// with that scope's state: mounting the grid or the map over the previous scope's items
+    /// drew them under the new scope's name — entering a place from the map drew all of
+    /// Places, scrolled to the focus inside them, then diffed down to the place. Until the
+    /// state arrives the pane draws the selected surface waiting, with nothing of either.
     var showsPlacesMap: Bool {
-        state.detailSurface == .placesMap
+        detailPane.shows(.placesMap)
     }
 
     /// The Places row, while a fixed library exists, once the catalog has loaded (APP-044).
     var showsPlacesRow: Bool {
         state.isCatalogLoaded && SidebarSelectionPolicy.showsPlaces(libraries: state.libraries)
+    }
+
+    /// Whether the picker shows the view mode selected: the map and On This Day are not view
+    /// modes, so no segment is, from the click that selects them on (DES-118).
+    var showsViewModeSegment: Bool {
+        detailPane.surface != .placesMap && detailPane.surface != .onThisDay
     }
 
     /// Whether the picker and ⌘1/2/3 act. The duplicates list has one presentation, so

@@ -59,8 +59,8 @@ extension CatalogWindowViewModel {
     }
 
     /// A click on a tile's stack badge: expands the stack the tile stands for, or collapses
-    /// the expanded stack it is in. Nothing while the grid still shows the scope the user
-    /// left (APP-080).
+    /// the expanded stack it is in. Nothing until the selected scope's state is applied
+    /// (APP-080).
     func toggleStack(shownBy id: MediaAssetID) {
         guard showsSelectedScope else { return }
         let stacks = state.mediaGrid.stacks

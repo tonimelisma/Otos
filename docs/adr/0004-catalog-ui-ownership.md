@@ -118,12 +118,25 @@ state (two independently built states could share a number, and every test-built
 would need one — an object's identity cannot collide); a lazily built index without a
 build at publication (the first main-actor lookup after a change would build it).
 
-While the sidebar has selected a scope that Projection has not published yet, the
-pane still shows the scope the user left. Nothing on it acts
-(`showsSelectedScope`): the targets are empty and the duplicates list's, the People
-gallery's, the map's and On This Day's acts do nothing, because one user action acts on
-the scope the user sees selected. How the pane looks in that interval is not decided
-here; no design rule covers it yet.
+While the sidebar has selected a scope that Projection has not published yet, the pane
+shows the selected scope waiting (DES-118, APP-084): `CatalogWindowViewModel.detailPane`
+is the one answer to which pane shows — the selected scope's surface, and whether its
+state has been applied — so the title, the surface and its bar follow the click in the
+step that applies it, and nothing of the scope left is drawn. The waiting pane's one
+indicator appears when the pane reports a presented frame without the state, a platform
+report rather than a timer (ADR 0033). The acts still check `showsSelectedScope` as a
+defence for anything that keeps the left scope's state: the targets are empty and the
+duplicates list's, the People gallery's, the map's and On This Day's acts do nothing.
+
+Move to Trash is shown before the Store records it (DES-119, APP-085). Projection, the
+owner of what is shown, takes the items off the window it last built on a `hide` intent
+(`CatalogProjectionIntent`, one lossless stream with the queries) and keeps them off every
+later publication until a pass that read the catalog after the Store's mark covers it;
+the trash queue's consumer relays the mark's landing (`hideLanded`) or its failure or
+undo (`hideWithdrawn`). Rejected: removing the items in the view model's copy of the state
+(a second owner of what is shown, and an order-sized filter and index build on the main
+actor); waiting for the mark (a write that queues behind background writers, seconds
+under load); re-reading the catalog for the hide (the read is the cost being avoided).
 
 ## Alternatives Considered
 

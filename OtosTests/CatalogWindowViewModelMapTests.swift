@@ -109,9 +109,10 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.sidebarSelection.sidebarRow == .places)
         #expect(model.showsMapAreaLeaf)
         #expect(model.viewMode == .grid)
-        // Until the area is published the pane still holds Places' items, so it stays
-        // the map; a grid mounted now would draw all of Places and diff down to the area.
-        #expect(model.showsPlacesMap)
+        // Until the area is published the pane is the area's, waiting (DES-118): neither the
+        // map nor a grid of all of Places that would diff down to the area.
+        #expect(!model.showsPlacesMap)
+        #expect(model.detailPane == CatalogDetailPane(surface: nil, content: .waiting(showsIndicator: false)))
         model.applyState(windowState(model, scope: stack, ids: [id("a.jpg")]))
         #expect(!model.showsPlacesMap)
         #expect(model.canChangeViewMode)
@@ -318,9 +319,10 @@ struct CatalogWindowViewModelMapTests {
         #expect(!area.contains(tallinn))
         #expect(model.sidebarSelection.sidebarRow == .places)
         #expect(model.viewMode == .loupe)
-        // The map stays until the area publishes, and a late Places state — the answer to
-        // the query before this one — does not undo the chosen mode.
-        #expect(model.showsPlacesMap)
+        // The area waits until it publishes (DES-118), and a late Places state — the answer
+        // to the query before this one — neither draws the map again nor undoes the mode.
+        #expect(!model.showsPlacesMap)
+        #expect(model.detailPane.content != .shown)
         model.applyState(windowState(
             model,
             scope: .places,

@@ -492,6 +492,63 @@ struct CatalogProjectionTests {
 
         #expect(await projection.publicationCount == published)
     }
+
+    /// A hide takes the items off the published window from the order held, with no catalog
+    /// read (DES-119); a read made before the mark cannot bring them back; the read of the
+    /// landed mark shares the hidden grid content, so nothing is applied twice; a withdrawn
+    /// hide brings the items back.
+    @Test func aHideIsPublishedWithoutAReadAndItsLandedMarkAppliesNothingTwice() async throws {
+        try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "hide") { fixture in
+            let projection = CatalogProjection(cadence: .milliseconds(10))
+            let recorder = StateRecorder()
+            let stream = await projection.states(
+                store: fixture.store,
+                initialDescriptor: CatalogQueryDescriptor(scope: .library(fixture.rootPath))
+            )
+            let recordingTask = Task {
+                for await state in stream {
+                    await recorder.append(state)
+                }
+            }
+            defer {
+                recordingTask.cancel()
+            }
+            let shown = await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs.count == 3 }
+            let order = try #require(shown.last).mediaGrid.orderedAssetIDs
+            try await waitForProjectionQuiescence(projection)
+            let reads = await projection.orderQueryCount
+
+            // Withdrawn: back as they were.
+            let failed = MediaTrashBatchID(unixMilliseconds: 1)
+            await projection.hide([order[0]], batch: failed)
+            _ = await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs == [order[1], order[2]] }
+            await projection.hideWithdrawn(failed, storeChanged: false)
+            _ = await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs == order }
+            #expect(await projection.orderQueryCount == reads, "neither the hide nor its withdrawal read the catalog")
+
+            // Hidden, then a read from before the mark: the item stays off.
+            let batch = MediaTrashBatchID(unixMilliseconds: 2)
+            await projection.hide([order[1]], batch: batch)
+            let hidden = await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs == [order[0], order[2]] }
+            let hiddenGrid = try #require(hidden.last).mediaGrid
+            _ = try await fixture.store.setMediaChoices([order[0]: .liked])
+            try await waitUntil { await projection.orderQueryCount > reads }
+            try await waitForProjectionQuiescence(projection)
+            #expect(await projection.orderQueryCount > reads)
+            for state in await recorder.snapshot().dropFirst(hidden.count) {
+                #expect(!state.mediaGrid.orderedAssetIDs.contains(order[1]))
+            }
+
+            // The mark lands and is read: the published grid is the hidden one's own content.
+            _ = try await fixture.store.markPendingTrash([order[1]], batch: batch)
+            await projection.hideLanded(batch)
+            try await waitForProjectionQuiescence(projection)
+            let settled = try #require(await recorder.snapshot().last)
+            #expect(settled.mediaGrid.orderedAssetIDs == [order[0], order[2]])
+            #expect(await projection.hiddenItems.isEmpty, "the read of the mark retired the hide")
+            #expect(settled.mediaGrid.sharesContent(with: hiddenGrid), "no read after the hide moved the grid")
+        }
+    }
 }
 
 extension CatalogProjectionTests {

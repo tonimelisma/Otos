@@ -12,15 +12,14 @@ import OSLog
 // its undo, its download question and its queue are the ordinary ones.
 
 extension CatalogWindowViewModel {
-    /// Whether the detail pane is the duplicates list. Read from the published scope
-    /// for the reason `showsPlacesMap` gives: the pane shows `state`, not the intent.
+    /// Whether the detail pane draws the duplicates list with its state applied
+    /// (`detailPane`, as `showsPlacesMap`).
     var showsDuplicatesList: Bool {
-        state.detailSurface == .duplicates
+        detailPane.shows(.duplicates)
     }
 
-    /// Whether the list's acts apply: the pane shows the list and the list is the scope
-    /// the user selected. Between a click on another row and its publication the list stays
-    /// on screen, but it is no longer the user's scope, so nothing on it acts.
+    /// Whether the list's acts apply: the pane draws the list, which it does only while the
+    /// list is the scope the user selected and its state is applied (DES-118).
     var actsOnDuplicatesList: Bool {
         showsDuplicatesList && showsSelectedScope
     }
@@ -183,12 +182,12 @@ extension CatalogWindowViewModel {
         OtosLog.ui.noticeOperation("duplicates.move", phase: "start", fields: [
             "count": "\(tally.itemsToMove.count)", "carries": "\(tally.carries.count)",
         ])
-        // The receipt is written once the Store has hidden the copies (`performMoveToTrash`).
+        // The receipt is written as the copies leave the list (`performMoveToTrash`).
         moveMediaToTrash(tally.itemsToMove, carrying: tally.carries)
     }
 
     var canMoveDuplicatesToTrash: Bool {
-        actsOnDuplicatesList && mediaTrashTask == nil && duplicatesTally?.itemsToMove.isEmpty == false
+        actsOnDuplicatesList && trashSizingTask == nil && duplicatesTally?.itemsToMove.isEmpty == false
     }
 
     /// What ⌘⌫ moves on this list: the extra copies of the groups the selection touches,

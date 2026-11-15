@@ -252,15 +252,39 @@ struct MediaTrashCoordinatorOwnershipTests {
             pendingItems: { try await store.pendingTrashItems() },
             trashItems: { _ in throw InjectedReadFailure() }
         )
+        // The file is cloud-only, so its size is read from the catalog, and that read fails.
         let coordinator = MediaTrashCoordinator(
             store: store,
             materializationRequester: nil,
             files: .refusing,
+            status: { _ in .dataless },
             volumeCapacity: ampleVolumeCapacity,
             reads: reads
         )
 
         #expect(await coordinator.downloadBytes(for: fixture.ids) == nil)
+        await coordinator.shutdown()
+    }
+
+    /// A command whose files are all local is sized from their own flags: the catalog is not
+    /// read, so the common Move to Trash never waits on it (APP-045).
+    @Test func aLocalCommandIsSizedWithoutReadingTheCatalog() async throws {
+        let fixture = try await Fixture.make(names: ["a.jpg"])
+        let store = fixture.store
+        let reads = MediaTrashCoordinator.StoreReads(
+            pendingItems: { try await store.pendingTrashItems() },
+            trashItems: { _ in throw InjectedReadFailure() }
+        )
+        let coordinator = MediaTrashCoordinator(
+            store: store,
+            materializationRequester: nil,
+            files: .refusing,
+            status: { _ in .materialized },
+            volumeCapacity: ampleVolumeCapacity,
+            reads: reads
+        )
+
+        #expect(await coordinator.downloadBytes(for: fixture.ids) == .zero)
         await coordinator.shutdown()
     }
 }

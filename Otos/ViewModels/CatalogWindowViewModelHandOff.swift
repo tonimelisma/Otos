@@ -266,7 +266,7 @@ extension CatalogWindowViewModel {
     /// prepared when there is one, and otherwise a file promise that prepares it when the
     /// receiver asks. Synchronous, from the details the grid holds; a photo whose details it
     /// does not hold is promised, and the promise decides once it can read them. Nil while
-    /// the grid still shows the scope the user left (`showsSelectedScope`): its photos are
+    /// the selected scope's state is not applied (`showsSelectedScope`): the photos held are
     /// no one's to hand over (APP-080).
     func dragWriter(for id: MediaAssetID) -> NSPasteboardWriting? {
         guard showsSelectedScope else { return nil }

@@ -107,6 +107,43 @@ nonisolated enum CatalogDetailSurface: String, Equatable {
     case placesMap
 }
 
+nonisolated extension SidebarSelection {
+    /// The pane that draws this scope in place of the media grid; nil where the grid does.
+    var detailSurface: CatalogDetailSurface? {
+        switch self {
+        case .people: .people
+        case .duplicates: .duplicates
+        case .onThisDay: .onThisDay
+        case .places: .placesMap
+        case .allMedia, .library, .mapArea, .mapStack, .importBatch, .allImports, .person, .duplicateGroup: nil
+        }
+    }
+}
+
+/// What the detail pane shows (DES-118): always the scope the sidebar has selected — its
+/// surface, title and bar from the click on — and whether that scope's state has been
+/// applied. Until it has, the pane draws the surface's bar with what is known without the
+/// scope's read and nothing of the scope left; the one indeterminate indicator appears once
+/// a frame has been presented without the state, so a scope whose state arrives within the
+/// frame of the click never shows one.
+nonisolated struct CatalogDetailPane: Equatable {
+    enum Content: Equatable {
+        /// The selected scope's state is applied: the pane draws it.
+        case shown
+        /// The selected scope's state has not been applied yet.
+        case waiting(showsIndicator: Bool)
+    }
+
+    /// The pane the selected scope is drawn in; nil for the media browser.
+    let surface: CatalogDetailSurface?
+    let content: Content
+
+    /// Whether the pane draws `surface` with its scope's state.
+    func shows(_ surface: CatalogDetailSurface) -> Bool {
+        self.surface == surface && content == .shown
+    }
+}
+
 /// Final UI-ready catalog state.
 nonisolated struct CatalogWindowState: Equatable {
     var title: String
@@ -153,15 +190,9 @@ nonisolated struct CatalogWindowState: Equatable {
     }
 
     /// The pane that draws this state's scope in place of the media grid; nil where the grid
-    /// does. Read from the published scope: the pane shows the state, not the intent.
+    /// does.
     var detailSurface: CatalogDetailSurface? {
-        switch resolvedSidebarSelection {
-        case .people: .people
-        case .duplicates: .duplicates
-        case .onThisDay: .onThisDay
-        case .places: .placesMap
-        case .allMedia, .library, .mapArea, .mapStack, .importBatch, .allImports, .person, .duplicateGroup: nil
-        }
+        resolvedSidebarSelection.detailSurface
     }
 
     /// Whether `detailSurface` has what it draws: the People gallery and the duplicates list
@@ -208,6 +239,31 @@ nonisolated struct CatalogWindowState: Equatable {
         }
         shared.mediaGrid.content.prepareIndex()
         return shared
+    }
+
+    /// This state without `hidden`, the items a Move to Trash took off the window before the
+    /// Store's mark (`CatalogProjection.hide(_:batch:)`): out of the grid's order with their
+    /// day buckets and stacks, off the map, out of On This Day's runs and out of the duplicate
+    /// groups, where a group left with one copy is resolved. Costs in what it removes past
+    /// one walk of each part that holds one of them; a part that holds none is this state's
+    /// own, so a state holding none of them is returned as it is. A person's photo count and
+    /// the filter's counts keep their last read until the read of the mark.
+    func hidingItems(_ hidden: Set<MediaAssetID>) -> CatalogWindowState {
+        guard !hidden.isEmpty else {
+            return self
+        }
+        var shown = self
+        shown.mediaGrid = mediaGrid.hiding(hidden)
+        if let map, map.located.contains(where: { hidden.contains($0.id) }) {
+            shown.map = CatalogMapState(located: map.located.filter { !hidden.contains($0.id) })
+        }
+        if let onThisDay, !mediaGrid.sharesContent(with: shown.mediaGrid) {
+            shown.onThisDay = onThisDay.keeping(shown.mediaGrid.orderedAssetIDs, from: mediaGrid.content, hidden: hidden)
+        }
+        if let duplicates {
+            shown.duplicates = duplicates.hiding(hidden)
+        }
+        return shown
     }
 
     /// What the window shows before the catalog has loaded: no title, no sources, no

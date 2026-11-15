@@ -361,10 +361,10 @@ nonisolated enum PeopleText {
 extension CatalogWindowViewModel {
     // MARK: - Surfaces
 
-    /// Whether the detail pane is the People gallery. Read from the published scope, for the
-    /// reason `showsPlacesMap` gives.
+    /// Whether the detail pane draws the People gallery with its state applied (`detailPane`,
+    /// as `showsPlacesMap`).
     var showsPeopleList: Bool {
-        state.detailSurface == .people
+        detailPane.shows(.people)
     }
 
     /// The row exists whenever one fixed library does, like Places.
@@ -1180,8 +1180,8 @@ extension CatalogWindowViewModel {
 
     ///
     /// Each act checks, when it is called, that the gallery is still the user's scope
-    /// (`showsSelectedScope`): between a click on another row and its publication the
-    /// gallery stays on screen, and nothing on it acts.
+    /// (`showsSelectedScope`): between a click on another row and its publication the pane
+    /// waits for that row (DES-118), and nothing of the gallery acts.
     var peopleActions: PeopleActions {
         PeopleActions(
             select: { [weak self] person, modifiers in self?.inGallery { $0.selectPeople(person, modifiers: modifiers) } },

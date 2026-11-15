@@ -233,22 +233,23 @@ struct PeopleMergeRefusalAlert: ViewModifier {
     }
 }
 
-/// The gallery's bar (DES-109): L1 over the tally.
-private struct PeopleBar: View {
-    let people: CatalogPeopleState
+/// The gallery's bar (DES-109): L1 over the tally. `nil` before People is first built: both
+/// lines hold their height and say nothing (APP-044, DES-118).
+struct PeopleBar: View {
+    let people: CatalogPeopleState?
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(PeoplePresentation.peopleLine(people.visiblePeople.count))
+                Text(people.map { PeoplePresentation.peopleLine($0.visiblePeople.count) } ?? " ")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(DesignPalette.label(for: colorScheme))
                     .monospacedDigit()
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
-                Text(PeoplePresentation.uncheckedLine(people.unchecked))
+                Text(people.map { PeoplePresentation.uncheckedLine($0.unchecked) } ?? " ")
                     .font(.subheadline)
                     .foregroundStyle(DesignPalette.l3(for: colorScheme))
                     .monospacedDigit()

@@ -42,7 +42,8 @@ highlighted: the area has no row of its own.
 The view-mode picker shows no segment selected, because the map is not one of the modes.
 Choosing one (or ⌘1 / ⌘2 / ⌘3, or the View menu) opens the area the map shows in that
 mode: Grid, Loupe or Compare over the photos located inside it. Loupe and Compare start
-on the area's first photos. The map stays on screen until the area is ready. The picker
+on the area's first photos. Until the area's photos arrive the pane is the area's, waiting
+(DES-118): no map and no grid of Places under the area's name. The picker
 is disabled (DES-053) only before the map has first reported where it is. The filter,
 sort and zoom controls keep working: filter narrows the map, sort decides which photo
 fronts a stack, zoom steps the camera. The map has no selection, so the trailing

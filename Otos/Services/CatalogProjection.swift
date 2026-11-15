@@ -107,6 +107,12 @@ actor CatalogProjection {
     private var loopTask: Task<Void, Never>?
     private var cadenceTask: Task<Void, Never>?
     private var lastPublishedState: CatalogWindowState?
+    /// The last state as built, before the hides take anything off it: what every
+    /// republication starts from, a hide's and its withdrawal's included.
+    private var lastBuiltState: CatalogWindowState?
+    /// What each Move to Trash took off the window until a read of the Store's mark
+    /// (`hide(_:batch:)`), by command.
+    private var hiddenBatches: [MediaTrashBatchID: HiddenBatch] = [:]
     /// The duplicate groups the last successful duplicates build produced; nil until one has.
     private var duplicates: CatalogDuplicatesState?
     private var duplicatesProjection: DuplicatesProjection?
@@ -323,6 +329,132 @@ actor CatalogProjection {
             unfilteredVisibleAssetCount: facts.scopedAssetIDs.count,
             filterOptions: .empty
         ).0
+    }
+}
+
+/// What the window asks of Projection, in the order the user acted (ADR 0032 rule 5): one
+/// lossless stream with one consumer, so a hide reaches Projection before the report that the
+/// Store's mark for it landed.
+nonisolated enum CatalogProjectionIntent: Sendable {
+    /// Show this query. Each is applied in turn; a pass builds the newest.
+    case query(CatalogQueryRequest)
+    /// A Move to Trash's items leave the window now, ahead of the Store's mark.
+    case hide([MediaAssetID], batch: MediaTrashBatchID)
+    /// The Store's mark for `batch` is written.
+    case hideLanded(MediaTrashBatchID)
+    /// `batch` is not hidden after all: its mark failed (`storeChanged` false), or its undo
+    /// put the items back in the Store (true).
+    case hideWithdrawn(MediaTrashBatchID, storeChanged: Bool)
+}
+
+/// One Move to Trash's items as Projection keeps them off the window: until a pass that read
+/// the catalog after the Store's mark landed covers its request (`retiresAt`).
+private nonisolated struct HiddenBatch {
+    let ids: Set<MediaAssetID>
+    /// The request a pass must cover for this batch to retire; nil until the mark lands.
+    var retiresAt: UInt64?
+}
+
+/// Hide guide (DES-119, APP-085)
+///
+/// Move to Trash shows its result before the Store has written anything: the items leave the
+/// published window from the order Projection already holds, with no catalog read, and the
+/// Store's mark follows. `hide(_:batch:)` takes them off `lastBuiltState` and republishes
+/// (`CatalogWindowState.hidingItems`, in proportion to the change); every later publication —
+/// a pass, a held answer, the options, People, the duplicate groups — leaves through the same
+/// `hidingItems`, so a pass that read the catalog before the mark cannot bring them back.
+/// `hideLanded` is the Store's own report that the mark is written, relayed by the trash
+/// queue's consumer after the write returns. It records a membership change, which the mark
+/// is (`CatalogChangedFacts.membership`), so no held read answers from before it, and rings the
+/// loop; the batch retires once a pass started after that report covers its request — that
+/// pass read the catalog with the mark in it, so what it builds already lacks the items and
+/// its publication shares the hidden one's grid content: nothing is applied twice. A held
+/// answer covers nothing, so it never retires a batch. `hideWithdrawn` puts a batch back: a
+/// failed mark republishes what was built, and an undo that put the items back in the Store
+/// records the change and rings the loop, as the landing does.
+extension CatalogProjection {
+    func apply(_ intent: CatalogProjectionIntent) {
+        switch intent {
+        case let .query(request):
+            updateQueryRequest(request)
+        case let .hide(ids, batch):
+            hide(ids, batch: batch)
+        case let .hideLanded(batch):
+            hideLanded(batch)
+        case let .hideWithdrawn(batch, storeChanged):
+            hideWithdrawn(batch, storeChanged: storeChanged)
+        }
+    }
+
+    /// Takes `ids` off the window now, from what was last built.
+    func hide(_ ids: [MediaAssetID], batch: MediaTrashBatchID) {
+        guard hiddenBatches[batch] == nil, !ids.isEmpty else {
+            return
+        }
+        hiddenBatches[batch] = HiddenBatch(ids: Set(ids))
+        let start = ContinuousClock.now
+        republish()
+        OtosLog.catalog.noticeOperation("projection.hide", phase: "hidden", fields: [
+            "projection": diagnosticID,
+            "batch": "\(batch.unixMilliseconds)",
+            "count": "\(ids.count)",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+    }
+
+    /// The Store's mark for `batch` is written: the next pass reads it.
+    func hideLanded(_ batch: MediaTrashBatchID) {
+        guard hiddenBatches[batch] != nil else {
+            return
+        }
+        factRevisions.record(.membership)
+        requestPublication(ringNow: true)
+        hiddenBatches[batch]?.retiresAt = requested
+        OtosLog.catalog.noticeOperation("projection.hide", phase: "landed", fields: [
+            "projection": diagnosticID,
+            "batch": "\(batch.unixMilliseconds)",
+            "retiresAt": "\(requested)",
+        ])
+    }
+
+    /// `batch`'s items come back: its mark failed, or its undo put them back in the Store.
+    func hideWithdrawn(_ batch: MediaTrashBatchID, storeChanged: Bool) {
+        let withdrawn = hiddenBatches.removeValue(forKey: batch) != nil
+        if storeChanged {
+            factRevisions.record(.membership)
+            requestPublication(ringNow: true)
+        }
+        guard withdrawn else {
+            return
+        }
+        republish()
+        OtosLog.catalog.noticeOperation("projection.hide", phase: "withdrawn", fields: [
+            "projection": diagnosticID,
+            "batch": "\(batch.unixMilliseconds)",
+            "storeChanged": "\(storeChanged)",
+        ])
+    }
+
+    /// Every item a batch still keeps off the window.
+    var hiddenItems: Set<MediaAssetID> {
+        hiddenBatches.values.reduce(into: Set<MediaAssetID>()) { $0.formUnion($1.ids) }
+    }
+
+    /// Retires each batch whose mark a pass that started from `startedFrom` has read, and
+    /// republishes in case the Store kept one of its items shown.
+    private func retireHides(coveredFrom startedFrom: UInt64) {
+        let retiring = hiddenBatches.filter { $0.value.retiresAt.map { $0 <= startedFrom } ?? false }
+        guard !retiring.isEmpty else {
+            return
+        }
+        for batch in retiring.keys {
+            hiddenBatches[batch] = nil
+        }
+        republish()
+        OtosLog.catalog.noticeOperation("projection.hide", phase: "retired", fields: [
+            "projection": diagnosticID,
+            "batches": "\(retiring.count)",
+        ])
     }
 }
 
@@ -681,6 +813,7 @@ private extension CatalogProjection {
             }
         }
         covered = startedFrom
+        retireHides(coveredFrom: startedFrom)
         ringIfBehind()
         // An injected test builder derives nothing. Otherwise a pass that took up a change
         // an owner's answer is built from asks that owner for a build, and one that took up
@@ -765,14 +898,13 @@ private extension CatalogProjection {
     /// Republishes the last state with freshly read options for `row`, when it still shows
     /// that row and the options differ. Synchronous.
     private func publishFilterOptions(_ options: CatalogFilterOptions, row: SidebarSelection) -> Bool {
-        guard var state = lastPublishedState,
+        guard let state = lastBuiltState,
               state.queryDescriptor.scope.sidebarRow == row,
               state.filterOptions != options
         else {
             return false
         }
-        state.filterOptions = options
-        yield(state)
+        republish { $0.filterOptions = options }
         return true
     }
 
@@ -780,33 +912,30 @@ private extension CatalogProjection {
     /// window keeps what it shows (ADR 0048). Nothing is covered, so the pass the reading's
     /// end rings builds the answer. Synchronous.
     func publishSearchReading() {
-        guard var state = lastPublishedState, state.searchPhase != .reading else {
+        guard let state = lastBuiltState, state.searchPhase != .reading else {
             return
         }
-        state.searchPhase = .reading
-        yield(state)
+        republish { $0.searchPhase = .reading }
     }
 
     /// Takes in a fresh People build and republishes the last state with it when it differs
     /// from what it carries. Synchronous.
     func publishPeople(_ built: CatalogPeopleState) {
         people = built
-        guard var state = lastPublishedState, state.people != built else {
+        guard let state = lastBuiltState, state.people != built else {
             return
         }
-        state.people = built
-        yield(state)
+        republish { $0.people = built }
     }
 
     /// Takes in freshly built groups and republishes the last state with them when they
     /// differ from what it carries. Synchronous.
     func publishDuplicates(_ built: CatalogDuplicatesState) {
         duplicates = built
-        guard var state = lastPublishedState, state.duplicates != built else {
+        guard let state = lastBuiltState, state.duplicates != built else {
             return
         }
-        state.duplicates = built
-        yield(state)
+        republish { $0.duplicates = built }
     }
 
     /// Normalizes the selection the build resolved, compares against the last published
@@ -822,9 +951,12 @@ private extension CatalogProjection {
             forInput: selectedRequest
         )
         let equalityStart = ContinuousClock.now
-        // Parts equal to the last publication's are handed on as that publication's own, so
-        // the window learns what changed by identity, never by walking them.
-        let state = publication.state.sharingUnchanged(with: lastPublishedState)
+        // What a Move to Trash took off the window stays off it until a read of the Store's
+        // mark (`hiddenBatches`). Parts equal to the last publication's are handed on as that
+        // publication's own, so the window learns what changed by identity, never by walking
+        // them — and a read that answers what a hide already showed applies nothing.
+        lastBuiltState = publication.state
+        let state = publication.state.hidingItems(hiddenItems).sharingUnchanged(with: lastPublishedState)
         let changeSummary = CatalogProjectionChangeSummary.compare(
             previous: lastPublishedState,
             current: state
@@ -868,9 +1000,24 @@ private extension CatalogProjection {
         loading.mediaGrid = CatalogMediaGridState(descriptor: request.descriptor, orderedAssetIDs: [])
         loading.resolvedSidebarSelection = request.descriptor.scope
         loading.queryGeneration = request.generation
+        lastBuiltState = loading
         OtosLog.catalog.notice("op=projection.publish phase=loadingCatalog")
         if loading != lastPublishedState {
             yield(loading)
+        }
+    }
+
+    /// Republishes the last built state changed by `change`, with what the hides take off it,
+    /// when the result differs from the last publication. Synchronous.
+    private func republish(_ change: (inout CatalogWindowState) -> Void = { _ in }) {
+        guard var built = lastBuiltState else {
+            return
+        }
+        change(&built)
+        lastBuiltState = built
+        let state = built.hidingItems(hiddenItems).sharingUnchanged(with: lastPublishedState)
+        if state != lastPublishedState {
+            yield(state)
         }
     }
 
@@ -913,6 +1060,8 @@ private extension CatalogProjection {
         covered = 0
         reads = .none
         lastPublishedState = nil
+        lastBuiltState = nil
+        hiddenBatches = [:]
         duplicates = nil
         people = nil
         orderQueryCount = 0

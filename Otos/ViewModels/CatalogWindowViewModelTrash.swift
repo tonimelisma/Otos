@@ -4,31 +4,38 @@ import OSLog
 
 /// Recoverable deletion intent guide
 ///
-/// The ViewModel resolves the same current target model as curation, snapshots the
-/// visible context, and hides the targets by marking them pending in the Store; the
-/// durable queue in `MediaTrashCoordinator` owns every filesystem move from there.
-/// Navigation after hiding is rejected when the user changed mode, query, or pane
-/// ownership while the mark was suspended.
+/// The ViewModel resolves the same current target model as curation and shows the result
+/// first (DES-119, APP-085): in the step that applies the intent, the targets leave the
+/// window (`CatalogProjectionIntent.hide`, which Projection publishes from the order it
+/// holds, with no catalog read), the selection or focus moves to the nearest survivor, and
+/// `Undo Move to Trash` is registered. The Store's mark follows on the trash intent stream;
+/// the durable queue in `MediaTrashCoordinator` owns every filesystem move from there.
 ///
 /// Every surface — Photo menu, ⌘⌫, context menu, toolbar Action menu — calls
 /// `moveTargetedMediaToTrash()`, which acts at once: the act is undoable, so it asks
-/// nothing first (HIG: no alerts for common, undoable actions; Plan 0104 D1).
+/// nothing first (HIG: no alerts for common, undoable actions; Plan 0104 D1). The one
+/// question, the large download (APP-045), is asked before anything is hidden, and only a
+/// command that holds a cloud-only file waits for its sizing read.
 ///
-/// Undo (APP-039). Once the Store has hidden the items, `Undo Move to Trash` is
-/// registered on the window's one undo manager. Undo and redo register their opposite
-/// entry synchronously at fire time, as curation's do, then hand the work to the
-/// queue: undo asks `MediaTrashCoordinator.undo` to withdraw what is still pending and
-/// put back what is in the Trash; redo marks the restored items pending again under a
-/// new command identity.
+/// Undo (APP-039). Undo and redo register their opposite entry synchronously at fire time,
+/// as curation's do, then hand the work to the queue on the same stream as the mark, so an
+/// undo pressed before the mark lands is applied after it: the stream's one consumer knows
+/// what each command's mark hid (`hiddenByBatch`) and undoes exactly that. Undo asks
+/// `MediaTrashCoordinator.undo` to withdraw what is still pending and put back what is in
+/// the Trash; redo hides the items again at once and marks what the undone command hid
+/// under a new command identity. A mark that fails or hides nothing takes its undo entry
+/// back off the stack (`TrashUndoTarget`); a failed one puts its items back and says so.
 ///
 /// The queue reports back through one event stream consumed here: its state feeds the
 /// bottom status bar, its decisions queue as prompts (D3/D4 of Plan 0104), and a move
 /// that failed after download re-shows the failure alert.
-/// A user act aimed at the trash queue after the original Move to Trash. They share one
+/// A Move to Trash and every user act aimed at the trash queue after it. They share one
 /// lossless stream so the queue sees them in the order the user acted.
 nonisolated enum TrashIntent: Sendable {
-    case undo(batch: MediaTrashBatchID, ids: [MediaAssetID])
-    case redo(batch: MediaTrashBatchID, ids: [MediaAssetID], carries: [DuplicateCarry])
+    /// Hide `items` behind the pending command `batch` in the Store. `receiptSizes` are the
+    /// sizes the duplicates list showed for them, for its receipt.
+    case mark(batch: MediaTrashBatchID, items: TrashMarkItems, carries: [DuplicateCarry], receiptSizes: DuplicateSizes?)
+    case undo(batch: MediaTrashBatchID)
     case deleteImmediately([MediaAssetID])
     case restore([MediaAssetID])
     case keepWaitingForSpace([MediaAssetID])
@@ -36,9 +43,26 @@ nonisolated enum TrashIntent: Sendable {
     case cancelPending
 }
 
+/// What a mark hides: the items a Move to Trash targeted, or — for its redo — exactly the
+/// items an earlier command's mark hid, which only the stream's consumer knows.
+nonisolated enum TrashMarkItems: Sendable {
+    case targets([MediaAssetID])
+    case hiddenBy(MediaTrashBatchID)
+}
+
+/// One Move to Trash command's undo target. `UndoManager` removes a target's entries by
+/// identity, so a command whose mark failed or hid nothing takes back exactly its own.
+final class TrashUndoTarget {
+    let batch: MediaTrashBatchID
+
+    init(batch: MediaTrashBatchID) {
+        self.batch = batch
+    }
+}
+
 extension CatalogWindowViewModel {
     var canMoveTargetedMediaToTrash: Bool {
-        guard mediaTrashTask == nil, showsSelectedScope else {
+        guard trashSizingTask == nil, showsSelectedScope else {
             return false
         }
         // On the duplicates list the targets are the selected groups' extra copies, never
@@ -54,8 +78,6 @@ extension CatalogWindowViewModel {
     }
 
     /// Hides the targets behind one pending Move to Trash and hands them to the queue.
-    /// `mediaTrashTask` covers only the Store mark, so a second command waits for the
-    /// first to be recorded rather than racing it.
     func moveTargetedMediaToTrash() {
         guard canMoveTargetedMediaToTrash else {
             return
@@ -77,22 +99,26 @@ extension CatalogWindowViewModel {
     /// copies Duplicates marked (ADR 0042). Asks the large-download question when it
     /// applies (APP-045), then hides the items behind one undoable command.
     func moveMediaToTrash(_ ids: [MediaAssetID], carrying carries: [DuplicateCarry] = []) {
-        guard mediaTrashTask == nil, !ids.isEmpty else {
+        guard trashSizingTask == nil, !ids.isEmpty else {
             return
         }
         guard asksBeforeLargeTrashDownload else {
             performMoveToTrash(ids, carrying: carries)
             return
         }
-        // Sizing runs on `MediaTrashCoordinator`, an actor, not the MainActor; `mediaTrashTask` keeps a second
-        // command from starting until this one has either asked or moved.
+        // The window holds no locality fact — whether a file is cloud-only is a point-in-time
+        // filesystem fact Otos never stores (ADR 0008) — so the question's answer is read off
+        // the main actor before anything is hidden. `MediaTrashCoordinator` reads the catalog
+        // only for a command holding a cloud-only file; a local one is sized from the files'
+        // own flags. `trashSizingTask` keeps a second command from starting until this one has
+        // either asked or moved.
         let coordinator = mediaTrashCoordinator
-        // Single in flight by construction (`mediaTrashTask` gates every start), so there is
+        // Single in flight by construction (`trashSizingTask` gates every start), so there is
         // nothing to order: a read-only sizing question, answered once.
-        mediaTrashTask = Task { [weak self, coordinator] in
+        trashSizingTask = Task { [weak self, coordinator] in
             let bytes = await coordinator.downloadBytes(for: ids)
             guard let self else { return }
-            mediaTrashTask = nil
+            trashSizingTask = nil
             guard let bytes else {
                 // The catalog could not size the download, so there is no number to put in
                 // a prompt. The move goes ahead on its own safeguards: the free-space floor
@@ -137,64 +163,80 @@ extension CatalogWindowViewModel {
         OtosLog.ui.notice("op=mediaTrash.prompt phase=\(asks ? "enabled" : "suppressed", privacy: .public)")
     }
 
+    /// The result first, in this step: the items leave the window, the selection moves on,
+    /// the undo entry and the duplicates receipt are there; the Store's mark follows on the
+    /// trash intent stream (`finishTrashMark`).
     private func performMoveToTrash(_ ids: [MediaAssetID], carrying carries: [DuplicateCarry]) {
-        guard mediaTrashTask == nil, !ids.isEmpty else {
+        guard trashSizingTask == nil, !ids.isEmpty else {
             return
         }
-        let context = TrashNavigationContext(
-            mode: viewMode,
-            descriptor: queryDescriptor,
-            comparePair: comparePair,
-            comparePane: activeComparePane,
-            orderedIDs: state.mediaGrid.orderedAssetIDs
-        )
         startMediaTrash()
-        let coordinator = mediaTrashCoordinator
-        OtosLog.ui.notice("op=trash.move phase=start count=\(ids.count, privacy: .public)")
+        let batch = MediaTrashBatchID()
+        OtosLog.ui.noticeOperation("trash.move", phase: "start", fields: [
+            "batch": "\(batch.unixMilliseconds)",
+            "count": "\(ids.count)",
+        ])
         // The duplicates bar's receipt reports what this command hid, with the sizes the
-        // list showed: read before the await, since the groups leave the published state
-        // once their copies are hidden (ADR 0042).
+        // list showed: read before the hide, since the groups leave the window with their
+        // copies (ADR 0042).
         let receiptSizes = showsDuplicatesList ? duplicateSizes(for: ids) : nil
-        // Single in flight by construction (`mediaTrashTask` gates every start): a second
-        // Move to Trash waits for this Store mark rather than racing it.
-        mediaTrashTask = Task { [weak self, store = catalogStore, coordinator] in
-            let batch = MediaTrashBatchID()
-            let hidden: [MediaAssetID]
-            do {
-                hidden = try await store.markPendingTrash(ids, batch: batch, carrying: carries)
-            } catch {
-                // Nothing was hidden or queued: the items stay where they are, with no
-                // undo for a move that did not happen.
-                OtosLog.ui.error(
-                    """
-                    op=trash.queue phase=failed batch=\(batch.unixMilliseconds, privacy: .public) \
-                    requested=\(ids.count, privacy: .public) error=\(String(describing: error), privacy: .public)
-                    """
-                )
-                self?.mediaTrashTask = nil
-                return
-            }
-            await coordinator.start()
-            coordinator.kick()
-            guard let self else { return }
-            OtosLog.ui.notice(
-                """
-                op=trash.queue phase=hidden batch=\(batch.unixMilliseconds, privacy: .public) \
-                requested=\(ids.count, privacy: .public) hidden=\(hidden.count, privacy: .public)
-                """
+        // Command: Projection takes the items off before it hears the mark landed.
+        projectionIntentContinuation.yield(.hide(ids, batch: batch))
+        navigateAfterHiding(Set(ids))
+        registerTrashUndo(batch: batch, ids: ids, carries: carries)
+        if let receiptSizes {
+            duplicatesSession.receipt = DuplicatesReceipt(
+                batch: batch,
+                movedCount: ids.count,
+                bytes: receiptSizes.total(for: ids)
             )
-            if !hidden.isEmpty {
-                registerTrashUndo(batch: batch, ids: hidden, carries: carries)
-                if let receiptSizes {
-                    duplicatesSession.receipt = DuplicatesReceipt(
-                        batch: batch,
-                        movedCount: hidden.count,
-                        bytes: receiptSizes.total(for: hidden)
-                    )
-                }
+        }
+        // Command: ordered before any undo of it, which the consumer applies after the mark.
+        submitTrashIntent(.mark(batch: batch, items: .targets(ids), carries: carries, receiptSizes: receiptSizes))
+    }
+
+    /// The Store's answer to a mark, applied in the consumer's order. What it hid is what an
+    /// undo puts back; a mark that hid nothing has nothing to undo, and one that failed
+    /// brings its items back and says so (DES-076).
+    private func finishTrashMark(
+        batch: MediaTrashBatchID,
+        requested: [MediaAssetID],
+        outcome: Result<[MediaAssetID], any Error>,
+        receiptSizes: DuplicateSizes?
+    ) {
+        switch outcome {
+        case let .success(hidden):
+            OtosLog.ui.noticeOperation("trash.queue", phase: "hidden", fields: [
+                "batch": "\(batch.unixMilliseconds)",
+                "requested": "\(requested.count)",
+                "hidden": "\(hidden.count)",
+            ])
+            if hidden.isEmpty {
+                removeTrashUndo(batch: batch)
             }
-            navigateAfterHiding(Set(hidden), context: context)
-            mediaTrashTask = nil
+            if let receipt = duplicatesSession.receipt, receipt.batch == batch, hidden.count != receipt.movedCount {
+                duplicatesSession.receipt = hidden.isEmpty ? nil : DuplicatesReceipt(
+                    batch: batch,
+                    movedCount: hidden.count,
+                    bytes: (receiptSizes ?? DuplicateSizes(sizes: [:])).total(for: hidden)
+                )
+            }
+        case let .failure(error):
+            // Nothing was hidden or queued: the items are back where they were, selected, with
+            // no undo for a move that did not happen.
+            OtosLog.ui.errorOperation("trash.queue", phase: "failed", fields: [
+                "batch": "\(batch.unixMilliseconds)",
+                "requested": "\(requested.count)",
+                "error": String(describing: error),
+            ])
+            removeTrashUndo(batch: batch)
+            if duplicatesSession.receipt?.batch == batch {
+                duplicatesSession.receipt = nil
+            }
+            trashFailedIDs = requested
+            trashAlertDetail = TrashAlertCopy.moveDetail
+            trashAlertMessage = requested.count == 1 ? TrashAlertCopy.moveFailedOne : TrashAlertCopy.moveFailedMany
+            selectAssets(requested)
         }
     }
 
@@ -214,14 +256,35 @@ extension CatalogWindowViewModel {
 
     static let moveToTrashActionName = "Move to Trash"
 
+    /// The command's undo target, made once per command and kept (`trashUndoTargets`).
+    private func trashUndoTarget(_ batch: MediaTrashBatchID) -> TrashUndoTarget {
+        if let target = trashUndoTargets[batch] {
+            return target
+        }
+        let target = TrashUndoTarget(batch: batch)
+        trashUndoTargets[batch] = target
+        return target
+    }
+
+    /// `ids` are the items the command took off the window: what redo hides again at once.
+    /// The Store work of undo and redo uses what the mark hid, which the consumer holds.
     private func registerTrashUndo(batch: MediaTrashBatchID, ids: [MediaAssetID], carries: [DuplicateCarry]) {
-        // Explicit group: registration happens after a Store await, outside any event.
+        // Explicit group: the manager does not group by event (curation registers on Store
+        // completions); this registration happens inside the user's event.
         windowUndoManager.beginUndoGrouping()
-        windowUndoManager.registerUndo(withTarget: self) { model in
-            model.undoMoveToTrash(batch: batch, ids: ids, carries: carries)
+        windowUndoManager.registerUndo(withTarget: trashUndoTarget(batch)) { [weak self] target in
+            self?.undoMoveToTrash(batch: target.batch, ids: ids, carries: carries)
         }
         windowUndoManager.setActionName(Self.moveToTrashActionName)
         windowUndoManager.endUndoGrouping()
+        publishUndoState()
+    }
+
+    /// Takes the command's entries, undo or redo, back off the stack: its mark failed or hid
+    /// nothing, so there is nothing to undo.
+    private func removeTrashUndo(batch: MediaTrashBatchID) {
+        guard let target = trashUndoTargets[batch] else { return }
+        windowUndoManager.removeAllActions(withTarget: target)
         publishUndoState()
     }
 
@@ -229,8 +292,8 @@ extension CatalogWindowViewModel {
     /// to withdraw or put back the command's items, and the Store to take back what the
     /// command carried onto kept copies.
     private func undoMoveToTrash(batch: MediaTrashBatchID, ids: [MediaAssetID], carries: [DuplicateCarry]) {
-        windowUndoManager.registerUndo(withTarget: self) { model in
-            model.redoMoveToTrash(ids: ids, carries: carries)
+        windowUndoManager.registerUndo(withTarget: trashUndoTarget(batch)) { [weak self] target in
+            self?.redoMoveToTrash(undone: target.batch, ids: ids, carries: carries)
         }
         windowUndoManager.setActionName(Self.moveToTrashActionName)
         // The receipt reported this batch; undone, there is nothing to report.
@@ -238,8 +301,8 @@ extension CatalogWindowViewModel {
             duplicatesSession.receipt = nil
         }
         OtosLog.ui.notice("op=trash.undo phase=start count=\(ids.count, privacy: .public)")
-        // Command: ordered with a following redo, which re-marks the same items.
-        submitTrashIntent(.undo(batch: batch, ids: ids))
+        // Command: ordered after the mark it undoes and before a following redo.
+        submitTrashIntent(.undo(batch: batch))
     }
 
     private func finishTrashUndo(_ outcome: MediaTrashCoordinator.UndoResult) {
@@ -264,16 +327,19 @@ extension CatalogWindowViewModel {
     }
 
     /// Runs inside `UndoManager.redo()`: files undo synchronously under a new command
-    /// identity, then hides the items again for the queue.
-    private func redoMoveToTrash(ids: [MediaAssetID], carries: [DuplicateCarry]) {
+    /// identity, takes the items off the window again at once, then marks what the undone
+    /// command hid.
+    private func redoMoveToTrash(undone: MediaTrashBatchID, ids: [MediaAssetID], carries: [DuplicateCarry]) {
         let batch = MediaTrashBatchID()
-        windowUndoManager.registerUndo(withTarget: self) { model in
-            model.undoMoveToTrash(batch: batch, ids: ids, carries: carries)
+        windowUndoManager.registerUndo(withTarget: trashUndoTarget(batch)) { [weak self] target in
+            self?.undoMoveToTrash(batch: target.batch, ids: ids, carries: carries)
         }
         windowUndoManager.setActionName(Self.moveToTrashActionName)
         OtosLog.ui.notice("op=trash.redo phase=start count=\(ids.count, privacy: .public)")
+        // Command: Projection takes the items off before it hears the mark landed.
+        projectionIntentContinuation.yield(.hide(ids, batch: batch))
         // Command: ordered after the undo it follows.
-        submitTrashIntent(.redo(batch: batch, ids: ids, carries: carries))
+        submitTrashIntent(.mark(batch: batch, items: .hiddenBy(undone), carries: carries, receiptSizes: nil))
     }
 
     private func submitTrashIntent(_ intent: TrashIntent) {
@@ -299,13 +365,43 @@ extension CatalogWindowViewModel {
         let intents = mediaTrashIntentStream
         let coordinator = mediaTrashCoordinator
         let store = catalogStore
-        mediaTrashIntentTask = Task { [weak self, coordinator, store] in
+        let projection = projectionIntentContinuation
+        let markHook = trashMarkHook
+        mediaTrashIntentTask = Task { [weak self, coordinator, store, projection, markHook] in
             // The queue starts before the first intent reaches it, in the same task.
             await coordinator.start()
+            // What each command's mark hid: what its undo puts back and its redo marks again.
+            // Only this consumer writes or reads it, in intent order.
+            var hiddenByBatch: [MediaTrashBatchID: [MediaAssetID]] = [:]
             for await intent in intents {
                 switch intent {
-                case let .undo(batch, ids):
-                    let outcome = await coordinator.undo(batch: batch, ids: ids)
+                case let .mark(batch, items, carries, receiptSizes):
+                    let ids = switch items {
+                    case let .targets(ids): ids
+                    case let .hiddenBy(undone): hiddenByBatch[undone] ?? []
+                    }
+                    let outcome: Result<[MediaAssetID], any Error>
+                    do {
+                        try await markHook?()
+                        outcome = try await .success(store.markPendingTrash(ids, batch: batch, carrying: carries))
+                    } catch {
+                        outcome = .failure(error)
+                    }
+                    switch outcome {
+                    case let .success(hidden):
+                        hiddenByBatch[batch] = hidden
+                        projection.yield(.hideLanded(batch))
+                        coordinator.kick()
+                    case .failure:
+                        projection.yield(.hideWithdrawn(batch, storeChanged: false))
+                    }
+                    self?.finishTrashMark(batch: batch, requested: ids, outcome: outcome, receiptSizes: receiptSizes)
+                case let .undo(batch):
+                    // Kept: a redo marks again what this command hid.
+                    let ids = hiddenByBatch[batch] ?? []
+                    let outcome = ids.isEmpty
+                        ? MediaTrashCoordinator.UndoResult()
+                        : await coordinator.undo(batch: batch, ids: ids)
                     do {
                         try await store.revertCarriedWork(batch: batch, restored: Set(outcome.restored))
                     } catch {
@@ -316,19 +412,10 @@ extension CatalogWindowViewModel {
                             "error": String(describing: error),
                         ])
                     }
+                    // Undone, the command's batch takes nothing off the window: what came
+                    // back is read now rather than on the cadence.
+                    projection.yield(.hideWithdrawn(batch, storeChanged: !outcome.restored.isEmpty))
                     self?.finishTrashUndo(outcome)
-                case let .redo(batch, ids, carries):
-                    do {
-                        _ = try await store.markPendingTrash(ids, batch: batch, carrying: carries)
-                        coordinator.kick()
-                    } catch {
-                        // Nothing was re-hidden; the items stay where they are.
-                        OtosLog.ui.errorOperation("trash.redo", phase: "failed", fields: [
-                            "batch": "\(batch.unixMilliseconds)",
-                            "requested": "\(ids.count)",
-                            "error": String(describing: error),
-                        ])
-                    }
                 case let .deleteImmediately(ids):
                     await coordinator.deleteImmediately(ids)
                 case let .restore(ids):
@@ -427,31 +514,25 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Lands on the nearest survivor of the last hidden item in the order the user saw
-    /// when issuing the command: the next one, or the previous one when the hidden items
-    /// ended the list (`BrowserModePolicy.nearestSurvivor`).
-    private func navigateAfterHiding(
-        _ hidden: Set<MediaAssetID>,
-        context: TrashNavigationContext
-    ) {
-        guard !hidden.isEmpty,
-              viewMode == context.mode,
-              queryDescriptor == context.descriptor
-        else {
+    /// Lands on the nearest survivor of the last hidden item in the order on screen: the next
+    /// one, or the previous one when the hidden items ended the list
+    /// (`BrowserModePolicy.nearestSurvivor`). Runs as the items are hidden, so the order is
+    /// the one the user acted in; it asks the order's index about the hidden items and walks
+    /// only to the survivor, never the whole order.
+    private func navigateAfterHiding(_ hidden: Set<MediaAssetID>) {
+        // Only where the hidden items are on screen: a scope changed while the download
+        // question was sized holds none of them, and its selection is the user's own.
+        let order = state.mediaGrid.content
+        guard showsSelectedScope, let lastHidden = order.inDisplayOrder(hidden).last else {
             return
         }
-        let survivors = state.mediaGrid.orderedAssetIDs.filter { !hidden.contains($0) }
-        let successor = context.orderedIDs.last(where: hidden.contains).flatMap { lastHidden in
-            BrowserModePolicy.nearestSurvivor(
-                of: lastHidden,
-                previousOrderedIDs: context.orderedIDs,
-                surviving: Set(survivors)
-            )
-        }
+        let survivors = HidingOrder(order: order, hidden: hidden)
+        let successor = BrowserModePolicy.nearestSurvivor(of: lastHidden, previousOrderedIDs: order, surviving: survivors)
+        let mode = viewMode
         OtosLog.ui.notice(
-            "op=trash.navigate mode=\(context.mode.rawValue, privacy: .public) successor=\(successor?.relativePath.rawValue ?? "none", privacy: .public)"
+            "op=trash.navigate mode=\(mode.rawValue, privacy: .public) successor=\(successor?.relativePath.rawValue ?? "none", privacy: .public)"
         )
-        switch context.mode {
+        switch mode {
         case .grid:
             if let successor {
                 gridSelection = gridSelection.plainClick(successor)
@@ -464,15 +545,8 @@ extension CatalogWindowViewModel {
                 gridSelection = gridSelection.plainClick(successor)
             }
         case .compare:
-            guard comparePair == context.comparePair, activeComparePane == context.comparePane else {
-                return
-            }
-            let next = ComparePairPolicy.prune(
-                pair: context.comparePair,
-                previousOrderedIDs: context.orderedIDs,
-                survivingOrderedIDs: survivors
-            )
-            applyComparePair(next, orderedIDs: survivors)
+            let next = ComparePairPolicy.prune(pair: comparePair, previousOrderedIDs: order, survivingOrderedIDs: survivors)
+            applyComparePair(next, orderedIDs: [])
         }
     }
 
@@ -488,16 +562,28 @@ extension CatalogWindowViewModel {
     }
 }
 
-/// The browsing context captured when Move to Trash was issued, so navigation after
-/// the Store mark lands only if the user is still where they were.
-struct TrashNavigationContext {
-    let mode: BrowserViewMode
-    let descriptor: CatalogQueryDescriptor
-    let comparePair: ComparePair
-    let comparePane: PanePosition
-    /// The display order when the command was issued: the frame of reference for
-    /// where navigation lands once the targets are hidden.
-    let orderedIDs: [MediaAssetID]
+/// A display order without the items a Move to Trash is hiding, answered from the order's
+/// own index, so the survivor policies ask about the items they look at, never the whole
+/// order. Only `orderedIDs` walks it, for a policy that needs every survivor.
+struct HidingOrder: MediaDisplayOrder {
+    let order: CatalogGridContent
+    let hidden: Set<MediaAssetID>
+
+    var orderedIDs: [MediaAssetID] {
+        order.orderedAssetIDs.filter { !hidden.contains($0) }
+    }
+
+    func position(of id: MediaAssetID) -> Int? {
+        hidden.contains(id) ? nil : order.position(of: id)
+    }
+
+    func contains(_ id: MediaAssetID) -> Bool {
+        !hidden.contains(id) && order.contains(id)
+    }
+
+    func inDisplayOrder(_ ids: Set<MediaAssetID>) -> [MediaAssetID] {
+        order.inDisplayOrder(ids.subtracting(hidden))
+    }
 }
 
 /// The sizes the duplicates list showed for the copies a command set out to hide, read

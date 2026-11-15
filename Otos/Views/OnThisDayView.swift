@@ -133,7 +133,7 @@ struct OnThisDayView: View {
 
 /// The surface's one fact (DES-010): the day, with what it holds as L3. 52 pt in every
 /// state, where the day bar sits (DES-112, after DES-105).
-private struct OnThisDayBar: View {
+struct OnThisDayBar: View {
     let day: CalendarDay
     let summary: String
     @Environment(\.colorScheme) private var colorScheme

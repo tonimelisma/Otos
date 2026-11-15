@@ -79,6 +79,19 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
             actionEnabled: moving > 0
         )
     }
+
+    /// This bar while the list's scope has not been applied (DES-118): the same lines, from
+    /// the groups that are the same in every scope, with its act disabled in place (DES-053)
+    /// until the list it acts on is drawn. The view disables the middle zone's links too.
+    var waiting: DuplicatesBarPresentation {
+        DuplicatesBarPresentation(
+            primaryLine: primaryLine,
+            secondaryLine: secondaryLine,
+            middle: middle,
+            actionTitle: actionTitle,
+            actionEnabled: false
+        )
+    }
 }
 
 /// A folder's name as the list shows it: the folder inside its library, and the library's

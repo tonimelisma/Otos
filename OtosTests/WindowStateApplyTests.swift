@@ -230,7 +230,9 @@ struct WindowStateApplyTests {
         #expect(model.canKeepSelectedDuplicateCopy)
 
         model.selectSidebar(.allMedia)
-        #expect(model.showsDuplicatesList, "the list stays on screen until All Media publishes")
+        // The pane is All Media's from the click, waiting (DES-118): the list is not drawn.
+        #expect(!model.showsDuplicatesList)
+        #expect(model.detailPane == CatalogDetailPane(surface: nil, content: .waiting(showsIndicator: false)))
         #expect(!model.showsSelectedScope)
         #expect(!model.canMoveDuplicatesToTrash)
         #expect(!model.canMoveTargetedMediaToTrash)
@@ -240,7 +242,8 @@ struct WindowStateApplyTests {
         model.duplicatesActions.keep(ids[1])
         #expect(model.duplicatesSession.picks == picks)
         model.duplicatesActions.moveAll()
-        #expect(model.mediaTrashTask == nil)
+        #expect(model.trashSizingTask == nil)
+        #expect(!model.undoMenuState.canUndo)
 
         var allMedia = windowState(ids: ids)
         allMedia.duplicates = duplicates.duplicates
@@ -285,6 +288,97 @@ struct WindowStateApplyTests {
         model.enterCompare()
         #expect(model.viewMode == .grid)
         #expect(model.galleryActingPerson == nil)
+    }
+
+    // MARK: - The selected scope from the click on (DES-118)
+
+    /// A click changes the pane in the same step: the selected scope's surface and title,
+    /// waiting, before its state arrives; the indicator only once a frame has been presented
+    /// without it; the state, when it arrives, fills the pane in.
+    @Test func aSidebarClickShowsTheSelectedScopeBeforeItsStateArrives() {
+        let model = makeViewModel()
+        let ids = makeIDs(3)
+        model.applyState(windowState(ids: ids).sharingUnchanged(with: nil))
+        #expect(model.detailPane == CatalogDetailPane(surface: nil, content: .shown))
+
+        model.selectSidebar(.places)
+        #expect(model.detailPane == CatalogDetailPane(surface: .placesMap, content: .waiting(showsIndicator: false)))
+        #expect(model.windowTitle == "Places")
+        #expect(!model.showsPlacesMap, "nothing of the map is drawn without its state")
+        #expect(!model.showsViewModeSegment)
+
+        model.waitingFramePresented()
+        #expect(model.detailPane == CatalogDetailPane(surface: .placesMap, content: .waiting(showsIndicator: true)))
+
+        var places = windowState(ids: [], scope: .places)
+        places.map = .empty
+        places.queryGeneration = model.queryGeneration
+        model.applyState(places)
+        #expect(model.detailPane == CatalogDetailPane(surface: .placesMap, content: .shown))
+        #expect(model.showsPlacesMap)
+    }
+
+    /// A scope whose state arrives within the frame of the click never shows the indicator:
+    /// a frame presented after the state is a report about nothing.
+    @Test func aStateArrivingWithinTheClicksFrameShowsNoIndicator() {
+        let model = makeViewModel()
+        model.applyState(windowState(ids: makeIDs(2)).sharingUnchanged(with: nil))
+        model.selectSidebar(.people)
+        var people = windowState(ids: [], scope: .people)
+        people.queryGeneration = model.queryGeneration
+        model.applyState(people)
+        model.waitingFramePresented()
+        #expect(model.detailPane == CatalogDetailPane(surface: .people, content: .shown))
+        #expect(model.waitingFramePresentedScope == nil)
+    }
+
+    /// Every scope intent is a new wait: an indicator shown for the scope left does not carry
+    /// to the next one's first frame.
+    @Test func aNewClickWaitsForItsOwnFrame() {
+        let model = makeViewModel()
+        model.applyState(windowState(ids: makeIDs(2)).sharingUnchanged(with: nil))
+        model.selectSidebar(.people)
+        model.waitingFramePresented()
+        #expect(model.detailPane.content == .waiting(showsIndicator: true))
+        model.selectSidebar(.duplicates)
+        #expect(model.detailPane == CatalogDetailPane(surface: .duplicates, content: .waiting(showsIndicator: false)))
+        #expect(model.windowTitle == "Duplicates")
+    }
+
+    // MARK: - Hiding a Move to Trash's items (DES-119)
+
+    /// The grid without the hidden items keeps its day buckets index-paired and drops the
+    /// hidden tiles' stacks; a grid holding none of them is the same content.
+    @Test func hidingRemovesItemsFromTheOrderTheirDaysAndTheirStacks() {
+        let ids = makeIDs(5)
+        let day = Date(timeIntervalSince1970: 86400)
+        let buckets: [Date?] = [day, day, nil, day, nil]
+        let state = windowState(ids: ids, dayBuckets: buckets).sharingUnchanged(with: nil)
+
+        let hidden = state.hidingItems([ids[1], ids[3]])
+        #expect(hidden.mediaGrid.orderedAssetIDs == [ids[0], ids[2], ids[4]])
+        #expect(hidden.mediaGrid.dayBuckets == [day, nil, nil])
+
+        let untouched = state.hidingItems([makeID("elsewhere.jpg")])
+        #expect(untouched.mediaGrid.sharesContent(with: state.mediaGrid))
+        #expect(state.hidingItems([]).mediaGrid.sharesContent(with: state.mediaGrid))
+    }
+
+    /// On This Day's runs follow the order they index: shorter by what they lost, gone when
+    /// emptied, keyed by their new first item when the key left.
+    @Test func hidingShortensOnThisDaysRuns() throws {
+        let ids = makeIDs(5)
+        var state = windowState(ids: ids, scope: .onThisDay(CalendarDay(year: 2026, month: 11, day: 15)))
+        state.onThisDay = CatalogOnThisDayState(day: CalendarDay(year: 2026, month: 11, day: 15), anniversaries: [
+            OnThisDayAnniversary(day: CalendarDay(year: 2025, month: 11, day: 15), keyItem: ids[0], firstIndex: 0, count: 2),
+            OnThisDayAnniversary(day: CalendarDay(year: 2024, month: 11, day: 15), keyItem: ids[2], firstIndex: 2, count: 1),
+            OnThisDayAnniversary(day: CalendarDay(year: 2023, month: 11, day: 15), keyItem: ids[3], firstIndex: 3, count: 2),
+        ])
+        let hidden = state.sharingUnchanged(with: nil).hidingItems([ids[0], ids[2]])
+        let runs = try #require(hidden.onThisDay?.anniversaries)
+        #expect(runs.map(\.keyItem) == [ids[1], ids[3]])
+        #expect(runs.map(\.firstIndex) == [0, 1])
+        #expect(runs.map(\.count) == [1, 2])
     }
 }
 

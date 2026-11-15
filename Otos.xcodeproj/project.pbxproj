@@ -290,6 +290,7 @@
 				Views/SharePickerPresenter.swift,
 				Views/CatalogMediaEmptyStateView.swift,
 				Views/PlacesMapView.swift,
+				Views/ScopeWaitingView.swift,
 				Views/SidebarView.swift,
 				Views/StoryPlayerView.swift,
 				Views/ThumbnailLoad.swift,

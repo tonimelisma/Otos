@@ -33,10 +33,10 @@ import OSLog
 extension CatalogWindowViewModel {
     // MARK: - Scope
 
-    /// Whether the detail pane is On This Day's anniversaries, or the story over them. Read from
-    /// the published scope, as `showsPlacesMap` is.
+    /// Whether the detail pane draws On This Day's anniversaries, or the story over them, with
+    /// its state applied (`detailPane`, as `showsPlacesMap`).
     var showsOnThisDay: Bool {
-        state.detailSurface == .onThisDay
+        detailPane.shows(.onThisDay)
     }
 
     /// Today, while the On This Day row exists: whenever the Places row does.

@@ -409,9 +409,19 @@ actor MediaTrashCoordinator {
     /// Bytes the requested items still need downloaded before they can be trashed:
     /// catalog sizes of members that are cloud-only right now. Reads no file bytes. `nil`
     /// means the catalog could not be read — unknown, not zero.
+    ///
+    /// An item whose own file is local is not read: a command made only of such items asks
+    /// nothing, from its files' flags alone, so the common Move to Trash never waits on the
+    /// catalog. Only the items whose own file is cloud-only are read, for their members'
+    /// sizes, companions included; a cloud-only companion of a local file is downloaded by the
+    /// queue without being counted toward the question (DES-090).
     func downloadBytes(for ids: [MediaAssetID]) async -> PartialByteCount? {
+        let cloudOnly = ids.filter { status($0.fileURL) == .dataless }
+        guard !cloudOnly.isEmpty else {
+            return .zero
+        }
         do {
-            let items = try await reads.trashItems(ids)
+            let items = try await reads.trashItems(cloudOnly)
             return items.reduce(PartialByteCount.zero) { $0 + datalessBytes(of: $1) }
         } catch {
             logReadFailure(error, read: "downloadBytes")
