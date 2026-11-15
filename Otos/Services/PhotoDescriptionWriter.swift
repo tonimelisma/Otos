@@ -308,7 +308,7 @@ actor PhotoDescriptionWriter {
     /// a picture of that size as well as a larger one, and a smaller one costs fewer tokens.
     /// Nil when it could not be read or decoded.
     @concurrent
-    private static func decode(_ url: URL) async -> CGImage? {
+    static func decode(_ url: URL) async -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
             return nil
         }

@@ -188,27 +188,39 @@ struct PhotoDescriptionTests {
         Taken on Saturday, 18 July 2026, in the afternoon, in Espoo, Finland.
         People in the photo, by where their faces are:
         - Jamie, 38 years old: face at the top left.
-        1 more person is not named.
-        Call each named person by name, and give no one else a name.
+        Everyone else in the photo is unnamed.
         Text in the photo: "SAUNA / OPEN".
         Recognized in the scene: blue sky.
         """)
     }
 
-    /// A photo naming no one says so, so the model gives no one a name; one naming everyone
-    /// asks for each by name.
-    @Test func thePromptSaysWhetherAnyoneMayBeNamed() {
+    /// A photo naming no one is described with instructions that never mention names or ages;
+    /// one whose faces are all named asks for each by name and no other; only one with unnamed
+    /// faces too says that everyone else stays unnamed.
+    @Test func theInstructionsSpeakOfNamesOnlyWhenThePhotoGivesThem() {
         let facts = PhotoDescriptionFacts(faces: [], capturedAt: nil, town: nil, country: nil, textLines: [], labels: [])
-        let unnamed = PhotoDescriptionPrompt.Face(box: CGRect(x: 0.4, y: 0.4, width: 0.1, height: 0.1), name: nil, age: nil)
+        let unnamed = PhotoDescriptionPrompt.Face(box: CGRect(x: 0.7, y: 0.4, width: 0.1, height: 0.1), name: nil, age: nil)
         let mia = PhotoDescriptionPrompt.Face(box: CGRect(x: 0.4, y: 0.4, width: 0.1, height: 0.1), name: "Mia", age: nil)
-        #expect(PhotoDescriptionPrompt(faces: [], facts: facts).facts == "No one in the photo is named, so give no one a name.")
-        #expect(PhotoDescriptionPrompt(faces: [unnamed, unnamed], facts: facts).facts
-            == "No one in the photo is named, so give no one a name.")
-        #expect(PhotoDescriptionPrompt(faces: [mia], facts: facts).facts == """
+        for faces in [[], [unnamed, unnamed]] {
+            let prompt = PhotoDescriptionPrompt(faces: faces, facts: facts)
+            #expect(prompt.facts.isEmpty)
+            #expect(!prompt.instructions.contains("name") && !prompt.instructions.contains("age"))
+        }
+        let named = PhotoDescriptionPrompt(faces: [mia], facts: facts)
+        #expect(named.facts == """
         People in the photo, by where their faces are:
         - Mia: face in the middle.
-        Call each of them by name.
         """)
+        #expect(named.instructions.contains("call each of them by name") && named.instructions.contains("Use no other names."))
+        #expect(!named.instructions.contains("Everyone else"))
+        #expect(named.instructions.contains("Never state anyone's age."))
+        let aged = PhotoDescriptionPrompt(
+            faces: [PhotoDescriptionPrompt.Face(box: mia.box, name: "Mia", age: "8 years old")], facts: facts
+        )
+        #expect(aged.instructions.contains("Mention a given age only when it adds something, and no other age."))
+        let mixed = PhotoDescriptionPrompt(faces: [mia, unnamed], facts: facts)
+        #expect(mixed.facts.hasSuffix("Everyone else in the photo is unnamed."))
+        #expect(mixed.instructions.contains("Everyone else stays unnamed"))
     }
 
     /// A face the crop leaves out is not told; one inside it is placed on the cropped preview.

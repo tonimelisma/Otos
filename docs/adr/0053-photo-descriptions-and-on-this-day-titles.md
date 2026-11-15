@@ -53,18 +53,20 @@ model is told:
   alone — then how many more people are not named. A face given to no one, to an unnamed person
   or to a hidden one is not named. Faces are stored on the upright photo and carried onto the
   preview through its edit (`EditGeometry`); a face the crop leaves out is not told;
-- **whether anyone may be named, in the photo's own facts:** "Call each of them by name", "Call
-  each named person by name, and give no one else a name", or "No one in the photo is named, so
-  give no one a name". The first version said this only in the instructions; on the owner's
-  library it gave people in photos with no faces read invented names ("Jasper", "Aunt Per",
-  "Toby, 7, and Claire, 4") and a named person an invented age ("Mia, 8"). Told only "use no
-  other names", it named no one at all, the listed people included. Said per photo, it named
-  Mia, Jamie and Tyler at their faces and no one in the photos naming no one (revision 2);
+- **instructions made for the photo:** the model writes what its instructions mention. With
+  one set of instructions that spoke of names and ages, photos with no named face came back
+  with invented names ("Jasper", "Aunt Per", "Toby, 7, and Claire, 4"), invented ages ("a
+  5-year-old and a 7-year-old") and placeholder people ("A, B, and C" beside a box of fruit
+  snacks). So a photo naming no one gets instructions that never mention names or ages (six of
+  six clean on the owner's photos); a photo whose faces are all named asks for each by name and
+  no other; and only a photo with unnamed faces too adds that everyone else stays unnamed (no
+  invented name in five runs). Sent where no one was unnamed, that last rule made the model drop
+  given names and add people who were not there (revision 3);
 - the text Vision is certain of and its confident scene labels.
 
-The instructions ask for two or three lively, playful sentences for the family to enjoy, only
-the names the facts give, an age only when given, nothing invented, and no closing remark about
-memories (the first version closed nearly every description with one). English only: the system model
+Every photo's instructions ask for two or three lively, playful sentences for the family to
+enjoy, nothing invented, and no closing remark about memories (the first version closed nearly
+every description with one). English only: the system model
 does not write Finnish, and search reads English (ADR 0048).
 
 ### When a description is written
@@ -126,6 +128,22 @@ an anniversary with none described has no title. Titles are kept in memory: a la
 few shown again. The card shows the title on its own line under the cover, the line held empty
 until one arrives (DES-053); the story bar shows it after `N years ago`; VoiceOver reads it
 first.
+
+### The eval
+
+A unit test checks what the model is told; only the model shows what it writes, and its first
+answers on the owner's library invented names. `script/description-eval.sh` runs the app's own
+facts reader, prompt, face placement and model call (`PhotoDescriptionEvalTests`) on a fixed
+sample of the owner's stills, read from the installed catalog opened read-only: twelve that name
+no one, twelve whose faces are all named, twelve with named and unnamed faces, chosen by a
+stable hash of their path so every run describes the same photos. Each answer is scored
+(`PhotoDescriptionScore`, itself tested on answers the model gave): a personal name Natural
+Language finds that the facts and the photo's text did not give, or letters standing in for
+people; an age the facts did not give; a given name left out; a closing remark about memories.
+It asserts no budget, like the face accuracy run (ADR 0047): a change to the prompt, its
+revision or the model is run through it before it ships, and the counts are recorded in the
+research note. It never runs in `script/check.sh`: the photos and the names in them never enter
+the repository, and the model's answers vary from run to run.
 
 ## Alternatives Considered
 

@@ -5,7 +5,8 @@ import FoundationModels
 /// Photo describer guide (ADR 0053)
 ///
 /// The one call to Apple's on-device language model (`SystemLanguageModel.default`, Foundation
-/// Models) that writes a still's description: the picture and its facts in one prompt, a typed
+/// Models) that writes a still's description: the photo's own instructions, then the picture and
+/// its facts in one prompt, a typed
 /// answer back (`GeneratedPhotoDescription`). Each request is its own session, so no photo's
 /// answer is read with another's in context. The model runs on the Mac, offline, and costs the
 /// user nothing; Private Cloud Compute is not used.
@@ -34,7 +35,7 @@ nonisolated enum PhotoDescriber {
         if case let .unavailable(reason) = model.availability {
             throw ModelUnavailable(reason: String(describing: reason))
         }
-        let session = LanguageModelSession(model: model, instructions: PhotoDescriptionPrompt.instructions)
+        let session = LanguageModelSession(model: model, instructions: prompt.instructions)
         do {
             let response = try await session.respond(generating: GeneratedPhotoDescription.self) {
                 prompt.facts

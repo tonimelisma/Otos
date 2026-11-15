@@ -250,6 +250,37 @@ Probed on the same previews with the same model:
 | Rule only in the instructions: "use no other names" | "A boy lies on his stomach…" | "Jamie holds a child…" | "A toddler…", no names |
 | The rule in each photo's facts (revision 2) | "Mia is lying on his stomach, peering over a blue barrier." | "Jamie holds Tyler in front of a fence…" | "A toddler holds a fishing rod…"; "A box of San Pellegrino fruit drink sits on a table." |
 
+Revision 2 on the owner's library still invented ages ("A 5-year-old and a 7-year-old peer over a
+glass dome"), placeholder people in photos with no one in them ("A, B, and C are surrounded by a
+colorful box of fruit snacks") and names from a screenshot's text ("Finnish and Habib"), while
+Mia was named right. The instructions spoke of names and ages for every photo.
+
+| Instructions (revision 3 picks one per photo) | Result on the owner's previews |
+| --- | --- |
+| Never mention names or ages, for photos naming no one | six of six clean: "A young boy and a young girl peek from behind a curved glass dome"; "A box of San Pellegrino fruit drink sits upright"; the screenshot read as a chat |
+| Names given, "use no other names" | Mia, Ian, Jamie and Tyler named right; one of five invented "Lucas" and "Emma" for unnamed children |
+| Names given, plus "everyone else stays unnamed" | no invented name in five runs; Sam named in two of three; sent where everyone was named, it called Tyler "a boy" and added a child who was not there, so it is sent only when someone is unnamed |
+
+### The eval [measured]
+
+`script/description-eval.sh` (ADR 0053) runs the app's own facts, prompt and model call on 36 of
+the owner's stills read from the installed catalog: 12 naming no one, 12 with every face named,
+12 with named and unnamed faces, the same 36 every run. Counts of answers flagged:
+
+| Revision | Group | Invented name | Invented age | Given name left out | Memory remark |
+| --- | --- | --- | --- | --- | --- |
+| 3 | names no one | 1 (a scorer false positive: "Red checkered curtains") | 0 | 0 | 0 |
+| 3 | names everyone | 1 (false positive: "Wood, art…") | 2 ("Sam, 10", "Sam, 5") | 0 | 0 |
+| 3 | names some | 1 (false positive: "Wood") | 1 ("Ian, age 5") | 2 | 0 |
+| 4 | names no one | 0 | 0 | 0 | 0 |
+| 4 | names everyone | 0 | 0 | 0 | 0 |
+| 4 | names some | 0 | 0 | 1 | 0 |
+
+Revision 3 asked a named photo to "mention an age only when it adds something" even when no age
+was given, and the model supplied one; revision 4 tells it to state no age unless one is given.
+The scorer now passes an ordinary English word that starts a sentence. The one remaining flag is
+a mixed photo described as "A man and a child…" without the named person's name.
+
 Two requests failed with `ModelManagerError` 1001 and 1032 while the installed Otos was using the
 model at the same time; one process at a time gets the model.
 

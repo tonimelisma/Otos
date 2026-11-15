@@ -9,12 +9,15 @@ import Foundation
 /// facts tell it what it cannot see — who people are — and what Otos already knows, so it
 /// names the right person at the right face and never guesses an identity.
 ///
-/// Whether anyone may be named is said in each photo's own facts, not only in the instructions:
-/// told generally to name no one unlisted, the model named no one at all, and told only to name
-/// the listed people, it gave invented names to the people in photos that listed none ("Jasper",
-/// "Aunt Per") and invented ages (measured on the owner's library, ADR 0053). Each photo's facts
-/// therefore end by saying to call the named people by name and give no one else a name, or that
-/// no one is named, so no one gets a name.
+/// What the model is asked depends on the photo, because the model writes whatever its
+/// instructions mention. Measured on the owner's library (ADR 0053): instructions that spoke of
+/// names and ages, sent for photos with no named face, came back with invented names ("Jasper",
+/// "Aunt Per"), invented ages ("a 5-year-old and a 7-year-old") and placeholder people ("A, B,
+/// and C" beside a box of fruit snacks). So a photo naming no one is described with
+/// instructions that never mention names or ages; a photo whose faces are all named asks for
+/// each by name and no other; and only a photo with unnamed faces too adds that everyone else
+/// stays unnamed — that rule, sent where no one was unnamed, made the model drop names it was
+/// given and add people who were not there.
 ///
 /// The text is built here, once, as a value: the writer passes it to the model, and a test
 /// reads exactly what the model would be told. `revision` is part of every stored
@@ -23,17 +26,10 @@ import Foundation
 nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
     /// What the stored descriptions were written from; raised whenever the instructions or the
     /// facts' wording change.
-    static let revision = 2
+    static let revision = 4
 
-    /// What the model is asked to be: the same for every photo.
-    static let instructions = """
-    You write short descriptions of the photos in a family's photo library, for the family to \
-    enjoy reading. Write two or three lively, playful sentences about what is happening in the \
-    photo and what makes it fun to look at. Use only the names the facts give, each at the place \
-    where that person's face is, and never guess who someone is. Give an age only when the facts \
-    give it. Describe only what is visible: do not invent events, feelings or relationships. Do \
-    not end with a remark about memories. Write in English.
-    """
+    /// What the model is asked to be for this photo (`init`).
+    let instructions: String
 
     /// One face as the model is told of it: where it is in the picture it is shown.
     nonisolated struct Face: Equatable, Sendable {
@@ -53,19 +49,19 @@ nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
             lines.append(taken)
         }
         let named = faces.filter { $0.name != nil }.sorted { ($0.box.midX, $0.box.midY) < ($1.box.midX, $1.box.midY) }
-        let unnamed = faces.count - named.count
-        if named.isEmpty {
-            lines.append("No one in the photo is named, so give no one a name.")
-        } else {
+        let othersUnnamed = named.count < faces.count
+        instructions = Self.instructions(
+            naming: !named.isEmpty, othersUnnamed: othersUnnamed, agesGiven: named.contains { $0.age != nil }
+        )
+        if !named.isEmpty {
             lines.append("People in the photo, by where their faces are:")
             for face in named {
                 let who = face.name.map { name in face.age.map { "\(name), \($0)" } ?? name } ?? ""
                 lines.append("- \(who): face \(Self.position(of: face.box)).")
             }
-            if unnamed > 0 {
-                lines.append(unnamed == 1 ? "1 more person is not named." : "\(unnamed) more people are not named.")
+            if othersUnnamed {
+                lines.append("Everyone else in the photo is unnamed.")
             }
-            lines.append(unnamed > 0 ? "Call each named person by name, and give no one else a name." : "Call each of them by name.")
         }
         let text = facts.textLines.prefix(Self.maximumTextLines).joined(separator: " / ")
         if !text.isEmpty {
@@ -75,6 +71,31 @@ nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
             lines.append("Recognized in the scene: \(facts.labels.map(Self.labelName).joined(separator: ", ")).")
         }
         self.facts = lines.joined(separator: "\n")
+    }
+
+    /// The instructions for a photo: whether it names anyone, whether anyone else in it is
+    /// unnamed, and whether any named person's age is given. Asked to mention an age "only when
+    /// it adds something" with none given, the model gave named children ages of its own
+    /// ("Sam, 10", "Ian, age 5": 3 of 24 named photos in the eval, revision 3).
+    static func instructions(naming: Bool, othersUnnamed: Bool, agesGiven: Bool) -> String {
+        var parts = [
+            "You write short descriptions of photos in a family's photo library, for the family to enjoy reading.",
+            "Write two or three lively, playful sentences about what you see in the photo and what makes it fun to look at.",
+        ]
+        if naming {
+            parts.append("The facts give the names of people in the photo and where their faces are: call each of them by name.")
+            parts.append("Use no other names.")
+            if othersUnnamed {
+                parts.append("Everyone else stays unnamed: call them a child, a boy, a girl, a woman, a man or someone.")
+                parts.append("Never make up a name.")
+            }
+            parts.append(
+                agesGiven ? "Mention a given age only when it adds something, and no other age." : "Never state anyone's age."
+            )
+        }
+        parts.append("Describe only what is visible, and do not invent events, feelings or relationships.")
+        parts.append("Do not end with a remark about memories. Write in English.")
+        return parts.joined(separator: " ")
     }
 
     static let maximumTextLines = 8

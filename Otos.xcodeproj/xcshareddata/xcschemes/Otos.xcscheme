@@ -80,6 +80,11 @@
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
+            key = "OTOS_DESCRIPTION_EVAL"
+            value = "$(OTOS_DESCRIPTION_EVAL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
             key = "OTOS_IMMICH_LIVE"
             value = "$(OTOS_IMMICH_LIVE)"
             isEnabled = "YES">

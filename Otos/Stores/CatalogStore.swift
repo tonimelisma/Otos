@@ -8662,8 +8662,9 @@ extension CatalogStore {
 
     /// What the model is told about one still: its faces with their people, when and where it
     /// was taken, the text Vision is certain of and its confident scene labels. A hidden
-    /// person is never named.
-    private nonisolated static func photoDescriptionFacts(_ db: Database, key: StatementArguments) throws -> PhotoDescriptionFacts {
+    /// person is never named. The description eval reads its sample's facts through it too
+    /// (`script/description-eval.sh`), so it scores exactly what the app tells the model.
+    nonisolated static func photoDescriptionFacts(_ db: Database, key: StatementArguments) throws -> PhotoDescriptionFacts {
         let faces = try Row.fetchAll(db, sql: PhotoDescriptionStorage.facesSQL, arguments: key).map { row in
             let hidden: Bool = row["hidden"]
             let name: String? = row["name"]
