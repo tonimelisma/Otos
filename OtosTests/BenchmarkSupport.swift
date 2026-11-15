@@ -225,7 +225,7 @@ struct BenchmarkLibrary {
             let digest = if index % 40 == 1, let previous {
                 previous.digest
             } else {
-                try #require(ContentDigest(data: Data((0 ..< 16).map { _ in
+                try #require(ContentDigest(data: Data((0 ..< ContentDigest.byteCount).map { _ in
                     UInt8.random(in: 0 ... 255, using: &random)
                 })))
             }
