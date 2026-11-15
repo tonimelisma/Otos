@@ -478,29 +478,54 @@ nonisolated enum CatalogQueryGateway {
         return motions
     }
 
-    /// Every row of every import batch, newest batch first: through
-    /// `idx_media_asset_import_batch`, which carries the batch, the root, the path and the
-    /// columns its tests read (v55), in the order the batches are returned; the burst
-    /// identifier, for the batches' stacks, is the one column read from the row.
-    static let importBatchRowsSQL = """
-    SELECT import_batch_unix_ms, library_root_id, relative_path, burst_identifier
-    FROM media_asset INDEXED BY idx_media_asset_import_batch
-    WHERE import_batch_unix_ms IS NOT NULL
+    /// What makes a row an import batch's shown row: stamped, not on its way to the Trash,
+    /// not a Live Photo's movie (ADR 0041). Every column it tests is in
+    /// `idx_media_asset_import_batch` (v55).
+    private static let importBatchRowTest = """
+    import_batch_unix_ms IS NOT NULL
       AND pending_trash_batch_unix_ms IS NULL
       AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
+    """
+
+    /// Every nonempty import batch, newest first, in `idx_media_asset_import_batch`'s order.
+    static let importBatchIDsSQL = """
+    SELECT DISTINCT import_batch_unix_ms
+    FROM media_asset INDEXED BY idx_media_asset_import_batch
+    WHERE \(importBatchRowTest)
     ORDER BY import_batch_unix_ms DESC
     """
 
-    /// Each import batch with how many photos it shows (ADR 0052: a stack counts once), read
-    /// every pass. A batch counts as its grid does: its rows collapsed by the stacks that hold
-    /// them (`PhotoStackSQL.build(rootPaths:holding:db:)`), so a RAW+JPEG pair imported
-    /// together is one photo, and a pair whose other file came in another batch, or is not
-    /// in any, is a file in each.
-    static func fetchImportBatches(rootPaths: [Int64: LibraryRootPath], db: Database) throws -> [ImportBatchSummary] {
-        var batches: [(batchMs: Int64, rows: [OrderedAssetIDRow])] = []
-        let cursor = try Row.fetchCursor(db.cachedStatement(sql: importBatchRowsSQL))
+    /// The rows of the batches the argument names (a JSON array of batch milliseconds), newest
+    /// batch first: the index carries the batch, the root and the path; the burst identifier,
+    /// for the batches' stacks, is the one column read from the row.
+    static let importBatchRowsSQL = """
+    SELECT import_batch_unix_ms, library_root_id, relative_path, burst_identifier
+    FROM media_asset INDEXED BY idx_media_asset_import_batch
+    WHERE import_batch_unix_ms IN (SELECT value FROM json_each(?))
+      AND \(importBatchRowTest)
+    ORDER BY import_batch_unix_ms DESC
+    """
+
+    /// Every nonempty import batch, newest first, with how many photos it shows (ADR 0052: a
+    /// stack counts once) for the batches `selection` shows (`ImportBatchListing.counted`),
+    /// and no count for the rest. A batch counts as its grid does: its rows collapsed by the
+    /// stacks that hold them (`PhotoStackSQL.build(rootPaths:holding:db:)`), so a RAW+JPEG
+    /// pair imported together is one photo, and a pair whose files came in two batches is a
+    /// file in each.
+    static func fetchImportBatches(
+        countingFor selection: SidebarSelection,
+        rootPaths: [Int64: LibraryRootPath],
+        db: Database
+    ) throws -> [ImportBatchSummary] {
+        let ids = try Int64.fetchAll(db.cachedStatement(sql: importBatchIDsSQL)).map(ImportBatchID.init(unixMilliseconds:))
+        let counted = ImportBatchListing.counted(ids, selection: selection)
+        guard !counted.isEmpty else {
+            return ids.map { ImportBatchSummary(batchID: $0, photoCount: nil) }
+        }
+        let names = try String(decoding: JSONEncoder().encode(counted.map(\.unixMilliseconds)), as: UTF8.self)
+        var rowsByBatch: [ImportBatchID: [OrderedAssetIDRow]] = [:]
+        let cursor = try Row.fetchCursor(db.cachedStatement(sql: importBatchRowsSQL), arguments: [names])
         while let row = try cursor.next() {
-            let batchMs: Int64 = row[0]
             var assetRow = OrderedAssetIDRow(
                 libraryRootID: row[1],
                 relativePath: MediaRelativePath(rawValue: row[2]),
@@ -508,25 +533,24 @@ nonisolated enum CatalogQueryGateway {
                 coordinate: nil
             )
             assetRow.burstIdentifier = row[3]
-            if batches.last?.batchMs == batchMs {
-                batches[batches.count - 1].rows.append(assetRow)
-            } else {
-                batches.append((batchMs, [assetRow]))
-            }
+            rowsByBatch[ImportBatchID(unixMilliseconds: row[0]), default: []].append(assetRow)
         }
-        let stacks = try PhotoStackSQL.build(rootPaths: rootPaths, holding: batches.flatMap(\.rows), db: db).stacks
-        return batches.map { batch in
-            let ids = batch.rows.compactMap { row in
+        let stacks = try PhotoStackSQL.build(rootPaths: rootPaths, holding: rowsByBatch.values.flatMap(\.self), db: db).stacks
+        return ids.map { id in
+            guard let rows = rowsByBatch[id] else {
+                return ImportBatchSummary(batchID: id, photoCount: nil)
+            }
+            let shown = rows.compactMap { row in
                 rootPaths[row.libraryRootID].map { MediaAssetID(libraryRootPath: $0, relativePath: row.relativePath) }
             }
             let photos = PhotoStackCollapse.collapse(
-                ids: ids,
+                ids: shown,
                 dayBuckets: [],
                 coordinates: [],
                 stacks: stacks,
                 expanded: []
             ).ids.count
-            return ImportBatchSummary(batchID: ImportBatchID(unixMilliseconds: batch.batchMs), photoCount: photos)
+            return ImportBatchSummary(batchID: id, photoCount: photos)
         }
     }
 

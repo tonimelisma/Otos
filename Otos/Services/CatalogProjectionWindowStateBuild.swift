@@ -26,12 +26,16 @@ extension CatalogProjection {
     ) async throws -> CatalogProjectionBuild {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         var reads = previous
+        let selection = request.descriptor.scope
+        let countScope = ImportBatchListing.countScope(of: selection)
         let importBatches: [ImportBatchSummary]
-        if let held = previous.importBatches(at: revisions) {
+        if let held = previous.importBatches(countScope: countScope, at: revisions) {
             importBatches = held
         } else {
-            importBatches = try await store.importBatches()
-            reads.importBatches = CatalogProjectionReads.ImportBatches(answer: importBatches, revisions: revisions)
+            importBatches = try await store.importBatches(countingFor: selection)
+            reads.importBatches = CatalogProjectionReads.ImportBatches(
+                countScope: countScope, answer: importBatches, revisions: revisions
+            )
         }
         let placeNameLanguages = try await store.placeNameLanguages()
         let resolvedDescriptor = Self.resolvedDescriptor(

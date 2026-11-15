@@ -928,15 +928,22 @@ extension CatalogStore {
             }
     }
 
-    /// Nonempty import batches newest-first. Projection publishes these for the
-    /// Imports sidebar section. SQL lives in the gateway; Store owns `timedRead`
-    /// and `roots` capture.
-    func importBatches() async throws -> [ImportBatchSummary] {
+    /// Nonempty import batches newest-first, with photo counts for the batches `selection`
+    /// shows (`ImportBatchListing.counted`). Projection publishes these for the Imports
+    /// sidebar section and All Imports. SQL lives in the gateway; Store owns `roots` capture.
+    func importBatches(countingFor selection: SidebarSelection) async throws -> [ImportBatchSummary] {
         let dbWriter = try database()
         let rootPaths = roots.pathsByRowID
-        return try await dbWriter.read { db in
-            try CatalogQueryGateway.fetchImportBatches(rootPaths: rootPaths, db: db)
+        let start = ContinuousClock.now
+        let batches = try await dbWriter.read { db in
+            try CatalogQueryGateway.fetchImportBatches(countingFor: selection, rootPaths: rootPaths, db: db)
         }
+        OtosLog.catalog.debugOperation("catalog.store.importBatches", phase: "finish", fields: [
+            "batches": "\(batches.count)",
+            "counted": "\(batches.count { $0.photoCount != nil })",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        return batches
     }
 
     /// Surviving assets that carry the given import batch stamp, across fixed libraries.

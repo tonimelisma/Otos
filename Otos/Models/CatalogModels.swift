@@ -1677,8 +1677,42 @@ nonisolated struct ImportBatchID: Hashable, Sendable, Comparable {
 /// One nonempty import batch for Store history queries and the Imports sidebar.
 nonisolated struct ImportBatchSummary: Equatable, Sendable {
     let batchID: ImportBatchID
-    /// The photos the batch's grid shows, a stack counting once (ADR 0052).
-    let photoCount: Int
+    /// The photos the batch's grid shows, a stack counting once (ADR 0052); nil for a batch
+    /// the window does not show, whose count was not read (`ImportBatchListing.counted`).
+    let photoCount: Int?
+}
+
+/// Which import batches the window shows, and so which are counted: counting a batch stacks
+/// its folders' files, a few hundred milliseconds for the owner's 45 batches and 11,401
+/// imported rows on every pass a membership or stack fact moved, against tens for the five
+/// the sidebar shows (`docs/research/2026-11-15-import-batch-photo-counts.md`).
+nonisolated enum ImportBatchListing {
+    /// How many of the newest batches the Imports section lists before All Imports….
+    static let sidebarRowCount = 5
+
+    /// The batches the Imports section lists: the newest `sidebarRowCount`, and the selected
+    /// batch after them when it is older. `batches` is newest first.
+    static func sidebarRows(_ batches: [ImportBatchID], selection: SidebarSelection) -> [ImportBatchID] {
+        let newest = Array(batches.prefix(sidebarRowCount))
+        if case let .importBatch(selected) = selection, !newest.contains(selected), batches.contains(selected) {
+            return newest + [selected]
+        }
+        return newest
+    }
+
+    /// The batches whose photos are counted for `selection`: every batch while All Imports
+    /// lists them, else the sidebar's rows.
+    static func counted(_ batches: [ImportBatchID], selection: SidebarSelection) -> Set<ImportBatchID> {
+        selection == .allImports ? Set(batches) : Set(sidebarRows(batches, selection: selection))
+    }
+
+    /// What decides `counted` besides the batches: All Imports, or the batch selected.
+    static func countScope(of selection: SidebarSelection) -> SidebarSelection? {
+        switch selection {
+        case .allImports, .importBatch: selection
+        default: nil
+        }
+    }
 }
 
 /// The motion movie of a Live Photo, the member its still's item carries (ADR 0041).

@@ -125,7 +125,7 @@ struct SidebarView: View {
                         }
                         .tag(SidebarSelection.importBatch(batch.batchID))
                     }
-                    if importBatches.count > 5 {
+                    if importBatches.count > ImportBatchListing.sidebarRowCount {
                         SidebarRow(systemImage: "list.bullet", title: "All Imports…") {
                             EmptyView()
                         }
@@ -209,9 +209,11 @@ struct SidebarView: View {
                 .frame(width: 32)
                 .accessibilityLabel("Importing, \(completed) of \(total)")
         case .none, .indeterminate:
-            Text("\(batch.photoCount)")
-                .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                .monospacedDigit()
+            if let photoCount = batch.photoCount {
+                Text("\(photoCount)")
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                    .monospacedDigit()
+            }
         }
     }
 
@@ -232,17 +234,8 @@ struct SidebarView: View {
     }
 
     private var visibleImportBatches: [ImportBatchSummary] {
-        if importBatches.count <= 5 {
-            return importBatches
-        }
-        let lastFive = Array(importBatches.prefix(5))
-        if case let .importBatch(selectedID) = sidebarSelection,
-           !lastFive.contains(where: { $0.batchID == selectedID }),
-           let selected = importBatches.first(where: { $0.batchID == selectedID })
-        {
-            return lastFive + [selected]
-        }
-        return lastFive
+        let rows = ImportBatchListing.sidebarRows(importBatches.map(\.batchID), selection: sidebarSelection)
+        return rows.compactMap { id in importBatches.first { $0.batchID == id } }
     }
 
     private var selectionBinding: Binding<SidebarSelection> {

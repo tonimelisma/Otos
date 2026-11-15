@@ -1347,7 +1347,7 @@ struct CatalogStoreSchemaMigrationTests {
             ]
         )
 
-        let batches = try await store.importBatches()
+        let batches = try await store.importBatches(countingFor: .allImports)
         #expect(batches.map(\.batchID) == [newer, older])
         #expect(batches.map(\.photoCount) == [2, 1])
 

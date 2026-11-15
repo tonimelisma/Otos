@@ -1717,7 +1717,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 nil
             }
         #expect(try #require(rePlannedSummary).skipCount == 2, "the two that landed are skips now")
-        #expect(try await store.importBatches().map(\.photoCount) == [2], "the stopped run's partial batch is real")
+        #expect(try await store.importBatches(countingFor: .allImports).map(\.photoCount) == [2], "the stopped run's partial batch is real")
         for name in ["a.jpg", "b.jpg", "c.jpg"] {
             #expect(
                 FileManager.default.fileExists(atPath: cardURL.appending(path: name).path),
@@ -1941,7 +1941,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // Wait for the execution to settle.
         _ = try await waitForPresentation(coordinator, source: cardPath) { $0.copiedJustNow != nil }
         try await waitForCoordinatorQuiescence(coordinator)
-        let batches = try await store.importBatches()
+        let batches = try await store.importBatches(countingFor: .allImports)
         #expect(batches.count == 1, "Repeated import should start exactly one batch")
         #expect(batches.first?.photoCount == 4)
         await coordinator.shutdown()

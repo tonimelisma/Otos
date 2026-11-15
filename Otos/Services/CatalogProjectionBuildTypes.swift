@@ -150,10 +150,11 @@ nonisolated struct CatalogProjectionReads: Sendable {
         let revisions: CatalogFactRevisions
     }
 
-    /// The import batches the last pass read, held while nothing their counts are built from
-    /// moved (`CatalogChangedFacts.importBatchInputs`): counting them stacks every batch's
-    /// folders, tens of milliseconds on the owner's 11,401 imported rows.
+    /// The import batches the last pass read, counted for the selection's count scope
+    /// (`ImportBatchListing.countScope`), held for the same scope while nothing their counts
+    /// are built from moved (`CatalogChangedFacts.importBatchInputs`).
     struct ImportBatches: Sendable {
+        let countScope: SidebarSelection?
         let answer: [ImportBatchSummary]
         let revisions: CatalogFactRevisions
     }
@@ -219,10 +220,10 @@ nonisolated struct CatalogProjectionReads: Sendable {
 
     /// The last stacks, while nothing they are built from changed after `revisions`. The
     /// order read uses them only over the roots they were built for.
-    /// The last import batches, when nothing their counts are built from moved after
-    /// `revisions`.
-    func importBatches(at revisions: CatalogFactRevisions) -> [ImportBatchSummary]? {
-        guard let importBatches,
+    /// The last import batches, when they were counted for `countScope` and nothing their
+    /// counts are built from moved after `revisions`.
+    func importBatches(countScope: SidebarSelection?, at revisions: CatalogFactRevisions) -> [ImportBatchSummary]? {
+        guard let importBatches, importBatches.countScope == countScope,
               !revisions.moved(CatalogChangedFacts.importBatchInputs, since: importBatches.revisions)
         else {
             return nil

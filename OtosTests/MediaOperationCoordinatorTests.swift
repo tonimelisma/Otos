@@ -53,10 +53,10 @@ struct MediaOperationCoordinatorTests {
         // for a run it starts): wait for the batch itself, then for the coordinator to
         // settle, so a second batch would have had every chance to appear.
         let landed = try await waitForValue {
-            try await store.importBatches().first { $0.photoCount == 12 }
+            try await store.importBatches(countingFor: .allImports).first { $0.photoCount == 12 }
         }
         try await waitForCoordinatorQuiescence(coordinator)
-        let batches = try await store.importBatches()
+        let batches = try await store.importBatches(countingFor: .allImports)
         #expect(batches.count == 1)
         #expect(batches.first == landed)
         await coordinator.shutdown()

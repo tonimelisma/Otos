@@ -72,7 +72,7 @@ struct CatalogWindowViewModelImportIntentTests {
         model.setImportDestination(second, for: source)
         model.queueImport(for: source)
 
-        try await waitUntil { try await store.importBatches().first?.photoCount == 1 }
+        try await waitUntil { try await store.importBatches(countingFor: .allImports).first?.photoCount == 1 }
         #expect(FileManager.default.fileExists(atPath: secondURL.appending(path: "f.jpg").path))
         #expect(!FileManager.default.fileExists(atPath: firstURL.appending(path: "f.jpg").path))
         await coordinator.shutdown()

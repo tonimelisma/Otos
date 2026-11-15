@@ -410,7 +410,7 @@ struct CatalogStoreQueryPlanTests {
             }
         }
         let orders = orderQueries
-        let (plans, typesPlan, batchesPlan, claimsPlan, editsPlan, indexColumns) = try await dbQueue.read { db in
+        let (plans, typesPlan, batchesPlan, batchIDsPlan, claimsPlan, editsPlan, indexColumns) = try await dbQueue.read { db in
             let types = try #require(try CatalogQueryGateway.distinctFilterableTypesQuery(
                 scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2]), db: db
             ))
@@ -421,7 +421,8 @@ struct CatalogStoreQueryPlanTests {
             return try (
                 orders.map { name, query in try (name, explainPlan(db, query: query)) },
                 explainPlan(db, query: types),
-                explainPlan(db, sql: CatalogQueryGateway.importBatchRowsSQL),
+                explainPlan(db, sql: CatalogQueryGateway.importBatchRowsSQL, arguments: ["[1800000000000]"]),
+                explainPlan(db, sql: CatalogQueryGateway.importBatchIDsSQL),
                 explainPlan(db, sql: EnrichmentClaimGateway.clearEnrichmentClaimsSQL),
                 explainPlan(db, sql: CatalogStore.releaseAllUnrenderedEditsSQL),
                 columns
@@ -436,6 +437,8 @@ struct CatalogStoreQueryPlanTests {
         #expect(tested.union(["best_format"]).isSubset(of: indexColumns["idx_media_asset_stack_candidate"] ?? []))
         #expect(batchesPlan.contains("idx_media_asset_import_batch"), "\(batchesPlan)")
         #expect(!usesTemporarySort(batchesPlan), "\(batchesPlan)")
+        #expect(batchIDsPlan.contains("USING INDEX idx_media_asset_import_batch"), "\(batchIDsPlan)")
+        #expect(!usesTemporarySort(batchIDsPlan), "\(batchIDsPlan)")
         #expect(tested.isSubset(of: indexColumns["idx_media_asset_import_batch"] ?? []))
         #expect(claimsPlan.contains("USING INDEX idx_media_asset_enrichment_claimed"), "\(claimsPlan)")
         #expect(editsPlan.contains("USING INDEX idx_media_asset_unrendered_edit"), "\(editsPlan)")

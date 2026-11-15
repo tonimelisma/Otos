@@ -202,7 +202,7 @@ struct PhotoStackStoreTests {
             }
             try stamp.close()
 
-            let batches = try await library.store.importBatches()
+            let batches = try await library.store.importBatches(countingFor: .allImports)
             // First: the DSC1 pair, DSC2, the DSC3 RAW alone, the burst. Second: the DSC3 JPEG.
             #expect(batches == [
                 ImportBatchSummary(batchID: second, photoCount: 1),
@@ -216,6 +216,36 @@ struct PhotoStackStoreTests {
                 ids: grid.ids, dayBuckets: [], coordinates: [], stacks: grid.stacks, expanded: []
             )
             #expect(collapsed.ids.count == 4)
+        }
+    }
+
+    /// Only the batches the window shows are counted: the sidebar's newest five, an older
+    /// batch while it is selected, and every batch while All Imports lists them. A batch not
+    /// shown has no count rather than one made up.
+    @Test func onlyTheBatchesTheWindowShowsAreCounted() async throws {
+        let files = (0 ..< 6).map { "a/IMG_\($0).JPG" }
+        try await withLibrary(files) { library in
+            let batches = (0 ..< 6).map { ImportBatchID(unixMilliseconds: 1_800_000_000_000 + Int64($0) * 1000) }
+            let stamp = try DatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
+            try await stamp.write { db in
+                for (index, batch) in batches.enumerated() {
+                    try db.execute(
+                        sql: "UPDATE media_asset SET import_batch_unix_ms = ? WHERE relative_path = ?",
+                        arguments: [batch.unixMilliseconds, "a/IMG_\(index).JPG"]
+                    )
+                }
+            }
+            try stamp.close()
+            let oldest = batches[0]
+
+            let sidebar = try await library.store.importBatches(countingFor: .library(library.rootPath))
+            #expect(sidebar.map(\.batchID) == batches.reversed())
+            #expect(sidebar.map(\.photoCount) == [1, 1, 1, 1, 1, nil])
+            let selected = try await library.store.importBatches(countingFor: .importBatch(oldest))
+            #expect(selected.map(\.photoCount) == [1, 1, 1, 1, 1, 1])
+            let all = try await library.store.importBatches(countingFor: .allImports)
+            #expect(all.allSatisfy { $0.photoCount == 1 })
+            #expect(ImportBatchListing.sidebarRows(batches.reversed(), selection: .importBatch(oldest)).last == oldest)
         }
     }
 

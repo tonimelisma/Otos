@@ -811,9 +811,11 @@ private struct AllImportsListView: View {
                     Text(ImportBatchFormatting.sidebarTitle(for: batch.batchID, among: batches))
                         .foregroundStyle(DesignPalette.label(for: colorScheme))
                     Spacer()
-                    Text("\(batch.photoCount) items")
-                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                        .monospacedDigit()
+                    if let photoCount = batch.photoCount {
+                        Text("\(photoCount) items")
+                            .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                            .monospacedDigit()
+                    }
                 }
                 .tag(batch.batchID)
             }
