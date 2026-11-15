@@ -154,7 +154,7 @@ struct BenchmarkLibrary {
 
     /// What the fixture writes for the still at one index.
     private struct Still {
-        let digest: XXH3Digest128
+        let digest: ContentDigest
         let hash: UInt64
         let gray: [UInt8]
         let width: Int
@@ -225,7 +225,7 @@ struct BenchmarkLibrary {
             let digest = if index % 40 == 1, let previous {
                 previous.digest
             } else {
-                try #require(XXH3Digest128(data: Data((0 ..< 16).map { _ in
+                try #require(ContentDigest(data: Data((0 ..< 16).map { _ in
                     UInt8.random(in: 0 ... 255, using: &random)
                 })))
             }

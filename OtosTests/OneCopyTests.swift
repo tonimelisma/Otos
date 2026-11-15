@@ -1,0 +1,191 @@
+import CryptoKit
+import Foundation
+@testable import OtosKit
+import Testing
+
+/// ADR 0054: a scope that spans the libraries and accounts shows one copy of each set of
+/// identical copies, a library's before an account's; one root's scope and Duplicates show
+/// every file. An uploaded Immich asset's checksum is its digest, so its copy of a library
+/// file is found with no download.
+@Suite(.testDirectory)
+struct OneCopyTests {
+    private static let server = URL(string: "https://photos.example.com")!
+    private static let date = Date(timeIntervalSince1970: 1_700_000_000)
+
+    private struct Fixture {
+        let store: CatalogStore
+        let library: LibraryRootPath
+        let account: LibraryRootPath
+    }
+
+    /// A library holding `IMG_1.JPG` ("same") and `IMG_2.JPG` ("other"), digested from their
+    /// bytes, and an Immich account.
+    private func fixture() async throws -> Fixture {
+        let temp = try makeTestDirectory()
+        let folder = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(folder.appending(path: "IMG_1.JPG"), contents: "same")
+        try writeCatalogStoreFile(folder.appending(path: "IMG_2.JPG"), contents: "other")
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: folder)
+        let library = try CatalogPath.normalizedDirectoryPath(for: folder)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        for facts in try #require(await store.planningMedia(for: library)) {
+            let bytes = try Data(contentsOf: URL(filePath: library.rawValue).appending(path: facts.id.relativePath.rawValue))
+            _ = try await store.applyContentHash(ContentHashResult(
+                id: facts.id,
+                contentHash: Self.digest(bytes),
+                sourceSize: facts.byteSize,
+                sourceMTimeSeconds: facts.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
+            ))
+        }
+        let account = try await store.addImmichAccount(server: Self.server, userID: "user-1", displayName: "Family")
+        return Fixture(store: store, library: library, account: account)
+    }
+
+    private static func digest(_ bytes: Data) -> ContentDigest {
+        ContentDigest(bytes: Array(Insecure.SHA1.hash(data: bytes)))!
+    }
+
+    private static func digest(_ text: String) -> ContentDigest {
+        digest(Data(text.utf8))
+    }
+
+    private static func item(
+        _ asset: String,
+        digest: ContentDigest?,
+        size: Int64? = 4,
+        hidden: Bool = false
+    ) -> SourceListedItem {
+        SourceListedItem(
+            file: ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: "\(asset)/IMG_1.JPG"), name: "IMG_1.JPG",
+                contentTypeIdentifier: "public.jpeg", byteSize: size, createdAt: date, contentModifiedAt: date
+            ),
+            sourceItemID: asset, isHiddenBySource: hidden, sourceHasProducts: false, sourceDigest: digest
+        )
+    }
+
+    private func apply(_ changes: SourceListingChanges, to account: LibraryRootPath, store: CatalogStore) async throws {
+        let scan = try await store.beginSourceListing(rootPath: account)
+        try await store.applySourceListingChanges(changes, scan: scan)
+        await store.endSourceListing(scan: scan)
+    }
+
+    private func ids(
+        _ scope: SidebarSelection,
+        _ store: CatalogStore,
+        available: Set<LibraryRootPath>? = nil
+    ) async throws -> Set<MediaAssetID> {
+        let paths: Set<LibraryRootPath> = if let available {
+            available
+        } else {
+            await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
+        }
+        return try await Set(store.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: paths).ids)
+    }
+
+    private func id(_ path: String, in root: LibraryRootPath) -> MediaAssetID {
+        MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
+    }
+
+    /// All Media shows the library's copy and not the account's; the account's own row, and
+    /// Duplicates, show the account's copy too.
+    @Test func aCombinedScopeShowsTheLibrarysCopyAndOneRootShowsEveryFile() async throws {
+        let fixture = try await fixture()
+        let store = fixture.store
+        try await apply(
+            SourceListingChanges(listed: [Self.item("a1", digest: Self.digest("same"))]),
+            to: fixture.account, store: store
+        )
+        let libraryCopy = id("IMG_1.JPG", in: fixture.library)
+        let accountCopy = id("a1/IMG_1.JPG", in: fixture.account)
+        let other = id("IMG_2.JPG", in: fixture.library)
+
+        #expect(try await ids(.allMedia, store) == [libraryCopy, other])
+        #expect(try await ids(.library(fixture.account), store) == [accountCopy])
+        #expect(try await ids(.library(fixture.library), store) == [libraryCopy, other])
+        #expect(try await ids(.duplicates, store) == [libraryCopy, accountCopy])
+
+        // While the library is not available, its copy is not in the scope, so the
+        // account's stands in for it.
+        #expect(try await ids(.allMedia, store, available: [fixture.account]) == [accountCopy])
+        await store.shutdown()
+    }
+
+    /// An external library's checksum hashes its path, so it is no digest: its asset is shown
+    /// beside the library file it names nothing about.
+    @Test func anAssetWithoutADigestOfItsBytesIsShown() async throws {
+        let fixture = try await fixture()
+        let store = fixture.store
+        try await apply(SourceListingChanges(listed: [Self.item("a1", digest: nil)]), to: fixture.account, store: store)
+        #expect(try await ids(.allMedia, store).contains(id("a1/IMG_1.JPG", in: fixture.account)))
+        #expect(ImmichAsset.contentDigest(checksum: "MDO/p/AKSxrbhRCQnjVUzGGH/i0=", libraryID: "lib-1", assetID: "x") == nil)
+        #expect(ImmichAsset.contentDigest(checksum: "MDO/p/AKSxrbhRCQnjVUzGGH/i0=", libraryID: nil, assetID: "x") != nil)
+        #expect(ImmichAsset.contentDigest(checksum: "not base64", libraryID: nil, assetID: "x") == nil)
+        await store.shutdown()
+    }
+
+    /// Two copies inside one account: the first by path is shown, and when Immich puts it in
+    /// its trash the other is shown in its place.
+    @Test func theNextCopyIsShownWhenTheShownOneIsHidden() async throws {
+        let fixture = try await fixture()
+        let store = fixture.store
+        let digest = Self.digest("account only")
+        try await apply(
+            SourceListingChanges(listed: [Self.item("a1", digest: digest), Self.item("a2", digest: digest)]),
+            to: fixture.account, store: store
+        )
+        let first = id("a1/IMG_1.JPG", in: fixture.account)
+        let second = id("a2/IMG_1.JPG", in: fixture.account)
+        #expect(try await ids(.allMedia, store).intersection([first, second]) == [first])
+
+        try await apply(
+            SourceListingChanges(listed: [Self.item("a1", digest: digest, hidden: true)]),
+            to: fixture.account, store: store
+        )
+        #expect(try await ids(.allMedia, store).intersection([first, second]) == [second])
+        await store.shutdown()
+    }
+
+    /// A digest listed before the server reported the size stays the row's once the size
+    /// arrives: the size is of the same bytes.
+    @Test func aSizeReportedAfterTheDigestKeepsItCurrent() async throws {
+        let fixture = try await fixture()
+        let store = fixture.store
+        try await apply(
+            SourceListingChanges(listed: [Self.item("a1", digest: Self.digest("same"), size: nil)]),
+            to: fixture.account, store: store
+        )
+        let accountCopy = id("a1/IMG_1.JPG", in: fixture.account)
+        #expect(try await !ids(.allMedia, store).contains(accountCopy))
+
+        try await apply(SourceListingChanges(sizesBySourceItem: ["a1": 4]), to: fixture.account, store: store)
+        #expect(try await !ids(.allMedia, store).contains(accountCopy))
+        #expect(try await store.photoInfoOverlay(for: accountCopy)?.otherCopyRoots == [fixture.library])
+        await store.shutdown()
+    }
+
+    /// Info's Copies row lists where the item's other copies are, says none when it has
+    /// none, and says not checked while its digest is owed.
+    @Test func infoNamesWhereTheOtherCopiesAre() async throws {
+        let fixture = try await fixture()
+        let store = fixture.store
+        try await apply(
+            SourceListingChanges(listed: [Self.item("a1", digest: Self.digest("same")), Self.item("a2", digest: nil)]),
+            to: fixture.account, store: store
+        )
+        let libraryCopy = id("IMG_1.JPG", in: fixture.library)
+        #expect(try await store.photoInfoOverlay(for: libraryCopy)?.otherCopyRoots == [fixture.account])
+        #expect(try await store.photoInfoOverlay(for: id("IMG_2.JPG", in: fixture.library))?.otherCopyRoots == [])
+        #expect(try await store.photoInfoOverlay(for: id("a2/IMG_1.JPG", in: fixture.account))?.otherCopyRoots == nil)
+
+        let names = [fixture.account: "Family", fixture.library: "Pictures"]
+        #expect(PhotoInfo.copiesText([fixture.account], names: names) == "Family")
+        #expect(PhotoInfo.copiesText([fixture.account, fixture.account, fixture.library], names: names) == "Family (2 copies) and Pictures")
+        #expect(PhotoInfo.copiesText([], names: names) == "None")
+        #expect(PhotoInfo.copiesText(nil, names: names) == "Not Checked Yet")
+        await store.shutdown()
+    }
+}

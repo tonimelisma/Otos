@@ -8,7 +8,7 @@ struct DuplicatesTests {
     private static let photos = LibraryRootPath(rawValue: "/Users/me/Photos")
     private static let backup = LibraryRootPath(rawValue: "/Volumes/Backup/Photos")
     private static let family = LibraryRootPath(rawValue: "/RemoteStaging/family")
-    private static let digest = XXH3Digest128(data: Data(repeating: 1, count: 16))!
+    private static let digest = ContentDigest(data: Data(repeating: 1, count: ContentDigest.byteCount))!
 
     private static func copy(
         _ path: String,
@@ -202,7 +202,7 @@ struct DuplicatesTests {
     @Test func theTallyCountsEveryActiveGroupAndWhatTheActMoves() throws {
         let preselected = try Self.onlyGroup([Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1 copy.jpg")])
         let waiting = try DuplicateGroupPolicy.group(
-            id: .identical(#require(XXH3Digest128(data: Data(repeating: 2, count: 16)))),
+            id: .identical(#require(ContentDigest(data: Data(repeating: 2, count: ContentDigest.byteCount)))),
             copies: [Self.copy("x.jpg", edited: true).copy, Self.copy("y.jpg", edited: true).copy],
             keptPairs: []
         )
@@ -447,7 +447,7 @@ struct DuplicatesTests {
 
         let twice = try Self.onlyGroup([Self.copy("2026/10/a.jpg"), Self.copy("2026/10/a_001.jpg")])
         let older = try DuplicateGroupPolicy.group(
-            id: .identical(#require(XXH3Digest128(data: Data(repeating: 3, count: 16)))),
+            id: .identical(#require(ContentDigest(data: Data(repeating: 3, count: ContentDigest.byteCount)))),
             copies: [Self.copy("2026/10/b.jpg", born: 10).copy, Self.copy("2026/10/c.jpg", born: 90).copy],
             keptPairs: []
         )
@@ -489,7 +489,7 @@ struct DuplicatesTests {
     @Test func theListPutsWhatNeedsAttentionFirst() throws {
         func identical(_ seed: UInt8, _ copies: [DuplicateCopyFacts]) throws -> DuplicateGroup {
             try DuplicateGroupPolicy.group(
-                id: .identical(#require(XXH3Digest128(data: Data(repeating: seed, count: 16)))),
+                id: .identical(#require(ContentDigest(data: Data(repeating: seed, count: ContentDigest.byteCount)))),
                 copies: copies.map(\.copy), keptPairs: []
             )
         }
@@ -529,7 +529,7 @@ struct DuplicatesTests {
         // click never moves the group out from under the pointer.
         let ids = conflict.copies.map(\.id)
         let keptConflict = try DuplicateGroupPolicy.group(
-            id: .identical(#require(XXH3Digest128(data: Data(repeating: 5, count: 16)))),
+            id: .identical(#require(ContentDigest(data: Data(repeating: 5, count: ContentDigest.byteCount)))),
             copies: conflict.copies, keptPairs: [DuplicateKeptPair(ids[0], ids[1])]
         )
         #expect(keptConflict.isKept)
@@ -588,7 +588,7 @@ struct DuplicatesTests {
     @Test func aFolderHeaderPreviewsItsFirstGroups() throws {
         let groups = try (0 ..< 7).map { index in
             try DuplicateGroupPolicy.group(
-                id: .identical(#require(XXH3Digest128(data: Data(repeating: UInt8(10 + index), count: 16)))),
+                id: .identical(#require(ContentDigest(data: Data(repeating: UInt8(10 + index), count: ContentDigest.byteCount)))),
                 copies: [Self.copy("2026/10/p\(index).jpg").copy, Self.copy("2026/10/p\(index)_001.jpg").copy],
                 keptPairs: []
             )
@@ -625,7 +625,7 @@ struct DuplicatesTests {
             }
             _ = try await store.applyContentHash(ContentHashResult(
                 id: facts.id,
-                contentHash: #require(XXH3Digest128(data: Data(repeating: byte, count: 16))),
+                contentHash: #require(ContentDigest(data: Data(repeating: byte, count: ContentDigest.byteCount))),
                 sourceSize: facts.byteSize,
                 sourceMTimeSeconds: facts.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
             ))

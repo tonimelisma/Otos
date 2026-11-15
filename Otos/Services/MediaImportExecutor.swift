@@ -707,11 +707,11 @@ actor MediaImportExecutor {
         }
         // Content matches are confirmed against the catalog now; a failed read confirms none,
         // so those files stay on the card (ADR 0032 rule 4: an error is not a fact).
-        let matchedDigests = Set(context.plan.entries.compactMap { entry -> XXH3Digest128? in
+        let matchedDigests = Set(context.plan.entries.compactMap { entry -> ContentDigest? in
             guard case .skipInLibrary = entry.disposition else { return nil }
             return entry.source.contentHash
         })
-        let heldContent: Set<XXH3Digest128>
+        let heldContent: Set<ContentDigest>
         if matchedDigests.isEmpty {
             heldContent = []
         } else {
@@ -855,7 +855,7 @@ actor MediaImportExecutor {
     private func sourceDeletionCandidates(
         plan: MediaOperationPlan,
         erasableSourcePaths publishedPaths: Set<MediaRelativePath>,
-        heldContent: Set<XXH3Digest128>
+        heldContent: Set<ContentDigest>
     ) -> [EraseManifestEntry] {
         let retainedPaths = Set(plan.entries.compactMap { entry -> MediaRelativePath? in
             switch entry.disposition {

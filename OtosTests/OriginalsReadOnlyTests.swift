@@ -14,7 +14,7 @@ struct FilesystemTreeSnapshot: Equatable, Sendable {
         let modificationDate: Date?
         let mode: UInt16?
         let inode: UInt64?
-        let digest: XXH3Digest128?
+        let digest: ContentDigest?
     }
 
     let entries: [String: Entry]
@@ -42,7 +42,7 @@ struct FilesystemTreeSnapshot: Equatable, Sendable {
             let attributes = try manager.attributesOfItem(atPath: url.path)
             let type = attributes[.type] as? FileAttributeType
             let isDirectory = type == .typeDirectory
-            let digest: XXH3Digest128?
+            let digest: ContentDigest?
             if type == .typeRegular {
                 guard case let .complete(value) = ContentHasher().hashMaterializedFile(at: url) else {
                     throw SnapshotError.digestFailed(url.path)

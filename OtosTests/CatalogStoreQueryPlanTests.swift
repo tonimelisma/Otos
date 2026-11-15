@@ -502,7 +502,7 @@ struct CatalogStoreQueryPlanTests {
         }
         for (name, plan) in plans {
             #expect(!plan.contains("TEMP B-TREE FOR GROUP BY"), "\(name): \(plan)")
-            #expect(plan.contains("USING INDEX idx_media_asset_content_hash"), "\(name): \(plan)")
+            #expect(plan.contains("INDEX idx_media_asset_content_sha1"), "\(name): \(plan)")
         }
     }
 

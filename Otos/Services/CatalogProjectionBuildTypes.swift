@@ -78,9 +78,10 @@ nonisolated extension CatalogChangedFacts {
         return facts
     }
 
-    /// What decides which rows a scope holds, beyond the rows themselves.
+    /// What decides which rows a scope holds, beyond the rows themselves. A scope that shows
+    /// one copy of identical copies (ADR 0054) depends on which files are copies.
     private static func scopeInputs(of scope: SidebarSelection) -> CatalogChangedFacts {
-        switch scope {
+        var facts: CatalogChangedFacts = switch scope {
         case .allMedia, .library, .importBatch, .allImports:
             []
         case .places, .mapArea, .mapStack:
@@ -92,6 +93,10 @@ nonisolated extension CatalogChangedFacts {
         case .people, .person:
             .faces
         }
+        if scope.showsOneCopy {
+            facts.insert(.copies)
+        }
+        return facts
     }
 }
 

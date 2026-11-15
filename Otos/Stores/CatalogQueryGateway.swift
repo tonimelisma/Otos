@@ -349,7 +349,7 @@ nonisolated enum CatalogQueryGateway {
                 SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
                        created_at_unix, content_modified_at_unix,
                        metadata_source_size, metadata_source_mtime, rendered_source_size, rendered_source_mtime,
-                       content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime,
+                       content_sha1, content_hash_source_size, content_hash_source_mtime,
                        faces_source_size, faces_source_mtime,
                        thumbnail_path,
                        duration_seconds,
@@ -551,6 +551,42 @@ nonisolated enum CatalogVisibilitySQL {
           AND \(row).awaiting_presence = 0
           AND \(row).hidden_by_source = 0
         """
+    }
+}
+
+/// Whether a row's SHA-1 names its current bytes (ADR 0018): the one definition every
+/// reader of the digest uses, the copy triggers included (ADR 0054). It reads the stored
+/// columns, never a generated one, so `idx_media_asset_content_sha1`, which holds them with
+/// what a copy is tested by, answers a scan of every digest without a table read: SQLite
+/// never serves a virtual column from an index, and that scan took 14–30 s on the owner's
+/// catalog (`docs/research/2026-11-14-one-photo-many-copies.md`).
+nonisolated enum ContentDigestSQL {
+    static let indexName = "idx_media_asset_content_sha1"
+
+    /// The index's columns: the digest, the row's key, the stamps and file facts currency
+    /// reads, and what visibility, Duplicates and the Live Photo rule test a row by.
+    static let indexedColumns = """
+    content_sha1, library_root_id, relative_path, content_hash_source_size, content_hash_source_mtime, \
+    byte_size, content_modified_at_unix, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+    trash_path, best_kind, content_identifier
+    """
+
+    /// The SHA-1 of no bytes, as a SQL literal. Every empty file has it, and an empty file is
+    /// a broken file, not a copy of another (ADR 0042), so no two rows are copies by it.
+    static let empty = "X'\(ContentDigest.empty.hexString)'"
+
+    static func isCurrent(_ row: String) -> String {
+        """
+        \(row).content_sha1 IS NOT NULL
+          AND length(\(row).content_sha1) = 20
+          AND \(row).content_hash_source_size = COALESCE(\(row).byte_size, -1)
+          AND \(row).content_hash_source_mtime = CAST(COALESCE(\(row).content_modified_at_unix, -1) AS INTEGER)
+        """
+    }
+
+    /// The row's digest while it is current, else NULL, as a value.
+    static func current(_ row: String) -> String {
+        "CASE WHEN \(isCurrent(row)) THEN \(row).content_sha1 END"
     }
 }
 
@@ -927,42 +963,45 @@ private nonisolated func scopeClause(
         arguments.append(importBatchUnixMs)
         predicate += "\n  AND media_asset.import_batch_unix_ms = ?"
     }
+    // A combined scope shows one copy of each set of identical copies (ADR 0054): a row
+    // whose shown copy is in a root of the scope stands aside for it. `shown_copy_root_id`
+    // is kept by the catalog's triggers, and the date indexes carry it (v60), so the test
+    // reads no table row.
+    if scope.showsOneCopy {
+        predicate += """
+
+          AND (media_asset.shown_copy_root_id IS NULL
+               OR media_asset.shown_copy_root_id NOT IN (\(sqlPlaceholders(count: scope.rootIDs.count))))
+        """
+        arguments.append(contentsOf: scope.rootIDs)
+    }
     // A duplicate's digest must be current for its file; the group subquery repeats the
     // visibility rules so a copy waiting for the Trash makes no one else a duplicate. The
-    // group subquery walks only the rows that have a digest, in digest order, so it groups
-    // without a temporary B-tree over every row of the scope: most of the owner's rows (an
-    // Immich account's) have none (`docs/research/2026-11-14-owner-scale-query-plans.md`).
-    let currentDigest = """
-      AND media_asset.content_hash_xxh3_128 IS NOT NULL
-      AND length(media_asset.content_hash_xxh3_128) = 16
-      AND media_asset.content_hash_source_size = COALESCE(media_asset.byte_size, -1)
-      AND media_asset.content_hash_source_mtime = CAST(COALESCE(media_asset.content_modified_at_unix, -1) AS INTEGER)
-    """
+    // group subquery walks only the rows that have a current digest, in digest order, so it
+    // groups without a temporary B-tree over every row of the scope
+    // (`docs/research/2026-11-14-owner-scale-query-plans.md`).
     switch scope.content {
     case .any:
         break
     case .duplicated:
-        predicate += currentDigest
         predicate += """
 
-          AND media_asset.content_hash_xxh3_128 IN (
-              SELECT twin.content_hash_xxh3_128 FROM media_asset AS twin INDEXED BY idx_media_asset_content_hash
-              WHERE twin.content_hash_xxh3_128 IS NOT NULL
+          AND \(ContentDigestSQL.isCurrent("media_asset"))
+          AND media_asset.content_sha1 IN (
+              SELECT twin.content_sha1 FROM media_asset AS twin INDEXED BY \(ContentDigestSQL.indexName)
+              WHERE \(ContentDigestSQL.isCurrent("twin"))
                 AND twin.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))
                 AND twin.pending_trash_batch_unix_ms IS NULL
                 AND twin.trash_path IS NULL
                 AND twin.hidden_by_source = 0
                 AND NOT \(LivePhotoSQL.isPairedMotion("twin"))
-                AND twin.content_hash_source_size = COALESCE(twin.byte_size, -1)
-                AND twin.content_hash_source_mtime = CAST(COALESCE(twin.content_modified_at_unix, -1) AS INTEGER)
-              GROUP BY twin.content_hash_xxh3_128
+              GROUP BY twin.content_sha1
               HAVING COUNT(*) > 1
           )
         """
         arguments.append(contentsOf: scope.rootIDs)
     case let .identical(digest):
-        predicate += currentDigest
-        predicate += "\n  AND media_asset.content_hash_xxh3_128 = ?"
+        predicate += "\n  AND \(ContentDigestSQL.isCurrent("media_asset"))\n  AND media_asset.content_sha1 = ?"
         arguments.append(digest.data)
     case let .members(keys):
         guard !keys.isEmpty else {
@@ -1149,7 +1188,7 @@ private nonisolated func storedAsset(from row: Row) -> StoredAsset {
         metadataSourceMTimeSeconds: row["metadata_source_mtime"],
         renderedSourceSize: row["rendered_source_size"],
         renderedSourceMTimeSeconds: row["rendered_source_mtime"],
-        contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
+        contentHash: (row["content_sha1"] as Data?).flatMap(ContentDigest.init(data:)),
         contentHashSourceSize: row["content_hash_source_size"],
         contentHashSourceMTimeSeconds: row["content_hash_source_mtime"],
         facesSourceSize: row["faces_source_size"],

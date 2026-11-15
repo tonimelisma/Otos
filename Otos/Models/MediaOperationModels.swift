@@ -99,7 +99,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     let livePhotoStillPath: MediaRelativePath?
     /// The source's digest, present only while it is current for `byteSize` and
     /// `contentModifiedAt` (ADR 0018). The import compares the staged copy's digest with it.
-    let contentHash: XXH3Digest128?
+    let contentHash: ContentDigest?
 
     init(
         id: MediaAssetID,
@@ -116,7 +116,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         companions: [MediaCompanion],
         contentTypeIdentifier: String? = nil,
         livePhotoStillPath: MediaRelativePath? = nil,
-        contentHash: XXH3Digest128? = nil
+        contentHash: ContentDigest? = nil
     ) {
         self.id = id
         self.sourceURL = sourceURL
@@ -889,7 +889,7 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
     let destinationOccupantKeys: Set<FilesystemNameKey>
     /// Every current digest the fixed libraries hold, and one library holding it — only rows
     /// in an available library, not pending trash, with a digest current for their file.
-    let libraryContent: [XXH3Digest128: LibraryRootPath]
+    let libraryContent: [ContentDigest: LibraryRootPath]
     let policy: ImportPolicy
     let calendar: Calendar
     let timeZone: TimeZone
@@ -904,7 +904,7 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
         destinationNamespaceRevision: UInt64,
         sourceMedia: [PlanningFileFacts],
         destinationOccupants: [MediaRelativePath: DestinationOccupantFacts],
-        libraryContent: [XXH3Digest128: LibraryRootPath] = [:],
+        libraryContent: [ContentDigest: LibraryRootPath] = [:],
         policy: ImportPolicy,
         calendar: Calendar,
         timeZone: TimeZone,

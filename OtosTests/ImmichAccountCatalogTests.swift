@@ -109,7 +109,7 @@ struct ImmichAccountCatalogTests {
         let rootPath = try await addAccount(store)
         try await list(["IMG_1.JPG"], into: rootPath, store: store)
 
-        let digest = try #require(XXH3Digest128(data: Data(repeating: 1, count: 16)))
+        let digest = try #require(ContentDigest(data: Data(repeating: 1, count: ContentDigest.byteCount)))
         let libraryMedia = try #require(await store.planningMedia(for: library))
         let media = try libraryMedia + #require(await store.planningMedia(for: rootPath))
         for facts in media {

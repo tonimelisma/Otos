@@ -54,7 +54,7 @@ struct EnrichmentClaimGatewayTests {
             metadataSourceMTimeSeconds: 1,
             renderedSourceSize: 1024,
             renderedSourceMTimeSeconds: 1,
-            contentHash: XXH3Digest128.empty,
+            contentHash: ContentDigest.empty,
             contentHashSourceSize: 1024,
             contentHashSourceMTimeSeconds: 1
         )

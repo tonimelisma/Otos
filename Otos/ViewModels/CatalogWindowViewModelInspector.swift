@@ -76,6 +76,9 @@ extension CatalogWindowViewModel {
         let reader = tileDetailReader
         let materialization = materializationCoordinator
         let libraryName = sourceName(for: id.libraryRootPath)
+        let rootNames = Dictionary(
+            (state.libraries + state.removableSources).map { ($0.path, $0.displayName) }
+        ) { first, _ in first }
         let labelNames = sceneLabelNames
         let availability = descriptionAvailability
         photoInfoTask = Task { [weak self] in
@@ -83,7 +86,7 @@ extension CatalogWindowViewModel {
             do {
                 read = try await Self.readPhotoInfo(
                     id: id, store: store, reader: reader, materialization: materialization, libraryName: libraryName,
-                    labelNames: labelNames, descriptionAvailability: availability()
+                    rootNames: rootNames, labelNames: labelNames, descriptionAvailability: availability()
                 )
             } catch {
                 guard !Task.isCancelled, let self, targetIDs(.current) == [id], showsInfo else { return }
@@ -127,6 +130,7 @@ extension CatalogWindowViewModel {
         reader: MediaTileDetailReader,
         materialization: MaterializationCoordinator,
         libraryName: String?,
+        rootNames: [LibraryRootPath: String],
         labelNames: SceneLabelNames,
         descriptionAvailability: PhotoDescriptionAvailability
     ) async throws -> PhotoInfo {
@@ -147,6 +151,7 @@ extension CatalogWindowViewModel {
             kind: resolvedDetail?.bestKind,
             nativePixelSize: resolvedDetail?.nativePixelSize,
             libraryName: libraryName,
+            rootNames: rootNames,
             locality: locality,
             editRecipe: recipe?.recipe,
             labelNames: names,

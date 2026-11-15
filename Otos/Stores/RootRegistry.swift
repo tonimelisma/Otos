@@ -97,6 +97,16 @@ nonisolated struct RootRegistry {
         selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
     ) -> CatalogScopePredicate {
+        var predicate = rowsPredicate(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        predicate.showsOneCopy = selection.showsOneCopy
+        return predicate
+    }
+
+    /// The rows the selection holds, before one copy is chosen of identical copies.
+    private func rowsPredicate(
+        selection: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) -> CatalogScopePredicate {
         switch selection {
         case .allMedia:
             return CatalogScopePredicate(

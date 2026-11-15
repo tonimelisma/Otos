@@ -393,7 +393,7 @@ struct MediaEnricherTests {
         let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
-        let digest = try #require(XXH3Digest128(data: Data(repeating: 3, count: 16)))
+        let digest = try #require(ContentDigest(data: Data(repeating: 3, count: ContentDigest.byteCount)))
         let enricher = MediaEnricher.live(
             thumbnailDirectory: thumbnailDirectory,
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),

@@ -16,26 +16,12 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		1319FC7CC26FB31C9A8FFA7A /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 3B44EB562FCEBA57007E4158 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 5980D4726503709D9D7F52EB;
-			remoteInfo = OtosXXH3;
-		};
 		510B1DC9C2F3D792D5651E92 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 3B44EB562FCEBA57007E4158 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = E3AF0A4A4C05349C25C4A3BC;
 			remoteInfo = OtosKit;
-		};
-		6412BE2FF2B1F1D030C27026 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 3B44EB562FCEBA57007E4158 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 5980D4726503709D9D7F52EB;
-			remoteInfo = OtosXXH3;
 		};
 		8185B88BDB1A41FF86C64695 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -64,7 +50,6 @@
 		3B44EB5E2FCEBA57007E4158 /* Otos.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Otos.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B44EB6B2FCEBA59007E4158 /* OtosTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OtosTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A07256481F38A90EADD1A61F /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
-		A90203CC9F2BB2998AC21811 /* libOtosXXH3.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libOtosXXH3.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		B399849F083A8A241AA47BE2 /* OtosKit.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = OtosKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -74,12 +59,6 @@
 			membershipExceptions = (
 				main.swift,
 				Otos.icon,
-				Support/OtosXXH3.c,
-				Support/OtosXXH3.h,
-				"Vendor/xxHash-0.8.3/LICENSE",
-				"Vendor/xxHash-0.8.3/README.md",
-				"Vendor/xxHash-0.8.3/xxhash.c",
-				"Vendor/xxHash-0.8.3/xxhash.h",
 			);
 			target = E3AF0A4A4C05349C25C4A3BC /* OtosKit */;
 		};
@@ -140,7 +119,7 @@
 				Models/RemovableEjectOutcome.swift,
 				Models/ReorganizationModels.swift,
 				Models/TrashPrompts.swift,
-				Models/XXH3Digest128.swift,
+				Models/ContentDigest.swift,
 				OtosApp.swift,
 				Services/CameraByteSource.swift,
 				Services/CameraCatalogSync.swift,
@@ -234,15 +213,11 @@
 				Stores/ScanLeaseController.swift,
 				Support/DiagnosticsTiming.swift,
 				Support/Instrumentation.swift,
-				Support/OtosXXH3.c,
 				Support/RelativeDateText.swift,
 				Support/RunContext.swift,
 				Support/SmokeLibrarySelection.swift,
 				Support/SmokeWindowCapture.swift,
 				Support/UIJankDiagnostics.swift,
-				"Vendor/xxHash-0.8.3/LICENSE",
-				"Vendor/xxHash-0.8.3/README.md",
-				"Vendor/xxHash-0.8.3/xxhash.c",
 				ViewModels/CatalogWindowViewModel.swift,
 				ViewModels/CatalogWindowViewModelBrowserPlace.swift,
 				ViewModels/CatalogWindowViewModelCrop.swift,
@@ -372,293 +347,6 @@
 			);
 			target = 3B44EB5D2FCEBA57007E4158 /* Otos */;
 		};
-		A8685DBD37D06A6C4E2EAE4B /* Exceptions for "Otos" folder in "OtosXXH3" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				ContentView.swift,
-				Models/PhotoDescriptionPrompt.swift,
-				Services/AnniversaryTitleWriter.swift,
-				Services/PhotoDescriber.swift,
-				Services/PhotoDescriptionWriter.swift,
-				Stores/PhotoDescriptionStorage.swift,
-				main.swift,
-				Models/ActiveFileOperation.swift,
-				Models/ActiveReorganizationModels.swift,
-				Models/AssetMetadata.swift,
-				Models/BrowserPlace.swift,
-				Models/BrowserViewMode.swift,
-				Models/CalendarDay.swift,
-				Models/MapModels.swift,
-				Models/OnThisDayModels.swift,
-				Models/PhotoStackModels.swift,
-				Models/RenderSignature.swift,
-				Services/OnThisDayAnniversaryPolicy.swift,
-				Services/RenderSignatureRefresher.swift,
-				Models/DuplicateModels.swift,
-				Services/StoryPlaybackPolicy.swift,
-				Stores/AnniversaryMatch.swift,
-				Stores/CatalogStoreDuplicates.swift,
-				ViewModels/CatalogWindowViewModelDuplicates.swift,
-				ViewModels/CatalogWindowViewModelStory.swift,
-				ViewModels/CatalogWindowViewModelStacks.swift,
-				Views/DuplicatesView.swift,
-				Views/PairSwitch.swift,
-				Views/DuplicatesPresentation.swift,
-				Models/CaptureTimestampProjections.swift,
-				Models/CaptureWallClock.swift,
-				Models/CatalogModels.swift,
-				Models/CatalogPath.swift,
-				Models/CatalogQueryModels.swift,
-				Models/CatalogWindowState.swift,
-				Models/ComparePairPolicy.swift,
-				Models/EditGeometry.swift,
-				Models/EditHistogram.swift,
-				Models/EditRecipe.swift,
-				Models/ExportSettings.swift,
-				Models/GridColumnCount.swift,
-				Models/ImportBatchFormatting.swift,
-				Models/PhotoInfo.swift,
-				Models/LoupeZoomPolicy.swift,
-				Models/MediaCompanionModels.swift,
-				Models/MediaItemMenuModel.swift,
-				Models/MediaOperationModels.swift,
-				Models/MediaTrashModels.swift,
-				Models/OpenWithMenuModel.swift,
-				Models/PanePreview.swift,
-				Models/PreferencesDomain.swift,
-				Models/PreferenceStore.swift,
-				Models/RemovableEjectOutcome.swift,
-				Models/ReorganizationModels.swift,
-				Models/TrashPrompts.swift,
-				Models/XXH3Digest128.swift,
-				Otos.icon,
-				OtosApp.swift,
-				Services/CameraByteSource.swift,
-				Services/CameraCatalogSync.swift,
-				Services/CameraMetadataReader.swift,
-				Services/CameraSourceMonitor.swift,
-				Services/CatalogFilesystemWatcher.swift,
-				Services/CatalogProjection.swift,
-				Services/CatalogProjectionBuildTypes.swift,
-				Services/CatalogProjectionDiagnostics.swift,
-				Services/CatalogProjectionWindowStateBuild.swift,
-				Services/CatalogScannedFileReader.swift,
-				Services/CatalogScanner.swift,
-				Services/CatalogWindowPolicy.swift,
-				Services/ContentHasher.swift,
-				Services/CopyfileTransfer.swift,
-				Services/DeviceCameraSessionError.swift,
-				Services/StagingLocation.swift,
-				Services/RemoteByteSource.swift,
-				Services/ImmichAccounts.swift,
-				Services/ImmichCatalogSync.swift,
-				Services/ImmichClient.swift,
-				Services/ImmichSessionStore.swift,
-				Services/DeviceStagingRegistry.swift,
-				Services/DiskEjector.swift,
-				Services/DuplicatesProjection.swift,
-				Models/PeopleModels.swift,
-				Services/PeopleAssignment.swift,
-				ViewModels/CatalogWindowViewModelPeople.swift,
-				Views/PeopleView.swift,
-				Views/FaceTileView.swift,
-				Views/PersonSheetView.swift,
-				Services/EnrichmentAdmissionPolicy.swift,
-				Services/EnrichmentByteAccess.swift,
-				Services/EnrichmentCoordinator.swift,
-				Services/EnrichmentCoordinatorCompletion.swift,
-				Services/EnrichmentCoordinatorWorkSelection.swift,
-				Services/EnrichmentReadinessRouter.swift,
-				Services/EnrichmentSchedule.swift,
-				Services/ExclusivePublication.swift,
-				Services/FileMaterialization.swift,
-				Services/FilesystemEventFlags.swift,
-				Services/FilesystemNamespaceSemantics.swift,
-				"Services/FilesystemNamespaceSemantics+NameKey.swift",
-				Services/HandOffPreparer.swift,
-				Services/ImageRenderer.swift,
-				Services/ImportDestinationDate.swift,
-				Services/ImportExecuting.swift,
-				Services/ImportNaming.swift,
-				Services/ImportPlanBuilder.swift,
-				Services/ImportSessionMachine.swift,
-				Services/ImportSourceReadiness.swift,
-				Services/LibraryReorganizationRunner.swift,
-				Services/LiveEditRenderer.swift,
-				Services/MaterializationAdmissionPolicy.swift,
-				Services/MaterializationCoordinator.swift,
-				Services/MediaEligibility.swift,
-				Services/MediaEnricher.swift,
-				Services/MediaExporter.swift,
-				Services/MediaFileWriter.swift,
-				Services/MediaImportExecutor.swift,
-				Services/MediaImportRecovery.swift,
-				Services/MediaOperationCoordinator.swift,
-				Services/MediaTileDetailReader.swift,
-				Services/MediaTransferPlanner.swift,
-				Services/MediaTrashCoordinator.swift,
-				Services/MetadataRefresher.swift,
-				Services/PreviewImageLoader.swift,
-				Services/RemovableVolumeMonitor.swift,
-				Services/ReorganizationExecutor.swift,
-				Services/ReorganizationPlanner.swift,
-				Services/MapClusterPolicy.swift,
-				Services/SidebarSelectionPolicy.swift,
-				Services/ThumbnailStore.swift,
-				Services/VideoPreviewLoader.swift,
-				Services/WorkspaceOpening.swift,
-				Stores/CatalogQueryGateway.swift,
-				Stores/CatalogSQLTypes.swift,
-				Stores/OnThisDayPicks.swift,
-				Stores/CatalogSchema.swift,
-				Stores/CatalogStore.swift,
-				Stores/CatalogStoreImportJournal.swift,
-				Stores/CatalogStorePersistence.swift,
-				Stores/CatalogStoreReorganizationJournal.swift,
-				Stores/EnrichmentClaimGateway.swift,
-				Stores/FilesystemDirtyScope.swift,
-				Stores/FilesystemReconciler.swift,
-				Stores/KnownMaterializationSuppression.swift,
-				Stores/MediaOperationGateway.swift,
-				Stores/RootRegistry.swift,
-				Stores/RootRuntimeState.swift,
-				Stores/ScanLeaseController.swift,
-				Support/DiagnosticsTiming.swift,
-				Support/Instrumentation.swift,
-				Support/RelativeDateText.swift,
-				Support/RunContext.swift,
-				Support/SmokeLibrarySelection.swift,
-				Support/SmokeWindowCapture.swift,
-				Support/UIJankDiagnostics.swift,
-				ViewModels/CatalogWindowViewModel.swift,
-				ViewModels/CatalogWindowViewModelBrowserPlace.swift,
-				ViewModels/CatalogWindowViewModelCrop.swift,
-				ViewModels/CatalogWindowViewModelCuration.swift,
-				ViewModels/CatalogWindowViewModelEdit.swift,
-				ViewModels/CatalogWindowViewModelEditCommands.swift,
-				ViewModels/CatalogWindowViewModelExport.swift,
-				ViewModels/CatalogWindowViewModelImmich.swift,
-				ViewModels/CatalogWindowViewModelHandOff.swift,
-				ViewModels/CatalogWindowViewModelInspector.swift,
-				ViewModels/CatalogWindowViewModelLoupeZoom.swift,
-				ViewModels/CatalogWindowViewModelMediaItemMenu.swift,
-				ViewModels/CatalogWindowViewModelMediaOperations.swift,
-				ViewModels/CatalogWindowViewModelMutation.swift,
-				ViewModels/CatalogWindowViewModelOpenWith.swift,
-				ViewModels/CatalogWindowViewModelSelection.swift,
-				ViewModels/CatalogWindowViewModelShare.swift,
-				ViewModels/CatalogWindowViewModelSourceMonitoring.swift,
-				ViewModels/CatalogWindowViewModelTrash.swift,
-				ViewModels/CatalogWindowViewModelMap.swift,
-				ViewModels/CatalogWindowViewModelViewMode.swift,
-				Views/BareMenuKey.swift,
-				Views/CatalogMediaEmptyStatePresentation.swift,
-				Views/CatalogToolbarControls.swift,
-				Views/CompareView.swift,
-				Views/CropEditorView.swift,
-				Views/DesignPalette.swift,
-				Views/EditHistogramView.swift,
-				Views/EditPanelView.swift,
-				Views/ExportSheetView.swift,
-				Views/ImmichAccountSheetView.swift,
-				Views/GridPostLayoutWorkQueue.swift,
-				Views/GridSelection.swift,
-				Views/InfoPaneView.swift,
-				Views/ImportBarPresentation.swift,
-				Views/ImportPlanFooter.swift,
-				Views/LoupeVideoPlayerView.swift,
-				Views/LoupeView.swift,
-				Views/LoupeZoomView.swift,
-				Views/MediaAssetTilePresentation.swift,
-				Views/MediaAssetTileView.swift,
-				Views/MediaChoiceControl.swift,
-				Views/MediaGridAnimation.swift,
-				Views/MediaGridBridge.swift,
-				Views/MediaGridClipboard.swift,
-				Views/MediaGridCollectionView.swift,
-				Views/MediaGridDayBar.swift,
-				Views/MediaGridDayLabel.swift,
-				Views/MediaGridDrag.swift,
-				Views/MediaGridItem.swift,
-				Views/MediaGridLayout.swift,
-				Views/MediaGridMutationGate.swift,
-				Views/MediaGridPrefetch.swift,
-				Views/MediaGridPresentation.swift,
-				Views/MediaGridSelectionController.swift,
-				Views/MediaGridStructuralApply.swift,
-				Views/MediaGridStructure.swift,
-				Views/MediaGridSupport.swift,
-				Views/MediaGridView.swift,
-				Views/MediaGridZoom.swift,
-				Views/MediaGridZoomPolicy.swift,
-				Views/MediaItemContextMenu.swift,
-				Views/OnThisDayPresentation.swift,
-				Views/OnThisDayView.swift,
-				Views/PanePresentation.swift,
-				Views/ProgressStatusBar.swift,
-				Views/ReorganizationPresentation.swift,
-				Views/SettingsView.swift,
-				Views/SharePickerPresenter.swift,
-				Views/CatalogMediaEmptyStateView.swift,
-				Views/PlacesMapView.swift,
-				Views/SidebarView.swift,
-				Views/StoryPlayerView.swift,
-				Views/ThumbnailLoad.swift,
-				Views/TileContentStore.swift,
-				Views/TrashStatusBar.swift,
-				Resources/FocalNet.mlpackage,
-				Resources/GeoCalib.mlpackage,
-				Services/AutoCropModel.swift,
-				Services/AutoLevelModel.swift,
-				Services/PerspectiveFieldSolver.swift,
-				Resources/AdaFaceIR101.mlpackage,
-				Services/FaceAlignment.swift,
-				Services/FaceAnalyzer.swift,
-				Services/FaceEmbeddingModel.swift,
-				Services/FaceAssignmentPolicy.swift,
-				Services/FaceRecognisability.swift,
-				Services/PreviewFaceReader.swift,
-				Models/MediaCount.swift,
-				Services/VideoFaceReader.swift,
-				Services/RemoteVideoAsset.swift,
-				Stores/FaceStorage.swift,
-				Stores/Float32Storage.swift,
-				Resources/Licenses/AdaFace-LICENSE.txt,
-				Resources/Licenses/FocalNet-LICENSE.txt,
-				Resources/Licenses/GeoCalib-LICENSE.txt,
-				Resources/Licenses/README.md,
-				Services/SearchPlaces.swift,
-				Services/SearchQueryParser.swift,
-				Services/SearchQueryReader.swift,
-				Services/SearchTextReading.swift,
-				Stores/SearchTextStorage.swift,
-				Services/SearchLabelGate.swift,
-				Resources/SearchLabelEmbeddings.bin,
-				Resources/SearchGlossary-et.tsv,
-				Resources/SceneLabelNames.tsv,
-				Services/BundledModel.swift,
-				Services/SceneLabelNames.swift,
-				Services/SearchGlossary.swift,
-				Models/SearchLanguages.swift,
-				Support/BackgroundReading.swift,
-				Services/PhotoSearchIndex.swift,
-				Services/SearchEmbeddingModel.swift,
-				Services/SearchQueryEncoder.swift,
-				Services/SearchTextTokenizer.swift,
-				Stores/SearchEmbeddingStorage.swift,
-				Resources/SigLIP2Image.mlpackage,
-				Resources/SigLIP2Text.mlpackage,
-				Resources/SigLIP2Tokenizer.bin,
-				Resources/SigLIP2TokenEmbeddings-0.bin,
-				Resources/SigLIP2TokenEmbeddings-1.bin,
-				Resources/SigLIP2TokenEmbeddings-2.bin,
-				Resources/SigLIP2TokenEmbeddings-3.bin,
-				Resources/Licenses/SigLIP2-LICENSE.txt,
-				Models/PlaceModels.swift,
-				Services/PlaceNameReader.swift,
-			);
-			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
-		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -666,7 +354,6 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				6D0F18C301F79354A2999F84 /* Exceptions for "Otos" folder in "Otos" target */,
-				A8685DBD37D06A6C4E2EAE4B /* Exceptions for "Otos" folder in "OtosXXH3" target */,
 				2FF9500192B89B315E8A84D1 /* Exceptions for "Otos" folder in "OtosKit" target */,
 			);
 			path = Otos;
@@ -706,13 +393,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		E5DD3A7B52CB7A66A26D0576 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -731,7 +411,6 @@
 			children = (
 				3B44EB5E2FCEBA57007E4158 /* Otos.app */,
 				3B44EB6B2FCEBA59007E4158 /* OtosTests.xctest */,
-				A90203CC9F2BB2998AC21811 /* libOtosXXH3.a */,
 				B399849F083A8A241AA47BE2 /* OtosKit.framework */,
 			);
 			name = Products;
@@ -763,13 +442,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		FD57F04531FCD5990244E4C4 /* Headers */ = {
-			isa = PBXHeadersBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
@@ -785,7 +457,6 @@
 			buildRules = (
 			);
 			dependencies = (
-				14B3E97405D7517746F07919 /* PBXTargetDependency */,
 				86B4C09E9F191C2E44059CAB /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
@@ -817,26 +488,6 @@
 			productReference = 3B44EB6B2FCEBA59007E4158 /* OtosTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		5980D4726503709D9D7F52EB /* OtosXXH3 */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 7A8A98E30E8C74E0FCF9B31F /* Build configuration list for PBXNativeTarget "OtosXXH3" */;
-			buildPhases = (
-				FD57F04531FCD5990244E4C4 /* Headers */,
-				65EE4ACB5C5792B275EBC809 /* Sources */,
-				E5DD3A7B52CB7A66A26D0576 /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				3B44EB602FCEBA57007E4158 /* Otos */,
-			);
-			name = OtosXXH3;
-			productName = OtosXXH3;
-			productReference = A90203CC9F2BB2998AC21811 /* libOtosXXH3.a */;
-			productType = "com.apple.product-type.library.static";
-		};
 		E3AF0A4A4C05349C25C4A3BC /* OtosKit */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = F1C98939DAD54967712D7ADC /* Build configuration list for PBXNativeTarget "OtosKit" */;
@@ -849,7 +500,6 @@
 			buildRules = (
 			);
 			dependencies = (
-				2E6B201AA529F5D5460F6B10 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3B44EB602FCEBA57007E4158 /* Otos */,
@@ -902,7 +552,6 @@
 			targets = (
 				3B44EB5D2FCEBA57007E4158 /* Otos */,
 				3B44EB6A2FCEBA59007E4158 /* OtosTests */,
-				5980D4726503709D9D7F52EB /* OtosXXH3 */,
 				E3AF0A4A4C05349C25C4A3BC /* OtosKit */,
 			);
 		};
@@ -947,13 +596,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		65EE4ACB5C5792B275EBC809 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		7C48A302E45E356E69FADF3C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -964,18 +606,6 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		14B3E97405D7517746F07919 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			name = OtosXXH3;
-			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
-			targetProxy = 1319FC7CC26FB31C9A8FFA7A /* PBXContainerItemProxy */;
-		};
-		2E6B201AA529F5D5460F6B10 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			name = OtosXXH3;
-			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
-			targetProxy = 6412BE2FF2B1F1D030C27026 /* PBXContainerItemProxy */;
-		};
 		86B4C09E9F191C2E44059CAB /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = OtosKit;
@@ -1145,7 +775,6 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Otos/Support";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
@@ -1182,7 +811,6 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Otos/Support";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
@@ -1203,7 +831,6 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Otos/Support";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
@@ -1224,26 +851,11 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Otos/Support";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
-		};
-		575654FA750AED8478D400E8 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_WARN_DOCUMENTATION_COMMENTS = NO;
-				DEFINES_MODULE = YES;
-				EXECUTABLE_PREFIX = lib;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/Otos/Vendor/xxHash-0.8.3";
-				MODULEMAP_FILE = Otos/Support/module.modulemap;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = macosx;
-				SKIP_INSTALL = YES;
-			};
-			name = Debug;
 		};
 		67F5CCED5788A6E30A1FA978 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -1264,21 +876,12 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(BUILT_PRODUCTS_DIR)",
-				);
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-lOtosXXH3",
-				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Otos/Support";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
@@ -1306,40 +909,17 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(BUILT_PRODUCTS_DIR)",
-				);
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-lOtosXXH3",
-				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Otos/Support";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 				VERSIONING_SYSTEM = "apple-generic";
 				VERSION_INFO_PREFIX = "";
-			};
-			name = Release;
-		};
-		B7A1BBED30FBDB907002DA16 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_WARN_DOCUMENTATION_COMMENTS = NO;
-				DEFINES_MODULE = YES;
-				EXECUTABLE_PREFIX = lib;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/Otos/Vendor/xxHash-0.8.3";
-				MODULEMAP_FILE = Otos/Support/module.modulemap;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = macosx;
-				SKIP_INSTALL = YES;
 			};
 			name = Release;
 		};
@@ -1369,15 +949,6 @@
 			buildConfigurations = (
 				3B44EB832FCEBA59007E4158 /* Debug */,
 				3B44EB842FCEBA59007E4158 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		7A8A98E30E8C74E0FCF9B31F /* Build configuration list for PBXNativeTarget "OtosXXH3" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				B7A1BBED30FBDB907002DA16 /* Release */,
-				575654FA750AED8478D400E8 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

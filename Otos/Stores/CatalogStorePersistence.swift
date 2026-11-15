@@ -367,6 +367,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.copiesMigrationIdentifier) { db in
+            for statement in CatalogSchema.copiesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -854,7 +859,7 @@ extension CatalogStore {
             try db.execute(
                 sql: """
                 UPDATE media_asset SET
-                    content_hash_xxh3_128 = ?,
+                    content_sha1 = ?,
                     content_hash_source_size = ?,
                     content_hash_source_mtime = ?
                 WHERE library_root_id = ?

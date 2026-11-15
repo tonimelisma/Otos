@@ -125,7 +125,7 @@ struct WindowStateApplyTests {
             CatalogLibraryState(root: $0, availability: .available, activity: .idle)
         }
         let batch = ImportBatchID(unixMilliseconds: 1_700_000_000_000)
-        let digest = XXH3Digest128(data: Data(repeating: 7, count: 16))
+        let digest = ContentDigest(data: Data(repeating: 7, count: ContentDigest.byteCount))
         for scope in Self.scopeSamples(batch: batch, digest: digest) {
             let expected: String = switch scope {
             case .allMedia: "All Media"
@@ -150,7 +150,7 @@ struct WindowStateApplyTests {
     }
 
     /// One sample of every scope; the switch fails to build when a scope is added.
-    private static func scopeSamples(batch: ImportBatchID, digest: XXH3Digest128?) -> [SidebarSelection] {
+    private static func scopeSamples(batch: ImportBatchID, digest: ContentDigest?) -> [SidebarSelection] {
         let samples: [SidebarSelection] = [
             .allMedia, .places, .mapArea(MapArea(south: 0, north: 1, west: 0, east: 1)),
             .mapStack(MapStack(members: [makeID("a.jpg")])), .onThisDay(CalendarDay(year: 2026, month: 11, day: 14)),
@@ -185,7 +185,7 @@ struct WindowStateApplyTests {
                 mediaChoice: .notRated, isEdited: false, hasCompanions: false
             )
         }
-        let digest = try #require(XXH3Digest128(data: Data(repeating: 7, count: 16)))
+        let digest = try #require(ContentDigest(data: Data(repeating: 7, count: ContentDigest.byteCount)))
         let group = DuplicateGroupPolicy.group(id: .identical(digest), copies: copies, keptPairs: [])
 
         model.selectSidebar(.duplicates)

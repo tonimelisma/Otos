@@ -393,7 +393,7 @@ actor ImmichCatalogSync {
             return ImmichAssetDetail(
                 id: id, originalFileName: line.originalFileName, type: line.type,
                 fileCreatedAt: created, fileModifiedAt: modified, fileSize: sizes[id],
-                hasPreview: line.hasPreview
+                hasPreview: line.hasPreview, contentDigest: line.contentDigest
             )
         }
     }
@@ -730,7 +730,8 @@ actor ImmichCatalogSync {
             ),
             sourceItemID: asset.id,
             isHiddenBySource: asset.deletedAt != nil,
-            sourceHasProducts: asset.hasPreview
+            sourceHasProducts: asset.hasPreview,
+            sourceDigest: asset.contentDigest
         )
     }
 
@@ -750,7 +751,8 @@ actor ImmichCatalogSync {
             ),
             sourceItemID: motion.id,
             isHiddenBySource: still.deletedAt != nil,
-            sourceHasProducts: motion.hasPreview
+            sourceHasProducts: motion.hasPreview,
+            sourceDigest: motion.contentDigest
         )
     }
 
@@ -770,7 +772,8 @@ actor ImmichCatalogSync {
             ),
             sourceItemID: asset.id,
             isHiddenBySource: row.isHiddenBySource,
-            sourceHasProducts: asset.hasPreview
+            sourceHasProducts: asset.hasPreview,
+            sourceDigest: asset.contentDigest
         )
     }
 

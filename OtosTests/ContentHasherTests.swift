@@ -1,22 +1,19 @@
+import CryptoKit
 import Foundation
 @testable import OtosKit
-import OtosXXH3
 import Synchronization
 import Testing
 
 @Suite(.testDirectory)
 struct ContentHasherTests {
-    @Test func officialCanonicalVectorsAndDigestRoundTrip() throws {
+    @Test func fipsVectorsAndDigestRoundTrip() throws {
+        // FIPS 180 examples: the empty message, "abc", and the 448-bit two-block message.
         let vectors: [(Data, String)] = [
-            (Data(), "99aa06d3014798d86001c324468d497f"),
-            (Data([0x00]), "a6cd5e9392000f6ac44bdff4074eecdb"),
+            (Data(), "da39a3ee5e6b4b0d3255bfef95601890afd80709"),
+            (Data("abc".utf8), "a9993e364706816aba3e25717850c26c9cd0d89d"),
             (
-                Data([0x00, 0x52, 0x92, 0x9B, 0xB7, 0x32]),
-                "082afe0b8162d12a3e7039bdda43cfc6"
-            ),
-            (
-                Data([0x00, 0x52, 0x92, 0x9B, 0xB7, 0x32, 0xA3, 0x24, 0x2D, 0x00, 0xAF, 0x95]),
-                "6e3efd8fc7802b18061a192713f69ad9"
+                Data("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".utf8),
+                "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
             ),
         ]
         for (data, expectedHex) in vectors {
@@ -27,7 +24,7 @@ struct ContentHasherTests {
                 continue
             }
             #expect(digest.hexString == expectedHex)
-            #expect(try #require(XXH3Digest128(data: digest.data)) == digest)
+            #expect(try #require(ContentDigest(data: digest.data)) == digest)
         }
     }
 
@@ -82,18 +79,7 @@ struct ContentHasherTests {
         })
     }
 
-    private func oneShotHash(_ data: Data) -> XXH3Digest128 {
-        let state = otos_xxh3_create()!
-        defer { otos_xxh3_free(state) }
-        precondition(otos_xxh3_reset(state) == 0)
-        data.withUnsafeBytes { buffer in
-            precondition(otos_xxh3_update(state, buffer.baseAddress, buffer.count) == 0)
-        }
-        var bytes = Array(repeating: UInt8(0), count: XXH3Digest128.byteCount)
-        let digestResult = bytes.withUnsafeMutableBufferPointer { output in
-            otos_xxh3_digest(state, output.baseAddress)
-        }
-        precondition(digestResult == 0)
-        return XXH3Digest128(canonicalBytes: bytes)!
+    private func oneShotHash(_ data: Data) -> ContentDigest {
+        ContentDigest(bytes: Array(Insecure.SHA1.hash(data: data)))!
     }
 }

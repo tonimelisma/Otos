@@ -78,7 +78,7 @@ nonisolated struct StoredAsset {
     var metadataSourceMTimeSeconds: Int?
     var renderedSourceSize: Int64?
     var renderedSourceMTimeSeconds: Int?
-    var contentHash: XXH3Digest128?
+    var contentHash: ContentDigest?
     var contentHashSourceSize: Int64?
     var contentHashSourceMTimeSeconds: Int?
     var facesSourceSize: Int64?
@@ -166,7 +166,7 @@ nonisolated struct CatalogScopePredicate: Equatable {
         /// The row's current digest is shared by another visible row: Duplicates.
         case duplicated
         /// The row's current digest is exactly this: one group under Duplicates.
-        case identical(XXH3Digest128)
+        case identical(ContentDigest)
         /// The row is one of these, by root row id and path: a same-photo group under
         /// Duplicates, or a stack opened from the map.
         case members([MemberKey])
@@ -208,6 +208,9 @@ nonisolated struct CatalogScopePredicate: Equatable {
     let location: LocationConstraint
     let content: ContentConstraint
     let date: DateConstraint
+    /// The scope shows one copy of each set of identical copies
+    /// (`SidebarSelection.showsOneCopy`, ADR 0054).
+    var showsOneCopy: Bool
 
     /// On This Day's scope, which picks its photos (`OnThisDayPicks`).
     var isAnniversary: Bool {
@@ -222,13 +225,15 @@ nonisolated struct CatalogScopePredicate: Equatable {
         importBatchUnixMs: Int64? = nil,
         location: LocationConstraint = .any,
         content: ContentConstraint = .any,
-        date: DateConstraint = .any
+        date: DateConstraint = .any,
+        showsOneCopy: Bool = false
     ) {
         self.rootIDs = rootIDs
         self.importBatchUnixMs = importBatchUnixMs
         self.location = location
         self.content = content
         self.date = date
+        self.showsOneCopy = showsOneCopy
     }
 
     /// Whether reads over this scope join `asset_metadata`, and so can carry each

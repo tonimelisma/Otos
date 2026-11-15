@@ -134,7 +134,7 @@ struct ImportRecoveryTests {
         rootPath: LibraryRootPath,
         destinationRelativePath: String = "final.jpg",
         stagingURL: URL?,
-        digest: XXH3Digest128,
+        digest: ContentDigest,
         byteSize: Int64,
         modifiedAt: Date,
         phase: ActiveFileOperationPhase = .readyToPublish
@@ -166,7 +166,7 @@ struct ImportRecoveryTests {
         let final = destination.appending(path: "final.jpg", directoryHint: .notDirectory)
         let staging = destination.appending(path: ".stage.otos-import-staging", directoryHint: .notDirectory)
         try Data("imported".utf8).write(to: staging)
-        let digest: XXH3Digest128
+        let digest: ContentDigest
         guard case let .complete(value) = ContentHasher().hashMaterializedFile(at: staging) else {
             Issue.record("expected staging digest")
             return
@@ -1600,7 +1600,7 @@ struct ImportVerifiesTheStagedCopyTests {
         // failing reader would produce, seen from the other side.
         let media = try #require(await store.planningMedia(for: source))
         let first = try #require(media.first { $0.relativePath.rawValue == "a.jpg" })
-        let wrong = try #require(XXH3Digest128(data: Data(repeating: 9, count: 16)))
+        let wrong = try #require(ContentDigest(data: Data(repeating: 9, count: ContentDigest.byteCount)))
         let written = await store.applyContentHash(ContentHashResult(
             id: first.id,
             contentHash: wrong,
@@ -1667,7 +1667,7 @@ struct LibraryContentRecheckTests {
         let library = try CatalogPath.normalizedDirectoryPath(for: libraryURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
         let facts = try #require(await store.planningMedia(for: library)?.first)
-        let digest = try #require(XXH3Digest128(data: Data(repeating: 4, count: 16)))
+        let digest = try #require(ContentDigest(data: Data(repeating: 4, count: ContentDigest.byteCount)))
         _ = await store.applyContentHash(ContentHashResult(
             id: facts.id,
             contentHash: digest,

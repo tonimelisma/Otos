@@ -15,7 +15,7 @@ nonisolated enum DuplicatesGateway {
         let relativePath: String
         /// The current digest; present for an identical-copies read, absent for a same-photo
         /// read, which compares pixels instead.
-        let digest: XXH3Digest128?
+        let digest: ContentDigest?
         let kind: String?
         let captureLocal: Double?
         let byteSize: Int64?
@@ -88,10 +88,7 @@ nonisolated enum DuplicatesGateway {
           AND \(row).trash_path IS NULL
           AND \(row).hidden_by_source = 0
           AND NOT \(LivePhotoSQL.isPairedMotion(row))
-          AND \(row).content_hash_xxh3_128 IS NOT NULL
-          AND length(\(row).content_hash_xxh3_128) = 16
-          AND \(row).content_hash_source_size = COALESCE(\(row).byte_size, -1)
-          AND \(row).content_hash_source_mtime = CAST(COALESCE(\(row).content_modified_at_unix, -1) AS INTEGER)
+          AND \(ContentDigestSQL.isCurrent(row))
         """
     }
 
@@ -103,23 +100,23 @@ nonisolated enum DuplicatesGateway {
     static func duplicateCopiesSQL(rootCount: Int) -> String {
         let placeholders = Array(repeating: "?", count: rootCount).joined(separator: ", ")
         return """
-        SELECT a.library_root_id, a.relative_path, a.content_hash_xxh3_128, a.best_kind, a.best_capture_local,
+        SELECT a.library_root_id, a.relative_path, a.content_sha1, a.best_kind, a.best_capture_local,
                a.byte_size, a.created_at_unix, a.media_choice, a.edit_recipe_json IS NOT NULL AS edited,
                m.pixel_width, m.pixel_height, m.orientation,
                EXISTS(
                    SELECT 1 FROM media_companion c
                    WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
                ) AS has_companions
-        FROM media_asset a INDEXED BY idx_media_asset_content_hash
+        FROM media_asset a INDEXED BY \(ContentDigestSQL.indexName)
         LEFT JOIN asset_metadata m
           ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(placeholders))
           AND \(visibleCurrentPredicate("a"))
-          AND a.content_hash_xxh3_128 IN (
-              SELECT d.content_hash_xxh3_128 FROM media_asset d INDEXED BY idx_media_asset_content_hash
+          AND a.content_sha1 IN (
+              SELECT d.content_sha1 FROM media_asset d INDEXED BY \(ContentDigestSQL.indexName)
               WHERE d.library_root_id IN (\(placeholders))
                 AND \(visibleCurrentPredicate("d"))
-              GROUP BY d.content_hash_xxh3_128
+              GROUP BY d.content_sha1
               HAVING COUNT(*) > 1
           )
         """
@@ -132,7 +129,7 @@ nonisolated enum DuplicatesGateway {
             arguments: StatementArguments(rootIDs + rootIDs)
         )
         return rows.compactMap { row in
-            guard let digest = (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)) else {
+            guard let digest = (row["content_sha1"] as Data?).flatMap(ContentDigest.init(data:)) else {
                 return nil
             }
             return CopyRow(

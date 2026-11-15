@@ -52,10 +52,22 @@ struct EnrichmentClaimIndexContractTests {
         }
     }
 
-    /// `INDEXED BY` matches a partial index by its text, so the library claim's predicate is
-    /// the text v35 made its indexes from, and the account claim's the text v40 did.
-    @Test func theLibraryClaimKeepsTheTextItsIndexesWereCreatedWith() {
-        #expect(EnrichmentClaimGateway.stalenessSQLPredicate(.library) == CatalogSchema.videoFacesClaimPredicate)
+    /// `INDEXED BY` matches a partial index by its text, so each claim's predicate is the
+    /// text its indexes hold in a migrated catalog: the products' and the library's as v60
+    /// made them again with the SHA-1 digest, the account's as v40 made it.
+    @Test func eachClaimKeepsTheTextItsIndexesWereCreatedWith() async throws {
+        let dbQueue = try await Self.migratedDatabase()
+        for (claim, names) in [
+            (EnrichmentClaim.products, [EnrichmentClaimGateway.broadRootIndexName, EnrichmentClaimGateway.broadGlobalIndexName]),
+            (.library, [EnrichmentClaimGateway.libraryRootIndexName, EnrichmentClaimGateway.libraryGlobalIndexName]),
+        ] {
+            for name in names {
+                let sql = try await dbQueue.read { db in
+                    try String.fetchOne(db, sql: "SELECT sql FROM sqlite_master WHERE name = ?", arguments: [name])
+                }
+                #expect(try #require(sql).hasSuffix("WHERE \(EnrichmentClaimGateway.stalenessSQLPredicate(claim))"))
+            }
+        }
         #expect(EnrichmentClaimGateway.stalenessSQLPredicate(.account) == CatalogSchema.accountClaimPredicate)
     }
 

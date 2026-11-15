@@ -168,7 +168,7 @@ subordinate, rebuildable overlay.
    observation to purge media or companions; retained dirty scopes reconcile after
    the current lease clears. Explicit import settlement may reuse a source's
    current normalized enrichment overlay when the source `(size, mtime)` facts and
-   Plan-0060 XXH3-128 digest agree. Metadata and normalized facts are cloned to the
+   SHA-1 digest (ADR 0018) agree. Metadata and normalized facts are cloned to the
    destination path identity, while a source thumbnail is copied into an independent
    destination thumbnail through the app-owned staged-promotion path. A reuse miss
    falls back to ordinary enrichment; source and destination overlay lifecycles
@@ -324,7 +324,7 @@ Rejected. Purge requires proven deletion from a reachable, completed enumeration
 Import provenance is permitted only as filesystem facts about a copy Otos
 performed: source root path, source relative path, source byte size and
 modification time, plus the settled destination byte size and modification time.
-The planner does not read those facts. A canonical XXH3-128 hash is also permitted
+The planner does not read those facts. A SHA-1 content digest (ADR 0018) is also permitted
 as subordinate overlay, produced only inside ordinary enrichment or an existing
 import worker after its deliberate byte-access gate. It is valid only with the
 size/mtime signature of the bytes hashed, never becomes a second asset identity,

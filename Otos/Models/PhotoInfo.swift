@@ -75,7 +75,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             case .location: ["Coordinates", "Altitude"]
             case .file: [
                     "Kind", "Dimensions", "Size", "Folder", "Original",
-                    "Created", "Modified", "Imported", "Companions", "Edits", "Stack",
+                    "Created", "Modified", "Imported", "Companions", "Copies", "Edits", "Stack",
                 ]
             }
         }
@@ -258,6 +258,8 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         var nativePixelSize: CGSize?
         /// The name the sidebar shows for the item's library.
         var libraryName: String?
+        /// The name the sidebar shows for each library and account, for the Copies row.
+        var rootNames: [LibraryRootPath: String] = [:]
         var locality: OriginalLocality?
         var editRecipe: EditRecipe?
         /// The overlay's confident scene labels, named in the Mac's language.
@@ -491,6 +493,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         } else {
             unknown
         }
+        let copies = overlay.map { copiesText($0.otherCopyRoots, names: source.rootNames) } ?? unknown
         return [
             Row(label: "Kind", value: kindText(id: id, kind: kind)),
             Row(label: "Dimensions", value: dimensions(source.nativePixelSize)),
@@ -501,9 +504,36 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             Row(label: "Modified", value: asset?.contentModifiedAt?.formatted(fileDate) ?? unknown),
             Row(label: "Imported", value: imported),
             Row(label: "Companions", value: companions),
+            Row(label: "Copies", value: copies),
             Row(label: "Edits", value: edits),
             Row(label: "Stack", value: notApplicable),
         ]
+    }
+
+    /// Where the item's other identical copies are (ADR 0054): each library or account by the
+    /// name the sidebar shows, in the order the copies are shown in, with how many it holds
+    /// when more than one. `Not Checked Yet` while the item's digest is owed, so a copy not
+    /// yet found is never reported as none.
+    static func copiesText(_ roots: [LibraryRootPath]?, names: [LibraryRootPath: String]) -> String {
+        guard let roots else {
+            return "Not Checked Yet"
+        }
+        guard !roots.isEmpty else {
+            return "None"
+        }
+        var order: [LibraryRootPath] = []
+        var counts: [LibraryRootPath: Int] = [:]
+        for root in roots {
+            if counts[root] == nil {
+                order.append(root)
+            }
+            counts[root, default: 0] += 1
+        }
+        return order.map { root in
+            let name = names[root] ?? root.displayName
+            let count = counts[root] ?? 1
+            return count > 1 ? "\(name) (\(count) copies)" : name
+        }.formatted(.list(type: .and))
     }
 
     /// The same facts, with the File section's `Stack` row naming the stack this photo is in
@@ -575,6 +605,9 @@ nonisolated struct PhotoInfoOverlay: Equatable, Sendable {
     var companionFileNames: [String]
     var importedAt: Date?
     var isEdited: Bool
+    /// The library or account of each other present copy with the item's digest (ADR 0054),
+    /// in the order copies are shown in; nil while the item's digest is owed.
+    var otherCopyRoots: [LibraryRootPath]?
     var sceneLabels: [String]?
     var textLines: [String]?
     /// The still's current description; nil while one is owed.

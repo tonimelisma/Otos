@@ -117,8 +117,8 @@ nonisolated enum EnrichmentClaimGateway {
 
     static func hashStalenessSQLPredicate() -> String {
         """
-        content_hash_xxh3_128 IS NULL
-           OR length(content_hash_xxh3_128) <> 16
+        content_sha1 IS NULL
+           OR length(content_sha1) <> 20
            OR content_hash_source_size IS NULL
            OR content_hash_source_mtime IS NULL
            OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
@@ -395,7 +395,7 @@ private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
         SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
                created_at_unix, content_modified_at_unix,
                metadata_source_size, metadata_source_mtime, rendered_source_size, rendered_source_mtime,
-               content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime,
+               content_sha1, content_hash_source_size, content_hash_source_mtime,
                faces_source_size, faces_source_mtime,
                thumbnail_path,
                duration_seconds,
@@ -430,7 +430,7 @@ private nonisolated func enrichmentCandidateStoredAsset(from row: Row) -> Stored
         metadataSourceMTimeSeconds: row["metadata_source_mtime"],
         renderedSourceSize: row["rendered_source_size"],
         renderedSourceMTimeSeconds: row["rendered_source_mtime"],
-        contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
+        contentHash: (row["content_sha1"] as Data?).flatMap(ContentDigest.init(data:)),
         contentHashSourceSize: row["content_hash_source_size"],
         contentHashSourceMTimeSeconds: row["content_hash_source_mtime"],
         facesSourceSize: row["faces_source_size"],

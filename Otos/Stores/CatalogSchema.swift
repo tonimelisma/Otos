@@ -300,8 +300,8 @@ nonisolated enum CatalogSchema {
                 AND preview_path IS NULL
             )
             """,
-            claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, claim: .products, orderColumn: "best_capture_unix"),
-            claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, claim: .products, orderColumn: "best_capture_unix"),
+            claimIndex(EnrichmentClaimGateway.broadGlobalIndexName, global: true, predicate: xxh3ProductsClaimPredicate, orderColumn: "best_capture_unix"),
+            claimIndex(EnrichmentClaimGateway.broadRootIndexName, global: false, predicate: xxh3ProductsClaimPredicate, orderColumn: "best_capture_unix"),
             claimIndex(EnrichmentClaimGateway.metadataOnlyGlobalIndexName, global: true, claim: .metadata, orderColumn: "best_capture_unix"),
             claimIndex(EnrichmentClaimGateway.metadataOnlyRootIndexName, global: false, claim: .metadata, orderColumn: "best_capture_unix"),
         ]
@@ -395,13 +395,29 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// The products claim's text from v13 until v60 made the digest SHA-1: every claim
+    /// index a migration before v60 makes names the XXH3 column, so it is frozen here.
+    static var xxh3ProductsClaimPredicate: String {
+        """
+        \(EnrichmentClaimGateway.metadataStalenessSQLPredicate())
+           OR \(EnrichmentClaimGateway.renderingStalenessSQLPredicate())
+           OR content_hash_xxh3_128 IS NULL
+           OR length(content_hash_xxh3_128) <> 16
+           OR content_hash_source_size IS NULL
+           OR content_hash_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(content_hash_source_mtime, -1)
+        """
+    }
+
     /// The claim index pair `v18_faces` made for a library's rows, and the products they
     /// owed: every product, faces included. `v30_faces_from_preview` drops them.
     private static let libraryGlobalIndexName = "idx_media_asset_needs_enrichment_global_library"
     private static let libraryRootIndexName = "idx_media_asset_needs_enrichment_root_library"
     private static var libraryClaimPredicate: String {
         """
-        \(EnrichmentClaimGateway.stalenessSQLPredicate(.products))
+        \(xxh3ProductsClaimPredicate)
            OR faces_source_size IS NULL
            OR faces_source_mtime IS NULL
            OR COALESCE(byte_size, -1) <> COALESCE(faces_source_size, -1)
@@ -1394,6 +1410,151 @@ nonisolated enum CatalogSchema {
         )
         """,
     ]
+
+    /// One photo, several copies (ADR 0054), and the digest that finds them (ADR 0018):
+    /// - The digest is SHA-1 (`content_sha1`), the digest Immich reports for an uploaded
+    ///   original, so a library's copy and an account's are compared without a download.
+    ///   Every XXH3 digest is cleared, and so is the import journal's: each row owes its
+    ///   digest again, and enrichment reads it as it reads any owed digest — a library's
+    ///   row for its digest alone, from one read of its bytes, under the free-space floor
+    ///   (ENR-008). The claim indexes whose text names the digest are made again from the
+    ///   gateway's predicate, which `INDEXED BY` matches by text.
+    /// - `idx_media_asset_content_sha1` holds the digest with what makes it current and what a
+    ///   copy is tested by (`ContentDigestSQL`), so a scan of every digest reads no table row.
+    /// - `shown_copy_root_id` is the root of the copy shown in this row's place: the first
+    ///   present copy with the same current digest, in a library before an account, then by
+    ///   root and path; NULL for the copy that is shown, and for a row with no current digest
+    ///   or the digest of no bytes. Three triggers keep it in the transaction of every write
+    ///   that can move it, so no write path can leave it stale. Deciding it inside each read
+    ///   took 17–33 s on the owner's catalog (`docs/research/2026-11-14-one-photo-many-copies.md`).
+    ///   Every digest is cleared here, so it starts NULL everywhere and fills as digests arrive.
+    /// - The window's date indexes and the stack candidates' carry it with the other
+    ///   columns a row is tested by (v55).
+    /// - Every Immich account owes a full resync, so every asset is listed again with its
+    ///   checksum.
+    static let copiesMigrationIdentifier = "v60_sha1_digest_and_copies"
+
+    /// The columns a combined scope's reads test a row by: v55's, and whether another copy
+    /// is shown in its place.
+    static let copyTestedColumns = "\(windowReadTestedColumns), shown_copy_root_id"
+
+    /// The kinds of root whose rows are copies of one another: the ones All Media holds
+    /// (`LibraryRootKind.isMemberOfAllMedia`).
+    static let copyRootKinds = "'library', 'immichAccount'"
+
+    /// A row's place among its copies, as an ordered row value over `row`: a library's copy
+    /// before an account's, then by root and path.
+    static func copyRank(_ row: String) -> String {
+        """
+        ((SELECT kind FROM library_root WHERE id = \(row).library_root_id) = 'immichAccount'), \
+        \(row).library_root_id, \(row).relative_path
+        """
+    }
+
+    /// Sets `shown_copy_root_id` for every row of `media_asset` that `rows` selects.
+    static func shownCopyRecompute(rows: String) -> String {
+        """
+        UPDATE media_asset SET shown_copy_root_id = CASE
+            WHEN \(ContentDigestSQL.isCurrent("media_asset")) AND media_asset.content_sha1 <> \(ContentDigestSQL.empty)
+            THEN (
+                SELECT copy.library_root_id FROM media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
+                WHERE copy.content_sha1 = media_asset.content_sha1
+                  AND \(ContentDigestSQL.isCurrent("copy"))
+                  AND copy.library_root_id IN (SELECT id FROM library_root WHERE kind IN (\(copyRootKinds)))
+                  AND \(CatalogVisibilitySQL.isPresent("copy"))
+                  AND (\(copyRank("copy"))) < (\(copyRank("media_asset")))
+                ORDER BY \(copyRank("copy"))
+                LIMIT 1
+            )
+        END
+        WHERE \(rows);
+        """
+    }
+
+    /// The columns a row's current digest, its presence or its rank read.
+    static let copyInputColumns = """
+    content_sha1, content_hash_source_size, content_hash_source_mtime, byte_size, content_modified_at_unix, \
+    pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, library_root_id, relative_path
+    """
+
+    /// Whether an update changed any of `copyInputColumns`.
+    static let copyInputChanged = """
+    OLD.content_sha1 IS NOT NEW.content_sha1
+      OR OLD.content_hash_source_size IS NOT NEW.content_hash_source_size
+      OR OLD.content_hash_source_mtime IS NOT NEW.content_hash_source_mtime
+      OR OLD.byte_size IS NOT NEW.byte_size
+      OR OLD.content_modified_at_unix IS NOT NEW.content_modified_at_unix
+      OR OLD.pending_trash_batch_unix_ms IS NOT NEW.pending_trash_batch_unix_ms
+      OR OLD.awaiting_presence IS NOT NEW.awaiting_presence
+      OR OLD.hidden_by_source IS NOT NEW.hidden_by_source
+      OR OLD.library_root_id IS NOT NEW.library_root_id
+      OR OLD.relative_path IS NOT NEW.relative_path
+    """
+
+    static var copiesStatements: [String] {
+        let claimIndexes: [(name: String, global: Bool, claim: EnrichmentClaim)] = [
+            (EnrichmentClaimGateway.broadGlobalIndexName, true, .products),
+            (EnrichmentClaimGateway.broadRootIndexName, false, .products),
+            (EnrichmentClaimGateway.libraryGlobalIndexName, true, .library),
+            (EnrichmentClaimGateway.libraryRootIndexName, false, .library),
+        ]
+        let testedIndexes: [(name: String, columns: String)] = [
+            ("idx_media_asset_best_capture_global_desc", "best_capture_local DESC, library_root_id, relative_path"),
+            ("idx_media_asset_best_capture_root_desc", "library_root_id, best_capture_local DESC, relative_path"),
+            ("idx_media_asset_best_capture_global_asc", "best_capture_local ASC, library_root_id, relative_path"),
+            ("idx_media_asset_best_capture_root_asc", "library_root_id, best_capture_local ASC, relative_path"),
+            ("idx_media_asset_stack_candidate", "library_root_id, best_kind, parent_path, best_format, relative_path"),
+        ]
+        var statements = ["DROP INDEX idx_media_asset_content_hash"]
+        statements += claimIndexes.map { "DROP INDEX \($0.name)" }
+        statements += testedIndexes.map { "DROP INDEX \($0.name)" }
+        statements += [
+            "ALTER TABLE media_asset RENAME COLUMN content_hash_xxh3_128 TO content_sha1",
+            """
+            UPDATE media_asset SET content_sha1 = NULL, content_hash_source_size = NULL, content_hash_source_mtime = NULL
+            WHERE content_sha1 IS NOT NULL OR content_hash_source_size IS NOT NULL OR content_hash_source_mtime IS NOT NULL
+            """,
+            "ALTER TABLE active_file_operation RENAME COLUMN content_hash_xxh3_128 TO content_sha1",
+            "UPDATE active_file_operation SET content_sha1 = NULL WHERE content_sha1 IS NOT NULL",
+            "ALTER TABLE media_asset ADD COLUMN shown_copy_root_id INTEGER",
+            """
+            CREATE INDEX \(ContentDigestSQL.indexName)
+            ON media_asset(\(ContentDigestSQL.indexedColumns))
+            WHERE content_sha1 IS NOT NULL
+            """,
+            """
+            CREATE TRIGGER media_asset_copy_inserted AFTER INSERT ON media_asset
+            WHEN NEW.content_sha1 IS NOT NULL
+            BEGIN
+            \(shownCopyRecompute(rows: "content_sha1 = NEW.content_sha1"))
+            END
+            """,
+            """
+            CREATE TRIGGER media_asset_copy_deleted AFTER DELETE ON media_asset
+            WHEN OLD.content_sha1 IS NOT NULL
+            BEGIN
+            \(shownCopyRecompute(rows: "content_sha1 = OLD.content_sha1"))
+            END
+            """,
+            """
+            CREATE TRIGGER media_asset_copy_updated AFTER UPDATE OF \(copyInputColumns) ON media_asset
+            WHEN (OLD.content_sha1 IS NOT NULL OR NEW.content_sha1 IS NOT NULL) AND (\(copyInputChanged))
+            BEGIN
+            \(shownCopyRecompute(rows: "content_sha1 IN (OLD.content_sha1, NEW.content_sha1)"))
+            UPDATE media_asset SET shown_copy_root_id = NULL
+            WHERE rowid = NEW.rowid AND NEW.content_sha1 IS NULL AND shown_copy_root_id IS NOT NULL;
+            END
+            """,
+        ]
+        statements += claimIndexes.map { index in
+            claimIndex(index.name, global: index.global, claim: index.claim, orderColumn: "best_capture_local")
+        }
+        statements += testedIndexes.map { index in
+            "CREATE INDEX \(index.name) ON media_asset(\(index.columns), \(copyTestedColumns))"
+        }
+        statements.append("UPDATE library_root SET resync_owed = resync_owed + 1 WHERE kind = 'immichAccount'")
+        return statements
+    }
 
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """

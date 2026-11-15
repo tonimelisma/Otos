@@ -111,7 +111,7 @@ extension EnrichmentCoordinator {
             thumbnailPath: nil,
             sourceSize: work.sourceSize,
             sourceMTimeSeconds: work.sourceMTimeSeconds,
-            contentHash: XXH3Digest128.empty,
+            contentHash: ContentDigest.empty,
             videoFaces: work.scope.contains(.videoFaces) ? .noneFound : nil
         )
         await recordVisibleThumbnailLifecycle(

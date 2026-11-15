@@ -286,7 +286,7 @@ struct BrowserPlaceTests {
                 mediaChoice: .notRated, isEdited: false, hasCompanions: false
             )
         }
-        let digest = try #require(XXH3Digest128(data: Data(repeating: 7, count: 16)))
+        let digest = try #require(ContentDigest(data: Data(repeating: 7, count: ContentDigest.byteCount)))
         let group = DuplicateGroupPolicy.group(id: .identical(digest), copies: copies, keptPairs: [])
         // The user is on the list: acts on a pane apply only while it is the selected scope.
         model.selectSidebar(.duplicates)

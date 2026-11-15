@@ -109,7 +109,7 @@ extension CatalogStore {
                 operation_key, source_kind, source_device_identity,
                 source_root_path, source_relative_path,
                 destination_root_path, destination_relative_path,
-                staging_path, content_hash_xxh3_128, import_batch_unix_ms,
+                staging_path, content_sha1, import_batch_unix_ms,
                 source_byte_size, source_modified_at, destination_modified_at,
                 phase, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -140,7 +140,7 @@ extension CatalogStore {
             sql: """
             UPDATE active_file_operation SET
                 staging_path = ?,
-                content_hash_xxh3_128 = ?,
+                content_sha1 = ?,
                 destination_modified_at = ?,
                 phase = ?,
                 updated_at = ?
@@ -237,7 +237,7 @@ extension CatalogStore {
                 import_source_modified_at_epoch = ?,
                 import_destination_byte_size = ?,
                 import_destination_modified_at_epoch = ?,
-                content_hash_xxh3_128 = ?,
+                content_sha1 = ?,
                 content_hash_source_size = ?,
                 content_hash_source_mtime = ?,
                 media_choice = COALESCE(
@@ -376,7 +376,7 @@ extension CatalogStore {
             destinationRelativePath: MediaRelativePath(rawValue: row["destination_relative_path"]),
             stagingURL: stagingPath.map { URL(fileURLWithPath: $0, isDirectory: false) },
             companionStagingURLs: companionStaging[key] ?? [],
-            contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
+            contentHash: (row["content_sha1"] as Data?).flatMap(ContentDigest.init(data:)),
             importBatch: ImportBatchID(unixMilliseconds: row["import_batch_unix_ms"]),
             sourceByteSize: row["source_byte_size"],
             sourceModifiedAt: Date(timeIntervalSince1970: sourceModified),

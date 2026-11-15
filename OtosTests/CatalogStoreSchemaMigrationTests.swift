@@ -222,6 +222,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.assignedFacePhotoIndexMigrationIdentifier,
             CatalogSchema.photoDescriptionMigrationIdentifier,
             CatalogSchema.stackCandidatePathMigrationIdentifier,
+            CatalogSchema.copiesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -549,6 +550,60 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(named == ["2026/a.jpg=nil", "a1/IMG_1.JPG=a1", "b2/IMG_2.HEIC=b2"])
     }
 
+    /// v60 (ADR 0054, ADR 0018): every XXH3 digest is cleared, so its row owes a SHA-1, and
+    /// every Immich account owes a full resync, which lists each asset with its checksum. Once
+    /// two rows hold the same SHA-1, the triggers name the library's copy as the one shown.
+    @Test func theCopiesMigrationClearsXXH3AndOwesEveryAccountAResync() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.assignedFacePhotoIndexMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/RemoteStaging/family', 'immichAccount')")
+            for (root, path) in [(1, "IMG_1.JPG"), (2, "a1/IMG_1.JPG")] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind, byte_size, content_modified_at_unix,
+                        content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime)
+                    VALUES (?, ?, ?, ?, ?, 'image', 4, 1700000000, zeroblob(16), 4, 1700000000)
+                    """,
+                    arguments: [root, path, path, path, path]
+                )
+            }
+        }
+        try CatalogStore.migrator.migrate(queue)
+
+        let (digests, owed) = try await queue.read { db in
+            try (
+                Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset WHERE content_sha1 IS NOT NULL OR content_hash_source_size IS NOT NULL"),
+                Int.fetchOne(db, sql: "SELECT resync_owed FROM library_root WHERE id = 2")
+            )
+        }
+        #expect(digests == 0)
+        #expect(owed == 1)
+
+        try await queue.write { db in
+            try db.execute(sql: """
+            UPDATE media_asset SET content_sha1 = zeroblob(20), content_hash_source_size = 4,
+                content_hash_source_mtime = 1700000000
+            """)
+        }
+        let shown = try await queue.read { db in
+            try Row.fetchAll(db, sql: "SELECT relative_path, shown_copy_root_id FROM media_asset ORDER BY relative_path")
+                .map { row -> String in
+                    let path: String = row["relative_path"]
+                    let root: Int64? = row["shown_copy_root_id"]
+                    return "\(path)=\(root.map(String.init) ?? "shown")"
+                }
+        }
+        #expect(shown == ["IMG_1.JPG=shown", "a1/IMG_1.JPG=1"])
+    }
+
     @Test func theProductStampsMigrationStampsRenderingsExceptProvisionalOnes() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -760,25 +815,11 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let fresh = CatalogStore(location: .databaseFile(databaseURL))
-        try await fresh.start(scansSavedLibraries: false)
-        await fresh.shutdown()
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
-            try db.execute(sql: "DROP INDEX \(EnrichmentClaimGateway.libraryGlobalIndexName)")
-            try db.execute(sql: "DROP INDEX \(EnrichmentClaimGateway.libraryRootIndexName)")
-            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN face_frames_path")
-            try db.execute(sql: "ALTER TABLE face DROP COLUMN frame_index")
-            try db.execute(
-                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
-                arguments: [CatalogSchema.videoFacesMigrationIdentifier]
-            )
-        }
+        // v35 as it ran: on a catalog migrated up to it, before v60 renamed the digest it names.
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue, upTo: CatalogSchema.videoFacesMigrationIdentifier)
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
-        try await store.start(scansSavedLibraries: false)
-        await store.shutdown()
-
-        let (assetColumns, faceColumns, indexes) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let (assetColumns, faceColumns, indexes) = try await dbQueue.read { db in
             try (
                 Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')")),
                 Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('face')")),

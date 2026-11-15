@@ -17,9 +17,8 @@ schemas refuse to open instead of erasing.
 
 ```
 Otos.xcodeproj
-├── OtosXXH3      (static library)     — vendored C hashing, no Swift
 ├── OtosKit       (framework)          — everything below (Models/Services/Stores/
-│                                         Support/Views/ViewModels); links OtosXXH3,
+│                                         Support/Views/ViewModels); links
 │                                         GRDB, MediaMetadata; OtosApp is its one
 │                                         public type
 ├── Otos          (app)                — main.swift + Assets.xcassets only; links
@@ -228,7 +227,7 @@ everything expensive happens on an actor off the main thread.
   `.readyToPublish` before exclusive publication, and the published final is durably
   recorded as `.publishedPendingSettlement` before settlement or source deletion.
   Recovery treats final-plus-staging and exclusive destination races as foreign;
-  final-only occupants require journaled size, integer-second mtime, and XXH3 proof,
+  final-only occupants require journaled size, integer-second mtime, and SHA-1 proof,
   with a live materialization gate before hashing. The shared
   `MaterializationCoordinator` owns deliberate recovery materialization requests.
 - **Enrichment byte gates**: `MediaEnricher` checks live materialization independently

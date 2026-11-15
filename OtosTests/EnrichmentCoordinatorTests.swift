@@ -996,7 +996,7 @@ struct EnrichmentCoordinatorTests {
         let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]))
         try await store.start(scansSavedLibraries: false)
         let recorder = ScopeRecorder()
-        let digest = try #require(XXH3Digest128(data: Data(repeating: 7, count: 16)))
+        let digest = try #require(ContentDigest(data: Data(repeating: 7, count: ContentDigest.byteCount)))
         let enricher = MediaEnricher { id, _, size, mtime, scope, _ in
             await recorder.record(name: id.relativePath.rawValue, scope: scope)
             return .complete(EnrichmentResult(
@@ -1065,7 +1065,7 @@ struct EnrichmentCoordinatorTests {
         }
 
         let recorder = ScopeRecorder()
-        let digest = try #require(XXH3Digest128(data: Data(repeating: 7, count: 16)))
+        let digest = try #require(ContentDigest(data: Data(repeating: 7, count: ContentDigest.byteCount)))
         let enricher = MediaEnricher { id, access, size, mtime, scope, _ in
             let url = access.localURL ?? id.fileURL
             await recorder.record(name: url.lastPathComponent, scope: scope)

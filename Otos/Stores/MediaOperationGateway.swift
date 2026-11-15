@@ -25,8 +25,7 @@ nonisolated enum MediaOperationGateway {
                    \(LivePhotoSQL.stillPath(ofMotion: "media_asset")) AS live_photo_still_path,
                    (metadata_source_size IS NOT NULL
                     AND metadata_source_mtime IS NOT NULL) AS enrichment_has_looked,
-                   CASE WHEN NOT (\(EnrichmentClaimGateway.hashStalenessSQLPredicate()))
-                        THEN content_hash_xxh3_128 END AS current_content_hash
+                   \(ContentDigestSQL.current("media_asset")) AS current_content_sha1
             FROM media_asset
             WHERE library_root_id = ?
               AND awaiting_presence = 0
@@ -86,7 +85,7 @@ nonisolated enum MediaOperationGateway {
                 companions: companionsByPrimary[relative.rawValue] ?? [],
                 contentTypeIdentifier: row["content_type_identifier"],
                 livePhotoStillPath: (row["live_photo_still_path"] as String?).map(MediaRelativePath.init(rawValue:)),
-                contentHash: (row["current_content_hash"] as Data?).flatMap(XXH3Digest128.init(data:))
+                contentHash: (row["current_content_sha1"] as Data?).flatMap(ContentDigest.init(data:))
             )
         }
     }
@@ -94,25 +93,25 @@ nonisolated enum MediaOperationGateway {
     /// Every current digest in these libraries, mapped to one library row id holding it.
     /// Current means the digest was read at the row's present size and mtime; a row waiting
     /// for, or already in, the Trash holds nothing.
-    static func fetchLibraryContent(libraryRootIDs: [Int64], db: Database) throws -> [XXH3Digest128: Int64] {
+    static func fetchLibraryContent(libraryRootIDs: [Int64], db: Database) throws -> [ContentDigest: Int64] {
         guard !libraryRootIDs.isEmpty else {
             return [:]
         }
         let rows = try Row.fetchAll(
             db,
             sql: """
-            SELECT content_hash_xxh3_128, library_root_id
+            SELECT content_sha1, library_root_id
             FROM media_asset
             WHERE library_root_id IN (\(Array(repeating: "?", count: libraryRootIDs.count).joined(separator: ", ")))
               AND pending_trash_batch_unix_ms IS NULL
               AND trash_path IS NULL
-              AND NOT (\(EnrichmentClaimGateway.hashStalenessSQLPredicate()))
+              AND \(ContentDigestSQL.isCurrent("media_asset"))
             """,
             arguments: StatementArguments(libraryRootIDs)
         )
-        var content: [XXH3Digest128: Int64] = [:]
+        var content: [ContentDigest: Int64] = [:]
         for row in rows {
-            guard let digest = (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)) else {
+            guard let digest = (row["content_sha1"] as Data?).flatMap(ContentDigest.init(data:)) else {
                 continue
             }
             content[digest] = content[digest] ?? row["library_root_id"]

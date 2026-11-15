@@ -40,7 +40,7 @@ nonisolated struct ActiveFileOperation: Equatable, Sendable {
     var stagingURL: URL?
     /// Every companion staging file created for this entry and not yet published or removed.
     var companionStagingURLs: [URL]
-    var contentHash: XXH3Digest128?
+    var contentHash: ContentDigest?
     let importBatch: ImportBatchID
     let sourceByteSize: Int64
     let sourceModifiedAt: Date

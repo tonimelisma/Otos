@@ -220,7 +220,7 @@ struct CatalogStoreEnrichmentTests {
         let db = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try await db.write { db in
             try db.execute(
-                sql: "UPDATE media_asset SET content_hash_xxh3_128 = ? WHERE relative_path = ?",
+                sql: "UPDATE media_asset SET content_sha1 = ? WHERE relative_path = ?",
                 arguments: [Data(repeating: 0, count: 15), asset.relativePath.rawValue]
             )
         }
@@ -455,8 +455,9 @@ struct CatalogStoreEnrichmentTests {
             libraryRootPath: destinationPath,
             relativePath: MediaRelativePath(rawValue: "IMG_1.JPG")
         )
-        let settled = try await catalogStoreTestState(store)
-        let destinationAsset = try #require(settled.testAssets.first { $0.id == destinationID })
+        // The copy is identical to its source, so All Media shows the source in its place
+        // (ADR 0054); the copy's own row is read by its ID.
+        let destinationAsset = try #require(try await store.mediaAssets(for: [destinationID])[destinationID])
         // The ordering column, rebuilt from the cloned records.
         // The record's wall clock is the instant's UTC reading (`localCapture`), and the local
         // time is that wall clock.
@@ -686,7 +687,7 @@ private struct EnrichedCardImport {
     let cardPath: LibraryRootPath
     let destinationPath: LibraryRootPath
     let staging: URL
-    let copyDigest: XXH3Digest128
+    let copyDigest: ContentDigest
     let scannedSize: Int64
     let scannedModifiedAt: Date
     let captureDate: Date
@@ -790,7 +791,7 @@ private func makeAsset(
     modifiedAt: Date? = nil,
     stampSize: Int64? = nil,
     stampMtime: Int? = nil,
-    contentHash: XXH3Digest128? = .empty,
+    contentHash: ContentDigest? = .empty,
     hashSourceSize: Int64? = nil,
     hashSourceMtime: Int? = nil
 ) -> MediaAsset {

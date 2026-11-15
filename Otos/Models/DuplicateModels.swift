@@ -14,7 +14,7 @@ import Foundation
 /// What makes copies one group. Identical copies share a content digest; versions of the
 /// same photo share a picture, proven by their thumbnails, and are named by their members.
 nonisolated enum DuplicateGroupID: Hashable, Sendable {
-    case identical(XXH3Digest128)
+    case identical(ContentDigest)
     /// Members in `duplicateOrderKey` order.
     case samePhoto([MediaAssetID])
 
@@ -341,7 +341,7 @@ nonisolated struct CatalogDuplicatesState: Equatable, Sendable {
 /// Facts the Store reads for one copy, plus the library's display name and kind.
 nonisolated struct DuplicateCopyFacts: Equatable, Sendable {
     let copy: DuplicateCopy
-    let digest: XXH3Digest128
+    let digest: ContentDigest
 }
 
 /// The keeper rule (ADR 0042). Pure: facts in, groups out. Every group has a default:

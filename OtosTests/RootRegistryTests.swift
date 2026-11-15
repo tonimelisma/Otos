@@ -56,7 +56,7 @@ struct RootRegistryTests {
             selection: .allMedia,
             availableLibraryPaths: [libraryPath, otherPath, volumePath]
         )
-        #expect(allMedia == CatalogScopePredicate(rootIDs: [1, 2]))
+        #expect(allMedia == CatalogScopePredicate(rootIDs: [1, 2], showsOneCopy: true))
 
         let libraryOnly = registry.scopePredicate(
             selection: .library(libraryPath),

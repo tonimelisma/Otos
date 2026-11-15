@@ -478,7 +478,7 @@ extension VideoFaceTests {
                 metadata_source_mtime = CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER),
                 rendered_source_size = COALESCE(byte_size, -1),
                 rendered_source_mtime = CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER),
-                content_hash_xxh3_128 = zeroblob(16),
+                content_sha1 = zeroblob(20),
                 content_hash_source_size = COALESCE(byte_size, -1),
                 content_hash_source_mtime = CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
             """)

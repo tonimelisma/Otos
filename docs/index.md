@@ -47,7 +47,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0015](adr/0015-observability.md) | Unified logging + Instruments-only signposts; rejects JSONL/event/counter sinks. |
 | [0016](adr/0016-view-modes-and-preview-decode.md) | Grid/loupe/compare view modes and full-size preview decode ownership. |
 | [0017](adr/0017-media-operation-ownership.md) | Media operation ownership: coordinator, executor, and Store journal split. |
-| [0018](adr/0018-xxh3-content-hash-overlay.md) | XXH3-128 content hash overlay, gated on byte locality. |
+| [0018](adr/0018-sha1-content-digest.md) | SHA-1 content digest overlay (CryptoKit, the digest Immich reports), gated on byte locality. |
 | [0019](adr/0019-import-plan-namespace-and-build-ownership.md) | Import plan namespace resolution by folder enumeration; off-actor build ownership. |
 | [0020](adr/0020-production-data-locations-and-the-developer-smoke-seam.md) | Production data locations and the developer smoke-run seam. |
 | [0021](adr/0021-concurrent-import-planning-and-destination-reservations.md) | Concurrent import planning, the cross-plan destination reservation ledger, and execution-scoped rebuild suppression. |
@@ -63,6 +63,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0031](adr/0031-browser-place-restored-on-relaunch.md) | The browser place (query, view mode, selection, position) is saved once at quit and restored at launch, checked against the loaded catalog. |
 | [0044](adr/0044-verification-builds-share-compile-results.md) | Verification builds share one compilation cache across worktrees through prefix mapping; tests take the checkout from `OTOS_SOURCE_ROOT`; gates run in one pass; `check.sh --only` is iteration feedback, not evidence. |
 | [0046](adr/0046-immich-accounts-as-read-only-sources.md) | An Immich account is a read-only fixed-library source synced from its server stream, browsable offline from stored renderings, with root-kind capabilities and one original-locality owner. |
+| [0054](adr/0054-one-photo-many-copies.md) | Identical copies (same current SHA-1) are one photo in the scopes that combine libraries and accounts, a library's copy shown first; a trigger-kept `shown_copy_root_id` decides it. |
 
 ## Research
 

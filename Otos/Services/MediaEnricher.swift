@@ -89,7 +89,7 @@ nonisolated struct MediaEnricher {
             guard readinessChecker.status(of: url) == .materialized else {
                 return .notMaterialized
             }
-            var contentHash: XXH3Digest128?
+            var contentHash: ContentDigest?
             if scope.contains(.hash) {
                 let hashStart = ContinuousClock.now
                 let hashSignpost = OtosSignpost.mediaIO.beginInterval("ContentHash")
@@ -434,7 +434,7 @@ nonisolated struct MediaEnricher {
     /// video's faces. Each is present in the result only when the scope covered it (ADR 0009).
     private static func produce(
         _ read: LocalRead,
-        contentHash: XXH3Digest128?,
+        contentHash: ContentDigest?,
         thumbnailDirectory: URL,
         readinessChecker: any EnrichmentReadinessChecking,
         analyzeFaces: @escaping FaceAnalysisReader

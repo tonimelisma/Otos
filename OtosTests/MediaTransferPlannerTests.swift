@@ -36,7 +36,7 @@ struct MediaTransferPlannerTests {
         sourceMedia: [PlanningFileFacts],
         destinationRoot: LibraryRootPath = destination,
         destinationOccupants: [MediaRelativePath: DestinationOccupantFacts] = [:],
-        libraryContent: [XXH3Digest128: LibraryRootPath] = [:],
+        libraryContent: [ContentDigest: LibraryRootPath] = [:],
         policy: ImportPolicy
     ) -> ImportPlanningSnapshot {
         ImportPlanningSnapshot(
@@ -254,10 +254,10 @@ struct MediaTransferPlannerTests {
     /// ADR 0018: a card item whose current digest a library holds — renamed, in another
     /// folder, or in another library — is not copied again, and the plan counts where it is.
     @Test func anItemALibraryHoldsByContentIsNotCopiedAgain() throws {
-        let held = try #require(XXH3Digest128(data: Data(repeating: 1, count: 16)))
-        let other = try #require(XXH3Digest128(data: Data(repeating: 2, count: 16)))
+        let held = try #require(ContentDigest(data: Data(repeating: 1, count: ContentDigest.byteCount)))
+        let other = try #require(ContentDigest(data: Data(repeating: 2, count: ContentDigest.byteCount)))
         let backup = LibraryRootPath(rawValue: "/tmp/backup")
-        func withDigest(_ name: String, _ digest: XXH3Digest128?) -> PlanningFileFacts {
+        func withDigest(_ name: String, _ digest: ContentDigest?) -> PlanningFileFacts {
             let base = Self.facts(name: name, captureWallCompact: 20_260_101_120_000)
             return PlanningFileFacts(
                 id: base.id,

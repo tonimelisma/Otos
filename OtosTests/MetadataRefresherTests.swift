@@ -144,7 +144,6 @@ struct MetadataRefresherTests {
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
         let apple = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "IMG_1.HEIC"))
         let other = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "b.heic"))
-        let hash = try #require(XXH3Digest128(canonicalBytes: [UInt8](repeating: 7, count: 16)))
         _ = await store.applyEnrichmentBatch(scanned.testAssets.map { asset in
             EnrichmentResult(
                 id: asset.id,
@@ -153,7 +152,8 @@ struct MetadataRefresherTests {
                 thumbnailPath: "old.jpg",
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
-                contentHash: hash
+                // Each file its own digest: two rows with one digest are one photo (ADR 0054).
+                contentHash: ContentDigest(bytes: [UInt8](repeating: asset.id == apple ? 7 : 8, count: ContentDigest.byteCount))
             )
         })
 
@@ -187,7 +187,7 @@ struct MetadataRefresherTests {
                     thumbnailPath: "new.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime,
-                    contentHash: hash
+                    contentHash: ContentDigest(bytes: [UInt8](repeating: 7, count: ContentDigest.byteCount))
                 ))
             },
             materialize: { url in

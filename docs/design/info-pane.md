@@ -48,7 +48,7 @@ Labels share one leading edge; a long value wraps beside its label rather than u
 | People | each face of the targeted photos, with the face acts (`docs/design/people.md`, DES-113) |
 | In This Photo | the scene labels Vision is confident of, as buttons wrapping in rows, most confident first; then `Text` and the lines Vision is certain of |
 | Location | a 140 pt still map with one pin (when located), Place, Coordinates, Altitude |
-| File | Kind, Dimensions, Size, Folder, Original, Created, Modified, Imported, Companions, Edits |
+| File | Kind, Dimensions, Size, Folder, Original, Created, Modified, Imported, Companions, Copies (where its identical copies are, ADR 0054), Edits, Stack |
 | Camera | Camera, Lens, Serial Number |
 | Exposure (a still) | Shutter Speed, Aperture, ISO, Focal Length, Compensation, Program, Metering, Flash, White Balance |
 | Video (a movie) | Duration, Frame Rate, Codec |

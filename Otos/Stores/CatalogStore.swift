@@ -891,7 +891,7 @@ extension CatalogStore {
     /// The digests among `digests` that a fixed library still holds now: a row in an
     /// available library, not pending trash, with a digest current for its file. A card
     /// Erase asks this just before deleting items the plan skipped by content (ADR 0018).
-    func librariesHoldContent(_ digests: Set<XXH3Digest128>) async throws -> Set<XXH3Digest128> {
+    func librariesHoldContent(_ digests: Set<ContentDigest>) async throws -> Set<ContentDigest> {
         let libraryRowIDs = roots.availableFixedLibraryRowIDs()
         let held = try await database().read { db in
             try MediaOperationGateway.fetchLibraryContent(libraryRootIDs: libraryRowIDs, db: db)
@@ -1002,7 +1002,8 @@ extension CatalogStore {
     }
 
     /// The overlay the Info pane shows for `id` (APP-041): its companion files, the import it
-    /// arrived in, whether it carries an edit, what search recognised in it — the confident
+    /// arrived in, whether it carries an edit, where its other copies are (ADR 0054), what
+    /// search recognised in it — the confident
     /// scene labels of its current embedding row and the certain lines of its current text
     /// reading — and its current description (ADR 0053), each nil while owed. Nil when the
     /// asset is not cataloged.
@@ -1016,7 +1017,8 @@ extension CatalogStore {
             guard let asset = try Row.fetchOne(
                 db,
                 sql: """
-                SELECT import_batch_unix_ms, edit_recipe_json IS NOT NULL AS edited
+                SELECT import_batch_unix_ms, edit_recipe_json IS NOT NULL AS edited,
+                       (\(ContentDigestSQL.isCurrent("media_asset"))) AS has_digest
                 FROM media_asset WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: arguments
@@ -1033,6 +1035,25 @@ extension CatalogStore {
                 arguments: arguments
             ).map { MediaRelativePath(rawValue: $0["relative_path"]).fileName }
             let batch: Int64? = asset["import_batch_unix_ms"]
+            let hasDigest: Bool = asset["has_digest"]
+            let copies = try hasDigest ? String.fetchAll(
+                db,
+                sql: """
+                SELECT root.path FROM media_asset AS a
+                JOIN media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
+                  ON copy.content_sha1 = a.content_sha1
+                JOIN library_root AS root ON root.id = copy.library_root_id
+                WHERE a.library_root_id = ? AND a.relative_path = ?
+                  AND NOT (copy.library_root_id = a.library_root_id AND copy.relative_path = a.relative_path)
+                  AND \(ContentDigestSQL.isCurrent("a"))
+                  AND \(ContentDigestSQL.isCurrent("copy"))
+                  AND copy.content_sha1 <> \(ContentDigestSQL.empty)
+                  AND root.kind IN (\(CatalogSchema.copyRootKinds))
+                  AND \(CatalogVisibilitySQL.isPresent("copy"))
+                ORDER BY \(CatalogSchema.copyRank("copy"))
+                """,
+                arguments: arguments
+            ).map(LibraryRootPath.init(rawValue:)) : nil
             let labels = try Row.fetchOne(
                 db,
                 sql: """
@@ -1062,6 +1083,7 @@ extension CatalogStore {
                 companionFileNames: companions,
                 importedAt: batch.map { Date(timeIntervalSince1970: Double($0) / 1000) },
                 isEdited: asset["edited"],
+                otherCopyRoots: copies,
                 sceneLabels: labels,
                 textLines: lines.map { try SearchTextReading.certain(SearchTextStorage.lines(fromJSON: $0)) },
                 photoDescription: description
@@ -3674,7 +3696,7 @@ extension CatalogStore {
                 try db.execute(
                     sql: """
                     UPDATE media_asset SET
-                        content_hash_xxh3_128 = ?,
+                        content_sha1 = ?,
                         content_hash_source_size = ?,
                         content_hash_source_mtime = ?,
                         enrichment_claimed = NULL
@@ -5250,6 +5272,23 @@ extension CatalogStore {
             """).execute(
                 arguments: [!item.sourceHasProducts, rootRowID, file.relativePath.rawValue, !item.sourceHasProducts]
             )
+            // The source's digest of the item's bytes is the row's (ADR 0054), stamped with
+            // the facts this listing wrote: the source lists the item again when its bytes
+            // change. Which copy shows can move with it, so an existing row's is a change.
+            if let digest = item.sourceDigest {
+                try db.cachedStatement(sql: """
+                UPDATE media_asset SET
+                    content_sha1 = ?,
+                    content_hash_source_size = COALESCE(byte_size, -1),
+                    content_hash_source_mtime = CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+                WHERE library_root_id = ? AND relative_path = ? AND (\(ContentDigestSQL.current("media_asset"))) IS NOT ?
+                """).execute(
+                    arguments: [digest.data, rootRowID, file.relativePath.rawValue, digest.data]
+                )
+                if upsert != .inserted {
+                    rows.recordUpdated(db.changesCount)
+                }
+            }
         }
         for (item, size) in changes.sizesBySourceItem {
             try db.cachedStatement(sql: """
@@ -5259,6 +5298,15 @@ extension CatalogStore {
                 arguments: [size, rootRowID, item, size]
             )
             rows.recordUpdated(db.changesCount)
+            // A digest the source stated before it reported the size was stamped with no
+            // size (-1); the size it reports now is of the same bytes.
+            try db.cachedStatement(sql: """
+            UPDATE media_asset SET content_hash_source_size = byte_size
+            WHERE library_root_id = ? AND source_item_id = ? AND content_sha1 IS NOT NULL
+              AND content_hash_source_size = -1 AND byte_size IS NOT NULL
+            """).execute(
+                arguments: [rootRowID, item]
+            )
         }
         var purged: [ExistingAssetRow] = []
         let listedPaths = Set(changes.listed.map(\.file.relativePath))

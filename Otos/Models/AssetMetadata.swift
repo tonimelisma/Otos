@@ -283,7 +283,7 @@ nonisolated struct EnrichmentScope: OptionSet, Hashable, Sendable {
     static let metadata = EnrichmentScope(rawValue: 1 << 0)
     /// The thumbnail and preview from one development of the original (ADR 0035).
     static let rendering = EnrichmentScope(rawValue: 1 << 1)
-    /// The XXH3 digest of every byte.
+    /// The SHA-1 digest of every byte (ADR 0018).
     static let hash = EnrichmentScope(rawValue: 1 << 2)
     /// A thumbnail that is not a rendering and is not stamped: QuickLook's in a card's
     /// metadata pass, or a camera's embedded preview, shown until the rendering lands.
@@ -357,7 +357,7 @@ nonisolated extension EnrichmentScope: CustomStringConvertible {
 /// it was read at (ADR 0018).
 nonisolated struct ContentHashResult: Equatable, Sendable {
     let id: MediaAssetID
-    let contentHash: XXH3Digest128
+    let contentHash: ContentDigest
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
 }
@@ -492,7 +492,7 @@ nonisolated struct EnrichmentResult: Equatable {
     let sourceMTimeSeconds: Int?
     /// Absent when the scope did not cover the digest. The store then leaves the row's
     /// existing hash columns untouched rather than clearing them.
-    let contentHash: XXH3Digest128?
+    let contentHash: ContentDigest?
     /// Whether the file's decoder could decode it: the renderer a still's, when the result
     /// covers its rendering, and the frame reader a video's, when it covers its faces; nil
     /// leaves the stored verdict as it is.
@@ -508,7 +508,7 @@ nonisolated struct EnrichmentResult: Equatable {
         provisionalThumbnail: StagedDerivedImage? = nil,
         sourceSize: Int64?,
         sourceMTimeSeconds: Int?,
-        contentHash: XXH3Digest128?,
+        contentHash: ContentDigest?,
         editRevision: Int64 = 0,
         decodeVerdict: DecodeVerdict? = nil,
         videoFaces: EnrichedVideoFaces? = nil
@@ -535,7 +535,7 @@ nonisolated struct EnrichmentResult: Equatable {
         thumbnailPath: String?,
         sourceSize: Int64?,
         sourceMTimeSeconds: Int?,
-        contentHash: XXH3Digest128?,
+        contentHash: ContentDigest?,
         generatedThumbnail: StagedDerivedImage? = nil,
         previewPath: String? = nil,
         generatedPreview: StagedDerivedImage? = nil,

@@ -144,7 +144,8 @@ nonisolated struct ImmichClient: Sendable {
             fileCreatedAt: Self.date(body.fileCreatedAt),
             fileModifiedAt: Self.date(body.fileModifiedAt),
             fileSize: body.exifInfo?.fileSizeInByte,
-            hasPreview: body.thumbhash != nil
+            hasPreview: body.thumbhash != nil,
+            contentDigest: ImmichAsset.contentDigest(checksum: body.checksum, libraryID: body.libraryId, assetID: body.id)
         )
     }
 
@@ -169,6 +170,8 @@ nonisolated struct ImmichClient: Sendable {
         let fileModifiedAt: String
         let exifInfo: Exif?
         let thumbhash: String?
+        let checksum: String?
+        let libraryId: String?
     }
 
     /// Downloads an asset's original to a temporary file the caller moves into place
@@ -450,8 +453,29 @@ nonisolated struct ImmichAsset: Equatable, Sendable {
     /// The server has made the asset's previews: its thumbhash is set, which Immich writes
     /// only once it has generated them, and never for a hidden motion part.
     let hasPreview: Bool
+    /// The SHA-1 of the original's bytes, as the server reports it; nil for an asset whose
+    /// checksum is not of its bytes (ADR 0054).
+    var contentDigest: ContentDigest?
     /// A Live Photo still's motion part, an asset of its own (`visibility: hidden`).
     var livePhotoVideoID: String?
+
+    /// The digest an asset's `checksum` states, or nil when it states none of its bytes. An
+    /// uploaded asset's checksum is the SHA-1 of its original. An external library's asset
+    /// (`libraryId` set) has the SHA-1 of the text `path:<its path>` instead, which names no
+    /// content, and the stream carries no algorithm to tell them apart
+    /// (`docs/research/2026-11-14-one-photo-many-copies.md`).
+    static func contentDigest(checksum: String?, libraryID: String?, assetID: String) -> ContentDigest? {
+        guard libraryID == nil, let checksum else {
+            return nil
+        }
+        guard let digest = ContentDigest(base64: checksum) else {
+            OtosLog.catalog.noticeOperation("immich.sync", phase: "checksumIgnored", fields: [
+                "reason": "notSHA1Base64", "assetID": assetID,
+            ])
+            return nil
+        }
+        return digest
+    }
 }
 
 /// One asset's own facts, read on their own rather than from the sync stream.
@@ -465,6 +489,8 @@ nonisolated struct ImmichAssetDetail: Equatable, Sendable {
     let fileSize: Int64?
     /// The server has made the asset's previews (`ImmichAsset.hasPreview`).
     let hasPreview: Bool
+    /// The SHA-1 of the original's bytes (`ImmichAsset.contentDigest`).
+    var contentDigest: ContentDigest?
 }
 
 /// One line of the sync stream. Every line carries the `ack` that moves the cursor past it.
@@ -542,6 +568,7 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
                 fileCreatedAt: data.fileCreatedAt.map(Self.date),
                 fileModifiedAt: data.fileModifiedAt.map(Self.date),
                 hasPreview: data.thumbhash != nil,
+                contentDigest: ImmichAsset.contentDigest(checksum: data.checksum, libraryID: data.libraryId, assetID: data.id),
                 livePhotoVideoID: data.livePhotoVideoId
             ), ack: ack)
         case .assetDeleted:
@@ -577,6 +604,8 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
         let fileCreatedAt: String?
         let fileModifiedAt: String?
         let thumbhash: String?
+        let checksum: String?
+        let libraryId: String?
         let livePhotoVideoId: String?
     }
 

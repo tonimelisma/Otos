@@ -860,7 +860,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     let metadataSourceMTimeSeconds: Int?
     let renderedSourceSize: Int64?
     let renderedSourceMTimeSeconds: Int?
-    let contentHash: XXH3Digest128?
+    let contentHash: ContentDigest?
     let contentHashSourceSize: Int64?
     let contentHashSourceMTimeSeconds: Int?
     let facesSourceSize: Int64?
@@ -884,7 +884,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         metadataSourceMTimeSeconds: Int? = nil,
         renderedSourceSize: Int64? = nil,
         renderedSourceMTimeSeconds: Int? = nil,
-        contentHash: XXH3Digest128? = nil,
+        contentHash: ContentDigest? = nil,
         contentHashSourceSize: Int64? = nil,
         contentHashSourceMTimeSeconds: Int? = nil,
         facesSourceSize: Int64? = nil,
@@ -1375,6 +1375,18 @@ nonisolated enum SidebarSelection: Hashable {
         }
     }
 
+    /// The scope shows one copy of each set of identical copies (ADR 0054): it spans the
+    /// libraries and accounts. One library's, an import's, Duplicates' and a map stack's
+    /// named members show every file they hold.
+    var showsOneCopy: Bool {
+        switch self {
+        case .allMedia, .places, .mapArea, .onThisDay, .people, .person, .allImports:
+            true
+        case .mapStack, .duplicates, .duplicateGroup, .library, .importBatch:
+            false
+        }
+    }
+
     /// The person whose photos the scope is: the leaf under People.
     var person: PersonID? {
         if case let .person(person) = self {
@@ -1484,6 +1496,9 @@ nonisolated struct SourceListedItem: Hashable, Sendable {
     /// The source holds its own thumbnail and preview of the item (ADR 0046 §7); false
     /// for one it has none of, which is not asked for them.
     let sourceHasProducts: Bool
+    /// The source's own digest of the item's bytes (an uploaded Immich asset's SHA-1,
+    /// ADR 0054), which the row takes as its digest; nil when the source states none.
+    var sourceDigest: ContentDigest?
 }
 
 /// A full resync a source owes (`library_root.resync_owed`, ADR 0046 §5): the revision of

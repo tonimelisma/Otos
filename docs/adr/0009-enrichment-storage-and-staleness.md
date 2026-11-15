@@ -57,7 +57,7 @@ This ADR owns:
   in-flight enrichment completion must revalidate the source signature in SQLite
   before it can stamp a row current.
 - Staleness is per product: the metadata, the rendering (thumbnail and preview), the
-  canonical XXH3-128 hash and a video's faces (ADR 0047) each record the
+  SHA-1 digest (ADR 0018) and a video's faces (ADR 0047) each record the
   `(size, mtime)` source signature they were made from, and each is stale on its own; a missing, malformed, or
   signature-mismatched hash is stale. mtime-only changes count. One read of a file
   makes every product its row owes.
@@ -386,7 +386,7 @@ Adjacent decisions requiring separate ADRs or specs:
     deletion. Journal update/delete operations fail when they affect zero rows.
     Recovery never trusts a final pathname alone: final-plus-staging and exclusive
     destination races are foreign, while a final-only occupant must match journaled
-    size, integer-second mtime, and XXH3 after a live materialization check immediately
+    size, integer-second mtime, and SHA-1 after a live materialization check immediately
     before hashing. Dataless or unknown recovery files retain their journal and use
     the shared `MaterializationCoordinator` for deliberate materialization. Ordinary
     enrichment repeats the same live gate immediately before hash, metadata, and

@@ -40,13 +40,9 @@ all traceable to hosting:
 **Otos.app links an OtosKit framework instead of containing the application
 directly, and OtosTests links OtosKit instead of hosting Otos.app.**
 
-- `OtosXXH3` (new static-library target) owns the vendored C hashing —
-  `Otos/Support/OtosXXH3.{h,c}` and `Otos/Vendor/xxHash-0.8.3/xxhash.{h,c}`.
-  It exists first because a framework target cannot use a bridging header,
-  and `Otos`'s bridging header named exactly these files.
 - `OtosKit` (new framework target) owns essentially all application Swift
   source — everything the dataflow map in `docs/architecture.md` describes.
-  It links `OtosXXH3`, GRDB, and MediaMetadata. `OtosApp` is its sole public
+  It links GRDB and MediaMetadata. `OtosApp` is its sole public
   type (`public struct OtosApp: App`); the codebase had zero `public`
   declarations before this and has exactly one now.
 - `Otos` (the app target) shrinks to `main.swift` (`import OtosKit; import
@@ -138,8 +134,10 @@ foreground, since none of them touch `build/DerivedData` or Xcode state.
 
 ## Consequences
 
-- `Otos.xcodeproj` has four targets instead of two: `OtosXXH3`, `OtosKit`,
-  `Otos`, `OtosTests`. `docs/architecture.md` names where each lives.
+- `Otos.xcodeproj` has three targets: `OtosKit`, `Otos`, `OtosTests`.
+  `docs/architecture.md` names where each lives. (A fourth, the `OtosXXH3`
+  static library of vendored C hashing, was removed when the digest became
+  CryptoKit's SHA-1, ADR 0018.)
 - The codebase has exactly one `public` declaration (`OtosApp`). Adding a
   second needs its own justification, same bar ADR 0020's "Consequences"
   already set for adding a data location.
@@ -148,16 +146,14 @@ foreground, since none of them touch `build/DerivedData` or Xcode state.
   OtosKit gets a second copy of every Objective-C class in it, and dyld warns
   at launch that each is "implemented in both" — the double link the app
   target carried until 2026-09-13. A package product belongs to exactly one
-  of the four targets.
+  of the three targets.
 - **A durable trap for future work**: any new file added under `Otos/`
   requires refreshing the exception set of *every* target that references
   the shared `Otos` synchronized-group root, not just the new file's own
   target — exceptions only *exclude*, so a file created after a target's
   exception set was last computed silently defaults into that target's
-  membership too. This bit increment 5 directly: `Otos/main.swift`
-  (created in increment 2) was absent from `OtosXXH3`'s increment-1
-  exception list, so it silently compiled inside the C-only static-library
-  target until a build error caught it.
+  membership too: a new OtosKit file must be added to the app target's
+  exception set, or the app target compiles it as well.
 - Xcode target creation, membership, and package-dependency wiring for this
   ADR were scripted against `project.pbxproj` with the `xcodeproj` Ruby gem
   rather than done through Xcode's GUI wizard, for a reviewable diff and
@@ -166,7 +162,7 @@ foreground, since none of them touch `build/DerivedData` or Xcode state.
   Frameworks-build-phase file reference corrupts a linker argument during
   the new build system's eager-linking debug-dylib step (worked around with
   explicit `OTHER_LDFLAGS`/`LIBRARY_SEARCH_PATHS`); consumers of a framework's
-  transitive package/module dependencies (GRDB's `GRDBSQLite`, `OtosXXH3`)
+  transitive package/module dependencies (GRDB's `GRDBSQLite`)
   need those dependencies re-declared directly even where the consumer's own
   source never imports them, because Swift's explicit-module scanner
   re-resolves each consuming target's full transitive closure independently.

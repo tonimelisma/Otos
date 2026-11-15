@@ -1,4 +1,0 @@
-module OtosXXH3 {
-    header "OtosXXH3.h"
-    export *
-}
