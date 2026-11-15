@@ -39,12 +39,13 @@ nonisolated enum ComparePairPolicy {
     /// neighbor as right; none selected → first two in scope.
     static func entry(
         selection: GridSelection,
-        orderedIDs: [MediaAssetID]
+        orderedIDs order: some MediaDisplayOrder
     ) -> ComparePair {
+        let orderedIDs = order.orderedIDs
         guard !orderedIDs.isEmpty else {
             return .empty
         }
-        let selected = GridSelection.orderedSelection(selection.selection, in: orderedIDs)
+        let selected = GridSelection.orderedSelection(selection.selection, in: order)
         switch selected.count {
         case 0:
             let prefix = Array(orderedIDs.prefix(2))
@@ -54,12 +55,12 @@ nonisolated enum ComparePairPolicy {
             )
         case 1:
             let first = selected[0]
-            if let index = orderedIDs.firstIndex(of: first),
+            if let index = order.position(of: first),
                orderedIDs.indices.contains(index + 1)
             {
                 return ComparePair(left: first, right: orderedIDs[index + 1])
             }
-            if let index = orderedIDs.firstIndex(of: first), index > 0 {
+            if let index = order.position(of: first), index > 0 {
                 return ComparePair(left: orderedIDs[index - 1], right: first)
             }
             return ComparePair(left: first, right: nil)
@@ -130,10 +131,10 @@ nonisolated enum ComparePairPolicy {
     /// display-order survivor; the other slot is untouched. Both gone → fresh entry.
     static func prune(
         pair: ComparePair,
-        previousOrderedIDs: [MediaAssetID],
-        survivingOrderedIDs: [MediaAssetID]
+        previousOrderedIDs: some MediaDisplayOrder,
+        survivingOrderedIDs: some MediaDisplayOrder
     ) -> ComparePair {
-        if survivingOrderedIDs.isEmpty {
+        if survivingOrderedIDs.orderedIDs.isEmpty {
             return .empty
         }
         let leftSurvives = pair.left.map(survivingOrderedIDs.contains) ?? false
@@ -164,11 +165,12 @@ nonisolated enum ComparePairPolicy {
 
     private static func nearestSurvivor(
         to id: MediaAssetID,
-        previousOrderedIDs: [MediaAssetID],
-        survivingOrderedIDs: [MediaAssetID],
+        previousOrderedIDs previousOrder: some MediaDisplayOrder,
+        survivingOrderedIDs: some MediaDisplayOrder,
         excluding: MediaAssetID?
     ) -> MediaAssetID? {
-        let index = previousOrderedIDs.firstIndex(of: id) ?? 0
+        let previousOrderedIDs = previousOrder.orderedIDs
+        let index = previousOrder.position(of: id) ?? 0
         for distance in 0 ..< max(previousOrderedIDs.count, 1) {
             let candidates = [index + distance, index - distance]
             for candidateIndex in candidates where previousOrderedIDs.indices.contains(candidateIndex) {
@@ -182,6 +184,6 @@ nonisolated enum ComparePairPolicy {
                 return candidate
             }
         }
-        return survivingOrderedIDs.first { $0 != excluding }
+        return survivingOrderedIDs.orderedIDs.first { $0 != excluding }
     }
 }

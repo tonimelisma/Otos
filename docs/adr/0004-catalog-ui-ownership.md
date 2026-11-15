@@ -83,6 +83,46 @@ Use a single-window catalog UI ownership model:
   library name/path/availability and does not receive catalog snapshots, scan
   activity UI, media rows, sidebar state, or the full window ViewModel.
 
+### Applying A Publication
+
+The ViewModel's apply of a projected state costs in what changed, never in the
+library's size. What changed is a fact Projection already holds when it publishes
+(ADR 0005), so it is handed over as identity rather than re-derived on the main actor:
+
+- The grid's order, day buckets and stacks are one immutable `CatalogGridContent`
+  held by reference. An unchanged content arrives as the last publication's own
+  object, so `sharesContent(with:)` — one pointer comparison — answers whether the
+  order, its days or its stacks moved.
+- `state` is observed by hand (`access` / `withMutation`) instead of through the
+  macro's tracked storage, whose setter compares an `Equatable` old value with the new
+  one; for a window state that comparison walked every identity, day and stack on every
+  enrichment batch. A published state is a change by construction, so a set notifies.
+- Selection pruning, loupe, compare and story focus reconciliation, the ordered
+  selection behind every target, and item-target membership ask the content's position
+  index (`MediaDisplayOrder`), so they cost in the selection and the focus. The policies
+  take any `MediaDisplayOrder`; a plain `[MediaAssetID]` answers the same questions by
+  walking itself, for callers whose order is small.
+- Stacks carry the selection, and duplicate picks are forgotten, only when the content
+  or the groups changed.
+
+Measured on 158,000 tiles with a tenth of them collapsed pairs, in the Debug build the
+owner runs: a republication that moved nothing visible took 405 ms on the main actor and
+an order change under a loupe 289 ms; both now cost a fraction of a millisecond plus the
+work the change itself owns (`window.apply.*` in `OtosTests/BenchmarkTests.swift`).
+
+Rejected: comparing the order on the main actor with a faster algorithm (still library-
+sized, and SwiftUI's observation compared it again); revision numbers stamped on the
+state (two independently built states could share a number, and every test-built state
+would need one — an object's identity cannot collide); a lazily built index without a
+build at publication (the first main-actor lookup after a change would build it).
+
+While the sidebar has selected a scope that Projection has not published yet, the
+pane still shows the scope the user left. Nothing on it acts
+(`showsSelectedScope`): the targets are empty and the duplicates list's, the People
+gallery's, the map's and On This Day's acts do nothing, because one user action acts on
+the scope the user sees selected. How the pane looks in that interval is not decided
+here; no design rule covers it yet.
+
 ## Alternatives Considered
 
 ### Alternative A: Single-Window Catalog ViewModel

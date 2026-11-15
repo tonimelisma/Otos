@@ -181,15 +181,15 @@ extension CatalogWindowViewModel {
     /// The scope's items changed under a playing story (a late import, a Move to Trash, a
     /// filter): focus stays on its item while it remains, else moves to the loupe's
     /// survivor, and the story closes when nothing remains.
-    func reconcileStoryAfterGridChange(previousOrderedIDs: [MediaAssetID]) {
+    func reconcileStoryAfterGridChange(previousOrder: CatalogGridContent) {
         guard story != nil, let current = focusedAssetID else {
             closeStory(reason: "noItem")
             return
         }
         guard let survivor = StoryPlaybackPolicy.survivor(
             of: current,
-            previousOrderedIDs: previousOrderedIDs,
-            survivingOrderedIDs: state.mediaGrid.orderedAssetIDs
+            previousOrderedIDs: previousOrder,
+            survivingOrderedIDs: state.mediaGrid.content
         ) else {
             closeStory(reason: "empty")
             return
@@ -210,7 +210,7 @@ extension CatalogWindowViewModel {
     /// Whether View ▸ Play Story acts: On This Day shows at least one anniversary and no
     /// story plays.
     var canPlayStory: Bool {
-        showsOnThisDay && story == nil && state.onThisDay?.anniversaries.isEmpty == false
+        showsOnThisDay && showsSelectedScope && story == nil && state.onThisDay?.anniversaries.isEmpty == false
     }
 
     /// View ▸ Play Story (⌘Return): from the newest anniversary.

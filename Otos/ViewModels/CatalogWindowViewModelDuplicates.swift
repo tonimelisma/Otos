@@ -18,6 +18,13 @@ extension CatalogWindowViewModel {
         state.resolvedSidebarSelection == .duplicates
     }
 
+    /// Whether the list's acts apply: the pane shows the list and the list is the scope
+    /// the user selected. Between a click on another row and its publication the list stays
+    /// on screen, but it is no longer the user's scope, so nothing on it acts.
+    var actsOnDuplicatesList: Bool {
+        showsDuplicatesList && showsSelectedScope
+    }
+
     /// Whether Back to Duplicates applies: the browser shows one group under Duplicates.
     var showsDuplicateGroupLeaf: Bool {
         if case .duplicateGroup = sidebarSelection {
@@ -52,10 +59,11 @@ extension CatalogWindowViewModel {
 
     // MARK: - State
 
-    /// Picks whose copy left are forgotten; the last move's receipt is the list's, so
-    /// leaving the list ends it.
-    func applyDuplicatesState(_ next: CatalogWindowState) {
-        if let duplicates = next.duplicates {
+    /// Picks whose copy left are forgotten, when the groups changed; the last move's receipt
+    /// is the list's, so leaving the list ends it. Unchanged groups are the last
+    /// publication's own (`CatalogWindowState.sharingUnchanged`), so telling them unchanged costs nothing.
+    func applyDuplicatesState(previous: CatalogWindowState, next: CatalogWindowState) {
+        if let duplicates = next.duplicates, duplicates != previous.duplicates {
             duplicatesSession.forgetPicks(absentFrom: duplicates)
         }
         if next.resolvedSidebarSelection != .duplicates, duplicatesSession.receipt != nil {
@@ -82,20 +90,52 @@ extension CatalogWindowViewModel {
 
     /// The intents the passive list calls.
     var duplicatesActions: DuplicatesActions {
+        // Each act checks, when it is called, that the list is still the user's scope.
         DuplicatesActions(
             select: { [weak self] hit, modifiers, order in
-                self?.selectDuplicateCopy(hit, modifiers: modifiers, orderedIDs: order)
+                guard let self, actsOnDuplicatesList else { return }
+                selectDuplicateCopy(hit, modifiers: modifiers, orderedIDs: order)
             },
-            keep: { [weak self] id in self?.keepDuplicateCopy(id) },
-            setRule: { [weak self] rule, set in self?.setDuplicateFolderRule(rule, for: set) },
-            keepAll: { [weak self] group in self?.keepAllDuplicateCopies([group]) },
-            reviewAgain: { [weak self] groups in self?.reviewKeptDuplicateGroups(groups) },
-            openGroup: { [weak self] in self?.openSelectedDuplicateGroup() },
-            openGroupContaining: { [weak self] id in self?.openDuplicateGroup(containing: id) },
-            moveToTrashNow: { [weak self] id in self?.moveMediaToTrash([id]) },
-            moveAll: { [weak self] in self?.moveDuplicatesToTrash() },
-            undoMove: { [weak self] in self?.undoLastChange() },
-            revealNeedingChoice: { [weak self] in self?.revealDuplicateGroupNeedingChoice() }
+            keep: { [weak self] id in
+                guard let self, actsOnDuplicatesList else { return }
+                keepDuplicateCopy(id)
+            },
+            setRule: { [weak self] rule, set in
+                guard let self, actsOnDuplicatesList else { return }
+                setDuplicateFolderRule(rule, for: set)
+            },
+            keepAll: { [weak self] group in
+                guard let self, actsOnDuplicatesList else { return }
+                keepAllDuplicateCopies([group])
+            },
+            reviewAgain: { [weak self] groups in
+                guard let self, actsOnDuplicatesList else { return }
+                reviewKeptDuplicateGroups(groups)
+            },
+            openGroup: { [weak self] in
+                guard let self, actsOnDuplicatesList else { return }
+                openSelectedDuplicateGroup()
+            },
+            openGroupContaining: { [weak self] id in
+                guard let self, actsOnDuplicatesList else { return }
+                openDuplicateGroup(containing: id)
+            },
+            moveToTrashNow: { [weak self] id in
+                guard let self, actsOnDuplicatesList else { return }
+                moveMediaToTrash([id])
+            },
+            moveAll: { [weak self] in
+                guard let self, actsOnDuplicatesList else { return }
+                moveDuplicatesToTrash()
+            },
+            undoMove: { [weak self] in
+                guard let self, actsOnDuplicatesList else { return }
+                undoLastChange()
+            },
+            revealNeedingChoice: { [weak self] in
+                guard let self, actsOnDuplicatesList else { return }
+                revealDuplicateGroupNeedingChoice()
+            }
         )
     }
 
@@ -120,7 +160,7 @@ extension CatalogWindowViewModel {
     }
 
     var canKeepSelectedDuplicateCopy: Bool {
-        showsDuplicatesList && orderedSelectedAssetIDs.count == 1
+        actsOnDuplicatesList && orderedSelectedAssetIDs.count == 1
             && orderedSelectedAssetIDs.first.flatMap(duplicateGroup(containing:)).map { !$0.isKept } == true
     }
 
@@ -137,7 +177,7 @@ extension CatalogWindowViewModel {
     /// The bar's act: every group's extra copies move to the Trash through the one Move to
     /// Trash path, carrying their likes and edits onto the kept copy that lacks them.
     func moveDuplicatesToTrash() {
-        guard let tally = duplicatesTally, !tally.itemsToMove.isEmpty, mediaTrashTask == nil else {
+        guard canMoveDuplicatesToTrash, let tally = duplicatesTally else {
             return
         }
         OtosLog.ui.noticeOperation("duplicates.move", phase: "start", fields: [
@@ -148,7 +188,7 @@ extension CatalogWindowViewModel {
     }
 
     var canMoveDuplicatesToTrash: Bool {
-        showsDuplicatesList && mediaTrashTask == nil && duplicatesTally?.itemsToMove.isEmpty == false
+        actsOnDuplicatesList && mediaTrashTask == nil && duplicatesTally?.itemsToMove.isEmpty == false
     }
 
     /// What ⌘⌫ moves on this list: the extra copies of the groups the selection touches,
@@ -171,7 +211,7 @@ extension CatalogWindowViewModel {
     }
 
     var canKeepAllSelectedDuplicateCopies: Bool {
-        showsDuplicatesList && selectedDuplicateGroups().contains { !$0.isKept }
+        actsOnDuplicatesList && selectedDuplicateGroups().contains { !$0.isKept }
     }
 
     /// Photo ▸ Keep All Copies and a photo's context menu: the groups are set aside,
@@ -250,7 +290,7 @@ extension CatalogWindowViewModel {
     }
 
     var canReviewSelectedDuplicateGroups: Bool {
-        showsDuplicatesList && selectedDuplicateGroups().contains(where: \.isKept)
+        actsOnDuplicatesList && selectedDuplicateGroups().contains(where: \.isKept)
     }
 
     /// Review Again, on a kept group's header or Photo ▸ Review Again on the selected kept

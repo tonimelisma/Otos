@@ -51,7 +51,7 @@ extension CatalogWindowViewModel {
             focus: focus,
             selection: GridSelection.orderedSelection(
                 gridSelection.selection,
-                in: state.mediaGrid.orderedAssetIDs
+                in: state.mediaGrid.content
             )
         )
         place.save(to: preferences)
@@ -76,7 +76,7 @@ extension CatalogWindowViewModel {
             return
         }
         pendingPlaceRestore = nil
-        let present = Set(state.mediaGrid.orderedAssetIDs)
+        let present = state.mediaGrid.content
         let selection = place.selection.filter(present.contains)
         if !selection.isEmpty {
             let selected = Set(selection)

@@ -195,8 +195,12 @@ extension CatalogWindowViewModel {
         handledMediaChoiceCount == submittedMediaChoiceCount
     }
 
+    /// What an act on `target` acts on. Nothing while the pane still shows a scope the user
+    /// has left: its items are not in the scope the sidebar has selected.
     func targetIDs(_ target: MediaTarget) -> [MediaAssetID] {
-        let ordered = state.mediaGrid.orderedAssetIDs
+        guard showsSelectedScope else {
+            return []
+        }
         switch target {
         case .current:
             // The duplicates list has one presentation: its rows are the selection.
@@ -212,7 +216,7 @@ extension CatalogWindowViewModel {
                 return compareID(for: activeComparePane).map { [$0] } ?? []
             }
         case let .item(id):
-            return ordered.contains(id) ? [id] : []
+            return state.mediaGrid.content.contains(id) ? [id] : []
         case let .compare(position):
             return compareID(for: position).map { [$0] } ?? []
         }

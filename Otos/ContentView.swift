@@ -218,6 +218,8 @@ struct ContentView: View {
                     )
                 }
             }
+            // One title for every scope, from its one owner: no pane names itself.
+            .navigationTitle(viewModel.windowTitle)
             // Hosted on its own view so `Do not ask again` applies to this alert only.
             .background { largeTrashDownloadAlertHost }
             // The trailing inspector column collapses and expands like the sidebar. It holds
@@ -578,7 +580,6 @@ struct ContentView: View {
                     derivedImageDirectory: viewModel.thumbnailDirectory,
                     actions: viewModel.peopleActions
                 )
-                .navigationTitle("People")
             } else {
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -665,7 +666,6 @@ struct ContentView: View {
         switch viewModel.viewMode {
         case .grid:
             MediaGridView(
-                title: viewModel.windowTitle,
                 grid: viewModel.state.mediaGrid,
                 tileContentStore: viewModel.tileContentStore,
                 emptyState: viewModel.mediaEmptyState,
@@ -752,7 +752,6 @@ struct ContentView: View {
                 shownPair: viewModel.shownPair,
                 onShowPairMember: { viewModel.showPairMember($0) }
             )
-            .navigationTitle(viewModel.windowTitle)
         case .compare:
             CompareView(
                 grid: viewModel.state.mediaGrid,
@@ -789,7 +788,6 @@ struct ContentView: View {
                 contextMenu: viewModel.makeMediaItemContextMenu,
                 faceOutlineBoxes: viewModel.outlinedFaceBoxes
             )
-            .navigationTitle(viewModel.windowTitle)
         }
     }
 }
@@ -819,7 +817,6 @@ private struct AllImportsListView: View {
                 .tag(batch.batchID)
             }
         }
-        .navigationTitle("All Imports")
     }
 
     private var selectionBinding: Binding<ImportBatchID?> {

@@ -617,18 +617,21 @@ private extension CatalogProjection {
             forInput: selectedRequest
         )
         let equalityStart = ContinuousClock.now
+        // Parts equal to the last publication's are handed on as that publication's own, so
+        // the window learns what changed by identity, never by walking them.
+        let state = publication.state.sharingUnchanged(with: lastPublishedState)
         let changeSummary = CatalogProjectionChangeSummary.compare(
             previous: lastPublishedState,
-            current: publication.state
+            current: state
         )
         let stateChanged = changeSummary.stateChanged
         let equalityUs = DiagnosticsTiming.microseconds(since: equalityStart)
         if stateChanged {
-            yield(publication.state)
+            yield(state)
         }
         return CatalogProjectionPublicationDiagnostics(
-            state: publication.state,
-            assetCount: publication.state.mediaGrid.orderedAssetIDs.count,
+            state: state,
+            assetCount: state.mediaGrid.orderedAssetIDs.count,
             metrics: publication.buildMetrics,
             changeSummary: changeSummary,
             selectedSidebarRow: publication.selectedDescriptor.scope,

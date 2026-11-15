@@ -4,7 +4,6 @@ import SwiftUI
 /// collection bridge receives one already-ordered, already-filtered grid value
 /// and does not derive catalog state inside the view tree.
 struct MediaGridView: View {
-    let title: String
     let grid: CatalogMediaGridState
     var tileContentStore: TileContentStore?
     let emptyState: CatalogMediaEmptyState?
@@ -93,7 +92,6 @@ struct MediaGridView: View {
             // this is the grid's alone.
             .background(DesignPalette.content(for: colorScheme))
         }
-        .navigationTitle(title)
     }
 
     private func isDismissed(_ banner: CatalogDeviceConnectionBanner) -> Bool {
@@ -116,7 +114,6 @@ struct MediaGridView: View {
         contentModifiedAt: Date()
     )
     MediaGridView(
-        title: "All Media",
         grid: CatalogMediaGridState(
             scope: .allMedia,
             orderedAssetIDs: [asset.id]

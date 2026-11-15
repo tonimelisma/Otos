@@ -124,11 +124,10 @@ extension CatalogWindowViewModel {
     /// Enter loupe on `id` (double-click), or on the selection's active item / first
     /// selected / first in scope when `id` is nil (segment, ⌘2, Return).
     func openLoupe(id: MediaAssetID?) {
-        let ordered = state.mediaGrid.orderedAssetIDs
         guard let focus = BrowserModePolicy.loupeEntryFocus(
             preferredID: id,
             selection: gridSelection,
-            orderedIDs: ordered
+            orderedIDs: state.mediaGrid.content
         ) else {
             return
         }
@@ -151,7 +150,7 @@ extension CatalogWindowViewModel {
         guard !ordered.isEmpty else {
             return
         }
-        let pair = ComparePairPolicy.entry(selection: gridSelection, orderedIDs: ordered)
+        let pair = ComparePairPolicy.entry(selection: gridSelection, orderedIDs: state.mediaGrid.content)
         // viewMode must be .compare before applyComparePair → refreshPanePreviews,
         // otherwise expectedAsset(for: compare*) returns nil and no decode starts.
         viewMode = .compare
@@ -241,17 +240,21 @@ extension CatalogWindowViewModel {
     /// Structural-apply / query churn for loupe and compare. Only a scope change starts
     /// over at the first item; a filter or sort change keeps the focus or pair members
     /// that survive and moves a lost one to its nearest survivor.
+    ///
+    /// Every lookup goes through the contents' indexes, so this costs in the focus and the
+    /// pair, not in the order's size.
     func reconcileFocusAfterGridChange(
-        previousOrderedIDs: [MediaAssetID],
+        previousOrder: CatalogGridContent,
         scopeChanged: Bool
     ) {
         // A playing story keeps its item or moves focus to the survivor itself, and closes
         // when nothing remains (ADR 0049).
         if story != nil {
-            reconcileStoryAfterGridChange(previousOrderedIDs: previousOrderedIDs)
+            reconcileStoryAfterGridChange(previousOrder: previousOrder)
             return
         }
-        let ordered = state.mediaGrid.orderedAssetIDs
+        let order = state.mediaGrid.content
+        let ordered = order.orderedAssetIDs
         if ordered.isEmpty {
             if viewMode != .grid {
                 exitToGrid()
@@ -273,8 +276,8 @@ extension CatalogWindowViewModel {
             }
             let next = BrowserModePolicy.pruneFocus(
                 previous: focusedAssetID,
-                previousOrderedIDs: previousOrderedIDs,
-                survivingOrderedIDs: ordered
+                previousOrderedIDs: previousOrder,
+                survivingOrderedIDs: order
             )
             guard next != focusedAssetID else {
                 return
@@ -285,7 +288,7 @@ extension CatalogWindowViewModel {
             }
         case .compare:
             if scopeChanged {
-                let pair = ComparePairPolicy.entry(selection: gridSelection, orderedIDs: ordered)
+                let pair = ComparePairPolicy.entry(selection: gridSelection, orderedIDs: order)
                 lastReplacedComparePane = .right
                 activeComparePane = .right
                 applyComparePair(pair, orderedIDs: ordered)
@@ -293,8 +296,8 @@ extension CatalogWindowViewModel {
             }
             let pruned = ComparePairPolicy.prune(
                 pair: comparePair,
-                previousOrderedIDs: previousOrderedIDs,
-                survivingOrderedIDs: ordered
+                previousOrderedIDs: previousOrder,
+                survivingOrderedIDs: order
             )
             applyComparePair(pruned, orderedIDs: ordered)
         }

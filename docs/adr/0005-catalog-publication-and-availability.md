@@ -121,6 +121,14 @@ and the collapse (0.4–0.9 s) back to back at over 300% CPU, and 368 of 642 ord
 three hours returned the order it already showed
 (`docs/research/2026-11-14-window-reads-and-launch.md`).
 
+A publication hands on what did not change. At the publication point, off the main
+actor, Projection compares the state a pass built with the last one it published and
+replaces every library-sized part that is equal — the grid's `CatalogGridContent`, the
+map, On This Day, the duplicate groups, People, the filter's options and the import
+batches — with the last publication's own, then builds the new content's position index
+(`CatalogWindowState.sharingUnchanged(with:)`). The comparison is paid once, here; the
+window, the change summary and SwiftUI then tell an unchanged part by identity (ADR 0004).
+
 Rejected: a time-based throttle on background passes beyond the existing cadence (ADR
 0033: whether a read can have changed is a fact the Store holds), a generic query cache in
 the Store (the Store would have to know who reads what; the reader knows its inputs), and

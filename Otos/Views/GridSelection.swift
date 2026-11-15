@@ -114,16 +114,18 @@ nonisolated struct GridSelection: Equatable {
     /// anchor and base so a later ⇧-click falls back to a plain click instead of ranging
     /// from a stale anchor. A *descriptor* change resets to `.empty` (handled by the
     /// caller, not here).
-    func pruned(to orderedIDs: [MediaAssetID]) -> GridSelection {
+    ///
+    /// Asks the order about the selected identities only, so on an indexed order
+    /// (`CatalogGridContent`) it costs in the selection's size, not the order's.
+    func pruned(to order: some MediaDisplayOrder) -> GridSelection {
         guard !selection.isEmpty else {
             return .empty
         }
-        let orderSet = Set(orderedIDs)
-        let prunedSelection = selection.intersection(orderSet)
-        guard let anchor, orderSet.contains(anchor) else {
+        let prunedSelection = selection.filter(order.contains)
+        guard let anchor, order.contains(anchor) else {
             return GridSelection(selection: prunedSelection, anchor: nil, base: [])
         }
-        return GridSelection(selection: prunedSelection, anchor: anchor, base: base.intersection(orderSet))
+        return GridSelection(selection: prunedSelection, anchor: anchor, base: base.filter(order.contains))
     }
 
     /// Applies a catalog identity remap batch atomically (ARC-051).
@@ -150,12 +152,9 @@ nonisolated struct GridSelection: Equatable {
     /// sees tiles, not in hash order, so a pasted multi-selection is stable.
     nonisolated static func orderedSelection(
         _ selected: Set<MediaAssetID>,
-        in ordered: [MediaAssetID]
+        in ordered: some MediaDisplayOrder
     ) -> [MediaAssetID] {
-        guard !selected.isEmpty else {
-            return []
-        }
-        return ordered.filter(selected.contains)
+        ordered.inDisplayOrder(selected)
     }
 
     /// The minimal delta that turns `current` into `target`: identities to deselect and

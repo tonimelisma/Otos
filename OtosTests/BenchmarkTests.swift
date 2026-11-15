@@ -302,6 +302,159 @@ struct BenchmarkTests {
         )
     }
 
+    /// The window's apply of a publication at the owner's size (158,000 tiles, a tenth of them
+    /// collapsed RAW+JPEG pairs), on the main actor: a republication that moved nothing the user
+    /// sees (an enrichment batch), an order that lost and regained one item under a loupe, and
+    /// a scope switch between two libraries of that size. Each state is built from fresh
+    /// values, as the projection builds every pass, and handed over as the projection
+    /// publishes it (`published(_:after:)`).
+    @MainActor
+    @Test func windowApplyCases() async throws {
+        let model = CatalogWindowViewModel(
+            catalogStore: CatalogStore(location: .inMemory),
+            enrichmentCoordinator: nil,
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: .suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
+            trashFiles: .refusing
+        )
+        let ownerSize = 158_000
+        let first = Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 1)
+            .sharingUnchanged(with: nil)
+        let republished = Self.published(
+            Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 2),
+            after: first
+        )
+        model.applyState(first)
+        let selected = first.mediaGrid.orderedAssetIDs[5000]
+        _ = model.applyGridClick(hit: selected, modifiers: [], orderedIDs: first.mediaGrid.orderedAssetIDs)
+        var next = republished
+        try await Benchmark.measure("window.apply.republished.158k") {
+            model.applyState(next)
+            #expect(model.gridSelection.selection == [selected])
+            next = next.mediaGrid.detailRefreshGeneration == 1 ? republished : first
+        }
+
+        let lostOne = Self.published(
+            Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 3, dropping: 1000),
+            after: first
+        )
+        model.applyState(first)
+        model.openLoupe(id: selected)
+        next = lostOne
+        try await Benchmark.measure("window.apply.orderChanged.158k") {
+            model.applyState(next)
+            #expect(model.focusedAssetID == selected)
+            next = next.mediaGrid.detailRefreshGeneration == 1 ? lostOne : first
+        }
+        model.exitToGrid()
+
+        let other = Self.published(
+            Self.ownerWindowState(
+                prefix: "b/",
+                photos: ownerSize,
+                scope: .library(LibraryRootPath(rawValue: "/Pictures/b/")),
+                generation: 4
+            ),
+            after: first
+        )
+        model.applyState(first)
+        next = other
+        try await Benchmark.measure("window.apply.scopeChanged.158k") {
+            model.applyState(next)
+            #expect(model.state.mediaGrid.orderedAssetIDs.count == ownerSize)
+            next = next.mediaGrid.detailRefreshGeneration == 1 ? other : first
+        }
+    }
+
+    /// What the window's cheap apply costs Projection, off the main actor, at the owner's
+    /// size: handing on an equal rebuilt content (the comparison of every identity, day and
+    /// stack), and a new order (the comparison up to its first difference, and the position
+    /// index it builds). Each iteration publishes a state built fresh, as a pass does.
+    @Test func windowPublishCases() async throws {
+        let ownerSize = 158_000
+        let first = Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 1)
+            .sharingUnchanged(with: nil)
+        // Published states are kept, so no iteration measures freeing one.
+        var kept: [CatalogWindowState] = []
+        var equal = (0 ..< 4).map { _ in
+            Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 2)
+        }
+        try await Benchmark.measure("window.publish.republished.158k", iterations: 3) {
+            let published = equal.removeLast().sharingUnchanged(with: first)
+            #expect(published.mediaGrid.sharesContent(with: first.mediaGrid))
+            kept.append(published)
+        }
+        var changed = (0 ..< 4).map { _ in
+            Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 3, dropping: 1000)
+        }
+        try await Benchmark.measure("window.publish.orderChanged.158k", iterations: 3) {
+            let published = changed.removeLast().sharingUnchanged(with: first)
+            #expect(!published.mediaGrid.sharesContent(with: first.mediaGrid))
+            kept.append(published)
+        }
+        #expect(kept.count == 8)
+    }
+
+    /// What the window receives for `next` published after `previous`.
+    private static func published(_ next: CatalogWindowState, after previous: CatalogWindowState) -> CatalogWindowState {
+        next.sharingUnchanged(with: previous)
+    }
+
+    /// `photos` tiles under Date sort over 5,000 days, every tenth a collapsed RAW+JPEG pair,
+    /// optionally without the tile at `dropping`; `generation` is its detail refresh.
+    private static func ownerWindowState(
+        prefix: String,
+        photos: Int,
+        scope: SidebarSelection,
+        generation: UInt64,
+        dropping: Int? = nil
+    ) -> CatalogWindowState {
+        let root = LibraryRootPath(rawValue: "/Pictures")
+        func id(_ name: String) -> MediaAssetID {
+            MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "DCIM/\(prefix)\(name)"))
+        }
+        let kept = (0 ..< photos).filter { $0 != dropping }
+        let ids = kept.map { id("IMG_\($0).\($0 % 10 == 0 ? "JPG" : "HEIC")") }
+        let buckets = kept.map { Optional(Date(timeIntervalSince1970: Double(5000 - $0 * 5000 / photos) * 86400)) }
+        var tiles: [MediaAssetID: TileStacks] = [:]
+        var hidden: [MediaAssetID: MediaAssetID] = [:]
+        for index in kept where index % 10 == 0 {
+            let shown = id("IMG_\(index).JPG")
+            let raw = id("IMG_\(index).CR3")
+            let pair = PhotoStack(
+                id: PhotoStackID(kind: .pair, libraryRootPath: root, key: "\(prefix)IMG_\(index)"),
+                members: [raw, shown],
+                key: shown,
+                keyChoice: .notRated,
+                rawMembers: [raw],
+                photos: [shown]
+            )
+            tiles[shown] = TileStacks(pair: pair)
+            hidden[raw] = shown
+        }
+        var grid = CatalogMediaGridState(
+            descriptor: CatalogQueryDescriptor(scope: scope),
+            orderedAssetIDs: ids,
+            dayBuckets: buckets,
+            detailRefreshGeneration: generation
+        )
+        grid.stacks = CatalogGridStacks(tiles: tiles, shownForHiddenMember: hidden)
+        return CatalogWindowState(
+            title: "Bench",
+            libraries: [],
+            removableSources: [],
+            mediaGrid: grid,
+            filterOptions: .empty,
+            resolvedSidebarSelection: scope,
+            mediaEmptyState: nil,
+            deviceConnectionBanner: nil,
+            queryGeneration: 0
+        )
+    }
+
     /// Two libraries of the owner's size, alternated, so every iteration replaces the whole
     /// grid as a sidebar switch does.
     @MainActor

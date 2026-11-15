@@ -49,8 +49,8 @@ nonisolated enum StoryPlaybackPolicy {
     /// remains.
     static func survivor(
         of current: MediaAssetID,
-        previousOrderedIDs: [MediaAssetID],
-        survivingOrderedIDs: [MediaAssetID]
+        previousOrderedIDs: some MediaDisplayOrder,
+        survivingOrderedIDs: some MediaDisplayOrder
     ) -> MediaAssetID? {
         BrowserModePolicy.pruneFocus(
             previous: current,

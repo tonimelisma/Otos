@@ -284,6 +284,10 @@ extension CatalogWindowViewModel {
     }
 
     private func openMapCluster(_ cluster: MapPlaceCluster, leaving viewport: MapViewport?) {
+        // A stack on a map the user has already left belongs to no scope they chose.
+        guard showsSelectedScope else {
+            return
+        }
         mapLeftViewport = viewport
         userHasChosenSource = true
         OtosLog.ui.noticeOperation("map.stack", phase: "open", fields: ["count": "\(cluster.count)"])
@@ -310,7 +314,7 @@ extension CatalogWindowViewModel {
     /// first items. The mode is set now and its focus settles when the area publishes,
     /// because the pane keeps showing the map until then (`showsPlacesMap`).
     func openVisibleMapArea(mode: BrowserViewMode) {
-        guard showsPlacesMap, let viewport = mapViewport else {
+        guard showsPlacesMap, showsSelectedScope, let viewport = mapViewport else {
             return
         }
         let area = MapClusterPolicy.area(of: viewport)

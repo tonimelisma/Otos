@@ -44,7 +44,6 @@ struct OnThisDayView: View {
                     .background(DesignPalette.content(for: colorScheme))
             }
         }
-        .navigationTitle("On This Day")
     }
 
     private func cards(_ anniversaries: [OnThisDayAnniversary]) -> some View {

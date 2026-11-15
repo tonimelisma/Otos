@@ -48,7 +48,6 @@ struct PlacesMapView: View {
                 mapContent
             }
         }
-        .navigationTitle("Places")
     }
 
     private var mapContent: some View {

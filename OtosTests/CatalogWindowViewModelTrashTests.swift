@@ -128,6 +128,8 @@ private func makeTrashModel(store: CatalogStore, trash: URL?) -> CatalogWindowVi
     )
 }
 
+/// The lone library's scope, the one the window selects for it at launch, so the state
+/// answers the window's own selection and its items are the user's to act on.
 @MainActor
 private func trashWindowState(ids: [MediaAssetID], root: LibraryRootPath) -> CatalogWindowState {
     CatalogWindowState(
@@ -136,9 +138,9 @@ private func trashWindowState(ids: [MediaAssetID], root: LibraryRootPath) -> Cat
             CatalogLibraryState(root: LibraryRoot(path: root), availability: .available, activity: .idle),
         ],
         removableSources: [],
-        mediaGrid: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids),
+        mediaGrid: CatalogMediaGridState(scope: .library(root), orderedAssetIDs: ids),
         filterOptions: .empty,
-        resolvedSidebarSelection: .allMedia,
+        resolvedSidebarSelection: .library(root),
         mediaEmptyState: .noMedia,
         deviceConnectionBanner: nil
     )

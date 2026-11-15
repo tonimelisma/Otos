@@ -349,16 +349,13 @@ nonisolated enum CatalogWindowPolicy {
             libraries: parts.libraries,
             removableSources: parts.removableSources,
             importBatches: parts.importBatches,
-            mediaGrid: {
-                var grid = CatalogMediaGridState(
-                    descriptor: parts.resolvedDescriptor,
-                    orderedAssetIDs: parts.scopedAssetIDs,
-                    dayBuckets: parts.scopedDayBuckets,
-                    detailRefreshGeneration: detailRefreshGeneration
-                )
-                grid.stacks = parts.gridStacks
-                return grid
-            }(),
+            mediaGrid: CatalogMediaGridState(
+                descriptor: parts.resolvedDescriptor,
+                orderedAssetIDs: parts.scopedAssetIDs,
+                dayBuckets: parts.scopedDayBuckets,
+                stacks: parts.gridStacks,
+                detailRefreshGeneration: detailRefreshGeneration
+            ),
             filterOptions: parts.filterOptions,
             resolvedSidebarSelection: parts.resolvedDescriptor.scope,
             mediaEmptyState: parts.mediaEmptyState,

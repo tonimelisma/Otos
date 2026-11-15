@@ -28,7 +28,7 @@ nonisolated struct CatalogGridHandoff: Equatable {
     let itemDelta: Int
     let selection: String
     let emptyState: String
-    let mediaIdentityChanged: Bool
+    let mediaContentChanged: Bool
     let detailRefreshGeneration: UInt64
     let timestamp: ContinuousClock.Instant
 }
@@ -285,7 +285,7 @@ final class MainRunLoopStallMonitor {
             fields["latestItemDelta"] = "\(latestHandoff.itemDelta)"
             fields["latestSelection"] = latestHandoff.selection
             fields["latestEmptyState"] = latestHandoff.emptyState
-            fields["mediaIdentityChanged"] = "\(latestHandoff.mediaIdentityChanged)"
+            fields["mediaContentChanged"] = "\(latestHandoff.mediaContentChanged)"
             fields["detailRefreshGeneration"] = "\(latestHandoff.detailRefreshGeneration)"
             fields["latestHandoffAgeMs"] = "\(DiagnosticsTiming.milliseconds(since: latestHandoff.timestamp, now: now))"
         }

@@ -47,11 +47,16 @@ compiles it.
         │                                      ▼
         │                            FileMaterialization (one-URL mechanism)
   CatalogProjection (actor)  ── truth → UI-ready CatalogWindowState (off MainActor)
-        │  coalesced ~1s for background changes, immediate for user query intents
+        │  coalesced ~1s for background changes, immediate for user query intents;
+        │  at publication hands on every part equal to the last one's as that one's own
+        │  (`sharingUnchanged`: the grid's `CatalogGridContent`, map, groups, People…)
         │  ◀── DuplicatesProjection, PeopleAssignment (actors): duplicate groups and People,
         │      each its own loop, asked after a catalog change; never awaited by a window pass
         ▼
   CatalogWindowViewModel (@MainActor)  ── the SwiftUI bridge; assigns @Observable state
+        │  apply costs in what changed: content identity says the grid moved, its index
+        │  answers selection/focus lookups (ADR 0004); `windowTitle` titles every scope;
+        │  nothing on a pane the user has left acts until its scope publishes (`showsSelectedScope`)
         │  owns loupeVideoState (single owner); VideoPreviewLoader (@MainActor factory) checks SF_DATALESS + interactive demand and creates AVPlayer
         ▼
   SwiftUI views  →  grid / loupe(+filmstrip) detail (mode-switched), or the Places map

@@ -144,6 +144,40 @@ nonisolated struct CatalogWindowState: Equatable {
         mediaEmptyState != .loadingCatalog
     }
 
+    /// This state as Projection publishes it after `previous`: every library-sized part
+    /// equal to `previous`'s is `previous`'s own — the grid's content, the map, On This Day,
+    /// the duplicate groups, People, the filter's options and the import batches — and the
+    /// grid's position index is built. The comparing is done here, off the main actor, once;
+    /// the window then tells an unchanged part by identity (`sharesContent(with:)`, and the
+    /// standard collections' own identity check behind `==`), so applying a publication
+    /// costs in what changed (ADR 0005).
+    func sharingUnchanged(with previous: CatalogWindowState?) -> CatalogWindowState {
+        var shared = self
+        if let previous {
+            shared.mediaGrid = mediaGrid.sharingContent(of: previous.mediaGrid)
+            if map == previous.map {
+                shared.map = previous.map
+            }
+            if onThisDay == previous.onThisDay {
+                shared.onThisDay = previous.onThisDay
+            }
+            if duplicates == previous.duplicates {
+                shared.duplicates = previous.duplicates
+            }
+            if people == previous.people {
+                shared.people = previous.people
+            }
+            if filterOptions == previous.filterOptions {
+                shared.filterOptions = previous.filterOptions
+            }
+            if importBatches == previous.importBatches {
+                shared.importBatches = previous.importBatches
+            }
+        }
+        shared.mediaGrid.content.prepareIndex()
+        return shared
+    }
+
     /// What the window shows before the catalog has loaded: no title, no sources, no
     /// items, and no claim about whether media exists (APP-044).
     static let empty = CatalogWindowState(

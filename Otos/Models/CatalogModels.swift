@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Synchronization
 import UniformTypeIdentifiers
 
 // Catalog model guide
@@ -1091,13 +1092,34 @@ nonisolated enum MediaSortKey {
 /// always the same length as `orderedAssetIDs`, index-for-index; an individual
 /// entry is `nil` when that asset has no known capture date (still grouped —
 /// into a single "no date" section, per `MediaGridBridge`'s section grouping).
+///
+/// The library-sized part — the order, its day buckets and its stacks — is one immutable
+/// `CatalogGridContent` held by reference. Projection hands the previous publication's
+/// content on whenever a pass rebuilt an equal one (`CatalogWindowState.sharingUnchanged`),
+/// so "did the grid's content change?" is `sharesContent(with:)`, one pointer comparison,
+/// and the main actor never compares or walks the order to learn it.
 nonisolated struct CatalogMediaGridState: Equatable {
     var descriptor: CatalogQueryDescriptor
-    var orderedAssetIDs: [MediaAssetID]
-    var dayBuckets: [Date?] = []
     var detailRefreshGeneration: UInt64 = 0
+    /// The order, its day buckets and its stacks, shared by every publication that holds
+    /// the same ones.
+    private(set) var content: CatalogGridContent
+
+    var orderedAssetIDs: [MediaAssetID] {
+        get { content.orderedAssetIDs }
+        set { content = CatalogGridContent(orderedAssetIDs: newValue, dayBuckets: content.dayBuckets, stacks: content.stacks) }
+    }
+
+    var dayBuckets: [Date?] {
+        get { content.dayBuckets }
+        set { content = content.replacing(dayBuckets: newValue) }
+    }
+
     /// How `orderedAssetIDs` shows each stack it holds (ADR 0052).
-    var stacks: CatalogGridStacks = .empty
+    var stacks: CatalogGridStacks {
+        get { content.stacks }
+        set { content = content.replacing(stacks: newValue) }
+    }
 
     var scope: SidebarSelection {
         descriptor.scope
@@ -1126,12 +1148,159 @@ nonisolated struct CatalogMediaGridState: Equatable {
         descriptor: CatalogQueryDescriptor,
         orderedAssetIDs: [MediaAssetID],
         dayBuckets: [Date?] = [],
+        stacks: CatalogGridStacks = .empty,
         detailRefreshGeneration: UInt64 = 0
     ) {
         self.descriptor = descriptor
+        content = CatalogGridContent(orderedAssetIDs: orderedAssetIDs, dayBuckets: dayBuckets, stacks: stacks)
+        self.detailRefreshGeneration = detailRefreshGeneration
+    }
+
+    /// Whether `other` holds this very content — the same publication of it, not merely an
+    /// equal one. Constant time; a content Projection rebuilt equal is handed on as the same
+    /// one, so on published states this answers whether the order, days or stacks changed.
+    func sharesContent(with other: CatalogMediaGridState) -> Bool {
+        content === other.content
+    }
+
+    /// This grid holding `previous`'s content when its own is equal to it. Compares the
+    /// order, days and stacks: Projection calls it off the main actor, at publication.
+    func sharingContent(of previous: CatalogMediaGridState) -> CatalogMediaGridState {
+        guard !sharesContent(with: previous), content == previous.content else {
+            return self
+        }
+        var shared = self
+        shared.content = previous.content
+        return shared
+    }
+}
+
+/// The questions the selection, focus and compare policies ask of a display order. A plain
+/// array answers them by walking itself; `CatalogGridContent` answers from its index, so a
+/// policy run on the window's order costs in what it asks about, not in the order's size.
+nonisolated protocol MediaDisplayOrder: MediaMembership {
+    var orderedIDs: [MediaAssetID] { get }
+    func position(of id: MediaAssetID) -> Int?
+    /// `ids` that the order holds, in its order.
+    func inDisplayOrder(_ ids: Set<MediaAssetID>) -> [MediaAssetID]
+}
+
+/// Which identities a collection holds: an order, or a set of survivors.
+nonisolated protocol MediaMembership {
+    func contains(_ id: MediaAssetID) -> Bool
+}
+
+extension Set<MediaAssetID>: MediaMembership {}
+
+extension [MediaAssetID]: MediaMembership {}
+
+extension [MediaAssetID]: MediaDisplayOrder {
+    var orderedIDs: [MediaAssetID] {
+        self
+    }
+
+    func position(of id: MediaAssetID) -> Int? {
+        firstIndex(of: id)
+    }
+
+    func inDisplayOrder(_ ids: Set<MediaAssetID>) -> [MediaAssetID] {
+        ids.isEmpty ? [] : filter(ids.contains)
+    }
+}
+
+/// One publication of the grid's library-sized content: the order, its day buckets
+/// (index-paired, or empty) and how it shows its stacks. Immutable and shared by reference,
+/// so a window state copies a pointer, not 158,000 identities, and two publications of the
+/// same content are told apart from two of different content by identity alone.
+///
+/// Each identity's position is indexed once, the first time a position or membership is
+/// asked, and kept; Projection asks for it at publication (`prepareIndex`), off the main
+/// actor, so the window's selection and focus checks are lookups. A content Projection
+/// rebuilt equal to the last one is dropped before that, so the index is built only for an
+/// order that is new.
+final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrder {
+    let orderedAssetIDs: [MediaAssetID]
+    let dayBuckets: [Date?]
+    let stacks: CatalogGridStacks
+    private let index: Mutex<[MediaAssetID: Int]?>
+
+    init(orderedAssetIDs: [MediaAssetID], dayBuckets: [Date?], stacks: CatalogGridStacks) {
         self.orderedAssetIDs = orderedAssetIDs
         self.dayBuckets = dayBuckets
-        self.detailRefreshGeneration = detailRefreshGeneration
+        self.stacks = stacks
+        index = Mutex(nil)
+    }
+
+    private init(_ content: CatalogGridContent, dayBuckets: [Date?], stacks: CatalogGridStacks) {
+        orderedAssetIDs = content.orderedAssetIDs
+        self.dayBuckets = dayBuckets
+        self.stacks = stacks
+        index = Mutex(content.index.withLock { $0 })
+    }
+
+    /// The same order with other day buckets: its index, if built, still holds.
+    func replacing(dayBuckets: [Date?]) -> CatalogGridContent {
+        CatalogGridContent(self, dayBuckets: dayBuckets, stacks: stacks)
+    }
+
+    /// The same order with other stacks: its index, if built, still holds.
+    func replacing(stacks: CatalogGridStacks) -> CatalogGridContent {
+        CatalogGridContent(self, dayBuckets: dayBuckets, stacks: stacks)
+    }
+
+    var orderedIDs: [MediaAssetID] {
+        orderedAssetIDs
+    }
+
+    /// Builds the position index now, if it is not built yet.
+    func prepareIndex() {
+        withIndex { _ in () }
+    }
+
+    func position(of id: MediaAssetID) -> Int? {
+        withIndex { $0[id] }
+    }
+
+    func contains(_ id: MediaAssetID) -> Bool {
+        position(of: id) != nil
+    }
+
+    func inDisplayOrder(_ ids: Set<MediaAssetID>) -> [MediaAssetID] {
+        guard !ids.isEmpty else {
+            return []
+        }
+        return withIndex { positions in
+            ids.compactMap { id in positions[id].map { (id, $0) } }
+                .sorted { $0.1 < $1.1 }
+                .map(\.0)
+        }
+    }
+
+    /// `body` over the position index, built on first use.
+    private func withIndex<Result: Sendable>(_ body: ([MediaAssetID: Int]) -> Result) -> Result {
+        index.withLock { index in
+            let positions = index ?? Self.positions(of: orderedAssetIDs)
+            index = positions
+            return body(positions)
+        }
+    }
+
+    /// Each identity's first position, as `firstIndex(of:)` answers.
+    private static func positions(of ids: [MediaAssetID]) -> [MediaAssetID: Int] {
+        var positions: [MediaAssetID: Int] = [:]
+        positions.reserveCapacity(ids.count)
+        for (position, id) in ids.enumerated() where positions[id] == nil {
+            positions[id] = position
+        }
+        return positions
+    }
+
+    /// Equal content: the same one, or the same order, days and stacks.
+    static func == (lhs: CatalogGridContent, rhs: CatalogGridContent) -> Bool {
+        lhs === rhs
+            || (lhs.orderedAssetIDs == rhs.orderedAssetIDs
+                && lhs.dayBuckets == rhs.dayBuckets
+                && lhs.stacks == rhs.stacks)
     }
 }
 

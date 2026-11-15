@@ -59,7 +59,7 @@ nonisolated enum BrowserModePolicy {
     static func loupeEntryFocus(
         preferredID: MediaAssetID?,
         selection: GridSelection,
-        orderedIDs: [MediaAssetID]
+        orderedIDs: some MediaDisplayOrder
     ) -> MediaAssetID? {
         if let preferredID, orderedIDs.contains(preferredID) {
             return preferredID
@@ -71,7 +71,7 @@ nonisolated enum BrowserModePolicy {
         if let first = orderedSelected.first {
             return first
         }
-        return orderedIDs.first
+        return orderedIDs.orderedIDs.first
     }
 
     /// Next/previous neighbor in display order. Returns `current` when already at the end
@@ -99,17 +99,17 @@ nonisolated enum BrowserModePolicy {
     /// that survives, the first surviving item.
     static func pruneFocus(
         previous: MediaAssetID?,
-        previousOrderedIDs: [MediaAssetID],
-        survivingOrderedIDs: [MediaAssetID]
+        previousOrderedIDs: some MediaDisplayOrder,
+        survivingOrderedIDs: some MediaDisplayOrder
     ) -> MediaAssetID? {
         guard let previous else {
-            return survivingOrderedIDs.first
+            return survivingOrderedIDs.orderedIDs.first
         }
         return nearestSurvivor(
             of: previous,
             previousOrderedIDs: previousOrderedIDs,
-            surviving: Set(survivingOrderedIDs)
-        ) ?? survivingOrderedIDs.first
+            surviving: survivingOrderedIDs
+        ) ?? survivingOrderedIDs.orderedIDs.first
     }
 
     /// The item itself if it survives, else the closest survivor in the order the user
@@ -121,18 +121,19 @@ nonisolated enum BrowserModePolicy {
     /// the user was. Walking the old order finds what was physically next to them.
     static func nearestSurvivor(
         of id: MediaAssetID,
-        previousOrderedIDs: [MediaAssetID],
-        surviving: Set<MediaAssetID>
+        previousOrderedIDs: some MediaDisplayOrder,
+        surviving: some MediaMembership
     ) -> MediaAssetID? {
         if surviving.contains(id) {
             return id
         }
-        guard let priorIndex = previousOrderedIDs.firstIndex(of: id) else {
+        guard let priorIndex = previousOrderedIDs.position(of: id) else {
             return nil
         }
-        if let later = previousOrderedIDs[(priorIndex + 1)...].first(where: surviving.contains) {
+        let previous = previousOrderedIDs.orderedIDs
+        if let later = previous[(priorIndex + 1)...].first(where: surviving.contains) {
             return later
         }
-        return previousOrderedIDs[..<priorIndex].last(where: surviving.contains)
+        return previous[..<priorIndex].last(where: surviving.contains)
     }
 }

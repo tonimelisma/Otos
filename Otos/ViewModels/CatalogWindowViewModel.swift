@@ -82,7 +82,25 @@ final class CatalogWindowViewModel {
     /// user was elsewhere when the batch row first existed). A run moves the selection
     /// once; a user who goes back to the card is not pulled to the batch again.
     var followedImportBatches: Set<ImportBatchID> = []
-    var state: CatalogWindowState = .empty
+    /// The last applied publication. Observed by hand rather than by the macro's tracked
+    /// storage: a tracked `Equatable` property compares the old value with the new one on
+    /// every set, and a window state's `==` walks every part it holds — on the owner's
+    /// catalog the order's 158,000 identities and its stacks, on every enrichment batch, on
+    /// the main actor. Projection yields only a state that changed (ADR 0005), so a set is a
+    /// change by construction and notifies without comparing.
+    var state: CatalogWindowState {
+        get {
+            access(keyPath: \.state)
+            return appliedState
+        }
+        set {
+            withMutation(keyPath: \.state) {
+                appliedState = newValue
+            }
+        }
+    }
+
+    @ObservationIgnored private var appliedState: CatalogWindowState = .empty
     /// User-adjustable grid density (APP-006), 3–9. `private(set)` so the only way to
     /// change it is the `setGridColumnCount(_:)` intent below — the one clamp/persist/publish
     /// path every zoom surface shares (compiler-enforced single owner). Set in `init`, not a
@@ -1329,13 +1347,20 @@ extension CatalogWindowViewModel {
         }
 
         state = nextState
+        // What changed is read from the publication, never by walking it: Projection hands an
+        // unchanged grid content on as the same one (`sharingUnchanged`), so one pointer
+        // comparison says whether the order, its days or its stacks moved, and every check
+        // below asks the content's index about the selection and focus alone.
+        let contentChanged = !previousState.mediaGrid.sharesContent(with: nextState.mediaGrid)
         // Before anything compares the new order with the old: a remapped selection or
         // focus must already carry its new identity, or the prune below would drop it.
         applyPendingIdentityRemaps(nextState.pendingIdentityRemaps)
-        carrySelectionIntoStacks(nextState.mediaGrid.stacks)
+        if contentChanged {
+            carrySelectionIntoStacks(nextState.mediaGrid.stacks)
+        }
         applyMapState(previous: previousState, next: nextState)
         applyOnThisDayState(previous: previousState, next: nextState)
-        applyDuplicatesState(nextState)
+        applyDuplicatesState(previous: previousState, next: nextState)
         applyPeopleState(previous: previousState, next: nextState)
 
         // A new scope is a different collection, so the user's place in the old one means
@@ -1343,17 +1368,14 @@ extension CatalogWindowViewModel {
         // so whatever survives stays selected and focused (APP-042).
         let descriptorChanged = previousState.mediaGrid.descriptor != nextState.mediaGrid.descriptor
         let scopeChanged = previousState.mediaGrid.descriptor.scope != nextState.mediaGrid.descriptor.scope
-        let orderChanged = previousState.mediaGrid.orderedAssetIDs != nextState.mediaGrid.orderedAssetIDs
         if scopeChanged {
             clearGridSelection(reason: "scopeChange")
-        } else if orderChanged {
-            gridSelection = gridSelection.selection.isEmpty
-                ? .empty
-                : gridSelection.pruned(to: nextState.mediaGrid.orderedAssetIDs)
+        } else if contentChanged {
+            gridSelection = gridSelection.pruned(to: nextState.mediaGrid.content)
         }
-        if descriptorChanged || orderChanged {
+        if descriptorChanged || contentChanged {
             reconcileFocusAfterGridChange(
-                previousOrderedIDs: previousState.mediaGrid.orderedAssetIDs,
+                previousOrder: previousState.mediaGrid.content,
                 scopeChanged: scopeChanged
             )
         }
@@ -1363,7 +1385,7 @@ extension CatalogWindowViewModel {
 
         let itemCount = nextState.mediaGrid.orderedAssetIDs.count
         let previousItemCount = previousState.mediaGrid.orderedAssetIDs.count
-        let mediaIdentityChanged = descriptorChanged || orderChanged
+        let mediaContentChanged = descriptorChanged || contentChanged
         let handoff = CatalogGridHandoff(
             updateID: updateID,
             itemCount: itemCount,
@@ -1371,7 +1393,7 @@ extension CatalogWindowViewModel {
             itemDelta: itemCount - previousItemCount,
             selection: nextState.resolvedSidebarSelection.diagnosticDescription,
             emptyState: nextState.mediaEmptyState?.diagnosticDescription ?? "none",
-            mediaIdentityChanged: mediaIdentityChanged,
+            mediaContentChanged: mediaContentChanged,
             detailRefreshGeneration: nextState.mediaGrid.detailRefreshGeneration,
             timestamp: .now
         )
@@ -1546,6 +1568,13 @@ extension CatalogWindowViewModel {
         searchFocusRequest &+= 1
     }
 
+    /// The window's title, the one every scope is named by: the person a person's photos
+    /// show, else the title Projection published for the scope shown
+    /// (`CatalogWindowPolicy.title(for:libraries:)`).
+    var windowTitle: String {
+        shownPerson?.displayName ?? state.title
+    }
+
     /// The window's subtitle, under its title (DES-012 L3, DES-034): `Filtered` while a filter
     /// narrows the scope, so a scope that looks short is never mistaken for the whole of it
     /// (DES-029: never the filter glyph's color alone), and `Searching…` while the search's
@@ -1690,6 +1719,16 @@ extension CatalogWindowViewModel {
         case let .failed(description):
             ejectAlertMessage = description
         }
+    }
+
+    /// Whether the pane shows the scope the sidebar has selected. From a selection intent
+    /// until Projection publishes that scope, the pane still shows the scope the user left;
+    /// nothing on it is the user's to act on, because one user action acts on the scope the
+    /// user sees selected. Every act on the pane's content reads this: the targets
+    /// (`targetIDs`), the duplicates list's and the People gallery's acts, the map's stacks
+    /// and Play Story. How the pane looks meanwhile is unchanged: no design rule covers it.
+    var showsSelectedScope: Bool {
+        state.resolvedSidebarSelection == queryDescriptor.scope
     }
 
     /// The All Media row, while two or more fixed libraries exist. The sidebar draws no row

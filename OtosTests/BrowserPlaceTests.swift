@@ -288,7 +288,13 @@ struct BrowserPlaceTests {
         }
         let digest = try #require(XXH3Digest128(data: Data(repeating: 7, count: 16)))
         let group = DuplicateGroupPolicy.group(id: .identical(digest), copies: copies, keptPairs: [])
-        var state = loadedState(descriptor: CatalogQueryDescriptor(scope: .duplicates), ids: ids)
+        // The user is on the list: acts on a pane apply only while it is the selected scope.
+        model.selectSidebar(.duplicates)
+        var state = loadedState(
+            descriptor: CatalogQueryDescriptor(scope: .duplicates),
+            ids: ids,
+            generation: model.queryGeneration
+        )
         state.duplicates = CatalogDuplicatesState(groups: [group])
         model.applyState(state)
 

@@ -386,11 +386,6 @@ extension CatalogWindowViewModel {
         queryDescriptor.scope.person != nil
     }
 
-    /// The window's title: the person a person's photos show, else the published title.
-    var windowTitle: String {
-        shownPerson?.displayName ?? state.title
-    }
-
     /// The published empty state; nil while the scope holds items.
     var mediaEmptyState: CatalogMediaEmptyState? {
         state.mediaEmptyState
@@ -1164,19 +1159,30 @@ extension CatalogWindowViewModel {
 
     // MARK: - What the views get
 
+    ///
+    /// Each act checks, when it is called, that the gallery is still the user's scope
+    /// (`showsSelectedScope`): between a click on another row and its publication the
+    /// gallery stays on screen, and nothing on it acts.
     var peopleActions: PeopleActions {
         PeopleActions(
-            select: { [weak self] person, modifiers in self?.selectPeople(person, modifiers: modifiers) },
-            moveCursor: { [weak self] step, columns, extending in self?.moveGalleryCursor(step, columns: columns, extending: extending) },
-            open: { [weak self] person in self?.openPerson(person) },
-            edit: { [weak self] person in self?.beginEditingPerson(person) },
-            askMerge: { [weak self] from, into in self?.askMerge(from, into: into) },
+            select: { [weak self] person, modifiers in self?.inGallery { $0.selectPeople(person, modifiers: modifiers) } },
+            moveCursor: { [weak self] step, columns, extending in
+                self?.inGallery { $0.moveGalleryCursor(step, columns: columns, extending: extending) } ?? nil
+            },
+            open: { [weak self] person in self?.inGallery { $0.openPerson(person) } },
+            edit: { [weak self] person in self?.inGallery { $0.beginEditingPerson(person) } },
+            askMerge: { [weak self] from, into in self?.inGallery { $0.askMerge(from, into: into) } },
             mergeRefusal: { [weak self] from, into in self?.mergeRefusal(from, into: into) },
-            canMergeAway: { [weak self] person in self?.canMergeAway(person) ?? false },
+            canMergeAway: { [weak self] person in self?.inGallery { $0.canMergeAway(person) } ?? false },
             answerMerge: { [weak self] merge in self?.answerMerge(merge) },
-            menu: { [weak self] person in self?.galleryPersonMenu(person) },
-            perform: { [weak self] act, person in self?.performPersonAct(act, on: person) }
+            menu: { [weak self] person in self?.inGallery { $0.galleryPersonMenu(person) } ?? nil },
+            perform: { [weak self] act, person in self?.inGallery { $0.performPersonAct(act, on: person) } }
         )
+    }
+
+    /// `act` while the gallery is the scope the user selected; nil otherwise.
+    private func inGallery<Result>(_ act: (CatalogWindowViewModel) -> Result) -> Result? {
+        showsPeopleList && showsSelectedScope ? act(self) : nil
     }
 }
 

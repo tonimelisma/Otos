@@ -58,7 +58,6 @@ struct StoryPlayerView: View {
         .onKeyPress(.leftArrow) { handled(actions.previous) }
         .onKeyPress(.rightArrow) { handled(actions.next) }
         .onKeyPress(.escape) { handled(actions.close) }
-        .navigationTitle("On This Day")
     }
 
     private func handled(_ action: () -> Void) -> KeyPress.Result {

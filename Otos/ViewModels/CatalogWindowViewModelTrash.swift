@@ -38,7 +38,7 @@ nonisolated enum TrashIntent: Sendable {
 
 extension CatalogWindowViewModel {
     var canMoveTargetedMediaToTrash: Bool {
-        guard mediaTrashTask == nil else {
+        guard mediaTrashTask == nil, showsSelectedScope else {
             return false
         }
         // On the duplicates list the targets are the selected groups' extra copies, never

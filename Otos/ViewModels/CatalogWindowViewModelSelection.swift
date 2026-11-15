@@ -35,7 +35,7 @@ extension CatalogWindowViewModel {
     var orderedSelectedAssetIDs: [MediaAssetID] {
         GridSelection.orderedSelection(
             gridSelection.selection,
-            in: state.mediaGrid.orderedAssetIDs
+            in: state.mediaGrid.content
         )
     }
 
