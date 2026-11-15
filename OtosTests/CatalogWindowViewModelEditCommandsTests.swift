@@ -12,9 +12,7 @@ struct CatalogWindowViewModelEditCommandsTests {
     @Test func showOriginalRendersTheUneditedPhotoUntilTheEditChanges() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
@@ -57,9 +55,7 @@ struct CatalogWindowViewModelEditCommandsTests {
     @Test func revertToOriginalRemovesTheWholeEditAsOneUndoStep() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
@@ -91,9 +87,7 @@ struct CatalogWindowViewModelEditCommandsTests {
         }) { library in
             let id = library.ids[0]
             _ = try await library.store.setEditRecipe(EditRecipe(trimStart: 0.5), for: id)
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.selectAll()
             model.setViewMode(.loupe)
             try await waitUntil { model.loupeVideoState?.id == id && model.loupeVideoState?.recipe.trimStart == 0.5 }
@@ -110,9 +104,7 @@ struct CatalogWindowViewModelEditCommandsTests {
     @Test func theKeyboardSelectsAnAdjustmentAndMovesItByItsStep() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
@@ -143,9 +135,7 @@ struct CatalogWindowViewModelEditCommandsTests {
     @Test func resettingOneControlLeavesTheOthers() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
@@ -165,9 +155,7 @@ struct CatalogWindowViewModelEditCommandsTests {
     @Test func theHistogramFollowsTheRenderedPhoto() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.editHistogram != nil }

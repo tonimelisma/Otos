@@ -164,6 +164,61 @@ struct PhotoStackStoreTests {
         }
     }
 
+    /// An import batch counts the photos its grid shows (ADR 0052: a stack counts once): a
+    /// pair imported together and a burst's frames are one photo each, and a pair whose
+    /// files came in two batches is a file in each.
+    @Test func anImportBatchCountsItsStacksOnce() async throws {
+        let files = [
+            "a/DSC1.ARW", "a/DSC1.JPG", "a/DSC2.JPG", "a/DSC3.ARW", "a/DSC3.JPG", "c/IMG_1.HEIC", "c/IMG_2.HEIC",
+        ]
+        try await withLibrary(files) { library in
+            let frames = try await library.store.mediaAssets(for: [library.id("c/IMG_1.HEIC"), library.id("c/IMG_2.HEIC")])
+            _ = await library.store.applyEnrichmentBatch(frames.values.map { asset in
+                EnrichmentResult(
+                    id: asset.id,
+                    metadata: AssetMetadata(timestamps: [], burstIdentifier: "B1"),
+                    enrichedKind: .image,
+                    thumbnailPath: nil,
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                    contentHash: nil
+                )
+            })
+            let first = ImportBatchID(unixMilliseconds: 1_800_000_000_000)
+            let second = ImportBatchID(unixMilliseconds: 1_800_000_001_000)
+            let stamp = try DatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
+            try await stamp.write { db in
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET import_batch_unix_ms = ?
+                    WHERE relative_path IN ('a/DSC1.ARW', 'a/DSC1.JPG', 'a/DSC2.JPG', 'a/DSC3.ARW', 'c/IMG_1.HEIC', 'c/IMG_2.HEIC')
+                    """,
+                    arguments: [first.unixMilliseconds]
+                )
+                try db.execute(
+                    sql: "UPDATE media_asset SET import_batch_unix_ms = ? WHERE relative_path = 'a/DSC3.JPG'",
+                    arguments: [second.unixMilliseconds]
+                )
+            }
+            try stamp.close()
+
+            let batches = try await library.store.importBatches()
+            // First: the DSC1 pair, DSC2, the DSC3 RAW alone, the burst. Second: the DSC3 JPEG.
+            #expect(batches == [
+                ImportBatchSummary(batchID: second, photoCount: 1),
+                ImportBatchSummary(batchID: first, photoCount: 4),
+            ])
+            let grid = try await library.store.orderedAssetIDs(
+                for: CatalogQueryDescriptor(scope: .importBatch(first)),
+                availableLibraryPaths: [library.rootPath]
+            )
+            let collapsed = PhotoStackCollapse.collapse(
+                ids: grid.ids, dayBuckets: [], coordinates: [], stacks: grid.stacks, expanded: []
+            )
+            #expect(collapsed.ids.count == 4)
+        }
+    }
+
     private struct Library {
         let store: CatalogStore
         let rootPath: LibraryRootPath

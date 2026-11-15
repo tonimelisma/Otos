@@ -70,6 +70,11 @@ nonisolated extension CatalogChangedFacts {
     /// Immich still alone in its asset's folder — leaves them standing.
     static let stackInputs: CatalogChangedFacts = [.membership, .choices, .stacks]
 
+    /// What the import batches' photo counts are built from: which rows exist and carry a
+    /// batch, the Live Photo identifiers that hide a movie, and what decides the stacks that
+    /// fold a batch's files (ADR 0052). Which file a stack shows changes no count.
+    static let importBatchInputs: CatalogChangedFacts = [.membership, .grouping, .stacks]
+
     /// What the Store's answer to a query's facts (`CatalogStore.searchFactMatches`) reads:
     /// which rows exist on which reachable roots, their capture dates, their locations, and
     /// who their faces are.
@@ -145,6 +150,14 @@ nonisolated struct CatalogProjectionReads: Sendable {
         let revisions: CatalogFactRevisions
     }
 
+    /// The import batches the last pass read, held while nothing their counts are built from
+    /// moved (`CatalogChangedFacts.importBatchInputs`): counting them stacks every batch's
+    /// folders, tens of milliseconds on the owner's 11,401 imported rows.
+    struct ImportBatches: Sendable {
+        let answer: [ImportBatchSummary]
+        let revisions: CatalogFactRevisions
+    }
+
     /// The last search answer (ADR 0048): what the index matched for one query over one scope.
     /// The index says when what it answers from moved (`PhotoSearchIndex.revision`, carried by
     /// the answer); the Store's fact matches move with the kinds of fact they read
@@ -162,6 +175,7 @@ nonisolated struct CatalogProjectionReads: Sendable {
     var filterOptions: FilterOptions?
     var collapse: Collapse?
     var stacks: Stacks?
+    var importBatches: ImportBatches?
     var search: Search?
 
     /// No answer yet: every read is made.
@@ -205,6 +219,17 @@ nonisolated struct CatalogProjectionReads: Sendable {
 
     /// The last stacks, while nothing they are built from changed after `revisions`. The
     /// order read uses them only over the roots they were built for.
+    /// The last import batches, when nothing their counts are built from moved after
+    /// `revisions`.
+    func importBatches(at revisions: CatalogFactRevisions) -> [ImportBatchSummary]? {
+        guard let importBatches,
+              !revisions.moved(CatalogChangedFacts.importBatchInputs, since: importBatches.revisions)
+        else {
+            return nil
+        }
+        return importBatches.answer
+    }
+
     func stacks(at revisions: CatalogFactRevisions) -> PhotoStackSQL.Built? {
         guard let stacks, !revisions.moved(CatalogChangedFacts.stackInputs, since: stacks.revisions) else {
             return nil

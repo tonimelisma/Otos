@@ -15,9 +15,7 @@ struct CatalogWindowViewModelEditTests {
     @Test func draggingRendersLiveAndLettingGoSavesAndRendersTheProducts() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
@@ -50,9 +48,7 @@ struct CatalogWindowViewModelEditTests {
     @Test func refreshingThePhotoTheLoupeShowsRaisesNoIndicator() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.selectAll()
             model.setViewMode(.loupe)
             #expect(model.downloadingSlots.contains(.loupe))
@@ -70,9 +66,7 @@ struct CatalogWindowViewModelEditTests {
     /// away from selects that photo again, and the panel follows it.
     @Test func undoingAnEditToAnotherPhotoRevealsIt() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAssets([library.ids[0]])
             try await waitUntil { model.editTarget?.id == library.ids[0] && model.canEdit }
@@ -92,9 +86,7 @@ struct CatalogWindowViewModelEditTests {
     @Test func undoAndRedoStepThroughSavesAndBringThePanelAlong() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
@@ -123,9 +115,7 @@ struct CatalogWindowViewModelEditTests {
     @Test func resetReturnsEveryLightControlToNeutralAsOneUndoStep() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget?.id == id && model.canEdit }
@@ -149,9 +139,7 @@ struct CatalogWindowViewModelEditTests {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
             try writeSolidJPEG(to: id.fileURL)
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             #expect(!model.canPickNeutral)
@@ -174,9 +162,7 @@ struct CatalogWindowViewModelEditTests {
 
     @Test func escapeDisarmsThePickerBeforeLeavingTheLoupe() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
@@ -195,9 +181,7 @@ struct CatalogWindowViewModelEditTests {
     @Test func theCropToolSavesADragAsOneStepAndEscapeEndsIt() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.selectAll()
 
             model.toggleCropTool()
@@ -226,9 +210,7 @@ struct CatalogWindowViewModelEditTests {
     @Test func aLineDrawnOnTheCanvasStraightensAlongIt() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.selectAll()
             model.toggleCropTool()
             try await waitUntil { model.canEdit && model.editCropBase?.id == id }
@@ -249,9 +231,7 @@ struct CatalogWindowViewModelEditTests {
     /// with its stored landscape size while it shows upright.
     @Test func cropGeometryUsesTheOpenedPhotosUprightSize() async throws {
         try await withEditableLibrary(fileCount: 1, fileExtension: "heic", write: writeRotatedHEIC) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
@@ -269,9 +249,7 @@ struct CatalogWindowViewModelEditTests {
     /// landscape guess from an unknown frame.
     @Test func cropStartsCustomAndOriginalStandsAsThePhotoDoes() async throws {
         try await withEditableLibrary(fileCount: 1, fileExtension: "heic", write: writeRotatedHEIC) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.selectAll()
 
             model.toggleCropTool()
@@ -301,10 +279,7 @@ struct CatalogWindowViewModelEditTests {
         }
         try await withEditableLibrary(fileCount: 1, write: write) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
-            defer { model.editAnalysisTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.canEdit }
@@ -338,10 +313,7 @@ struct CatalogWindowViewModelEditTests {
             )
         }
         try await withEditableLibrary(fileCount: 1, write: write) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
-            defer { model.editAnalysisTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.canEdit && model.autoStraightenState != .reading }
@@ -355,10 +327,7 @@ struct CatalogWindowViewModelEditTests {
     @Test func autoCropAppliesTheReadingForTheFrameAsShown() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
-            defer { model.editAnalysisTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.canEdit && model.autoCropState != .reading }
@@ -383,9 +352,7 @@ struct CatalogWindowViewModelEditTests {
     /// The ruler draws on the crop canvas, so arming it with the tool off turns the tool on.
     @Test func theRulerTurnsTheCropToolOn() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.canEdit }
@@ -399,9 +366,7 @@ struct CatalogWindowViewModelEditTests {
 
     @Test func leavingTheLoupeEndsTheCropTool() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.selectAll()
             model.toggleCropTool()
             try await waitUntil { model.canEdit }
@@ -416,9 +381,7 @@ struct CatalogWindowViewModelEditTests {
     /// The panel edits one photo; with two selected its controls have nothing to act on.
     @Test func aMultipleSelectionHasNoEditTarget() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             _ = model.applyGridClick(hit: library.ids[0], modifiers: [], orderedIDs: library.ids)
             try await waitUntil { model.editTarget?.id == library.ids[0] }
@@ -433,9 +396,7 @@ struct CatalogWindowViewModelEditTests {
 
     @Test func hidingThePanelLetsGoOfTheTarget() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
             try await waitUntil { model.editTarget != nil }

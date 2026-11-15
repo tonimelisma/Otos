@@ -103,7 +103,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation?.batchID == Self.batchID)
 
         model.applyState(Self.attachedState(model, importBatches: [
-            ImportBatchSummary(batchID: Self.batchID, assetCount: 1),
+            ImportBatchSummary(batchID: Self.batchID, photoCount: 1),
         ]))
         #expect(model.sidebarSelection == .importBatch(Self.batchID))
         #expect(model.selectedImportPresentation == nil)
@@ -125,14 +125,14 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.sidebarSelection == .library(Self.cardPath))
 
         model.applyState(Self.attachedState(model, importBatches: [
-            ImportBatchSummary(batchID: Self.batchID, assetCount: 5),
+            ImportBatchSummary(batchID: Self.batchID, photoCount: 5),
         ]))
         #expect(model.sidebarSelection == .importBatch(Self.batchID))
     }
 
     @Test func aUserWhoReturnsToTheCardIsNotPulledBackToTheBatch() {
         let model = makeModel()
-        let withRow = [ImportBatchSummary(batchID: Self.batchID, assetCount: 1)]
+        let withRow = [ImportBatchSummary(batchID: Self.batchID, photoCount: 1)]
         model.applyState(Self.attachedState(model, importBatches: withRow))
         model.selectSidebar(.library(Self.cardPath))
         model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
@@ -153,7 +153,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
         model.applyState(Self.state(
             resolvedSidebarSelection: .library(Self.libraryPath),
-            importBatches: [ImportBatchSummary(batchID: Self.batchID, assetCount: 1)],
+            importBatches: [ImportBatchSummary(batchID: Self.batchID, photoCount: 1)],
             queryGeneration: model.queryGeneration,
             libraries: [Self.library(Self.libraryPath)],
             removableSources: [Self.card(Self.cardPath)]
@@ -195,7 +195,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
     @Test func aJustCancelledBatchRowShowsNoBar() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: [
-            ImportBatchSummary(batchID: Self.batchID, assetCount: 3),
+            ImportBatchSummary(batchID: Self.batchID, photoCount: 3),
         ]))
         model.applyImportPresentations([Self.cancelled])
         model.selectSidebar(.importBatch(Self.batchID))
@@ -216,7 +216,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         for state in states {
             let model = makeModel()
             model.applyState(Self.attachedState(model, importBatches: [
-                ImportBatchSummary(batchID: Self.batchID, assetCount: 2),
+                ImportBatchSummary(batchID: Self.batchID, photoCount: 2),
             ]))
             model.applyImportPresentations([Self.presentation(batchID: Self.batchID, state: state, isFullyClean: false)])
             model.selectSidebar(.importBatch(Self.batchID))
@@ -229,7 +229,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
     @Test func ejectingTheSelectedCardFallsBackNormally() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: [
-            ImportBatchSummary(batchID: Self.batchID, assetCount: 42),
+            ImportBatchSummary(batchID: Self.batchID, photoCount: 42),
         ]))
         model.applyImportPresentations([Self.cancelled])
         model.selectSidebar(.library(Self.cardPath))
@@ -239,7 +239,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         // the ViewModel must not override it with the card's batch.
         model.applyState(Self.state(
             resolvedSidebarSelection: .library(Self.libraryPath),
-            importBatches: [ImportBatchSummary(batchID: Self.batchID, assetCount: 42)],
+            importBatches: [ImportBatchSummary(batchID: Self.batchID, photoCount: 42)],
             queryGeneration: model.queryGeneration,
             libraries: [Self.library(Self.libraryPath)]
         ))

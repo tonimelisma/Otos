@@ -421,7 +421,7 @@ struct CatalogStoreQueryPlanTests {
             return try (
                 orders.map { name, query in try (name, explainPlan(db, query: query)) },
                 explainPlan(db, query: types),
-                explainPlan(db, sql: "SELECT batch_ms FROM (\(CatalogQueryGateway.importBatchesSQL))"),
+                explainPlan(db, sql: CatalogQueryGateway.importBatchRowsSQL),
                 explainPlan(db, sql: EnrichmentClaimGateway.clearEnrichmentClaimsSQL),
                 explainPlan(db, sql: CatalogStore.releaseAllUnrenderedEditsSQL),
                 columns
@@ -435,6 +435,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(typesPlan.contains("idx_media_asset_stack_candidate"), "\(typesPlan)")
         #expect(tested.union(["best_format"]).isSubset(of: indexColumns["idx_media_asset_stack_candidate"] ?? []))
         #expect(batchesPlan.contains("idx_media_asset_import_batch"), "\(batchesPlan)")
+        #expect(!usesTemporarySort(batchesPlan), "\(batchesPlan)")
         #expect(tested.isSubset(of: indexColumns["idx_media_asset_import_batch"] ?? []))
         #expect(claimsPlan.contains("USING INDEX idx_media_asset_enrichment_claimed"), "\(claimsPlan)")
         #expect(editsPlan.contains("USING INDEX idx_media_asset_unrendered_edit"), "\(editsPlan)")

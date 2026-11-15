@@ -209,7 +209,7 @@ struct SidebarView: View {
                 .frame(width: 32)
                 .accessibilityLabel("Importing, \(completed) of \(total)")
         case .none, .indeterminate:
-            Text("\(batch.assetCount)")
+            Text("\(batch.photoCount)")
                 .foregroundStyle(DesignPalette.l3(for: colorScheme))
                 .monospacedDigit()
         }
@@ -322,7 +322,7 @@ private struct SidebarRow<Trailing: View>: View {
         importBatches: [
             ImportBatchSummary(
                 batchID: ImportBatchID(unixMilliseconds: 1_704_067_200_000),
-                assetCount: 12
+                photoCount: 12
             ),
         ],
         removableSources: [

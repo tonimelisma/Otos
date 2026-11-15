@@ -811,7 +811,7 @@ private struct AllImportsListView: View {
                     Text(ImportBatchFormatting.sidebarTitle(for: batch.batchID, among: batches))
                         .foregroundStyle(DesignPalette.label(for: colorScheme))
                     Spacer()
-                    Text("\(batch.assetCount) items")
+                    Text("\(batch.photoCount) items")
                         .foregroundStyle(DesignPalette.l3(for: colorScheme))
                         .monospacedDigit()
                 }

@@ -18,9 +18,7 @@ struct InThisPhotoRefreshTests {
                 sourceSize: asset.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
                 contentHash: nil
             )])
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.startReadingsRefresh()
             defer { model.readingsRefreshTask?.cancel() }
 

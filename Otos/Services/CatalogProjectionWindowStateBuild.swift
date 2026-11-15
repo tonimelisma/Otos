@@ -25,7 +25,14 @@ extension CatalogProjection {
         revisions: CatalogFactRevisions
     ) async throws -> CatalogProjectionBuild {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
-        let importBatches = try await store.importBatches()
+        var reads = previous
+        let importBatches: [ImportBatchSummary]
+        if let held = previous.importBatches(at: revisions) {
+            importBatches = held
+        } else {
+            importBatches = try await store.importBatches()
+            reads.importBatches = CatalogProjectionReads.ImportBatches(answer: importBatches, revisions: revisions)
+        }
         let placeNameLanguages = try await store.placeNameLanguages()
         let resolvedDescriptor = Self.resolvedDescriptor(
             for: request,
@@ -39,7 +46,7 @@ extension CatalogProjection {
                 request: request,
                 resolvedDescriptor: resolvedDescriptor,
                 importBatches: importBatches,
-                reads: previous
+                reads: reads
             )
         }
         // The query is read by the index's own owner; a pass only takes what it has read, so
@@ -51,7 +58,6 @@ extension CatalogProjection {
             return .queryBeingRead
         }
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
-        var reads = previous
         var reuse = CatalogProjectionReuse()
 
         // The filter's options are read after the window publishes, when they are owed; until

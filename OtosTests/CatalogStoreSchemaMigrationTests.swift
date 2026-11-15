@@ -1315,7 +1315,7 @@ struct CatalogStoreSchemaMigrationTests {
 
         let batches = try await store.importBatches()
         #expect(batches.map(\.batchID) == [newer, older])
-        #expect(batches.map(\.assetCount) == [2, 1])
+        #expect(batches.map(\.photoCount) == [2, 1])
 
         let newerIDs = try await store.assetIDs(inImportBatch: newer)
         #expect(Set(newerIDs.map(\.relativePath.rawValue)) == ["b.jpg", "c.jpg"])

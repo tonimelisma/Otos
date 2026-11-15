@@ -16,9 +16,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
     @Test func aFailedReadPublishesNoPanePreviewAndTheNextReconcileDoes() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             let hidden = try await HiddenCatalogTable("asset_metadata", in: library.databaseURL)
 
             model.openLoupe(id: id)
@@ -83,9 +81,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
     @Test func aFailedReadLeavesTheFocusedKindUnknownAndTheNextFocusReadsIt() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             let hidden = try await HiddenCatalogTable("asset_metadata", in: library.databaseURL)
 
             model.openLoupe(id: id)
@@ -100,9 +96,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
 
     @Test func aFailedReadOpensNoEditTargetAndTheNextRefreshDoes() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.openLoupe(id: library.ids[0])
             try await waitUntil { model.editTarget?.id == library.ids[0] }
@@ -122,9 +116,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
 
     @Test func aFailedReadShowsNoSharedChoiceAndTheNextTargetChangeDoes() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             _ = try await library.store.setMediaChoices([library.ids[0]: .liked, library.ids[1]: .liked])
             model.openLoupe(id: library.ids[0])
             try await waitUntil { model.currentTargetChoice == .liked }
@@ -143,9 +135,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
 
     @Test func aFailedAssetReadShowsNoOtherAssetsInfoAndNoInventedFacts() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             model.openLoupe(id: library.ids[0])
             model.toggleInspector(.info)
             try await waitUntil { model.photoInfo?.id == library.ids[0] }
@@ -182,9 +172,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
                 )])
                 try #require(try await library.store.metadata(for: id)?.locations.count == 1)
             }
-            let model = makeEditModel(store: library.store, ids: library.ids)
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel()
             let places = PlaceGate()
             model.placeNameLookup = PlaceNameLookup { await places.name(for: $0) }
 

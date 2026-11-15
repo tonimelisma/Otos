@@ -1673,7 +1673,8 @@ nonisolated struct ImportBatchID: Hashable, Sendable, Comparable {
 /// One nonempty import batch for Store history queries and the Imports sidebar.
 nonisolated struct ImportBatchSummary: Equatable, Sendable {
     let batchID: ImportBatchID
-    let assetCount: Int
+    /// The photos the batch's grid shows, a stack counting once (ADR 0052).
+    let photoCount: Int
 }
 
 /// The motion movie of a Live Photo, the member its still's item carries (ADR 0041).

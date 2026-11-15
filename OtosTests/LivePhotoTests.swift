@@ -121,9 +121,7 @@ struct LivePhotoTests {
             try await library.enrich("IMG_10.JPG", kind: .image, contentIdentifier: nil)
             let still = library.id("IMG_9.HEIC")
             let other = library.id("IMG_10.JPG")
-            let model = makeEditModel(store: library.store, ids: [still, other])
-            defer { model.editCommandTask?.cancel() }
-            defer { model.editRenderTask?.cancel() }
+            let model = library.makeEditModel(ids: [still, other])
 
             model.openLoupe(id: still)
             try await waitUntil { model.focusedLivePhotoMotion == library.id("IMG_9.MOV") }
@@ -142,6 +140,12 @@ struct LivePhotoTests {
     private struct Library {
         let store: CatalogStore
         let rootPath: LibraryRootPath
+        let models: EditModels
+
+        @MainActor
+        func makeEditModel(ids: [MediaAssetID]) -> CatalogWindowViewModel {
+            models.make(store: store, ids: ids)
+        }
 
         func id(_ path: String) -> MediaAssetID {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: path))
@@ -192,16 +196,19 @@ struct LivePhotoTests {
         let databaseURL = temp.appending(path: "Catalog/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(5))
+        let models = EditModels()
         do {
             try await store.addLibrary(url: root)
             let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning }
             try #require(scanned.testAssets.count == files.count)
             let rootPath = try CatalogPath.normalizedExistingDirectoryPath(for: root)
-            try await body(Library(store: store, rootPath: rootPath))
+            try await body(Library(store: store, rootPath: rootPath, models: models))
         } catch {
+            await models.finish()
             await store.shutdown()
             throw error
         }
+        await models.finish()
         await store.shutdown()
     }
 }

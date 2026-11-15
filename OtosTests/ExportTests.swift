@@ -25,7 +25,7 @@ struct ExportTests {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let existing = folder.appending(path: "edit-0.jpg")
             try Data("keep".utf8).write(to: existing)
-            let model = makeEditModel(store: library.store, ids: ids)
+            let model = library.makeEditModel(ids: ids)
             model.startExport()
             defer { model.exportTask?.cancel() }
             var settings = model.exportSettings
@@ -147,7 +147,7 @@ struct ExportTests {
 
     @Test func aMissingFolderStopsTheExportWithAReport() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
-            let model = makeEditModel(store: library.store, ids: library.ids)
+            let model = library.makeEditModel()
             model.startExport()
             defer { model.exportTask?.cancel() }
             var settings = model.exportSettings

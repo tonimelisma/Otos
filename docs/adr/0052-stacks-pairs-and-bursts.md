@@ -120,7 +120,9 @@ action, Move to Trash included: it trashes that one file. Each member keeps its 
 nothing is moved between members when the key changes.
 
 **Counting.** A stack counts once: day counts, On This Day's item counts, a person's photo
-count, a map stack's count and search results. A filter or search narrows a stack's members
+count, a map stack's count, an import batch's count in the sidebar and All Imports (the
+stacks that hold its rows, collapsed over its rows alone, so a pair split across two
+batches is a file in each, as each batch's grid shows it) and search results. A filter or search narrows a stack's members
 first: a stack collapses only when two or more of its units match, and its tile is the key
 member when that matches, else its first matching member; a single matching member shows as
 an ordinary photo. The duplicates scope never collapses.

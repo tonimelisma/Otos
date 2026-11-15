@@ -12,6 +12,59 @@ struct EditableLibrary {
     let ids: [MediaAssetID]
     let thumbnailDirectory: URL
     let databaseURL: URL
+    let models: EditModels
+
+    /// A view model over the library's store whose grid holds `ids` (the library's own when
+    /// none are given), with its edit lanes started, ended with the test (`EditModels`).
+    @MainActor
+    func makeEditModel(ids: [MediaAssetID]? = nil) -> CatalogWindowViewModel {
+        models.make(store: store, ids: ids ?? self.ids)
+    }
+}
+
+/// The edit view models a test makes over one store, ended before the store shuts down. A
+/// cancelled lane still finishes the step it is awaiting — a save, a render, an analysis —
+/// and holds the store while it does, so `finish` waits for each lane to end: a write that
+/// lands after the test's directory removal began leaves a file behind.
+@MainActor
+final class EditModels {
+    private var started: [CatalogWindowViewModel] = []
+
+    /// A view model over `store` whose grid holds `ids`, with its edit lanes started.
+    func make(store: CatalogStore, ids: [MediaAssetID]) -> CatalogWindowViewModel {
+        let model = CatalogWindowViewModel(
+            catalogStore: store,
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: .suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
+            trashFiles: .refusing
+        )
+        model.applyState(CatalogWindowState(
+            title: "Edit",
+            libraries: [],
+            removableSources: [],
+            mediaGrid: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids),
+            filterOptions: .empty,
+            resolvedSidebarSelection: .allMedia,
+            mediaEmptyState: .noMedia,
+            deviceConnectionBanner: nil
+        ))
+        model.startEditing(store: store)
+        started.append(model)
+        return model
+    }
+
+    func finish() async {
+        for model in started {
+            for lane in [model.editRenderTask, model.editCommandTask, model.editAnalysisTask] {
+                lane?.cancel()
+                await lane?.value
+            }
+        }
+        started.removeAll()
+    }
 }
 
 func withEditableLibrary(
@@ -35,6 +88,7 @@ func withEditableLibrary(
         at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
     )
     let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(5))
+    let models = EditModels()
     let thumbnailDirectory = try #require(store.thumbnailDirectory)
     try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
     do {
@@ -42,44 +96,21 @@ func withEditableLibrary(
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try #require(Set(scanned.testAssets.map(\.id)) == Set(ids))
         try await body(EditableLibrary(
-            store: store, root: root, ids: ids, thumbnailDirectory: thumbnailDirectory, databaseURL: databaseURL
+            store: store, root: root, ids: ids, thumbnailDirectory: thumbnailDirectory, databaseURL: databaseURL,
+            models: models
         ))
     } catch {
+        await models.finish()
         await store.shutdown()
         throw error
     }
+    await models.finish()
     await store.shutdown()
 }
 
-/// A view model over `store` whose grid holds `ids`, with its edit lanes started.
 /// A volume with a terabyte free, for tests that write: the free-space floor (ADR 0027)
 /// reads this instead of the disk the tests run on, which parallel checks fill and drain.
 nonisolated let ampleVolumeCapacity: @Sendable (URL) -> Int64? = { _ in 1 << 40 }
-
-@MainActor
-func makeEditModel(store: CatalogStore, ids: [MediaAssetID]) -> CatalogWindowViewModel {
-    let model = CatalogWindowViewModel(
-        catalogStore: store,
-        startsStallMonitor: false,
-        startsEnrichment: false,
-        startsSourceMonitoring: false,
-        preferencesDomain: .suite(UUID().uuidString),
-        volumeCapacity: ampleVolumeCapacity,
-        trashFiles: .refusing
-    )
-    model.applyState(CatalogWindowState(
-        title: "Edit",
-        libraries: [],
-        removableSources: [],
-        mediaGrid: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids),
-        filterOptions: .empty,
-        resolvedSidebarSelection: .allMedia,
-        mediaEmptyState: .noMedia,
-        deviceConnectionBanner: nil
-    ))
-    model.startEditing(store: store)
-    return model
-}
 
 /// A 96×64 left-to-right gray gradient, so exposure and contrast visibly move its pixels.
 func writeGradientJPEG(to url: URL) throws {

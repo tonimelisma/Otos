@@ -933,8 +933,9 @@ extension CatalogStore {
     /// and `roots` capture.
     func importBatches() async throws -> [ImportBatchSummary] {
         let dbWriter = try database()
+        let rootPaths = roots.pathsByRowID
         return try await dbWriter.read { db in
-            try CatalogQueryGateway.fetchImportBatches(db: db)
+            try CatalogQueryGateway.fetchImportBatches(rootPaths: rootPaths, db: db)
         }
     }
 
