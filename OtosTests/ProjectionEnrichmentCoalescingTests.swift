@@ -12,15 +12,18 @@ struct ProjectionEnrichmentCoalescingTests {
     private static let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
 
     private func seededScanner() -> CatalogScanner {
-        CatalogScanner { _, _, batchHandler in
+        CatalogScanner { rootPath, _, batchHandler in
+            // A second library's files are not copies of the first's (ADR 0054): another size
+            // and a capture half a second later.
+            let second = rootPath.rawValue.hasSuffix("/Family/") || rootPath.rawValue.hasSuffix("/Family")
             let files = (0 ..< Self.assetCount).map { index in
                 ScannedMediaFile(
                     relativePath: MediaRelativePath(rawValue: String(format: "a%05d.jpg", index)),
                     name: String(format: "a%05d.jpg", index),
                     contentTypeIdentifier: "public.jpeg",
-                    byteSize: 4,
-                    createdAt: Self.baseDate.addingTimeInterval(Double(index)),
-                    contentModifiedAt: Self.baseDate.addingTimeInterval(Double(index))
+                    byteSize: second ? 5 : 4,
+                    createdAt: Self.baseDate.addingTimeInterval(Double(index) + (second ? 0.5 : 0)),
+                    contentModifiedAt: Self.baseDate.addingTimeInterval(Double(index) + (second ? 0.5 : 0))
                 )
             }
             try await batchHandler(files)
@@ -278,6 +281,101 @@ struct ProjectionEnrichmentCoalescingTests {
         #expect(shown.last?.mediaGrid.orderedAssetIDs == [library.id("a.jpg")])
         #expect(await projection.orderQueryCount > beforeAssignment)
         await library.store.shutdown()
+    }
+
+    /// Two libraries published under All Media, settled, then one library opened and
+    /// settled: All Media's answers are held while the user is in the library.
+    private func windowInALibraryAfterAllMedia() async throws -> (Window, library: LibraryRootPath) {
+        let temp = try makeTestDirectory()
+        let firstURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let secondURL = temp.appending(path: "Family", directoryHint: .isDirectory)
+        for url in [firstURL, secondURL] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        let store = CatalogStore(location: .inMemory, scanner: seededScanner())
+        let projection = CatalogProjection(cadence: .milliseconds(25))
+        let recorder = AsyncValueRecorder<CatalogWindowState>()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recording = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: firstURL)
+        try await store.addLibrary(url: secondURL)
+        _ = try await waitForCatalogStoreState(store) {
+            !$0.isScanning && $0.testAssets.count == 2 * Self.assetCount
+        }
+        // With one library All Media resolved to it, and the projection kept that resolution;
+        // with two, the user can open All Media.
+        try await waitForProjectionQuiescence(projection)
+        await projection.updateSidebarSelection(.allMedia)
+        _ = await recorder.waitForValues { $0.last?.resolvedSidebarSelection == .allMedia }
+        try await waitForProjectionQuiescence(projection)
+        let ids = try #require(await recorder.snapshot().last?.mediaGrid.orderedAssetIDs)
+        try #require(ids.count == 2 * Self.assetCount, "All Media shows \(ids.count)")
+        let assets = try await store.mediaAssets(for: ids)
+        let libraryPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
+        let library = SidebarSelection.library(libraryPath)
+        await projection.updateSidebarSelection(library)
+        _ = await recorder.waitForValues { $0.last?.resolvedSidebarSelection == library }
+        try await waitForProjectionQuiescence(projection)
+        let shown = await recorder.snapshot().last?.mediaGrid.orderedAssetIDs.count
+        try #require(shown == Self.assetCount, "the library shows \(String(describing: shown))")
+        let window = Window(store: store, projection: projection, recorder: recorder, recording: recording, ids: ids, assets: assets)
+        return (window, libraryPath)
+    }
+
+    /// ARC-018: All Media's order is held while the user is in another scope that reads its
+    /// own, so returning to it with no fact moved reads nothing and shows what it showed.
+    @Test func aReturnToAllMediaWithNoFactMovedReadsNothing() async throws {
+        let (window, _) = try await windowInALibraryAfterAllMedia()
+        defer { window.recording.cancel() }
+        let before = await window.reads
+        let published = await window.recorder.count()
+
+        await window.projection.updateSidebarSelection(.allMedia)
+        _ = await window.recorder.waitForValues { $0.last?.resolvedSidebarSelection == .allMedia }
+        try await waitForProjectionQuiescence(window.projection)
+
+        // Every publication of the return shows the held order; only the filter's options,
+        // held for one row and read after the window publishes, are read again.
+        let returns = await window.recorder.snapshot().dropFirst(published)
+        #expect(!returns.isEmpty && returns.allSatisfy { $0.mediaGrid.orderedAssetIDs == window.ids })
+        let after = await window.reads
+        #expect(after.order == before.order, "before=\(before) after=\(after)")
+        await window.store.shutdown()
+    }
+
+    /// ARC-018: a return to a scope whose facts moved while the user was elsewhere paints what
+    /// it last showed at once, without a read, and the pass after it reads the moved order
+    /// again and republishes: a capture date moved in the library reorders All Media only in
+    /// the second publication.
+    @Test func aReturnToAScopeWhoseFactsMovedPaintsWhatItHeldThenReadsAgain() async throws {
+        let (window, library) = try await windowInALibraryAfterAllMedia()
+        defer { window.recording.cancel() }
+        let oldest = try #require(window.ids.last { $0.libraryRootPath == library })
+        let asset = try #require(window.assets[oldest])
+        try await window.publish {
+            _ = await window.store.applyEnrichmentBatch([
+                detailEnrichment(for: asset, captureDate: Self.baseDate.addingTimeInterval(10000)),
+            ])
+        }
+        let before = await window.reads
+        let published = await window.recorder.count()
+
+        await window.projection.updateSidebarSelection(.allMedia)
+        _ = await window.recorder.waitForValues { $0.last?.resolvedSidebarSelection == .allMedia }
+        try await waitForProjectionQuiescence(window.projection)
+        let returns = await window.recorder.snapshot().dropFirst(published)
+
+        #expect(returns.first?.resolvedSidebarSelection == .allMedia)
+        #expect(returns.first?.mediaGrid.orderedAssetIDs == window.ids, "the first paint is the held order")
+        #expect(returns.last?.mediaGrid.orderedAssetIDs.first == oldest, "the next pass read the moved date")
+        let after = await window.reads
+        #expect(after.order == before.order + 1, "before=\(before) after=\(after)")
+        await window.store.shutdown()
     }
 
     private func detailEnrichment(

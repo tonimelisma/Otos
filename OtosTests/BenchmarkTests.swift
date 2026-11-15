@@ -73,7 +73,30 @@ struct BenchmarkTests {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
             }
-            #expect(metrics.reuse == CatalogProjectionReuse(order: true, filterOptions: true, collapse: true))
+            #expect(metrics.reuse == CatalogProjectionReuse(
+                order: true, filterOptions: true, collapse: true, importBatches: true, placeNameLanguages: true
+            ))
+            #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
+        }
+
+        // The first paint of a return to All Media after a capture date moved elsewhere: the
+        // held order, options and collapse, answered from although the date moved since; the
+        // pass after it reads the order again (`projection.windowState.allMedia`).
+        var movedSince = CatalogFactRevisions()
+        movedSince.record([.captureDate, .stacks])
+        try await Benchmark.measure("projection.windowState.allMedia.returnHeld") {
+            guard case let .built(state, metrics, _, _) = try await projection.buildWindowState(
+                store: store,
+                libraries: libraries,
+                request: request,
+                reads: lastReads,
+                revisions: movedSince,
+                answerFromHeld: true
+            ) else {
+                Issue.record("nothing is searched, so nothing waits on a reading")
+                return
+            }
+            #expect(metrics.reuse.held && metrics.reuse.order && metrics.reuse.collapse)
             #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
         }
 

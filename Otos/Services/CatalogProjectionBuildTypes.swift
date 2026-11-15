@@ -115,6 +115,16 @@ nonisolated extension CatalogChangedFacts {
 /// what they were and no kind of fact it depends on has changed, and reads it again
 /// otherwise; nothing else decides it. A pass takes these as a value and returns the ones it
 /// built with its state, which the projection keeps only once that state is published.
+///
+/// The held set, each keyed by what it was read for and the facts it is read from:
+/// - the ordered assets, one per `Slot` (All Media's, and the last other scope's);
+/// - the stack collapse, one per `Slot`;
+/// - the whole-roots stacks (`stackInputs`);
+/// - the filter's options, for one sidebar row;
+/// - the import batches, for one count scope (`importBatchInputs`);
+/// - the place-name languages (`placeNameLanguageInputs`);
+/// - the shown search's answer, keyed also by the index's revision.
+/// `CatalogProjectionReuse` names which of them a pass answered from (`reused=`).
 nonisolated struct CatalogProjectionReads: Sendable {
     struct Order: Sendable {
         let descriptor: CatalogQueryDescriptor
@@ -172,15 +182,41 @@ nonisolated struct CatalogProjectionReads: Sendable {
         let matches: SearchMatches
     }
 
-    var order: Order?
+    /// The languages the map's cells are named in, held with the revisions they were read at.
+    struct PlaceNameLanguages: Sendable {
+        let answer: Set<PlaceNameLanguage>
+        let revisions: CatalogFactRevisions
+    }
+
+    /// Where a scope's order and collapse are held. All Media, the scope a return to the
+    /// library lands on, keeps its own answers while the user is anywhere else; every other
+    /// scope shares one slot, the last one read. So at most two orders and two collapses are
+    /// held: All Media's (at owner scale about 165,000 IDs, some 20 MB with its collapse, most
+    /// of it shared with the published window while All Media is shown) and one more.
+    enum Slot: Hashable, Sendable {
+        case allMedia
+        case other
+
+        init(_ scope: SidebarSelection) {
+            self = scope == .allMedia ? .allMedia : .other
+        }
+    }
+
+    /// The last order read in each slot.
+    var orders: [Slot: Order] = [:]
     var filterOptions: FilterOptions?
-    var collapse: Collapse?
+    /// The last collapse made in each slot.
+    var collapses: [Slot: Collapse] = [:]
     var stacks: Stacks?
     var importBatches: ImportBatches?
+    var placeNameLanguages: PlaceNameLanguages?
     var search: Search?
 
     /// No answer yet: every read is made.
     static let none = CatalogProjectionReads()
+
+    /// What the place-name languages are read from.
+    static let placeNameLanguageInputs: CatalogChangedFacts = .placeNames
 
     /// The last order, when it answers `descriptor` over `paths` and nothing it depends on
     /// changed after `revisions`.
@@ -189,12 +225,37 @@ nonisolated struct CatalogProjectionReads: Sendable {
         availableLibraryPaths paths: Set<LibraryRootPath>,
         at revisions: CatalogFactRevisions
     ) -> CatalogOrderedAssets? {
-        guard let order, order.descriptor == descriptor, order.availableLibraryPaths == paths,
+        guard let order = heldOrder(for: descriptor, availableLibraryPaths: paths),
               !revisions.moved(.orderInputs(of: descriptor), since: order.revisions)
         else {
             return nil
         }
         return order.answer
+    }
+
+    /// The last order read for `descriptor` over `paths`, whether or not a fact it depends on
+    /// moved since: what a scope the user returns to shows while it is read again.
+    func heldOrder(
+        for descriptor: CatalogQueryDescriptor,
+        availableLibraryPaths paths: Set<LibraryRootPath>
+    ) -> Order? {
+        guard let order = orders[Slot(descriptor.scope)], order.descriptor == descriptor,
+              order.availableLibraryPaths == paths
+        else {
+            return nil
+        }
+        return order
+    }
+
+    /// The last place-name languages, when nothing they are read from moved after
+    /// `revisions`, or, with `current` false, whatever they were.
+    func placeNameLanguages(at revisions: CatalogFactRevisions, current: Bool) -> Set<PlaceNameLanguage>? {
+        guard let placeNameLanguages,
+              !current || !revisions.moved(Self.placeNameLanguageInputs, since: placeNameLanguages.revisions)
+        else {
+            return nil
+        }
+        return placeNameLanguages.answer
     }
 
     /// The last search answer, when it answers `encoding` with `facts` over `scope` from the
@@ -219,10 +280,15 @@ nonisolated struct CatalogProjectionReads: Sendable {
     }
 
     /// The last import batches, when they were counted for `countScope` and nothing their
-    /// counts are built from moved after `revisions`.
-    func importBatches(countScope: SidebarSelection?, at revisions: CatalogFactRevisions) -> [ImportBatchSummary]? {
+    /// counts are built from moved after `revisions`, or, with `current` false, whatever they
+    /// were.
+    func importBatches(
+        countScope: SidebarSelection?,
+        at revisions: CatalogFactRevisions,
+        current: Bool
+    ) -> [ImportBatchSummary]? {
         guard let importBatches, importBatches.countScope == countScope,
-              !revisions.moved(CatalogChangedFacts.importBatchInputs, since: importBatches.revisions)
+              !current || !revisions.moved(CatalogChangedFacts.importBatchInputs, since: importBatches.revisions)
         else {
             return nil
         }
@@ -281,10 +347,18 @@ nonisolated struct CatalogProjectionReuse: Equatable {
     var stacks = false
     /// The index was not asked: the last search answer still held.
     var search = false
+    /// The import batches the sidebar counts came from the last read.
+    var importBatches = false
+    /// The languages the map's cells are named in came from the last read.
+    var placeNameLanguages = false
+    /// The pass answered from what it held although a fact it depends on moved since: the
+    /// first pass of a scope the user returned to, which the next pass reads again.
+    var held = false
 
     var diagnosticDescription: String {
         let reused = [
             ("order", order), ("filterOptions", filterOptions), ("collapse", collapse), ("stacks", stacks), ("search", search),
+            ("importBatches", importBatches), ("placeNameLanguages", placeNameLanguages), ("held", held),
         ]
         .filter(\.1).map(\.0)
         return reused.isEmpty ? "none" : reused.joined(separator: ",")

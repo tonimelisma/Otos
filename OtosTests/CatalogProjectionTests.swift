@@ -170,6 +170,45 @@ struct CatalogProjectionTests {
         #expect(states.contains { $0.libraries.map(\.path) == [rootPath] })
     }
 
+    /// A superseded build is cancelled and never waited for (ADR 0032): a cancelled read ends
+    /// only when its statement or its wait for a connection does. The intent's scope is built
+    /// and published while the build it superseded is still parked, and what that build
+    /// returns when it ends is never published.
+    @Test func anIntentNeverWaitsForTheBuildItSuperseded() async throws {
+        let store = CatalogStore(location: .inMemory)
+        try await store.start(scansSavedLibraries: false)
+        let probe = ProjectionProbe()
+        let projection = makeProbedProjection(probe, cadence: .seconds(3600))
+        let recorder = StateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+
+        let pictures = SidebarSelection.library(LibraryRootPath(rawValue: "/Users/example/Pictures"))
+        await probe.waitUntilInFlight()
+        await projection.updateSidebarSelection(pictures)
+
+        // The first build is still parked: it ignores its cancellation, as a read waiting for
+        // a connection does.
+        let states = await recorder.waitForCount(1) { states in
+            states.contains { $0.resolvedSidebarSelection == pictures }
+        }
+        #expect(await probe.maximumInFlight() == 2)
+        #expect(await projection.supersededCount == 1)
+        #expect(!states.contains { $0.title == "Call 1" })
+
+        await probe.releaseBuilds()
+        try await waitUntil { await probe.cancelledBuildCount() == 1 }
+        try await waitUntil { await projection.isQuiescent }
+        #expect(await !recorder.snapshot().contains { $0.title == "Call 1" })
+    }
+
     @Test func publicationLoopRunsOneProjectionAtATimeAndRerunsWhenDirtyDuringRun() async throws {
         let store = CatalogStore(location: .inMemory)
         // Projection builds only for a loaded catalog (APP-044).
@@ -196,18 +235,17 @@ struct CatalogProjectionTests {
             recordingTask.cancel()
         }
 
-        // The intent supersedes the parked build, but the loop still waits for that build to
-        // end before it starts the next one: never two at once.
-        let pictures = SidebarSelection.library(LibraryRootPath(rawValue: "/Users/example/Pictures"))
+        // A store change made while the build is parked does not supersede it; the loop runs
+        // one pass at a time and builds again for the change once the parked build publishes.
         await probe.waitUntilInFlight()
-        await projection.updateSidebarSelection(pictures)
+        let heard = await projection.detailRefreshGeneration
+        try await store.addLibrary(url: makeTestDirectory())
+        try await waitUntil { await projection.detailRefreshGeneration > heard }
         await probe.releaseBuilds()
 
-        _ = await recorder.waitForCount(1) { states in
-            states.contains { $0.resolvedSidebarSelection == pictures }
-        }
+        try await waitUntil { await probe.callCount() >= 2 }
+        try await waitUntil { await projection.isQuiescent }
         #expect(await probe.maximumInFlight() == 1)
-        #expect(await probe.callCount() >= 2)
     }
 
     /// A scope switch never waits for the build of the scope the user left (ADR 0032): the

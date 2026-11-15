@@ -930,7 +930,7 @@ nonisolated enum PhotoStackSQL {
     }
 
     private static func fetchCandidates(query: SQLQuery, start: ContinuousClock.Instant, db: Database) throws -> Candidates {
-        // Prepared once per connection: the text depends only on the root count, and a keyed
+        // Prepared once per connection: the text depends only on the root count, and a narrow
         // scope's read runs on every publication of a batch while it imports.
         let rows = try Row.fetchCursor(db.cachedStatement(sql: query.sql), arguments: query.arguments)
         var byRoot: [Int64: [PhotoStackCandidate]] = [:]

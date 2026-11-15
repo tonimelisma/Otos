@@ -461,7 +461,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(!plan.contains("SCAN media_asset"))
         #expect(!plan.contains("SCAN still"))
 
-        // A keyed scope's candidates start from its rows' folders and bursts, and
+        // A narrow scope's candidates start from its rows' folders and bursts, and
         // seek every step by index; no step walks a root (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
         let scoped = PhotoStackSQL.scopedCandidateQuery(folders: #"[[\#(rootID1),"a/"]]"#, bursts: #"[[\#(rootID1),"B1"]]"#)
         let scopedPlan = try await dbQueue.read { db in try explainPlan(db, query: scoped) }
@@ -698,7 +698,7 @@ struct CatalogStoreQueryPlanTests {
     /// ordered by and the People filter, for one library and for several. On the owner's
     /// catalog (2026-11-14: 147,024 rows of one account, 14,614 faces of its most
     /// photographed person) the walk never let a person's photos open. The person's photos
-    /// themselves are found from the person's faces, once each: a keyed scope
+    /// themselves are found from the person's faces, once each: a narrow scope
     /// (`keyedScopesSeekTheirOwnRowsInsteadOfWalkingTheOrder`).
     @Test func whetherARowHoldsAPersonIsOneSeekByPersonAndPhoto() async throws {
         let temp = try makeTestDirectory()

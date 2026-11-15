@@ -17,27 +17,56 @@ extension CatalogProjection {
     ///
     /// The People gallery shows people, not items (ADR 0047): it reads no order, no stacks, no
     /// search and no options, and says only what its libraries' state is.
+    ///
+    /// With `answerFromHeld`, a read the projection holds an answer for is answered from it
+    /// even when a fact it depends on moved since (`CatalogProjectionReuse.held` says one
+    /// was): the first pass of a scope the user returns to shows what that scope last showed at
+    /// once, and the pass after it reads again whatever moved. A read with no answer held is
+    /// made either way.
     func buildWindowState(
         store: CatalogStore,
         libraries unsortedLibraries: [CatalogLibraryState],
         request: CatalogQueryRequest,
         reads previous: CatalogProjectionReads,
-        revisions: CatalogFactRevisions
+        revisions: CatalogFactRevisions,
+        answerFromHeld: Bool = false
     ) async throws -> CatalogProjectionBuild {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         var reads = previous
+        var reuse = CatalogProjectionReuse()
         let selection = request.descriptor.scope
         let countScope = ImportBatchListing.countScope(of: selection)
         let importBatches: [ImportBatchSummary]
-        if let held = previous.importBatches(countScope: countScope, at: revisions) {
+        if let held = previous.importBatches(countScope: countScope, at: revisions, current: true) {
             importBatches = held
+            reuse.importBatches = true
+        } else if answerFromHeld, let held = previous.importBatches(countScope: countScope, at: revisions, current: false) {
+            importBatches = held
+            reuse.importBatches = true
+            reuse.held = true
         } else {
             importBatches = try await store.importBatches(countingFor: selection)
             reads.importBatches = CatalogProjectionReads.ImportBatches(
                 countScope: countScope, answer: importBatches, revisions: revisions
             )
         }
-        let placeNameLanguages = try await store.placeNameLanguages()
+        let placeNameLanguages: Set<PlaceNameLanguage>
+        if let held = previous.placeNameLanguages(at: revisions, current: true) {
+            placeNameLanguages = held
+            reuse.placeNameLanguages = true
+        } else if answerFromHeld, let held = previous.placeNameLanguages(at: revisions, current: false) {
+            placeNameLanguages = held
+            reuse.placeNameLanguages = true
+            reuse.held = true
+        } else {
+            placeNameLanguages = try await store.placeNameLanguages()
+            reads.placeNameLanguages = CatalogProjectionReads.PlaceNameLanguages(
+                answer: placeNameLanguages, revisions: revisions
+            )
+        }
+        // A build an intent superseded may still be finishing its read; it must not reach the
+        // search reader's state or count a read it never publishes.
+        try Task.checkCancellation()
         let resolvedDescriptor = Self.resolvedDescriptor(
             for: request,
             allRoots: allRoots,
@@ -50,7 +79,8 @@ extension CatalogProjection {
                 request: request,
                 resolvedDescriptor: resolvedDescriptor,
                 importBatches: importBatches,
-                reads: reads
+                reads: reads,
+                reuse: reuse
             )
         }
         // The query is read by the index's own owner; a pass only takes what it has read, so
@@ -62,7 +92,6 @@ extension CatalogProjection {
             return .queryBeingRead
         }
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
-        var reuse = CatalogProjectionReuse()
 
         // The filter's options are read after the window publishes, when they are owed; until
         // then the window carries the last ones read for its row, or none. An injected test
@@ -93,6 +122,13 @@ extension CatalogProjection {
             ordered = held
             orderQueryMs = 0
             reuse.order = true
+        } else if answerFromHeld,
+                  let held = previous.heldOrder(for: resolvedDescriptor, availableLibraryPaths: availableLibraryPaths)
+        {
+            ordered = held.answer
+            orderQueryMs = 0
+            reuse.order = true
+            reuse.held = true
         } else {
             orderQueryCount &+= 1
             let orderStart = ContinuousClock.now
@@ -103,7 +139,7 @@ extension CatalogProjection {
                 heldStacks: heldStacks
             )
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
-            reads.order = CatalogProjectionReads.Order(
+            reads.orders[CatalogProjectionReads.Slot(resolvedDescriptor.scope)] = CatalogProjectionReads.Order(
                 descriptor: resolvedDescriptor,
                 availableLibraryPaths: availableLibraryPaths,
                 revisions: revisions,
@@ -116,7 +152,7 @@ extension CatalogProjection {
                 if !heldStill {
                     stackReadCount &+= 1
                     // Only a whole-roots build answers the next scope over the same roots; a
-                    // keyed scope's own stacks answer that scope alone, and are read again,
+                    // narrow scope's own stacks answer that scope alone, and are read again,
                     // in milliseconds, rather than replace held whole-roots stacks.
                     if built.span == .roots {
                         reads.stacks = CatalogProjectionReads.Stacks(built: built, revisions: revisions)
@@ -155,13 +191,14 @@ extension CatalogProjection {
             }
         }
         let collapseStart = ContinuousClock.now
+        let collapseSlot = CatalogProjectionReads.Slot(resolvedDescriptor.scope)
         let collapse = Self.collapseStacks(
             ordered.stacks,
             expanded: request.expandedStacks,
             in: &unsearched,
-            last: previous.collapse
+            last: previous.collapses[collapseSlot]
         )
-        reads.collapse = collapse.made
+        reads.collapses[collapseSlot] = collapse.made
         reuse.collapse = collapse.reused
         let collapseMs = DiagnosticsTiming.milliseconds(since: collapseStart)
         Self.capAnniversaries(in: &unsearched)
@@ -194,7 +231,8 @@ extension CatalogProjection {
         request: CatalogQueryRequest,
         resolvedDescriptor: CatalogQueryDescriptor,
         importBatches: [ImportBatchSummary],
-        reads: CatalogProjectionReads
+        reads: CatalogProjectionReads,
+        reuse: CatalogProjectionReuse
     ) -> CatalogProjectionBuild {
         let facts = makeBuildFacts(
             allRoots: allRoots,
@@ -211,7 +249,7 @@ extension CatalogProjection {
             filterOptions: .empty
         )
         state.mediaEmptyState = CatalogWindowPolicy.peopleGalleryLibrariesState(libraries: allRoots)
-        return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: 0), reads, nil)
+        return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: 0, reuse: reuse), reads, nil)
     }
 
     /// Reads the options `owed` names. Run by the pass after the window it owes them to is

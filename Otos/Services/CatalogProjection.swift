@@ -12,24 +12,37 @@ import OSLog
 /// advances `covered` to it when its build succeeds. Whether work is owed is
 /// `requested != covered` — nothing a finishing pass does can erase a request made while
 /// it ran, because a pass can only cover what it started from. One consumer task
-/// (`loopTask`) runs every pass off a `bufferingNewest(1)` doorbell, so builds never
-/// overlap. Intents and a store change that arrives before the first catalog load ring
+/// (`loopTask`) runs every pass off a `bufferingNewest(1)` doorbell, so passes never
+/// overlap; only a build an intent superseded can still be ending its cancelled read while
+/// the next pass runs, and it publishes and keeps nothing. Intents and a store change that arrives before the first catalog load ring
 /// the doorbell directly; other store changes wait for `cadenceTask`, which rings it
 /// every `cadence` while the projection is behind.
 ///
 /// A pass repeats a catalog read only when its answer can have changed (ADR 0005). Each Store
 /// change says which kinds of fact it touched (`CatalogChangedFacts`), and `storeDidChange`
-/// counts them in `factRevisions`. `reads` keeps the last answer of the order read, of the
-/// filter's options, of the stack collapse and of the search, each with what it was read for
-/// and the revisions its pass started from; a pass reuses one while those inputs are unchanged
-/// and no kind of fact it depends on moved (`CatalogChangedFacts.orderInputs(of:)`,
-/// `filterOptionsInputs(of:)`, `searchFactInputs`), and reads it again otherwise. The search
+/// counts them in `factRevisions`. `reads` keeps the last answer of each held read — the
+/// order, the stack collapse, the whole-roots stacks, the filter's options, the import
+/// batches, the place-name languages and the search (the list is `CatalogProjectionReads`'s)
+/// — each with what it was read for and the revisions its pass started from; a pass reuses
+/// one while those inputs are unchanged and no kind of fact it depends on moved
+/// (`CatalogChangedFacts.orderInputs(of:)`, `stackInputs`, `filterOptionsInputs(of:)`,
+/// `importBatchInputs`, `placeNameLanguageInputs`, `searchFactInputs`), reads it again
+/// otherwise, and logs which it reused (`reused=`). The search
 /// answer is also keyed by the index's own `revision`, which moves when what it answers from
 /// does. An enrichment write that
 /// touched only faces or a tile's detail therefore publishes its detail refresh without
 /// reading the order or the options, while one that moved a capture date reads the order
 /// again. A pass takes `reads` as a value and keeps the reads it built from only when it
 /// publishes, so a failed or cancelled pass leaves the last answers standing.
+///
+/// A scope the user returns to paints from what it last showed. All Media's order and
+/// collapse are held while the user is elsewhere, beside the last other scope's
+/// (`CatalogProjectionReads.Slot`). The first pass of an intent answers every read it holds an
+/// answer for from that answer, even when a fact it depends on moved since
+/// (`answerFromHeld`); when one had moved, it publishes that window, covers nothing, and the
+/// next pass reads again what moved and republishes — what the window would have shown had
+/// the user stayed and waited for the cadence to bring it up to date. A scope with nothing
+/// held is read.
 ///
 /// The duplicate groups and People have their own owners, `DuplicatesProjection` and
 /// `PeopleAssignment`, each with its own loop. A pass publishes the window with what they
@@ -50,9 +63,9 @@ import OSLog
 /// pass's build, and its owed options read, run in a task the pass waits on (`inFlight`); an
 /// intent that changes what is shown — another scope, filter, sort or search — cancels that
 /// task when it is for the descriptor the user left. That work is not published and never can
-/// be, since what it answers is no longer asked; GRDB interrupts its statement, so its reader
-/// is free at once. The superseded pass publishes nothing, covers nothing and rings the loop,
-/// which builds the new request next. A store change never supersedes anything: the build in
+/// be, since what it answers is no longer asked; GRDB interrupts its statement. The pass does
+/// not wait for the cancelled work to end: it publishes nothing, covers nothing and rings the
+/// loop at once, which builds the new request next. A store change never supersedes anything: the build in
 /// flight is for what is shown, and the next pass takes the change up. Teardown
 /// (`removeContinuation`) cancels the loop itself, and a pass that is torn down or whose read
 /// fails publishes nothing: it leaves `covered` where it was, so the request stays
@@ -146,6 +159,11 @@ actor CatalogProjection {
     /// The work an intent cancelled, so its pass knows the error it ends with is that.
     private var supersededWork: UInt64?
     private var nextWorkID: UInt64 = 0
+    /// The pass waiting on supersedable work, resumed when it ends or is superseded.
+    private var workWaiter: WorkWaiter?
+    /// The intent generation whose first pass published what the projection held
+    /// (`CatalogProjectionReuse.held`): the passes after it for that generation read.
+    private var heldPublishedGeneration: UInt64?
     /// Window states published so far. Read with `isQuiescent`, it says whether a change
     /// published anything, without depending on when a subscriber receives it.
     private(set) var publicationCount: UInt64 = 0
@@ -480,45 +498,58 @@ private extension CatalogProjection {
             "asked": queryRequest.descriptor.scope.diagnosticDescription,
         ])
         inFlight.cancel()
+        workEnded(inFlight.id)
     }
 
     /// Runs `work` as the pass's in-flight work, which an intent whose descriptor it does not
     /// answer cancels (`supersede()`). Throws `CatalogProjectionWorkSuperseded` when it did; a
     /// teardown of the loop cancels the work with it and rethrows its error.
+    ///
+    /// The pass waits for the work to end or for an intent to supersede it, whichever comes
+    /// first: superseded work is cancelled and left to end on its own, publishing nothing,
+    /// because a cancelled read can only end when its statement or its wait for a connection
+    /// does, and what the user asked for next must not wait on that.
     private func supersedable<Value: Sendable>(
         _ kind: InFlightWork.Kind,
         _ work: @escaping @Sendable () async throws -> Value
     ) async throws -> Value {
         nextWorkID &+= 1
         let id = nextWorkID
-        let task = Task { try await work() }
+        let task = Task { [weak self] in
+            let result = await Result { try await work() }
+            await self?.workEnded(id)
+            return try result.get()
+        }
         inFlight = InFlightWork(id: id, kind: kind, cancel: { task.cancel() })
         defer {
             if inFlight?.id == id {
                 inFlight = nil
             }
         }
-        do {
-            let value = try await withTaskCancellationHandler {
-                try await task.value
-            } onCancel: {
-                task.cancel()
+        // Resumed by `workEnded` or by `supersede()`, both on this actor; the work cannot end
+        // before this registers, since `workEnded` needs the actor this step holds.
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                workWaiter = WorkWaiter(id: id, continuation: continuation)
             }
+        } onCancel: {
+            task.cancel()
+        }
+        guard supersededWork != id else {
             // Work that finished in spite of its cancellation still answers what was left.
-            guard supersededWork != id else {
-                supersededWork = nil
-                throw CatalogProjectionWorkSuperseded()
-            }
-            return value
-        } catch let superseded as CatalogProjectionWorkSuperseded {
-            throw superseded
-        } catch {
-            guard supersededWork == id, !Task.isCancelled else {
-                throw error
-            }
             supersededWork = nil
             throw CatalogProjectionWorkSuperseded()
         }
+        return try await task.value
+    }
+
+    /// The supersedable work `id` has ended: the pass waiting on it, if it still is, goes on.
+    private func workEnded(_ id: UInt64) {
+        guard let waiter = workWaiter, waiter.id == id else {
+            return
+        }
+        workWaiter = nil
+        waiter.continuation.resume()
     }
 
     /// One publication pass. It only runs on `loopTask`, so passes never overlap. It
@@ -566,13 +597,18 @@ private extension CatalogProjection {
             defer {
                 OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
             }
+            // The first pass of an intent shows what the projection holds for it at once; a
+            // pass that did reads again, and nothing else answers from held reads.
+            let answerFromHeld = lastPublishedState?.queryGeneration != selectedRequest.generation
+                && heldPublishedGeneration != selectedRequest.generation
             let build = try await supersedable(.build(selectedRequest.descriptor)) {
                 try await self.buildWindowState(
                     store: store,
                     libraries: libraries,
                     request: selectedRequest,
                     reads: startedReads,
-                    revisions: startedRevisions
+                    revisions: startedRevisions,
+                    answerFromHeld: answerFromHeld
                 )
             }
             // A cancelled pass is a teardown: whatever it read is not the catalog.
@@ -626,6 +662,19 @@ private extension CatalogProjection {
         // The window is published, so the reads it was built from stand whatever the options
         // read does.
         reads = passReads
+        // What the window shows was held, and a fact it depends on moved since: the next pass
+        // reads it again, and takes up the options and the derived owners. This one covers
+        // nothing.
+        if completed.buildMetrics.reuse.held {
+            heldPublishedGeneration = selectedRequest.generation
+            OtosLog.catalog.noticeOperation("projection.publish", phase: "held", fields: [
+                "projection": diagnosticID,
+                "generation": "\(selectedRequest.generation)",
+                "scope": selectedRequest.descriptor.scope.diagnosticDescription,
+            ])
+            doorbell?.yield()
+            return
+        }
         if let owedOptions {
             guard await readOwedFilterOptions(owedOptions, request: selectedRequest, store: store) else {
                 return
@@ -871,6 +920,7 @@ private extension CatalogProjection {
         stackReadCount = 0
         inFlight = nil
         supersededWork = nil
+        heldPublishedGeneration = nil
     }
 }
 
@@ -913,6 +963,12 @@ private nonisolated struct InFlightWork {
         case .filterOptions: "filterOptions"
         }
     }
+}
+
+/// The pass waiting on the supersedable work `id`.
+private nonisolated struct WorkWaiter {
+    let id: UInt64
+    let continuation: CheckedContinuation<Void, Never>
 }
 
 /// A pass's work was cancelled by an intent that left the descriptor it was for.

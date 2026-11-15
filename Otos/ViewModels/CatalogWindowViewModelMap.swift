@@ -27,7 +27,7 @@ extension CatalogWindowViewModel {
     /// inside them, then diffed down to the place. The map stays until the place
     /// arrives, as every scope keeps its old content until the new one is ready.
     var showsPlacesMap: Bool {
-        state.resolvedSidebarSelection == .places
+        state.detailSurface == .placesMap
     }
 
     /// The Places row, while a fixed library exists, once the catalog has loaded (APP-044).

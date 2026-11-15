@@ -99,6 +99,14 @@ nonisolated struct CatalogDeviceConnectionBanner: Equatable {
     let message: String
 }
 
+/// A pane that draws a scope in place of the media grid.
+nonisolated enum CatalogDetailSurface: String, Equatable {
+    case people
+    case duplicates
+    case onThisDay
+    case placesMap
+}
+
 /// Final UI-ready catalog state.
 nonisolated struct CatalogWindowState: Equatable {
     var title: String
@@ -142,6 +150,30 @@ nonisolated struct CatalogWindowState: Equatable {
     /// about the catalog (APP-044).
     var isCatalogLoaded: Bool {
         mediaEmptyState != .loadingCatalog
+    }
+
+    /// The pane that draws this state's scope in place of the media grid; nil where the grid
+    /// does. Read from the published scope: the pane shows the state, not the intent.
+    var detailSurface: CatalogDetailSurface? {
+        switch resolvedSidebarSelection {
+        case .people: .people
+        case .duplicates: .duplicates
+        case .onThisDay: .onThisDay
+        case .places: .placesMap
+        case .allMedia, .library, .mapArea, .mapStack, .importBatch, .allImports, .person, .duplicateGroup: nil
+        }
+    }
+
+    /// Whether `detailSurface` has what it draws: the People gallery and the duplicates list
+    /// claim nothing until their owners first build (APP-044); the map and On This Day draw
+    /// the state they are given.
+    var detailSurfaceHasContent: Bool {
+        switch detailSurface {
+        case .people: people != nil
+        case .duplicates: duplicates != nil
+        case .onThisDay, .placesMap: true
+        case nil: false
+        }
     }
 
     /// This state as Projection publishes it after `previous`: every library-sized part

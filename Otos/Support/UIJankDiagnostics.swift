@@ -129,12 +129,14 @@ final class MainRunLoopStallMonitor {
         return abandoned
     }
 
-    /// Ends the click→paint interval when a structural apply renders the intent's
-    /// scope. Returns whether a pending measurement was completed; a non-matching
-    /// scope (an unrelated enrichment/scroll apply) leaves the pending interval
-    /// untouched.
+    /// Ends the click→paint interval when the surface that draws the intent's scope gets its
+    /// content: a structural apply of the media grid (`surface` "grid"), or the state apply
+    /// that hands a pane drawn in its place (`CatalogDetailSurface`) what it draws, which
+    /// SwiftUI renders in the same main-thread turn. Returns whether a pending measurement
+    /// was completed; a non-matching scope (an unrelated enrichment/scroll apply) leaves the
+    /// pending interval untouched.
     @discardableResult
-    func completeIntentToPaint(appliedScope: SidebarSelection) -> Bool {
+    func completeIntentToPaint(appliedScope: SidebarSelection, surface: String = "grid") -> Bool {
         guard let pending = pendingIntentToPaint, pending.scope == appliedScope else {
             return false
         }
@@ -144,7 +146,7 @@ final class MainRunLoopStallMonitor {
         OtosLog.ui.noticeOperation(
             "ui.sidebarSelectionToPaint",
             phase: "finish",
-            fields: ["scope": appliedScope.diagnosticDescription, "ms": "\(ms)"]
+            fields: ["scope": appliedScope.diagnosticDescription, "surface": surface, "ms": "\(ms)"]
         )
         return true
     }

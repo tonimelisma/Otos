@@ -15,7 +15,7 @@ extension CatalogWindowViewModel {
     /// Whether the detail pane is the duplicates list. Read from the published scope
     /// for the reason `showsPlacesMap` gives: the pane shows `state`, not the intent.
     var showsDuplicatesList: Bool {
-        state.resolvedSidebarSelection == .duplicates
+        state.detailSurface == .duplicates
     }
 
     /// Whether the list's acts apply: the pane shows the list and the list is the scope

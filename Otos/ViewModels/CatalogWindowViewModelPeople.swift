@@ -364,7 +364,7 @@ extension CatalogWindowViewModel {
     /// Whether the detail pane is the People gallery. Read from the published scope, for the
     /// reason `showsPlacesMap` gives.
     var showsPeopleList: Bool {
-        state.resolvedSidebarSelection == .people
+        state.detailSurface == .people
     }
 
     /// The row exists whenever one fixed library does, like Places.

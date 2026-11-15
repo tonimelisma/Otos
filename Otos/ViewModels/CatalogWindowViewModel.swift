@@ -1404,6 +1404,11 @@ extension CatalogWindowViewModel {
         }
         restoreBrowserPlaceIfReady()
         followRunsIntoTheirBatches()
+        // A scope drawn by a pane in place of the grid paints when that pane has its content;
+        // the grid's own structural apply ends the interval for every other scope.
+        if let surface = nextState.detailSurface, nextState.detailSurfaceHasContent {
+            stallMonitor.completeIntentToPaint(appliedScope: nextState.resolvedSidebarSelection, surface: surface.rawValue)
+        }
 
         OtosSignpost.ui.endInterval("CatalogWindowStateApply", signpost)
 

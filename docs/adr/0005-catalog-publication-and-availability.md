@@ -99,8 +99,12 @@ IDs, derives one `CatalogWindowState`, and yields it. ADR 0032 states the rule.
 
 A pass repeats a catalog read only when a change that can alter its answer has happened.
 Projection counts each kind of fact a change names (`CatalogFactRevisions`, one revision
-per kind, never a flag). It keeps the last answer of each read — the ordered assets with
-their stacks, the filter's options, and the stack collapse — with what the read was for
+per kind, never a flag). It keeps the last answer of each held read — the ordered assets
+with their stacks, the stack collapse, the whole-roots stacks, the filter's options, the
+import batches (the sidebar's counts, `importBatchInputs`: rows shown, grouping, stacks),
+the place-name languages (`placeNameLanguageInputs`: place names) and a shown search's
+answer; `CatalogProjectionReads` lists them and a pass logs which it reused (`reused=`) —
+with what the read was for
 (the resolved descriptor or sidebar row, the available roots, the place-name languages) and
 the revisions its pass started from (`CatalogProjectionReads`). A pass reuses an answer
 while what it was for is unchanged and no kind it depends on moved, and reads it again
@@ -152,20 +156,27 @@ same-path replacement therefore remains unselected even when no root-absent
 state was published. The path is transient context, not generated identity;
 SQLite row IDs remain Store-private.
 
-Only one derivation may be in flight, because only the loop task runs passes.
-Actor reentrancy lets new input arrive while a pass awaits Store reads; it raises
-`requested`, the finishing pass covers only what it started from, and the loop runs
-again.
+Only one pass runs at a time, because only the loop task runs passes. Actor reentrancy
+lets new input arrive while a pass awaits Store reads; it raises `requested`, the
+finishing pass covers only what it started from, and the loop runs again. The one
+exception to "one derivation in flight" is a build an intent superseded (below): it may
+still be ending its cancelled read while the next pass runs, and it publishes and keeps
+nothing.
 
 A user never waits for work answering what they left. A pass runs its build, and the
 filter's options it owes, in a task it waits on; an intent whose descriptor that work does
 not answer — another scope, filter, sort or search for a build; another sidebar row for the
 options — cancels it in the step that applies the intent. That work is unpublished and can
 never be published, because what it answers is no longer asked; GRDB interrupts its
-statement, which frees its reader at once. A superseded pass publishes nothing, covers
-nothing and rings the loop, so the new request is built next; whatever a superseded build
-read, its result is discarded even if it finished in spite of the cancellation, because a
-cancelled GRDB read holds errors, not a catalog. A store change supersedes nothing: the
+statement. The pass does not wait for the cancelled work to end: a cancelled read ends only
+when its statement, or its wait for a connection, does, and the next scope must not wait on
+either. The superseded pass publishes nothing, covers nothing and rings the loop at once, so
+the new request is built next; whatever a superseded build read, its result is discarded
+even if it finished in spite of the cancellation, because a cancelled GRDB read holds
+errors, not a catalog, and a superseded build stops before it touches the search reader or
+counts a read. On the owner's catalog the next pass started 3.2–6.6 s after a People build
+was superseded, the pass waiting for that build to end
+(`docs/research/2026-11-15-scope-returns-and-superseded-builds.md`). A store change supersedes nothing: the
 build in flight is for what is shown, and the next pass takes the change up. Teardown
 cancels the loop, and a torn-down pass publishes nothing. On the owner's catalog a sidebar
 click waited 2–9 s for the All Media build it left, then 1.4 s on the main thread applying
@@ -186,6 +197,25 @@ candidate again. The Store names `.stacks` only for a write that changes a captu
 kind or grouping of a still that is or was in a burst, or that shares its folder with a
 still it could pair with, so an Immich asset alone in its folder moves its date without a
 stack read.
+
+A scope the user returns to paints from what it last showed. The reads are held per
+scope slot (`CatalogProjectionReads.Slot`): All Media, where every return to the library
+lands, keeps its order and collapse while the user is anywhere else, and every other scope
+shares one slot, the last read — so at most two orders and two collapses are held, about
+20 MB at owner scale for All Media's, most of it shared with the published window while All
+Media is shown. The first pass of an intent (`answerFromHeld`)
+answers every read it holds an answer for from that answer, even when a fact the answer
+depends on moved since; when one had moved it publishes that window, logs
+`op=projection.publish phase=held`, covers nothing, and the next pass reads again whatever
+moved and republishes. The window then shows, for the length of one read, what it would
+have shown had the user stayed on the scope and waited for the cadence's catch-up; a scope
+with nothing held is read before it paints. On the owner's catalog, with enrichment moving
+capture dates, digests and stacks in the background, a return to All Media re-read the
+164,747-row order and every stack candidate and painted after 12.1 s
+(`docs/research/2026-11-15-scope-returns-and-superseded-builds.md`). Rejected: holding every
+scope's answers (memory in proportion to the scopes visited, for returns that rarely leave
+the default scope), and narrowing the facts a background write names further (it shortens
+how often a return reads, never the read itself, and a busy machine makes the read seconds).
 
 A failed Store read is not a fact. A pass whose build throws publishes nothing,
 logs `op=projection.publish phase=failed`, and leaves `covered` where it was, so

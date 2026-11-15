@@ -36,10 +36,7 @@ extension CatalogWindowViewModel {
     /// Whether the detail pane is On This Day's anniversaries, or the story over them. Read from
     /// the published scope, as `showsPlacesMap` is.
     var showsOnThisDay: Bool {
-        if case .onThisDay = state.resolvedSidebarSelection {
-            return true
-        }
-        return false
+        state.detailSurface == .onThisDay
     }
 
     /// Today, while the On This Day row exists: whenever the Places row does.
