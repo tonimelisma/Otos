@@ -35,8 +35,14 @@ struct OnThisDayPolicyTests {
     }
 
     /// Which of `times` the match selects, evaluated by SQLite itself as the gateway's read
-    /// does.
+    /// does: the same rows whether the read seeks the day's columns or walks the capture time.
     private static func selected(by match: AnniversaryMatch?, from times: [Double]) throws -> [Double] {
+        let sought = try selected(by: match, from: times, seeksDay: true)
+        #expect(try selected(by: match, from: times, seeksDay: false) == sought)
+        return sought
+    }
+
+    private static func selected(by match: AnniversaryMatch?, from times: [Double], seeksDay: Bool) throws -> [Double] {
         let match = try #require(match)
         let queue = try DatabaseQueue()
         return try queue.write { db in
@@ -53,8 +59,8 @@ struct OnThisDayPolicyTests {
             try db.execute(sql: "INSERT INTO t VALUES (NULL)")
             return try Double.fetchAll(
                 db,
-                sql: "SELECT best_capture_local FROM t WHERE \(match.sql(row: "t")) ORDER BY 1",
-                arguments: StatementArguments(match.arguments)
+                sql: "SELECT best_capture_local FROM t WHERE \(match.sql(row: "t", seeksDay: seeksDay)) ORDER BY 1",
+                arguments: StatementArguments(match.arguments(seeksDay: seeksDay))
             )
         }
     }

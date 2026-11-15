@@ -43,14 +43,24 @@ nonisolated enum CatalogQueryGateway {
         stacks: AnniversaryStacks = .readWhenNeeded,
         db: Database
     ) throws -> [OrderedAssetIDRow] {
-        guard let query = try orderedAssetIDQuery(descriptor: descriptor, scope: scope, stacks: stacks, db: db) else {
+        guard let clause = try scopeClause(scope, stacks: stacks, db: db) else {
             return []
         }
+        return try fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, clause: clause, db: db)
+    }
+
+    private static func fetchOrderedAssetIDRows(
+        descriptor: CatalogQueryDescriptor,
+        scope: CatalogScopePredicate,
+        clause: ScopeClause,
+        db: Database
+    ) throws -> [OrderedAssetIDRow] {
+        let query = orderedAssetIDQuery(descriptor: descriptor, scope: scope, clause: clause)
         // Read by position, in `orderedAssetIDQuery`'s column order: a name lookup per column
         // per row is the read's own cost on a large order. Each row is mapped as the cursor
         // reaches it, so no copy of every row is made first.
         let likedColumn = scope.requiresLocation ? 5 : 3
-        let burstColumn: Int? = try PhotoStackSQL.isBuiltFromRows(scope) ? likedColumn + (scope.isAnniversary ? 1 : 0) : nil
+        let burstColumn: Int? = clause.seek != nil ? likedColumn + (scope.isAnniversary ? 1 : 0) : nil
         return try Array(Row.fetchCursor(
             db,
             sql: query.sql,
@@ -78,10 +88,12 @@ nonisolated enum CatalogQueryGateway {
     /// The order's rows and the stacks that judge them, in the caller's read (`db`), so every
     /// stack and row comes from one snapshot (ADR 0052). `held` — every stack of
     /// `stackRootPaths`' roots, which the caller holds while nothing they are built from
-    /// moved — is used when given. Otherwise a narrow scope (`PhotoStackSQL.isBuiltFromRows`)
-    /// reads its rows first and builds only the stacks that hold them
-    /// (`PhotoStackSQL.build(rootPaths:holding:db:)`), and a wide scope builds every stack of
-    /// its roots before its rows.
+    /// moved — is used when given. Otherwise a scope whose reads seek its rows
+    /// (`ScopeClause.Seek`) reads its rows first and builds only the stacks that hold them
+    /// (`PhotoStackSQL.build(rootPaths:holding:db:)`), and a scope whose reads walk the order
+    /// builds every stack of its roots: its rows are a large share of them, and a build from
+    /// tens of thousands of rows' folders costs more than every candidate does
+    /// (`docs/research/2026-11-15-large-narrow-scopes.md`).
     static func readOrder(
         descriptor: CatalogQueryDescriptor,
         scope: CatalogScopePredicate,
@@ -89,12 +101,15 @@ nonisolated enum CatalogQueryGateway {
         held: PhotoStackSQL.Built?,
         db: Database
     ) throws -> (rows: [OrderedAssetIDRow], stacks: PhotoStackSQL.Built) {
-        if held == nil, try PhotoStackSQL.isBuiltFromRows(scope) {
-            let rows = try fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, db: db)
+        guard let clause = try scopeClause(scope, stacks: held.map(AnniversaryStacks.built) ?? .readWhenNeeded, db: db) else {
+            return try ([], held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, holding: [], db: db))
+        }
+        if held == nil, clause.seek != nil {
+            let rows = try fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, clause: clause, db: db)
             return try (rows, PhotoStackSQL.build(rootPaths: stackRootPaths, holding: rows, db: db))
         }
         let stacks = try held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, db: db)
-        return try (fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, stacks: .built(stacks), db: db), stacks)
+        return try (fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, clause: clause, db: db), stacks)
     }
 
     /// One row of the ordered-ID query. `coordinate` is set only for a scope that
@@ -120,9 +135,16 @@ nonisolated enum CatalogQueryGateway {
         stacks: AnniversaryStacks = .readWhenNeeded,
         db: Database
     ) throws -> SQLQuery? {
-        guard let scopeClause = try scopeClause(scope, stacks: stacks, db: db) else {
-            return nil
+        try scopeClause(scope, stacks: stacks, db: db).map { clause in
+            orderedAssetIDQuery(descriptor: descriptor, scope: scope, clause: clause)
         }
+    }
+
+    private static func orderedAssetIDQuery(
+        descriptor: CatalogQueryDescriptor,
+        scope: CatalogScopePredicate,
+        clause scopeClause: ScopeClause
+    ) -> SQLQuery {
         let order = orderPlan(
             for: descriptor.effectiveSort,
             person: descriptor.scope.person,
@@ -138,8 +160,8 @@ nonisolated enum CatalogQueryGateway {
             : ""
         // Read by position in `fetchOrderedAssetIDRows`: keep this column order.
         let likedColumn = scope.isAnniversary ? ", media_asset.media_choice = 'liked' AS is_liked" : ""
-        // A narrow scope's stacks are built from its rows, so its rows carry their stills' bursts.
-        let burstColumn = try PhotoStackSQL.isBuiltFromRows(scope)
+        // A sought scope's stacks are built from its rows, so its rows carry their stills' bursts.
+        let burstColumn = scopeClause.seek != nil
             ? ", CASE WHEN media_asset.best_kind IN ('raw', 'image') THEN media_asset.burst_identifier END"
             : ""
         // A wide scope walks the order's index, which hands its rows over in order. A narrow
@@ -158,9 +180,11 @@ nonisolated enum CatalogQueryGateway {
 
     /// The rows of `scope` that `match` selects and On This Day's exclusion leaves in, by key,
     /// with their stills' bursts (`StackJudgedRows`): what the years-or-months match judges
-    /// (`anniversaryMatch`), sought through the day's index. Nil when the scope selects nothing.
+    /// (`anniversaryMatch`), sought through the day's index however many rows the day holds: the
+    /// match stops at the first row shown, which a seek reaches first. Nil when the scope
+    /// selects nothing.
     static func anniversaryRowsQuery(scope: CatalogScopePredicate, match: AnniversaryMatch) throws -> SQLQuery? {
-        guard !scope.selectsNothing, let clause = try scopeClause(scope, anniversary: match) else {
+        guard !scope.selectsNothing, let clause = try scopeClause(scope, anniversary: match, seeks: true) else {
             return nil
         }
         return SQLQuery(
@@ -345,8 +369,9 @@ nonisolated enum CatalogQueryGateway {
     /// shows (`OnThisDayPicks.shows`), so its empty state never counts a file of a stack
     /// whose key is Disliked: a scope whose cards are all left out reads as nothing on this
     /// day, never as a filter's doing or an offline library's. The match and the count each
-    /// judge their rows by the stacks that hold them, built in this read
-    /// (`AnniversaryStacks.judging`).
+    /// judge their rows by stacks built in this read (`AnniversaryStacks.judging`): the count's
+    /// are the stacks that hold its rows when the scope seeks them, every stack of its roots
+    /// when it walks.
     static func countAssets(
         scope: CatalogScopePredicate,
         filter: MediaFilter = .all,
@@ -376,7 +401,9 @@ nonisolated enum CatalogQueryGateway {
             ),
             db: db
         )
-        let picks = try AnniversaryStacks.readWhenNeeded.judging(rows, rootIDs: scope.rootIDs, db: db)
+        let picks = try AnniversaryStacks.readWhenNeeded.judging(
+            rows, rootIDs: scope.rootIDs, span: scopeClause.seek != nil ? .rows : .roots, db: db
+        )
         return rows.count { row in
             picks.rootPaths[row.libraryRootID].map { rootPath in
                 OnThisDayPicks.shows(MediaAssetID(libraryRootPath: rootPath, relativePath: row.relativePath), stacks: picks.stacks)
@@ -796,17 +823,6 @@ nonisolated enum PhotoStackSQL {
         )
     }
 
-    /// Whether `scope` is narrow (`ScopeClause.Seek`): a few hundred or thousand rows of a
-    /// catalog of hundreds of thousands, whose stacks are built from its own rows
-    /// (`build(rootPaths:holding:db:)`). On This Day decides its match inside its read, and
-    /// either match seeks its day (`AnniversaryMatch`), so it is always narrow.
-    static func isBuiltFromRows(_ scope: CatalogScopePredicate) throws -> Bool {
-        guard !scope.selectsNothing else {
-            return false
-        }
-        return try scope.isAnniversary || scopeClause(scope, anniversary: nil)?.seek != nil
-    }
-
     /// The stacks that hold one of `rows` (`Span.rows`), in the caller's read, after the rows.
     /// A pair is two files of one folder and a burst is its frames' identifier within a root,
     /// so every such stack is built whole from the candidates of the rows' folders that hold
@@ -1213,14 +1229,74 @@ private nonisolated func scopeClause(
     guard !scope.selectsNothing else {
         return nil
     }
+    let anniversary: AnniversaryMatch?
     switch scope.date {
     case .any:
-        return try scopeClause(scope, anniversary: nil)
+        anniversary = nil
     case let .anniversary(day):
         guard let match = try anniversaryMatch(for: day, scope: scope, stacks: stacks, db: db) else {
             return nil
         }
-        return try scopeClause(scope, anniversary: match)
+        anniversary = match
+    }
+    guard let sought = try scopeClause(scope, anniversary: anniversary, seeks: true) else {
+        return nil
+    }
+    guard let size = sought.size, try !size.seeks(scope: scope, db: db) else {
+        return sought
+    }
+    return try scopeClause(scope, anniversary: anniversary, seeks: false)
+}
+
+/// What decides whether a scope's reads seek its rows or walk the order: the rows its seek
+/// would visit against the rows a walk would. A person, a day and a map area are a few dozen
+/// rows of the catalog or most of it — the most photographed person, a day of a library taken
+/// in one day, the whole world as an area — and a seek costs a random page or two a row where
+/// a walk costs a small, fixed share of a page a row (`walkRowsPerSoughtRow`,
+/// `docs/research/2026-11-15-large-narrow-scopes.md`). Both counts are read in the read
+/// itself, from indexes alone: the seek's in proportion to its own rows, the walk's no
+/// further than the seek's count times the ratio, so deciding costs a small share of the
+/// cheaper plan.
+nonisolated struct SeekSize {
+    /// Counts the index entries the seek visits, every one of which it then looks up.
+    let candidatesSQL: String
+    let arguments: [any DatabaseValueConvertible]
+    /// How many rows a walk visits for the pages one row a seek finds costs, measured on a
+    /// generated catalog of the owner's size and shape.
+    let walkRowsPerSoughtRow: Int
+
+    static let personRatio = 40
+    static let dayRatio = 2
+    static let areaRatio = 10
+
+    /// Whether the seek costs less than the walk: whether the rows the walk visits — every
+    /// row of a root a one-root scope's order index is led by, else every row of the catalog,
+    /// which the global order indexes hold in one sequence — outnumber the seek's candidates
+    /// by more than the ratio.
+    func seeks(scope: CatalogScopePredicate, db: Database) throws -> Bool {
+        let candidates = try Int.fetchOne(db.cachedStatement(sql: candidatesSQL), arguments: StatementArguments(arguments)) ?? 0
+        let (bound, overflow) = candidates.multipliedReportingOverflow(by: walkRowsPerSoughtRow)
+        let walked: Int = if overflow || bound == .max {
+            0
+        } else if scope.rootIDs.count == 1, let rootID = scope.rootIDs.first {
+            try Int.fetchOne(
+                db.cachedStatement(sql: "SELECT count(*) FROM (SELECT 1 FROM media_asset WHERE library_root_id = ? LIMIT ?)"),
+                arguments: [rootID, bound + 1]
+            ) ?? 0
+        } else {
+            try Int.fetchOne(
+                db.cachedStatement(sql: "SELECT count(*) FROM (SELECT 1 FROM media_asset LIMIT ?)"),
+                arguments: [bound + 1]
+            ) ?? 0
+        }
+        let seeks = walked > bound
+        OtosLog.catalog.debugOperation("catalog.query.reach", phase: "decided", fields: [
+            "candidates": "\(candidates)",
+            "walkedAtLeast": "\(walked)",
+            "ratio": "\(walkRowsPerSoughtRow)",
+            "reach": seeks ? "seek" : "walk",
+        ])
+        return seeks
     }
 }
 
@@ -1248,6 +1324,9 @@ private nonisolated struct ScopeClause {
     let sql: String
     let arguments: [any DatabaseValueConvertible]
     let seek: Seek?
+    /// What decides whether `seek` costs less than walking the order, for a seek whose rows can
+    /// be any share of the catalog; nil for one whose rows are always few, or no seek.
+    let size: SeekSize?
 
     /// The tables a narrow scope's reads start from, through its seek, with its join; nil for
     /// a wide scope.
@@ -1279,10 +1358,11 @@ private nonisolated struct ScopeClause {
 private nonisolated let mediaAssetKeyIndexName = "sqlite_autoindex_media_asset_1"
 
 /// The stacks On This Day's match judges a stack's files by (`OnThisDayPicks.shows`): every
-/// stack of the scope's roots, which the read's caller holds or built in the read, or none
-/// yet, built in the read from the rows being judged — only the stacks that hold one of them
+/// stack of the scope's roots, which the read's caller holds, or none yet, built in the read
+/// when rows are judged — `span` `.rows`: only the stacks that hold one of them
 /// (`PhotoStackSQL.build(rootPaths:holding:db:)`), which judge those rows exactly as every
-/// stack would. Either way they come from the snapshot the rows do.
+/// stack would; `.roots`: every stack of the roots, for rows that are a large share of them.
+/// Either way they come from the snapshot the rows do.
 nonisolated enum AnniversaryStacks {
     case built(PhotoStackSQL.Built)
     case readWhenNeeded
@@ -1290,6 +1370,7 @@ nonisolated enum AnniversaryStacks {
     func judging(
         _ rows: [CatalogQueryGateway.OrderedAssetIDRow],
         rootIDs: [Int64],
+        span: PhotoStackSQL.Span = .rows,
         db: Database
     ) throws -> PhotoStackSQL.Built {
         switch self {
@@ -1305,7 +1386,12 @@ nonisolated enum AnniversaryStacks {
             for root in roots {
                 rootPaths[root[0]] = LibraryRootPath(rawValue: root[1])
             }
-            return try PhotoStackSQL.build(rootPaths: rootPaths, holding: rows, db: db)
+            switch span {
+            case .rows:
+                return try PhotoStackSQL.build(rootPaths: rootPaths, holding: rows, db: db)
+            case .roots:
+                return try PhotoStackSQL.build(rootPaths: rootPaths, db: db)
+            }
         }
     }
 }
@@ -1384,10 +1470,13 @@ private nonisolated func logAnniversaryMatch(day: CalendarDay, unit: Anniversary
 }
 
 /// The scope's `FROM` join and `WHERE` fragment with its date dimension already decided
-/// (`anniversary` nil: any date), or nil when the scope selects nothing.
+/// (`anniversary` nil: any date), or nil when the scope selects nothing. `seeks` false leaves
+/// out the seeks whose rows can be any share of the catalog (`SeekSize`): a person's photos,
+/// On This Day's day and a map area's cells are then tested on each row the order walks.
 private nonisolated func scopeClause(
     _ scope: CatalogScopePredicate,
-    anniversary: AnniversaryMatch?
+    anniversary: AnniversaryMatch?,
+    seeks: Bool
 ) throws -> ScopeClause? {
     var arguments: [any DatabaseValueConvertible] = []
     let rootPredicate: String
@@ -1412,6 +1501,7 @@ private nonisolated func scopeClause(
     // below names fewer rows than a batch, so it takes over, and a key names fewer than a day
     // or an area.
     var keyIndex: String?
+    var size: SeekSize?
     if let importBatchUnixMs = scope.importBatchUnixMs {
         arguments.append(importBatchUnixMs)
         predicate += "\n  AND media_asset.import_batch_unix_ms = ?"
@@ -1486,26 +1576,61 @@ private nonisolated func scopeClause(
           )
         """
     case let .person(person):
-        // A person's photos are named by their faces (`idx_face_person_photo`), and each is
-        // then found by its key: a person is a few dozen to a few thousand photos, and
-        // testing every row of the catalog for one of their faces read 3,500–157,000 pages
-        // per read on the owner's catalog
-        // (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
-        predicate += """
+        // A person's photos are named by their faces (`idx_face_person_photo`). A person of a
+        // few dozen to a few thousand photos seeks them there and finds each by its key:
+        // testing every row of the catalog for one of their faces read 3,500–157,000 pages per
+        // read on the owner's catalog (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
+        // A person in a large share of the catalog is tested on each row the order walks, one
+        // seek of that index a row (`SeekSize`).
+        if seeks {
+            predicate += """
 
-          AND (media_asset.library_root_id, media_asset.relative_path) IN (
-              SELECT face.library_root_id, face.relative_path FROM face
-              WHERE face.person_id = ? AND face.is_not_face = 0
-          )
-        """
+              AND (media_asset.library_root_id, media_asset.relative_path) IN (
+                  SELECT face.library_root_id, face.relative_path FROM face
+                  WHERE face.person_id = ? AND face.is_not_face = 0
+              )
+            """
+            keyIndex = mediaAssetKeyIndexName
+            size = SeekSize(
+                candidatesSQL: """
+                SELECT count(*) FROM face INDEXED BY idx_face_person_photo
+                WHERE face.person_id = ? AND face.is_not_face = 0
+                """,
+                arguments: [person],
+                walkRowsPerSoughtRow: SeekSize.personRatio
+            )
+        } else {
+            predicate += """
+
+              AND EXISTS (
+                  SELECT 1 FROM face INDEXED BY idx_face_person_photo
+                  WHERE face.person_id = ?
+                    AND face.library_root_id = media_asset.library_root_id
+                    AND face.relative_path = media_asset.relative_path
+                    AND face.is_not_face = 0
+              )
+            """
+        }
         arguments.append(person)
-        keyIndex = mediaAssetKeyIndexName
     }
     if let anniversary {
-        predicate += "\n  AND \(anniversary.sql(row: "media_asset"))"
-        arguments.append(contentsOf: anniversary.arguments)
+        // The day's own index is sought only when no key narrows the scope further; otherwise
+        // its date is tested on each row found, from the capture time the order indexes hold.
+        let seeksDay = seeks && keyIndex == nil
+        predicate += "\n  AND \(anniversary.sql(row: "media_asset", seeksDay: seeksDay))"
+        arguments.append(contentsOf: anniversary.arguments(seeksDay: seeksDay))
         predicate += OnThisDayPicks.exclusionSQL
-        keyIndex = keyIndex ?? AnniversaryMatch.indexName
+        if seeksDay {
+            keyIndex = AnniversaryMatch.indexName
+            size = SeekSize(
+                candidatesSQL: """
+                SELECT count(*) FROM media_asset INDEXED BY \(AnniversaryMatch.indexName)
+                WHERE \(anniversary.sql(row: "media_asset", seeksDay: true))
+                """,
+                arguments: anniversary.arguments(seeksDay: true),
+                walkRowsPerSoughtRow: SeekSize.dayRatio
+            )
+        }
     }
     var seek = keyIndex.map(ScopeClause.Seek.rows(index:))
     var join = ""
@@ -1538,9 +1663,21 @@ private nonisolated func scopeClause(
           AND (asset_metadata.place_cell_longitude >= ? \(longitude) asset_metadata.place_cell_longitude <= ?)
         """
         arguments.append(contentsOf: [cells.south, cells.north, cells.west, cells.east])
-        seek = seek ?? .placeCells
+        if seeks, seek == nil {
+            seek = .placeCells
+            size = SeekSize(
+                candidatesSQL: """
+                SELECT count(*) FROM asset_metadata INDEXED BY \(PlaceCellSQL.indexName)
+                WHERE place_cell_latitude IS NOT NULL AND place_cell_longitude IS NOT NULL
+                  AND place_cell_latitude BETWEEN ? AND ?
+                  AND (place_cell_longitude >= ? \(longitude) place_cell_longitude <= ?)
+                """,
+                arguments: [cells.south, cells.north, cells.west, cells.east],
+                walkRowsPerSoughtRow: SeekSize.areaRatio
+            )
+        }
     }
-    return ScopeClause(join: join, sql: predicate, arguments: arguments, seek: seek)
+    return ScopeClause(join: join, sql: predicate, arguments: arguments, seek: seek, size: size)
 }
 
 private nonisolated let locationJoin = """

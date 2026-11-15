@@ -60,14 +60,26 @@ nonisolated struct AnniversaryMatch: Equatable, Sendable {
         }
     }
 
-    /// The predicate over the columns of `row`, with `arguments` as its arguments, in the
-    /// order of `indexName`'s columns.
-    func sql(row: String) -> String {
-        let month = month == nil ? "" : " AND \(row).capture_month = ?"
-        return "(\(row).capture_day = ?\(month) AND \(row).best_capture_local < ?)"
+    /// The predicate over the columns of `row`, with `arguments(seeksDay:)` as its arguments.
+    /// `seeksDay`: over `capture_day` and `capture_month`, in the order of `indexName`'s
+    /// columns, for a read that seeks the day through it. Otherwise over `best_capture_local`
+    /// itself, which every order index holds, so a read that walks an order tests each row's
+    /// date in the index — the end first, then the one date `strftime` writes — rather than
+    /// reading the row to generate its day.
+    func sql(row: String, seeksDay: Bool) -> String {
+        guard !seeksDay else {
+            let month = month == nil ? "" : " AND \(row).capture_month = ?"
+            return "(\(row).capture_day = ?\(month) AND \(row).best_capture_local < ?)"
+        }
+        let format = month == nil ? "%d" : "%m-%d"
+        return "(\(row).best_capture_local < ? AND strftime('\(format)', \(row).best_capture_local, 'unixepoch') = ?)"
     }
 
-    var arguments: [any DatabaseValueConvertible] {
-        [day] + (month.map { [$0] } ?? []) + [end]
+    func arguments(seeksDay: Bool) -> [any DatabaseValueConvertible] {
+        guard !seeksDay else {
+            return [day] + (month.map { [$0] } ?? []) + [end]
+        }
+        let date = month.map { String(format: "%02d-%02d", $0, day) } ?? String(format: "%02d", day)
+        return [end, date]
     }
 }

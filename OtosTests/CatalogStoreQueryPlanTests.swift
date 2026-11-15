@@ -283,19 +283,19 @@ struct CatalogStoreQueryPlanTests {
             descriptor: .default,
             scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2], location: .located)
         ))
-        let onePlace = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
-            descriptor: .default,
-            scope: CatalogScopePredicate(
-                rootIDs: [rootID1, rootID2],
-                location: .within(MapArea(south: 60, north: 61, west: 24, east: 25))
-            )
-        ))
+        let onePlace = CatalogScopePredicate(
+            rootIDs: [rootID1, rootID2],
+            location: .within(MapArea(south: 60, north: 61, west: 24, east: 25))
+        )
 
+        // An area's plan follows its size, which is read from the catalog (`SeekSize`).
         let (rootPlan, globalPlan, placePlan, rows) = try await dbQueue.read { db in
             try (
                 explainPlan(db, query: rootLocated),
                 explainPlan(db, query: globalLocated),
-                explainPlan(db, query: onePlace),
+                explainPlan(db, query: #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                    descriptor: .default, scope: onePlace, db: db
+                ))),
                 CatalogQueryGateway.fetchOrderedAssetIDRows(
                     descriptor: .default,
                     scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2], location: .located),
@@ -309,15 +309,12 @@ struct CatalogStoreQueryPlanTests {
             #expect(plan.contains("SEARCH asset_metadata USING INDEX sqlite_autoindex_asset_metadata_1"))
             #expect(!usesTemporarySort(plan))
         }
-        // A map area is narrow: its cells' located rows are sought through the cell index,
-        // each row's `media_asset` by its key, and the few found are sorted.
-        let placeLines = placePlan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-        #expect(
-            placeLines.first?.hasPrefix("SEARCH asset_metadata USING INDEX idx_asset_metadata_place_cell (place_cell_latitude>") == true,
-            "\(placePlan)"
-        )
-        #expect(placePlan.contains("SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)"))
-        #expect(!placeLines.contains { $0.hasPrefix("SCAN ") }, "\(placePlan)")
+        // A map area whose located rows are a third of the catalog walks the capture index
+        // like Places, testing each row's coordinate by key (`SeekSize`); a small area's seek
+        // is pinned by `ScopeReachPlanTests` and `narrowScopesSeekTheirOwnRows`.
+        #expect(placePlan.contains("idx_media_asset_best_capture_global_desc"), "\(placePlan)")
+        #expect(placePlan.contains("SEARCH asset_metadata USING INDEX sqlite_autoindex_asset_metadata_1"), "\(placePlan)")
+        #expect(!usesTemporarySort(placePlan), "\(placePlan)")
         #expect(rootPlan.contains("idx_media_asset_best_capture_root_desc"))
         #expect(globalPlan.contains("idx_media_asset_best_capture_global_desc"))
         #expect(rows.map(\.relativePath.rawValue) == ["a.jpg"])

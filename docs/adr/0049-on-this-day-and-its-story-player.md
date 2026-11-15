@@ -80,9 +80,14 @@ view mode for it.
    other. Years match month 11 and day 12 on rows taken before the day's year began;
    months match day 12 on rows taken before its month began. The day and month are stored
    as generated columns (`capture_day`, `capture_month`, schema v62) that lead
-   `idx_media_asset_capture_day`, so every read of the scope seeks the day's rows, a few
+   `idx_media_asset_capture_day`, so a read of the scope seeks the day's rows, a few
    hundred, instead of testing the date of every row before the end
-   (`docs/research/2026-11-15-proportional-small-scopes.md`). The
+   (`docs/research/2026-11-15-proportional-small-scopes.md`). A day holding more than
+   half the rows a walk of the order visits — a library taken in one day — walks the
+   order instead, testing each row's capture time in the index, and judges its rows by
+   every stack of its roots: sorting and building stacks from that many sought rows costs
+   more than the walk (`docs/research/2026-11-15-large-narrow-scopes.md`). The match itself
+   always seeks, since it stops at the first row shown. The
    scope's rows under the years' match — its roots and visibility rules, never the filter —
    decide the unit by the rule that fills the cards (`OnThisDayPicks.shows`): a year is
    offered exactly when its card would hold a photo, so any row On This Day would show keeps
