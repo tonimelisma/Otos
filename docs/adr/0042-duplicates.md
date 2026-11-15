@@ -24,6 +24,29 @@ and mtime. The Store reads the copies (`CatalogStore.duplicateCopies`, through
 publishes the groups as `CatalogWindowState.duplicates` in every scope, so the sidebar's
 Duplicates row exists exactly while a group is active.
 
+**Duplicates compares copies within each library, unless the user widens it** (owner,
+2026-11-15). A library the user keeps a second time on purpose — an Immich server that
+indexes the same OneDrive folders Otos has as a library — is a mirror, not waste, and its
+pairs buried the copies worth clearing (16,001 groups on the owner's catalog). So by default
+a group's copies are all in one library or one account (`DuplicatesReach.withinEachLibrary`):
+
+- an identical group is a digest in one library, `DuplicateGroupID.identical(_, library:)`,
+  and the same digest in two libraries is two groups or none;
+- versions of the same photo are proposed only within one library, so no group joined
+  through pairs spans two.
+
+Settings ▸ General ▸ `Find duplicates across libraries and accounts` widens it
+(`.acrossLibraries`, `library: nil`), and then the rules below for groups that span
+libraries apply. The preference is the window view model's (`duplicates.acrossLibraries`),
+handed to the Store as the first command on its mutation stream and on every change. The
+Store holds the one current value and every reader uses it: the copies read, the Duplicates
+scope (`ContentConstraint.duplicated(reach)`) and the build, which groups by the reach the
+copies read used. `DuplicatesReachSQL.shared` is the one definition of "another row shares
+this digest": within each library it groups by digest and root, the digest index's own
+order. A change of reach is a change of which files are copies (`.copies`), so the groups
+and the Duplicates scopes are read again. A build the catalog's load lets run before the
+handoff is followed by another.
+
 **The groups have their own owner.** They are a fact about the whole catalog, not about
 what the window shows, so `DuplicatesProjection` owns them with its own loop (ADR 0032).
 `CatalogProjection` asks it for a build after a publication that took up a catalog change,
@@ -138,6 +161,9 @@ file, not a copy of another.
 
 | Alternative | Why rejected |
 | --- | --- |
+| Listing copies across libraries by default (2026-11-14 to 2026-11-15) | A mirror the user keeps on purpose filled the list with pairs nobody wants removed, and hid the copies within a library that are waste (owner, 2026-11-15). |
+| Leaving mirrors out by recognising them (a folder set whose every file has a twin) | A guess about intent; a backup library the user is consolidating looks the same. One stated preference decides it. |
+| Keeping the reach in the window's query request | The Duplicates scopes and the build would each need it threaded through; the Store already answers what a duplicate is for both. |
 | A duplicate-group table with IDs | A second identity for facts the digests already state; it would go stale with every scan. |
 | Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). A library goes only when the user picks it in its folder rule. |
 | Let groups with authored work, or versions of the same photo, wait without a default | Nothing in the act's count until the user decides each group; competitors default every group (Photos, Lightroom web, PhotoSweeper, Mylio). Carrying the work makes a default safe (owner, 2026-11-01). |

@@ -114,7 +114,7 @@ struct BenchmarkTests {
         let paths = CatalogWindowPolicy.availablePaths(from: libraries)
         let candidates = try await store.samePhotoCandidates(availableLibraryPaths: paths)
         try await Benchmark.measure("duplicates.samePhotoPairs") {
-            #expect(!SamePhotoPolicy.candidatePairs(candidates, excluding: []).isEmpty)
+            #expect(!SamePhotoPolicy.candidatePairs(candidates, excluding: [], reach: .acrossLibraries).isEmpty)
         }
 
         // People at a family archive's scale (ADR 0047): 10,000 faces, 1,000 of them the

@@ -19,6 +19,8 @@ struct SettingsView: View {
     let setAdvanceAfterMediaChoice: (Bool) -> Void
     let asksBeforeLargeTrashDownload: Bool
     let setAsksBeforeLargeTrashDownload: (Bool) -> Void
+    let findsDuplicatesAcrossLibraries: Bool
+    let setFindsDuplicatesAcrossLibraries: (Bool) -> Void
     let searchLanguages: [String]
     let searchLanguageChoices: [SearchLanguageChoice]
     let setSearchLanguages: ([String]) -> Void
@@ -41,6 +43,13 @@ struct SettingsView: View {
                         set: { value in setAsksBeforeLargeTrashDownload(value) }
                     )
                 )
+                Toggle(
+                    "Find duplicates across libraries and accounts",
+                    isOn: Binding(
+                        get: { findsDuplicatesAcrossLibraries },
+                        set: { value in setFindsDuplicatesAcrossLibraries(value) }
+                    )
+                )
                 SearchLanguagesPicker(
                     selected: searchLanguages,
                     choices: searchLanguageChoices,
@@ -48,7 +57,7 @@ struct SettingsView: View {
                 )
             }
             .formStyle(.grouped)
-            .frame(width: 520, height: 210)
+            .frame(width: 520, height: 250)
             .tabItem {
                 Label("General", systemImage: "gearshape")
             }
@@ -486,6 +495,8 @@ private struct LibrariesSettingsView: View {
         setAdvanceAfterMediaChoice: { _ in },
         asksBeforeLargeTrashDownload: true,
         setAsksBeforeLargeTrashDownload: { _ in },
+        findsDuplicatesAcrossLibraries: false,
+        setFindsDuplicatesAcrossLibraries: { _ in },
         searchLanguages: ["fi", "en"],
         searchLanguageChoices: [
             SearchLanguageChoice(code: "en", name: "English"),

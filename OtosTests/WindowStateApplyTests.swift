@@ -154,7 +154,7 @@ struct WindowStateApplyTests {
         let samples: [SidebarSelection] = [
             .allMedia, .places, .mapArea(MapArea(south: 0, north: 1, west: 0, east: 1)),
             .mapStack(MapStack(members: [makeID("a.jpg")])), .onThisDay(CalendarDay(year: 2026, month: 11, day: 14)),
-            .duplicates, .duplicateGroup(digest.map(DuplicateGroupID.identical) ?? .samePhoto([makeID("a.jpg")])),
+            .duplicates, .duplicateGroup(digest.map { DuplicateGroupID.identical($0, library: nil) } ?? .samePhoto([makeID("a.jpg")])),
             .people, .person(PersonID(rawValue: 1)),
             .library(pictures), .library(LibraryRootPath(rawValue: "/Volumes/EOS_DIGITAL")),
             .library(LibraryRootPath(rawValue: "mtp://camera")), .library(LibraryRootPath(rawValue: "immich://family")),
@@ -186,7 +186,7 @@ struct WindowStateApplyTests {
             )
         }
         let digest = try #require(ContentDigest(data: Data(repeating: 7, count: ContentDigest.byteCount)))
-        let group = DuplicateGroupPolicy.group(id: .identical(digest), copies: copies, keptPairs: [])
+        let group = DuplicateGroupPolicy.group(id: .identical(digest, library: nil), copies: copies, keptPairs: [])
 
         model.selectSidebar(.duplicates)
         var duplicates = windowState(ids: ids, scope: .duplicates)

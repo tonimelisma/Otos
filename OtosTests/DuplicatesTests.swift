@@ -39,8 +39,9 @@ struct DuplicatesTests {
         )
     }
 
+    /// The keeper rule's tests compare across libraries, so a group may span them.
     private static func onlyGroup(_ copies: [DuplicateCopyFacts], kept: Set<DuplicateKeptPair> = []) throws -> DuplicateGroup {
-        let groups = DuplicateGroupPolicy.groups(copies: copies, keptPairs: kept)
+        let groups = DuplicateGroupPolicy.groups(copies: copies, keptPairs: kept, reach: .acrossLibraries)
         try #require(groups.count == 1)
         return groups[0]
     }
@@ -202,7 +203,7 @@ struct DuplicatesTests {
     @Test func theTallyCountsEveryActiveGroupAndWhatTheActMoves() throws {
         let preselected = try Self.onlyGroup([Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1 copy.jpg")])
         let waiting = try DuplicateGroupPolicy.group(
-            id: .identical(#require(ContentDigest(data: Data(repeating: 2, count: ContentDigest.byteCount)))),
+            id: .identical(#require(ContentDigest(data: Data(repeating: 2, count: ContentDigest.byteCount))), library: nil),
             copies: [Self.copy("x.jpg", edited: true).copy, Self.copy("y.jpg", edited: true).copy],
             keptPairs: []
         )
@@ -447,7 +448,7 @@ struct DuplicatesTests {
 
         let twice = try Self.onlyGroup([Self.copy("2026/10/a.jpg"), Self.copy("2026/10/a_001.jpg")])
         let older = try DuplicateGroupPolicy.group(
-            id: .identical(#require(ContentDigest(data: Data(repeating: 3, count: ContentDigest.byteCount)))),
+            id: .identical(#require(ContentDigest(data: Data(repeating: 3, count: ContentDigest.byteCount))), library: nil),
             copies: [Self.copy("2026/10/b.jpg", born: 10).copy, Self.copy("2026/10/c.jpg", born: 90).copy],
             keptPairs: []
         )
@@ -489,7 +490,7 @@ struct DuplicatesTests {
     @Test func theListPutsWhatNeedsAttentionFirst() throws {
         func identical(_ seed: UInt8, _ copies: [DuplicateCopyFacts]) throws -> DuplicateGroup {
             try DuplicateGroupPolicy.group(
-                id: .identical(#require(ContentDigest(data: Data(repeating: seed, count: ContentDigest.byteCount)))),
+                id: .identical(#require(ContentDigest(data: Data(repeating: seed, count: ContentDigest.byteCount))), library: nil),
                 copies: copies.map(\.copy), keptPairs: []
             )
         }
@@ -529,7 +530,7 @@ struct DuplicatesTests {
         // click never moves the group out from under the pointer.
         let ids = conflict.copies.map(\.id)
         let keptConflict = try DuplicateGroupPolicy.group(
-            id: .identical(#require(ContentDigest(data: Data(repeating: 5, count: ContentDigest.byteCount)))),
+            id: .identical(#require(ContentDigest(data: Data(repeating: 5, count: ContentDigest.byteCount))), library: nil),
             copies: conflict.copies, keptPairs: [DuplicateKeptPair(ids[0], ids[1])]
         )
         #expect(keptConflict.isKept)
@@ -588,7 +589,7 @@ struct DuplicatesTests {
     @Test func aFolderHeaderPreviewsItsFirstGroups() throws {
         let groups = try (0 ..< 7).map { index in
             try DuplicateGroupPolicy.group(
-                id: .identical(#require(ContentDigest(data: Data(repeating: UInt8(10 + index), count: ContentDigest.byteCount)))),
+                id: .identical(#require(ContentDigest(data: Data(repeating: UInt8(10 + index), count: ContentDigest.byteCount))), library: nil),
                 copies: [Self.copy("2026/10/p\(index).jpg").copy, Self.copy("2026/10/p\(index)_001.jpg").copy],
                 keptPairs: []
             )
@@ -598,6 +599,92 @@ struct DuplicatesTests {
         #expect(header.previews.count == DuplicateFolderBucketPresentation.previewLimit)
         #expect(header.previews.map(\.id) == bucket.groups.prefix(5).compactMap { $0.copies.first?.id })
         #expect(header.previews.allSatisfy { !$0.id.relativePath.fileName.contains("_001") })
+    }
+
+    /// ADR 0042: while Duplicates compares within each library, a copy in another library is
+    /// no duplicate of it, and the same digest in two libraries is two groups.
+    @Test func copiesGroupWithinEachLibraryUnlessDuplicatesComparesAcrossThem() throws {
+        let copies = [
+            Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1.jpg"),
+            Self.copy("IMG_1.jpg", in: Self.backup),
+            Self.copy("asset-1/IMG_1.jpg", in: Self.family),
+        ]
+        let within = DuplicateGroupPolicy.groups(copies: copies, keptPairs: [], reach: .withinEachLibrary)
+        try #require(within.count == 1)
+        #expect(within[0].id == .identical(Self.digest, library: Self.photos))
+        #expect(Set(within[0].copies.map(\.id.relativePath.rawValue)) == ["a/IMG_1.jpg", "b/IMG_1.jpg"])
+
+        // A mirror alone, one copy in each of two libraries, is no group at all.
+        #expect(DuplicateGroupPolicy.groups(
+            copies: [Self.copy("IMG_1.jpg", in: Self.backup), Self.copy("asset-1/IMG_1.jpg", in: Self.family)],
+            keptPairs: [], reach: .withinEachLibrary
+        ).isEmpty)
+
+        let across = DuplicateGroupPolicy.groups(copies: copies, keptPairs: [], reach: .acrossLibraries)
+        try #require(across.count == 1)
+        #expect(across[0].id == .identical(Self.digest, library: nil))
+        #expect(across[0].copies.count == 4)
+    }
+
+    /// The Store's read, the Duplicates scope and a group's scope agree on the reach, and a
+    /// change of reach is a change of which files are copies.
+    @Test func theStoreComparesWithinEachLibraryUntilToldToCompareAcross() async throws {
+        let temp = try makeTestDirectory()
+        let first = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let second = temp.appending(path: "Mirror", directoryHint: .isDirectory)
+        for url in [first, second] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        for url in [first.appending(path: "a.jpg"), first.appending(path: "b.jpg"), second.appending(path: "a.jpg"), second.appending(path: "c.jpg")] {
+            try writeCatalogStoreFile(url, contents: url.lastPathComponent == "c.jpg" ? "other" : "same")
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: first)
+        try await store.addLibrary(url: second)
+        let libraries = try [first, second].map(CatalogPath.normalizedDirectoryPath(for:))
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 4 }
+        let shared = try #require(ContentDigest(data: Data(repeating: 1, count: ContentDigest.byteCount)))
+        for library in libraries {
+            for facts in try #require(await store.planningMedia(for: library)) {
+                let byte: UInt8 = facts.relativePath.rawValue == "c.jpg" ? 2 : 1
+                _ = try await store.applyContentHash(ContentHashResult(
+                    id: facts.id,
+                    contentHash: #require(ContentDigest(data: Data(repeating: byte, count: ContentDigest.byteCount))),
+                    sourceSize: facts.byteSize,
+                    sourceMTimeSeconds: facts.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
+                ))
+            }
+        }
+        let available = Set(libraries)
+        func names(_ ids: [MediaAssetID]) -> Set<String> {
+            Set(ids.map { "\($0.libraryRootPath == libraries[0] ? "first" : "second")/\($0.relativePath.rawValue)" })
+        }
+        func scoped(_ scope: SidebarSelection) async throws -> Set<String> {
+            try await names(store.orderedAssetIDs(
+                for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: available
+            ).ids)
+        }
+
+        #expect(await store.duplicatesReach == .withinEachLibrary)
+        #expect(try await names(store.duplicateCopies(availableLibraryPaths: available).copies.map(\.copy.id))
+            == ["first/a.jpg", "first/b.jpg"])
+        #expect(try await scoped(.duplicates) == ["first/a.jpg", "first/b.jpg"])
+        #expect(try await scoped(.duplicateGroup(.identical(shared, library: libraries[0])))
+            == ["first/a.jpg", "first/b.jpg"])
+
+        let changes = await store.changeNotifications()
+        await store.setDuplicatesReach(.acrossLibraries)
+        for await change in changes where change.facts.contains(.copies) {
+            break
+        }
+        #expect(try await store.duplicateCopies(availableLibraryPaths: available).reach == .acrossLibraries)
+        #expect(try await names(store.duplicateCopies(availableLibraryPaths: available).copies.map(\.copy.id))
+            == ["first/a.jpg", "first/b.jpg", "second/a.jpg"])
+        #expect(try await scoped(.duplicates) == ["first/a.jpg", "first/b.jpg", "second/a.jpg"])
+        #expect(try await scoped(.duplicateGroup(.identical(shared, library: nil)))
+            == ["first/a.jpg", "first/b.jpg", "second/a.jpg"])
+        await store.shutdown()
     }
 
     @Test func theStoreGroupsVisibleCopiesWithCurrentDigestsAndRemembersKeepAll() async throws {

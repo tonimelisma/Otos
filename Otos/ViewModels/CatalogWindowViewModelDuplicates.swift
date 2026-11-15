@@ -404,3 +404,20 @@ nonisolated enum DuplicatesIntent: Sendable {
     case keepAll(groups: [[MediaAssetID]], actionName: String)
     case forget(Set<DuplicateKeptPair>)
 }
+
+extension CatalogWindowViewModel {
+    /// What Duplicates compares, from the user's preference.
+    var duplicatesReach: DuplicatesReach {
+        findsDuplicatesAcrossLibraries ? .acrossLibraries : .withinEachLibrary
+    }
+
+    /// The one writer of the preference (Settings ▸ General). The Store regroups on it.
+    func setFindsDuplicatesAcrossLibraries(_ finds: Bool) {
+        guard findsDuplicatesAcrossLibraries != finds else { return }
+        findsDuplicatesAcrossLibraries = finds
+        preferences.set(finds, forKey: Self.findsDuplicatesAcrossLibrariesDefaultsKey)
+        let reach = duplicatesReach
+        OtosLog.ui.notice("op=duplicates.reach phase=chosen reach=\(String(describing: reach), privacy: .public)")
+        submitCatalogMutation(.setDuplicatesReach(reach))
+    }
+}

@@ -106,7 +106,12 @@ struct OneCopyTests {
         #expect(try await ids(.allMedia, store) == [libraryCopy, other])
         #expect(try await ids(.library(fixture.account), store) == [accountCopy])
         #expect(try await ids(.library(fixture.library), store) == [libraryCopy, other])
+        // A library and an account are two libraries: Duplicates lists the pair only while
+        // it compares across them (ADR 0042), and All Media shows one copy either way.
+        #expect(try await ids(.duplicates, store).isEmpty)
+        await store.setDuplicatesReach(.acrossLibraries)
         #expect(try await ids(.duplicates, store) == [libraryCopy, accountCopy])
+        #expect(try await ids(.allMedia, store) == [libraryCopy, other])
 
         // While the library is not available, its copy is not in the scope, so the
         // account's stands in for it.

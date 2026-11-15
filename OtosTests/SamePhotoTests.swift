@@ -34,9 +34,10 @@ struct SamePhotoTests {
         subsecond: String? = nil,
         model: String? = "ILCE-6700",
         hash: UInt64 = 0xF0F0,
-        width: Int = 4000
+        width: Int = 4000,
+        in library: LibraryRootPath = root
     ) -> Still {
-        let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
+        let id = MediaAssetID(libraryRootPath: library, relativePath: MediaRelativePath(rawValue: path))
         return Still(
             candidate: SamePhotoCandidate(
                 id: id,
@@ -90,7 +91,7 @@ struct SamePhotoTests {
                 }
             }
         })
-        let pairs = SamePhotoPolicy.candidatePairs(stills.map(\.candidate), excluding: [])
+        let pairs = SamePhotoPolicy.candidatePairs(stills.map(\.candidate), excluding: [], reach: .acrossLibraries)
         return SamePhotoPolicy.groups(pairs: pairs, details: details)
     }
 
@@ -180,12 +181,26 @@ struct SamePhotoTests {
             Self.still("Pictures/IMG_1.JPG", subsecond: "123"),
             Self.still("asset-1/IMG_1.JPG", drawnBy: .source, subsecond: "123"),
         ]
-        #expect(SamePhotoPolicy.candidatePairs(candidates.map(\.candidate), excluding: []).isEmpty)
+        #expect(SamePhotoPolicy.candidatePairs(candidates.map(\.candidate), excluding: [], reach: .acrossLibraries).isEmpty)
         let sameSource = [
             Self.still("asset-1/IMG_1.JPG", drawnBy: .source, subsecond: "123"),
             Self.still("asset-2/IMG_1.JPG", drawnBy: .source, subsecond: "123"),
         ]
-        #expect(SamePhotoPolicy.candidatePairs(sameSource.map(\.candidate), excluding: []).count == 1)
+        #expect(SamePhotoPolicy.candidatePairs(sameSource.map(\.candidate), excluding: [], reach: .acrossLibraries).count == 1)
+    }
+
+    /// ADR 0042: while Duplicates compares within each library, a version in another
+    /// library is never proposed, so no group of versions spans two.
+    @Test func versionsInTwoLibrariesPairOnlyWhenDuplicatesComparesAcrossThem() {
+        let mirror = LibraryRootPath(rawValue: "/Users/me/Mirror")
+        let acrossTwo = [
+            Self.still("IMG_1.JPG", subsecond: "123"),
+            Self.still("IMG_1.JPG", subsecond: "123", in: mirror),
+        ].map(\.candidate)
+        #expect(SamePhotoPolicy.candidatePairs(acrossTwo, excluding: [], reach: .withinEachLibrary).isEmpty)
+        #expect(SamePhotoPolicy.candidatePairs(acrossTwo, excluding: [], reach: .acrossLibraries).count == 1)
+        let inOne = [Self.still("a/IMG_1.JPG", subsecond: "123"), Self.still("b/IMG_1.JPG", subsecond: "123")]
+        #expect(SamePhotoPolicy.candidatePairs(inOne.map(\.candidate), excluding: [], reach: .withinEachLibrary).count == 1)
     }
 
     @Test func farHashesAreNotEvenCompared() {
@@ -193,7 +208,7 @@ struct SamePhotoTests {
             Self.still("a.jpg", subsecond: "1", hash: 0),
             Self.still("b.jpg", subsecond: "1", hash: UInt64.max),
         ]
-        #expect(SamePhotoPolicy.candidatePairs(candidates.map(\.candidate), excluding: []).isEmpty)
+        #expect(SamePhotoPolicy.candidatePairs(candidates.map(\.candidate), excluding: [], reach: .acrossLibraries).isEmpty)
     }
 
     @Test func aSignatureOfOneImageMatchesItself() throws {

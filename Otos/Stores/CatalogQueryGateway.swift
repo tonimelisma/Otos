@@ -983,21 +983,22 @@ private nonisolated func scopeClause(
     switch scope.content {
     case .any:
         break
-    case .duplicated:
-        predicate += """
-
-          AND \(ContentDigestSQL.isCurrent("media_asset"))
-          AND media_asset.content_sha1 IN (
-              SELECT twin.content_sha1 FROM media_asset AS twin INDEXED BY \(ContentDigestSQL.indexName)
-              WHERE \(ContentDigestSQL.isCurrent("twin"))
+    case let .duplicated(reach):
+        let shared = DuplicatesReachSQL.shared(
+            row: "media_asset", twin: "twin", reach: reach,
+            twinFilter: """
+            \(ContentDigestSQL.isCurrent("twin"))
                 AND twin.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))
                 AND twin.pending_trash_batch_unix_ms IS NULL
                 AND twin.trash_path IS NULL
                 AND twin.hidden_by_source = 0
                 AND NOT \(LivePhotoSQL.isPairedMotion("twin"))
-              GROUP BY twin.content_sha1
-              HAVING COUNT(*) > 1
-          )
+            """
+        )
+        predicate += """
+
+          AND \(ContentDigestSQL.isCurrent("media_asset"))
+          AND \(shared)
         """
         arguments.append(contentsOf: scope.rootIDs)
     case let .identical(digest):

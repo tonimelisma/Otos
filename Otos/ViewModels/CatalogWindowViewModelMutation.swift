@@ -126,6 +126,9 @@ extension CatalogWindowViewModel {
         case let .acknowledgeIdentityRemaps(batchIDs):
             await performAcknowledgeIdentityRemaps(batchIDs, store: store)
             return nil
+        case let .setDuplicatesReach(reach):
+            await store.setDuplicatesReach(reach)
+            return nil
         }
     }
 }

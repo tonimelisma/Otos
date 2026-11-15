@@ -47,6 +47,7 @@ final class CatalogWindowViewModel {
         case resumeRemovableSource(DeviceIdentity)
         case detachRemovableSource(DeviceIdentity, RemovableSourceDetachReason)
         case acknowledgeIdentityRemaps([Int64])
+        case setDuplicatesReach(DuplicatesReach)
     }
 
     /// What a finished mutation tells the user, when it tells them anything.
@@ -397,6 +398,10 @@ final class CatalogWindowViewModel {
     /// `LargeTrashDownloadPrompt.thresholdBytes` asks first (Plan 0104). One preference
     /// with two editors: the prompt's `Do not ask again` and Settings ▸ General.
     var asksBeforeLargeTrashDownload: Bool
+    /// Whether Duplicates also lists copies in two different libraries or accounts, such as
+    /// a library and the Immich server that mirrors it (ADR 0042). Off by default: a mirror
+    /// the user keeps on purpose is not waste. Settings ▸ General is its one editor.
+    var findsDuplicatesAcrossLibraries: Bool
     /// The large-download question awaiting an answer; nil when none.
     var largeTrashDownloadPrompt: LargeTrashDownloadPrompt?
     /// Full-size decodes keyed by pane slot and bound to the asset they belong to.
@@ -738,6 +743,7 @@ final class CatalogWindowViewModel {
         advanceAfterMediaChoice = preferences.bool(forKey: Self.advanceAfterMediaChoiceDefaultsKey)
         asksBeforeLargeTrashDownload = preferences.object(forKey: Self.asksBeforeLargeTrashDownloadDefaultsKey)
             as? Bool ?? true
+        findsDuplicatesAcrossLibraries = preferences.bool(forKey: Self.findsDuplicatesAcrossLibrariesDefaultsKey)
         searchLanguages = SearchLanguages.resolved(
             stored: preferences.object(forKey: Self.searchLanguagesDefaultsKey) as? [String],
             systemPreferred: Locale.preferredLanguages
@@ -1060,6 +1066,10 @@ extension CatalogWindowViewModel {
         startReadingsRefresh()
         startAnniversaryTitles()
         startFacesReadRefresh()
+        // The Store's first command: it compares duplicates as the user chose. A duplicates
+        // build that the catalog's load lets run before it is followed by another, since the
+        // handoff is a change of which files are copies.
+        submitCatalogMutation(.setDuplicatesReach(duplicatesReach))
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startMediaChoiceForwarding(store: store)
         startStackKeyForwarding(store: store)
@@ -1782,6 +1792,7 @@ extension CatalogWindowViewModel {
     static let advanceAfterMediaChoiceDefaultsKey = "advanceAfterMediaChoice"
     static let asksBeforeLargeTrashDownloadDefaultsKey = "trash.asksBeforeLargeDownload"
     static let searchLanguagesDefaultsKey = "search.languages"
+    static let findsDuplicatesAcrossLibrariesDefaultsKey = "duplicates.acrossLibraries"
     static let dismissedCameraBannersDefaultsKey = "dismissedCameraConnectionBannerIdentities"
 
     /// Clamps into 3–9, persists, and publishes; a no-op re-request does not re-persist.

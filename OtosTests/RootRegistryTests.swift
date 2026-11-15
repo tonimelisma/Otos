@@ -54,19 +54,22 @@ struct RootRegistryTests {
 
         let allMedia = registry.scopePredicate(
             selection: .allMedia,
-            availableLibraryPaths: [libraryPath, otherPath, volumePath]
+            availableLibraryPaths: [libraryPath, otherPath, volumePath],
+            duplicatesReach: .withinEachLibrary
         )
         #expect(allMedia == CatalogScopePredicate(rootIDs: [1, 2], showsOneCopy: true))
 
         let libraryOnly = registry.scopePredicate(
             selection: .library(libraryPath),
-            availableLibraryPaths: [libraryPath, otherPath]
+            availableLibraryPaths: [libraryPath, otherPath],
+            duplicatesReach: .withinEachLibrary
         )
         #expect(libraryOnly == CatalogScopePredicate(rootIDs: [1]))
 
         let unavailableLibrary = registry.scopePredicate(
             selection: .library(libraryPath),
-            availableLibraryPaths: [otherPath]
+            availableLibraryPaths: [otherPath],
+            duplicatesReach: .withinEachLibrary
         )
         #expect(unavailableLibrary.selectsNothing)
     }
@@ -81,7 +84,8 @@ struct RootRegistryTests {
 
         let batch = registry.scopePredicate(
             selection: .importBatch(ImportBatchID(unixMilliseconds: 1_785_908_514_176)),
-            availableLibraryPaths: [libraryPath, otherPath, volumePath]
+            availableLibraryPaths: [libraryPath, otherPath, volumePath],
+            duplicatesReach: .withinEachLibrary
         )
 
         #expect(batch == CatalogScopePredicate(rootIDs: [1, 2], importBatchUnixMs: 1_785_908_514_176))

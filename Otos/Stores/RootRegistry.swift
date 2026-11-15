@@ -95,9 +95,14 @@ nonisolated struct RootRegistry {
     /// ordered IDs and counts cannot disagree about what a selection means.
     func scopePredicate(
         selection: SidebarSelection,
-        availableLibraryPaths: Set<LibraryRootPath>
+        availableLibraryPaths: Set<LibraryRootPath>,
+        duplicatesReach: DuplicatesReach
     ) -> CatalogScopePredicate {
-        var predicate = rowsPredicate(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        var predicate = rowsPredicate(
+            selection: selection,
+            availableLibraryPaths: availableLibraryPaths,
+            duplicatesReach: duplicatesReach
+        )
         predicate.showsOneCopy = selection.showsOneCopy
         return predicate
     }
@@ -105,7 +110,8 @@ nonisolated struct RootRegistry {
     /// The rows the selection holds, before one copy is chosen of identical copies.
     private func rowsPredicate(
         selection: SidebarSelection,
-        availableLibraryPaths: Set<LibraryRootPath>
+        availableLibraryPaths: Set<LibraryRootPath>,
+        duplicatesReach: DuplicatesReach
     ) -> CatalogScopePredicate {
         switch selection {
         case .allMedia:
@@ -139,11 +145,17 @@ nonisolated struct RootRegistry {
         case .duplicates:
             return CatalogScopePredicate(
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
-                content: .duplicated
+                content: .duplicated(duplicatesReach)
             )
-        case let .duplicateGroup(.identical(digest)):
+        case let .duplicateGroup(.identical(digest, library: nil)):
             return CatalogScopePredicate(
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                content: .identical(digest)
+            )
+        case let .duplicateGroup(.identical(digest, library: library?)):
+            // A group within one library holds only that library's copies of the digest.
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths.intersection([library])),
                 content: .identical(digest)
             )
         case let .duplicateGroup(.samePhoto(members)):

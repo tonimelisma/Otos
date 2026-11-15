@@ -445,7 +445,8 @@ struct CatalogStoreQueryPlanTests {
             ("library", CatalogScopePredicate(rootIDs: [rootID1])),
             ("places", CatalogScopePredicate(rootIDs: roots, location: .located)),
             ("onThisDay", CatalogScopePredicate(rootIDs: roots, date: .anniversary(CalendarDay(year: 2026, month: 11, day: 13)))),
-            ("duplicates", CatalogScopePredicate(rootIDs: roots, content: .duplicated)),
+            ("duplicates", CatalogScopePredicate(rootIDs: roots, content: .duplicated(.withinEachLibrary))),
+            ("duplicatesAcross", CatalogScopePredicate(rootIDs: roots, content: .duplicated(.acrossLibraries))),
             ("people", CatalogScopePredicate(rootIDs: roots, content: .withPerson)),
             ("importBatch", CatalogScopePredicate(rootIDs: roots, importBatchUnixMs: 1_785_908_514_176)),
         ]
@@ -484,20 +485,23 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let reaches: [DuplicatesReach] = [.withinEachLibrary, .acrossLibraries]
         let plans = try await dbQueue.read { db in
             try [[rootID1], [rootID1, rootID2]].flatMap { roots in
-                let scope = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
-                    descriptor: CatalogQueryDescriptor(scope: .duplicates),
-                    scope: CatalogScopePredicate(rootIDs: roots, content: .duplicated),
-                    db: db
-                ))
-                return try [
-                    ("copies \(roots.count)", explainPlan(
-                        db, sql: DuplicatesGateway.duplicateCopiesSQL(rootCount: roots.count),
-                        arguments: StatementArguments(roots + roots)
-                    )),
-                    ("scope \(roots.count)", explainPlan(db, query: scope)),
-                ]
+                try reaches.flatMap { reach in
+                    let scope = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                        descriptor: CatalogQueryDescriptor(scope: .duplicates),
+                        scope: CatalogScopePredicate(rootIDs: roots, content: .duplicated(reach)),
+                        db: db
+                    ))
+                    return try [
+                        ("copies \(roots.count) \(reach)", explainPlan(
+                            db, sql: DuplicatesGateway.duplicateCopiesSQL(rootCount: roots.count, reach: reach),
+                            arguments: StatementArguments(roots + roots)
+                        )),
+                        ("scope \(roots.count) \(reach)", explainPlan(db, query: scope)),
+                    ]
+                }
             }
         }
         for (name, plan) in plans {

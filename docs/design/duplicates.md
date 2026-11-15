@@ -181,7 +181,10 @@ edits onto the kept copy that lacks them; `.xmp` / `.srt` files go with their co
 
 Before a click or a rule, every group keeps what the keeper rule picks (ADR 0042):
 
-- **Each library keeps its own copy.**
+- **Copies are compared within each library or account.** A mirror — the same photo in a
+  library and in the Immich server that indexes it — is no duplicate until Settings ▸
+  General ▸ `Find duplicates across libraries and accounts` is on.
+- **Each library keeps its own copy**, when copies across libraries are listed.
 - **The best copy is kept:** one with `.xmp` / `.srt` files; for files of one photo —
   whether or not they name their capture — the camera original, then the most pixels,
   then the largest file in bytes; an edited copy, then one with a choice; the name without

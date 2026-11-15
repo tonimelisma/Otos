@@ -136,20 +136,25 @@ actor DuplicatesProjection {
 }
 
 extension DuplicatesProjection {
-    /// Duplicate groups across the available fixed libraries: identical copies by digest,
-    /// then versions of the same photo among the rest.
+    /// Duplicate groups in the available fixed libraries — within each, or across them, as
+    /// the Store's reach says: identical copies by digest, then versions of the same photo
+    /// among the rest.
     static func build(store: CatalogStore, libraries: [CatalogLibraryState]) async throws -> CatalogDuplicatesState {
         let signpost = OtosSignpost.performance.beginInterval("DuplicatesBuild")
         defer { OtosSignpost.performance.endInterval("DuplicatesBuild", signpost) }
         let start = ContinuousClock.now
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: libraries)
         let duplicates = try await store.duplicateCopies(availableLibraryPaths: availableLibraryPaths)
-        let identical = DuplicateGroupPolicy.groups(copies: duplicates.copies, keptPairs: duplicates.keptPairs)
+        let identical = DuplicateGroupPolicy.groups(
+            copies: duplicates.copies, keptPairs: duplicates.keptPairs, reach: duplicates.reach
+        )
         let identicalMs = DiagnosticsTiming.milliseconds(since: start)
 
         let candidatesStart = ContinuousClock.now
         let candidates = try await store.samePhotoCandidates(availableLibraryPaths: availableLibraryPaths)
-        let pairs = await proposePairs(candidates, excluding: Set(identical.flatMap(\.copies).map(\.id)))
+        let pairs = await proposePairs(
+            candidates, excluding: Set(identical.flatMap(\.copies).map(\.id)), reach: duplicates.reach
+        )
         let candidatesMs = DiagnosticsTiming.milliseconds(since: candidatesStart)
 
         let detailsStart = ContinuousClock.now
@@ -170,6 +175,7 @@ extension DuplicatesProjection {
             "preselected": "\(groups.count { !$0.isKept && $0.defaultKeep != nil })",
             "waiting": "\(groups.count { !$0.isKept && $0.defaultKeep == nil })",
             "samePhoto": "\(samePhoto.count)",
+            "reach": "\(duplicates.reach)",
             "choose": "\(state.layout.choose.count)",
             "different": "\(state.layout.different.count)",
             "folders": "\(state.layout.buckets.count)",
@@ -190,9 +196,10 @@ extension DuplicatesProjection {
     @concurrent
     private static func proposePairs(
         _ candidates: [SamePhotoCandidate],
-        excluding excluded: Set<MediaAssetID>
+        excluding excluded: Set<MediaAssetID>,
+        reach: DuplicatesReach
     ) async -> [SamePhotoPair] {
-        SamePhotoPolicy.candidatePairs(candidates, excluding: excluded)
+        SamePhotoPolicy.candidatePairs(candidates, excluding: excluded, reach: reach)
     }
 
     /// Versions of the same photo from the proposed pairs, off the actor. A group the user

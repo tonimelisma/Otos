@@ -163,8 +163,9 @@ nonisolated struct CatalogScopePredicate: Equatable {
     /// What a scope requires of a row's content digest (ADR 0042).
     enum ContentConstraint: Equatable {
         case any
-        /// The row's current digest is shared by another visible row: Duplicates.
-        case duplicated
+        /// The row's current digest is shared by another visible row — one in its own root
+        /// while Duplicates compares within each library: Duplicates.
+        case duplicated(DuplicatesReach)
         /// The row's current digest is exactly this: one group under Duplicates.
         case identical(ContentDigest)
         /// The row is one of these, by root row id and path: a same-photo group under

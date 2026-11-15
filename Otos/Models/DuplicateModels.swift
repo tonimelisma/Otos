@@ -11,10 +11,31 @@ import Foundation
 // feature adds is the user's "Keep All Copies" — remembered per pair of paths, overlay
 // with the copies' own lifecycle.
 
-/// What makes copies one group. Identical copies share a content digest; versions of the
-/// same photo share a picture, proven by their thumbnails, and are named by their members.
+/// Which copies Duplicates compares with each other (ADR 0042). By default, only copies in
+/// the same library or account: a library the user keeps a second time on purpose — an
+/// Immich server that indexes the same OneDrive folders — is a mirror, not waste. Settings
+/// widens it to every library and account.
+nonisolated enum DuplicatesReach: Equatable, Sendable {
+    case withinEachLibrary
+    case acrossLibraries
+
+    /// The library a group of these copies is confined to: its copies' own while Duplicates
+    /// compares within each library, none when it compares across them.
+    func library(of id: MediaAssetID) -> LibraryRootPath? {
+        switch self {
+        case .withinEachLibrary: id.libraryRootPath
+        case .acrossLibraries: nil
+        }
+    }
+}
+
+/// What makes copies one group. Identical copies share a content digest — in one library
+/// while Duplicates compares within each library, so the same digest in two libraries is two
+/// groups; versions of the same photo share a picture, proven by their thumbnails, and are
+/// named by their members.
 nonisolated enum DuplicateGroupID: Hashable, Sendable {
-    case identical(ContentDigest)
+    /// `library` is nil when the group's copies may span libraries.
+    case identical(ContentDigest, library: LibraryRootPath?)
     /// Members in `duplicateOrderKey` order.
     case samePhoto([MediaAssetID])
 
@@ -347,7 +368,8 @@ nonisolated struct DuplicateCopyFacts: Equatable, Sendable {
 /// The keeper rule (ADR 0042). Pure: facts in, groups out. Every group has a default:
 ///
 /// - **Each library keeps its own copy.** Nothing across libraries is preselected, so a group
-///   whose copies span libraries keeps the best copy in each; the library pair row offers
+///   whose copies span libraries — only while Duplicates compares across them
+///   (`DuplicatesReach`) — keeps the best copy in each; the library pair row offers
 ///   `Keep Only <Library>`.
 /// - **Work is carried, not chosen between.** The act moves a copy's curation or edit onto
 ///   the kept copy when the kept copy lacks it (`DuplicatesSession.carries`), so the copy
@@ -364,13 +386,16 @@ nonisolated struct DuplicateCopyFacts: Equatable, Sendable {
 nonisolated enum DuplicateGroupPolicy {
     static func groups(
         copies: [DuplicateCopyFacts],
-        keptPairs: Set<DuplicateKeptPair>
+        keptPairs: Set<DuplicateKeptPair>,
+        reach: DuplicatesReach
     ) -> [DuplicateGroup] {
-        let byDigest = Dictionary(grouping: copies, by: \.digest)
+        let byGroup = Dictionary(grouping: copies) { copy in
+            DuplicateGroupID.identical(copy.digest, library: reach.library(of: copy.copy.id))
+        }
         var groups: [DuplicateGroup] = []
-        for (digest, members) in byDigest where members.count > 1 {
+        for (id, members) in byGroup where members.count > 1 {
             groups.append(group(
-                id: .identical(digest),
+                id: id,
                 copies: members.map(\.copy),
                 keptPairs: keptPairs
             ))
@@ -960,11 +985,19 @@ nonisolated enum SamePhotoPolicy {
     /// test the hash from a flat array before they touch a candidate.
     static func candidatePairs(
         _ candidates: [SamePhotoCandidate],
-        excluding excluded: Set<MediaAssetID>
+        excluding excluded: Set<MediaAssetID>,
+        reach: DuplicatesReach
     ) -> [SamePhotoPair] {
         let eligible = candidates.filter { !excluded.contains($0.id) && $0.aspectRatio != nil }
+        // A bucket is one library's while Duplicates compares within each library, so no
+        // pair, and no group joined through pairs, spans two.
         let buckets = Dictionary(grouping: eligible) { candidate in
-            AspectBucket(isRaw: candidate.isRaw, drawnBy: candidate.drawnBy, aspect: Int(((candidate.aspectRatio ?? 0) * 100).rounded()))
+            AspectBucket(
+                library: reach.library(of: candidate.id),
+                isRaw: candidate.isRaw,
+                drawnBy: candidate.drawnBy,
+                aspect: Int(((candidate.aspectRatio ?? 0) * 100).rounded())
+            )
         }
         var pairs: [SamePhotoPair] = []
         for members in buckets.values where members.count > 1 {
@@ -1131,6 +1164,7 @@ nonisolated enum SamePhotoPolicy {
     }
 
     private struct AspectBucket: Hashable {
+        let library: LibraryRootPath?
         let isRaw: Bool
         let drawnBy: EnrichedRendering.Origin
         let aspect: Int

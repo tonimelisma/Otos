@@ -93,12 +93,20 @@ nonisolated enum DuplicatesGateway {
     }
 
     /// Every visible copy whose current digest another visible copy shares, over `rootCount`
-    /// roots (their IDs bound twice). Both reads walk the digest index, which holds only rows
-    /// that have a digest, so neither visits a row without one nor groups through a temporary
-    /// B-tree: most of the owner's rows (an Immich account's) have none
+    /// roots (their IDs bound twice) — another in the same root while Duplicates compares
+    /// within each library. Both reads walk the digest index, which holds only rows that have
+    /// a digest, in digest then root order, so neither visits a row without one nor groups
+    /// through a temporary B-tree: most of the owner's rows (an Immich account's) have none
     /// (`docs/research/2026-11-14-owner-scale-query-plans.md`).
-    static func duplicateCopiesSQL(rootCount: Int) -> String {
+    static func duplicateCopiesSQL(rootCount: Int, reach: DuplicatesReach) -> String {
         let placeholders = Array(repeating: "?", count: rootCount).joined(separator: ", ")
+        let shared = DuplicatesReachSQL.shared(
+            row: "a", twin: "d", reach: reach,
+            twinFilter: """
+            d.library_root_id IN (\(placeholders))
+                AND \(visibleCurrentPredicate("d"))
+            """
+        )
         return """
         SELECT a.library_root_id, a.relative_path, a.content_sha1, a.best_kind, a.best_capture_local,
                a.byte_size, a.created_at_unix, a.media_choice, a.edit_recipe_json IS NOT NULL AS edited,
@@ -112,20 +120,14 @@ nonisolated enum DuplicatesGateway {
           ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(placeholders))
           AND \(visibleCurrentPredicate("a"))
-          AND a.content_sha1 IN (
-              SELECT d.content_sha1 FROM media_asset d INDEXED BY \(ContentDigestSQL.indexName)
-              WHERE d.library_root_id IN (\(placeholders))
-                AND \(visibleCurrentPredicate("d"))
-              GROUP BY d.content_sha1
-              HAVING COUNT(*) > 1
-          )
+          AND \(shared)
         """
     }
 
-    static func fetchDuplicateCopies(rootIDs: [Int64], db: Database) throws -> [CopyRow] {
+    static func fetchDuplicateCopies(rootIDs: [Int64], reach: DuplicatesReach, db: Database) throws -> [CopyRow] {
         let rows = try Row.fetchAll(
             db,
-            sql: duplicateCopiesSQL(rootCount: rootIDs.count),
+            sql: duplicateCopiesSQL(rootCount: rootIDs.count, reach: reach),
             arguments: StatementArguments(rootIDs + rootIDs)
         )
         return rows.compactMap { row in
@@ -166,6 +168,37 @@ nonisolated enum DuplicatesGateway {
                 secondRootID: row["second_root_id"],
                 secondPath: row["second_path"]
             )
+        }
+    }
+}
+
+/// Whether a row's digest is one another row shares (ADR 0042): the one definition the
+/// Duplicates read and the Duplicates scope use. While Duplicates compares within each
+/// library, the other row must be in the same root, so the subquery groups by digest and root,
+/// the digest index's own order.
+nonisolated enum DuplicatesReachSQL {
+    /// `row`'s digest, and its root within each library, among `twin`'s groups of more than
+    /// one; `twinFilter` says which twins count.
+    static func shared(row: String, twin: String, reach: DuplicatesReach, twinFilter: String) -> String {
+        switch reach {
+        case .acrossLibraries:
+            """
+            \(row).content_sha1 IN (
+                  SELECT \(twin).content_sha1 FROM media_asset \(twin) INDEXED BY \(ContentDigestSQL.indexName)
+                  WHERE \(twinFilter)
+                  GROUP BY \(twin).content_sha1
+                  HAVING COUNT(*) > 1
+              )
+            """
+        case .withinEachLibrary:
+            """
+            (\(row).content_sha1, \(row).library_root_id) IN (
+                  SELECT \(twin).content_sha1, \(twin).library_root_id FROM media_asset \(twin) INDEXED BY \(ContentDigestSQL.indexName)
+                  WHERE \(twinFilter)
+                  GROUP BY \(twin).content_sha1, \(twin).library_root_id
+                  HAVING COUNT(*) > 1
+              )
+            """
         }
     }
 }

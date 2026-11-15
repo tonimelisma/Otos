@@ -400,6 +400,11 @@ actor CatalogStore {
     }
 
     private let location: Location
+    /// Which copies Duplicates compares (ADR 0042): every Duplicates read and the Duplicates
+    /// scopes use this one value, so the groups and the rows the scopes hold agree. The user's
+    /// preference, which the window's owner hands over before the catalog starts and on
+    /// every change (`setDuplicatesReach`).
+    private(set) var duplicatesReach: DuplicatesReach = .withinEachLibrary
     /// Bytes the WAL file may reach before a bulk write empties it (64 MiB). A
     /// write-ahead log is reset only at an instant no reader is using it, so while readers
     /// overlap one another back to back — the window, enrichment and the derived owners
@@ -6139,7 +6144,11 @@ private extension CatalogStore {
         selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
     ) -> CatalogScopePredicate {
-        roots.scopePredicate(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        roots.scopePredicate(
+            selection: selection,
+            availableLibraryPaths: availableLibraryPaths,
+            duplicatesReach: duplicatesReach
+        )
     }
 
     private func validateNoOverlap(_ path: LibraryRootPath, ignoring existingRootRowID: Int64? = nil) throws {
@@ -8250,26 +8259,41 @@ extension CatalogStore {
 // MARK: - Duplicates (ADR 0042)
 
 extension CatalogStore {
-    /// Every visible copy whose current digest another visible copy shares, and every
-    /// remembered "Keep All Copies" pair among them.
+    /// Duplicates compares these copies from now on. A change is a change of which files
+    /// are copies of which, so the groups and the Duplicates scopes are read again.
+    func setDuplicatesReach(_ reach: DuplicatesReach) {
+        guard duplicatesReach != reach else {
+            return
+        }
+        duplicatesReach = reach
+        OtosLog.catalog.noticeOperation("duplicates.reach", phase: "set", fields: [
+            "reach": "\(reach)",
+        ])
+        notifyCatalogChanged(.changed(.copies))
+    }
+
+    /// Every visible copy whose current digest another visible copy shares — in its own
+    /// library while Duplicates compares within each — every remembered "Keep All Copies"
+    /// pair among them, and the reach the read used, which the rest of the build groups by.
     func duplicateCopies(
         availableLibraryPaths: Set<LibraryRootPath>
-    ) async throws -> (copies: [DuplicateCopyFacts], keptPairs: Set<DuplicateKeptPair>) {
+    ) async throws -> (copies: [DuplicateCopyFacts], keptPairs: Set<DuplicateKeptPair>, reach: DuplicatesReach) {
+        let reach = duplicatesReach
         let libraries = roots.values.filter { $0.root.kind.isMemberOfAllMedia && availableLibraryPaths.contains($0.path) }
         guard !libraries.isEmpty else {
-            return ([], [])
+            return ([], [], reach)
         }
         let rootIDs = libraries.map(\.rowID).sorted()
         let pathsByRowID = roots.pathsByRowID
         let librariesByPath = Dictionary(uniqueKeysWithValues: libraries.map { ($0.path, DuplicateLibrary($0.root)) })
         return try await database().read { db in
-            let copies = try DuplicatesGateway.fetchDuplicateCopies(rootIDs: rootIDs, db: db).compactMap { row in
+            let copies = try DuplicatesGateway.fetchDuplicateCopies(rootIDs: rootIDs, reach: reach, db: db).compactMap { row in
                 row.facts(pathsByRowID: pathsByRowID, librariesByPath: librariesByPath)
             }
             let keptPairs = try DuplicatesGateway.fetchKeptPairs(rootIDs: rootIDs, db: db).compactMap { row in
                 row.pair(pathsByRowID: pathsByRowID)
             }
-            return (copies, Set(keptPairs))
+            return (copies, Set(keptPairs), reach)
         }
     }
 

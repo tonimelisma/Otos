@@ -96,7 +96,7 @@ struct ImmichAccountCatalogTests {
 
     /// Duplicates spans accounts like libraries: an account's copy of a library photo with
     /// the same digest is one group.
-    @Test func anAccountsCopyOfALibraryPhotoIsADuplicate() async throws {
+    @Test func anAccountsCopyOfALibraryPhotoIsADuplicateAcrossLibraries() async throws {
         let temp = try makeTestDirectory()
         let folder = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -122,6 +122,10 @@ struct ImmichAccountCatalogTests {
         }
 
         let available = await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
+        // A library and an account are two libraries: their copies are duplicates only while
+        // Duplicates compares across libraries.
+        #expect(try await store.duplicateCopies(availableLibraryPaths: available).copies.isEmpty)
+        await store.setDuplicatesReach(.acrossLibraries)
         let copies = try await store.duplicateCopies(availableLibraryPaths: available).copies
         #expect(Set(copies.map(\.copy.id.libraryRootPath)) == [library, rootPath])
         // ADR 0046 §8: the account's copy is never moved to the Trash, and its asset folder

@@ -21,7 +21,8 @@ The owner decided, on 2026-11-14:
 - identical copies show as one photo in the views that combine libraries and accounts, whether
   the copies are in two libraries, in a library and an account, or in one folder;
 - a view of one library or folder shows exactly what is on disk there, every file;
-- Duplicates still lists identical copies, so they can be cleaned up.
+- Duplicates still lists identical copies, so they can be cleaned up — within one library or
+  account unless the user asks for copies across them (2026-11-15, ADR 0042).
 
 ## Decision
 
@@ -80,7 +81,7 @@ is never reported as none.
 | Showing the copy with the user's work (edited, liked) first | Liking or un-liking would swap which file the tile is, under the pointer. |
 | Keeping XXH3 and adding SHA-1 beside it | Two digests answering one question. Immich speaks SHA-1, so one digest serves both. |
 | Collapsing copies in one library's or folder's view | The owner wants that view to show exactly what is on disk (2026-11-14). |
-| Taking identical copies out of Duplicates | Duplicates is where copies are cleaned up; a mirror's pairs are its facts too (ADR 0046 §8 keeps an account's copy from ever being moved). |
+| Taking identical copies out of Duplicates | Duplicates is where copies are cleaned up. A mirror's pairs across libraries are listed only when the user asks for them (ADR 0042), and an account's copy is never moved (ADR 0046 §8). |
 
 ## Consequences
 
@@ -88,9 +89,9 @@ is never reported as none.
   bytes once, downloading an evicted cloud file under the free-space floor (ENR-008). Every
   Immich account owes a full resync, which lists each asset with its checksum.
 - Until a row's digest is read, its copies are not known, and a copy shows beside it.
-- Duplicates lists a mirror's pairs, since they are identical copies. An account's copy is
-  never tagged Trash (ADR 0046 §8), and by default each library and account keeps its own
-  (ADR 0042), so nothing moves unless the user chooses it. On the owner's catalog that is
-  16,001 groups, and a copies read of 4–6 s, off the main actor.
+- Duplicates lists a mirror's pairs only while the user has it compare across libraries
+  (ADR 0042). Then an account's copy is never tagged Trash (ADR 0046 §8), and by default
+  each library and account keeps its own, so nothing moves unless the user chooses it. On
+  the owner's catalog that is 16,001 groups, and a copies read of 4–6 s, off the main actor.
 - A digest write recomputes its group in the same transaction, about 0.7 ms on the owner's
   catalog. It notifies `.copies`, which the combined scopes now depend on.

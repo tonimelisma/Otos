@@ -502,6 +502,8 @@ public struct OtosApp: App {
                 setAdvanceAfterMediaChoice: catalogViewModel.setAdvanceAfterMediaChoice,
                 asksBeforeLargeTrashDownload: catalogViewModel.asksBeforeLargeTrashDownload,
                 setAsksBeforeLargeTrashDownload: catalogViewModel.setAsksBeforeLargeTrashDownload,
+                findsDuplicatesAcrossLibraries: catalogViewModel.findsDuplicatesAcrossLibraries,
+                setFindsDuplicatesAcrossLibraries: catalogViewModel.setFindsDuplicatesAcrossLibraries,
                 searchLanguages: catalogViewModel.searchLanguages,
                 searchLanguageChoices: catalogViewModel.searchLanguageChoices,
                 setSearchLanguages: catalogViewModel.setSearchLanguages,
