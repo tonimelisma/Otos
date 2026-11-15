@@ -197,3 +197,6 @@ Read from the installed app's catalog, opened read-only.
 - The rule: learn the server prefix from one asset's `originalPath`, confirmed by that
   asset's checksum. Then a file pairs with the asset whose checksum is that of the prefix plus
   its relative path, listed with its size and mtime.
+- On a generated catalog (`BenchmarkTests.immichMirrorCases`: 16,000 library files, each
+  mirrored by an external asset), a pass that finds every file already paired measured
+  3,577 M instructions (0.6% range), 414 ms median, with no write.

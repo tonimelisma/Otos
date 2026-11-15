@@ -1,5 +1,6 @@
 import AppKit
 import CoreImage
+import CryptoKit
 import Foundation
 import GRDB
 @testable import OtosKit
@@ -283,6 +284,83 @@ struct BenchmarkTests {
         await store.endSourceListing(scan: scan)
         let kept = try await store.sourceItemRows(["asset-010000", "asset-019999"], in: rootPath)
         #expect(kept.count == 2)
+        await store.shutdown()
+    }
+
+    /// A pass's mirror pairing (ADR 0054) over a library of 16,000 digested files that an
+    /// account mirrors in full, shaped like the owner's Camera Roll and its Immich external
+    /// library: every pass pairs every file again, so once all are paired a pass costs one
+    /// read of the library's digests and one indexed probe per file, and writes nothing.
+    @Test func immichMirrorCases() async throws {
+        let temp = try makeTestDirectory()
+        let count = 16000
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let path: @Sendable (Int) -> String = { index in
+            String(format: "%04d/IMG_%05d.JPG", 2000 + index / 1000, index)
+        }
+        let rootURL = temp.appending(path: "Camera Roll", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let scanner = CatalogScanner { _, _, batchHandler in
+            let files = (0 ..< count).map { index in
+                ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: path(index)), name: String(format: "IMG_%05d.JPG", index),
+                    contentTypeIdentifier: "public.jpeg", byteSize: 4,
+                    createdAt: base.addingTimeInterval(Double(index)), contentModifiedAt: base.addingTimeInterval(Double(index)),
+                    kind: .image
+                )
+            }
+            try await batchHandler(files)
+            return .mediaOnly(Set(files.map(\.relativePath)))
+        }
+        let store = CatalogStore(
+            location: .databaseFile(temp.appending(path: "db/catalog.sqlite")), scanner: scanner,
+            stagingContainers: StagingContainers(base: temp)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: rootURL)
+        let library = try CatalogPath.normalizedDirectoryPath(for: rootURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == count }
+        func digest(_ index: Int) -> ContentDigest {
+            ContentDigest(bytes: Array(Insecure.SHA1.hash(data: Data("file \(index)".utf8))))!
+        }
+        for start in stride(from: 0, to: count, by: 500) {
+            _ = await store.applyEnrichmentBatch((start ..< start + 500).map { index in
+                EnrichmentResult(
+                    id: MediaAssetID(libraryRootPath: library, relativePath: MediaRelativePath(rawValue: path(index))),
+                    metadata: nil, rendering: nil, sourceSize: 4,
+                    sourceMTimeSeconds: Int(base.timeIntervalSince1970) + index, contentHash: digest(index)
+                )
+            })
+        }
+        let account = try await store.addImmichAccount(
+            server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family"
+        )
+        let prefix = "/mnt/onedrive/Pictures/Camera Roll/"
+        let scan = try await store.beginSourceListing(rootPath: account)
+        for start in stride(from: 0, to: count, by: 500) {
+            let items = (start ..< start + 500).map { index in
+                let folder = String(format: "asset-%06d", index)
+                return SourceListedItem(
+                    file: ScannedMediaFile(
+                        relativePath: MediaRelativePath(rawValue: "\(folder)/IMG_\(String(format: "%05d", index)).JPG"),
+                        name: String(format: "IMG_%05d.JPG", index), contentTypeIdentifier: "public.jpeg", byteSize: 4,
+                        createdAt: base.addingTimeInterval(Double(index)), contentModifiedAt: base.addingTimeInterval(Double(index))
+                    ),
+                    sourceItemID: folder, isHiddenBySource: false, sourceHasProducts: true,
+                    sourcePathChecksum: ImmichPathChecksum(serverPath: prefix + path(index))
+                )
+            }
+            try await store.applySourceListingChanges(SourceListingChanges(listed: items), scan: scan)
+        }
+        await store.endSourceListing(scan: scan)
+        try await store.recordMirror(account: account, library: library, serverPrefix: prefix)
+        let first = try await store.pairMirroredCopies(account: account)
+        #expect(first == count)
+
+        try await Benchmark.measure("immich.mirror.pass.of16k") {
+            let paired = try await store.pairMirroredCopies(account: account)
+            #expect(paired == 0)
+        }
         await store.shutdown()
     }
 

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# A catalog is named explicitly, never defaulted: the installed app's catalog is the owner's
+# production data, which no check or diagnostic reads (owner, 2026-11-15).
 usage() {
-  echo "usage: script/catalog-query.sh name-vs-capture [catalog.sqlite]" >&2
+  echo "usage: script/catalog-query.sh name-vs-capture <catalog.sqlite>" >&2
   exit 2
 }
 
-[[ "${1:-}" == "name-vs-capture" ]] || usage
-CATALOG_DB="${2:-${OTOS_CATALOG_DB:-/Users/example/Library/Application Support/net.melisma.Otos/Catalog/catalog.sqlite}}"
+[[ "${1:-}" == "name-vs-capture" && -n "${2:-}" ]] || usage
+CATALOG_DB="$2"
 
 if [[ ! -f "$CATALOG_DB" ]]; then
   echo "catalog database not found: $CATALOG_DB" >&2

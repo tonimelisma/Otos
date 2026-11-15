@@ -39,6 +39,12 @@ design rules for user-facing surfaces; per-screen specs live beside it in
   requirement proves the simple path insufficient.
 - Do not guess. Inspect the repo, read the relevant APIs, and verify claims with
   code, docs, tests, profiling, or runtime evidence.
+- Never test, measure or verify on the owner's production data (owner, 2026-11-15): not
+  the installed app's catalog, a copy or backup of it, his libraries, his Immich account, or
+  the installed app's behaviour after an install. Owner-scale evidence comes from generated
+  catalogs shaped like his (benchmark fixtures, query-plan tests); a change's effect on his
+  data is verified by tests and stays unverified there. The one read of the installed app is
+  install's own check for an import or reorganization in flight.
 - Do not fabricate user-visible or domain facts. Unknown dates, paths, provider
   state, progress, counts, diagnostics, and capabilities stay unknown or
   explicitly qualified until proven.

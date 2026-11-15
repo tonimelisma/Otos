@@ -121,6 +121,10 @@ is never reported as none.
   full resync, so each external asset is listed with its path checksum. A library's mirror is
   learned from the server once, with one asset request, and pairing a whole library is a
   pass's batched writes. A mirror goes with either root.
+- Every pass pairs every mirrored file again. On a generated library of 16,000 paired files
+  (`immich.mirror.pass.of16k`), that pass costs about 3.6 G instructions and 0.4 s, off the
+  main actor, and writes nothing. `CatalogStoreQueryPlanTests.mirrorReadsSeekTheirIndexes`
+  holds its reads to index seeks.
 - A file renamed on one side but not yet on the other pairs again once both sides list it at
   the same path.
 - Duplicates lists a mirror's pairs only while the user has it compare across libraries

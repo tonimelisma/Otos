@@ -992,6 +992,34 @@ private func insertEnrichmentClaimFixture(
     }
 }
 
+extension CatalogStoreQueryPlanTests {
+    /// ADR 0054: a mirror's reads seek indexes at any catalog size. The candidate probe walks
+    /// one library root by its key and seeks the account's size index per file; a pairing
+    /// seeks the account's path-checksum index; a page of digested files walks the root's
+    /// primary key in path order with no sort.
+    @Test func mirrorReadsSeekTheirIndexes() async throws {
+        let temp = try makeTestDirectory()
+        let dbQueue = try DatabaseQueue(path: temp.appending(path: "catalog.sqlite").path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        try await dbQueue.read { db in
+            let candidates = try explainPlan(db, sql: MirrorGateway.candidatesSQL, arguments: [2, 1])
+            #expect(candidates.contains("SEARCH asset USING INDEX idx_media_asset_size_root_asc"), "\(candidates)")
+            #expect(!candidates.contains("SCAN"), "\(candidates)")
+
+            let digest = Data(repeating: 1, count: 20)
+            let pair = try explainPlan(db, sql: MirrorGateway.pairSQL, arguments: [digest, 2, digest, 4, 1, digest])
+            #expect(pair.contains("USING INDEX idx_media_asset_source_path_sha1"), "\(pair)")
+
+            let files = try explainPlan(
+                db, sql: MirrorGateway.digestedFilesSQL + "\n  AND relative_path > ?\nORDER BY relative_path LIMIT 500",
+                arguments: [1, "a"]
+            )
+            #expect(files.contains("SEARCH media_asset USING"), "\(files)")
+            #expect(!usesTemporarySort(files), "\(files)")
+        }
+    }
+}
+
 private func explainPlan(
     _ db: Database,
     sql: String,
