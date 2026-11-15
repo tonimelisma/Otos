@@ -34,25 +34,30 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
     ///   reloadData switch the other way.
     /// - Small insert/remove: animate.
     ///
-    /// Membership is read from `previous`'s own identity index, so no apply rebuilds a set
-    /// of the identities on screen.
+    /// Membership and order are read from the change between the two structures
+    /// (`MediaGridStructureChange`), which looks up only what lies outside the runs each
+    /// day shares, so no apply rebuilds a set of the identities on screen or looks up every
+    /// one of them.
     static func summarize(
         previous: MediaGridStructure,
         next: MediaGridStructure,
         descriptorChanged: Bool
     ) -> MediaGridStructuralApplyPolicy {
-        let previousOrderedIDs = previous.orderedIDs
-        let nextOrderedIDs = next.orderedIDs
-        let retainedCount = nextOrderedIDs.reduce(into: 0) { count, id in
-            if previous.contains(id) {
-                count += 1
-            }
-        }
+        summarize(MediaGridStructureChange(from: previous, to: next), descriptorChanged: descriptorChanged)
+    }
+
+    static func summarize(
+        _ change: MediaGridStructureChange,
+        descriptorChanged: Bool
+    ) -> MediaGridStructuralApplyPolicy {
+        let previousOrderedIDs = change.old.orderedIDs
+        let nextOrderedIDs = change.new.orderedIDs
+        let retainedCount = change.retainedCount
         let insertedCount = nextOrderedIDs.count - retainedCount
         let removedCount = previousOrderedIDs.count - retainedCount
         let reorderOnly = insertedCount == 0
             && removedCount == 0
-            && previousOrderedIDs != nextOrderedIDs
+            && !change.orderIsUnchanged
         let largeApply = max(previousOrderedIDs.count, nextOrderedIDs.count)
             >= reloadDataFallbackItemCountThreshold
         // Same membership in the same order reaches an apply only when photos changed day

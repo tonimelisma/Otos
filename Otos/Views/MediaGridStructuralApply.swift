@@ -87,8 +87,10 @@ extension MediaGridViewController {
     /// on screen when its result is committed, and a grid arriving meanwhile parks as the
     /// gate's pending grid, applied after this one.
     ///
-    /// The build is linear in items, but at a library's size that is still tens of
-    /// milliseconds, so it runs off the main actor
+    /// The build reads every item to cut the day sections and to compare the days a change
+    /// left alone, and looks up only what changed
+    /// (`docs/research/2026-11-15-grid-reorder-follows-the-change.md`); at a library's size
+    /// that is still tens of milliseconds, so it runs off the main actor
     /// (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). One build at
     /// a time, by the gate's exclusivity; the task is cancelled only at teardown, and a
     /// cancelled build is never applied.
@@ -129,17 +131,16 @@ extension MediaGridViewController {
         let structure = MediaGridStructure(grid: grid)
         let structureBuildMs = DiagnosticsTiming.milliseconds(since: structureStart)
 
+        // The one identity comparison both the summary and the batch read: it looks up
+        // only what changed between the two structures.
         let policyStart = ContinuousClock.now
-        let summary = MediaGridStructuralApplyPolicy.summarize(
-            previous: previous,
-            next: structure,
-            descriptorChanged: descriptorChanged
-        )
+        let change = MediaGridStructureChange(from: previous, to: structure)
+        let summary = MediaGridStructuralApplyPolicy.summarize(change, descriptorChanged: descriptorChanged)
         let diffPolicyMs = DiagnosticsTiming.milliseconds(since: policyStart)
 
         let batchStart = ContinuousClock.now
         let batchUpdates = summary.animatingDifferences
-            ? MediaGridBatchUpdates.between(previous, structure)
+            ? MediaGridBatchUpdates.between(change)
             : nil
         return BuiltStructure(
             structure: structure,

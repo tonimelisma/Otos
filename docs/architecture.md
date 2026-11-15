@@ -150,7 +150,9 @@ everything expensive happens on an actor off the main thread.
   `CatalogGridContent` index) off the main actor
   (`buildStructure`) and hands it to AppKit on the main actor (`commitStructure`): `reloadData`
   for query and large membership changes, `performBatchUpdates` with the derived
-  `MediaGridBatchUpdates` otherwise. The controller is the collection view's plain
+  `MediaGridBatchUpdates` otherwise. The apply policy's summary and the batch both read
+  one `MediaGridStructureChange`, which looks up only the identities outside the runs
+  each day shares with its previous self. The controller is the collection view's plain
   `NSCollectionViewDataSource` over that one value, which the layout, day bar, headers,
   selection, drag, prefetch, zoom and scroll anchoring also read. The grid's layout is
   Otos's own `MediaGridLayout`, arithmetic over the section counts

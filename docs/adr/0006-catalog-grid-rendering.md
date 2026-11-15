@@ -127,9 +127,15 @@ and large membership changes call `reloadData`, which is what the diffable non-a
 apply did. Small and same-query reorder applies call `performBatchUpdates` with
 `MediaGridBatchUpdates`: sections only in the old structure are deleted and only in the
 new inserted; an item crossing into an inserted or out of a deleted section is a delete
-plus an insert, because AppKit cannot move it there; among the rest, the longest run
+plus an insert, because AppKit cannot move it there; an item changing between surviving
+sections is an explicit move; within a surviving section the longest run of its own items
 already in old order stays and every other item is an explicit move, so a few photos
-changing day in a large grid are a few moves. A change no batch can describe (surviving
+changing day in a large grid are a few moves. Both the apply policy's summary and the
+batch read one `MediaGridStructureChange`, which pairs sections by key, compares each
+pair's items from both ends for the runs they share, and looks up by identity only what
+lies between those runs and the items of unpaired sections: a few photos changing day
+look up a few hundred identities, not the library
+(`docs/research/2026-11-15-grid-reorder-follows-the-change.md`). A change no batch can describe (surviving
 sections that swap order, a repeated section key — neither occurs under Date sort)
 reloads.
 
@@ -253,8 +259,11 @@ admits the apply. The AppKit half — scroll anchor capture, handing AppKit the 
 (`reloadData`, or `performBatchUpdates` with the structure switched inside the update
 block), the anchor restore — then runs synchronously on the main actor. Nothing on screen
 can change between the halves: the gate is in flight, so no other apply or zoom swap runs
-and a grid arriving meanwhile parks. The build is linear in items and flat in days: 0.16 G
-instructions for 158,000 items over 5,000 days, where the diffable snapshot it replaced
+and a grid arriving meanwhile parks. The build reads every item once to cut the day
+sections and once to compare the days a reorder left alone, and looks up and diffs only
+what changed: 0.54 G instructions (Debug) to move 200 photos between days in a grid of
+158,000 items over 5,000 days, where looking up every identity took 4.5 G
+(`docs/research/2026-11-15-grid-reorder-follows-the-change.md`), and the diffable snapshot it replaced
 took 54 G (13–15 s on the owner's library), because AppKit's snapshot copies its whole
 item set on every mutating call and has no call that appends to more than one section
 (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). The apply call
