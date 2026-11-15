@@ -45,6 +45,36 @@ nonisolated enum SearchTextReading {
             .map { RecognizedTextLine(text: $0.string, confidence: $0.confidence) }
     }
 
+    /// Whether `error` loses Vision's text reader for the rest of its process.
+    ///
+    /// Vision's text reader keeps its compiled model in memory for the process and reloads
+    /// parts of it from the runtime's compiled-model cache in `~/Library/Caches` at every
+    /// reading. When macOS purges those files under disk pressure, every later reading in the
+    /// process throws `CRImageReaderError.e5rtError(_, 13)` — the runtime could not create the
+    /// precompiled operation — and nothing in the process recovers it: not a new request or
+    /// handler, the default device, the Swift `RecognizeTextRequest`, nor removing the cache.
+    /// A new process recompiles and reads
+    /// (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`).
+    ///
+    /// It is told by the error's domain and code (`CRImageReaderError` code 1, its `e5rtError`
+    /// case) and that case's own `e5rt` status, 13, read from the typed value, never from its
+    /// text. Status 10, the runtime's deadline overrun on a cold reading under load, is not
+    /// it: that is a failure of one reading. An error this cannot read is not it either, and
+    /// is a failure of one reading.
+    static func losesTheProcess(_ error: any Error) -> Bool {
+        let bridged = error as NSError
+        guard bridged.domain == "TextRecognition.CRImageReaderError", bridged.code == 1,
+              let payload = Mirror(reflecting: error).children.first?.value
+        else { return false }
+        return Mirror(reflecting: payload).children.contains { field in
+            (field.value as? any BinaryInteger).flatMap { Int(exactly: $0) } == lostE5RTStatus
+        }
+    }
+
+    /// The `e5rt` status (a `UInt32` in the case) whose operation could not be created from the
+    /// compiled-model cache.
+    private static let lostE5RTStatus = 13
+
     /// What search matches a query against: every kept line.
     static func searchable(_ lines: [RecognizedTextLine]) -> String {
         lines.map(\.text).joined(separator: "\n")
@@ -107,14 +137,34 @@ nonisolated struct SearchTextQuery: Sendable {
     }
 }
 
+/// What reading a page of previews came to.
+nonisolated enum SearchTextPageReading: Equatable, Sendable {
+    /// One result per candidate read; a candidate with none stays owed.
+    case read([SearchTextResult])
+    /// Vision's reader is lost for the rest of this process: `before`, what the page read
+    /// before it was lost; nothing after it is attempted.
+    case readerLost(before: [SearchTextResult])
+}
+
 /// Reads stored previews for text, on its own serial queue: decoding a 2,560 px preview and
 /// recognising text both block (ADR 0032 rule 6).
+///
+/// Vision's text reader can be lost for the rest of its process: a failure that says so
+/// (`SearchTextReading.losesTheProcess`) comes back on every later reading until Otos
+/// relaunches, and a new request or handler does not recover it
+/// (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`). From that failure on,
+/// this reader attempts nothing — no preview is decoded, no recognition made — and says so,
+/// once, as `op=search.text phase=readerLost`. Every still it did not read stays owed and is
+/// read in the next process.
 actor SearchTextReader {
     typealias Recognize = @Sendable (CGImage) throws -> [RecognizedTextLine]
 
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.search.text", qos: .utility)
     /// Vision's reading (`SearchTextReading.read`); tests replace it to deliver its failure.
     private let recognize: Recognize
+    /// Whether the reader is lost for this process. Set once, never cleared: only a new process
+    /// recovers it.
+    private(set) var isLost = false
 
     init(recognize: @escaping Recognize = SearchTextReading.read) {
         self.recognize = recognize
@@ -124,15 +174,16 @@ actor SearchTextReader {
         queue.asUnownedSerialExecutor()
     }
 
-    /// One result per candidate read. A preview that does not decode, or a recognition that
-    /// fails, is no reading: it has no result, so the still stays owed and is read again after
-    /// the index's backoff, in this process or the next (ADR 0032 rule 4). A failure is never
-    /// a still with no text: Vision's `CRImageReaderError` code 1, which can stay with a
-    /// process for its life (`docs/research/2026-11-14-vision-text-reading-breaks-for-its-process.md`),
-    /// stamps nothing.
-    func read(_ page: [SearchTextCandidate], directory: URL?) -> [SearchTextResult] {
-        guard let directory else { return [] }
-        return page.compactMap { candidate in
+    /// Reads `page` in order. A preview that does not decode, or a recognition that fails
+    /// about one picture, is no reading: it has no result, so the still stays owed and is read
+    /// again after the index's backoff (ADR 0032 rule 4), and the rest of the page is read. A
+    /// failure that loses the reader for the process ends the page there and every page after
+    /// it. A failure is never a still with no text: it stamps nothing.
+    func read(_ page: [SearchTextCandidate], directory: URL?) -> SearchTextPageReading {
+        guard !isLost else { return .readerLost(before: []) }
+        guard let directory else { return .read([]) }
+        var results: [SearchTextResult] = []
+        for candidate in page {
             let url = directory.appending(path: candidate.previewPath)
             guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -140,14 +191,22 @@ actor SearchTextReader {
                 OtosLog.thumbnails.errorOperation("search.text", phase: "undecodable", fields: [
                     "id": candidate.id.relativePath.rawValue,
                 ])
-                return nil
+                continue
             }
             do {
-                return try SearchTextResult(id: candidate.id, source: candidate.source, lines: recognize(image))
+                try results.append(SearchTextResult(id: candidate.id, source: candidate.source, lines: recognize(image)))
+            } catch where SearchTextReading.losesTheProcess(error) {
+                isLost = true
+                OtosLog.thumbnails.errorOperation("search.text", phase: "readerLost", fields: [
+                    "error": String(describing: error),
+                    "domain": (error as NSError).domain,
+                    "code": "\((error as NSError).code)",
+                ])
+                return .readerLost(before: results)
             } catch {
                 OtosLog.thumbnails.errorOperation("search.text", phase: "failed", fields: ["error": String(describing: error)])
-                return nil
             }
         }
+        return .read(results)
     }
 }

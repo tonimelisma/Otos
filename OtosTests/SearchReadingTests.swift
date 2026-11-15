@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// What search reads besides the picture's embedding (ADR 0048): the text in a photo, and the
@@ -53,30 +54,103 @@ struct SearchReadingTests {
         #expect(try Self.readAsTheIndexDoes(blank).isEmpty)
     }
 
-    /// A recognition that fails is no reading (ADR 0032 rule 4): Vision's
-    /// `CRImageReaderError` code 1, which can stay with a process for its life, leaves the
-    /// still without a result, so it stays owed and is read again, never stamped as holding
-    /// no text. A reading that finds nothing is a result with no lines, which is.
+    /// The shape of Vision's `TextRecognition.CRImageReaderError`, whose `e5rtError` case is
+    /// code 1 and carries the runtime's message and its `UInt32` status, as the reader receives it.
+    enum VisionTextError: Error, CustomNSError {
+        case other
+        case e5rtError(String, UInt32)
+
+        static var errorDomain: String {
+            "TextRecognition.CRImageReaderError"
+        }
+
+        var errorCode: Int {
+            switch self {
+            case .other: 0
+            case .e5rtError: 1
+            }
+        }
+    }
+
+    /// What every reading throws once the compiled-model cache was purged under the process.
+    static let readerLostError = VisionTextError.e5rtError(
+        "e5rt_execution_stream_operation_create_precompiled_compute_operation_with_options call failed", 13
+    )
+
+    private static func candidates(_ count: Int, in directory: URL) throws -> [SearchTextCandidate] {
+        try (0 ..< count).map { index in
+            try writeGradientJPEG(to: directory.appending(path: "preview-\(index).jpg"))
+            return SearchTextCandidate(
+                id: MediaAssetID(
+                    libraryRootPath: LibraryRootPath(rawValue: "/Library"),
+                    relativePath: MediaRelativePath(rawValue: "sign-\(index).jpg")
+                ),
+                previewPath: "preview-\(index).jpg",
+                source: "rendered"
+            )
+        }
+    }
+
+    /// A recognition that fails about one picture is no reading (ADR 0032 rule 4): that still
+    /// has no result, so it stays owed and is read again, never stamped as holding no text, and
+    /// the rest of the page is read. A reading that finds nothing is a result with no lines.
     @Test func aFailedRecognitionIsNoReadingAndAnEmptyOneIs() async throws {
         let directory = try makeTestDirectory()
-        try writeGradientJPEG(to: directory.appending(path: "preview.jpg"))
-        let candidate = SearchTextCandidate(
-            id: MediaAssetID(
-                libraryRootPath: LibraryRootPath(rawValue: "/Library"),
-                relativePath: MediaRelativePath(rawValue: "sign.jpg")
-            ),
-            previewPath: "preview.jpg",
-            source: "rendered"
-        )
-        let broken = SearchTextReader { _ in
-            throw NSError(domain: "TextRecognition.CRImageReaderError", code: 1)
+        let page = try Self.candidates(2, in: directory)
+        let attempts = Mutex(0)
+        let once = SearchTextReader { _ in
+            let attempt = attempts.withLock { count in
+                count += 1
+                return count
+            }
+            if attempt == 1 {
+                throw VisionTextError.e5rtError("e5rt_stream_completion_handler call failed", 10)
+            }
+            return []
         }
-        #expect(await broken.read([candidate], directory: directory).isEmpty)
+        #expect(await once.read(page, directory: directory) == .read([
+            SearchTextResult(id: page[1].id, source: "rendered", lines: []),
+        ]))
+        #expect(await !once.isLost)
+        #expect(await once.read([page[0]], directory: directory) == .read([
+            SearchTextResult(id: page[0].id, source: "rendered", lines: []),
+        ]))
+    }
 
-        let empty = SearchTextReader { _ in [] }
-        #expect(await empty.read([candidate], directory: directory) == [
-            SearchTextResult(id: candidate.id, source: "rendered", lines: []),
-        ])
+    /// A failure that loses Vision's reader for the process ends the page where it came and
+    /// every page after it: nothing more is recognised, and the stills it did not read have no
+    /// result, so they stay owed for the next process.
+    @Test func aReaderLostForTheProcessAttemptsNothingMore() async throws {
+        let directory = try makeTestDirectory()
+        let page = try Self.candidates(3, in: directory)
+        let attempts = Mutex(0)
+        let reader = SearchTextReader { _ in
+            let attempt = attempts.withLock { count in
+                count += 1
+                return count
+            }
+            if attempt == 2 {
+                throw Self.readerLostError
+            }
+            return [RecognizedTextLine(text: "OPEN", confidence: 1)]
+        }
+        #expect(await reader.read(page, directory: directory) == .readerLost(before: [
+            SearchTextResult(id: page[0].id, source: "rendered", lines: [RecognizedTextLine(text: "OPEN", confidence: 1)]),
+        ]))
+        #expect(await reader.isLost)
+        #expect(await reader.read(page, directory: directory) == .readerLost(before: []))
+        #expect(attempts.withLock { $0 } == 2)
+    }
+
+    /// Only the `e5rtError` case with status 13 loses the process: the same case's deadline
+    /// (status 10), another case of the same domain, and an error of another domain with the
+    /// same code fail one reading.
+    @Test func onlyTheCompiledModelsLossLosesTheProcess() {
+        #expect(SearchTextReading.losesTheProcess(Self.readerLostError))
+        #expect(!SearchTextReading.losesTheProcess(VisionTextError.e5rtError("e5rt_stream_completion_handler call failed", 10)))
+        #expect(!SearchTextReading.losesTheProcess(VisionTextError.other))
+        #expect(!SearchTextReading.losesTheProcess(NSError(domain: "TextRecognition.CRImageReaderError", code: 1)))
+        #expect(!SearchTextReading.losesTheProcess(NSError(domain: NSCocoaErrorDomain, code: 1)))
     }
 
     /// Search matches every kept line; the Info pane shows only the certain ones.

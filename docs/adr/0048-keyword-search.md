@@ -229,10 +229,17 @@ On the 60 judged word queries it matched 213 of the 222 relevant photos against 
 level's 212, with 59 judged misreadings against 84, and about 180 real matches the fast level
 missed. Its lines at full confidence read cleanly, which the Info pane shows (ADR 0050); the
 fast level reported only 0.3 and 0.5 and misread texture at both. On the CPU it takes a median
-0.15 s a preview; on the default device it stalled for 32 s under load. The accurate level
-failed on macOS 27.0 for every image after a process's first (`e5rt` error 13) and does not on
-27.0.1 (10,065 previews, no error); a reading that fails stays owed and is retried after the
-index's backoff. At 512 px the fast level read noise, so the full preview is read; an original
+0.15 s a preview; on the default device it stalled for 32 s under load. A reading that fails
+about one picture stays owed and is retried after the index's backoff. A reading that fails
+with `CRImageReaderError.e5rtError` status 13 is not about the picture: the runtime's compiled
+model lost a file — macOS purges `~/Library/Caches` under disk pressure, and concurrent first
+readings do the same — and every later reading in the process fails, whatever request, device
+or API, until Otos relaunches (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`).
+`SearchTextReader` then reads nothing more for the process: the stills stay owed for the next
+launch, and `op=search.text phase=readerLost` says so once. One serial queue reads every
+preview, so Otos never starts two first readings at once. Reading in a helper process that
+could be relaunched was rejected: after each purge it would recompile the models (4 s to
+minutes) into a cache the next purge empties, for a cause — a full disk — Otos does not own. At 512 px the fast level read noise, so the full preview is read; an original
 is not, since nearly every original in the owner's library is a cloud placeholder. Text is read
 after every embedding is made.
 
