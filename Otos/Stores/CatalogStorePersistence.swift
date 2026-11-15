@@ -2,6 +2,8 @@ import CoreGraphics
 import Foundation
 import GRDB
 import OSLog
+import SQLite3
+import Synchronization
 
 /// Persistence guide
 ///
@@ -2123,5 +2125,89 @@ nonisolated extension DeviceIdentity: DatabaseValueConvertible {
 
     static func fromDatabaseValue(_ dbValue: DatabaseValue) -> DeviceIdentity? {
         String.fromDatabaseValue(dbValue).map(DeviceIdentity.init(rawValue:))
+    }
+}
+
+// MARK: - Reads that free their connection
+
+extension DatabaseReader {
+    /// Runs `body` in a read transaction and frees its connection the moment the body ends,
+    /// on the connection's own queue. GRDB's async `read` frees it only once the reading task
+    /// resumes on a cooperative-pool thread at its own priority (`Pool.get(block:)`), so a
+    /// background read whose task waits for a thread keeps a connection it no longer uses,
+    /// and every read behind it waits too: the visible tiles' reads waited 1–6 s on the
+    /// installed app, with no read running
+    /// (`docs/research/2026-11-15-cooperative-pool-holders.md`). `asyncRead` hands the
+    /// connection back from its queue as the body returns, whatever the caller's task is
+    /// waiting for.
+    ///
+    /// Cancelling the task interrupts the body's statement, as GRDB's own read does, and the
+    /// read throws `CancellationError`.
+    nonisolated func readFreeingConnection<T: Sendable>(
+        _ body: @escaping @Sendable (Database) throws -> T
+    ) async throws -> T {
+        let interruption = ReadInterruption()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                asyncRead { connection in
+                    continuation.resume(with: Result {
+                        let db = try connection.get()
+                        try interruption.begin(db)
+                        defer { interruption.end() }
+                        do {
+                            return try body(db)
+                        } catch {
+                            if interruption.wasCancelled {
+                                throw CancellationError()
+                            }
+                            throw error
+                        }
+                    })
+                }
+            }
+        } onCancel: {
+            interruption.cancel()
+        }
+    }
+}
+
+/// The one connection a `readFreeingConnection` body is running on, so a cancellation
+/// interrupts that statement and never a connection the pool has since handed to another
+/// read: the body takes and gives back the connection under the same lock the cancellation
+/// interrupts under.
+private final nonisolated class ReadInterruption: Sendable {
+    /// The connection's address: a value the lock can hold, which `cancel` turns back into the
+    /// connection only while the body runs on it.
+    private struct State {
+        var connection: Int?
+        var cancelled = false
+    }
+
+    private let state = Mutex(State())
+
+    var wasCancelled: Bool {
+        state.withLock(\.cancelled)
+    }
+
+    func begin(_ db: Database) throws {
+        try state.withLock { state in
+            guard !state.cancelled else {
+                throw CancellationError()
+            }
+            state.connection = db.sqliteConnection.map { Int(bitPattern: $0) }
+        }
+    }
+
+    func end() {
+        state.withLock { $0.connection = nil }
+    }
+
+    func cancel() {
+        state.withLock { state in
+            state.cancelled = true
+            if let address = state.connection, let connection = OpaquePointer(bitPattern: address) {
+                sqlite3_interrupt(connection)
+            }
+        }
     }
 }

@@ -389,13 +389,35 @@ actor CatalogStore {
         }
     }
 
+    /// One read's or write's value and where its time went, for the query's log line.
+    /// `waitMs` is asked → the body runs: for a read, a free connection of its pool and that
+    /// connection's queue, reached without the cooperative pool (`readFreeingConnection`); for
+    /// a write, the writer, through GRDB's async access. `resumeMs` is the body ends → the
+    /// Store continues: a cooperative-pool thread at `priority`, then the Store actor. Reads
+    /// that hold every connection show in `waitMs` alone; a pool with no thread free at the
+    /// caller's priority, or a busy Store, in `resumeMs`
+    /// (`docs/research/2026-11-15-cooperative-pool-holders.md`).
     private struct DatabaseTimedValue<Value: Sendable> {
         let value: Value
         let waitMs: Int
         let execMs: Int
+        var resumeMs = 0
+        /// The caller's priority when it asked; nil for a value summed from several.
+        var priority: TaskPriority?
 
         var totalMs: Int {
             waitMs + execMs
+        }
+
+        var priorityName: String {
+            switch priority {
+            case nil: "unknown"
+            case .userInitiated?: "userInitiated"
+            case .medium?: "medium"
+            case .utility?: "utility"
+            case .background?: "background"
+            case let other?: "\(other.rawValue)"
+            }
         }
     }
 
@@ -806,7 +828,7 @@ extension CatalogStore {
         }
         do {
             let dbWriter = try database()
-            let companions = try await dbWriter.read { db in
+            let companions = try await dbWriter.readFreeingConnection { db in
                 try Self.fetchCompanions(libraryRootID: state.rowID, db: db)
             }
             let companionsByPrimary = Dictionary(grouping: companions) {
@@ -814,7 +836,7 @@ extension CatalogStore {
             }
             let unreadable = unreadableSourceIDs
             let rowID = state.rowID
-            return try await dbWriter.read { db in
+            return try await dbWriter.readFreeingConnection { db in
                 try MediaOperationGateway.fetchPlanningSourceMedia(
                     libraryRootID: rowID,
                     sourceRoot: rootPath,
@@ -848,14 +870,14 @@ extension CatalogStore {
         let dbWriter = try database()
         let sourceRowID = sourceState.rowID
         let destinationRowID = destinationState.rowID
-        let companions = try await dbWriter.read { db in
+        let companions = try await dbWriter.readFreeingConnection { db in
             try Self.fetchCompanions(libraryRootID: sourceRowID, db: db)
         }
         let companionsByPrimary = Dictionary(grouping: companions) {
             $0.primaryRelativePath?.rawValue ?? ""
         }
         let unreadable = unreadableSourceIDs
-        let sourceMedia = try await dbWriter.read { db in
+        let sourceMedia = try await dbWriter.readFreeingConnection { db in
             try MediaOperationGateway.fetchPlanningSourceMedia(
                 libraryRootID: sourceRowID,
                 sourceRoot: source,
@@ -864,7 +886,7 @@ extension CatalogStore {
                 db: db
             )
         }
-        let destinationOccupants = try await dbWriter.read { db in
+        let destinationOccupants = try await dbWriter.readFreeingConnection { db in
             try MediaOperationGateway.fetchDestinationOccupants(
                 libraryRootID: destinationRowID,
                 db: db
@@ -872,7 +894,7 @@ extension CatalogStore {
         }
         let libraryRowIDs = roots.availableFixedLibraryRowIDs()
         let pathsByRowID = roots.pathsByRowID
-        let libraryContent = try await dbWriter.read { db in
+        let libraryContent = try await dbWriter.readFreeingConnection { db in
             try MediaOperationGateway.fetchLibraryContent(libraryRootIDs: libraryRowIDs, db: db)
         }.compactMapValues { pathsByRowID[$0] }
         let destinationCapabilities = await Self.probeCapabilities(of: destination)
@@ -898,7 +920,7 @@ extension CatalogStore {
     /// Erase asks this just before deleting items the plan skipped by content (ADR 0018).
     func librariesHoldContent(_ digests: Set<ContentDigest>) async throws -> Set<ContentDigest> {
         let libraryRowIDs = roots.availableFixedLibraryRowIDs()
-        let held = try await database().read { db in
+        let held = try await database().readFreeingConnection { db in
             try MediaOperationGateway.fetchLibraryContent(libraryRootIDs: libraryRowIDs, db: db)
         }
         return digests.filter { held[$0] != nil }
@@ -951,7 +973,7 @@ extension CatalogStore {
     func assetIDs(inImportBatch batchID: ImportBatchID) async throws -> [MediaAssetID] {
         let dbWriter = try database()
         let pathsByRowID = roots.pathsByRowID
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try CatalogQueryGateway.fetchAssetIDs(inImportBatch: batchID, pathsByRowID: pathsByRowID, db: db)
         }
     }
@@ -963,7 +985,7 @@ extension CatalogStore {
     func assetsMissingBestDateFacts() async throws -> [MediaAssetID] {
         let dbWriter = try database()
         let pathsByRowID = roots.pathsByRowID
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try CatalogQueryGateway.fetchAssetIDsMissingBestDate(pathsByRowID: pathsByRowID, db: db)
         }
     }
@@ -974,7 +996,7 @@ extension CatalogStore {
             return nil
         }
         let dbWriter = try database()
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try CatalogQueryGateway.fetchCaptureWall(id: id, rootRowID: rootRowID, db: db)
         }
     }
@@ -985,7 +1007,7 @@ extension CatalogStore {
             return []
         }
         let dbWriter = try database()
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try Self.fetchCompanions(libraryRootID: rootRowID, db: db)
         }
     }
@@ -998,7 +1020,7 @@ extension CatalogStore {
             return nil
         }
         let dbWriter = try database()
-        return try await dbWriter.read { db -> PhotoFacesRead? in
+        return try await dbWriter.readFreeingConnection { db -> PhotoFacesRead? in
             try Row.fetchOne(
                 db,
                 sql: """
@@ -1026,7 +1048,7 @@ extension CatalogStore {
             return nil
         }
         let dbWriter = try database()
-        let overlay = try await dbWriter.read { db -> PhotoInfoOverlay? in
+        let overlay = try await dbWriter.readFreeingConnection { db -> PhotoInfoOverlay? in
             let arguments: StatementArguments = [rootRowID, id.relativePath.rawValue]
             guard let asset = try Row.fetchOne(
                 db,
@@ -1116,7 +1138,7 @@ extension CatalogStore {
             return []
         }
         let dbWriter = try database()
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -1158,7 +1180,7 @@ extension CatalogStore {
     /// The unchecked tally alone (`PeopleSnapshot.unchecked`): what rows only added change.
     func uncheckedForFaces(availableLibraryPaths: Set<LibraryRootPath>) async throws -> MediaCount {
         let rootIDs = faceRootIDs(availableLibraryPaths)
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try Self.uncheckedForFaces(rootIDs: rootIDs, db: db)
         }
     }
@@ -1174,7 +1196,7 @@ extension CatalogStore {
         let rowIDs = roots.rowIDSnapshot()
         let faceRootIDs = faceRootIDs(availableLibraryPaths)
         let dbWriter = try database()
-        let (snapshot, malformed) = try await dbWriter.read { db -> (PeopleSnapshot, Set<FaceRowKey.Photo>) in
+        let (snapshot, malformed) = try await dbWriter.readFreeingConnection { db -> (PeopleSnapshot, Set<FaceRowKey.Photo>) in
             var malformed: Set<FaceRowKey.Photo> = []
             var rejections: [FaceRowKey: Set<PersonID>] = [:]
             for row in try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, face_index, person_id FROM face_rejection") {
@@ -1381,7 +1403,7 @@ extension CatalogStore {
         guard !rootIDs.isEmpty else { return PreviewFacePage(candidates: [], next: nil) }
         let pathsByRowID = roots.pathsByRowID
         let arguments = StatementArguments(rootIDs) + [cursor?.rootID ?? Int64.min, cursor?.relativePath ?? "", limit]
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             let rows = try Row.fetchAll(db, sql: PreviewFaceSQL.candidatesSQL(rootCount: rootIDs.count), arguments: arguments)
             let candidates = rows.compactMap { row -> PreviewFaceCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
@@ -2083,7 +2105,7 @@ extension CatalogStore {
                 fields["pathRegistered"] = "\(roots[path] != nil)"
             }
             OtosLog.catalog.noticeOperation("catalog.store.query.order", phase: "selectsNothing", fields: fields)
-            let pending = try await database().read { db in
+            let pending = try await database().readFreeingConnection { db in
                 try Self.fetchPendingIdentityRemapBatches(db: db)
             }
             return CatalogOrderedAssets(ids: [], dayBuckets: [], pendingIdentityRemaps: pending)
@@ -2195,7 +2217,7 @@ extension CatalogStore {
             ])
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stacks=\(held == nil ? "read" : "held", privacy: .public) stackSpan=\(builtStacks.span == .roots ? "roots" : "rows", privacy: .public) stackCandidates=\(held == nil ? builtStacks.candidateCount : 0, privacy: .public) stackReadMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) : 0, privacy: .public) stackRuleMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stacks=\(held == nil ? "read" : "held", privacy: .public) stackSpan=\(builtStacks.span == .roots ? "roots" : "rows", privacy: .public) stackCandidates=\(held == nil ? builtStacks.candidateCount : 0, privacy: .public) stackReadMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) : 0, privacy: .public) stackRuleMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) resumeMs=\(timedRows.resumeMs, privacy: .public) priority=\(timedRows.priorityName, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return CatalogOrderedAssets(
             ids: ids,
@@ -2231,7 +2253,7 @@ extension CatalogStore {
             try CatalogQueryGateway.countAssets(scope: scope, db: db)
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.catalogedCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
+            "op=catalog.store.query.catalogedCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) resumeMs=\(timedCount.resumeMs, privacy: .public) priority=\(timedCount.priorityName, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
         )
         return timedCount.value
     }
@@ -2254,7 +2276,7 @@ extension CatalogStore {
             try CatalogQueryGateway.countAssets(scope: scope, filter: filter, db: db)
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) filtered=\(filter.isActive, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
+            "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) filtered=\(filter.isActive, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) resumeMs=\(timedCount.resumeMs, privacy: .public) priority=\(timedCount.priorityName, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
         )
         return timedCount.value
     }
@@ -2280,7 +2302,7 @@ extension CatalogStore {
             try CatalogQueryGateway.filterOptions(scope: scope, placeNameLanguage: language, db: db)
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.filterOptions phase=finish row=\(row.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.formatsByKind.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) countryCount=\(timedOptions.value.countries.count, privacy: .public) placeLanguage=\(language?.identifier ?? "none", privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
+            "op=catalog.store.query.filterOptions phase=finish row=\(row.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.formatsByKind.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) countryCount=\(timedOptions.value.countries.count, privacy: .public) placeLanguage=\(language?.identifier ?? "none", privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) resumeMs=\(timedOptions.resumeMs, privacy: .public) priority=\(timedOptions.priorityName, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
         )
         return timedOptions.value
     }
@@ -2289,7 +2311,7 @@ extension CatalogStore {
     /// forgotten the others, none before anything is named. A held place filter lives only
     /// while its language is among them (`MediaFilter.keepingPlaces(namedIn:)`).
     func placeNameLanguages() async throws -> Set<PlaceNameLanguage> {
-        try await database().read { db in
+        try await database().readFreeingConnection { db in
             try Set(String.fetchAll(db, sql: CatalogQueryGateway.placeNameLanguagesSQL).map(PlaceNameLanguage.init(identifier:)))
         }
     }
@@ -2301,7 +2323,7 @@ extension CatalogStore {
     /// item counts, wherever it is cataloged, so a card's photos are named before they are
     /// imported. Walks `idx_asset_metadata_place_cell`.
     func unnamedPlaceCells(language: PlaceNameLanguage, after: PlaceCell? = nil, limit: Int) async throws -> [PlaceCell] {
-        try await database().read { db in
+        try await database().readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: after != nil),
@@ -2450,7 +2472,7 @@ extension CatalogStore {
             else {
                 continue
             }
-            let (companions, motion) = try await dbWriter.read { db in
+            let (companions, motion) = try await dbWriter.readFreeingConnection { db in
                 try (
                     Self.fetchCompanions(libraryRootID: rootState.rowID, db: db)
                         .filter { $0.primaryRelativePath == id.relativePath },
@@ -2475,7 +2497,7 @@ extension CatalogStore {
     func livePhotoMotion(of id: MediaAssetID) async throws -> MediaAssetID? {
         guard let rootID = roots[id.libraryRootPath]?.rowID else { return nil }
         let dbWriter = try database()
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try CatalogQueryGateway.fetchLivePhotoMotions(
                 libraryRootID: rootID,
                 stillPaths: [id.relativePath],
@@ -2689,7 +2711,7 @@ extension CatalogStore {
         let primaryPath = trashed.item.id.relativePath.rawValue
         let isBack: Bool
         do {
-            isBack = try await database().read { db in
+            isBack = try await database().readFreeingConnection { db in
                 try Bool.fetchOne(
                     db,
                     sql: """
@@ -2728,7 +2750,7 @@ extension CatalogStore {
         try await loadIfNeeded()
         let dbWriter = try database()
         let pathsByRowID = roots.pathsByRowID
-        let rows: [(rootID: Int64, relativePath: String, batchMs: Int64)] = try await dbWriter.read { db in
+        let rows: [(rootID: Int64, relativePath: String, batchMs: Int64)] = try await dbWriter.readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -2882,7 +2904,7 @@ extension CatalogStore {
         guard let rootID = roots.rowIDSnapshot()[id.libraryRootPath] else {
             return nil
         }
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             guard let row = try Row.fetchOne(
                 db,
                 sql: """
@@ -3164,7 +3186,7 @@ extension CatalogStore {
             """
         )
         OtosLog.catalog.notice(
-            "op=catalog.store.query.tileDetail phase=finish requested=\(requestedCount, privacy: .public) returned=\(returnedCount, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) queryMs=\(timing.totalMs, privacy: .public) thresholdMs=\(Self.slowQueryDiagnosticThresholdMs, privacy: .public)"
+            "op=catalog.store.query.tileDetail phase=finish requested=\(requestedCount, privacy: .public) returned=\(returnedCount, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) resumeMs=\(timing.resumeMs, privacy: .public) priority=\(timing.priorityName, privacy: .public) queryMs=\(timing.totalMs, privacy: .public) thresholdMs=\(Self.slowQueryDiagnosticThresholdMs, privacy: .public)"
         )
     }
 
@@ -3194,7 +3216,7 @@ extension CatalogStore {
             """
         )
         OtosLog.metadata.notice(
-            "op=catalog.store.query.metadata phase=finish 0=1 returned=\(timedMetadata.value == nil ? "0" : "1", privacy: .public) waitMs=\(timedMetadata.waitMs, privacy: .public) execMs=\(timedMetadata.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.metadata phase=finish 0=1 returned=\(timedMetadata.value == nil ? "0" : "1", privacy: .public) waitMs=\(timedMetadata.waitMs, privacy: .public) execMs=\(timedMetadata.execMs, privacy: .public) resumeMs=\(timedMetadata.resumeMs, privacy: .public) priority=\(timedMetadata.priorityName, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return timedMetadata.value
     }
@@ -3578,7 +3600,7 @@ extension CatalogStore {
         var phases = LoadPhaseTimer()
         let dbQueue = try database()
         phases.lap("openMs")
-        let loadedRoots = try await dbQueue.read { db in
+        let loadedRoots = try await dbQueue.readFreeingConnection { db in
             try Self.fetchRoots(db)
         }
         phases.lap("rootsMs")
@@ -3628,7 +3650,7 @@ extension CatalogStore {
         await initialLoadDidRead?()
         let normalizedRoots = await normalizeLoadedRoots(loadedRoots, dbWriter: dbQueue)
         phases.lap("normalizeMs")
-        let journaledRoots = try await dbQueue.read { db in
+        let journaledRoots = try await dbQueue.readFreeingConnection { db in
             try Set(Self.fetchAllActiveReorganizationComponents(db: db).map(\.libraryRootPath))
         }
         phases.lap("journalMs")
@@ -3985,7 +4007,7 @@ extension CatalogStore {
         let dbWriter = try database()
         let cursorRootID = cursor.flatMap { roots.rowIDSnapshot()[$0.libraryRootPath] } ?? -1
         let cursorPath = cursor?.relativePath.rawValue ?? ""
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -4264,7 +4286,7 @@ extension CatalogStore {
         let purgedThumbnails: [String]
         do {
             let dbQueue = try database()
-            purgedThumbnails = try await dbQueue.read { db in
+            purgedThumbnails = try await dbQueue.readFreeingConnection { db in
                 try Self.fetchExistingAssetRows(libraryRootID: rootRowID, db: db)
             }.flatMap(\.derivedImagePaths)
             try await dbQueue.write { db in
@@ -5132,7 +5154,7 @@ extension CatalogStore {
             notifyCatalogChanged(change)
         }
         OtosLog.catalog.notice(
-            "op=catalog.source.listing.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public) inserted=\(timed.value.inserted, privacy: .public) updated=\(timed.value.updated, privacy: .public) waitMs=\(timed.waitMs, privacy: .public) execMs=\(timed.execMs, privacy: .public)"
+            "op=catalog.source.listing.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public) inserted=\(timed.value.inserted, privacy: .public) updated=\(timed.value.updated, privacy: .public) waitMs=\(timed.waitMs, privacy: .public) execMs=\(timed.execMs, privacy: .public) resumeMs=\(timed.resumeMs, privacy: .public) priority=\(timed.priorityName, privacy: .public)"
         )
         await boundWAL(reason: "deviceListingBatch")
     }
@@ -5367,7 +5389,7 @@ extension CatalogStore {
         guard let rootID = roots.rowIDSnapshot()[rootPath] else {
             return nil
         }
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try Double.fetchOne(
                 db, sql: "SELECT last_synced_at FROM library_root WHERE id = ?", arguments: [rootID]
             ).map(Date.init(timeIntervalSince1970:))
@@ -5394,7 +5416,7 @@ extension CatalogStore {
         guard let rootID = roots.rowIDSnapshot()[rootPath] else {
             return nil
         }
-        let revision = try await database().read { db in
+        let revision = try await database().readFreeingConnection { db in
             try Int64.fetchOne(db, sql: "SELECT resync_owed FROM library_root WHERE id = ?", arguments: [rootID])
         }
         return revision.flatMap { $0 > 0 ? SourceResyncDebt(revision: $0) : nil }
@@ -5503,7 +5525,7 @@ extension CatalogStore {
         guard let rootID = roots.rowIDSnapshot()[id.libraryRootPath] else {
             return nil
         }
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try String.fetchOne(
                 db,
                 sql: "SELECT source_item_id FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
@@ -5524,7 +5546,7 @@ extension CatalogStore {
         }
         let ids = sourceItemIDs.sorted()
         let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ", ")
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             var rows: [String: SourceItemRow] = [:]
             for row in try Row.fetchAll(
                 db,
@@ -5554,7 +5576,7 @@ extension CatalogStore {
         guard let rootID = roots.rowIDSnapshot()[rootPath] else {
             return []
         }
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -5758,32 +5780,50 @@ private extension CatalogStore {
         _ dbWriter: any DatabaseReader,
         _ body: @Sendable @escaping (Database) throws -> Value
     ) async throws -> DatabaseTimedValue<Value> {
+        let priority = Task.currentPriority
         let start = ContinuousClock.now
-        return try await dbWriter.read { db in
+        let (timed, left) = try await dbWriter.readFreeingConnection { db in
             let entered = ContinuousClock.now
             let value = try body(db)
-            return DatabaseTimedValue(
-                value: value,
-                waitMs: DiagnosticsTiming.milliseconds(from: start, to: entered),
-                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            let left = ContinuousClock.now
+            return (
+                DatabaseTimedValue(
+                    value: value,
+                    waitMs: DiagnosticsTiming.milliseconds(from: start, to: entered),
+                    execMs: DiagnosticsTiming.milliseconds(from: entered, to: left),
+                    priority: priority
+                ),
+                left
             )
         }
+        var resumed = timed
+        resumed.resumeMs = DiagnosticsTiming.milliseconds(since: left)
+        return resumed
     }
 
     private func timedWrite<Value: Sendable>(
         _ dbWriter: any DatabaseWriter,
         _ body: @Sendable @escaping (Database) throws -> Value
     ) async throws -> DatabaseTimedValue<Value> {
+        let priority = Task.currentPriority
         let start = ContinuousClock.now
-        return try await dbWriter.write { db in
+        let (timed, left) = try await dbWriter.write { db in
             let entered = ContinuousClock.now
             let value = try body(db)
-            return DatabaseTimedValue(
-                value: value,
-                waitMs: DiagnosticsTiming.milliseconds(from: start, to: entered),
-                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            let left = ContinuousClock.now
+            return (
+                DatabaseTimedValue(
+                    value: value,
+                    waitMs: DiagnosticsTiming.milliseconds(from: start, to: entered),
+                    execMs: DiagnosticsTiming.milliseconds(from: entered, to: left),
+                    priority: priority
+                ),
+                left
             )
         }
+        var resumed = timed
+        resumed.resumeMs = DiagnosticsTiming.milliseconds(since: left)
+        return resumed
     }
 
     private func ensureStartedForMutation() async throws {
@@ -6309,7 +6349,7 @@ private extension CatalogStore {
             """
         )
         OtosLog.catalog.notice(
-            "op=catalog.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(scannedCount, privacy: .public) changed=\(visibleChange, privacy: .public) changedCount=\(changedCount, privacy: .public) inserted=\(rows.inserted, privacy: .public) updated=\(rows.updated, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) writeMs=\(timing.totalMs, privacy: .public)"
+            "op=catalog.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(scannedCount, privacy: .public) changed=\(visibleChange, privacy: .public) changedCount=\(changedCount, privacy: .public) inserted=\(rows.inserted, privacy: .public) updated=\(rows.updated, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) resumeMs=\(timing.resumeMs, privacy: .public) priority=\(timing.priorityName, privacy: .public) writeMs=\(timing.totalMs, privacy: .public)"
         )
     }
 
@@ -6453,7 +6493,7 @@ private extension CatalogStore {
         }
         let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
         let dbQueue = try database()
-        let existingRows = try await dbQueue.read { db in
+        let existingRows = try await dbQueue.readFreeingConnection { db in
             try Self.fetchExistingAssetRows(
                 libraryRootID: scan.rootRowID,
                 underSubtree: underSubtree,
@@ -7487,7 +7527,7 @@ private extension CatalogStore {
 
         let deletionTarget: CatalogedFileDeletionTarget?
         do {
-            deletionTarget = try await dbQueue.read { db in
+            deletionTarget = try await dbQueue.readFreeingConnection { db in
                 try Self.catalogedFileDeletionTarget(relativePath: relativePath, rootRowID: rootRowID, db: db)
             }
             let capabilities = roots.values.first(where: { $0.rowID == rootRowID })?.capabilities
@@ -7589,7 +7629,7 @@ extension CatalogStore {
 
     func importBatchAssetCount(_ batch: ImportBatchID) async throws -> Int {
         let dbWriter = try database()
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try Int.fetchOne(
                 db,
                 sql: "SELECT COUNT(*) FROM media_asset WHERE import_batch_unix_ms = ?",
@@ -7600,14 +7640,14 @@ extension CatalogStore {
 
     func activeImportOperations() async throws -> [ActiveFileOperation] {
         let dbWriter = try database()
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try Self.fetchAllActiveFileOperations(db: db)
         }
     }
 
     func activeSourceEraseOperations() async throws -> [ActiveSourceEraseOperation] {
         let dbWriter = try database()
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try Self.fetchAllActiveSourceErases(db: db)
         }
     }
@@ -7729,7 +7769,7 @@ extension CatalogStore {
         let sourceRootID = roots[operation.sourceRootPath]?.rowID
         var overlay: ReusableEnrichmentOverlay?
         if let sourceRootID {
-            overlay = try await dbWriter.read { db in
+            overlay = try await dbWriter.readFreeingConnection { db in
                 try Self.fetchReusableEnrichmentOverlay(
                     sourceRootID: sourceRootID,
                     sourceRelativePath: operation.sourceRelativePath,
@@ -8086,7 +8126,7 @@ extension CatalogStore {
 
     func activeReorganizationComponents() async throws -> [ActiveReorganizationComponent] {
         let dbWriter = try database()
-        return try await dbWriter.read { db in
+        return try await dbWriter.readFreeingConnection { db in
             try Self.fetchAllActiveReorganizationComponents(db: db)
         }
     }
@@ -8231,7 +8271,7 @@ extension CatalogStore {
     /// batch for the window, in one transaction (ARC-051, ARC-052).
     func settleReorganizationComponent(key: ReorganizationComponentKey) async throws {
         let dbWriter = try database()
-        let component = try await dbWriter.read { db in
+        let component = try await dbWriter.readFreeingConnection { db in
             try Self.fetchActiveReorganizationComponent(key: key, db: db)
         }
         guard let component else {
@@ -8306,7 +8346,7 @@ extension CatalogStore {
         let rootIDs = libraries.map(\.rowID).sorted()
         let pathsByRowID = roots.pathsByRowID
         let librariesByPath = Dictionary(uniqueKeysWithValues: libraries.map { ($0.path, DuplicateLibrary($0.root)) })
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             let copies = try DuplicatesGateway.fetchDuplicateCopies(rootIDs: rootIDs, reach: reach, db: db).compactMap { row in
                 row.facts(pathsByRowID: pathsByRowID, librariesByPath: librariesByPath)
             }
@@ -8326,7 +8366,7 @@ extension CatalogStore {
             return []
         }
         let libraries = roots.values.filter { $0.root.kind == .library }.map { (id: $0.rowID, path: $0.path) }
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try libraries.map { library in
                 try MirrorGateway.Probe(
                     libraryRootID: library.id,
@@ -8362,7 +8402,7 @@ extension CatalogStore {
         }
         let dbQueue = try database()
         let started = ContinuousClock.now
-        let mirrors = try await dbQueue.read { db in
+        let mirrors = try await dbQueue.readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: "SELECT library_root_id, server_prefix FROM immich_mirror WHERE account_root_id = ?",
@@ -8483,7 +8523,7 @@ extension CatalogStore {
         let rootIDs = libraries.map(\.rowID).sorted()
         let pathsByRowID = roots.pathsByRowID
         let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -8555,7 +8595,7 @@ extension CatalogStore {
             return []
         }
         let pathsByRowID = roots.pathsByRowID
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -8584,7 +8624,7 @@ extension CatalogStore {
         guard !rootIDs.isEmpty else {
             return 0
         }
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try Int.fetchOne(
                 db,
                 sql: "SELECT COUNT(*) \(SearchEmbeddingStorage.owedFrom(rootCount: rootIDs.count))",
@@ -8665,7 +8705,7 @@ extension CatalogStore {
             return []
         }
         let pathsByRowID = roots.pathsByRowID
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             let rows = try Row.fetchCursor(
                 db,
                 sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: rootIDs.count, vectors: vectors),
@@ -8692,7 +8732,7 @@ extension CatalogStore {
     /// The people the user has named and not hidden, for search to match in a query
     /// (ADR 0048): a hidden person is found only in the People gallery.
     func namedPeople() async throws -> [SearchPerson] {
-        try await database().read { db in
+        try await database().readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: "SELECT id, name FROM person WHERE name IS NOT NULL AND name <> '' AND is_hidden = 0"
@@ -8744,7 +8784,7 @@ extension CatalogStore {
         """
         let place = facts.place
         let statementArguments = StatementArguments(arguments)
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             let rows = try Row.fetchCursor(db, sql: sql, arguments: statementArguments)
             var allowed: Set<MediaAssetID> = []
             while let row = try rows.next() {
@@ -8765,7 +8805,7 @@ extension CatalogStore {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty else { return [] }
         let pathsByRowID = roots.pathsByRowID
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -8826,7 +8866,7 @@ extension CatalogStore {
         let rootIDs = roots.values.filter(\.root.kind.readsFaces).map(\.rowID).sorted()
         guard !rootIDs.isEmpty else { return [] }
         let pathsByRowID = roots.pathsByRowID
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             let rows = try Row.fetchAll(
                 db,
                 sql: PhotoDescriptionStorage.candidatesSQL(rootCount: rootIDs.count),
@@ -8928,7 +8968,7 @@ extension CatalogStore {
     /// declined is absent. What On This Day's titles are written from.
     func currentPhotoDescriptions(for ids: [MediaAssetID]) async throws -> [MediaAssetID: String] {
         let rowIDs = roots.rowIDSnapshot()
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             var texts: [MediaAssetID: String] = [:]
             for id in ids {
                 guard let rootID = rowIDs[id.libraryRootPath],
@@ -8961,7 +9001,7 @@ extension CatalogStore {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty else { return [:] }
         let pathsByRowID = roots.pathsByRowID
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             let rows = try Row.fetchCursor(
                 db,
                 sql: SearchTextStorage.currentReadingsSQL(rootCount: rootIDs.count, lines: lines),
@@ -8990,7 +9030,7 @@ extension CatalogStore {
         }
         let rootIDs = libraries.map(\.rowID).sorted()
         let pathsByRowID = Dictionary(uniqueKeysWithValues: libraries.map { ($0.rowID, $0.path) })
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             try DuplicatesGateway.fetchSamePhotoCandidates(rootIDs: rootIDs, pathsByRowID: pathsByRowID, db: db)
         }
     }
@@ -9002,7 +9042,7 @@ extension CatalogStore {
         let libraries = Dictionary(uniqueKeysWithValues: roots.values.map {
             ($0.path, (rowID: $0.rowID, library: DuplicateLibrary($0.root)))
         })
-        return try await database().read { db in
+        return try await database().readFreeingConnection { db in
             var details: [MediaAssetID: SamePhotoDetail] = [:]
             for id in ids {
                 guard let library = libraries[id.libraryRootPath],

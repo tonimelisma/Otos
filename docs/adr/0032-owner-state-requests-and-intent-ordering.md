@@ -82,11 +82,17 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
 6. **Blocking work leaves the actor explicitly.** Filesystem walks, planning, decoding and
    hashing enter through `@concurrent`, `Task.detached`, a task-group child, or a dedicated
    queue. A comment saying "off the actor" or "off main" names which. The first three run on
-   the cooperative pool, one thread per core, so they carry work that computes. Work that
-   waits — a copy, a device or network read, anything that holds its thread while the
-   volume or peer takes seconds — runs on a dedicated queue: eight held copies on the pool
-   took every thread of an eight-core Mac, and a visible tile's few-millisecond read waited
-   7–25 s for one (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
+   the cooperative pool, which gives each priority one thread per core, so they carry work
+   that computes. Work that waits — a copy, a device or network read, anything that holds
+   its thread while the volume or peer takes seconds — runs on a dedicated queue: eight held
+   copies on the pool took every thread of an eight-core Mac, and a visible tile's
+   few-millisecond read waited 7–25 s for one
+   (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`). What starves the pool
+   is how many tasks hold a thread at once, at the priority of user work, for how long —
+   eight two-second tasks at `.userInitiated` delayed a user read up to 1.8 s whether they
+   blocked or computed, and the same tasks at `.medium` or `.utility` never did — and every
+   owner the window model starts runs at `.userInitiated`, inherited from the main thread
+   (`docs/research/2026-11-15-cooperative-pool-holders.md`).
 7. **Interleavings are tested deterministically.** Every `await` in an owner is a place
    another event can arrive, so each gets a test that delivers an event exactly there: a
    sequence of `handle(_:)` calls for a pure machine, a seam that parks the async work for
@@ -122,4 +128,17 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
   (a `catch` in `CatalogProjection*.swift` that assigns or returns `[]`, `.empty` or `0`).
   A rule for rule 6 ("`func … async` in a `Live*` type without `@concurrent`") cannot be
   made precise with a regex — it needs the type's isolation, and actors and `@concurrent`
-  functions are both correct — so review carries it (CLAUDE.md, Code Review lens A).
+  functions are both correct — so review carries it (CLAUDE.md, Code Review lens A). Nor
+  can a lint count how many tasks a change runs at once or for how long, so review asks of
+  every pool step a change adds: how many can run at once, at what priority, and for how
+  long each holds its thread. Eight or more at `.userInitiated` that hold a thread for longer
+  than a frame starve visible tiles; such a step either waits — and moves to a dedicated
+  queue — or computes, and then runs below the priority of user work or with fewer at once.
+  Every store query's log line carries `waitMs`, `resumeMs` and the caller's `priority`, so a
+  starved pool shows at the read's priority without a probe.
+- A store read frees its connection from the connection's own queue as its body ends
+  (`DatabaseReader.readFreeingConnection`, on GRDB's `asyncRead`). GRDB's async `read` frees it
+  only once the reading task resumes on a pool thread of its own priority, so two utility reads
+  that could not resume held both of the tiles' connections and a visible tile's read waited
+  3.7 s for them (`docs/research/2026-11-15-cooperative-pool-holders.md`). No store code calls
+  GRDB's async `read` directly.
