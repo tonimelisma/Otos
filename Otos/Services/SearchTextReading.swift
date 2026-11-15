@@ -149,6 +149,11 @@ nonisolated enum SearchTextPreviewReading: Codable, Equatable, Sendable {
     /// (`SearchTextReading.losesTheProcess`), or the process ended — and nothing more is
     /// asked of it; a new session reads the rest.
     case ended(String)
+    /// The session's process ended while reading this picture, without answering: the
+    /// picture may be what ended it (a decoder or recognizer crash), so it is no reading and
+    /// stays owed, and the rest of the page is read by a new session. Never sent by the
+    /// process itself.
+    case exited(String)
 }
 
 nonisolated extension SearchTextReading {
@@ -252,6 +257,15 @@ actor SearchTextReader {
                 ])
             case let .failed(error):
                 OtosLog.thumbnails.errorOperation("search.text", phase: "failed", fields: ["error": error])
+            case let .exited(reason):
+                // Paged past, not the page's end: a picture that ends every process it is
+                // asked of would otherwise come first in every page and stop every other
+                // still from being read.
+                self.session = nil
+                OtosLog.thumbnails.errorOperation("search.text", phase: "sessionExited", fields: [
+                    "id": candidate.id.relativePath.rawValue, "reason": reason,
+                    "sessionsStarted": "\(sessionsStarted)",
+                ])
             case let .ended(reason):
                 self.session = nil
                 OtosLog.thumbnails.errorOperation("search.text", phase: "sessionEnded", fields: [

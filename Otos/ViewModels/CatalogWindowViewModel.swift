@@ -1749,8 +1749,10 @@ extension CatalogWindowViewModel {
     /// until Projection publishes that scope, the pane still shows the scope the user left;
     /// nothing on it is the user's to act on, because one user action acts on the scope the
     /// user sees selected. Every act on the pane's content reads this: the targets
-    /// (`targetIDs`), the duplicates list's and the People gallery's acts, the map's stacks
-    /// and Play Story. How the pane looks meanwhile is unchanged: no design rule covers it.
+    /// (`targetIDs`), the edit controls (`canEdit`), the Info pane's face acts, drag-out, a
+    /// stack badge, opening the loupe or compare, the duplicates list's and the People
+    /// gallery's acts and the menu bar's person items, the map's stacks and Play Story. How
+    /// the pane looks meanwhile is unchanged: no design rule covers it.
     var showsSelectedScope: Bool {
         state.resolvedSidebarSelection == queryDescriptor.scope
     }

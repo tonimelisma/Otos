@@ -134,8 +134,9 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
   long each holds its thread. Eight or more at `.userInitiated` that hold a thread for longer
   than a frame starve visible tiles; such a step either waits — and moves to a dedicated
   queue — or computes, and then runs below the priority of user work or with fewer at once.
-  Every store query's log line carries `waitMs`, `resumeMs` and the caller's `priority`, so a
-  starved pool shows at the read's priority without a probe.
+  Every store query timed through `CatalogStore.timedRead` or `timedWrite` logs `waitMs`,
+  `resumeMs` and the caller's `priority`, so a starved pool shows at the read's priority
+  without a probe.
 - A store read frees its connection from the connection's own queue as its body ends
   (`DatabaseReader.readFreeingConnection`, on GRDB's `asyncRead`). GRDB's async `read` frees it
   only once the reading task resumes on a pool thread of its own priority, so two utility reads

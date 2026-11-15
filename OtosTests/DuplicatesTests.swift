@@ -721,6 +721,11 @@ struct DuplicatesTests {
         let read = try await store.duplicateCopies(availableLibraryPaths: [library])
         #expect(Set(read.copies.map(\.copy.id.relativePath.rawValue)) == ["a.jpg", "Print/a.jpg"])
         #expect(read.keptPairs.isEmpty)
+        // The Duplicates scope holds the copies the groups list, and no empty file.
+        let scoped = try await store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: .duplicates), availableLibraryPaths: [library]
+        ).ids
+        #expect(Set(scoped.map(\.relativePath.rawValue)) == ["a.jpg", "Print/a.jpg"])
 
         let ids = read.copies.map(\.copy.id)
         let added = try await store.keepCopiesTogether([ids])

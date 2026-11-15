@@ -691,9 +691,10 @@ extension CatalogWindowViewModel {
     }
 
     /// The person the menu bar's person items act on while the gallery shows: the one the
-    /// keys last reached, if selected, else the one person selected.
+    /// keys last reached, if selected, else the one person selected; none while the gallery
+    /// on screen belongs to a scope the user has left (APP-080), so every item is disabled.
     var galleryActingPerson: PersonID? {
-        guard showsPeopleList else { return nil }
+        guard showsPeopleList, showsSelectedScope else { return nil }
         let selected = peopleSession.selectedPeople
         if let cursor = peopleSession.cursor, selected.contains(cursor) {
             return cursor

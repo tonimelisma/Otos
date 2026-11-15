@@ -5,8 +5,6 @@ import Foundation
 import Synchronization
 import Testing
 
-/// What search reads besides the picture's embedding (ADR 0048): the text in a photo, and the
-/// scene labels that gate a query naming a thing.
 /// A session that reads in the test's own process with the test's recognition, as Otos's
 /// reading process reads with Vision's (`SearchTextReading.readPreview`).
 final class RecognizingSession: SearchTextSession {
@@ -21,6 +19,23 @@ final class RecognizingSession: SearchTextSession {
     }
 }
 
+/// A session whose process ends, without answering, on the pictures `exitsOn` names.
+final class ExitingSession: SearchTextSession {
+    private let exitsOn: Set<String>
+
+    init(exitsOn: Set<String>) {
+        self.exitsOn = exitsOn
+    }
+
+    func read(_ url: URL) -> SearchTextPreviewReading {
+        exitsOn.contains(url.lastPathComponent)
+            ? .exited("ended while reading")
+            : .lines([RecognizedTextLine(text: "OPEN", confidence: 1)])
+    }
+}
+
+/// What search reads besides the picture's embedding (ADR 0048): the text in a photo, and the
+/// scene labels that gate a query naming a thing.
 @Suite(.testDirectory)
 struct SearchReadingTests {
     /// Whether `query` matches `text` as a search pass matches it (`PhotoSearchIndex`): the
@@ -62,17 +77,19 @@ struct SearchReadingTests {
     ///
     /// When macOS purges Vision's compiled model under disk pressure while this process holds
     /// it, no reading in the process can succeed again
-    /// (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`). This test then has
-    /// nothing to read, and records that one error as a known issue: the product's handling of
-    /// it is `aReaderLostForTheProcessAttemptsNothingMore`. Any other failure fails the test.
+    /// (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`). This test reads in
+    /// its own process, so it then has nothing to read, and records that one error as a known
+    /// issue: the product reads in a child process and starts a new one then
+    /// (`aSessionThatEndsEndsThePageAndANewSessionReadsTheNext`,
+    /// `theReadingProcessReadsAPreviewAndEndsWhenItIsGone`). Any other failure fails the test.
     @Test func textInAPictureIsRead() throws {
         try withKnownIssue("Vision's text reader was lost for this process to a cache purge", isIntermittent: true) {
             let image = try #require(Self.picture(saying: "OTOS SEARCH 2026"))
-            let read = try Self.readAsTheIndexDoes(image)
+            let read = try Self.readRetryingFailures(image)
             #expect(Self.matches("otos search", in: SearchTextReading.searchable(read)))
             #expect(SearchTextReading.certain(read) == ["OTOS SEARCH 2026"])
             let blank = SearchModelTests.solid(red: 0.4, green: 0.5, blue: 0.6, width: 1200, height: 800)
-            #expect(try Self.readAsTheIndexDoes(blank).isEmpty)
+            #expect(try Self.readRetryingFailures(blank).isEmpty)
         } matching: { issue in
             issue.error.map(SearchTextReading.losesTheProcess) ?? false
         }
@@ -184,10 +201,22 @@ struct SearchReadingTests {
         try PhotoSearchIndexTests.writeJPEG(#require(Self.picture(saying: "OTOS SEARCH 2026")), to: sign)
         let executable = try SearchTextChild.executable()
         var child = try SearchTextChild(executable: executable)
+        // A fresh child's first reading is a cold one, which a loaded machine can make Vision
+        // give up on (`readRetryingFailures`); the attempts are counted, not timed.
         var reading = child.read(sign)
-        if case .ended = reading {
-            child = try SearchTextChild(executable: executable)
-            reading = child.read(sign)
+        for _ in 1 ..< 3 {
+            switch reading {
+            case .lines, .undecodable:
+                break
+            case .failed:
+                reading = child.read(sign)
+                continue
+            case .ended, .exited:
+                child = try SearchTextChild(executable: executable)
+                reading = child.read(sign)
+                continue
+            }
+            break
         }
         guard case let .lines(lines) = reading else {
             Issue.record("the reading process answered \(reading)")
@@ -197,10 +226,28 @@ struct SearchReadingTests {
         #expect(child.read(directory.appending(path: "missing.jpg")) == .undecodable)
 
         #expect(kill(child.processIdentifier, SIGKILL) == 0)
-        guard case .ended = child.read(sign) else {
-            Issue.record("a killed reading process still answered")
-            return
+        switch child.read(sign) {
+        case .ended, .exited:
+            break
+        case let answer:
+            Issue.record("a killed reading process still answered \(answer)")
         }
+    }
+
+    /// A picture whose reading ends its process is paged past: the rest of the page is read by
+    /// a new session, so one such picture never stops every other still from being read.
+    @Test func aPictureThatEndsItsSessionIsPagedPast() async throws {
+        let directory = try makeTestDirectory()
+        let page = try Self.candidates(3, in: directory)
+        let reader = SearchTextReader {
+            ExitingSession(exitsOn: [URL(filePath: page[0].previewPath).lastPathComponent])
+        }
+        let open = [RecognizedTextLine(text: "OPEN", confidence: 1)]
+        #expect(await reader.read(page, directory: directory) == .read([
+            SearchTextResult(id: page[1].id, source: "rendered", lines: open),
+            SearchTextResult(id: page[2].id, source: "rendered", lines: open),
+        ]))
+        #expect(await reader.sessionsStarted == 2)
     }
 
     /// Only the `e5rtError` case with status 13 loses the process: the same case's deadline
@@ -297,15 +344,15 @@ struct SearchReadingTests {
         await store.shutdown()
     }
 
-    /// Reads `image` as the product does: a reading that fails is read again (ADR 0048, the
-    /// index retries an owed still). Under a loaded machine Vision's runtime can give up on a
-    /// cold reading on its own: it cancels an operation that overran its internal deadline
-    /// (`e5rt` "has timed out", error 10) while it compiles the text models, which takes
-    /// minutes under parallel checks. The attempts are counted, not timed, and a reading that
-    /// fails every attempt throws the last error, so a Vision that cannot read still fails. An
-    /// error that loses the reader for the process is thrown at once, as the product stops at
-    /// it (`SearchTextReading.losesTheProcess`): no later attempt in the process can read.
-    static func readAsTheIndexDoes(_ image: CGImage) throws -> [RecognizedTextLine] {
+    /// Reads `image` in this process, reading again after a failure, as the index reads an owed
+    /// still again (ADR 0048). Under a loaded machine Vision's runtime can give up on a cold
+    /// reading on its own: it cancels an operation that overran its internal deadline (`e5rt`
+    /// "has timed out", error 10) while it compiles the text models, which takes minutes under
+    /// parallel checks. The attempts are counted, not timed, and a reading that fails every
+    /// attempt throws the last error, so a Vision that cannot read still fails. An error that
+    /// loses the reader for the process (`SearchTextReading.losesTheProcess`) is thrown at
+    /// once: no later attempt in this process can read, and only a new process would.
+    static func readRetryingFailures(_ image: CGImage) throws -> [RecognizedTextLine] {
         let attempts = 3
         for attempt in 1 ... attempts {
             do {

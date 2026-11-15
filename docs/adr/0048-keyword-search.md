@@ -243,7 +243,7 @@ the index's retry after its backoff (30 s doubling to 15 minutes) starts a new c
 recompiles what the purge removed (4 s for a file, minutes for an emptied cache) and reads the
 rest. The backoff bounds the recompiling a disk purged every few minutes would cause to one
 child a backoff, where a reader lost for the app's process read nothing until the owner
-relaunched. One serial queue reads every preview, so Otos never starts two first readings at
+relaunched. A child that exits while reading a picture, without answering, may have been ended by that picture (a decoder or recognizer crash), so the picture is paged past for the pass like a failed reading (`phase=sessionExited`) and the rest of the page is read by a new child: one such picture would otherwise come first in every page and stop every other still from being read. One serial queue reads every preview, so Otos never starts two first readings at
 once. At 512 px the fast level read noise, so the full preview is read; an original
 is not, since nearly every original in the owner's library is a cloud placeholder. Text is read
 after every embedding is made.

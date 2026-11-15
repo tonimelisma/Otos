@@ -170,8 +170,11 @@ extension MediaGridViewController {
             orderedIDs: structure.orderedIDs
         )
         let originFrame = collectionView.layoutAttributesForItem(at: hit)?.frame ?? .zero
-        let items: [NSDraggingItem] = ids.map { id in
-            let item = NSDraggingItem(pasteboardWriter: selectionHandlers.dragWriter(id))
+        let items: [NSDraggingItem] = ids.compactMap { id in
+            guard let writer = selectionHandlers.dragWriter(id) else {
+                return nil
+            }
+            let item = NSDraggingItem(pasteboardWriter: writer)
             if let indexPath = structure.indexPath(of: id),
                let tile = collectionView.item(at: indexPath)?.view
             {
@@ -181,6 +184,10 @@ extension MediaGridViewController {
                 item.setDraggingFrame(originFrame, contents: nil)
             }
             return item
+        }
+        guard !items.isEmpty else {
+            OtosLog.ui.notice("op=ui.dragOut.refused reason=scopeLeft count=\(ids.count, privacy: .public)")
+            return
         }
         dragSource.onEnd = { operation in
             OtosLog.ui.notice(

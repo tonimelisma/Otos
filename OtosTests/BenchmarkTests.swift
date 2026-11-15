@@ -905,12 +905,19 @@ struct BenchmarkTests {
 
         let sign = try #require(SearchReadingTests.picture(saying: "OTOS SEARCH 2026"))
         // The cold reading compiles Vision's text models, which a loaded machine can make
-        // Vision give up on; it happens here, read as the index does, so the case measures
-        // warm readings only.
-        _ = try SearchReadingTests.readAsTheIndexDoes(sign)
-        try await Benchmark.measure("search.readText") {
-            let read = try SearchTextReading.read(sign)
-            #expect(!read.isEmpty)
+        // Vision give up on; it happens here, read again after a failure, so the case measures
+        // warm readings only. A reader lost for this process to a purge of those compiled
+        // models (`SearchTextReading.losesTheProcess`, by its error's type and status) is the
+        // machine's, not the commit's: no reading in this process can succeed, so this
+        // process records no `search.readText` and the other processes measure it.
+        try await withKnownIssue("Vision's text reader was lost for this process to a cache purge", isIntermittent: true) {
+            _ = try SearchReadingTests.readRetryingFailures(sign)
+            try await Benchmark.measure("search.readText") {
+                let read = try SearchTextReading.read(sign)
+                #expect(!read.isEmpty)
+            }
+        } matching: { issue in
+            issue.error.map(SearchTextReading.losesTheProcess) ?? false
         }
 
         var generator = SplitMix64(seed: 11)

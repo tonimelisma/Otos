@@ -171,8 +171,9 @@ struct MediaGridSelectionHandlers {
     ) -> GridSelection = { _, _, _ in .empty }
     var reconcileNative: (Set<MediaAssetID>) -> GridSelection = { _ in .empty }
     /// The drag pasteboard writer for a dragged item: what the selection hands to another
-    /// app (the hand-off's choice, `CatalogWindowViewModel.dragWriter(for:)`).
-    var dragWriter: (MediaAssetID) -> NSPasteboardWriting = { $0.fileURL as NSURL }
+    /// app (the hand-off's choice, `CatalogWindowViewModel.dragWriter(for:)`); nil while
+    /// the grid still shows a scope the user has left, which hands nothing over (APP-080).
+    var dragWriter: (MediaAssetID) -> NSPasteboardWriting? = { $0.fileURL as NSURL }
 
     /// Wires the ViewModel's selection intents into the bridge.
     @MainActor

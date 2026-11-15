@@ -236,6 +236,26 @@ struct WindowStateApplyTests {
         #expect(model.targetIDs(.current).isEmpty)
         #expect(model.targetIDs(.item(ids[0])).isEmpty)
     }
+
+    /// The grid of the scope left stays on screen, but nothing on it opens, drags out or
+    /// edits until the selected scope publishes (APP-080).
+    @Test func aGridLeftForAnotherRowOpensDragsAndEditsNothing() {
+        let model = makeViewModel()
+        let ids = makeIDs(3)
+        model.applyState(windowState(ids: ids).sharingUnchanged(with: nil))
+        _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
+        #expect(model.dragWriter(for: ids[0]) != nil)
+
+        model.selectSidebar(.people)
+        #expect(!model.showsSelectedScope)
+        #expect(model.dragWriter(for: ids[0]) == nil)
+        #expect(!model.canEdit)
+        model.openLoupe(id: ids[1])
+        #expect(model.viewMode == .grid)
+        model.enterCompare()
+        #expect(model.viewMode == .grid)
+        #expect(model.galleryActingPerson == nil)
+    }
 }
 
 private let pictures = LibraryRootPath(rawValue: "/Users/example/Pictures")

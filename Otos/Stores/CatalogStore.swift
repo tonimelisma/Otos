@@ -2084,7 +2084,7 @@ extension CatalogStore {
     /// `CatalogMediaGridState.dayBuckets`).
     ///
     /// `heldStacks`, when given, built over exactly the roots this read's stacks span and
-    /// answering its scope (`PhotoStackSQL.Span.answers`), are used instead of reading the
+    /// spanning them all (`PhotoStackSQL.Span.roots`), are used instead of reading the
     /// stack candidates again: the caller holds them while nothing they are built from moved
     /// (`CatalogChangedFacts.stackInputs`). Otherwise a narrow scope reads only its own
     /// folders' stacks (`PhotoStackSQL.build`). The stacks used, read or held, come back in

@@ -166,7 +166,6 @@ extension AppKitWindowTests {
                 grid: grid,
                 change: .scope,
                 applyStart: .now,
-                applyCallStart: .now,
                 commit: .init(start: .now),
                 diffPolicyMs: 0,
                 structureBuildMs: 0,

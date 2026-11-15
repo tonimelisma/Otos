@@ -96,6 +96,12 @@ extension CatalogWindowViewModel {
             openVisibleMapArea(mode: mode)
             return
         }
+        // The pane still shows the scope the user left, whose items are not theirs to open
+        // (APP-080): the mode is the selected scope's, and settles on its items as it arrives.
+        guard showsSelectedScope else {
+            enterModeForOpeningScope(mode)
+            return
+        }
         switch mode {
         case .grid:
             exitToGrid()
@@ -122,9 +128,11 @@ extension CatalogWindowViewModel {
     }
 
     /// Enter loupe on `id` (double-click), or on the selection's active item / first
-    /// selected / first in scope when `id` is nil (segment, ⌘2, Return).
+    /// selected / first in scope when `id` is nil (segment, ⌘2, Return). Nothing while the
+    /// grid still shows the scope the user left: its photos are not the user's to open
+    /// (APP-080).
     func openLoupe(id: MediaAssetID?) {
-        guard let focus = BrowserModePolicy.loupeEntryFocus(
+        guard showsSelectedScope, let focus = BrowserModePolicy.loupeEntryFocus(
             preferredID: id,
             selection: gridSelection,
             orderedIDs: state.mediaGrid.content
@@ -147,7 +155,7 @@ extension CatalogWindowViewModel {
 
     func enterCompare() {
         let ordered = state.mediaGrid.orderedAssetIDs
-        guard !ordered.isEmpty else {
+        guard showsSelectedScope, !ordered.isEmpty else {
             return
         }
         let pair = ComparePairPolicy.entry(selection: gridSelection, orderedIDs: state.mediaGrid.content)

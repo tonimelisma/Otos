@@ -2142,7 +2142,9 @@ extension DatabaseReader {
     /// waiting for.
     ///
     /// Cancelling the task interrupts the body's statement, as GRDB's own read does, and the
-    /// read throws `CancellationError`.
+    /// read throws `CancellationError`. The cancellation holds for the rest of the body: a
+    /// statement that starts after it is stopped too, because SQLite clears an interrupt that
+    /// lands while no statement runs.
     nonisolated func readFreeingConnection<T: Sendable>(
         _ body: @escaping @Sendable (Database) throws -> T
     ) async throws -> T {
@@ -2153,7 +2155,7 @@ extension DatabaseReader {
                     continuation.resume(with: Result {
                         let db = try connection.get()
                         try interruption.begin(db)
-                        defer { interruption.end() }
+                        defer { interruption.end(db) }
                         do {
                             return try body(db)
                         } catch {
@@ -2189,6 +2191,9 @@ private final nonisolated class ReadInterruption: Sendable {
         state.withLock(\.cancelled)
     }
 
+    /// SQLite's virtual-machine steps between checks of `wasCancelled` (`progressHandler`).
+    private static let progressCheckInterval: Int32 = 1000
+
     func begin(_ db: Database) throws {
         try state.withLock { state in
             guard !state.cancelled else {
@@ -2196,9 +2201,21 @@ private final nonisolated class ReadInterruption: Sendable {
             }
             state.connection = db.sqliteConnection.map { Int(bitPattern: $0) }
         }
+        // `sqlite3_interrupt` stops only a statement that is running when it lands: SQLite
+        // clears it as the next statement starts on an idle connection, so a cancel between
+        // two statements, or before the first steps, would let the rest of the body run. The
+        // progress handler makes it hold: every statement the body starts afterwards stops at
+        // its first check with `SQLITE_INTERRUPT`. The body holds this object until `end`.
+        sqlite3_progress_handler(db.sqliteConnection, Self.progressCheckInterval, { context in
+            guard let context else {
+                return 0
+            }
+            return Unmanaged<ReadInterruption>.fromOpaque(context).takeUnretainedValue().wasCancelled ? 1 : 0
+        }, Unmanaged.passUnretained(self).toOpaque())
     }
 
-    func end() {
+    func end(_ db: Database) {
+        sqlite3_progress_handler(db.sqliteConnection, 0, nil, nil)
         state.withLock { $0.connection = nil }
     }
 

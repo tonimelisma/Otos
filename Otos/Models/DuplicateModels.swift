@@ -369,8 +369,8 @@ nonisolated struct DuplicateCopyFacts: Equatable, Sendable {
 ///
 /// - **Each library keeps its own copy.** Nothing across libraries is preselected, so a group
 ///   whose copies span libraries — only while Duplicates compares across them
-///   (`DuplicatesReach`) — keeps the best copy in each; the library pair row offers
-///   `Keep Only <Library>`.
+///   (`DuplicatesReach`) — keeps the best copy in each; the pair row offers
+///   `Keep the copies in <folder>`.
 /// - **Work is carried, not chosen between.** The act moves a copy's curation or edit onto
 ///   the kept copy when the kept copy lacks it (`DuplicatesSession.carries`), so the copy
 ///   kept need not be the one holding the work. A library's copies wait only when their

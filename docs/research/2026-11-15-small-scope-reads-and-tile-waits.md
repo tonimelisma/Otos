@@ -1,5 +1,9 @@
 # Small scopes' reads and visible tiles' waits (2026-11-15)
 
+**Superseded in part:** the pool-hop wait this note reads as `waitMs` no longer exists in store
+reads; `2026-11-15-cooperative-pool-holders.md` removed it (`readFreeingConnection`), and store
+queries now log it apart as `resumeMs`.
+
 ## Question
 
 On 2026-11-15 (06:29–06:33, installed build 32f39417, about 164,500 rows, three libraries

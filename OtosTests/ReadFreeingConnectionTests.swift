@@ -84,6 +84,39 @@ struct ReadFreeingConnectionTests {
         try pool.close()
     }
 
+    /// A cancel that lands while the body runs no statement still stops the statement the body
+    /// starts next: SQLite clears an interrupt that finds the connection idle.
+    @Test func aCancelBetweenStatementsStopsTheNextStatement() async throws {
+        let directory = try makeTestDirectory()
+        let pool = try DatabasePool(path: directory.appending(path: "reads.sqlite").path(percentEncoded: false))
+        let (entered, enter) = AsyncStream<Void>.makeStream()
+        let cancelled = DispatchSemaphore(value: 0)
+        let reading = Task {
+            try await pool.readFreeingConnection { db in
+                enter.yield()
+                // The body is on the reader's queue, not the cooperative pool, so it may block.
+                cancelled.wait()
+                return try Int.fetchOne(db, sql: """
+                WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000000000000)
+                SELECT count(*) FROM n
+                """)
+            }
+        }
+        for await _ in entered {
+            break
+        }
+        // The cancellation handler runs inside `cancel()`, so the read is cancelled before the
+        // body goes on to its statement.
+        reading.cancel()
+        cancelled.signal()
+
+        await #expect(throws: CancellationError.self) {
+            try await reading.value
+        }
+        #expect(try await pool.readFreeingConnection { _ in 1 } == 1)
+        try pool.close()
+    }
+
     /// A task cancelled before its read starts reads nothing.
     @Test func aReadCancelledBeforeItStartsRunsNoBody() async throws {
         let directory = try makeTestDirectory()

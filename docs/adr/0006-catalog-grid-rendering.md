@@ -42,7 +42,7 @@ for a visible asset; tiles are pure renderers of that store value. Which apply p
 runs only affects how much work AppKit does. Same-descriptor same-membership
 reorders (the enrichment trickle that publishes ~1/s while Date-sort enrichment
 runs) animate as a batch of moves, which moves surviving items
-instead of recreating them — measured `applyCallMs` for K = 1–3 movers at n ≈ 23k
+instead of recreating them — the measured synchronous apply call (the structural-apply line's `commitMs`) for K = 1–3 movers at n ≈ 23k
 is in the low tens of milliseconds (`docs/research/grid-reorder-cadence-and-appkit-diffable-apply.md`).
 Descriptor-changed reorders and large membership applies keep the reloadData-class
 path. The once-per-second reorder cadence is intentional; the hitch was the
@@ -338,6 +338,5 @@ new rendering mechanism.
   compositional layout's geometry and animation measured against `MediaGridLayout`).
 - Implemented in `Otos/Views/MediaGrid*.swift` (the layout in `MediaGridLayout.swift`),
   `Otos/Views/MediaAssetTileView.swift`, `Otos/Views/GridSelection.swift`,
-  `Otos/Views/MediaGridDayHeaderView.swift`,
   `Otos/ViewModels/CatalogWindowViewModelSelection.swift`;
   requirements APP-006/010/011/015/030.

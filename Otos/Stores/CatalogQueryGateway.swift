@@ -1445,17 +1445,13 @@ private nonisolated func scopeClause(
         let shared = DuplicatesReachSQL.shared(
             row: "media_asset", twin: "twin", reach: reach,
             twinFilter: """
-            \(ContentDigestSQL.isCurrent("twin"))
-                AND twin.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))
-                AND twin.pending_trash_batch_unix_ms IS NULL
-                AND twin.trash_path IS NULL
-                AND twin.hidden_by_source = 0
-                AND NOT \(LivePhotoSQL.isPairedMotion("twin"))
+            twin.library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))
+                AND \(DuplicatesGateway.countsAsCopy("twin"))
             """
         )
         predicate += """
 
-          AND \(ContentDigestSQL.isCurrent("media_asset"))
+          AND \(DuplicatesGateway.countsAsCopy("media_asset"))
           AND \(shared)
         """
         arguments.append(contentsOf: scope.rootIDs)

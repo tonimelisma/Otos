@@ -5,6 +5,10 @@ at once. The earlier note (`2026-11-13-e5rt-shared-compiled-model-cache.md`) saw
 10 and 13 and concluded that a reading after a failed one is warm. This pass measured what a
 process does after a slow first reading.
 
+**Superseded in part:** its "Not changed" conclusions were overtaken by
+`2026-11-15-text-reading-lost-to-a-cache-purge.md`, which found the cause (a purge of the
+compiled-model cache, status 13) and moved text reading into a child process (ADR 0048).
+
 ## Method
 
 A standalone binary outside Otos runs `SearchTextReading.read`'s request (accurate level,

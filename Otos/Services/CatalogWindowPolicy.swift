@@ -263,8 +263,6 @@ nonisolated enum CatalogWindowPolicy {
         }
     }
 
-    /// What the window says about an empty scope, and nil when the scope holds items: a
-    /// scope with items has no empty state to draw.
     /// What the People gallery says of its libraries when it holds no one: still checking
     /// them, or none of the fixed libraries reachable. Nil when one is, and then the gallery
     /// says why it is empty itself (`PeoplePresentation.emptySentence`). Read from the
@@ -277,6 +275,8 @@ nonisolated enum CatalogWindowPolicy {
         return fixedLibraries.isEmpty || fixedLibraries.contains(where: \.isAvailable) ? nil : .noAvailableMedia
     }
 
+    /// What the window says about an empty scope, and nil when the scope holds items: a
+    /// scope with items has no empty state to draw.
     static func mediaEmptyState(
         for descriptor: CatalogQueryDescriptor,
         libraries: [CatalogLibraryState],

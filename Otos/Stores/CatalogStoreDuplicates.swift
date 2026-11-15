@@ -80,8 +80,10 @@ nonisolated enum DuplicatesGateway {
 
     /// A row counts when it is visible, has content, and its digest is current for its
     /// file. An empty file holds nothing to duplicate: every one shares the digest of no
-    /// bytes, so matching them would group unrelated broken files.
-    private static func visibleCurrentPredicate(_ row: String) -> String {
+    /// bytes, so matching them would group unrelated broken files. The one rule: the
+    /// Duplicates read and the Duplicates scope's rows (`CatalogQueryGateway`) both apply
+    /// it, so the scope holds exactly the copies the groups list.
+    static func countsAsCopy(_ row: String) -> String {
         """
         \(row).byte_size > 0
           AND \(row).pending_trash_batch_unix_ms IS NULL
@@ -104,7 +106,7 @@ nonisolated enum DuplicatesGateway {
             row: "a", twin: "d", reach: reach,
             twinFilter: """
             d.library_root_id IN (\(placeholders))
-                AND \(visibleCurrentPredicate("d"))
+                AND \(countsAsCopy("d"))
             """
         )
         return """
@@ -119,7 +121,7 @@ nonisolated enum DuplicatesGateway {
         LEFT JOIN asset_metadata m
           ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(placeholders))
-          AND \(visibleCurrentPredicate("a"))
+          AND \(countsAsCopy("a"))
           AND \(shared)
         """
     }

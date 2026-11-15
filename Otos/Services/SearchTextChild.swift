@@ -9,7 +9,9 @@ import Foundation
 /// which never starts the app and serves readings until its input closes. One request is one
 /// line of JSON holding a preview's path; one answer is one line of JSON holding its
 /// `SearchTextPreviewReading`. A child that answers `.ended` exits after the answer, and the
-/// reader starts another for the next page (`SearchTextReader`).
+/// reader starts another for the next page (`SearchTextReader`). A child whose output closes
+/// before it answers ended while reading that picture (`.exited`): the reader pages past the
+/// picture and reads the rest in another child.
 ///
 /// The child is the app's executable in the installed app, beside the `OtosKit` framework it
 /// embeds, and the built `Otos.app` beside the framework when tests load it from the build's
@@ -36,6 +38,8 @@ final nonisolated class SearchTextChild: SearchTextSession {
         process = Process()
         process.executableURL = executable
         process.arguments = [SearchTextReadingProcess.argument]
+        // Background reading, as the reader's own queue is.
+        process.qualityOfService = .utility
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -70,7 +74,7 @@ final nonisolated class SearchTextChild: SearchTextSession {
             request.append(0x0A)
             try requests.write(contentsOf: request)
             guard let answer = nextAnswer() else {
-                return .ended("the reading process exited")
+                return .exited("the reading process exited before it answered")
             }
             return try JSONDecoder().decode(SearchTextPreviewReading.self, from: answer)
         } catch {

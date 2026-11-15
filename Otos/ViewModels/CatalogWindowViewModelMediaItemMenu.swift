@@ -145,7 +145,14 @@ extension CatalogWindowViewModel {
         )
     }
 
+    /// The context menu's and the Info pane's photo acts. The Info pane keeps showing the
+    /// faces of the scope the user left until the new one publishes, so its acts do nothing
+    /// meanwhile (APP-080), as the target acts already resolve to no photo.
     func performMediaItemCommand(_ command: MediaItemCommand) {
+        guard showsSelectedScope else {
+            OtosLog.ui.notice("op=mediaItemCommand phase=refused reason=scopeLeft")
+            return
+        }
         switch command {
         case .open:
             openTargetsInDefaultApplication()

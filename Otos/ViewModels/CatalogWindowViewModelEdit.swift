@@ -244,7 +244,7 @@ extension CatalogWindowViewModel {
 
     /// The loupe was clicked while the picker was armed.
     func pickNeutral(at point: CGPoint) {
-        guard isPickingNeutral, let target = editTarget, editPhotoFacts != nil else { return }
+        guard isPickingNeutral, canEdit, let target = editTarget else { return }
         isPickingNeutral = false
         commitPendingEdit()
         submittedEditCommandCount += 1
@@ -359,7 +359,7 @@ extension CatalogWindowViewModel {
     /// A control moved. While it is being dragged only the live render follows; a change
     /// that is not a drag (a keyboard step, an accessibility increment) is saved at once.
     func setEditValue(_ value: Double, for control: EditControl) {
-        guard editTarget != nil, let facts = editPhotoFacts else { return }
+        guard canEdit, let facts = editPhotoFacts else { return }
         let next = control.applying(value, to: editDraft, facts: facts)
         guard next != editDraft else { return }
         editDraft = next
@@ -383,15 +383,17 @@ extension CatalogWindowViewModel {
 
     /// A section's Reset: every control in it back to neutral, as one undo step.
     func resetEditSection(_ section: EditSection) {
-        guard editTarget != nil, editPhotoFacts != nil, !section.isNeutral(in: editDraft) else { return }
+        guard canEdit, !section.isNeutral(in: editDraft) else { return }
         editDraft = section.reset(editDraft)
         requestLiveEditRender()
         commitEdit(actionName: section.resetActionName)
     }
 
-    /// The controls act: there is one photo to edit and it is open.
+    /// The controls act: there is one photo to edit, it is open, and it belongs to the scope
+    /// the user has selected. Until a newly selected scope publishes, the panel keeps showing
+    /// the photo of the scope left (APP-080), but nothing acts on it.
     var canEdit: Bool {
-        editTarget != nil && editPhotoFacts != nil
+        editTarget != nil && editPhotoFacts != nil && showsSelectedScope
     }
 
     /// True once every submitted edit command has been saved and rendered, or refused.

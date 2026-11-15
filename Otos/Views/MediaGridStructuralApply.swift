@@ -6,12 +6,12 @@ extension MediaGridViewController {
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let change: MediaGridMutationGate.QueryChange
-        /// When the gate admitted the apply, so `applyMs` includes the off-main build.
+        /// When the gate admitted the apply, so `totalMs` includes the off-main build.
         let applyStart: ContinuousClock.Instant
-        let applyCallStart: ContinuousClock.Instant
-        /// The main thread's synchronous share of the apply: from taking the built
-        /// structure to handing AppKit the reload or the batch, layout included. The
-        /// completion is timed apart, as `completionMs`.
+        /// The main thread's synchronous share of the apply (`commitMs`): from taking the
+        /// built structure to handing AppKit the reload or the batch, layout included. What
+        /// follows until AppKit's completion is the batch's motion (`animationMs`), and the
+        /// completion is timed apart (`completionMs`).
         let commit: CommitDuration
         let diffPolicyMs: Int
         let structureBuildMs: Int
@@ -34,7 +34,7 @@ extension MediaGridViewController {
     /// completion before `performBatchUpdates` returns, so either can be first.
     final class CommitDuration {
         private let start: ContinuousClock.Instant
-        private var milliseconds: Int?
+        private var endedAt: ContinuousClock.Instant?
 
         init(start: ContinuousClock.Instant) {
             self.start = start
@@ -43,12 +43,15 @@ extension MediaGridViewController {
         /// The commit's duration in milliseconds, fixed by the first call.
         @discardableResult
         func end() -> Int {
-            if let milliseconds {
-                return milliseconds
-            }
-            let measured = DiagnosticsTiming.milliseconds(since: start)
-            milliseconds = measured
-            return measured
+            let ended = endedAt ?? .now
+            endedAt = ended
+            return DiagnosticsTiming.milliseconds(start.duration(to: ended))
+        }
+
+        /// From the commit's end to `instant`, in milliseconds: an animated batch's motion,
+        /// which runs after the main thread has returned to the run loop.
+        func millisecondsAfterEnd(until instant: ContinuousClock.Instant) -> Int {
+            DiagnosticsTiming.milliseconds((endedAt ?? instant).duration(to: instant))
         }
     }
 
@@ -163,7 +166,6 @@ extension MediaGridViewController {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
         logStartedStructuralApply(grid, change: change, anchor: scrollAnchor, summary: summary)
         let stallMonitor = stallMonitor
-        let applyCallStart = ContinuousClock.now
         let animationSuppressed = summary.animatingDifferences
             && suppressesApplyAnimation(anchor: scrollAnchor, nextOrderedIDs: grid.orderedAssetIDs)
         // A collection view outside a window has nothing on screen to move, so it reloads.
@@ -172,7 +174,6 @@ extension MediaGridViewController {
             grid: grid,
             change: change,
             applyStart: applyStart,
-            applyCallStart: applyCallStart,
             commit: commitDuration,
             diffPolicyMs: built.diffPolicyMs,
             structureBuildMs: built.structureBuildMs,
@@ -509,9 +510,11 @@ extension MediaGridViewController {
         operation: MainRunLoopOperationToken?,
         stallMonitor: MainRunLoopStallMonitor?
     ) {
+        // The commit's end first: a reload, or a batch AppKit completes before returning,
+        // reaches here inside the commit, which ends now and so animated for 0 ms.
         let commitMs = context.commit.end()
-        let applyCallMs = DiagnosticsTiming.milliseconds(since: context.applyCallStart)
         let completionStart = ContinuousClock.now
+        let animationMs = context.commit.millisecondsAfterEnd(until: completionStart)
         OtosSignpost.ui.endInterval("MediaGridStructuralApply", context.signpost)
         stallMonitor?.completeIntentToPaint(appliedScope: context.grid.scope)
 
@@ -533,21 +536,21 @@ extension MediaGridViewController {
         }
 
         let completionMs = DiagnosticsTiming.milliseconds(since: completionStart)
-        let applyMs = DiagnosticsTiming.milliseconds(since: context.applyStart)
+        let totalMs = DiagnosticsTiming.milliseconds(since: context.applyStart)
         logFinishedStructuralApply(
             context,
-            applyMs: applyMs,
+            totalMs: totalMs,
             commitMs: commitMs,
-            applyCallMs: applyCallMs,
+            animationMs: animationMs,
             completionMs: completionMs,
             visibleDetailRequestCount: visibleDetailRequestCount,
             preheatCount: preheatCount
         )
         recordStructuralApplyDiagnostics(
             context,
-            applyMs: applyMs,
+            totalMs: totalMs,
             commitMs: commitMs,
-            applyCallMs: applyCallMs,
+            animationMs: animationMs,
             completionMs: completionMs,
             visibleDetailRequestCount: visibleDetailRequestCount,
             preheatCount: preheatCount
@@ -604,9 +607,9 @@ extension MediaGridViewController {
 
     private func logFinishedStructuralApply(
         _ context: StructuralApplyCompletionContext,
-        applyMs: Int,
+        totalMs: Int,
         commitMs: Int,
-        applyCallMs: Int,
+        animationMs: Int,
         completionMs: Int,
         visibleDetailRequestCount: Int,
         preheatCount: Int
@@ -630,18 +633,18 @@ extension MediaGridViewController {
             appliedBy=\(context.appliedBy.rawValue, privacy: .public) \
             sections=\(context.sectionCount, privacy: .public) \
             commitMs=\(commitMs, privacy: .public) \
-            applyCallMs=\(applyCallMs, privacy: .public) \
+            animationMs=\(animationMs, privacy: .public) \
             completionMs=\(completionMs, privacy: .public) \
-            applyMs=\(applyMs, privacy: .public)
+            totalMs=\(totalMs, privacy: .public)
             """
         )
     }
 
     private func recordStructuralApplyDiagnostics(
         _ context: StructuralApplyCompletionContext,
-        applyMs: Int,
+        totalMs: Int,
         commitMs: Int,
-        applyCallMs: Int,
+        animationMs: Int,
         completionMs: Int,
         visibleDetailRequestCount: Int,
         preheatCount: Int
@@ -669,9 +672,9 @@ extension MediaGridViewController {
                 "appliedBy": context.appliedBy.rawValue,
                 "sections": "\(context.sectionCount)",
                 "commitMs": "\(commitMs)",
-                "applyCallMs": "\(applyCallMs)",
+                "animationMs": "\(animationMs)",
                 "completionMs": "\(completionMs)",
-                "applyMs": "\(applyMs)",
+                "totalMs": "\(totalMs)",
             ]
         )
     }
