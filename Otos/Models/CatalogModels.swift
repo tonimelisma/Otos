@@ -1270,8 +1270,21 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
     /// Shared by every content holding this very order and days (`replacing(stacks:)`).
     private let order: Order
 
-    /// The identity of one publication of an order and its days.
-    private final class Order: Sendable {}
+    /// The identity of one publication of an order and its days, and, for one `removing`
+    /// made, the order it was made from and the positions it dropped.
+    private final class Order: Sendable {
+        /// Held weakly: a content made by removal never keeps its source's order alive,
+        /// and once nothing holds that order, nothing can ask about it.
+        weak let source: Order?
+        /// The source's positions this order dropped, ascending; empty for an order that
+        /// was not made by removal.
+        let removedPositions: [Int]
+
+        init(source: Order? = nil, removedPositions: [Int] = []) {
+            self.source = source
+            self.removedPositions = removedPositions
+        }
+    }
 
     init(orderedAssetIDs: [MediaAssetID], dayBuckets: [Date?], stacks: CatalogGridStacks) {
         self.orderedAssetIDs = orderedAssetIDs
@@ -1279,6 +1292,20 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         self.stacks = stacks
         index = Mutex(nil)
         order = Order()
+    }
+
+    private init(
+        orderedAssetIDs: [MediaAssetID],
+        dayBuckets: [Date?],
+        stacks: CatalogGridStacks,
+        removing positions: [Int],
+        from source: CatalogGridContent
+    ) {
+        self.orderedAssetIDs = orderedAssetIDs
+        self.dayBuckets = dayBuckets
+        self.stacks = stacks
+        index = Mutex(nil)
+        order = Order(source: source.order, removedPositions: positions)
     }
 
     private init(_ content: CatalogGridContent, stacks: CatalogGridStacks) {
@@ -1306,7 +1333,7 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
     /// files' mapping with it; the files of a collapsed stack are hidden together, since Move
     /// to Trash moves them together (`CatalogGridStacks.files(reachedThrough:)`).
     func removing(_ hidden: Set<MediaAssetID>) -> CatalogGridContent? {
-        let positions = withIndex { index in hidden.compactMap { index[$0] } }
+        let positions = withIndex { index in hidden.compactMap { index[$0] } }.sorted()
         guard !positions.isEmpty else {
             return nil
         }
@@ -1316,14 +1343,31 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         var buckets: [Date?] = []
         buckets.reserveCapacity(dayBuckets.isEmpty ? 0 : orderedAssetIDs.count - positions.count)
         var start = 0
-        for position in positions.sorted() + [orderedAssetIDs.count] {
+        for position in positions + [orderedAssetIDs.count] {
             ids.append(contentsOf: orderedAssetIDs[start ..< position])
             if !dayBuckets.isEmpty {
                 buckets.append(contentsOf: dayBuckets[start ..< position])
             }
             start = position + 1
         }
-        return CatalogGridContent(orderedAssetIDs: ids, dayBuckets: buckets, stacks: stacks.removing(hidden))
+        return CatalogGridContent(
+            orderedAssetIDs: ids,
+            dayBuckets: buckets,
+            stacks: stacks.removing(hidden),
+            removing: positions,
+            from: self
+        )
+    }
+
+    /// The positions of `other`'s order this content's order was made from it by dropping
+    /// (`removing`), ascending; nil unless this order was made from that very order. A grid
+    /// that shows `other` takes this one in by those positions alone
+    /// (`MediaGridStructure.init(grid:following:)`).
+    func positionsRemoved(from other: CatalogGridContent) -> [Int]? {
+        guard let source = order.source, source === other.order else {
+            return nil
+        }
+        return order.removedPositions
     }
 
     var orderedIDs: [MediaAssetID] {

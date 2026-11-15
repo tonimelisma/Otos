@@ -27,11 +27,12 @@ import AppKit
 /// label's one height, blank or not, so the first row sits below the bar, and it is never
 /// pinned — `MediaGridDayLabel.swift` records why the bar holds the current day instead.
 ///
-/// `MediaGridLayout` is the `NSCollectionViewLayout` over that value. `prepare()` reads the
-/// collection view's section counts (the counts AppKit holds, which inside a batch update
-/// are already the new ones) and asks `sectionHasDayHeader` which sections carry a header;
-/// the controller answers that from the structure AppKit took in the same synchronous
-/// region. Scrolling never invalidates it: only a width change does, and a move to a screen
+/// `MediaGridLayout` is the `NSCollectionViewLayout` over that value. `prepare()` takes the
+/// sections in one value: in the grid, from the structure AppKit took in the same
+/// synchronous region (`MediaGridStructure.layoutSections`), whose counts are the ones
+/// AppKit holds, which inside a batch update are already the new ones, so a pass asks no
+/// per-section question of the collection view or the controller. Scrolling never
+/// invalidates it: only a width change does, and a move to a screen
 /// of another backing scale (`MediaGridCollectionView`).
 ///
 /// Insert and remove choreography: AppKit's base layout already supplies the attributes
@@ -277,14 +278,32 @@ nonisolated enum MediaGridLayoutUpdatePolicy {
 
 final class MediaGridLayout: NSCollectionViewLayout {
     let columnCount: Int
-    private let sectionHasDayHeader: (Int) -> Bool
+    /// The sections `prepare()` lays out, for the collection view it lays out.
+    private let sections: (NSCollectionView) -> [MediaGridLayoutGeometry.Section]
     private(set) var geometry: MediaGridLayoutGeometry
     private var insertedIndexPaths: Set<IndexPath> = []
     private var deletedIndexPaths: Set<IndexPath> = []
 
-    init(columnCount: Int, sectionHasDayHeader: @escaping (Int) -> Bool) {
+    /// Lays out the counts the collection view holds, with the header flags
+    /// `sectionHasDayHeader` gives: one count and one flag asked per section.
+    convenience init(columnCount: Int, sectionHasDayHeader: @escaping (Int) -> Bool) {
+        self.init(columnCount: columnCount) { collectionView in
+            (0 ..< collectionView.numberOfSections).map { section in
+                MediaGridLayoutGeometry.Section(
+                    itemCount: collectionView.numberOfItems(inSection: section),
+                    hasHeader: sectionHasDayHeader(section)
+                )
+            }
+        }
+    }
+
+    /// Lays out the sections `sections` answers in one value: in the grid, the structure's
+    /// (`MediaGridStructure.layoutSections`). Asking for every section's count and flag one
+    /// at a time was most of a reload's main-thread cost at 5,000 days
+    /// (`docs/research/2026-11-15-grid-hide-follows-the-removal.md`).
+    init(columnCount: Int, sections: @escaping (NSCollectionView) -> [MediaGridLayoutGeometry.Section]) {
         self.columnCount = columnCount
-        self.sectionHasDayHeader = sectionHasDayHeader
+        self.sections = sections
         geometry = MediaGridLayoutGeometry(
             sections: [],
             columnCount: columnCount,
@@ -309,14 +328,7 @@ final class MediaGridLayout: NSCollectionViewLayout {
         var scale: CGFloat = 1
         var isRightToLeft = false
         if let collectionView {
-            let count = collectionView.numberOfSections
-            sections.reserveCapacity(count)
-            for section in 0 ..< count {
-                sections.append(MediaGridLayoutGeometry.Section(
-                    itemCount: collectionView.numberOfItems(inSection: section),
-                    hasHeader: sectionHasDayHeader(section)
-                ))
-            }
+            sections = self.sections(collectionView)
             width = collectionView.bounds.width
             scale = collectionView.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
             isRightToLeft = collectionView.userInterfaceLayoutDirection == .rightToLeft

@@ -128,7 +128,7 @@ extension MediaGridViewController {
         // ViewModel and is already pruned/cleared in `applyState` before this apply runs;
         // completion only renders the model.
         let structureStart = ContinuousClock.now
-        let structure = MediaGridStructure(grid: grid)
+        let structure = MediaGridStructure(grid: grid, following: previous)
         let structureBuildMs = DiagnosticsTiming.milliseconds(since: structureStart)
 
         // The one identity comparison both the summary and the batch read: it looks up

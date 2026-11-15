@@ -135,7 +135,12 @@ batch read one `MediaGridStructureChange`, which pairs sections by key, compares
 pair's items from both ends for the runs they share, and looks up by identity only what
 lies between those runs and the items of unpaired sections: a few photos changing day
 look up a few hundred identities, not the library
-(`docs/research/2026-11-15-grid-reorder-follows-the-change.md`). A change no batch can describe (surviving
+(`docs/research/2026-11-15-grid-reorder-follows-the-change.md`). A content made from the
+one on screen by removing items records the positions it dropped from that very order
+(held weakly), so a hide's structure takes the old sections less those positions and the
+change reads each day's shared runs from them: what a fresh build and a full comparison
+make, at the cost of the sections and the removed items, not the grid
+(`docs/research/2026-11-15-grid-hide-follows-the-removal.md`). A change no batch can describe (surviving
 sections that swap order, a repeated section key — neither occurs under Date sort)
 reloads.
 
@@ -268,7 +273,8 @@ took 54 G (13–15 s on the owner's library), because AppKit's snapshot copies i
 item set on every mutating call and has no call that appends to more than one section
 (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). The apply call
 stays on the main actor; with the arithmetic layout its layout share is a pass over the
-section counts, and what remains of a batch is AppKit's own update bookkeeping, about
+section counts, which the layout takes from the structure in one value rather than one
+count and one header flag asked per section, and what remains of a batch is AppKit's own update bookkeeping, about
 20 ms at the owner's 158,765 items plus about 0.4 M instructions a move
 (`docs/research/2026-11-15-grid-layout-without-compositional-solve.md`). Reset scroll and selection only when the sidebar scope changes; a filter or
 sort change keeps the user's place by anchoring on a visible selected tile or the top tile's
