@@ -224,6 +224,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.stackCandidatePathMigrationIdentifier,
             CatalogSchema.copiesMigrationIdentifier,
             CatalogSchema.mirrorsMigrationIdentifier,
+            CatalogSchema.captureDayMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -489,7 +490,7 @@ struct CatalogStoreSchemaMigrationTests {
                 db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND sql LIKE '%best_capture_local%'"
             ))
         }
-        try CatalogStore.migrator.migrate(queue)
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.wholeSecondCaptureLocalMigrationIdentifier)
         let (local, indexesAfter) = try await queue.read { db in
             try (
                 Dictionary(uniqueKeysWithValues: Row.fetchAll(

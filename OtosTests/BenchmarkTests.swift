@@ -136,6 +136,42 @@ struct BenchmarkTests {
             }
         }
 
+        // Opening Duplicates and a map area: narrow scopes no key names, read from the digests
+        // the group subquery finds and from the area's map cells
+        // (`docs/research/2026-11-15-proportional-small-scopes.md`). Every still is given a
+        // place, one in fifty of them inside the area.
+        let area = MapArea(south: 10, north: 10.5, west: 19.5, east: 20.5)
+        let located = try DatabaseQueue(path: directory.appending(path: "db/catalog.sqlite").path(percentEncoded: false))
+        let inArea = try await located.write { db in
+            try db.execute(sql: """
+            UPDATE asset_metadata SET primary_latitude = 10.0 + (rowid % 50) * 1.1, primary_longitude = 20.0
+            """)
+            return try Int.fetchOne(db, sql: """
+            SELECT count(*) FROM asset_metadata WHERE primary_latitude BETWEEN 10 AND 10.5
+            """) ?? 0
+        }
+        try located.close()
+        #expect(inArea > 200)
+        for (name, scope, expected) in [
+            ("projection.windowState.duplicates", SidebarSelection.duplicates, BenchmarkLibrary.stillCount / 40 * 2),
+            ("projection.windowState.mapArea", .mapArea(area), inArea),
+        ] {
+            let narrow = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: scope), generation: 0)
+            try await Benchmark.measure(name) {
+                guard case let .built(state, _, _, _) = try await projection.buildWindowState(
+                    store: store,
+                    libraries: libraries,
+                    request: narrow,
+                    reads: .none,
+                    revisions: CatalogFactRevisions()
+                ) else {
+                    Issue.record("nothing is searched, so nothing waits on a reading")
+                    return
+                }
+                #expect(state.mediaGrid.orderedAssetIDs.count == expected)
+            }
+        }
+
         // A whole duplicates build, as `DuplicatesProjection` runs it after a catalog change.
         try await Benchmark.measure("duplicates.build") {
             let built = try await DuplicatesProjection.build(store: store, libraries: libraries)

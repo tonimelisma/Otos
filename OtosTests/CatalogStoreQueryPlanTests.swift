@@ -169,6 +169,87 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    /// The narrow scopes no key names start every read — the order under each sort, the
+    /// filter's types, the count and the place options — from an index that holds their rows:
+    /// a map area from its cells' located rows, On This Day from its day, Duplicates from the
+    /// digests its group subquery finds. Walking the order index for them tested every row of
+    /// the owner's catalog: 56,000 pages for 283 rows of Helsinki, 29,000 for 705 rows of a
+    /// day, 155,000 for 126 copies, against 869, 5,500 and 5,700
+    /// (`docs/research/2026-11-15-proportional-small-scopes.md`).
+    @Test func narrowScopesSeekTheirOwnRows() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let roots = [rootID1, rootID2]
+        let day = CalendarDay(year: 2026, month: 11, day: 15)
+        let cells = "SEARCH asset_metadata USING INDEX idx_asset_metadata_place_cell (place_cell_latitude>? AND place_cell_latitude<?)"
+        let narrow: [(name: String, scope: CatalogScopePredicate, firstLine: String)] = [
+            ("area", CatalogScopePredicate(rootIDs: roots, location: .within(MapArea(south: 60.15, north: 60.2, west: 24.85, east: 25))),
+             cells),
+            ("areaAcrossTheAntimeridian",
+             CatalogScopePredicate(rootIDs: roots, location: .within(MapArea(south: -50, north: 30, west: 150, east: -150))), cells),
+            ("onThisDay", CatalogScopePredicate(rootIDs: roots, date: .anniversary(day), showsOneCopy: true),
+             "SEARCH media_asset USING INDEX idx_media_asset_capture_day (capture_day=?"),
+            ("duplicates", CatalogScopePredicate(rootIDs: roots, content: .duplicated(.withinEachLibrary)),
+             "SEARCH media_asset USING INDEX idx_media_asset_content_sha1 (content_sha1=? AND library_root_id=?)"),
+            ("duplicatesAcross", CatalogScopePredicate(rootIDs: roots, content: .duplicated(.acrossLibraries)),
+             "SEARCH media_asset USING INDEX idx_media_asset_content_sha1 (content_sha1=? AND library_root_id=?)"),
+        ]
+        let sorts = [
+            MediaSortOrder(field: .bestDate, direction: .descending),
+            MediaSortOrder(field: .name, direction: .ascending),
+            MediaSortOrder(field: .size, direction: .descending),
+        ]
+        let plans = try await dbQueue.read { db in
+            try narrow.map { name, scope, firstLine in
+                var reads = try sorts.map { sort in
+                    try explainPlan(db, query: #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                        descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort),
+                        scope: scope,
+                        db: db
+                    )))
+                }
+                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.distinctFilterableTypesQuery(scope: scope, db: db))))
+                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.countQuery(scope: scope, db: db))))
+                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.placeOptionsQuery(
+                    scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
+                ))))
+                return (name, firstLine, reads)
+            }
+        }
+        for (name, firstLine, reads) in plans {
+            for plan in reads {
+                let lines = plan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                #expect(lines.first?.hasPrefix(firstLine) == true, "\(name): \(plan)")
+                for table in ["media_asset", "asset_metadata", "place_metadata", "place_cell", "twin"] {
+                    #expect(!lines.contains { $0 == "SCAN \(table)" || $0.hasPrefix("SCAN \(table) ") }, "\(name): \(plan)")
+                }
+            }
+        }
+    }
+
+    /// The Swift cell of a coordinate is the one SQLite generates for it, at the cell's edges,
+    /// below zero and at the clamps, so an area's cell bounds never leave out a row inside it.
+    @Test func anAreasCellsAreTheCellsSQLiteGivesItsCoordinates() async throws {
+        let dbQueue = try DatabaseQueue()
+        let values = [-90.0, -89.99, -60.17, -0.02, -0.019_999, -0.000_001, 0, 0.019_999, 0.02, 24.94, 60.15, 60.2, 89.99, 90, 179.99, 180, -180]
+        let generated = try await dbQueue.read { db in
+            try values.map { value in
+                try (
+                    Int.fetchOne(db, sql: "SELECT \(PlaceCellSQL.cell("?", cells: PlaceCellSQL.latitudeCells))", arguments: [value, value, value]),
+                    Int.fetchOne(db, sql: "SELECT \(PlaceCellSQL.cell("?", cells: PlaceCellSQL.longitudeCells))", arguments: [value, value, value])
+                )
+            }
+        }
+        for (value, cells) in zip(values, generated) {
+            #expect(cells.0 == PlaceCellSQL.cell(of: value, cells: PlaceCellSQL.latitudeCells), "\(value)")
+            #expect(cells.1 == PlaceCellSQL.cell(of: value, cells: PlaceCellSQL.longitudeCells), "\(value)")
+        }
+    }
+
     /// The Places scopes join `asset_metadata` for the coordinate (ADR 0040). The order
     /// must still come from the capture index — a walk, never a temporary sort — and the
     /// join must be a primary-key lookup per row, which is what makes the deferred
@@ -223,11 +304,20 @@ struct CatalogStoreQueryPlanTests {
             )
         }
 
-        for plan in [rootPlan, globalPlan, placePlan] {
+        for plan in [rootPlan, globalPlan] {
             #expect(plan.contains("idx_media_asset_best_capture_"))
             #expect(plan.contains("SEARCH asset_metadata USING INDEX sqlite_autoindex_asset_metadata_1"))
             #expect(!usesTemporarySort(plan))
         }
+        // A map area is narrow: its cells' located rows are sought through the cell index,
+        // each row's `media_asset` by its key, and the few found are sorted.
+        let placeLines = placePlan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        #expect(
+            placeLines.first?.hasPrefix("SEARCH asset_metadata USING INDEX idx_asset_metadata_place_cell (place_cell_latitude>") == true,
+            "\(placePlan)"
+        )
+        #expect(placePlan.contains("SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)"))
+        #expect(!placeLines.contains { $0.hasPrefix("SCAN ") }, "\(placePlan)")
         #expect(rootPlan.contains("idx_media_asset_best_capture_root_desc"))
         #expect(globalPlan.contains("idx_media_asset_best_capture_global_desc"))
         #expect(rows.map(\.relativePath.rawValue) == ["a.jpg"])
@@ -556,9 +646,11 @@ struct CatalogStoreQueryPlanTests {
             for table in ["media_asset", "place_metadata", "asset_metadata", "search_embedding", "face"] {
                 #expect(!lines.contains { $0 == "SCAN \(table)" || $0.hasPrefix("SCAN \(table) ") }, "\(name): \(plan)")
             }
-            // A keyed scope's places start from its own rows instead
-            // (`keyedScopesSeekTheirOwnRowsInsteadOfWalkingTheOrder`).
-            if name.hasSuffix(".places"), !name.hasPrefix("importBatch") {
+            // A narrow scope's places start from its own rows instead: an import batch by its
+            // key (`keyedScopesSeekTheirOwnRowsInsteadOfWalkingTheOrder`), On This Day by its
+            // day and Duplicates by the digests it groups (`narrowScopesSeekTheirOwnRows`).
+            let narrow = ["importBatch", "onThisDay", "duplicates"]
+            if name.hasSuffix(".places"), !narrow.contains(where: { name.hasPrefix($0) }) {
                 #expect(plan.contains("SEARCH place_metadata USING INDEX idx_asset_metadata_place_cell"), "\(name): \(plan)")
             }
         }
@@ -695,9 +787,9 @@ struct CatalogStoreQueryPlanTests {
         #expect(!plan.contains("SCAN search_embedding"))
     }
 
-    /// On This Day's years-or-months match walks a year's rows through a capture-time index
-    /// of their roots, bounded by the year's start, never by a scan of every row.
-    @Test func onThisDaysYearRowsAreWalkedThroughTheCaptureIndex() async throws {
+    /// On This Day's years-or-months match seeks the day's rows in earlier years through the
+    /// day's index, bounded by the year's start, never by a scan or a walk of every row.
+    @Test func onThisDaysYearRowsAreSoughtThroughTheDayIndex() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
@@ -716,7 +808,10 @@ struct CatalogStoreQueryPlanTests {
         }
         for plan in plans {
             let lines = plan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-            #expect(lines.contains { $0.hasPrefix("SEARCH media_asset USING") && $0.contains("best_capture_local<?") }, "\(plan)")
+            #expect(
+                lines.first == "SEARCH media_asset USING INDEX idx_media_asset_capture_day (capture_day=? AND capture_month=? AND best_capture_local<?)",
+                "\(plan)"
+            )
             #expect(!lines.contains { $0.hasPrefix("SCAN media_asset") }, "\(plan)")
         }
     }

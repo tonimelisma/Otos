@@ -77,15 +77,21 @@ view mode for it.
    transaction (`AnniversaryMatch`, pure): that column is the clock's reading counted on a
    UTC calendar, so SQLite's `strftime(…, 'unixepoch')` writes the date the clock showed
    with no zone applied, and a daylight-saving day is midnight to midnight like any
-   other. Years match `strftime('%m-%d') = '11-12'` on rows taken before the day's year
-   began; months match `strftime('%d') = '12'` on rows taken before its month began. The
+   other. Years match month 11 and day 12 on rows taken before the day's year began;
+   months match day 12 on rows taken before its month began. The day and month are stored
+   as generated columns (`capture_day`, `capture_month`, schema v62) that lead
+   `idx_media_asset_capture_day`, so every read of the scope seeks the day's rows, a few
+   hundred, instead of testing the date of every row before the end
+   (`docs/research/2026-11-15-proportional-small-scopes.md`). The
    scope's rows under the years' match — its roots and visibility rules, never the filter —
    decide the unit by the rule that fills the cards (`OnThisDayPicks.shows`): a year is
    offered exactly when its card would hold a photo, so any row On This Day would show keeps
    the years, and none falls back to the months. A row the exclusion leaves in is still not
-   shown when it is a file of a stack whose key is Disliked (ADR 0052), so the walk judges
-   each row by the stacks the read built in the same transaction, and stops at the first
-   row shown.
+   shown when it is a file of a stack whose key is Disliked (ADR 0052), so the match
+   judges the year's rows by stacks from the same transaction: the stacks the caller holds,
+   or else only the stacks that hold those rows, built from their folders and bursts
+   (`PhotoStackSQL.build(rootPaths:holding:db:)`), which judge them exactly as every stack
+   would.
    Because the filter takes no part, it only narrows: a video filter on a scope whose
    year holds only photos shows nothing, never last month's videos. Every read decides
    the same unit from the same snapshot, so order, counts and filter options agree, and

@@ -377,6 +377,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.captureDayMigrationIdentifier) { db in
+            for statement in CatalogSchema.captureDayStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

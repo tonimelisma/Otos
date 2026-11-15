@@ -994,21 +994,17 @@ nonisolated enum CatalogSchema {
     static let placeCellMigrationIdentifier = "v43_place_cell_columns"
 
     static var placeCellStatements: [String] {
-        func cell(_ column: String, lowest: Int, highest: Int) -> String {
-            let scaled = "(\(column) * 50.0)"
-            return "MIN(MAX(CAST(\(scaled) AS INTEGER) - (\(scaled) < CAST(\(scaled) AS INTEGER)), \(lowest)), \(highest))"
-        }
-        return [
+        [
             """
             ALTER TABLE asset_metadata ADD COLUMN place_cell_latitude INTEGER
-            GENERATED ALWAYS AS (\(cell("primary_latitude", lowest: -4500, highest: 4499))) VIRTUAL
+            GENERATED ALWAYS AS (\(PlaceCellSQL.cell("primary_latitude", cells: PlaceCellSQL.latitudeCells))) VIRTUAL
             """,
             """
             ALTER TABLE asset_metadata ADD COLUMN place_cell_longitude INTEGER
-            GENERATED ALWAYS AS (\(cell("primary_longitude", lowest: -9000, highest: 8999))) VIRTUAL
+            GENERATED ALWAYS AS (\(PlaceCellSQL.cell("primary_longitude", cells: PlaceCellSQL.longitudeCells))) VIRTUAL
             """,
             """
-            CREATE INDEX idx_asset_metadata_place_cell
+            CREATE INDEX \(PlaceCellSQL.indexName)
             ON asset_metadata(place_cell_latitude, place_cell_longitude)
             WHERE place_cell_latitude IS NOT NULL AND place_cell_longitude IS NOT NULL
             """,
@@ -1583,6 +1579,22 @@ nonisolated enum CatalogSchema {
         """,
         "CREATE INDEX idx_immich_mirror_library ON immich_mirror(library_root_id)",
         "UPDATE library_root SET resync_owed = resync_owed + 1 WHERE kind = 'immichAccount'",
+    ]
+
+    /// v62: On This Day's day as columns (`AnniversaryMatch`). `capture_day` and
+    /// `capture_month` are the date `best_capture_local` shows, generated and never written;
+    /// `idx_media_asset_capture_day` is led by them, carries the order's columns and what a
+    /// combined scope tests a row by, so a match seeks its day's rows and tests them in the
+    /// index (`docs/research/2026-11-15-proportional-small-scopes.md`).
+    static let captureDayMigrationIdentifier = "v62_capture_day_index"
+
+    static let captureDayStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN capture_day INTEGER GENERATED ALWAYS AS (\(AnniversaryMatch.daySQL)) VIRTUAL",
+        "ALTER TABLE media_asset ADD COLUMN capture_month INTEGER GENERATED ALWAYS AS (\(AnniversaryMatch.monthSQL)) VIRTUAL",
+        """
+        CREATE INDEX \(AnniversaryMatch.indexName)
+        ON media_asset(capture_day, capture_month, best_capture_local DESC, library_root_id, relative_path, \(copyTestedColumns))
+        """,
     ]
 
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {

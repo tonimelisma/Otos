@@ -2064,7 +2064,7 @@ extension CatalogStore {
     /// `heldStacks`, when given, built over exactly the roots this read's stacks span and
     /// answering its scope (`PhotoStackSQL.Span.answers`), are used instead of reading the
     /// stack candidates again: the caller holds them while nothing they are built from moved
-    /// (`CatalogChangedFacts.stackInputs`). Otherwise a keyed scope reads only its own
+    /// (`CatalogChangedFacts.stackInputs`). Otherwise a narrow scope reads only its own
     /// folders' stacks (`PhotoStackSQL.build`). The stacks used, read or held, come back in
     /// `CatalogOrderedAssets.builtStacks`.
     func orderedAssetIDs(
@@ -2091,39 +2091,25 @@ extension CatalogStore {
 
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreOrderedAssetIDQuery")
         let dbWriter = try database()
-        // The stacks are built in the read, before its rows: On This Day's match judges a
-        // year's rows by them (`OnThisDayPicks.shows`), and every stack and row then comes
-        // from one snapshot (ADR 0052). Stacks the caller holds over the same roots are used
-        // instead: it holds them only while nothing they are built from has moved, so they are
-        // what this snapshot would build.
+        // The stacks are built in the read with its rows, so every stack and row comes from
+        // one snapshot (ADR 0052; `CatalogQueryGateway.readOrder`). Stacks the caller holds
+        // over the same roots are used instead: it holds them only while nothing they are
+        // built from has moved, so they are what this snapshot would build.
         let stackRootPaths = roots.pathsByRowID.filter { rowID, path in
             scope.rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
         }
         // One read transaction: a row this read sees under a new identity always comes
         // with the pending batch that renamed it (ARC-052).
         let held = heldStacks.flatMap { $0.rootPaths == stackRootPaths && $0.span == .roots ? $0 : nil }
-        // A keyed scope's own stacks are built from its rows, so its rows are read first.
-        let readsRowsFirst = try held == nil && PhotoStackSQL.isKeyed(scope)
         let timedRows = try await timedRead(dbWriter) { db in
-            if readsRowsFirst {
-                let rows = try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, db: db)
-                return try (
-                    rows: rows,
-                    pending: Self.fetchPendingIdentityRemapBatches(db: db),
-                    stacks: PhotoStackSQL.build(rootPaths: stackRootPaths, holding: rows, db: db)
-                )
-            }
-            let stacks = try held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, db: db)
-            return try (
-                rows: CatalogQueryGateway.fetchOrderedAssetIDRows(
-                    descriptor: descriptor,
-                    scope: scope,
-                    stacks: .built(stacks),
-                    db: db
-                ),
-                pending: Self.fetchPendingIdentityRemapBatches(db: db),
-                stacks: stacks
+            let order = try CatalogQueryGateway.readOrder(
+                descriptor: descriptor,
+                scope: scope,
+                stackRootPaths: stackRootPaths,
+                held: held,
+                db: db
             )
+            return try (rows: order.rows, pending: Self.fetchPendingIdentityRemapBatches(db: db), stacks: order.stacks)
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
 

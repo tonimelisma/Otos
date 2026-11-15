@@ -40,15 +40,21 @@ struct OnThisDayPolicyTests {
         let match = try #require(match)
         let queue = try DatabaseQueue()
         return try queue.write { db in
-            try db.execute(sql: "CREATE TABLE t (best_capture_local DOUBLE)")
+            try db.execute(sql: """
+            CREATE TABLE t (
+                best_capture_local DOUBLE,
+                capture_day INTEGER GENERATED ALWAYS AS (\(AnniversaryMatch.daySQL)) VIRTUAL,
+                capture_month INTEGER GENERATED ALWAYS AS (\(AnniversaryMatch.monthSQL)) VIRTUAL
+            )
+            """)
             for time in times {
                 try db.execute(sql: "INSERT INTO t VALUES (?)", arguments: [time])
             }
             try db.execute(sql: "INSERT INTO t VALUES (NULL)")
             return try Double.fetchAll(
                 db,
-                sql: "SELECT best_capture_local FROM t WHERE \(match.sql(column: "best_capture_local")) ORDER BY 1",
-                arguments: [match.end, match.date]
+                sql: "SELECT best_capture_local FROM t WHERE \(match.sql(row: "t")) ORDER BY 1",
+                arguments: StatementArguments(match.arguments)
             )
         }
     }
@@ -260,7 +266,8 @@ struct OnThisDayPolicyTests {
         // …while the scope's day, its match and its years stay Gregorian.
         #expect(CalendarDay(instant) == CalendarDay(year: 2023, month: 11, day: 9))
         let match = try #require(AnniversaryMatch.years(for: CalendarDay(year: 2026, month: 11, day: 9)))
-        #expect(match.date == "11-09")
+        #expect(match.day == 9)
+        #expect(match.month == 11)
         #expect(match.end == Self.local(2026, 1, 1))
     }
 
