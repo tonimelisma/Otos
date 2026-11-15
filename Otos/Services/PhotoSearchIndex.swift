@@ -63,9 +63,9 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///   dog scores below the library's best still shows it.
 /// - **A read that cannot be made** (a thumbnail or preview that does not decode, a prediction
 ///   that fails) records nothing, so the asset stays owed; a pass pages past it to the rest and
-///   tries it again after the backoff. A text reading that loses Vision's reader for the
-///   process (`SearchTextReader`) ends text reading for the process instead: every still not
-///   read stays owed for the next launch, and no pass or retry reads another preview.
+///   tries it again after the backoff. A text reading whose session ends (Vision lost its
+///   reader for the reading process, `SearchTextReader`) ends the pass's reading: every still
+///   not read stays owed, and the retry after the backoff reads them in a new session.
 ///
 /// `revision` moves whenever memory gains or loses an embedding or a text reading, and every
 /// answer carries the revision it was computed at: the same query over the same scope and
@@ -408,15 +408,14 @@ actor PhotoSearchIndex {
     /// reading failed is paged past for the rest of the pass. Settled when none is left, or
     /// when it stops for new embeddings (whose thumbnail's change rang already);
     /// `unreadThumbnails`, the thumbnails the embedding pass could not read, are no new ones.
-    /// Settled too once Vision's reader is lost for the process (`SearchTextReader`): what it
-    /// read before is written, every other still stays owed for the next process, and no
-    /// retry would read one in this process.
+    /// Not settled when the session reading it ends (`SearchTextReader`): what it read before
+    /// is written, every other still stays owed, and the retry after the backoff reads them in
+    /// a new session.
     private func drainTexts(unreadThumbnails: Set<MediaAssetID>) async throws -> Bool {
-        guard await !textReader.isLost else { return true }
         var read = 0, withText = 0
         var unread: Set<MediaAssetID> = []
         var settled = false
-        var lost = false
+        var sessionEnded = false
         let start = ContinuousClock.now
         while !Task.isCancelled {
             let page = try await store.searchTextCandidates(limit: 8, excluding: unread)
@@ -428,9 +427,9 @@ actor PhotoSearchIndex {
             switch await textReader.read(page, directory: thumbnailDirectory) {
             case let .read(page):
                 results = page
-            case let .readerLost(before):
+            case let .sessionEnded(before):
                 results = before
-                lost = true
+                sessionEnded = true
             }
             let written = try await store.applySearchTexts(results)
             unread.formUnion(Set(page.map(\.id)).subtracting(written.map(\.id)))
@@ -442,8 +441,7 @@ actor PhotoSearchIndex {
                 announce()
             }
             read += written.count
-            if lost {
-                settled = true
+            if sessionEnded {
                 break
             }
             // New embeddings come first: a thumbnail written meanwhile is embedded before more
@@ -456,7 +454,7 @@ actor PhotoSearchIndex {
         if read > 0 || !unread.isEmpty {
             OtosLog.thumbnails.noticeOperation("search.text", phase: "read", fields: [
                 "count": "\(read)", "withText": "\(withText)", "unread": "\(unread.count)",
-                "readerLost": "\(lost)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+                "sessionEnded": "\(sessionEnded)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
             ])
         }
         return settled

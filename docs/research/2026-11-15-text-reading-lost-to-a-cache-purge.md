@@ -105,3 +105,16 @@ average 25 on 8 cores, other sessions' checks running.
 - **Unknown:** whether status 10 can also lose a process (not reproduced here), and whether a
   purge of another model's bundle (face, scene labels) could lose those readers the same way;
   in the installed app they kept working through the night, and they were not measured here.
+
+## Revisited the same day: reading in a child process
+
+The helper process was rejected above for the recompiling a disk purged every few minutes
+would cause. Measured against what the app did instead — read no text until the owner
+relaunched, which on an app left open is days — that cost is bounded by the index's own
+backoff: a child whose reader is lost ends, and the retry after 30 s doubling to 15 minutes
+starts the next, so a purge storm costs one recompile a backoff, and the first child after the
+storm reads everything owed. The child is Otos's own executable started with `--read-text`,
+so it needs no new target, no XPC boundary and no new signing; ADR 0048 records the decision.
+`SearchReadingTests.theReadingProcessReadsAPreviewAndEndsWhenItIsGone` reads the sign through
+the built app's child, and asks a second child when the first answers that it ended — the
+recovery this exists for.

@@ -7,6 +7,20 @@ import Testing
 
 /// What search reads besides the picture's embedding (ADR 0048): the text in a photo, and the
 /// scene labels that gate a query naming a thing.
+/// A session that reads in the test's own process with the test's recognition, as Otos's
+/// reading process reads with Vision's (`SearchTextReading.readPreview`).
+final class RecognizingSession: SearchTextSession {
+    private let recognize: (CGImage) throws -> [RecognizedTextLine]
+
+    init(_ recognize: @escaping (CGImage) throws -> [RecognizedTextLine]) {
+        self.recognize = recognize
+    }
+
+    func read(_ url: URL) -> SearchTextPreviewReading {
+        SearchTextReading.readPreview(at: url, recognize: recognize)
+    }
+}
+
 @Suite(.testDirectory)
 struct SearchReadingTests {
     /// Whether `query` matches `text` as a search pass matches it (`PhotoSearchIndex`): the
@@ -103,53 +117,90 @@ struct SearchReadingTests {
 
     /// A recognition that fails about one picture is no reading (ADR 0032 rule 4): that still
     /// has no result, so it stays owed and is read again, never stamped as holding no text, and
-    /// the rest of the page is read. A reading that finds nothing is a result with no lines.
+    /// the rest of the page is read, in the same session. A reading that finds nothing is a
+    /// result with no lines.
     @Test func aFailedRecognitionIsNoReadingAndAnEmptyOneIs() async throws {
         let directory = try makeTestDirectory()
         let page = try Self.candidates(2, in: directory)
         let attempts = Mutex(0)
-        let once = SearchTextReader { _ in
-            let attempt = attempts.withLock { count in
-                count += 1
-                return count
+        let once = SearchTextReader {
+            RecognizingSession { _ in
+                let attempt = attempts.withLock { count in
+                    count += 1
+                    return count
+                }
+                if attempt == 1 {
+                    throw VisionTextError.e5rtError("e5rt_stream_completion_handler call failed", 10)
+                }
+                return []
             }
-            if attempt == 1 {
-                throw VisionTextError.e5rtError("e5rt_stream_completion_handler call failed", 10)
-            }
-            return []
         }
         #expect(await once.read(page, directory: directory) == .read([
             SearchTextResult(id: page[1].id, source: "rendered", lines: []),
         ]))
-        #expect(await !once.isLost)
         #expect(await once.read([page[0]], directory: directory) == .read([
             SearchTextResult(id: page[0].id, source: "rendered", lines: []),
         ]))
+        #expect(await once.sessionsStarted == 1)
     }
 
-    /// A failure that loses Vision's reader for the process ends the page where it came and
-    /// every page after it: nothing more is recognised, and the stills it did not read have no
-    /// result, so they stay owed for the next process.
-    @Test func aReaderLostForTheProcessAttemptsNothingMore() async throws {
+    /// A failure that loses Vision's reader for the session's process ends the page where it
+    /// came: the stills it did not read have no result, so they stay owed, and the next page
+    /// is read by a new session.
+    @Test func aSessionThatEndsEndsThePageAndANewSessionReadsTheNext() async throws {
         let directory = try makeTestDirectory()
         let page = try Self.candidates(3, in: directory)
         let attempts = Mutex(0)
-        let reader = SearchTextReader { _ in
-            let attempt = attempts.withLock { count in
-                count += 1
-                return count
+        let reader = SearchTextReader {
+            RecognizingSession { _ in
+                let attempt = attempts.withLock { count in
+                    count += 1
+                    return count
+                }
+                if attempt == 2 {
+                    throw Self.readerLostError
+                }
+                return [RecognizedTextLine(text: "OPEN", confidence: 1)]
             }
-            if attempt == 2 {
-                throw Self.readerLostError
-            }
-            return [RecognizedTextLine(text: "OPEN", confidence: 1)]
         }
-        #expect(await reader.read(page, directory: directory) == .readerLost(before: [
-            SearchTextResult(id: page[0].id, source: "rendered", lines: [RecognizedTextLine(text: "OPEN", confidence: 1)]),
+        let open = [RecognizedTextLine(text: "OPEN", confidence: 1)]
+        #expect(await reader.read(page, directory: directory) == .sessionEnded(before: [
+            SearchTextResult(id: page[0].id, source: "rendered", lines: open),
         ]))
-        #expect(await reader.isLost)
-        #expect(await reader.read(page, directory: directory) == .readerLost(before: []))
-        #expect(attempts.withLock { $0 } == 2)
+        #expect(await reader.read(Array(page.dropFirst()), directory: directory) == .read([
+            SearchTextResult(id: page[1].id, source: "rendered", lines: open),
+            SearchTextResult(id: page[2].id, source: "rendered", lines: open),
+        ]))
+        #expect(await reader.sessionsStarted == 2)
+        #expect(attempts.withLock { $0 } == 4)
+    }
+
+    /// Otos's own reading process reads a preview's text as the app read it in its own
+    /// process, and a child that is gone ends its session. A child whose reader a cache purge
+    /// lost is the case a new child exists for, so the reading is asked of a second one then.
+    @Test func theReadingProcessReadsAPreviewAndEndsWhenItIsGone() throws {
+        let directory = try makeTestDirectory()
+        let sign = directory.appending(path: "sign.jpg")
+        try PhotoSearchIndexTests.writeJPEG(#require(Self.picture(saying: "OTOS SEARCH 2026")), to: sign)
+        let executable = try SearchTextChild.executable()
+        var child = try SearchTextChild(executable: executable)
+        var reading = child.read(sign)
+        if case .ended = reading {
+            child = try SearchTextChild(executable: executable)
+            reading = child.read(sign)
+        }
+        guard case let .lines(lines) = reading else {
+            Issue.record("the reading process answered \(reading)")
+            return
+        }
+        #expect(SearchTextReading.certain(lines) == ["OTOS SEARCH 2026"])
+        #expect(child.read(directory.appending(path: "missing.jpg")) == .undecodable)
+
+        #expect(kill(child.processIdentifier, SIGKILL) == 0)
+        guard case .ended = child.read(sign) else {
+            Issue.record("a killed reading process still answered")
+            return
+        }
     }
 
     /// Only the `e5rtError` case with status 13 loses the process: the same case's deadline

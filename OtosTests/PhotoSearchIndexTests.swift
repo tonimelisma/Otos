@@ -108,34 +108,24 @@ struct PhotoSearchIndexTests {
         #expect(try await catalog.store.searchTextCandidates(limit: 10).count == 2)
     }
 
-    /// A text reading that loses Vision's reader for the process ends text reading for the
-    /// process: no further preview is read, in that pass or any retry, every still not read
-    /// stays owed, and no retry is scheduled for it. The next process's reader reads them.
-    @Test func aReaderLostForTheProcessReadsNothingMoreAndTheNextProcessReadsTheRest() async throws {
+    /// A text reading that loses Vision's reader for its session's process ends the pass's
+    /// reading with every still not read owed, and the retry after the backoff reads them in a
+    /// new session: Otos reads text again without a relaunch.
+    @Test func aSessionThatEndsIsReplacedAndTheRetryReadsTheRest() async throws {
         let catalog = try await makeCatalog()
         try await givePreviews(catalog)
-        let lost = Recognitions(failing: .max, with: SearchReadingTests.readerLostError)
+        let lost = Recognitions(failing: 1, with: SearchReadingTests.readerLostError)
+        let reader = SearchTextReader { RecognizingSession(lost.recognize) }
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
-            cutoff: .none, backoff: (.zero, .zero), textReader: SearchTextReader(recognize: lost.recognize)
+            cutoff: .none, backoff: (.zero, .zero), textReader: reader
         )
         await index.start()
-        try await waitUntil { await index.passesFinished > 0 }
-        #expect(lost.attempted == 1)
-        #expect(await index.retriesScheduled == 0)
-        #expect(try await catalog.store.searchTextCandidates(limit: 10).count == 2)
+        try await waitUntil { try await catalog.store.searchTextCandidates(limit: 10).isEmpty }
+        #expect(lost.attempted == 3)
+        #expect(await reader.sessionsStarted == 2)
+        #expect(await index.retriesScheduled > 0)
         await index.shutdown()
-
-        let healthy = Recognitions(failing: 0, with: SearchReadingTests.readerLostError)
-        let next = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
-            cutoff: .none, backoff: (.zero, .zero), textReader: SearchTextReader(recognize: healthy.recognize)
-        )
-        await next.start()
-        try await waitUntil { await next.passesFinished > 0 }
-        #expect(healthy.attempted == 2)
-        #expect(try await catalog.store.searchTextCandidates(limit: 10).isEmpty)
-        await next.shutdown()
         await catalog.store.shutdown()
     }
 
@@ -147,7 +137,7 @@ struct PhotoSearchIndexTests {
         let once = Recognitions(failing: 1, with: NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError))
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
-            cutoff: .none, backoff: (.zero, .zero), textReader: SearchTextReader(recognize: once.recognize)
+            cutoff: .none, backoff: (.zero, .zero), textReader: SearchTextReader { RecognizingSession(once.recognize) }
         )
         await index.start()
         try await waitUntil { try await catalog.store.searchTextCandidates(limit: 10).isEmpty }

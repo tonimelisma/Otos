@@ -30,8 +30,13 @@ otos_log_file() {
 # every instance to make the question moot, which is how a review once found a
 # live session truncated to a log that still looked complete.
 
+# An instance is the app: the text-reading child the app starts from its own executable
+# (`Otos --read-text`, ADR 0048) shares its process name and is never one.
 otos_running_pids() {
-  pgrep -x "${1:-Otos}" 2>/dev/null || true
+  local pid
+  for pid in $(pgrep -x "${1:-Otos}" 2>/dev/null || true); do
+    /bin/ps -o args= -p "$pid" 2>/dev/null | grep -q -- ' --read-text$' || echo "$pid"
+  done
 }
 
 # Refuse rather than adopt or kill. A run that did not launch the app cannot

@@ -137,37 +137,82 @@ nonisolated struct SearchTextQuery: Sendable {
     }
 }
 
+/// What reading one preview came to, in a session (`SearchTextSession`).
+nonisolated enum SearchTextPreviewReading: Codable, Equatable, Sendable {
+    /// The recognised lines; empty when the picture holds no text.
+    case lines([RecognizedTextLine])
+    /// The preview did not decode: no reading, so the still stays owed.
+    case undecodable
+    /// The recognition failed about this picture: no reading, so the still stays owed.
+    case failed(String)
+    /// The session cannot read again — Vision lost its reader for the session's process
+    /// (`SearchTextReading.losesTheProcess`), or the process ended — and nothing more is
+    /// asked of it; a new session reads the rest.
+    case ended(String)
+}
+
+nonisolated extension SearchTextReading {
+    /// Reads the preview at `url` as a session does: decoded without caching, then
+    /// recognised by `recognize`, Vision's reading unless a test gives its own.
+    static func readPreview(
+        at url: URL,
+        recognize: (CGImage) throws -> [RecognizedTextLine] = read
+    ) -> SearchTextPreviewReading {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            return .undecodable
+        }
+        do {
+            return try .lines(recognize(image))
+        } catch where losesTheProcess(error) {
+            return .ended(String(describing: error))
+        } catch {
+            return .failed(String(describing: error))
+        }
+    }
+}
+
+/// One process reading previews for text, one at a time: Otos's own reading process
+/// (`SearchTextChild`) or, in a test, a reading in the test's process. A session that answers
+/// `.ended` is never asked again.
+nonisolated protocol SearchTextSession: AnyObject {
+    func read(_ url: URL) -> SearchTextPreviewReading
+}
+
 /// What reading a page of previews came to.
 nonisolated enum SearchTextPageReading: Equatable, Sendable {
     /// One result per candidate read; a candidate with none stays owed.
     case read([SearchTextResult])
-    /// Vision's reader is lost for the rest of this process: `before`, what the page read
-    /// before it was lost; nothing after it is attempted.
-    case readerLost(before: [SearchTextResult])
+    /// The session reading the page ended: `before`, what the page read before it; nothing
+    /// after it was attempted, and the next page is read by a new session.
+    case sessionEnded(before: [SearchTextResult])
 }
 
-/// Reads stored previews for text, on its own serial queue: decoding a 2,560 px preview and
-/// recognising text both block (ADR 0032 rule 6).
+/// Reads stored previews for text, on its own serial queue: each reading waits on its session,
+/// which blocks (ADR 0032 rule 6).
 ///
 /// Vision's text reader can be lost for the rest of its process: a failure that says so
-/// (`SearchTextReading.losesTheProcess`) comes back on every later reading until Otos
-/// relaunches, and a new request or handler does not recover it
-/// (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`). From that failure on,
-/// this reader attempts nothing — no preview is decoded, no recognition made — and says so,
-/// once, as `op=search.text phase=readerLost`. Every still it did not read stays owed and is
-/// read in the next process.
+/// (`SearchTextReading.losesTheProcess`) comes back on every later reading in that process,
+/// and nothing in it recovers, while a new process does
+/// (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`). So the reading runs in
+/// a session of its own — in the app, a child process (`SearchTextChild`) — and a session
+/// that ends ends the page: what it read is kept, the rest stays owed, and the next page
+/// starts a new session. `op=search.text phase=sessionEnded` says so each time. The index's
+/// own backoff paces the next page (`PhotoSearchIndex`), so a disk whose purges empty the
+/// cache every few minutes starts a session at most once a backoff.
 actor SearchTextReader {
-    typealias Recognize = @Sendable (CGImage) throws -> [RecognizedTextLine]
+    typealias StartSession = @Sendable () throws -> any SearchTextSession
 
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.search.text", qos: .utility)
-    /// Vision's reading (`SearchTextReading.read`); tests replace it to deliver its failure.
-    private let recognize: Recognize
-    /// Whether the reader is lost for this process. Set once, never cleared: only a new process
-    /// recovers it.
-    private(set) var isLost = false
+    /// Starts a session: Otos's reading process, unless a test gives its own.
+    private let startSession: StartSession
+    private var session: (any SearchTextSession)?
+    /// How many sessions this reader has started.
+    private(set) var sessionsStarted = 0
 
-    init(recognize: @escaping Recognize = SearchTextReading.read) {
-        self.recognize = recognize
+    init(startSession: @escaping StartSession = SearchTextChild.start) {
+        self.startSession = startSession
     }
 
     nonisolated var unownedExecutor: UnownedSerialExecutor {
@@ -177,34 +222,42 @@ actor SearchTextReader {
     /// Reads `page` in order. A preview that does not decode, or a recognition that fails
     /// about one picture, is no reading: it has no result, so the still stays owed and is read
     /// again after the index's backoff (ADR 0032 rule 4), and the rest of the page is read. A
-    /// failure that loses the reader for the process ends the page there and every page after
-    /// it. A failure is never a still with no text: it stamps nothing.
+    /// session that ends, or cannot start, ends the page there. A failure is never a still
+    /// with no text: it stamps nothing.
     func read(_ page: [SearchTextCandidate], directory: URL?) -> SearchTextPageReading {
-        guard !isLost else { return .readerLost(before: []) }
         guard let directory else { return .read([]) }
         var results: [SearchTextResult] = []
         for candidate in page {
-            let url = directory.appending(path: candidate.previewPath)
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-            else {
+            let session: any SearchTextSession
+            if let current = self.session {
+                session = current
+            } else {
+                do {
+                    session = try startSession()
+                } catch {
+                    OtosLog.thumbnails.errorOperation("search.text", phase: "sessionFailedToStart", fields: [
+                        "error": String(describing: error),
+                    ])
+                    return .sessionEnded(before: results)
+                }
+                self.session = session
+                sessionsStarted += 1
+            }
+            switch session.read(directory.appending(path: candidate.previewPath)) {
+            case let .lines(lines):
+                results.append(SearchTextResult(id: candidate.id, source: candidate.source, lines: lines))
+            case .undecodable:
                 OtosLog.thumbnails.errorOperation("search.text", phase: "undecodable", fields: [
                     "id": candidate.id.relativePath.rawValue,
                 ])
-                continue
-            }
-            do {
-                try results.append(SearchTextResult(id: candidate.id, source: candidate.source, lines: recognize(image)))
-            } catch where SearchTextReading.losesTheProcess(error) {
-                isLost = true
-                OtosLog.thumbnails.errorOperation("search.text", phase: "readerLost", fields: [
-                    "error": String(describing: error),
-                    "domain": (error as NSError).domain,
-                    "code": "\((error as NSError).code)",
+            case let .failed(error):
+                OtosLog.thumbnails.errorOperation("search.text", phase: "failed", fields: ["error": error])
+            case let .ended(reason):
+                self.session = nil
+                OtosLog.thumbnails.errorOperation("search.text", phase: "sessionEnded", fields: [
+                    "reason": reason, "sessionsStarted": "\(sessionsStarted)",
                 ])
-                return .readerLost(before: results)
-            } catch {
-                OtosLog.thumbnails.errorOperation("search.text", phase: "failed", fields: ["error": String(describing: error)])
+                return .sessionEnded(before: results)
             }
         }
         return .read(results)

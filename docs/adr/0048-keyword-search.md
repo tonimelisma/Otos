@@ -234,12 +234,17 @@ about one picture stays owed and is retried after the index's backoff. A reading
 with `CRImageReaderError.e5rtError` status 13 is not about the picture: the runtime's compiled
 model lost a file — macOS purges `~/Library/Caches` under disk pressure, and concurrent first
 readings do the same — and every later reading in the process fails, whatever request, device
-or API, until Otos relaunches (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`).
-`SearchTextReader` then reads nothing more for the process: the stills stay owed for the next
-launch, and `op=search.text phase=readerLost` says so once. One serial queue reads every
-preview, so Otos never starts two first readings at once. Reading in a helper process that
-could be relaunched was rejected: after each purge it would recompile the models (4 s to
-minutes) into a cache the next purge empties, for a cause — a full disk — Otos does not own. At 512 px the fast level read noise, so the full preview is read; an original
+or API, while a new process reads again (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`).
+So text is read in a child process of Otos's own: its executable started with `--read-text`
+(`SearchTextChild`, `SearchTextReadingProcess`), which serves one JSON line per preview and
+never starts the app. A child whose reader is lost answers that it ended and exits; the page
+ends there, every still not read stays owed, `op=search.text phase=sessionEnded` says so, and
+the index's retry after its backoff (30 s doubling to 15 minutes) starts a new child, which
+recompiles what the purge removed (4 s for a file, minutes for an emptied cache) and reads the
+rest. The backoff bounds the recompiling a disk purged every few minutes would cause to one
+child a backoff, where a reader lost for the app's process read nothing until the owner
+relaunched. One serial queue reads every preview, so Otos never starts two first readings at
+once. At 512 px the fast level read noise, so the full preview is read; an original
 is not, since nearly every original in the owner's library is a cloud placeholder. Text is read
 after every embedding is made.
 
