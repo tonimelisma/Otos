@@ -260,7 +260,7 @@ struct MediaImportRecovery {
         let id = MediaAssetID(libraryRootPath: operation.destinationRootPath, relativePath: operation.destinationRelativePath)
         // Where the published file is has one owner (`locality(of:)`, ADR 0046 §4): a
         // fetchable one is downloaded deliberately before its bytes are hashed.
-        if let materializationRequester, await materializationRequester.locality(of: id) == .fetchable {
+        if let materializationRequester, await materializationRequester.locality(of: id).isFetchable(at: .background) {
             OtosLog.catalog.noticeOperation("mediaOperation.recover", phase: "materializing", fields: [
                 "key": operation.operationKey.rawValue,
             ])

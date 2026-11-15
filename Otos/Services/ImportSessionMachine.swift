@@ -798,8 +798,10 @@ nonisolated struct ImportSessionMachine {
     /// invalidates every session reading it as source or destination; its **naming**
     /// revision invalidates only sessions reading it as *source*, because enriching an
     /// asset already in the destination renames nothing on disk and
-    /// `fetchDestinationOccupants` never reads a capture wall. A wake that moves neither
-    /// is `planRevision`-only churn and does no work.
+    /// `fetchDestinationOccupants` never reads a capture wall. The Store emits a wake only
+    /// for a root an import plans against and only when one of the two moved
+    /// (`CatalogStore.recordNamingChange`, `bumpNamespaceRevision`); a wake that moves
+    /// neither here carries revisions a refresh already brought, and does no work.
     private mutating func applyPlanningChange(_ change: RootPlanningChange, into effects: inout [Effect]) {
         let previous = lastSeenRevisions[change.rootPath]
         let namespaceChanged = previous?.namespaceRevision != change.namespaceRevision

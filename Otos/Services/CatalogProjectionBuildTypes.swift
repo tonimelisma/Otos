@@ -64,6 +64,12 @@ nonisolated extension CatalogChangedFacts {
         return facts
     }
 
+    /// What the stacks (ADR 0052) are built from: which rows exist, the user's choices and
+    /// stack keys, and the facts of the stills that are or can become stack candidates
+    /// (`stacks`). A capture date, kind or grouping moving on a row no stack can hold — an
+    /// Immich still alone in its asset's folder — leaves them standing.
+    static let stackInputs: CatalogChangedFacts = [.membership, .choices, .stacks]
+
     /// What the filter's options for the sidebar row `row` depend on: which rows the row
     /// shows, their kinds and formats, and the places named for them.
     static func filterOptionsInputs(of row: SidebarSelection) -> CatalogChangedFacts {
@@ -121,9 +127,18 @@ nonisolated struct CatalogProjectionReads: Sendable {
         let result: PhotoStackCollapse.Result
     }
 
+    /// The stacks the last order read built (ADR 0052), held for the next order read over
+    /// the same roots while nothing they are built from moved (`CatalogChangedFacts.stackInputs`):
+    /// reading every candidate of the fixed libraries is the larger half of an order read.
+    struct Stacks: Sendable {
+        let built: PhotoStackSQL.Built
+        let revisions: CatalogFactRevisions
+    }
+
     var order: Order?
     var filterOptions: FilterOptions?
     var collapse: Collapse?
+    var stacks: Stacks?
 
     /// No answer yet: every read is made.
     static let none = CatalogProjectionReads()
@@ -141,6 +156,30 @@ nonisolated struct CatalogProjectionReads: Sendable {
             return nil
         }
         return order.answer
+    }
+
+    /// The last stacks, while nothing they are built from changed after `revisions`. The
+    /// order read uses them only over the roots they were built for.
+    func stacks(at revisions: CatalogFactRevisions) -> PhotoStackSQL.Built? {
+        guard let stacks, !revisions.moved(CatalogChangedFacts.stackInputs, since: stacks.revisions) else {
+            return nil
+        }
+        return stacks.built
+    }
+
+    /// The last options read for `row` over `paths` in `languages`, whether or not a fact they
+    /// depend on moved since: what the window shows while the options are read again.
+    func lastFilterOptions(
+        for row: SidebarSelection,
+        availableLibraryPaths paths: Set<LibraryRootPath>,
+        placeNameLanguages languages: Set<PlaceNameLanguage>
+    ) -> CatalogFilterOptions? {
+        guard let filterOptions, filterOptions.row == row, filterOptions.availableLibraryPaths == paths,
+              filterOptions.placeNameLanguages == languages
+        else {
+            return nil
+        }
+        return filterOptions.answer
     }
 
     /// The last options, when they answer `row` over `paths` in `languages` and nothing they
@@ -167,9 +206,11 @@ nonisolated struct CatalogProjectionReuse: Equatable {
     var order = false
     var filterOptions = false
     var collapse = false
+    /// The order was read again over the stacks the last read built.
+    var stacks = false
 
     var diagnosticDescription: String {
-        let reused = [("order", order), ("filterOptions", filterOptions), ("collapse", collapse)]
+        let reused = [("order", order), ("filterOptions", filterOptions), ("collapse", collapse), ("stacks", stacks)]
             .filter(\.1).map(\.0)
         return reused.isEmpty ? "none" : reused.joined(separator: ",")
     }
@@ -226,7 +267,19 @@ nonisolated enum CatalogSearchOutcome: Equatable {
 /// What a build made: the window state, or nothing yet because the shown search's query is
 /// still being read (`SearchQueryReader`), whose report rings the loop when it ends.
 nonisolated enum CatalogProjectionBuild {
-    /// The state, what the build cost, and the reads it was built from, for the next pass.
-    case built(CatalogWindowState, CatalogProjectionBuildMetrics, CatalogProjectionReads)
+    /// The state, what the build cost, the reads it was built from, for the next pass, and the
+    /// filter's options when they are owed: the state carries the last options read for its
+    /// row, or none, and the pass reads these after it publishes (`OwedFilterOptions`).
+    case built(CatalogWindowState, CatalogProjectionBuildMetrics, CatalogProjectionReads, OwedFilterOptions?)
     case queryBeingRead
+}
+
+/// The filter's options a published window still owes: the row they are read for and what
+/// the read is keyed by (ADR 0005). The window never waits for them; the pass reads them
+/// after it publishes and republishes the window with them.
+nonisolated struct OwedFilterOptions: Sendable {
+    let row: SidebarSelection
+    let availableLibraryPaths: Set<LibraryRootPath>
+    let placeNameLanguages: Set<PlaceNameLanguage>
+    let revisions: CatalogFactRevisions
 }

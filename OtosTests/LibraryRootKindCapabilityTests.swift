@@ -70,10 +70,11 @@ struct LibraryRootKindCapabilityTests {
             rowsWhileUnreachable: true
         ))
         #expect(LibraryRootKind.allCases.filter(\.supportsReorganization) == [.library])
-        #expect(LibraryRootKind.immichAccount.availabilityAtLaunch == .available)
-        #expect(LibraryRootKind.library.availabilityAtLaunch == .unknown)
-        #expect(LibraryRootKind.removableVolume.availabilityAtLaunch == .unavailable)
-        #expect(LibraryRootKind.deviceMTP.availabilityAtLaunch == .unavailable)
+        #expect(LibraryRootKind.immichAccount.availabilityAtLaunch { false } == .available)
+        #expect(LibraryRootKind.library.availabilityAtLaunch { true } == .available)
+        #expect(LibraryRootKind.library.availabilityAtLaunch { false } == .unavailable)
+        #expect(LibraryRootKind.removableVolume.availabilityAtLaunch { true } == .unavailable)
+        #expect(LibraryRootKind.deviceMTP.availabilityAtLaunch { true } == .unavailable)
     }
 
     @Test func sqlListNamesExactlyTheKindsWithTheCapability() {

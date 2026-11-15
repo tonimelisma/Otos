@@ -150,7 +150,7 @@ actor HandOffPreparer {
     /// staged original its source has not sent yet is fetched, as the user's work.
     private func original(for item: EditedMediaItem) async throws -> URL {
         guard !Self.exists(item.id.fileURL),
-              await materialization.locality(of: item.id) == .fetchable
+              await materialization.locality(of: item.id).isFetchable(at: .interactive)
         else {
             return item.id.fileURL
         }
@@ -171,7 +171,7 @@ actor HandOffPreparer {
     func needsPreparation(_ item: EditedMediaItem, as wanted: Wanted) async -> Bool {
         guard wanted == .handOffFile, item.handOffForm != .original else {
             guard !Self.exists(item.id.fileURL) else { return false }
-            return await materialization.locality(of: item.id) == .fetchable
+            return await materialization.locality(of: item.id).isFetchable(at: .interactive)
         }
         return readyURL(for: item) == nil
     }
@@ -188,7 +188,7 @@ actor HandOffPreparer {
             throw PrepareError.sourceUnavailable(.serverNotAnswering)
         case .notMaterialized(.deviceUnavailable):
             throw PrepareError.sourceUnavailable(.cameraDisconnected)
-        case .unreachable, .notMaterialized:
+        case .unreachable, .notMaterialized, .userWorkOnly:
             throw PrepareError.originalUnavailable
         }
     }

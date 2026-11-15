@@ -7,12 +7,42 @@ struct MaterializationCoordinatorTests {
     /// ADR 0046 §4: an in-place original's locality is its `SF_DATALESS` status; a staged
     /// root's file absent from its staging folder is one its source has yet to send.
     @Test func localityReadsAStagedRootsAbsentFileAsFetchable() {
-        #expect(OriginalLocality.of(stagesOriginals: false, status: .materialized) == .local)
-        #expect(OriginalLocality.of(stagesOriginals: false, status: .dataless) == .fetchable)
-        #expect(OriginalLocality.of(stagesOriginals: false, status: .unknown) == .unreachable)
-        #expect(OriginalLocality.of(stagesOriginals: true, status: .materialized) == .local)
-        #expect(OriginalLocality.of(stagesOriginals: true, status: .unknown) == .fetchable)
-        #expect(OriginalLocality.of(stagesOriginals: true, status: .dataless) == .fetchable)
+        #expect(OriginalLocality.of(kind: .library, status: .materialized) == .local)
+        #expect(OriginalLocality.of(kind: .library, status: .dataless) == .fetchable)
+        #expect(OriginalLocality.of(kind: .library, status: .unknown) == .unreachable)
+        #expect(OriginalLocality.of(kind: nil, status: .dataless) == .fetchable)
+        #expect(OriginalLocality.of(kind: .deviceMTP, status: .materialized) == .local)
+        #expect(OriginalLocality.of(kind: .deviceMTP, status: .unknown) == .fetchable)
+        #expect(OriginalLocality.of(kind: .deviceMTP, status: .dataless) == .fetchable)
+    }
+
+    /// An Immich account sends an original only for the user's work (ADR 0046 §4), so its
+    /// locality says so, and only user work may fetch it: background and device work never
+    /// ask its source, so it never refuses them.
+    @Test func anAccountsUnstagedOriginalIsFetchableOnlyForUserWork() {
+        let locality = OriginalLocality.of(kind: .immichAccount, status: .unknown)
+        #expect(locality == .fetchableForUserWork)
+        #expect(OriginalLocality.of(kind: .immichAccount, status: .materialized) == .local)
+        #expect(locality.isFetchable(at: .interactive))
+        #expect(locality.isFetchable(at: .command))
+        #expect(!locality.isFetchable(at: .background))
+        #expect(!locality.isFetchable(at: .device))
+        #expect(OriginalLocality.fetchable.isFetchable(at: .background))
+    }
+
+    /// Background work that asks to make an account's original local is answered without a
+    /// request: nothing is dispatched, so nothing is refused or logged as failed.
+    @Test func ensureLocalAsksNothingOfAnAccountForBackgroundWork() async {
+        let requester = UserWorkOnlyRequester()
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Account"),
+            relativePath: MediaRelativePath(rawValue: "asset/clip.mp4")
+        )
+        let outcome = await requester.ensureLocal(.init(id: id, sourceSize: 10, isVideo: true, priority: .background))
+        #expect(outcome == .userWorkOnly)
+        #expect(requester.requests.withLock { $0 } == 0)
+        _ = await requester.ensureLocal(.init(id: id, sourceSize: 10, isVideo: true, priority: .interactive))
+        #expect(requester.requests.withLock { $0 } == 1)
     }
 
     /// The coordinator answers a folder's file from its own detector: a dataless file is
@@ -615,4 +645,19 @@ private func waitForAdmission(
 ) async throws {
     try await waitUntil { await registered() }
     try await waitUntil { await coordinator.isQuiescent }
+}
+
+/// A requester whose originals are an account's: fetchable for the user's work only. It
+/// counts the transfers asked of it and never makes one land.
+private final nonisolated class UserWorkOnlyRequester: MaterializationRequesting {
+    let requests = Mutex(0)
+
+    func materialize(_: MaterializationCoordinator.Request) async -> MaterializationResult {
+        requests.withLock { $0 += 1 }
+        return MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 0)
+    }
+
+    func locality(of _: MediaAssetID) async -> OriginalLocality {
+        .fetchableForUserWork
+    }
 }

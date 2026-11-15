@@ -33,21 +33,19 @@ struct CatalogWindowViewModelQueryIntentTests {
 
         model.start()
         await gate.waitForBuildCount(1)
+        // A sort chosen and toggled back while the first build is parked: whichever builds
+        // for the sort left run or are superseded (ADR 0005), what the window shows in the
+        // end is the default the user came back to, and no state rolls the intent back.
         model.setSortOrder(.filenameAscending)
-        await gate.releaseNext()
-
-        _ = try await waitForWindowState(model) { state in
-            state.title == "Build 1"
-        }
-        await gate.waitForBuildCount(2)
-
         model.setSortOrder(.dateNewest)
         #expect(model.queryDescriptor == .default)
 
-        await gate.releaseNext()
-        _ = try await waitForWindowState(model) { state in
-            state.title == "Build 2"
+        await gate.open()
+        let settled = try await waitForWindowState(model) { state in
+            state.title.hasPrefix("Build") && state.queryDescriptor == .default
         }
+        await gate.close()
+        #expect(settled.queryDescriptor == .default)
         #expect(model.queryDescriptor == .default)
 
         let staleGeneration = model.state.queryGeneration

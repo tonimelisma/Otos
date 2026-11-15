@@ -659,8 +659,9 @@ nonisolated struct RootPlanningRevisions: Equatable, Sendable {
 ///   that reads this root as **source only**; enriching an asset already in the
 ///   destination renames nothing on disk (ARC-046).
 ///
-/// A wake with both unchanged is `planRevision`-only churn (no-op rescans, event
-/// deferrals) and is a cheap no-op.
+/// The Store emits one only for a root an import plans against (a card, a camera or a
+/// library; never an Immich account) and only when one of the two moved: `planRevision`,
+/// which only reorganization reads, wakes no one.
 nonisolated struct RootPlanningChange: Equatable, Sendable {
     let rootPath: LibraryRootPath
     let namespaceRevision: UInt64

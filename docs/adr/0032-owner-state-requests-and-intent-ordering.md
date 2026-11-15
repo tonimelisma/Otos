@@ -52,8 +52,14 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
 3. **One loop per owner, woken by a doorbell.** The doorbell is a
    `.bufferingNewest(1)` `AsyncStream<Void>`; every producer yields to it and one task runs
    the passes. Newer work never cancels older work: the older result is checked against its
-   identity when it completes and dropped if stale. Cancellation is only for teardown,
-   detach and shutdown, and a cancelled operation's result is never published. A loop that
+   identity when it completes and dropped if stale. Cancellation is for teardown, detach
+   and shutdown, and for one more case: unpublished work answering a request the user has
+   left. A user's intent cancels the work in flight that does not answer what they now ask
+   — `CatalogProjection`'s build of a scope left, or its options read for a row left — in
+   the synchronous step that applies the intent, because waiting for it is waiting for an
+   answer nobody will see (ADR 0005). Published work is never cancelled, a store change
+   cancels nothing, and a cancelled operation's result is never published, even if it
+   finishes. A loop that
    waits indefinitely holds its owner weakly and ends when the upgrade fails.
 4. **An error is not a fact.** A failed read publishes nothing: the last published state
    stands, the request stays outstanding, and the error is logged with `errorOperation`.

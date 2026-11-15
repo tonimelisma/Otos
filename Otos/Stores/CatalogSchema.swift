@@ -1350,6 +1350,23 @@ nonisolated enum CatalogSchema {
     /// 0.13–0.15 s, cold or warm (`docs/research/2026-11-14-derived-owners-and-face-checks.md`).
     static let assignedFacePhotoIndexMigrationIdentifier = "v57_assigned_face_photo_index"
 
+    /// The filter's types for the People row walk `idx_media_asset_stack_candidate` and test
+    /// each row for an assigned face by its key (`idx_face_assigned_photo`). The index held no
+    /// `relative_path`, so every row reached cost a read of its table row to find the key: on
+    /// the owner's catalog the People row's options took 17–41 s on a copy (8–12 s in the
+    /// installed app, rerun on every lap of the window during enrichment). With the path in
+    /// the index the key is in the index and the read took 0.18–0.31 s; the index grows from
+    /// about 10 MB to 19 MB (`docs/research/2026-11-14-scope-switch-and-background-laps.md`).
+    static let stackCandidatePathMigrationIdentifier = "v59_stack_candidate_path"
+
+    static let stackCandidatePathStatements: [String] = [
+        "DROP INDEX idx_media_asset_stack_candidate",
+        """
+        CREATE INDEX idx_media_asset_stack_candidate
+        ON media_asset(library_root_id, best_kind, parent_path, best_format, relative_path, \(windowReadTestedColumns))
+        """,
+    ]
+
     static let assignedFacePhotoIndexStatements: [String] = [
         """
         CREATE INDEX idx_face_assigned_photo

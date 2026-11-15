@@ -556,7 +556,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
     private static func localityText(_ locality: OriginalLocality) -> String {
         switch locality {
         case .local: "On This Mac"
-        case .fetchable: "Not Downloaded"
+        case .fetchable, .fetchableForUserWork: "Not Downloaded"
         case .unreachable: "Unavailable"
         }
     }

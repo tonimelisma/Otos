@@ -196,16 +196,24 @@ struct CatalogProjectionTests {
             recordingTask.cancel()
         }
 
+        // The intent supersedes the parked build, but the loop still waits for that build to
+        // end before it starts the next one: never two at once.
+        let pictures = SidebarSelection.library(LibraryRootPath(rawValue: "/Users/example/Pictures"))
         await probe.waitUntilInFlight()
-        await projection.updateSidebarSelection(.library(LibraryRootPath(rawValue: "/Users/example/Pictures")))
+        await projection.updateSidebarSelection(pictures)
         await probe.releaseBuilds()
 
-        _ = await recorder.waitForCount(2)
+        _ = await recorder.waitForCount(1) { states in
+            states.contains { $0.resolvedSidebarSelection == pictures }
+        }
         #expect(await probe.maximumInFlight() == 1)
         #expect(await probe.callCount() >= 2)
     }
 
-    @Test func newerIntentDuringPublicationNeverCancelsTheRunningBuild() async throws {
+    /// A scope switch never waits for the build of the scope the user left (ADR 0032): the
+    /// intent, delivered while that build is parked, cancels it; what it built is never
+    /// published, and the new scope's build runs next.
+    @Test func anIntentForAnotherScopeSupersedesTheBuildOfTheScopeLeft() async throws {
         let store = CatalogStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
@@ -239,8 +247,54 @@ struct CatalogProjectionTests {
         let states = await recorder.waitForCount(1) { states in
             states.contains { $0.resolvedSidebarSelection == pictures }
         }
-        #expect(states.contains { $0.resolvedSidebarSelection == pictures })
+        #expect(!states.contains { $0.title == "Call 1" })
+        #expect(await probe.cancelledBuildCount() == 1)
+        #expect(await projection.supersededCount == 1)
+        try await waitUntil { await projection.isQuiescent }
+    }
+
+    /// A store change is not an intent: the build in flight is for what is shown, so it
+    /// finishes and publishes, and the change is taken up by the next pass.
+    @Test func aStoreChangeNeverSupersedesTheBuildInFlight() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory)
+        try await store.start(scansSavedLibraries: false)
+        let probe = ProjectionProbe()
+        let projection = CatalogProjection(
+            cadence: .milliseconds(10),
+            stateBuilder: { libraries, orderedAssetIDs, request in
+                try await probe.build(
+                    libraries: libraries,
+                    orderedAssetIDs: orderedAssetIDs,
+                    request: request
+                )
+            }
+        )
+        let recorder = StateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+
+        await probe.waitUntilInFlight()
+        let heard = await projection.detailRefreshGeneration
+        try await store.addLibrary(url: root)
+        try await waitUntil { await projection.detailRefreshGeneration > heard }
+        await probe.releaseBuilds()
+
+        let states = await recorder.waitForCount(1) { states in
+            states.contains { $0.title == "Call 1" }
+        }
+        #expect(states.contains { $0.title == "Call 1" })
         #expect(await probe.cancelledBuildCount() == 0)
+        #expect(await projection.supersededCount == 0)
     }
 
     @Test func aFailedBuildPublishesNothingAndTheNextIntentRetries() async throws {

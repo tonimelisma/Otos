@@ -153,9 +153,37 @@ SQLite row IDs remain Store-private.
 Only one derivation may be in flight, because only the loop task runs passes.
 Actor reentrancy lets new input arrive while a pass awaits Store reads; it raises
 `requested`, the finishing pass covers only what it started from, and the loop runs
-again. A newer request never cancels a running build: GRDB reads throw
-`CancellationError` in a cancelled task, so a cancelled build holds errors, not a
-catalog. Cancellation is teardown only, and a cancelled pass publishes nothing.
+again.
+
+A user never waits for work answering what they left. A pass runs its build, and the
+filter's options it owes, in a task it waits on; an intent whose descriptor that work does
+not answer — another scope, filter, sort or search for a build; another sidebar row for the
+options — cancels it in the step that applies the intent. That work is unpublished and can
+never be published, because what it answers is no longer asked; GRDB interrupts its
+statement, which frees its reader at once. A superseded pass publishes nothing, covers
+nothing and rings the loop, so the new request is built next; whatever a superseded build
+read, its result is discarded even if it finished in spite of the cancellation, because a
+cancelled GRDB read holds errors, not a catalog. A store change supersedes nothing: the
+build in flight is for what is shown, and the next pass takes the change up. Teardown
+cancels the loop, and a torn-down pass publishes nothing. On the owner's catalog a sidebar
+click waited 2–9 s for the All Media build it left, then 1.4 s on the main thread applying
+it (`docs/research/2026-11-14-scope-switch-and-background-laps.md`).
+
+The filter's options never hold the window back. A pass whose options are owed publishes
+the window with the last options read for the same row (none for a row not read yet: the
+popover lists every kind, and the types under each arrive with the read), then reads the
+options and republishes the window with them; it covers its request only once they are
+read. The People gallery shows people, not items: its window reads no order, stacks, search
+or options, and says only what its libraries' state is
+(`CatalogWindowPolicy.peopleGalleryLibrariesState`).
+
+The stacks (ADR 0052) are held with the reads: an order read again over the same roots,
+while no fact they are built from moved (`CatalogChangedFacts.stackInputs`: membership,
+choices and `.stacks`), uses the stacks the last read built instead of reading every stack
+candidate again. The Store names `.stacks` only for a write that changes a capture date,
+kind or grouping of a still that is or was in a burst, or that shares its folder with a
+still it could pair with, so an Immich asset alone in its folder moves its date without a
+stack read.
 
 A failed Store read is not a fact. A pass whose build throws publishes nothing,
 logs `op=projection.publish phase=failed`, and leaves `covered` where it was, so
@@ -193,10 +221,16 @@ they do not share selection's newest-value buffering.
   added root was validated successfully
 - `.unavailable`: the latest reachability check failed
 
-Database-loaded roots begin unknown. Availability is never persisted to SQLite.
-The existing pre-scan check transitions unknown to available or unavailable. A
-scan failure rechecks the root so disappearance during traversal can be modeled
-as unavailable.
+A database-loaded library is checked as the catalog loads: one `stat` of its folder
+(`LibraryRootKind.availabilityAtLaunch(folderIsReachable:)`) makes it available or
+unavailable before the first publication, so a reachable library's rows show at once and
+its launch scan only reconciles them (ADR 0008). Waiting for the scan to start was wrong:
+the fixed libraries scan one at a time on one lane, so a library queued behind another
+showed none of its rows until that scan finished — 11,714 of the owner's rows arrived in two
+later publications (`docs/research/2026-11-14-scope-switch-and-background-laps.md`). A root
+added in this process begins unknown until its first check. Availability is never persisted
+to SQLite. The pre-scan check still answers it again; a scan failure rechecks the root so
+disappearance during traversal can be modeled as unavailable.
 
 Unknown and unavailable roots retain all catalog rows but contribute no assets
 to All Media or selected-library grids. Unknown is rendered as `Checking`,
@@ -285,7 +319,7 @@ selection `didSet` orchestration must not remain in current docs or comments.
 
 ## Verification
 
-- Store tests cover unknown load state and available/unavailable transitions.
+- Store tests cover the load's availability, unknown for a new root, and available/unavailable transitions.
 - Projection tests cover mixed availability filtering and checking empty states.
 - ViewModel tests cover rapid selection intents, resolved-selection application
   without feedback, weak state-consumer lifetime, and owned-task cancellation.

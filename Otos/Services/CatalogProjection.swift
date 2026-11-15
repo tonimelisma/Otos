@@ -39,12 +39,22 @@ import OSLog
 /// grouping never hold back the sidebar or the grid, and a change of scope, filter or sort
 /// never rebuilds them, since neither depends on it.
 ///
-/// Nothing cancels a build that newer work supersedes: GRDB reads throw
-/// `CancellationError` in a cancelled task, so a cancelled build would hold errors, and the
-/// older build's result is simply covered by the next pass. Cancellation is teardown only
-/// (`removeContinuation`), and a pass that is cancelled or whose read fails publishes
-/// nothing: it leaves `covered` where it was, so the request stays outstanding and the
-/// next intent or cadence tick retries it.
+/// The filter's options never hold the window back. A pass that owes them publishes the
+/// window with the last options read for its row (none for a row not read yet), then reads
+/// them and republishes the window with them (`OwedFilterOptions`); it covers its request only
+/// once they are read.
+///
+/// What the user asked for is never queued behind work for what they left (ADR 0032). A
+/// pass's build, and its owed options read, run in a task the pass waits on (`inFlight`); an
+/// intent that changes what is shown — another scope, filter, sort or search — cancels that
+/// task when it is for the descriptor the user left. That work is not published and never can
+/// be, since what it answers is no longer asked; GRDB interrupts its statement, so its reader
+/// is free at once. The superseded pass publishes nothing, covers nothing and rings the loop,
+/// which builds the new request next. A store change never supersedes anything: the build in
+/// flight is for what is shown, and the next pass takes the change up. Teardown
+/// (`removeContinuation`) cancels the loop itself, and a pass that is torn down or whose read
+/// fails publishes nothing: it leaves `covered` where it was, so the request stays
+/// outstanding and the next intent or cadence tick retries it.
 actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async throws
         -> CatalogWindowState
@@ -120,6 +130,17 @@ actor CatalogProjection {
     var orderQueryCount: UInt64 = 0
     /// Count of filter-option reads executed by publications, likewise.
     var filterOptionsQueryCount: UInt64 = 0
+    /// Count of order reads that read the stack candidates rather than reusing the stacks
+    /// the last read built (`CatalogProjectionReads.Stacks`).
+    var stackReadCount: UInt64 = 0
+    /// Count of passes whose build or owed read an intent superseded (`supersede()`).
+    private(set) var supersededCount: UInt64 = 0
+    /// The build or owed options read the loop is waiting on: what it is for, and how to
+    /// cancel it when an intent leaves that descriptor.
+    private var inFlight: InFlightWork?
+    /// The work an intent cancelled, so its pass knows the error it ends with is that.
+    private var supersededWork: UInt64?
+    private var nextWorkID: UInt64 = 0
     /// Window states published so far. Read with `isQuiescent`, it says whether a change
     /// published anything, without depending on when a subscriber receives it.
     private(set) var publicationCount: UInt64 = 0
@@ -231,6 +252,7 @@ actor CatalogProjection {
             descriptor: descriptor,
             generation: queryRequest.generation &+ 1
         )
+        supersede()
         requestPublication(ringNow: true)
     }
 
@@ -247,6 +269,7 @@ actor CatalogProjection {
         // The same query with other stacks expanded reuses the order: only the collapse
         // differs (ADR 0052).
         queryRequest = request
+        supersede()
         requestPublication(ringNow: true)
     }
 
@@ -416,6 +439,7 @@ private extension CatalogProjection {
         if case let .libraryRemoved(path) = change {
             if queryRequest.descriptor.scope == .library(path) {
                 queryRequest.descriptor.scope = .allMedia
+                supersede()
             }
         }
         detailRefreshGeneration &+= 1
@@ -434,6 +458,62 @@ private extension CatalogProjection {
             }
         }
         requestPublication(ringNow: publishedBeforeCatalogLoad)
+    }
+
+    /// Cancels the build or owed read in flight when it is for a descriptor other than the one
+    /// now asked for. Synchronous: it runs in the step that applies the intent, so no await
+    /// separates the intent from the cancellation.
+    private func supersede() {
+        guard let inFlight, !inFlight.answers(queryRequest.descriptor) else {
+            return
+        }
+        supersededWork = inFlight.id
+        OtosLog.catalog.noticeOperation("projection.publish", phase: "superseded", fields: [
+            "projection": diagnosticID,
+            "work": inFlight.kindName,
+            "left": inFlight.scope.diagnosticDescription,
+            "asked": queryRequest.descriptor.scope.diagnosticDescription,
+        ])
+        inFlight.cancel()
+    }
+
+    /// Runs `work` as the pass's in-flight work, which an intent whose descriptor it does not
+    /// answer cancels (`supersede()`). Throws `CatalogProjectionWorkSuperseded` when it did; a
+    /// teardown of the loop cancels the work with it and rethrows its error.
+    private func supersedable<Value: Sendable>(
+        _ kind: InFlightWork.Kind,
+        _ work: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        nextWorkID &+= 1
+        let id = nextWorkID
+        let task = Task { try await work() }
+        inFlight = InFlightWork(id: id, kind: kind, cancel: { task.cancel() })
+        defer {
+            if inFlight?.id == id {
+                inFlight = nil
+            }
+        }
+        do {
+            let value = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            // Work that finished in spite of its cancellation still answers what was left.
+            guard supersededWork != id else {
+                supersededWork = nil
+                throw CatalogProjectionWorkSuperseded()
+            }
+            return value
+        } catch let superseded as CatalogProjectionWorkSuperseded {
+            throw superseded
+        } catch {
+            guard supersededWork == id, !Task.isCancelled else {
+                throw error
+            }
+            supersededWork = nil
+            throw CatalogProjectionWorkSuperseded()
+        }
     }
 
     /// One publication pass. It only runs on `loopTask`, so passes never overlap. It
@@ -462,6 +542,7 @@ private extension CatalogProjection {
         let storeReadStart = ContinuousClock.now
         let completed: CatalogProjectionCompletedPublication
         let passReads: CatalogProjectionReads
+        let owedOptions: OwedFilterOptions?
         do {
             // Before the catalog's first load there is nothing to query and nothing to
             // claim: publish the loading state instead of an empty catalog (APP-044).
@@ -480,16 +561,18 @@ private extension CatalogProjection {
             defer {
                 OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
             }
-            let build = try await buildWindowState(
-                store: store,
-                libraries: libraries,
-                request: selectedRequest,
-                reads: startedReads,
-                revisions: startedRevisions
-            )
+            let build = try await supersedable(.build(selectedRequest.descriptor)) {
+                try await self.buildWindowState(
+                    store: store,
+                    libraries: libraries,
+                    request: selectedRequest,
+                    reads: startedReads,
+                    revisions: startedRevisions
+                )
+            }
             // A cancelled pass is a teardown: whatever it read is not the catalog.
             try Task.checkCancellation()
-            guard case let .built(state, buildMetrics, builtReads) = build else {
+            guard case let .built(state, buildMetrics, builtReads, owed) = build else {
                 // Owed, not failed: the window keeps what it shows and says it is searching,
                 // and the reader's report that the reading ended rings the loop.
                 OtosLog.catalog.noticeOperation("projection.publish", phase: "searchReading", fields: [
@@ -500,6 +583,7 @@ private extension CatalogProjection {
                 return
             }
             passReads = builtReads
+            owedOptions = owed
             completed = CatalogProjectionCompletedPublication(
                 state: state,
                 buildMetrics: buildMetrics,
@@ -510,19 +594,8 @@ private extension CatalogProjection {
                     totalMs: DiagnosticsTiming.milliseconds(since: publicationStart)
                 )
             )
-        } catch is CancellationError {
-            // Teardown (`removeContinuation`) already reset the counters; this pass
-            // belongs to a subscription that no longer exists.
-            return
         } catch {
-            // The work is still owed: `covered` stays put and the last reads stand. No
-            // doorbell here — a persistent error must not retry in a tight loop; the next
-            // intent or cadence tick retries it.
-            OtosLog.catalog.errorOperation("projection.publish", phase: "failed", fields: [
-                "projection": diagnosticID,
-                "generation": "\(selectedRequest.generation)",
-                "error": String(describing: error),
-            ])
+            endUnpublishedPass(error, request: selectedRequest)
             return
         }
 
@@ -545,7 +618,14 @@ private extension CatalogProjection {
         guard !Task.isCancelled else {
             return
         }
+        // The window is published, so the reads it was built from stand whatever the options
+        // read does.
         reads = passReads
+        if let owedOptions {
+            guard await readOwedFilterOptions(owedOptions, request: selectedRequest, store: store) else {
+                return
+            }
+        }
         covered = startedFrom
         ringIfBehind()
         // An injected test builder derives nothing. Otherwise a pass that took up a change
@@ -569,6 +649,77 @@ private extension CatalogProjection {
         } else if asksTally {
             await peopleAssignment.requestTally()
         }
+    }
+
+    /// Reads the options the published window owes and republishes it with them. False when
+    /// the read was superseded, torn down or failed: the pass then covers nothing.
+    private func readOwedFilterOptions(
+        _ owed: OwedFilterOptions,
+        request: CatalogQueryRequest,
+        store: CatalogStore
+    ) async -> Bool {
+        let read: (options: CatalogFilterOptions, ms: Int)
+        do {
+            read = try await supersedable(.filterOptions(row: owed.row)) {
+                try await self.readFilterOptions(owed, store: store)
+            }
+            try Task.checkCancellation()
+        } catch {
+            endUnpublishedPass(error, request: request)
+            return false
+        }
+        reads.filterOptions = CatalogProjectionReads.FilterOptions(
+            row: owed.row,
+            availableLibraryPaths: owed.availableLibraryPaths,
+            placeNameLanguages: owed.placeNameLanguages,
+            revisions: owed.revisions,
+            answer: read.options
+        )
+        let republished = publishFilterOptions(read.options, row: owed.row)
+        OtosLog.catalog.noticeOperation("projection.filterOptions", phase: "read", fields: [
+            "projection": diagnosticID,
+            "generation": "\(request.generation)",
+            "row": owed.row.diagnosticDescription,
+            "ms": "\(read.ms)",
+            "republished": "\(republished)",
+        ])
+        return true
+    }
+
+    /// How a pass that published nothing ends: torn down, superseded by an intent (the loop
+    /// is rung for what was asked), or failed. The work stays owed in every case: `covered`
+    /// stays put and the last reads stand. No doorbell for a failure — a persistent error
+    /// must not retry in a tight loop; the next intent or cadence tick retries it.
+    private func endUnpublishedPass(_ error: any Error, request: CatalogQueryRequest) {
+        switch error {
+        case is CatalogProjectionWorkSuperseded:
+            supersededCount &+= 1
+            doorbell?.yield()
+        case is CancellationError:
+            // Teardown (`removeContinuation`) already reset the counters; this pass
+            // belongs to a subscription that no longer exists.
+            break
+        default:
+            OtosLog.catalog.errorOperation("projection.publish", phase: "failed", fields: [
+                "projection": diagnosticID,
+                "generation": "\(request.generation)",
+                "error": String(describing: error),
+            ])
+        }
+    }
+
+    /// Republishes the last state with freshly read options for `row`, when it still shows
+    /// that row and the options differ. Synchronous.
+    private func publishFilterOptions(_ options: CatalogFilterOptions, row: SidebarSelection) -> Bool {
+        guard var state = lastPublishedState,
+              state.queryDescriptor.scope.sidebarRow == row,
+              state.filterOptions != options
+        else {
+            return false
+        }
+        state.filterOptions = options
+        yield(state)
+        return true
     }
 
     /// Republishes the last state, as it is, marked as searching: while a query is read the
@@ -712,5 +863,52 @@ private extension CatalogProjection {
         people = nil
         orderQueryCount = 0
         filterOptionsQueryCount = 0
+        stackReadCount = 0
+        inFlight = nil
+        supersededWork = nil
     }
 }
+
+/// The work a pass waits on, for `CatalogProjection.supersede()`.
+private nonisolated struct InFlightWork {
+    enum Kind {
+        /// The window's build for this descriptor: it answers only this descriptor.
+        case build(CatalogQueryDescriptor)
+        /// The options of this sidebar row: they answer every descriptor shown under it, so a
+        /// filter or sort change on the row leaves them standing.
+        case filterOptions(row: SidebarSelection)
+    }
+
+    let id: UInt64
+    let kind: Kind
+    let cancel: @Sendable () -> Void
+
+    /// Whether this work's answer is still asked for when the window asks for `descriptor`.
+    func answers(_ descriptor: CatalogQueryDescriptor) -> Bool {
+        switch kind {
+        case let .build(built):
+            built == descriptor
+        case let .filterOptions(row):
+            descriptor.scope.sidebarRow == row
+        }
+    }
+
+    var scope: SidebarSelection {
+        switch kind {
+        case let .build(descriptor):
+            descriptor.scope
+        case let .filterOptions(row):
+            row
+        }
+    }
+
+    var kindName: String {
+        switch kind {
+        case .build: "build"
+        case .filterOptions: "filterOptions"
+        }
+    }
+}
+
+/// A pass's work was cancelled by an intent that left the descriptor it was for.
+nonisolated struct CatalogProjectionWorkSuperseded: Error {}

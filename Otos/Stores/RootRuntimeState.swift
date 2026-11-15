@@ -30,9 +30,10 @@ nonisolated struct RootRuntimeState: Equatable {
     /// inventory-only here.
     var skippedPackageCount: Int
     /// Monotonic general planning revision. Bumped whenever reorganization planning
-    /// inputs may have changed, including no-op rescans and event deferrals. Reorg
-    /// planning polls this. Import planning does NOT key staleness on it — it churns
-    /// under cloud-sync/enrichment materialization noise that never changes what an
+    /// inputs may have changed, including no-op rescans, event deferrals and, on a root
+    /// that can be reorganized, a capture-wall change. Reorganization reads it when it
+    /// plans and confirms. Import planning does NOT key staleness on it, and a bump wakes
+    /// no one — it churns under cloud-sync/enrichment noise that never changes what an
     /// import reads. See `namespaceRevision` and `namingRevision`.
     var planRevision: UInt64
     /// Monotonic namespace revision: which paths this root occupies. Bumped only when
@@ -45,9 +46,11 @@ nonisolated struct RootRuntimeState: Equatable {
     /// destination's occupied names decide collisions, and the source's inventory
     /// decides what there is to copy.
     var namespaceRevision: UInt64
-    /// Monotonic naming revision: what Otos would *call* this root's assets. Bumped
-    /// when an enrichment write changes an asset's `capture_wall_compact`, which is
-    /// the fact date/time import naming is derived from.
+    /// Monotonic naming revision: what Otos would *call* this import source's assets.
+    /// Bumped when an enrichment write changes an asset's `capture_wall_compact` on a
+    /// card or camera (`CatalogStore.recordNamingChange`), which is the fact date/time
+    /// import naming is derived from. A library's or an Immich account's never moves:
+    /// no import reads it.
     ///
     /// An import plan reads this for its **source only**. Enriching an asset already
     /// in the destination cannot change the plan: Otos never writes into media
@@ -57,9 +60,8 @@ nonisolated struct RootRuntimeState: Equatable {
     /// against an enriching cloud library (ARC-046; fixed once in pull request 111,
     /// then regressed by `40261bf` and fixed again later).
     ///
-    /// Every namespace or naming bump also advances `planRevision` — both are
-    /// planning changes for reorganization, which legitimately depends on capture
-    /// dates and polls `planRevision` directly.
+    /// A namespace bump also advances `planRevision`, and so does a capture-wall change
+    /// on a root that can be reorganized: reorganization names by capture dates.
     var namingRevision: UInt64
     /// Process-local proof generation for destructive full-scan reconciliation. Any
     /// independent namespace mutation advances this value and retains typed dirty

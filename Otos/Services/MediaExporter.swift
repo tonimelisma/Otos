@@ -66,7 +66,7 @@ nonisolated enum MediaExporter {
             guard isDirectory(folder) else {
                 throw ExportError.folderUnavailable
             }
-            if await materialization.locality(of: item.id) == .fetchable {
+            if await materialization.locality(of: item.id).isFetchable(at: .interactive) {
                 try requireRoom(item.sourceSize ?? fileSize(original), onVolumeOf: item.id.libraryRootPath.url, volumeCapacity)
             }
             guard await materialization.ensureLocal(.init(

@@ -158,13 +158,21 @@ compares a kind directly. A new kind is a new column in this table.
 
 ### 4. One owner of original locality
 
-`MaterializationCoordinator` answers `locality(of:)` with `.local`, `.fetchable`, or
-`.unreachable`:
+`MaterializationCoordinator` answers `locality(of:)` with `.local`, `.fetchable`,
+`.fetchableForUserWork`, or `.unreachable`:
 
 - for in-place roots, from `SF_DATALESS`;
 - for staged roots, from whether the staged file exists (absent is `.fetchable`); whether
   the source can serve it now is the executor's answer (`deviceUnavailable`,
-  `serverUnreachable`), not part of locality.
+  `serverUnreachable`), not part of locality;
+- for an account, whose source sends an original only for the user's work
+  (`LibraryRootKind.sendsOriginalsOnlyForUserWork`), an absent staged file is
+  `.fetchableForUserWork`. A requester asks `isFetchable(at:)` with its priority, so
+  background and device work never ask the server for one: `ensureLocal` answers
+  `.userWorkOnly` without a request, and enrichment releases the row to the pacing ledger
+  instead of demanding a download. In the installed app, 36 background requests in 20
+  minutes were dispatched, refused by the executor and logged as failures before the type
+  said so (`docs/research/2026-11-14-scope-switch-and-background-laps.md`).
 
 It also owns `ensureLocal(_:)` (on `MaterializationRequesting`; the request carries the
 priority), which replaces `makeLocal`. `PreviewImageLoader`, `VideoPreviewLoader`,
@@ -178,9 +186,10 @@ of the file's own status immediately before the read. The executor gains an `imm
 2. a move into the asset's folder under a hidden name, then a rename over the final
    name, so a reader never sees half a file;
 3. the existing priorities and per-root breaker throughout. Only the user's work —
-   interactive or command priority — downloads an original; background and device
-   demand is refused, because an account's originals are never downloaded to render the
-   library (owner, 2026-11-09).
+   interactive or command priority — downloads an original, because an account's
+   originals are never downloaded to render the library (owner, 2026-11-09). Locality says
+   so, so no background or device request reaches the executor; its refusal of one stays
+   as the boundary's own guard.
 
 An original that lands is offered to enrichment ahead of other work, for every product it
 still owes (`CatalogStore.originalBecameLocal`, the list imported copies use): Otos's

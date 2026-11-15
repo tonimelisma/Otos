@@ -459,6 +459,19 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
         }
     }
 
+    /// An import copies from it (ADR 0013): a card or camera. Its inventory and capture walls
+    /// are what a plan copies and names, so its namespace and naming revisions wake the
+    /// import coordinator.
+    var isImportSource: Bool {
+        isRemovable
+    }
+
+    /// An import plans against it, as its source or its destination, so a change to the
+    /// paths it occupies wakes the import coordinator. An Immich account is neither.
+    var isImportPlanned: Bool {
+        isImportSource || isImportDestination
+    }
+
     /// A card or camera (ADR 0013): it attaches and detaches, starts each launch
     /// unavailable, is an import source, is enriched ahead of fixed libraries while
     /// connected, holds rows awaiting presence on attach, and is forgotten after the
@@ -509,6 +522,17 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     /// Originals are copied into an Otos staging folder rather than read in place.
     var stagesOriginals: Bool {
         stagingContainer != nil
+    }
+
+    /// Its source sends an original only for work the user is waiting on, never to enrich a
+    /// library (ADR 0046 §4, owner 2026-11-09): an Immich account's originals are read in
+    /// ranges for enrichment and downloaded only for a zoom, an edit, an export or a
+    /// hand-off. A card's or a camera's are copied for any work.
+    var sendsOriginalsOnlyForUserWork: Bool {
+        switch self {
+        case .immichAccount: true
+        case .library, .removableVolume, .deviceMTP: false
+        }
     }
 
     /// An import reads this source's own files in place, so enrichment leaves the source
@@ -589,13 +613,14 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     }
 
     /// What a launch knows of a saved root before any source has answered. A fixed
-    /// library is checked by its launch scan, and a card or camera is unavailable until a
-    /// monitor attaches it. An account's stored listing is its truth until its server
-    /// reports otherwise, so it is available at once; whether the server answers is a
-    /// separate fact (ADR 0046 §6).
-    var availabilityAtLaunch: LibraryAvailability {
+    /// library is what one `stat` of its folder says (`folderIsReachable`), asked as the
+    /// catalog loads, so its rows show at once and its launch scan only reconciles them. A
+    /// card or camera is unavailable until a monitor attaches it. An account's stored listing
+    /// is its truth until its server reports otherwise, so it is available at once; whether
+    /// the server answers is a separate fact (ADR 0046 §6).
+    func availabilityAtLaunch(folderIsReachable: () -> Bool) -> LibraryAvailability {
         switch self {
-        case .library: .unknown
+        case .library: folderIsReachable() ? .available : .unavailable
         case .removableVolume, .deviceMTP: .unavailable
         case .immichAccount: .available
         }
@@ -1366,6 +1391,15 @@ nonisolated enum SidebarSelection: Hashable {
         case .onThisDay: .dateNewest
         default: nil
         }
+    }
+
+    /// The People gallery: it shows people, not items (ADR 0047), so the window reads no
+    /// order, stacks, search or filter options for it.
+    var isPeopleGallery: Bool {
+        if case .people = self {
+            return true
+        }
+        return false
     }
 
     var diagnosticDescription: String {

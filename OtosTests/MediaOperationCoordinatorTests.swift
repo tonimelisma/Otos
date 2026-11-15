@@ -266,14 +266,10 @@ struct MediaOperationCoordinatorTests {
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
 
-        // The real bug's destination changes occupancy while scanning, which primes
-        // the coordinator's occupancy memory for that root. Reproduce that priming
-        // (an unseen root's first wake is conservatively treated as a possible
-        // change) with one bump, then settle so the baseline is past it.
-        _ = await store.bumpPlanRevision(for: fixedPath)
         let baseline = try await settledReadyGeneration(coordinator, source: cardPath)
 
-        // No-op planRevision churn on the destination — the exact livelock trigger.
+        // No-op planRevision churn on the destination — the exact livelock trigger. It wakes
+        // no import plan: only reorganization reads `planRevision`.
         for _ in 0 ..< 8 {
             _ = await store.bumpPlanRevision(for: fixedPath)
         }
@@ -582,17 +578,12 @@ struct MediaOperationCoordinatorTests {
         // enrichment coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
-        // An unseen root's first wake is conservatively treated as a possible change
-        // (the coordinator has no recorded revisions to compare against), same as
-        // `noOpPlanRevisionChurnDoesNotDisturbReadyPlan`. Prime past it, then settle,
-        // so the baseline measures steady state.
-        _ = await store.bumpPlanRevision(for: fixedPath)
         let baseline = try await settledReadyGeneration(coordinator, source: cardPath)
 
         // The destination library enriching in the background: capture walls change,
-        // no file moves.
+        // no file moves, and no import plan is woken.
         for _ in 0 ..< 8 {
-            _ = await store.bumpNamingRevision(for: fixedPath)
+            await store.recordNamingChange(for: fixedPath)
         }
         _ = try await settledReadyGeneration(coordinator, source: cardPath)
 
@@ -659,7 +650,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.setDestination(fixedPath, for: cardPath)
         let baseline = try await settledReadyGeneration(coordinator, source: cardPath)
 
-        _ = await store.bumpNamingRevision(for: cardPath)
+        await store.recordNamingChange(for: cardPath)
         let replanned = try await readyGeneration(coordinator, source: cardPath, greaterThan: baseline)
         #expect(replanned > baseline)
         await coordinator.shutdown()

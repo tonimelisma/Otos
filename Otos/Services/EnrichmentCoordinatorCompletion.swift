@@ -37,6 +37,22 @@ extension EnrichmentCoordinator {
             readyClaims[id] = nil
             await handleApplyOutcome(store.applyContentHash(result), batchCount: 1)
         case .notMaterialized:
+            let locality = await materializationRequester.locality(of: id)
+            // Read again after the await: a shutdown or another completion may have settled
+            // the row meanwhile.
+            guard !isShuttingDown, readyClaims[id] != nil else {
+                return
+            }
+            readyClaims[id] = nil
+            guard locality != .fetchableForUserWork else {
+                // The read found no local file, and its source sends the whole original only
+                // for the user's work: nothing is asked of it (ADR 0046 §4). The row waits
+                // out the pacing ledger, as a ranged read its server did not answer does.
+                await releaseClaimIfOwned(record, id: id)
+                schedule.pace(id, sourceSize: work.sourceSize, now: ContinuousClock.now)
+                await recordVisibleThumbnailLifecycle(phase: "userWorkOnly", id: id)
+                return
+            }
             let pending = DownloadWork(
                 id: id,
                 url: work.url,
@@ -45,7 +61,6 @@ extension EnrichmentCoordinator {
                 isVideo: work.isVideo,
                 isDeviceStaging: work.isDeviceStaging
             )
-            readyClaims[id] = nil
             // The ready claim's Store claim passes to the demand.
             schedule.demand(pending, ownsStoreClaim: record.ownsStoreClaim)
             await recordVisibleThumbnailLifecycle(

@@ -107,7 +107,7 @@ extension EnrichmentCoordinator {
             await recordDispatchedWork(items)
             if !routing.readinessCounts.isEmpty {
                 OtosLog.metadata.notice(
-                    "op=catalog.enrichment.readiness phase=route probes=\(routing.examined, privacy: .public) ready=\(routing.readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(routing.readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(routing.readinessCounts["rangedReady", default: 0], privacy: .public) retryReadiness=\(routing.readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(routing.readinessCounts["materializationBound", default: 0], privacy: .public)"
+                    "op=catalog.enrichment.readiness phase=route probes=\(routing.examined, privacy: .public) ready=\(routing.readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(routing.readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(routing.readinessCounts["rangedReady", default: 0], privacy: .public) remoteReady=\(routing.readinessCounts["remoteReady", default: 0], privacy: .public) userWorkOnly=\(routing.readinessCounts["userWorkOnly", default: 0], privacy: .public) notDue=\(routing.readinessCounts["notDue", default: 0], privacy: .public) retryReadiness=\(routing.readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(routing.readinessCounts["materializationBound", default: 0], privacy: .public)"
                 )
             }
             logClaimBatch(
@@ -143,6 +143,7 @@ extension EnrichmentCoordinator {
             let asset = candidate.asset
             guard schedule.readinessProbeIsDue(asset.id, now: now) else {
                 releasedIDs.append(asset.id)
+                routing.readinessCounts["notDue", default: 0] += 1
                 continue
             }
 
@@ -195,6 +196,14 @@ extension EnrichmentCoordinator {
                     ownsStoreClaim: true
                 )
                 routing.readinessCounts["needsMaterialization", default: 0] += 1
+            case .fetchableForUserWork:
+                // Its source sends the whole original only for the user's work, and its
+                // ranges are not served now: nothing is asked of it. The row waits out the
+                // pacing ledger, like a ranged read its server did not answer; an outage
+                // stops claims through the root's answering fact.
+                schedule.pace(asset.id, sourceSize: asset.byteSize, now: now)
+                releasedIDs.append(asset.id)
+                routing.readinessCounts["userWorkOnly", default: 0] += 1
             case .unreachable:
                 schedule.deferReadinessProbe(asset.id, now: now)
                 releasedIDs.append(asset.id)

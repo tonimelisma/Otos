@@ -60,6 +60,17 @@ extension CatalogStore {
         return configuration
     }
 
+    /// The interactive readers' configuration (`CatalogStore.interactiveReader`): a second,
+    /// read-only pool on the same file, opened after the writer has migrated it, with the
+    /// main pool's cache settings. Two readers: a visible-tile read is a few milliseconds, and
+    /// nothing else uses them.
+    static func interactiveReaderConfiguration() -> Configuration {
+        var configuration = fileBackedDatabaseConfiguration()
+        configuration.readonly = true
+        configuration.maximumReaderCount = 2
+        return configuration
+    }
+
     /// Known migration identifiers in registration order. Future-schema refusal
     /// compares applied identifiers against this set before any write.
     static var knownMigrationIdentifiers: [String] {
@@ -348,6 +359,11 @@ extension CatalogStore {
         }
         migrator.registerMigration(CatalogSchema.photoDescriptionMigrationIdentifier) { db in
             for statement in CatalogSchema.photoDescriptionStatements {
+                try db.execute(sql: statement)
+            }
+        }
+        migrator.registerMigration(CatalogSchema.stackCandidatePathMigrationIdentifier) { db in
+            for statement in CatalogSchema.stackCandidatePathStatements {
                 try db.execute(sql: statement)
             }
         }

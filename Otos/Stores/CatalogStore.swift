@@ -74,20 +74,27 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     /// other kinds name: dimensions, orientation, camera, lens and serial, the capture
     /// instant, the record itself. What the same-photo rule compares.
     static let mediaRecord = CatalogChangedFacts(rawValue: 1 << 12)
+    /// What decides the stacks (ADR 0052) beyond which rows exist and the user's choices: the
+    /// kind, capture time or burst identifier of a still that is, or was before the write, in
+    /// a burst, or that shares its folder with a still it could pair with. A write that
+    /// changes those facts of a row no stack can hold — an Immich asset alone in its folder, a
+    /// video — does not name it, so the stacks stand
+    /// (`EnrichmentOverlayBeforeWrite.changesStacks`).
+    static let stacks = CatalogChangedFacts(rawValue: 1 << 13)
 
     static let all: CatalogChangedFacts = [
         .membership, .captureDate, .kindAndFormat, .grouping, .location, .placeNames, .faces, .copies,
-        .searchReadings, .detail, .choices, .images, .mediaRecord,
+        .searchReadings, .detail, .choices, .images, .mediaRecord, .stacks,
     ]
 
     /// How many kinds there are: the bits `all` sets.
-    static let bitCount = 13
+    static let bitCount = 14
 
     private static let names: [(CatalogChangedFacts, String)] = [
         (.membership, "membership"), (.captureDate, "captureDate"), (.kindAndFormat, "kindAndFormat"),
         (.grouping, "grouping"), (.location, "location"), (.placeNames, "placeNames"), (.faces, "faces"),
         (.copies, "copies"), (.searchReadings, "searchReadings"), (.detail, "detail"), (.choices, "choices"),
-        (.images, "images"), (.mediaRecord, "mediaRecord"),
+        (.images, "images"), (.mediaRecord, "mediaRecord"), (.stacks, "stacks"),
     ]
 
     /// The kinds by name, comma-separated, `all` or `none`: one log field.
@@ -270,11 +277,12 @@ actor CatalogStore {
         let burstIdentifier: String?
         let latitude: Double?
         let longitude: Double?
+        let parentPath: String?
 
         static let columnsSQL = """
         SELECT a.best_capture_local, a.best_kind, a.best_format, a.capture_wall_compact, a.thumbnail_path,
             a.preview_path, a.face_frames_path, a.content_identifier, a.burst_identifier,
-            m.primary_latitude, m.primary_longitude
+            m.primary_latitude, m.primary_longitude, a.parent_path
         FROM media_asset AS a
         LEFT JOIN asset_metadata AS m USING (library_root_id, relative_path)
         WHERE a.library_root_id = ? AND a.relative_path = ?
@@ -292,6 +300,7 @@ actor CatalogStore {
             burstIdentifier = row[8]
             latitude = row[9]
             longitude = row[10]
+            parentPath = row[11]
         }
 
         /// The kinds of fact the write changed besides its detail: the sort date; the kind
@@ -313,6 +322,52 @@ actor CatalogStore {
                 facts.insert(.location)
             }
             return facts
+        }
+
+        /// Whether a write that changed `facts` of this row can change a stack
+        /// (`CatalogChangedFacts.stacks`): a capture date, kind or grouping of a still that
+        /// carries, or carried, a burst identifier, or that shares its folder with a present
+        /// still it could pair with — any other still for a RAW, another RAW for a processed
+        /// image (`PhotoStackRule`). A still alone in its folder, as every Immich asset is in
+        /// its own, is in no stack whatever its date. One probe of
+        /// `idx_media_asset_stack_candidate`, asked only of a still whose date, kind or
+        /// grouping moved.
+        func changesStacks(
+            to new: EnrichmentOverlayBeforeWrite,
+            facts: CatalogChangedFacts,
+            libraryRootID: Int64,
+            relativePath: MediaRelativePath,
+            db: Database
+        ) throws -> Bool {
+            guard !facts.isDisjoint(with: [.captureDate, .kindAndFormat, .grouping]) else {
+                return false
+            }
+            let stills: Set<String> = [MediaKind.raw.rawValue, MediaKind.image.rawValue]
+            let wasStill = bestKind.map(stills.contains) ?? false
+            let isStill = new.bestKind.map(stills.contains) ?? false
+            guard wasStill || isStill else {
+                return false
+            }
+            if burstIdentifier != nil || new.burstIdentifier != nil {
+                return true
+            }
+            guard let folder = new.parentPath ?? parentPath else {
+                return false
+            }
+            let isOrWasRaw = bestKind == MediaKind.raw.rawValue || new.bestKind == MediaKind.raw.rawValue
+            return try Bool.fetchOne(
+                db,
+                sql: """
+                SELECT EXISTS (
+                    SELECT 1 FROM media_asset INDEXED BY idx_media_asset_stack_candidate
+                    WHERE library_root_id = ? AND best_kind IN ('raw', 'image') AND parent_path = ?
+                      AND relative_path <> ?
+                      AND (best_kind = 'raw' OR ?)
+                      AND \(CatalogVisibilitySQL.isPresent("media_asset"))
+                )
+                """,
+                arguments: [libraryRootID, folder, relativePath.rawValue, isOrWasRaw]
+            ) ?? false
         }
     }
 
@@ -356,6 +411,10 @@ actor CatalogStore {
 
     /// The WAL file size past which a bulk write empties the log (`boundWAL`).
     private let walByteBudget: Int64
+    /// The largest WAL file size a sample has logged since the last truncation. A log
+    /// SQLite keeps resetting is reused from its start and its file keeps its size, so a
+    /// sample says something only when the file grew (`boundWAL`).
+    private var walLoggedHighWater: Int64 = 0
     /// Where this catalog's staging roots live: the one answer every reader asks
     /// (`StagingContainers`). The app's are its bundle identifier's under Caches, a catalog
     /// file's sit beside it, and an in-memory catalog's in a temporary folder of its own. A
@@ -378,6 +437,13 @@ actor CatalogStore {
     private let initialLoadDidRead: (@Sendable () async -> Void)?
     private let importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)?
     private var dbWriter: (any DatabaseWriter)?
+    /// Readers no background read can occupy, for the reads a user is waiting on with
+    /// something on screen: the visible tiles' details (ADR 0002). The main pool's four
+    /// readers are held for seconds at a time by the window's order, the filter's options,
+    /// enrichment's claims and the derived owners' builds while a large library enriches, and a
+    /// tile's detail read waited 2.5–4.5 s for one with 0 ms of its own work. Nil for an
+    /// in-memory catalog, whose one connection serves every read.
+    private var interactiveReader: (any DatabaseReader)?
     private var databaseFileURL: URL?
     private var started = false
     private var startupTask: Task<Void, Error>?
@@ -589,7 +655,7 @@ extension CatalogStore {
         OtosLog.metadata.notice(
             "op=enrichment.sourceUnreadable phase=record rootPath=\(id.libraryRootPath.rawValue, privacy: .public) relativePath=\(id.relativePath.rawValue, privacy: .public)"
         )
-        bumpNamingRevision(for: id.libraryRootPath, reason: "sourceUnreadable")
+        recordNamingChange(for: id.libraryRootPath, reason: "sourceUnreadable")
     }
 
     /// Drops every unreadable verdict recorded under `rootPath`. Called where a root
@@ -623,8 +689,8 @@ extension CatalogStore {
 
     /// General planning revision bump for changes that may invalidate reorganization
     /// planning but change neither the occupied namespace nor naming (no-op rescans,
-    /// event deferrals, watch arming). Wakes the import coordinator with both
-    /// revisions unchanged, which the coordinator treats as a cheap no-op.
+    /// event deferrals, watch arming). Reorganization reads it when it plans; no import
+    /// plan reads it, so it wakes no one.
     @discardableResult
     func bumpPlanRevision(for path: LibraryRootPath) -> UInt64? {
         guard var state = roots[path] else {
@@ -632,7 +698,6 @@ extension CatalogStore {
         }
         state.planRevision &+= 1
         upsert(state)
-        emitPlanningChange(rootPath: path, state: state)
         OtosLog.catalog.notice(
             "op=catalog.planRevision phase=bump rootPath=\(path.rawValue, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
         )
@@ -644,6 +709,9 @@ extension CatalogStore {
     /// settlement, foreign occupant). Also advances `planRevision` — a namespace
     /// change is a superset planning change — and wakes the import coordinator, which
     /// replans every session reading this root as source or destination.
+    ///
+    /// Only a root an import plans against wakes the coordinator (`LibraryRootKind.isImportPlanned`):
+    /// an Immich account is neither a source nor a destination.
     @discardableResult
     func bumpNamespaceRevision(for path: LibraryRootPath, reason: String = "catalogChange") -> UInt64? {
         guard var state = roots[path] else {
@@ -652,34 +720,48 @@ extension CatalogStore {
         state.namespaceRevision &+= 1
         state.planRevision &+= 1
         upsert(state)
-        emitPlanningChange(rootPath: path, state: state)
+        if state.root.kind.isImportPlanned {
+            emitPlanningChange(rootPath: path, state: state)
+        }
         OtosLog.catalog.notice(
             "op=catalog.namespaceRevision phase=bump rootPath=\(path.rawValue, privacy: .public) reason=\(reason, privacy: .public) namespaceRevision=\(state.namespaceRevision, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
         )
         return state.namespaceRevision
     }
 
-    /// Naming bump for an enrichment write that changed what Otos would call this
-    /// root's assets (`capture_wall_compact`). Also advances `planRevision`, because
-    /// reorganization naming legitimately depends on capture dates.
+    /// Records an enrichment write that changed what Otos would call this root's assets
+    /// (`capture_wall_compact`), for the readers that name by it:
     ///
-    /// This does **not** advance `namespaceRevision`: no file moved, so a plan
-    /// copying *into* this root is untouched. Only a session reading this root as its
-    /// **source** replans, because the source's capture wall is what names the copy
-    /// (ARC-046, ARC-057).
-    @discardableResult
-    func bumpNamingRevision(for path: LibraryRootPath, reason: String = "enrichmentNaming") -> UInt64? {
+    /// - An import **source** (a card or camera) advances `namingRevision` and wakes the
+    ///   import coordinator, because the source's capture wall is what names the copy
+    ///   (ARC-046, ARC-057).
+    /// - A root that can be **reorganized** (a library) advances `planRevision`, which
+    ///   reorganization reads when it plans by capture dates.
+    ///
+    /// No other reader names by it. A library is an import destination too, but no file
+    /// moved, so a plan copying into it is untouched; an Immich account is read by neither,
+    /// so its enrichment moves nothing and wakes no one.
+    func recordNamingChange(for path: LibraryRootPath, reason: String = "enrichmentNaming") {
         guard var state = roots[path] else {
-            return nil
+            return
         }
-        state.namingRevision &+= 1
-        state.planRevision &+= 1
+        let kind = state.root.kind
+        guard kind.isImportSource || kind.supportsReorganization else {
+            return
+        }
+        if kind.isImportSource {
+            state.namingRevision &+= 1
+        }
+        if kind.supportsReorganization {
+            state.planRevision &+= 1
+        }
         upsert(state)
-        emitPlanningChange(rootPath: path, state: state)
+        if kind.isImportSource {
+            emitPlanningChange(rootPath: path, state: state)
+        }
         OtosLog.catalog.notice(
             "op=catalog.namingRevision phase=bump rootPath=\(path.rawValue, privacy: .public) reason=\(reason, privacy: .public) namingRevision=\(state.namingRevision, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
         )
-        return state.namingRevision
     }
 
     /// Records a namespace mutation before its owner crosses a database await.
@@ -1942,9 +2024,15 @@ extension CatalogStore {
     /// (day-contiguity — and so grouping — only holds under that sort), else
     /// index-paired with the returned IDs (DES-069; see
     /// `CatalogMediaGridState.dayBuckets`).
+    ///
+    /// `heldStacks`, when given and built over exactly the roots this read's stacks span, are
+    /// used instead of reading the stack candidates again: the caller holds them while nothing
+    /// they are built from moved (`CatalogChangedFacts.stackInputs`). The stacks used, read or
+    /// held, come back in `CatalogOrderedAssets.builtStacks`.
     func orderedAssetIDs(
         for descriptor: CatalogQueryDescriptor,
-        availableLibraryPaths: Set<LibraryRootPath>
+        availableLibraryPaths: Set<LibraryRootPath>,
+        heldStacks: PhotoStackSQL.Built? = nil
     ) async throws -> CatalogOrderedAssets {
         let scope = scopePredicate(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
         guard !scope.selectsNothing else {
@@ -1967,14 +2055,17 @@ extension CatalogStore {
         let dbWriter = try database()
         // The stacks are built in the read, before its rows: On This Day's match judges a
         // year's rows by them (`OnThisDayPicks.shows`), and every stack and row then comes
-        // from one snapshot (ADR 0052).
+        // from one snapshot (ADR 0052). Stacks the caller holds over the same roots are used
+        // instead: it holds them only while nothing they are built from has moved, so they are
+        // what this snapshot would build.
         let stackRootPaths = roots.pathsByRowID.filter { rowID, path in
             scope.rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
         }
         // One read transaction: a row this read sees under a new identity always comes
         // with the pending batch that renamed it (ARC-052).
+        let held = heldStacks.flatMap { $0.rootPaths == stackRootPaths ? $0 : nil }
         let timedRows = try await timedRead(dbWriter) { db in
-            let stacks = try PhotoStackSQL.build(rootPaths: stackRootPaths, db: db)
+            let stacks = try held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, db: db)
             return try (
                 rows: CatalogQueryGateway.fetchOrderedAssetIDRows(
                     descriptor: descriptor,
@@ -2070,14 +2161,15 @@ extension CatalogStore {
             ])
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stackCandidates=\(builtStacks.candidateCount, privacy: .public) stackReadMs=\(DiagnosticsTiming.milliseconds(builtStacks.readDuration), privacy: .public) stackRuleMs=\(DiagnosticsTiming.milliseconds(builtStacks.ruleDuration), privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stacks=\(held == nil ? "read" : "held", privacy: .public) stackCandidates=\(held == nil ? builtStacks.candidateCount : 0, privacy: .public) stackReadMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) : 0, privacy: .public) stackRuleMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return CatalogOrderedAssets(
             ids: ids,
             dayBuckets: dayBuckets,
             coordinates: coordinates,
             pendingIdentityRemaps: timedRows.value.pending,
-            stacks: catalogStacks
+            stacks: catalogStacks,
+            builtStacks: builtStacks
         )
     }
 
@@ -2266,8 +2358,8 @@ extension CatalogStore {
 
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreTileDetailQuery")
         let rootIDsBeforeRead = roots.rowIDSnapshot()
-        let dbWriter = try database()
-        let timedDetails = try await timedRead(dbWriter) { db in
+        let reader = try interactiveDatabase()
+        let timedDetails = try await timedRead(reader) { db in
             try CatalogQueryGateway.fetchStoredTileDetails(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogStoreTileDetailQuery", signpost)
@@ -3685,7 +3777,7 @@ extension CatalogStore {
         await boundWAL(reason: "enrichmentBatch")
         if writeOutcome.appliedCount > 0 {
             for rootPath in writeOutcome.namingChangedRoots {
-                bumpNamingRevision(for: rootPath)
+                recordNamingChange(for: rootPath)
             }
             // The change names what the batch changed, so a reader repeats only the reads
             // that depend on it: a batch that moved no capture date, kind, format, grouping
@@ -3804,7 +3896,13 @@ extension CatalogStore {
         ).map(EnrichmentOverlayBeforeWrite.init(row:))
         outcome.facts.insert(.detail)
         if let old = oldRow, let newRow {
-            outcome.facts.formUnion(old.changedFacts(to: newRow))
+            let changed = old.changedFacts(to: newRow)
+            outcome.facts.formUnion(changed)
+            if try old.changesStacks(
+                to: newRow, facts: changed, libraryRootID: rootID, relativePath: result.id.relativePath, db: db
+            ) {
+                outcome.facts.insert(.stacks)
+            }
         }
         if result.metadata != nil {
             outcome.facts.insert(.mediaRecord)
@@ -3990,7 +4088,13 @@ extension CatalogStore {
                     .map(EnrichmentOverlayBeforeWrite.init(row:))
                 outcome.facts.formUnion([.detail, .mediaRecord])
                 if let oldRow, let newRow {
-                    outcome.facts.formUnion(oldRow.changedFacts(to: newRow))
+                    let changed = oldRow.changedFacts(to: newRow)
+                    outcome.facts.formUnion(changed)
+                    if try oldRow.changesStacks(
+                        to: newRow, facts: changed, libraryRootID: rootID, relativePath: refresh.id.relativePath, db: db
+                    ) {
+                        outcome.facts.insert(.stacks)
+                    }
                 }
                 if oldRow?.captureWallCompact != newRow?.captureWallCompact {
                     outcome.namingChangedRoots.insert(refresh.id.libraryRootPath)
@@ -4008,7 +4112,7 @@ extension CatalogStore {
         ])
         if outcome.appliedCount > 0 {
             for rootPath in outcome.namingChangedRoots {
-                _ = bumpNamingRevision(for: rootPath, reason: "metadataRefresh")
+                recordNamingChange(for: rootPath, reason: "metadataRefresh")
             }
             notifyCatalogChanged(.changed(outcome.facts))
         }
@@ -4653,7 +4757,7 @@ extension CatalogStore {
             root: libraryRoot(from: storedRoot),
             rowID: storedRoot.id,
             sortIndex: storedRoot.sortIndex,
-            availability: LibraryRootKind.immichAccount.availabilityAtLaunch,
+            availability: LibraryRootKind.immichAccount.availabilityAtLaunch { false },
             activity: .idle,
             isEjectable: false,
             capabilities: storedRoot.capabilities
@@ -5571,8 +5675,14 @@ extension CatalogStore {
 }
 
 private extension CatalogStore {
+    /// The reader for a read a user waits on with something on screen (`interactiveReader`).
+    private func interactiveDatabase() throws -> any DatabaseReader {
+        let dbWriter = try database()
+        return interactiveReader ?? dbWriter
+    }
+
     private func timedRead<Value: Sendable>(
-        _ dbWriter: any DatabaseWriter,
+        _ dbWriter: any DatabaseReader,
         _ body: @Sendable @escaping (Database) throws -> Value
     ) async throws -> DatabaseTimedValue<Value> {
         let start = ContinuousClock.now
@@ -5635,6 +5745,12 @@ private extension CatalogStore {
         performThumbnailStoreStartupMaintenance()
         self.dbWriter = dbWriter
         databaseFileURL = openResult.openedFileURL
+        if let fileURL = openResult.openedFileURL {
+            interactiveReader = try DatabasePool(
+                path: fileURL.path(percentEncoded: false),
+                configuration: Self.interactiveReaderConfiguration()
+            )
+        }
         recordDatabaseOpenDiagnostics(dbWriter: dbWriter, storageKind: openResult.storageKind)
         OtosLog.persistence.info(
             "Catalog database opened storage=\(openResult.storageKind, privacy: .public)"
@@ -5739,13 +5855,16 @@ private extension CatalogStore {
 
         for storedRoot in storedRoots {
             let root = libraryRoot(from: storedRoot)
-            // SQLite proves that a root was saved, not that it is reachable now; what a
-            // launch knows before any source answers is the kind's own rule.
+            // SQLite proves that a root was saved, not that it is reachable now. A folder the
+            // user chose answers that with one `stat` of the folder, here, so its rows show in
+            // the first publication and its launch scan only reconciles them (ADR 0008): a
+            // reachable library's rows are never hidden until its scan, queued behind the
+            // other libraries' on one lane, starts. Every other kind knows its own rule.
             roots.upsert(RootRuntimeState(
                 root: root,
                 rowID: storedRoot.id,
                 sortIndex: storedRoot.sortIndex,
-                availability: root.kind.availabilityAtLaunch,
+                availability: root.kind.availabilityAtLaunch { rootIsAvailable(root.path) },
                 activity: .idle,
                 isEjectable: false,
                 capabilities: storedRoot.capabilities
@@ -6683,10 +6802,15 @@ private extension CatalogStore {
             return
         }
         guard walBytes > walByteBudget else {
-            OtosLog.catalog.noticeOperation("catalog.database.wal", phase: "sample", fields: [
-                "reason": reason,
-                "walBytes": "\(walBytes)",
-            ])
+            // A file that did not grow is a log SQLite is reusing: nothing new to say.
+            if walBytes > walLoggedHighWater {
+                walLoggedHighWater = walBytes
+                OtosLog.catalog.noticeOperation("catalog.database.wal", phase: "grew", fields: [
+                    "reason": reason,
+                    "walBytes": "\(walBytes)",
+                    "budgetBytes": "\(walByteBudget)",
+                ])
+            }
             return
         }
         do {
@@ -6697,6 +6821,7 @@ private extension CatalogStore {
                     continuation.resume(with: Result { try database.get().checkpoint(.truncate) })
                 }
             }
+            walLoggedHighWater = 0
             OtosLog.catalog.noticeOperation("catalog.database.wal", phase: "truncated", fields: [
                 "reason": reason,
                 "walBytesBefore": "\(walBytes)",

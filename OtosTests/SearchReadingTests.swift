@@ -53,6 +53,32 @@ struct SearchReadingTests {
         #expect(try Self.readAsTheIndexDoes(blank).isEmpty)
     }
 
+    /// A recognition that fails is no reading (ADR 0032 rule 4): Vision's
+    /// `CRImageReaderError` code 1, which can stay with a process for its life, leaves the
+    /// still without a result, so it stays owed and is read again, never stamped as holding
+    /// no text. A reading that finds nothing is a result with no lines, which is.
+    @Test func aFailedRecognitionIsNoReadingAndAnEmptyOneIs() async throws {
+        let directory = try makeTestDirectory()
+        try writeGradientJPEG(to: directory.appending(path: "preview.jpg"))
+        let candidate = SearchTextCandidate(
+            id: MediaAssetID(
+                libraryRootPath: LibraryRootPath(rawValue: "/Library"),
+                relativePath: MediaRelativePath(rawValue: "sign.jpg")
+            ),
+            previewPath: "preview.jpg",
+            source: "rendered"
+        )
+        let broken = SearchTextReader { _ in
+            throw NSError(domain: "TextRecognition.CRImageReaderError", code: 1)
+        }
+        #expect(await broken.read([candidate], directory: directory).isEmpty)
+
+        let empty = SearchTextReader { _ in [] }
+        #expect(await empty.read([candidate], directory: directory) == [
+            SearchTextResult(id: candidate.id, source: "rendered", lines: []),
+        ])
+    }
+
     /// Search matches every kept line; the Info pane shows only the certain ones.
     @Test func searchReadsEveryLineAndTheInfoPaneTheCertainOnes() {
         let lines = [

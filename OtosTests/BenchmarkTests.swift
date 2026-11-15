@@ -20,7 +20,7 @@ struct BenchmarkTests {
         let projection = CatalogProjection()
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
         try await Benchmark.measure("projection.windowState.allMedia") {
-            guard case let .built(state, _, _) = try await projection.buildWindowState(
+            guard case let .built(state, _, _, _) = try await projection.buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: request,
@@ -35,18 +35,32 @@ struct BenchmarkTests {
 
         // The pass an enrichment write that moved no fact the window reads costs: the order,
         // the filter's options and the collapse answered from the last pass (ADR 0005).
-        guard case let .built(_, _, lastReads) = try await projection.buildWindowState(
+        guard case let .built(_, _, firstReads, owed?) = try await projection.buildWindowState(
             store: store,
             libraries: libraries,
             request: request,
             reads: .none,
             revisions: CatalogFactRevisions()
         ) else {
-            Issue.record("nothing is searched, so nothing waits on a reading")
+            Issue.record("nothing is searched, and a first build owes its options")
             return
         }
+        // The options a published window owes, read after it publishes (`OwedFilterOptions`).
+        var options = CatalogFilterOptions.empty
+        try await Benchmark.measure("projection.filterOptions.allMedia") {
+            options = try await projection.readFilterOptions(owed, store: store).options
+            #expect(!options.formatsByKind.isEmpty)
+        }
+        var lastReads = firstReads
+        lastReads.filterOptions = CatalogProjectionReads.FilterOptions(
+            row: owed.row,
+            availableLibraryPaths: owed.availableLibraryPaths,
+            placeNameLanguages: owed.placeNameLanguages,
+            revisions: owed.revisions,
+            answer: options
+        )
         try await Benchmark.measure("projection.windowState.allMedia.heldReads") {
-            guard case let .built(state, metrics, _) = try await projection.buildWindowState(
+            guard case let .built(state, metrics, _, _) = try await projection.buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: request,
@@ -74,7 +88,7 @@ struct BenchmarkTests {
         ] {
             let onThisDay = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: .onThisDay(day)), generation: 0)
             try await Benchmark.measure(name) {
-                guard case let .built(state, _, _) = try await projection.buildWindowState(
+                guard case let .built(state, _, _, _) = try await projection.buildWindowState(
                     store: store,
                     libraries: libraries,
                     request: onThisDay,
@@ -159,8 +173,9 @@ struct BenchmarkTests {
         let library = try await BenchmarkPairLibrary.make(in: makeTestDirectory())
         let projection = CatalogProjection()
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
+        var lastReads = CatalogProjectionReads.none
         try await Benchmark.measure("projection.windowState.pairs") {
-            guard case let .built(state, _, _) = try await projection.buildWindowState(
+            guard case let .built(state, _, reads, _) = try await projection.buildWindowState(
                 store: library.store,
                 libraries: library.libraries,
                 request: request,
@@ -170,6 +185,25 @@ struct BenchmarkTests {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
             }
+            lastReads = reads
+            #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkPairLibrary.tileCount)
+        }
+        // What an enrichment batch that moved capture dates of rows no stack holds costs: the
+        // order read again over the stacks the last read built (`CatalogChangedFacts.stacks`).
+        var datesMoved = CatalogFactRevisions()
+        datesMoved.record(.captureDate)
+        try await Benchmark.measure("projection.windowState.pairs.heldStacks") {
+            guard case let .built(state, metrics, _, _) = try await projection.buildWindowState(
+                store: library.store,
+                libraries: library.libraries,
+                request: request,
+                reads: lastReads,
+                revisions: datesMoved
+            ) else {
+                Issue.record("nothing is searched, so nothing waits on a reading")
+                return
+            }
+            #expect(metrics.reuse.stacks && !metrics.reuse.order)
             #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkPairLibrary.tileCount)
         }
         await library.store.shutdown()

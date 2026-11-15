@@ -535,18 +535,30 @@ nonisolated struct CatalogOrderedAssets: Equatable, Sendable {
     /// Every stack in the scope's roots, read in the same transaction as the IDs (ADR
     /// 0052). The IDs are the full order: collapsing is the projection's.
     let stacks: CatalogStacks
+    /// The stacks as the read built them or was handed them, with the roots they span: a
+    /// reader holds them for its next read while nothing they are built from moves. Nil where
+    /// the read built none (a scope that selects nothing).
+    let builtStacks: PhotoStackSQL.Built?
 
     init(
         ids: [MediaAssetID],
         dayBuckets: [Date?],
         coordinates: [PlaceCoordinate] = [],
         pendingIdentityRemaps: [CatalogIdentityRemapBatch],
-        stacks: CatalogStacks = .empty
+        stacks: CatalogStacks = .empty,
+        builtStacks: PhotoStackSQL.Built? = nil
     ) {
         self.ids = ids
         self.dayBuckets = dayBuckets
         self.coordinates = coordinates
         self.pendingIdentityRemaps = pendingIdentityRemaps
         self.stacks = stacks
+        self.builtStacks = builtStacks
+    }
+
+    /// The answer, not how it was made: the held stacks' read timings are not compared.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.ids == rhs.ids && lhs.dayBuckets == rhs.dayBuckets && lhs.coordinates == rhs.coordinates
+            && lhs.pendingIdentityRemaps == rhs.pendingIdentityRemaps && lhs.stacks == rhs.stacks
     }
 }

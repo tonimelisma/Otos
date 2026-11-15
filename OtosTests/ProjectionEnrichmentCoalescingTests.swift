@@ -125,6 +125,50 @@ struct ProjectionEnrichmentCoalescingTests {
         #expect(dated.last == .changed([.detail, .copies, .mediaRecord, .images, .captureDate]))
     }
 
+    /// The stacks are held while no stack candidate's fact moves (ADR 0052): the JPEG of the
+    /// seeded library has no RAW beside it, so its new capture date names no `.stacks` (the
+    /// test above), while the same write to the JPEG of a RAW+JPEG pair does, and so does one
+    /// to the RAW.
+    @Test func aCaptureDateNamesTheStacksOnlyForAStackCandidate() async throws {
+        let temp = try makeTestDirectory()
+        let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let pair = CatalogScanner { _, _, batchHandler in
+            let files = [("DSC_1.ARW", "com.sony.arw-raw-image"), ("DSC_1.JPG", "public.jpeg")].map { name, type in
+                ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: name),
+                    name: name,
+                    contentTypeIdentifier: type,
+                    byteSize: 4,
+                    createdAt: Self.baseDate,
+                    contentModifiedAt: Self.baseDate
+                )
+            }
+            try await batchHandler(files)
+            return .mediaOnly(Set(files.map(\.relativePath)))
+        }
+        let store = CatalogStore(location: .inMemory, scanner: pair)
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: rootURL)
+        let state = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let changeStream = await store.changeNotifications()
+        let changeTask = Task {
+            for await change in changeStream {
+                await changes.append(change)
+            }
+        }
+        defer { changeTask.cancel() }
+
+        for (index, asset) in state.testAssets.sorted(by: { $0.id.relativePath.rawValue < $1.id.relativePath.rawValue }).enumerated() {
+            _ = await store.applyEnrichmentBatch([
+                detailEnrichment(for: asset, captureDate: Self.baseDate.addingTimeInterval(1_000_000)),
+            ])
+            let seen = await changes.waitForValues { $0.count == index + 1 }
+            #expect(seen.last?.facts.contains(.stacks) == true, "\(asset.id.relativePath.rawValue)")
+        }
+    }
+
     /// End-to-end: detail-only enrichment batches read neither the order nor the options; a
     /// capture date read from bytes reads the order once and reorders, and leaves the options
     /// standing, since a date offers no other type or place.
@@ -225,9 +269,11 @@ struct ProjectionEnrichmentCoalescingTests {
         await projection.updateSidebarSelection(.person(sam))
         try await waitForProjectionQuiescence(projection)
         let beforeAssignment = await projection.orderQueryCount
-        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [
-            .init(face: FaceID(asset: library.id("a.jpg"), index: 0), person: .existing(sam)),
-        ]))
+        // The user's own act, not a guess: `PeopleAssignment` runs its own passes after every
+        // faces write and decides guesses itself, so a guess written here raced its next pass,
+        // which could give the face to someone else and leave Sam's photos empty — the hang
+        // seen under a loaded parallel run. A user's act is never Otos's to decide again.
+        _ = try await library.store.perform(.move([FaceID(asset: library.id("a.jpg"), index: 0)], to: sam))
         let shown = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [library.id("a.jpg")] }
         #expect(shown.last?.mediaGrid.orderedAssetIDs == [library.id("a.jpg")])
         #expect(await projection.orderQueryCount > beforeAssignment)

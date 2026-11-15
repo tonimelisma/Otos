@@ -110,7 +110,15 @@ nonisolated struct SearchTextQuery: Sendable {
 /// Reads stored previews for text, on its own serial queue: decoding a 2,560 px preview and
 /// recognising text both block (ADR 0032 rule 6).
 actor SearchTextReader {
+    typealias Recognize = @Sendable (CGImage) throws -> [RecognizedTextLine]
+
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.search.text", qos: .utility)
+    /// Vision's reading (`SearchTextReading.read`); tests replace it to deliver its failure.
+    private let recognize: Recognize
+
+    init(recognize: @escaping Recognize = SearchTextReading.read) {
+        self.recognize = recognize
+    }
 
     nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
@@ -118,7 +126,10 @@ actor SearchTextReader {
 
     /// One result per candidate read. A preview that does not decode, or a recognition that
     /// fails, is no reading: it has no result, so the still stays owed and is read again after
-    /// the index's backoff.
+    /// the index's backoff, in this process or the next (ADR 0032 rule 4). A failure is never
+    /// a still with no text: Vision's `CRImageReaderError` code 1, which can stay with a
+    /// process for its life (`docs/research/2026-11-14-vision-text-reading-breaks-for-its-process.md`),
+    /// stamps nothing.
     func read(_ page: [SearchTextCandidate], directory: URL?) -> [SearchTextResult] {
         guard let directory else { return [] }
         return page.compactMap { candidate in
@@ -132,7 +143,7 @@ actor SearchTextReader {
                 return nil
             }
             do {
-                return try SearchTextResult(id: candidate.id, source: candidate.source, lines: SearchTextReading.read(image))
+                return try SearchTextResult(id: candidate.id, source: candidate.source, lines: recognize(image))
             } catch {
                 OtosLog.thumbnails.errorOperation("search.text", phase: "failed", fields: ["error": String(describing: error)])
                 return nil

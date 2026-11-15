@@ -101,6 +101,11 @@ final class HeldTransfer: Sendable {
         Self.transfers.withLock { $0[host] = self }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [HeldTransferProtocol.self]
+        // The transfer is held on purpose until its test ends it. URLSession's idle timeout
+        // (60 s) would otherwise race the test's own step under a loaded machine and end the
+        // read as a server that did not answer: it did, 71 s into a parallel suite.
+        configuration.timeoutIntervalForRequest = .greatestFiniteMagnitude
+        configuration.timeoutIntervalForResource = .greatestFiniteMagnitude
         return URLSession(configuration: configuration)
     }
 

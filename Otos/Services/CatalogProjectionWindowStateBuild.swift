@@ -12,7 +12,11 @@ extension CatalogProjection {
     /// Builds the window state for `request`, answering each catalog read from `previous`
     /// while it still holds (`CatalogProjectionReads`): `revisions` are the fact revisions
     /// the pass started from, which a read made now records. Returns the reads the state was
-    /// built from, for the pass to keep once it publishes.
+    /// built from, for the pass to keep once it publishes, and the filter's options when they
+    /// are owed: the window never waits for them (`OwedFilterOptions`).
+    ///
+    /// The People gallery shows people, not items (ADR 0047): it reads no order, no stacks, no
+    /// search and no options, and says only what its libraries' state is.
     func buildWindowState(
         store: CatalogStore,
         libraries unsortedLibraries: [CatalogLibraryState],
@@ -29,6 +33,15 @@ extension CatalogProjection {
             importBatches: importBatches,
             placeNameLanguages: placeNameLanguages
         )
+        if resolvedDescriptor.scope.isPeopleGallery {
+            return peopleGalleryBuild(
+                allRoots: allRoots,
+                request: request,
+                resolvedDescriptor: resolvedDescriptor,
+                importBatches: importBatches,
+                reads: previous
+            )
+        }
         // The query is read by the index's own owner; a pass only takes what it has read, so
         // it never waits on Translation or Maps. A query still being read builds nothing yet:
         // the pass keeps the last state and says it is searching, and the reader's report
@@ -41,8 +54,9 @@ extension CatalogProjection {
         var reads = previous
         var reuse = CatalogProjectionReuse()
 
-        // The filter's options depend on neither the order nor its search, so their read,
-        // when one is owed, runs beside the order's. An injected test builder shows none.
+        // The filter's options are read after the window publishes, when they are owed; until
+        // then the window carries the last ones read for its row, or none. An injected test
+        // builder shows none and owes none.
         let optionsRow = resolvedDescriptor.scope.sidebarRow
         let heldOptions = stateBuilder != nil ? CatalogFilterOptions.empty : previous.filterOptions(
             for: optionsRow,
@@ -51,16 +65,17 @@ extension CatalogProjection {
             at: revisions
         )
         reuse.filterOptions = heldOptions != nil && stateBuilder == nil
-        if heldOptions == nil {
-            filterOptionsQueryCount &+= 1
-        }
-        async let readOptions = Self.filterOptions(
-            held: heldOptions,
-            store: store,
+        let owedOptions: OwedFilterOptions? = heldOptions == nil ? OwedFilterOptions(
             row: optionsRow,
             availableLibraryPaths: availableLibraryPaths,
+            placeNameLanguages: placeNameLanguages,
+            revisions: revisions
+        ) : nil
+        let shownOptions = heldOptions ?? previous.lastFilterOptions(
+            for: optionsRow,
+            availableLibraryPaths: availableLibraryPaths,
             placeNameLanguages: placeNameLanguages
-        )
+        ) ?? .empty
 
         let ordered: CatalogOrderedAssets
         let orderQueryMs: Int
@@ -71,9 +86,11 @@ extension CatalogProjection {
         } else {
             orderQueryCount &+= 1
             let orderStart = ContinuousClock.now
+            let heldStacks = previous.stacks(at: revisions)
             ordered = try await store.orderedAssetIDs(
                 for: resolvedDescriptor,
-                availableLibraryPaths: availableLibraryPaths
+                availableLibraryPaths: availableLibraryPaths,
+                heldStacks: heldStacks
             )
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
             reads.order = CatalogProjectionReads.Order(
@@ -82,13 +99,21 @@ extension CatalogProjection {
                 revisions: revisions,
                 answer: ordered
             )
+            if let built = ordered.builtStacks {
+                // Stacks handed back unchanged keep the revisions they were read at.
+                let heldStill = heldStacks.map { $0.rootPaths == built.rootPaths } ?? false
+                reuse.stacks = heldStill
+                if !heldStill {
+                    stackReadCount &+= 1
+                    reads.stacks = CatalogProjectionReads.Stacks(built: built, revisions: revisions)
+                }
+            }
         }
         // Tests inject controlled derivation while keeping the real publication loop.
         if let stateBuilder {
-            _ = try await readOptions
             var state = try await stateBuilder(allRoots, ordered.ids, request)
             state.pendingIdentityRemaps = ordered.pendingIdentityRemaps
-            return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: orderQueryMs, reuse: reuse), reads)
+            return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: orderQueryMs, reuse: reuse), reads, nil)
         }
 
         var unsearched = makeBuildFacts(
@@ -124,50 +149,63 @@ extension CatalogProjection {
         // The supplementary reads are independent; an error in any fails the build.
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
         async let allAssetCount = catalogedAssetCount(facts, store: store)
-        let options = try await readOptions
-        if heldOptions == nil {
-            reads.filterOptions = CatalogProjectionReads.FilterOptions(
-                row: optionsRow,
-                availableLibraryPaths: availableLibraryPaths,
-                placeNameLanguages: placeNameLanguages,
-                revisions: revisions,
-                answer: options.options
-            )
-        }
         var (state, _) = try await windowState(
             from: facts,
             allAssetCount: allAssetCount,
             unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
-            filterOptions: options.options
+            filterOptions: shownOptions
         )
         state.pendingIdentityRemaps = ordered.pendingIdentityRemaps
         state.searchPhase = facts.search?.phase
         let metrics = CatalogProjectionBuildMetrics(
             orderQueryMs: orderQueryMs,
-            filterOptionsMs: options.ms,
             collapseMs: collapseMs,
             reuse: reuse
         )
-        return .built(state, metrics, reads)
+        return .built(state, metrics, reads, owedOptions)
     }
 
-    /// `held` when the last options still answer, else the Store's read of them, with what
-    /// the read took (0 for held options).
-    private static func filterOptions(
-        held: CatalogFilterOptions?,
-        store: CatalogStore,
-        row: SidebarSelection,
-        availableLibraryPaths: Set<LibraryRootPath>,
-        placeNameLanguages: Set<PlaceNameLanguage>
+    /// The People gallery's window: its libraries, title and sidebar, and what its libraries'
+    /// state says when it holds no one (`CatalogWindowPolicy.peopleGalleryLibrariesState`).
+    /// People itself comes from `PeopleAssignment`. Reads nothing, and keeps every read the
+    /// last pass made for the next scope that needs it.
+    private func peopleGalleryBuild(
+        allRoots: [CatalogLibraryState],
+        request: CatalogQueryRequest,
+        resolvedDescriptor: CatalogQueryDescriptor,
+        importBatches: [ImportBatchSummary],
+        reads: CatalogProjectionReads
+    ) -> CatalogProjectionBuild {
+        let facts = makeBuildFacts(
+            allRoots: allRoots,
+            request: request,
+            resolvedDescriptor: resolvedDescriptor,
+            importBatches: importBatches,
+            ordered: ([], [], []),
+            orderQueryMs: 0
+        )
+        var (state, _) = windowState(
+            from: facts,
+            allAssetCount: 0,
+            unfilteredVisibleAssetCount: 0,
+            filterOptions: .empty
+        )
+        state.mediaEmptyState = CatalogWindowPolicy.peopleGalleryLibrariesState(libraries: allRoots)
+        return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: 0), reads, nil)
+    }
+
+    /// Reads the options `owed` names. Run by the pass after the window it owes them to is
+    /// published.
+    func readFilterOptions(
+        _ owed: OwedFilterOptions,
+        store: CatalogStore
     ) async throws -> (options: CatalogFilterOptions, ms: Int) {
-        if let held {
-            return (held, 0)
-        }
+        filterOptionsQueryCount &+= 1
         let start = ContinuousClock.now
         let options = try await store.filterOptions(
-            for: row,
-            availableLibraryPaths: availableLibraryPaths,
-            placeNameLanguages: placeNameLanguages
+            for: owed.row,
+            availableLibraryPaths: owed.availableLibraryPaths,
+            placeNameLanguages: owed.placeNameLanguages
         )
         return (options, DiagnosticsTiming.milliseconds(since: start))
     }

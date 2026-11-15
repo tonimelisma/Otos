@@ -151,14 +151,21 @@ recovery.
 Use `DatabasePool` with WAL for file-backed locations so Store-owned projection,
 grid-detail, and enrichment reads can run alongside serialized writes. Keep
 `.inMemory` test locations on `DatabaseQueue`, because GRDB pools require files.
-File-backed pools use `maximumReaderCount = 4`. GRDB's reader pool can surface a
-QoS inversion warning (User-initiated waiter blocked on `Pool.get` while a
-lower-QoS holder runs) because `DispatchSemaphore` does not donate priority;
-measured UI-facing `waitMs` p95 under real ~23k load stays in the low teens of
-milliseconds, so the warning is accepted as benign — do not raise the reader
-count or add a second UI-only pool until unbiased `waitMs` evidence shows a
-real queueing problem (see
-`docs/research/2026-07-10-grdb-reader-pool-qos.md`). Do not add a second cache
+File-backed pools use `maximumReaderCount = 4`. Those readers are shared by every
+background read — the window's order and options, enrichment's claims, the derived owners'
+builds — and at 164,517 assets with an account enriching, each of those holds a reader for
+seconds; a visible tile's detail read then waited 2.5–4.5 s for one, with 0 ms of its own
+work (`docs/research/2026-11-14-scope-switch-and-background-laps.md`; at ~23k assets the
+same wait's p95 was 17 ms, `docs/research/2026-07-10-grdb-reader-pool-qos.md`). So a
+file-backed Store also opens a second, read-only `DatabasePool` of two readers on the same
+file after migrating it (`CatalogStore.interactiveReader`), and the reads a user waits on
+with something on screen — the visible tiles' details — use only it. No background read
+can occupy it, so it never queues behind one. It is not a cache: every read is a SQLite
+read of the current WAL snapshot. A truncating checkpoint (below) can find one of its short
+reads in flight; the checkpoint then fails, is logged, and the next bulk write retries it.
+Raising the shared pool's reader count was rejected: background work fans out to fill any
+count.
+Do not add a second cache
 layer or query-paging architecture until measurements or implemented
 requirements prove the current Store-owned query model insufficient.
 
@@ -170,7 +177,7 @@ a 147k-asset Immich first sync, 357 MB in a 100k-row listing probe whose log sta
 25 MB with no reader (`docs/research/2026-11-12-listing-batch-cost.md`). After every
 bulk write (a scan batch, a device- or source-listing batch, an enrichment batch) Store
 reads the WAL file's size: a log SQLite keeps resetting is reused from its start, so
-its file stays near one write's pages, and only a starved one keeps growing. Past
+its file stays near one write's pages, and only a starved one keeps growing. The read is logged only when the file grew past the largest size logged since the last truncation (`op=catalog.database.wal phase=grew`): a reused log's file keeps its size, so a line per batch (586 in 20 minutes at 57 MB, under the budget) said nothing new. Past
 `CatalogStore.defaultWALByteBudget` (64 MiB, about two and a half times the unstarved
 high-water mark) Store truncates the log behind GRDB's barrier, which waits for the
 reads in flight and holds new ones until the log is empty. The barrier is GRDB's callback form, so the wait blocks GRDB's queue rather than

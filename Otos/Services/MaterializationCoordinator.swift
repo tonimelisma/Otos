@@ -18,6 +18,11 @@ nonisolated enum OriginalLocality: Equatable, Sendable {
     /// The bytes are not here, and a deliberate transfer can bring them: a dataless
     /// cloud placeholder, or a staged original not yet copied from its source.
     case fetchable
+    /// The bytes are not here, and their source sends them only for work the user is
+    /// waiting on (`MaterializationCoordinator.Priority.isUserWork`): an Immich account's
+    /// original, downloaded for a zoom, an edit, an export or a hand-off and never to
+    /// enrich a library (ADR 0046 §4). Background and device work never asks for it.
+    case fetchableForUserWork
     /// The original cannot be read or fetched: a missing in-place file, or an unreadable
     /// status.
     case unreachable
@@ -34,12 +39,25 @@ nonisolated enum OriginalLocality: Equatable, Sendable {
     /// Locality of a root's original. A root that stages its originals keeps them in an
     /// Otos folder that holds only what has been copied so far, so a file absent there is
     /// one the source has yet to send, not a missing original. Whether the source can
-    /// send it now is the executor's answer (`deviceUnavailable`), not a guess here.
-    static func of(stagesOriginals: Bool, status: FileMaterializationStatus) -> OriginalLocality {
-        guard stagesOriginals else {
+    /// send it now is the executor's answer (`deviceUnavailable`), not a guess here; whether
+    /// it sends it for this work is the kind's (`sendsOriginalsOnlyForUserWork`).
+    static func of(kind: LibraryRootKind?, status: FileMaterializationStatus) -> OriginalLocality {
+        guard let kind, kind.stagesOriginals else {
             return inPlace(status)
         }
-        return status == .materialized ? .local : .fetchable
+        guard status != .materialized else {
+            return .local
+        }
+        return kind.sendsOriginalsOnlyForUserWork ? .fetchableForUserWork : .fetchable
+    }
+
+    /// Whether a transfer at `priority` may bring the bytes here.
+    func isFetchable(at priority: MaterializationCoordinator.Priority) -> Bool {
+        switch self {
+        case .fetchable: true
+        case .fetchableForUserWork: priority.isUserWork
+        case .local, .unreachable: false
+        }
     }
 }
 
@@ -48,6 +66,9 @@ nonisolated enum EnsureLocalOutcome: Equatable, Sendable {
     case local
     case unreachable
     case notMaterialized(MaterializationOutcome)
+    /// The source sends this original only for the user's work, and the request was not
+    /// (`OriginalLocality.fetchableForUserWork`). Nothing was asked of it.
+    case userWorkOnly
 
     var isLocal: Bool {
         self == .local
@@ -69,7 +90,12 @@ extension MaterializationRequesting {
                 "id": request.id.relativePath.rawValue,
             ])
             return .unreachable
-        case .fetchable:
+        case .fetchableForUserWork where !request.priority.isUserWork:
+            OtosLog.mediaIO.noticeOperation("original.ensureLocal", phase: "userWorkOnly", fields: [
+                "id": request.id.relativePath.rawValue, "priority": "\(request.priority)",
+            ])
+            return .userWorkOnly
+        case .fetchable, .fetchableForUserWork:
             let result = await materialize(request)
             guard result.isMaterialized else {
                 OtosLog.mediaIO.noticeOperation("original.ensureLocal", phase: "notMaterialized", fields: [
@@ -110,6 +136,12 @@ actor MaterializationCoordinator: MaterializationRequesting {
         /// Demand-bounded priorities stop their transfer when the last waiter leaves.
         /// Background and device keep polling on purpose (ENR-008 wants those bytes).
         var cancelsWhenUnwaited: Bool {
+            self == .interactive || self == .command
+        }
+
+        /// Work the user asked for: on screen (`interactive`) or commanded (`command`). A
+        /// source that sends originals only for the user's work sends them for these.
+        var isUserWork: Bool {
             self == .interactive || self == .command
         }
 
@@ -302,10 +334,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     @concurrent
     nonisolated func locality(of id: MediaAssetID) async -> OriginalLocality {
         let kind = await store.rootKind(for: id.libraryRootPath)
-        return OriginalLocality.of(
-            stagesOriginals: kind?.stagesOriginals ?? false,
-            status: status(id.fileURL)
-        )
+        return OriginalLocality.of(kind: kind, status: status(id.fileURL))
     }
 
     func shutdown() async {
