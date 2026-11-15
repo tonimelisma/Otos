@@ -489,13 +489,15 @@ extension CatalogWindowViewModel {
 
     // MARK: - Lanes
 
-    func startEditing(store: CatalogStore) {
+    /// Starts the edit lanes over `store`. The window owns its `analyzer`; a test making many
+    /// windows in one process shares one, so the models load once there as they do in the app.
+    func startEditing(store: CatalogStore, analyzer: EditAnalyzer = EditAnalyzer()) {
         let pipeline = EditPipeline(
             store: store,
             renderer: liveEditRenderer,
             materialization: materializationCoordinator,
             directory: store.thumbnailDirectory,
-            analyzer: EditAnalyzer()
+            analyzer: analyzer
         )
         startLiveEditRendering(pipeline)
         startEditSaving(pipeline)

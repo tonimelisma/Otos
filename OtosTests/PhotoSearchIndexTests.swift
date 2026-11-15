@@ -621,6 +621,79 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    /// ADR 0032 rule 1: a pass that reconciles the text readings changes memory only after its
+    /// reads. A query answered while the pass awaits the readings memory lacks gets the answer
+    /// its revision names: the one memory gave before the pass, not memory with the gone
+    /// readings removed and the new ones not yet in, under the same revision.
+    @Test func aQueryDuringATextReconcileAnswersAsItsRevisionSays() async throws {
+        let catalog = try await makeCatalog()
+        let store = catalog.store
+        let red = try #require(catalog.assets.first { $0.id == catalog.red })
+        let blue = try #require(catalog.assets.first { $0.id == catalog.blue })
+        try await giveReading(store, blue, preview: "blue-preview.heic", text: "Proof of Insurance")
+        let held = ArrivalGate()
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            textReader: SearchTextReader { RecognizingSession { _ in [] } },
+            readTexts: { [redID = catalog.red] ids in
+                // Only the pass that reads red's new reading is held.
+                if ids.contains(redID) {
+                    await held.arrive()
+                }
+                return try await store.currentSearchTexts(for: ids)
+            }
+        )
+        let changes = await index.changes()
+        await index.start()
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "insurance")
+        let scope = [catalog.red, catalog.blue]
+        let before = try await waitForValue {
+            let matches = try await index.matches(query, facts: nil, among: scope)
+            return (matches.scores?[catalog.blue] ?? 0) > PhotoSearchIndex.textMatchScore - 1 ? matches : nil
+        }
+
+        // Blue's reading goes stale (a new preview) and red gets one: the next pass removes
+        // one reading and reads the other.
+        try await giveReading(store, red, preview: "red-preview.heic", text: "Insurance policy")
+        _ = await store.applyEnrichmentBatch([EnrichmentResult(
+            id: blue.id, metadata: AssetMetadata(), enrichedKind: .image, thumbnailPath: "blue-thumb.jpg",
+            sourceSize: blue.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(blue.contentModifiedAt), contentHash: nil,
+            previewPath: "blue-preview-2.heic"
+        )])
+        await held.waitForArrivals(1)
+
+        let during = try await index.matches(query, facts: nil, among: scope)
+        try #require(during.indexRevision == before.indexRevision, "nothing but the held text read is in this pass")
+        #expect(during == before)
+
+        await held.open()
+        let after = try await waitForValue {
+            let matches = try await index.matches(query, facts: nil, among: scope)
+            return matches.indexRevision != before.indexRevision ? matches : nil
+        }
+        #expect((after.scores?[catalog.red] ?? 0) > PhotoSearchIndex.textMatchScore - 1)
+        #expect((after.scores?[catalog.blue] ?? 0) < PhotoSearchIndex.textMatchScore - 1)
+        await index.shutdown()
+        await store.shutdown()
+    }
+
+    /// Gives `asset` a stored preview named `preview` and a text reading of it.
+    private func giveReading(_ store: CatalogStore, _ asset: MediaAsset, preview: String, text: String) async throws {
+        let thumbnail = asset.id.relativePath.rawValue.replacingOccurrences(of: ".jpg", with: "-thumb.jpg")
+        _ = await store.applyEnrichmentBatch([EnrichmentResult(
+            id: asset.id, metadata: AssetMetadata(), enrichedKind: .image, thumbnailPath: thumbnail,
+            sourceSize: asset.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt), contentHash: nil,
+            previewPath: preview
+        )])
+        let candidate = try #require(try await store.searchTextCandidates(limit: 10).first { $0.id == asset.id })
+        _ = try await store.applySearchTexts([SearchTextResult(
+            id: asset.id, source: candidate.source, lines: [RecognizedTextLine(text: text, confidence: 1)]
+        )])
+    }
+
     /// Relevance order is best match first, ties in the scope's order, and ungrouped; the
     /// scope's own order keeps its day grouping. Unmatched items leave either way.
     @Test func searchedScopesKeepOrDropTheirOrder() {

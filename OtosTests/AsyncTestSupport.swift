@@ -73,8 +73,7 @@ func drainMainQueue() async {
 func awaitGridShows(_ controller: MediaGridViewController, _ grid: CatalogMediaGridState) async throws {
     let gate = controller.mutationGate
     try await waitUntil {
-        gate.displayedOrderedIDs == grid.orderedAssetIDs && gate.displayedDayBuckets == grid.dayBuckets
-            && gate.inFlight == .none
+        gate.showsDisplayedOrder(grid) && gate.inFlight == .none
     }
     await drainMainQueue()
 }

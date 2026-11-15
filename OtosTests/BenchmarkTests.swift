@@ -649,6 +649,21 @@ struct BenchmarkTests {
             #expect(model.state.mediaGrid.orderedAssetIDs.count == ownerSize)
             next = next.mediaGrid.detailRefreshGeneration == 1 ? other : first
         }
+
+        // The grid's gate asks whether a publication holds the order it shows: by identity,
+        // so its cost is not the library's.
+        let gate = MediaGridMutationGate()
+        _ = gate.receive(first.mediaGrid)
+        _ = gate.completeStructuralApply(applied: first.mediaGrid)
+        next = republished
+        try await Benchmark.measure("grid.gate.republished.158k") {
+            let actions = gate.receive(next.mediaGrid)
+            guard case .refreshVisible = actions.first else {
+                Issue.record("a republished order is a detail refresh, not \(actions)")
+                return
+            }
+            next = next.mediaGrid.detailRefreshGeneration == 1 ? republished : first
+        }
     }
 
     /// What the window's cheap apply costs Projection, off the main actor, at the owner's
@@ -717,13 +732,13 @@ struct BenchmarkTests {
             tiles[shown] = TileStacks(pair: pair)
             hidden[raw] = shown
         }
-        var grid = CatalogMediaGridState(
+        let grid = CatalogMediaGridState(
             descriptor: CatalogQueryDescriptor(scope: scope),
             orderedAssetIDs: ids,
             dayBuckets: buckets,
+            stacks: CatalogGridStacks(tiles: tiles, shownForHiddenMember: hidden),
             detailRefreshGeneration: generation
         )
-        grid.stacks = CatalogGridStacks(tiles: tiles, shownForHiddenMember: hidden)
         return CatalogWindowState(
             title: "Bench",
             libraries: [],

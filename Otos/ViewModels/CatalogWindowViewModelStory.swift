@@ -111,7 +111,7 @@ extension CatalogWindowViewModel {
         } else if previous.onThisDay != nil {
             tileContentStore.pinVisible([])
         }
-        if next.onThisDay != previous.onThisDay || next.mediaGrid.orderedAssetIDs != previous.mediaGrid.orderedAssetIDs {
+        if next.onThisDay != previous.onThisDay || !next.mediaGrid.sharesOrder(with: previous.mediaGrid) {
             anniversaryTitleRequests?.yield(Self.titledAnniversaries(next))
         }
         let scopeChanged = previous.mediaGrid.descriptor.scope != next.mediaGrid.descriptor.scope

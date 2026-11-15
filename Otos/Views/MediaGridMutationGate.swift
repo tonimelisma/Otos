@@ -108,13 +108,15 @@ final class MediaGridMutationGate {
         }
     }
 
-    /// The identity order and day buckets the gate last adopted, which together decide
-    /// whether a grid needs a structural apply at all: the same two values build the same
+    /// The content the gate last adopted, whose order and day buckets decide whether a grid
+    /// needs a structural apply at all: the same two values build the same
     /// `MediaGridStructure`, so a grid repeating them is a detail refresh that touches no
-    /// section, batch or layout. Sections, index paths and membership are the controller's
-    /// `MediaGridStructure`, built from the same arrays.
-    private(set) var displayedOrderedIDs: [MediaAssetID] = []
-    private(set) var displayedDayBuckets: [Date?] = []
+    /// section, batch or layout. Told by identity (`CatalogGridContent.sharesOrder`), never by
+    /// comparing the library-sized arrays on the main actor: Projection hands an equal order
+    /// on as the same one. Sections, index paths and membership are the controller's
+    /// `MediaGridStructure`, built from the same arrays. Nil before the first apply, when the
+    /// grid shows nothing.
+    private(set) var displayedContent: CatalogGridContent?
     private(set) var displayedDescriptor: CatalogQueryDescriptor = .default
     /// What the installed layout currently shows.
     private(set) var installedColumnCount: Int
@@ -208,8 +210,7 @@ final class MediaGridMutationGate {
     /// The structural apply for `grid` finished. Adopts its identities/descriptor
     /// as displayed, clears the in-flight slot, then drains any parked work.
     func completeStructuralApply(applied grid: CatalogMediaGridState) -> [Action] {
-        displayedOrderedIDs = grid.orderedAssetIDs
-        displayedDayBuckets = grid.dayBuckets
+        displayedContent = grid.content
         displayedDescriptor = grid.descriptor
         inFlight = .none
         guard canDrainPendingGrid else {
@@ -232,18 +233,28 @@ final class MediaGridMutationGate {
     }
 
     /// Evaluates a grid as if the gate were idle: updates descriptor bookkeeping and
-    /// returns either a non-exclusive `.refreshVisible` (identical identities and days) or
+    /// returns either a non-exclusive `.refreshVisible` (the order and days shown) or
     /// an exclusive `.apply` (a new order, or a photo moved to another day without moving
     /// in the order), marking `inFlight = .structuralApply` in the apply case. Shared by
     /// `receive`'s idle path and `drain`.
     private func idleGridAction(_ grid: CatalogMediaGridState) -> Action {
         let change = QueryChange(from: displayedDescriptor, to: grid.descriptor)
-        if grid.orderedAssetIDs == displayedOrderedIDs, grid.dayBuckets == displayedDayBuckets {
+        if showsDisplayedOrder(grid) {
             displayedDescriptor = grid.descriptor
             return .refreshVisible(grid, change: change)
         }
         inFlight = .structuralApply
         return .apply(grid, change: change)
+    }
+
+    /// Whether `grid` holds the order and days the grid shows: the same publication of
+    /// them, or no order where nothing is shown. Constant time.
+    func showsDisplayedOrder(_ grid: CatalogMediaGridState) -> Bool {
+        guard let displayedContent else {
+            return grid.orderedAssetIDs.isEmpty
+        }
+        return grid.content.sharesOrder(with: displayedContent)
+            || (grid.orderedAssetIDs.isEmpty && displayedContent.orderedAssetIDs.isEmpty)
     }
 
     /// Runs after every completion, in order: parked grid first (content correctness),

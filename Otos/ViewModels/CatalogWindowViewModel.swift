@@ -87,12 +87,12 @@ final class CatalogWindowViewModel {
     /// rather than a timer's sample of it (B4).
     var lastDrawnSignature: [LibraryRootPath: String] = [:]
     /// Batches a run has started copying into, each with its card, until the sidebar first
-    /// draws the batch's row: the run names its batch once the batch's first item is in the
-    /// catalog, but the row exists only once Projection publishes it, which can be after the
-    /// run has finished and stopped naming it.
+    /// draws the batch's row or the user leaves the card's row: the run names its batch once
+    /// the batch's first item is in the catalog, but the row exists only once Projection
+    /// publishes it, which can be after the run has finished and stopped naming it.
     var importBatchesAwaitingTheirRow: [ImportBatchID: LibraryRootPath] = [:]
     /// Batches this window has already moved the user into (or declined to, because the
-    /// user was elsewhere when the batch row first existed). A run moves the selection
+    /// user was elsewhere when the batch row first existed or left the card's row before). A run moves the selection
     /// once; a user who goes back to the card is not pulled to the batch again.
     var followedImportBatches: Set<ImportBatchID> = []
     /// The last applied publication. Observed by hand rather than by the macro's tracked

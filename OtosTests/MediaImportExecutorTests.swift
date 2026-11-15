@@ -242,7 +242,7 @@ struct ImportRecoveryTests {
         #expect(try Data(contentsOf: final) == Data("foreign!".utf8))
         #expect(!FileManager.default.fileExists(atPath: staging.path))
         #expect(try await store.activeImportOperations().isEmpty)
-        #expect(try await store.importBatches(countingFor: .allImports).isEmpty)
+        #expect(try await store.importBatches(counting: .every).isEmpty)
     }
 
     @Test func matchingFinalOnlyRecoverySettlesAfterOwnershipProof() async throws {
@@ -308,7 +308,7 @@ struct ImportRecoveryTests {
 
         #expect(try Data(contentsOf: final) == Data("foreign!".utf8))
         #expect(try await store.activeImportOperations().isEmpty)
-        #expect(try await store.importBatches(countingFor: .allImports).isEmpty)
+        #expect(try await store.importBatches(counting: .every).isEmpty)
     }
 
     /// Launch order: the coordinator starts on its own task, independent of

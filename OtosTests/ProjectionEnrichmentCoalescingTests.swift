@@ -368,7 +368,11 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.projection.updateSidebarSelection(.allMedia)
         _ = await window.recorder.waitForValues { $0.last?.resolvedSidebarSelection == .allMedia }
         try await waitForProjectionQuiescence(window.projection)
+        // A library publication of the enrichment can reach the recorder after it was
+        // counted (the recorder consumes the stream on its own task), so the return starts
+        // at its first All Media publication.
         let returns = await window.recorder.snapshot().dropFirst(published)
+            .drop { $0.resolvedSidebarSelection != .allMedia }
 
         #expect(returns.first?.resolvedSidebarSelection == .allMedia)
         #expect(returns.first?.mediaGrid.orderedAssetIDs == window.ids, "the first paint is the held order")

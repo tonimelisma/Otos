@@ -165,6 +165,35 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.sidebarSelection == .library(Self.cardPath))
     }
 
+    /// A batch whose row never appears (its items left the catalog first) is not waited on
+    /// for ever: leaving the card's row ends the wait, and the row appearing later, with the
+    /// user back on the card, does not pull them.
+    @Test func leavingTheCardBeforeTheRowAppearsEndsTheWait() {
+        let model = makeModel()
+        model.applyState(Self.attachedState(model, importBatches: []))
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        #expect(model.importBatchesAwaitingTheirRow[Self.batchID] == Self.cardPath)
+
+        model.selectSidebar(.library(Self.libraryPath))
+        model.applyState(Self.state(
+            resolvedSidebarSelection: .library(Self.libraryPath),
+            importBatches: [],
+            queryGeneration: model.queryGeneration,
+            libraries: [Self.library(Self.libraryPath)],
+            removableSources: [Self.card(Self.cardPath)]
+        ))
+        #expect(model.importBatchesAwaitingTheirRow.isEmpty)
+
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyState(Self.attachedState(model, importBatches: [
+            ImportBatchSummary(batchID: Self.batchID, photoCount: 1),
+        ]))
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+        #expect(model.importBatchesAwaitingTheirRow.isEmpty)
+    }
+
     @Test func aRunThatIsNotCopyingDoesNotMoveTheUser() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))

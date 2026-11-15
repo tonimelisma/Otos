@@ -207,14 +207,19 @@ extension CatalogWindowViewModel {
     /// stays there, and one who returns to the card afterwards is not pulled back — the
     /// card's row keeps the bar, Cancel and Eject. Same path as a sidebar click
     /// (`selectSidebar`).
+    ///
+    /// A wait ends on one of two facts, never on time: the row appears, or the user is no
+    /// longer on the card's row, which declines the move for good. A run names its batch
+    /// only once an item is in the catalog (`batchHasPublishedAsset`), so a cancelled or
+    /// failed run's batch still appears; one whose items leave the catalog first never does,
+    /// and only the user (Move to Trash, removing the library) takes them out from elsewhere.
     func followRunsIntoTheirBatches() {
-        for (batchID, sourcePath) in importBatchesAwaitingTheirRow
-            where state.importBatches.contains(where: { $0.batchID == batchID })
-        {
+        for (batchID, sourcePath) in importBatchesAwaitingTheirRow {
+            let rowExists = state.importBatches.contains { $0.batchID == batchID }
+            let onTheCard = sidebarSelection == .library(sourcePath)
+            guard rowExists || !onTheCard else { continue }
             importBatchesAwaitingTheirRow[batchID] = nil
-            guard followedImportBatches.insert(batchID).inserted,
-                  sidebarSelection == .library(sourcePath)
-            else {
+            guard followedImportBatches.insert(batchID).inserted, rowExists, onTheCard else {
                 continue
             }
             OtosLog.ui.noticeOperation("import.follow", phase: "select", fields: [

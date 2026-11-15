@@ -202,7 +202,7 @@ struct PhotoStackStoreTests {
             }
             try stamp.close()
 
-            let batches = try await library.store.importBatches(countingFor: .allImports)
+            let batches = try await library.store.importBatches(counting: .every)
             // First: the DSC1 pair, DSC2, the DSC3 RAW alone, the burst. Second: the DSC3 JPEG.
             #expect(batches == [
                 ImportBatchSummary(batchID: second, photoCount: 1),
@@ -238,12 +238,12 @@ struct PhotoStackStoreTests {
             try stamp.close()
             let oldest = batches[0]
 
-            let sidebar = try await library.store.importBatches(countingFor: .library(library.rootPath))
+            let sidebar = try await library.store.importBatches(counting: ImportBatchListing.counting(for: .library(library.rootPath)))
             #expect(sidebar.map(\.batchID) == batches.reversed())
             #expect(sidebar.map(\.photoCount) == [1, 1, 1, 1, 1, nil])
-            let selected = try await library.store.importBatches(countingFor: .importBatch(oldest))
+            let selected = try await library.store.importBatches(counting: ImportBatchListing.counting(for: .importBatch(oldest)))
             #expect(selected.map(\.photoCount) == [1, 1, 1, 1, 1, 1])
-            let all = try await library.store.importBatches(countingFor: .allImports)
+            let all = try await library.store.importBatches(counting: .every)
             #expect(all.allSatisfy { $0.photoCount == 1 })
             #expect(ImportBatchListing.sidebarRows(batches.reversed(), selection: .importBatch(oldest)).last == oldest)
         }

@@ -37,7 +37,7 @@ struct ProjectionChangeSummaryTests {
         #expect(summary(previous: base, current: filterOptionsChanged).stateChanged)
 
         var mediaOrderChanged = base
-        mediaOrderChanged.mediaGrid.orderedAssetIDs = [id]
+        mediaOrderChanged.mediaGrid = CatalogMediaGridState(descriptor: base.mediaGrid.descriptor, orderedAssetIDs: [id])
         #expect(summary(previous: base, current: mediaOrderChanged).stateChanged)
 
         var detailRefreshChanged = base

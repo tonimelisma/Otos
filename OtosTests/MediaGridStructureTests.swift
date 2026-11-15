@@ -331,31 +331,37 @@ extension AppKitWindowTests {
                 // A photo changes day without moving in the order.
                 [("n", two), ("a", one), ("b", one)],
             ]
-            try await applyEach(steps, to: controller)
+            let applied = try await applyEach(steps, to: controller)
 
-            // A republished grid with the same order over the same days touches nothing:
-            // no apply starts, and the views on screen stay the same objects.
+            // A republished grid with the same order over the same days — handed on as the
+            // same order, as Projection publishes it — touches nothing: no apply starts, and
+            // the views on screen stay the same objects.
             let last = try #require(steps.last)
             let shown = Set(controller.collectionView.visibleItems().map(ObjectIdentifier.init))
             #expect(!shown.isEmpty)
-            var republished = CatalogMediaGridState(
+            let republished = try CatalogMediaGridState(
                 scope: .allMedia,
                 orderedAssetIDs: last.map { MediaGridStructureTests.id($0.0) },
-                dayBuckets: last.map(\.1)
-            )
-            republished.detailRefreshGeneration = 99
+                dayBuckets: last.map(\.1),
+                detailRefreshGeneration: 99
+            ).sharingContent(of: #require(applied))
             controller.receive(republished)
             #expect(controller.mutationGate.inFlight == .none)
             controller.collectionView.layoutSubtreeIfNeeded()
             #expect(Set(controller.collectionView.visibleItems().map(ObjectIdentifier.init)) == shown)
         }
 
-        private func applyEach(_ steps: [[(String, Date?)]], to controller: MediaGridViewController) async throws {
+        /// Applies each step in turn and returns the last grid applied.
+        private func applyEach(
+            _ steps: [[(String, Date?)]], to controller: MediaGridViewController
+        ) async throws -> CatalogMediaGridState? {
+            var applied: CatalogMediaGridState?
             for entries in steps {
                 let ids = entries.map { MediaGridStructureTests.id($0.0) }
                 let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids, dayBuckets: entries.map(\.1))
                 controller.receive(grid)
                 try await awaitGridShows(controller, grid)
+                applied = grid
                 controller.collectionView.layoutSubtreeIfNeeded()
                 let expected = MediaGridStructure(orderedIDs: ids, dayBuckets: entries.map(\.1))
                 #expect(controller.structure.sections == expected.sections)
@@ -364,6 +370,7 @@ extension AppKitWindowTests {
                     #expect(controller.collectionView.numberOfItems(inSection: section) == expected.numberOfItems(inSection: section))
                 }
             }
+            return applied
         }
     }
 }

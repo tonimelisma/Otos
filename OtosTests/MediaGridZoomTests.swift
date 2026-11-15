@@ -30,7 +30,7 @@ struct MediaGridZoomTests {
 
     @Test func zoomRequestedWhileApplyIsInFlightDefersAndInstallsExactlyOnceAfterCompletion() {
         let controller = makeController(itemCount: 4)
-        let ids = controller.mutationGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedContent?.orderedAssetIDs ?? []
         let newGrid = CatalogMediaGridState(
             scope: .allMedia,
             orderedAssetIDs: ids + [makeAssetID(path: "extra.jpg")]

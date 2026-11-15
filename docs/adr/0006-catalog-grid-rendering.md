@@ -317,6 +317,11 @@ new rendering mechanism.
   `MediaAssetTilePresentation` so the hit-test and the drawn face cannot drift.
 - Settings may continue using SwiftUI `Table`; this decision concerns only the
   high-cardinality media browser.
+- The gate tells whether a grid needs a structural apply by the identity of its order
+  and days (`CatalogGridContent.sharesOrder`), never by comparing the library-sized
+  arrays on the main actor: Projection hands an equal order on as the same one, and an
+  order it rebuilt that the gate does not recognise costs an apply with an empty diff,
+  not a wrong grid.
 - Day-section grouping needed no changes to `MediaGridStructuralApplyPolicy` or
   `MediaGridMutationGate`: both operate purely on flat `[MediaAssetID]`/
   `Set<MediaAssetID>` identity, agnostic to section structure, because sections

@@ -74,6 +74,8 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 /// showing results can ask again. The forwarder and the loop hold this actor weakly and end
 /// with it.
 actor PhotoSearchIndex {
+    typealias ReadTexts = @Sendable (Set<MediaAssetID>) async throws -> [MediaAssetID: String]
+
     private let store: CatalogStore
     private let thumbnailDirectory: URL?
     private let embedder: SearchImageEmbedder
@@ -96,6 +98,9 @@ actor PhotoSearchIndex {
     /// revision means the same memory.
     private(set) var revision: UInt64 = 0
     private let textReader: SearchTextReader
+    /// Reads the current text readings of the ids memory lacks: the Store's, unless a test
+    /// suspends the read to answer a query at that await.
+    private let readTexts: ReadTexts
     private let bundle: Bundle
     private var loaded = false
 
@@ -119,10 +124,12 @@ actor PhotoSearchIndex {
         cutoff: SearchCutoff = .calibrated,
         backoff: (first: Duration, last: Duration) = (.seconds(30), .seconds(900)),
         queries: SearchQueryReader? = nil,
-        textReader: SearchTextReader = SearchTextReader()
+        textReader: SearchTextReader = SearchTextReader(),
+        readTexts: ReadTexts? = nil
     ) {
         self.store = store
         self.textReader = textReader
+        self.readTexts = readTexts ?? { [store] ids in try await store.currentSearchTexts(for: ids) }
         self.backoff = backoff
         nextRetry = backoff.first
         self.bundle = bundle
@@ -388,16 +395,19 @@ actor PhotoSearchIndex {
     }
 
     /// Brings the text readings in memory in line with the catalog's: the ids first, without
-    /// the lines, and only the readings memory lacks are decoded.
+    /// the lines, and only the readings memory lacks are decoded. Both reads finish before
+    /// memory changes: a query answered while they are awaited (`matches`) reads the memory
+    /// its revision names, and the removal, the additions and the revision move in one step.
     private func reconcileTexts() async throws {
         let current = try await store.currentSearchTextIDs()
         let gone = Set(texts.keys).subtracting(current)
         let missing = current.subtracting(texts.keys)
         guard !gone.isEmpty || !missing.isEmpty else { return }
+        let added = missing.isEmpty ? [:] : try await readTexts(missing)
         for id in gone {
             texts.removeValue(forKey: id)
         }
-        for (id, text) in try await store.currentSearchTexts(for: missing) {
+        for (id, text) in added {
             texts[id] = SearchTextReading.folded(text)
         }
         announce()

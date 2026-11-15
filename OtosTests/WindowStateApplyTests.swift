@@ -27,17 +27,46 @@ struct WindowStateApplyTests {
         #expect(reordered.mediaGrid.orderedAssetIDs == ids.reversed())
     }
 
-    /// The same order over other days, or with other stacks, is other content.
+    /// The same order over other days, or with other stacks, is other content; with other
+    /// stacks only, it is the same order, which the grid's gate and Story tell by identity.
     @Test func otherDaysOrStacksAreOtherContent() {
         let ids = makeIDs(2)
         let day = Date(timeIntervalSince1970: 86400)
         let first = windowState(ids: ids, dayBuckets: [day, day]).sharingUnchanged(with: nil)
         let movedDay = windowState(ids: ids, dayBuckets: [day, nil]).sharingUnchanged(with: first)
         #expect(!movedDay.mediaGrid.sharesContent(with: first.mediaGrid))
+        #expect(!movedDay.mediaGrid.sharesOrder(with: first.mediaGrid))
 
-        var stacked = windowState(ids: ids, dayBuckets: [day, day])
-        stacked.mediaGrid.stacks = CatalogGridStacks(tiles: [:], shownForHiddenMember: [makeID("hidden.CR3"): ids[0]])
-        #expect(!stacked.sharingUnchanged(with: first).mediaGrid.sharesContent(with: first.mediaGrid))
+        let stacks = CatalogGridStacks(tiles: [:], shownForHiddenMember: [makeID("hidden.CR3"): ids[0]])
+        let stacked = windowState(ids: ids, dayBuckets: [day, day], stacks: stacks).sharingUnchanged(with: first)
+        #expect(!stacked.mediaGrid.sharesContent(with: first.mediaGrid))
+        #expect(stacked.mediaGrid.sharesOrder(with: first.mediaGrid))
+        #expect(stacked.mediaGrid.stacks == stacks)
+    }
+
+    /// The gate tells a republished order from a new one by identity: an equal order handed
+    /// on is a detail refresh, a stacks-only change too, and an equal order it was never
+    /// handed (rebuilt, not shared) is an apply with nothing to move, never a compare of the
+    /// library on the main actor.
+    @Test func theGateTellsTheShownOrderByIdentity() {
+        let ids = makeIDs(3)
+        let first = windowState(ids: ids).sharingUnchanged(with: nil)
+        let gate = MediaGridMutationGate()
+        guard case .apply = gate.receive(first.mediaGrid).first else {
+            Issue.record("a first order is applied")
+            return
+        }
+        _ = gate.completeStructuralApply(applied: first.mediaGrid)
+
+        let republished = windowState(ids: ids, detailRefresh: 2).sharingUnchanged(with: first)
+        #expect(gate.receive(republished.mediaGrid) == [.refreshVisible(republished.mediaGrid, change: .unchanged)])
+        let restacked = windowState(
+            ids: ids, stacks: CatalogGridStacks(tiles: [:], shownForHiddenMember: [makeID("hidden.CR3"): ids[0]])
+        ).sharingUnchanged(with: republished)
+        #expect(gate.receive(restacked.mediaGrid) == [.refreshVisible(restacked.mediaGrid, change: .unchanged)])
+
+        let rebuilt = windowState(ids: ids)
+        #expect(gate.receive(rebuilt.mediaGrid) == [.apply(rebuilt.mediaGrid, change: .unchanged)])
     }
 
     /// The content answers positions and membership as the plain order does, keeping an
@@ -107,8 +136,9 @@ struct WindowStateApplyTests {
         model.applyState(first)
         _ = model.applyGridClick(hit: raw, modifiers: [], orderedIDs: [raw, jpeg])
 
-        var collapsed = windowState(ids: [jpeg], detailRefresh: 2)
-        collapsed.mediaGrid.stacks = CatalogGridStacks(tiles: [:], shownForHiddenMember: [raw: jpeg])
+        let collapsed = windowState(
+            ids: [jpeg], stacks: CatalogGridStacks(tiles: [:], shownForHiddenMember: [raw: jpeg]), detailRefresh: 2
+        )
         model.applyState(collapsed.sharingUnchanged(with: first))
         #expect(model.gridSelection.selection == [jpeg])
     }
@@ -286,6 +316,7 @@ private func windowState(
     ids: [MediaAssetID],
     scope: SidebarSelection = .allMedia,
     dayBuckets: [Date?] = [],
+    stacks: CatalogGridStacks = .empty,
     detailRefresh: UInt64 = 1
 ) -> CatalogWindowState {
     CatalogWindowState(
@@ -296,6 +327,7 @@ private func windowState(
             descriptor: CatalogQueryDescriptor(scope: scope),
             orderedAssetIDs: ids,
             dayBuckets: dayBuckets,
+            stacks: stacks,
             detailRefreshGeneration: detailRefresh
         ),
         filterOptions: .empty,

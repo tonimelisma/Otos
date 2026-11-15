@@ -382,6 +382,12 @@ while :; do
       sample "$xctest_pid" 2 -mayDie > "$sample_log" 2>/dev/null || true
       echo "--- parked threads of xctest $xctest_pid (full sample: $sample_log) ---" >&2
       grep -m 25 -E "Otos|XCTWaiter|semaphore|Mutex|dispatch" "$sample_log" >&2 || true
+      # Threads by the queue they run, so a cooperative pool whose every thread is held
+      # (`com.apple.root.<qos>-qos.cooperative` at its core count) shows as one line, beside
+      # the parked tests below. The frames each holds are in the full sample.
+      echo "--- threads by queue in xctest $xctest_pid ---" >&2
+      grep -oE "DispatchQueue_[0-9]+: [^ ]+" "$sample_log" | sed -E 's/^DispatchQueue_[0-9]+: //' \
+        | sort | uniq -c | sort -rn >&2 || true
       report_parked_tests "$xctest_pid"
     done
     echo "check: DEADLOCKED — consumed under ${MIN_CPU_SECONDS_PER_MINUTE} CPU-s/min for ${STALL_SECONDS}s while still running. Killed so this reports instead of hanging." >&2

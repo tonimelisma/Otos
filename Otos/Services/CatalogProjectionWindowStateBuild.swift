@@ -35,19 +35,19 @@ extension CatalogProjection {
         var reads = previous
         var reuse = CatalogProjectionReuse()
         let selection = request.descriptor.scope
-        let countScope = ImportBatchListing.countScope(of: selection)
+        let counting = ImportBatchListing.counting(for: selection)
         let importBatches: [ImportBatchSummary]
-        if let held = previous.importBatches(countScope: countScope, at: revisions, current: true) {
+        if let held = previous.importBatches(counting: counting, at: revisions, current: true) {
             importBatches = held
             reuse.importBatches = true
-        } else if answerFromHeld, let held = previous.importBatches(countScope: countScope, at: revisions, current: false) {
+        } else if answerFromHeld, let held = previous.importBatches(counting: counting, at: revisions, current: false) {
             importBatches = held
             reuse.importBatches = true
             reuse.held = true
         } else {
-            importBatches = try await store.importBatches(countingFor: selection)
+            importBatches = try await store.importBatches(counting: counting)
             reads.importBatches = CatalogProjectionReads.ImportBatches(
-                countScope: countScope, answer: importBatches, revisions: revisions
+                counting: counting, answer: importBatches, revisions: revisions
             )
         }
         let placeNameLanguages: Set<PlaceNameLanguage>

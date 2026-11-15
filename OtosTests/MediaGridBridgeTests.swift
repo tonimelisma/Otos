@@ -98,11 +98,9 @@ struct MediaGridBridgeTests {
         let parked = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
         #expect(gate.receive(parked) == [.pending(replacedExisting: false)])
 
-        // Same IDs + new scope is refreshVisible (not apply); still bypasses hold.
-        let library = makeGrid(
-            scope: .library(LibraryRootPath(rawValue: "/Pictures")),
-            paths: ["a.jpg"]
-        )
+        // The same order republished for a new scope is refreshVisible (not apply); still
+        // bypasses hold.
+        let library = republished(allMedia, scope: .library(LibraryRootPath(rawValue: "/Pictures")))
         #expect(
             gate.receive(library)
                 == [.refreshVisible(library, change: .scope)]
@@ -252,7 +250,7 @@ struct MediaGridBridgeTests {
 
         #expect(gate.receiveColumnCount(4) == [.zoomSwap(columnCount: 4)]) // installed still 6
 
-        let sameIDsNewScope = makeGrid(scope: .library(LibraryRootPath(rawValue: "/Pictures")), paths: ["a.jpg"])
+        let sameIDsNewScope = republished(base, scope: .library(LibraryRootPath(rawValue: "/Pictures")))
         #expect(gate.receive(sameIDsNewScope) == [.pending(replacedExisting: false)])
         #expect(gate.receiveColumnCount(5) == []) // requested changes again mid-swap
 
@@ -400,6 +398,14 @@ struct MediaGridBridgeTests {
         )
         #expect(gate.receive(sortFlip) == [.apply(sortFlip, change: .filterOrSort)])
     }
+}
+
+/// `grid`'s content republished for another scope, as Projection hands an equal order on.
+@MainActor
+private func republished(_ grid: CatalogMediaGridState, scope: SidebarSelection) -> CatalogMediaGridState {
+    var next = grid
+    next.descriptor = CatalogQueryDescriptor(scope: scope)
+    return next
 }
 
 @MainActor

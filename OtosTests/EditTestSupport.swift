@@ -29,6 +29,10 @@ struct EditableLibrary {
 @MainActor
 final class EditModels {
     private var started: [CatalogWindowViewModel] = []
+    /// The one analyzer every test's edit view models read with: the app has one per window,
+    /// and a window per test loading Auto crop's and Auto straighten's 79 MB of weights side by
+    /// side took the test host from 220 MB to 1.39 GB within two seconds.
+    private static let analyzer = EditAnalyzer()
 
     /// A view model over `store` whose grid holds `ids`, with its edit lanes started.
     func make(store: CatalogStore, ids: [MediaAssetID]) -> CatalogWindowViewModel {
@@ -51,7 +55,7 @@ final class EditModels {
             mediaEmptyState: .noMedia,
             deviceConnectionBanner: nil
         ))
-        model.startEditing(store: store)
+        model.startEditing(store: store, analyzer: Self.analyzer)
         started.append(model)
         return model
     }

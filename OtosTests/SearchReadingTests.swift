@@ -234,6 +234,19 @@ struct SearchReadingTests {
         }
     }
 
+    /// A reading process that neither answers nor exits is ended at its deadline, and the
+    /// picture comes back `.exited`: owed, and paged past by the reader. `/bin/sleep` stands in
+    /// for a child stuck mid-reading: its output stays open and silent.
+    @Test func aReadingProcessThatNeverAnswersIsEndedAtItsDeadline() throws {
+        let child = try SearchTextChild(
+            executable: URL(filePath: "/bin/sleep"), arguments: ["86400"], answerDeadline: .milliseconds(100)
+        )
+        guard case .exited = child.read(URL(filePath: "/nonexistent.jpg")) else {
+            Issue.record("a silent reading process was not ended")
+            return
+        }
+    }
+
     /// A picture whose reading ends its process is paged past: the rest of the page is read by
     /// a new session, so one such picture never stops every other still from being read.
     @Test func aPictureThatEndsItsSessionIsPagedPast() async throws {

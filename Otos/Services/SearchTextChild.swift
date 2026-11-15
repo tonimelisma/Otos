@@ -13,6 +13,14 @@ import Foundation
 /// before it answers ended while reading that picture (`.exited`): the reader pages past the
 /// picture and reads the rest in another child.
 ///
+/// A child that neither answers nor exits is ended after `answerDeadline` (ADR 0033 `time:
+/// deadline`): nothing can report that a reading will never finish — the child's output stays
+/// open, and a heartbeat from it would beat on while Vision is stuck in another of its
+/// threads — so the child is terminated and its picture is `.exited` like a crash's: owed and
+/// paged past. The bound is 20 minutes, about twice the slowest reading measured, a cold first
+/// one under parallel load at 649 s (a warm one takes 0.15–3.4 s;
+/// `docs/research/2026-11-14-vision-text-reading-breaks-for-its-process.md`).
+///
 /// The child is the app's executable in the installed app, beside the `OtosKit` framework it
 /// embeds, and the built `Otos.app` beside the framework when tests load it from the build's
 /// products. It reads the same previews from Application Support the app does, and reads
@@ -22,13 +30,24 @@ final nonisolated class SearchTextChild: SearchTextSession {
     private let requests: FileHandle
     private let answers: FileHandle
     private var pending = Data()
+    private let answerDeadline: Duration
+
+    /// How long a reading may go unanswered before its child is ended.
+    static let answerDeadline: Duration = .seconds(1200)
 
     /// Starts a child from Otos's own executable.
     static func start() throws -> any SearchTextSession {
         try SearchTextChild(executable: executable())
     }
 
-    init(executable: URL) throws {
+    /// `arguments` and `answerDeadline` are the reading process's own, unless a test starts
+    /// another program to stand in for a child that never answers.
+    init(
+        executable: URL,
+        arguments: [String] = [SearchTextReadingProcess.argument],
+        answerDeadline: Duration = SearchTextChild.answerDeadline
+    ) throws {
+        self.answerDeadline = answerDeadline
         let input = Pipe()
         let output = Pipe()
         // A write to a child that has exited fails with EPIPE instead of signalling this process.
@@ -37,7 +56,7 @@ final nonisolated class SearchTextChild: SearchTextSession {
         }
         process = Process()
         process.executableURL = executable
-        process.arguments = [SearchTextReadingProcess.argument]
+        process.arguments = arguments
         // Background reading, as the reader's own queue is.
         process.qualityOfService = .utility
         process.standardInput = input
@@ -73,30 +92,69 @@ final nonisolated class SearchTextChild: SearchTextSession {
             var request = try JSONEncoder().encode(SearchTextReadingProcess.Request(path: url.path(percentEncoded: false)))
             request.append(0x0A)
             try requests.write(contentsOf: request)
-            guard let answer = nextAnswer() else {
+            switch nextAnswer(by: ContinuousClock.now + answerDeadline) {
+            case let .line(answer):
+                return try JSONDecoder().decode(SearchTextPreviewReading.self, from: answer)
+            case .closed:
                 return .exited("the reading process exited before it answered")
+            case .overran:
+                // Ended here, so the reader's next page starts a new child; `deinit` reaps it.
+                process.terminate()
+                OtosLog.thumbnails.errorOperation("search.text", phase: "sessionOverran", fields: [
+                    "pid": "\(process.processIdentifier)", "deadlineSeconds": "\(answerDeadline.components.seconds)",
+                ])
+                return .exited("the reading process gave no answer within \(answerDeadline.components.seconds) s and was ended")
             }
-            return try JSONDecoder().decode(SearchTextPreviewReading.self, from: answer)
         } catch {
             return .ended(String(describing: error))
         }
     }
 
-    /// The next line the child wrote, or nil once its output closed.
-    private func nextAnswer() -> Data? {
+    private enum Answer {
+        case line(Data)
+        /// The child's output closed: it exited.
+        case closed
+        /// Nothing came by the deadline.
+        case overran
+    }
+
+    /// The next line the child wrote, its output's close, or the deadline passing first.
+    private func nextAnswer(by deadline: ContinuousClock.Instant) -> Answer {
         while true {
             if let newline = pending.firstIndex(of: 0x0A) {
                 let line = Data(pending[pending.startIndex ..< newline])
                 pending.removeSubrange(pending.startIndex ... newline)
-                return line
+                return .line(line)
+            }
+            guard waitForOutput(until: deadline) else {
+                return .overran
             }
             // What the pipe holds now, waiting only until it holds something: a read of a count
             // waits for that many bytes or the end, and an answer is one short line.
             let chunk = answers.availableData
             guard !chunk.isEmpty else {
-                return nil
+                return .closed
             }
             pending.append(chunk)
+        }
+    }
+
+    /// Whether the child's output became readable (a line, or its close) before `deadline`.
+    private func waitForOutput(until deadline: ContinuousClock.Instant) -> Bool {
+        var descriptor = pollfd(fd: answers.fileDescriptor, events: Int16(POLLIN), revents: 0)
+        while true {
+            let remaining = ContinuousClock.now.duration(to: deadline)
+            guard remaining > .zero else { return false }
+            let milliseconds = Int32(clamping: DiagnosticsTiming.milliseconds(remaining))
+            // time: deadline — a reading that hangs in the child reports nothing (file guide)
+            let ready = poll(&descriptor, 1, max(milliseconds, 1))
+            if ready > 0 {
+                return true
+            }
+            if ready < 0, errno != EINTR {
+                // A descriptor poll cannot wait on: let the read report what the pipe holds.
+                return true
+            }
         }
     }
 

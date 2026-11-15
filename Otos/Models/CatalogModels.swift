@@ -1131,19 +1131,16 @@ nonisolated struct CatalogMediaGridState: Equatable {
     private(set) var content: CatalogGridContent
 
     var orderedAssetIDs: [MediaAssetID] {
-        get { content.orderedAssetIDs }
-        set { content = CatalogGridContent(orderedAssetIDs: newValue, dayBuckets: content.dayBuckets, stacks: content.stacks) }
+        content.orderedAssetIDs
     }
 
     var dayBuckets: [Date?] {
-        get { content.dayBuckets }
-        set { content = content.replacing(dayBuckets: newValue) }
+        content.dayBuckets
     }
 
     /// How `orderedAssetIDs` shows each stack it holds (ADR 0052).
     var stacks: CatalogGridStacks {
-        get { content.stacks }
-        set { content = content.replacing(stacks: newValue) }
+        content.stacks
     }
 
     var scope: SidebarSelection {
@@ -1188,14 +1185,26 @@ nonisolated struct CatalogMediaGridState: Equatable {
         content === other.content
     }
 
-    /// This grid holding `previous`'s content when its own is equal to it. Compares the
-    /// order, days and stacks: Projection calls it off the main actor, at publication.
+    /// Whether `other` holds this very order and days, whatever its stacks: constant time,
+    /// and on published states it answers whether the order or days changed.
+    func sharesOrder(with other: CatalogMediaGridState) -> Bool {
+        content.sharesOrder(with: other.content)
+    }
+
+    /// This grid holding `previous`'s content when its own is equal to it, or `previous`'s
+    /// order with its own stacks when only the stacks differ. Compares the order, days and
+    /// stacks: Projection calls it off the main actor, at publication.
     func sharingContent(of previous: CatalogMediaGridState) -> CatalogMediaGridState {
-        guard !sharesContent(with: previous), content == previous.content else {
+        guard !sharesContent(with: previous),
+              content.orderedAssetIDs == previous.content.orderedAssetIDs,
+              content.dayBuckets == previous.content.dayBuckets
+        else {
             return self
         }
         var shared = self
-        shared.content = previous.content
+        shared.content = content.stacks == previous.content.stacks
+            ? previous.content
+            : previous.content.replacing(stacks: content.stacks)
         return shared
     }
 }
@@ -1248,29 +1257,38 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
     let dayBuckets: [Date?]
     let stacks: CatalogGridStacks
     private let index: Mutex<[MediaAssetID: Int]?>
+    /// Shared by every content holding this very order and days (`replacing(stacks:)`).
+    private let order: Order
+
+    /// The identity of one publication of an order and its days.
+    private final class Order: Sendable {}
 
     init(orderedAssetIDs: [MediaAssetID], dayBuckets: [Date?], stacks: CatalogGridStacks) {
         self.orderedAssetIDs = orderedAssetIDs
         self.dayBuckets = dayBuckets
         self.stacks = stacks
         index = Mutex(nil)
+        order = Order()
     }
 
-    private init(_ content: CatalogGridContent, dayBuckets: [Date?], stacks: CatalogGridStacks) {
+    private init(_ content: CatalogGridContent, stacks: CatalogGridStacks) {
         orderedAssetIDs = content.orderedAssetIDs
-        self.dayBuckets = dayBuckets
+        dayBuckets = content.dayBuckets
         self.stacks = stacks
         index = Mutex(content.index.withLock { $0 })
+        order = content.order
     }
 
-    /// The same order with other day buckets: its index, if built, still holds.
-    func replacing(dayBuckets: [Date?]) -> CatalogGridContent {
-        CatalogGridContent(self, dayBuckets: dayBuckets, stacks: stacks)
-    }
-
-    /// The same order with other stacks: its index, if built, still holds.
+    /// The same order and days with other stacks: the same order (`sharesOrder`), and its
+    /// index, if built, still holds.
     func replacing(stacks: CatalogGridStacks) -> CatalogGridContent {
-        CatalogGridContent(self, dayBuckets: dayBuckets, stacks: stacks)
+        CatalogGridContent(self, stacks: stacks)
+    }
+
+    /// Whether `other` holds this very order and days: the same publication of them, not
+    /// merely equal ones. Constant time.
+    func sharesOrder(with other: CatalogGridContent) -> Bool {
+        order === other.order
     }
 
     var orderedIDs: [MediaAssetID] {
@@ -1678,7 +1696,7 @@ nonisolated struct ImportBatchID: Hashable, Sendable, Comparable {
 nonisolated struct ImportBatchSummary: Equatable, Sendable {
     let batchID: ImportBatchID
     /// The photos the batch's grid shows, a stack counting once (ADR 0052); nil for a batch
-    /// the window does not show, whose count was not read (`ImportBatchListing.counted`).
+    /// the window does not show, whose count was not read (`ImportBatchCounting`).
     let photoCount: Int?
 }
 
@@ -1693,24 +1711,42 @@ nonisolated enum ImportBatchListing {
     /// The batches the Imports section lists: the newest `sidebarRowCount`, and the selected
     /// batch after them when it is older. `batches` is newest first.
     static func sidebarRows(_ batches: [ImportBatchID], selection: SidebarSelection) -> [ImportBatchID] {
-        let newest = Array(batches.prefix(sidebarRowCount))
-        if case let .importBatch(selected) = selection, !newest.contains(selected), batches.contains(selected) {
-            return newest + [selected]
-        }
-        return newest
+        ImportBatchCounting.newest(sidebarRowCount, and: selectedBatch(selection)).batches(batches)
     }
 
     /// The batches whose photos are counted for `selection`: every batch while All Imports
-    /// lists them, else the sidebar's rows.
-    static func counted(_ batches: [ImportBatchID], selection: SidebarSelection) -> Set<ImportBatchID> {
-        selection == .allImports ? Set(batches) : Set(sidebarRows(batches, selection: selection))
+    /// lists them, else the sidebar's rows. What the Store is asked to count.
+    static func counting(for selection: SidebarSelection) -> ImportBatchCounting {
+        selection == .allImports ? .every : .newest(sidebarRowCount, and: selectedBatch(selection))
     }
 
-    /// What decides `counted` besides the batches: All Imports, or the batch selected.
-    static func countScope(of selection: SidebarSelection) -> SidebarSelection? {
-        switch selection {
-        case .allImports, .importBatch: selection
-        default: nil
+    private static func selectedBatch(_ selection: SidebarSelection) -> ImportBatchID? {
+        if case let .importBatch(selected) = selection {
+            return selected
+        }
+        return nil
+    }
+}
+
+/// Which import batches the Store counts photos for (`CatalogStore.importBatches(counting:)`):
+/// a fact about batches, so the Store answers it without knowing what the window shows.
+nonisolated enum ImportBatchCounting: Hashable, Sendable {
+    /// Every batch.
+    case every
+    /// The newest `count` batches, and `batch` after them when it is older.
+    case newest(Int, and: ImportBatchID?)
+
+    /// The batches of `batches` (newest first) this counts, in their order.
+    func batches(_ batches: [ImportBatchID]) -> [ImportBatchID] {
+        switch self {
+        case .every:
+            return batches
+        case let .newest(count, and: batch):
+            let newest = Array(batches.prefix(count))
+            if let batch, !newest.contains(batch), batches.contains(batch) {
+                return newest + [batch]
+            }
+            return newest
         }
     }
 }

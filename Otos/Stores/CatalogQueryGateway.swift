@@ -526,18 +526,17 @@ nonisolated enum CatalogQueryGateway {
     """
 
     /// Every nonempty import batch, newest first, with how many photos it shows (ADR 0052: a
-    /// stack counts once) for the batches `selection` shows (`ImportBatchListing.counted`),
-    /// and no count for the rest. A batch counts as its grid does: its rows collapsed by the
+    /// stack counts once) for the batches `counting` names, and no count for the rest. A batch counts as its grid does: its rows collapsed by the
     /// stacks that hold them (`PhotoStackSQL.build(rootPaths:holding:db:)`), so a RAW+JPEG
     /// pair imported together is one photo, and a pair whose files came in two batches is a
     /// file in each.
     static func fetchImportBatches(
-        countingFor selection: SidebarSelection,
+        counting: ImportBatchCounting,
         rootPaths: [Int64: LibraryRootPath],
         db: Database
     ) throws -> [ImportBatchSummary] {
         let ids = try Int64.fetchAll(db.cachedStatement(sql: importBatchIDsSQL)).map(ImportBatchID.init(unixMilliseconds:))
-        let counted = ImportBatchListing.counted(ids, selection: selection)
+        let counted = counting.batches(ids)
         guard !counted.isEmpty else {
             return ids.map { ImportBatchSummary(batchID: $0, photoCount: nil) }
         }

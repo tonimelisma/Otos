@@ -92,7 +92,9 @@ library's size. What changed is a fact Projection already holds when it publishe
 - The grid's order, day buckets and stacks are one immutable `CatalogGridContent`
   held by reference. An unchanged content arrives as the last publication's own
   object, so `sharesContent(with:)` — one pointer comparison — answers whether the
-  order, its days or its stacks moved.
+  order, its days or its stacks moved. A content whose order and days are the last
+  one's but whose stacks are not keeps the last one's order (`sharesOrder(with:)`), so
+  the grid's mutation gate and Story tell "same order" by identity too.
 - `state` is observed by hand (`access` / `withMutation`) instead of through the
   macro's tracked storage, whose setter compares an `Equatable` old value with the new
   one; for a window state that comparison walked every identity, day and stack on every

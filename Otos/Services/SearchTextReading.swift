@@ -149,10 +149,11 @@ nonisolated enum SearchTextPreviewReading: Codable, Equatable, Sendable {
     /// (`SearchTextReading.losesTheProcess`), or the process ended — and nothing more is
     /// asked of it; a new session reads the rest.
     case ended(String)
-    /// The session's process ended while reading this picture, without answering: the
-    /// picture may be what ended it (a decoder or recognizer crash), so it is no reading and
-    /// stays owed, and the rest of the page is read by a new session. Never sent by the
-    /// process itself.
+    /// The session's process ended while reading this picture, without answering — it
+    /// crashed, or gave no answer by its deadline and was ended (`SearchTextChild`): the
+    /// picture may be what ended it (a decoder or recognizer crash or hang), so it is no
+    /// reading and stays owed, and the rest of the page is read by a new session. Never sent
+    /// by the process itself.
     case exited(String)
 }
 
