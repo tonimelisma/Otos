@@ -45,14 +45,24 @@ nonisolated enum PeoplePresentation {
     }
 }
 
-struct PeopleView: View {
+struct PeopleView: View, Equatable {
     let people: CatalogPeopleState
     let session: PeopleSession
     /// The window's shared sentence when libraries are offline or being checked.
     let librariesState: CatalogMediaEmptyState?
     let images: FaceTileImages?
     let derivedImageDirectory: URL?
+    /// The gallery's intents: not part of what it shows.
     let actions: PeopleActions
+
+    /// What the gallery shows. The window re-renders its detail pane for every state it
+    /// applies, People or not; an equal gallery is not rendered again (`.equatable()` where
+    /// `ContentView` hosts it), and comparing the People state of an unchanged publication
+    /// is a storage-identity check.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.people == rhs.people && lhs.session == rhs.session && lhs.librariesState == rhs.librariesState
+            && lhs.images === rhs.images && lhs.derivedImageDirectory == rhs.derivedImageDirectory
+    }
 
     @FocusState private var listFocused: Bool
     @State private var columns = 1
@@ -151,6 +161,8 @@ struct PeopleView: View {
         }
     }
 
+    /// A cell is equal to the one it replaces while its person, selection and images are, so
+    /// a People update re-renders only the cells whose person changed (`PersonCell.==`).
     private func cell(_ person: PersonSummary) -> some View {
         PersonCell(
             person: person,
@@ -161,6 +173,7 @@ struct PeopleView: View {
             actions: actions,
             focusList: { listFocused = true }
         )
+        .equatable()
         .id(person.id)
     }
 }
@@ -252,17 +265,29 @@ private struct PeopleBar: View {
 /// One person: their key photo, their name (or `Add Name…`) and their photo count; a
 /// heart before the name for a favourite. A hidden person is dimmed and offers only Unhide.
 /// Dragging one person onto another asks whether they are the same person.
-private struct PersonCell: View {
+///
+/// Its body reads only its own values: nothing in it scales with the number of people. Its
+/// context menu and VoiceOver actions are child views whose bodies ask the view model for the
+/// person's menu, which SwiftUI evaluates only as the menu or VoiceOver opens them.
+private struct PersonCell: View, Equatable {
     let person: PersonSummary
     let edge: CGFloat
     let isSelected: Bool
     let images: FaceTileImages?
     let derivedImageDirectory: URL?
+    /// Intents, the same for every cell of the gallery: not part of what the cell shows.
     let actions: PeopleActions
     let focusList: () -> Void
 
     @State private var isTargeted = false
     @Environment(\.colorScheme) private var colorScheme
+
+    /// What the cell shows: its person, selection, edge and images. The closures are the
+    /// gallery's intents, rebuilt with every window update and the same in effect.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.person == rhs.person && lhs.isSelected == rhs.isSelected && lhs.edge == rhs.edge
+            && lhs.images === rhs.images && lhs.derivedImageDirectory == rhs.derivedImageDirectory
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -291,7 +316,7 @@ private struct PersonCell: View {
             focusList()
             actions.select(person.id, [])
         }
-        .modifier(PersonCellDrag(person: person.id, isDraggable: actions.canMergeAway(person.id)))
+        .modifier(PersonCellDrag(person: person.id, isDraggable: CatalogPeopleState.mergeSourceRefusal(of: person) == nil))
         .dropDestination(for: String.self) { items, _ in
             guard let from = items.first.flatMap(PeopleDrag.person(from:)), from != person.id,
                   actions.mergeRefusal(from, person.id) == nil
@@ -302,9 +327,7 @@ private struct PersonCell: View {
             isTargeted = targeted
         }
         .contextMenu {
-            if let menu = actions.menu(person.id) {
-                PersonMenuContent(menu: menu) { actions.perform($0, person.id) }
-            }
+            PersonContextMenu(person: person.id, actions: actions)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(PeoplePresentation.accessibilityLabel(person))
@@ -312,9 +335,7 @@ private struct PersonCell: View {
         .accessibilityAction { actions.open(person.id) }
         // The context menu's acts, in its words, so VoiceOver reaches every one (DES-080).
         .accessibilityActions {
-            ForEach(actions.menu(person.id)?.accessibilityItems ?? [], id: \.title) { item in
-                Button(item.title) { actions.perform(item.act, person.id) }
-            }
+            PersonAccessibilityActions(person: person.id, actions: actions)
         }
     }
 
@@ -361,6 +382,32 @@ private struct PersonCell: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
+        }
+    }
+}
+
+/// A cell's context menu: the person's `PersonMenu`, asked for when the menu opens, so the
+/// selection it offers to merge into is the one at that moment.
+private struct PersonContextMenu: View {
+    let person: PersonID
+    let actions: PeopleActions
+
+    var body: some View {
+        if let menu = actions.menu(person) {
+            PersonMenuContent(menu: menu) { actions.perform($0, person) }
+        }
+    }
+}
+
+/// A cell's VoiceOver actions: the context menu's enabled acts, asked for when VoiceOver
+/// reads them.
+private struct PersonAccessibilityActions: View {
+    let person: PersonID
+    let actions: PeopleActions
+
+    var body: some View {
+        ForEach(actions.menu(person)?.accessibilityItems ?? [], id: \.title) { item in
+            Button(item.title) { actions.perform(item.act, person) }
         }
     }
 }

@@ -57,7 +57,14 @@ final class CatalogWindowViewModel {
     }
 
     private(set) var sidebarSelection: SidebarSelection = .allMedia
-    private(set) var queryDescriptor: CatalogQueryDescriptor = .default
+    private(set) var queryDescriptor: CatalogQueryDescriptor = .default {
+        didSet {
+            if oldValue.scope != queryDescriptor.scope {
+                rebuildShownPersonMenu()
+            }
+        }
+    }
+
     /// The stacks the user expanded in the grid (ADR 0052), sent with every query request.
     private(set) var expandedStacks: Set<PhotoStackID> = []
     private(set) var isFilterPresented = false
@@ -154,6 +161,9 @@ final class CatalogWindowViewModel {
     /// open sheet or question, and whether the browser was opened on a person from the
     /// gallery. Window state, not catalog state.
     var peopleSession = PeopleSession()
+    /// The toolbar menu of the person whose photos the browser shows; nil elsewhere. Written
+    /// only by `rebuildShownPersonMenu`, on a new People state or scope.
+    var shownPersonMenu: PersonMenu?
     /// The people each face of the targets could be, as `PeopleAssignment` last ranked them
     /// for those photos (`refreshTargetFaces`).
     var faceCandidates = FaceCandidates.none {
@@ -176,8 +186,6 @@ final class CatalogWindowViewModel {
     /// The faces outlined on their photos: the face the pointer is over in the Info pane, or
     /// the faces of the face-menu item highlighted in a photo's context menu.
     var outlinedFaces: [FaceID] = []
-    /// Lookups over the last People state, rebuilt when it changes (`applyPeopleState`).
-    @ObservationIgnored var peopleIndex = PeopleIndex(.empty)
     /// The People acts submitted that the store has not answered (`PendingPeopleActs`).
     @ObservationIgnored var pendingPeopleActs = PendingPeopleActs()
     /// Face crops decoded this process, shared by every face tile (DES-110).

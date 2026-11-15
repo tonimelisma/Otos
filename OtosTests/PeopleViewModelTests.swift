@@ -360,8 +360,8 @@ struct PeopleViewModelTests {
         try await fixture.show(fixture.people(), scope: .people)
 
         let actions = fixture.model.peopleActions
-        #expect(!actions.canMergeAway(ian))
-        #expect(actions.canMergeAway(fixture.sam))
+        #expect(fixture.model.peopleState.mergeSourceRefusal(ian) == "Ian is a hidden person")
+        #expect(fixture.model.peopleState.mergeSourceRefusal(fixture.sam) == nil)
         #expect(actions.mergeRefusal(ian, fixture.sam) == "Ian is a hidden person")
         #expect(actions.mergeRefusal(fixture.sam, ian) == "Ian is a hidden person")
         actions.askMerge(ian, fixture.sam)
@@ -371,7 +371,7 @@ struct PeopleViewModelTests {
 
         _ = try await fixture.store.perform(.setHidden(ian, false))
         try await fixture.show(fixture.people(), scope: .people)
-        #expect(fixture.model.peopleActions.canMergeAway(ian))
+        #expect(fixture.model.peopleState.mergeSourceRefusal(ian) == nil)
         fixture.model.peopleActions.askMerge(ian, fixture.sam)
         #expect(fixture.model.peopleSession.mergeQuestion == PeopleMergeQuestion(from: ian, into: fixture.sam))
         await fixture.store.shutdown()

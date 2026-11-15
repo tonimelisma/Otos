@@ -310,6 +310,24 @@ grouping had put with the right child.
   exists only there), the People filter, whose several people are photos of them together,
   the face acts in
   the photo menus and the Info pane (`docs/design/people.md`).
+- **What the People UI reads:** `CatalogPeopleState` is built off the main actor with
+  everything its surfaces look up already derived: the visible and the hidden people in
+  gallery order, the names the Person sheet suggests, each person's index, and each person's
+  newest faces for the sheet. The hard rules (`mergeRefusal`, `moveRefusal`, `sheetRefusal`)
+  are functions over that state, so the window holds no second index to keep in step with
+  it. A gallery cell renders from its own person and selection alone and is equal to the
+  cell it replaces while they are, so a People update, published every few seconds while
+  faces are read, re-renders only the cells whose person changed; the gallery is equal to the
+  one it replaces while its People state and selection are, so the window's other
+  publications render nothing in it. A cell's `PersonMenu` is
+  built only as its context menu or VoiceOver opens it, and it is the same value the menu
+  bar's person items and the toolbar menu of a person's photos render; that toolbar menu
+  judges a merge into every named person, so it is built once per People state or scope,
+  never in a view's body. Rejected: building every cell's menu with the state (the merge
+  targets are the window's selection, and a selection of every person makes that quadratic),
+  and an AppKit menu host for the cells (SwiftUI does not evaluate the body of a context
+  menu's or an accessibility-actions content view while the cell renders, measured in a
+  hosted test on 2026-11-14, so a child view already defers the menu's cost to its use).
 - **Which person the window shows:** one view-model owner (`reconcileShownPeople`) decides it,
   with the filter's people, from the published People state and the writes the store has not
   answered. Each write's submission — an act, an undo, a redo — takes a number

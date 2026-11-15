@@ -414,7 +414,7 @@ struct ContentView: View {
         .modifier(PersonSheetHost(viewModel: viewModel))
         .modifier(PeopleMergeAlert(
             question: viewModel.peopleSession.mergeQuestion,
-            name: { viewModel.peopleIndex.name($0) },
+            name: { viewModel.peopleState.name($0) },
             answer: { viewModel.answerMerge($0) }
         ))
         .modifier(PeopleMergeRefusalAlert(
@@ -580,6 +580,7 @@ struct ContentView: View {
                     derivedImageDirectory: viewModel.thumbnailDirectory,
                     actions: viewModel.peopleActions
                 )
+                .equatable()
             } else {
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

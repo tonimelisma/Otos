@@ -201,6 +201,17 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     /// The photos and videos of the faces that define this person (the user's and the
     /// seeds), each with whether it is a video, which two people merged may not share.
     var anchorMedia: [MediaAssetID: Bool] = [:]
+    /// Up to `newestFaceCount` of the person's faces, whoever gave them, newest first: the
+    /// row the Person sheet shows.
+    var newestFaces: [FaceTile] = []
+
+    static let newestFaceCount = 8
+
+    /// The capture time of the oldest face the user gave this person; nil when none has a
+    /// date. `userFaces` is newest first with the undated last, so it is the last dated one.
+    var oldestUserCapture: Double? {
+        userFaces.last { $0.captureSeconds != nil }?.captureSeconds
+    }
 
     /// What the person is called where only text fits; a person without a name is
     /// `Unnamed Person`, which no one is called. Where a control fits, a person without a
@@ -275,18 +286,51 @@ nonisolated enum FaceActTitle {
 }
 
 /// What `PeopleAssignment` publishes: the People gallery and the tally of photos and videos
-/// not yet checked.
+/// not yet checked. What the gallery, the Person sheet and every menu read from the people
+/// is derived once, where the state is built (`PeopleStateBuilder`, off the main actor):
+/// everyone visible and the hidden people in gallery order, the names the sheet suggests,
+/// and each person's place by ID, so no surface walks the people to find one.
 nonisolated struct CatalogPeopleState: Equatable, Sendable {
     /// The gallery's order: favourites first, then most photos, then the name in the locale's
     /// order; the hidden people after everyone else, in the same order.
     let people: [PersonSummary]
+    /// Everyone not hidden, in gallery order: the people every surface but the gallery offers.
+    let visiblePeople: [PersonSummary]
+    /// The hidden people, in gallery order: the gallery's `Hidden` section.
+    let hiddenPeople: [PersonSummary]
+    /// The visible people's names, in gallery order: what the Person sheet suggests.
+    let visibleNames: [String]
+    /// Each person's index in `people`.
+    private let positions: [PersonID: Int]
     /// Each photo's faces of visible people and unidentified faces, in reading order: what
     /// the photo menus and the Info pane show, at once.
-    var photoFaces: [MediaAssetID: [PhotoFace]] = [:]
+    var photoFaces: [MediaAssetID: [PhotoFace]]
     /// Read with every pass, and alone when rows were only added (`PeopleAssignment`).
     var unchecked: MediaCount
     /// Faces found that are still faces (not marked `This Is Not a Face`).
     let faceCount: Int
+
+    init(
+        people: [PersonSummary],
+        photoFaces: [MediaAssetID: [PhotoFace]] = [:],
+        unchecked: MediaCount,
+        faceCount: Int
+    ) {
+        self.people = people
+        visiblePeople = people.filter { !$0.isHidden }
+        hiddenPeople = people.filter(\.isHidden)
+        visibleNames = visiblePeople.compactMap(\.name)
+        positions = Dictionary(uniqueKeysWithValues: people.enumerated().map { ($1.id, $0) })
+        self.photoFaces = photoFaces
+        self.unchecked = unchecked
+        self.faceCount = faceCount
+    }
+
+    /// The derived lists are functions of `people`, so they are not compared again.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.faceCount == rhs.faceCount && lhs.unchecked == rhs.unchecked && lhs.people == rhs.people
+            && lhs.photoFaces == rhs.photoFaces
+    }
 
     static let empty = CatalogPeopleState(people: [], unchecked: MediaCount(), faceCount: 0)
 
@@ -295,17 +339,13 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
         SelectionFaces(photos: photos, faces: photos.flatMap { photoFaces[$0] ?? [] })
     }
 
-    /// Everyone not hidden, in gallery order: the people every surface but the gallery offers.
-    var visiblePeople: [PersonSummary] {
-        people.filter { !$0.isHidden }
-    }
-
-    var hiddenPeople: [PersonSummary] {
-        people.filter(\.isHidden)
-    }
-
     func person(_ id: PersonID) -> PersonSummary? {
-        people.first { $0.id == id }
+        positions[id].map { people[$0] }
+    }
+
+    /// The people among `ids`, in gallery order.
+    func inGalleryOrder(_ ids: some Sequence<PersonID>) -> [PersonSummary] {
+        ids.compactMap { positions[$0] }.sorted().map { people[$0] }
     }
 
     /// A visible person's name; nil for a hidden or unknown one, which no surface but the

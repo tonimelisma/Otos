@@ -72,10 +72,11 @@ extension CatalogWindowViewModel {
     ) -> FaceMenu.Group {
         let ids = faces.map(\.id)
         let notAFace = FaceMenu.Action(title: FaceActTitle.notAFace, command: .notAFace(ids), faces: ids)
-        guard let name = peopleIndex.givenName(person) else {
+        let people = peopleState
+        guard let name = people.givenName(person) else {
             // An unnamed person is named as a whole: the list merges them into the person
             // chosen, and the count is every photo of them.
-            let list = likelyPeople(for: faces, in: selection) { peopleIndex.mergeRefusal(person, into: $0) == nil }
+            let list = likelyPeople(for: faces, in: selection) { people.mergeRefusal(person, into: $0) == nil }
                 .map { FaceMenu.Action(title: $0.displayName, command: .nameAs(person, $0.id), faces: ids) }
             var corrections = [notAFace]
             if ownPhotos {
@@ -83,13 +84,13 @@ extension CatalogWindowViewModel {
             }
             return FaceMenu.Group(
                 kind: .unnamed, person: person, faces: ids, tile: faces.first?.tile,
-                media: peopleIndex.summaries[person]?.media ?? MediaCount(faces: faces),
+                media: people.person(person)?.media ?? MediaCount(faces: faces),
                 listTitle: FaceActTitle.nameThisPerson,
                 list: list + [FaceMenu.Action(title: FaceActTitle.newName, command: .addName(person), faces: ids)],
                 corrections: corrections
             )
         }
-        let list = likelyPeople(for: faces, in: selection) { $0 != person && peopleIndex.moveRefusal(faces, to: $0) == nil }
+        let list = likelyPeople(for: faces, in: selection) { $0 != person && people.moveRefusal(faces, to: $0) == nil }
             .map { FaceMenu.Action(title: $0.displayName, command: .giveTo(ids, $0.id), faces: ids) }
         var corrections = [
             FaceMenu.Action(title: FaceActTitle.notPerson(name), command: .notPerson(ids), faces: ids),
@@ -112,7 +113,8 @@ extension CatalogWindowViewModel {
     /// photo, the face most like them.
     private func unidentifiedGroup(_ faces: [PhotoFace], in selection: SelectionFaces, media: MediaCount?) -> FaceMenu.Group {
         let ids = faces.map(\.id)
-        let allowed = { [peopleIndex] (person: PersonID) in peopleIndex.moveRefusal(faces, to: person) == nil }
+        let people = peopleState
+        let allowed = { (person: PersonID) in people.moveRefusal(faces, to: person) == nil }
         let assign = { (person: PersonSummary) in
             let given = faces.count == 1 ? ids : selection.unidentifiedFacesToName(as: person.id)
             return FaceMenu.Action(title: person.displayName, command: .giveTo(given, person.id), faces: given)

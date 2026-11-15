@@ -360,7 +360,8 @@ nonisolated enum PeopleStateBuilder {
                 }),
                 cover: keyPhoto ?? own.first,
                 userFaces: (userFaces[person.id] ?? []).sorted(by: newestFirst),
-                anchorMedia: anchorMedia[person.id] ?? [:]
+                anchorMedia: anchorMedia[person.id] ?? [:],
+                newestFaces: Array(own.prefix(PersonSummary.newestFaceCount))
             )
         }.sorted(by: galleryOrder)
         return CatalogPeopleState(
