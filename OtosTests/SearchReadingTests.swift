@@ -45,13 +45,23 @@ struct SearchReadingTests {
     }
 
     /// Text drawn into a picture is read back, certain enough for the Info pane to show it.
+    ///
+    /// When macOS purges Vision's compiled model under disk pressure while this process holds
+    /// it, no reading in the process can succeed again
+    /// (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`). This test then has
+    /// nothing to read, and records that one error as a known issue: the product's handling of
+    /// it is `aReaderLostForTheProcessAttemptsNothingMore`. Any other failure fails the test.
     @Test func textInAPictureIsRead() throws {
-        let image = try #require(Self.picture(saying: "OTOS SEARCH 2026"))
-        let read = try Self.readAsTheIndexDoes(image)
-        #expect(Self.matches("otos search", in: SearchTextReading.searchable(read)))
-        #expect(SearchTextReading.certain(read) == ["OTOS SEARCH 2026"])
-        let blank = SearchModelTests.solid(red: 0.4, green: 0.5, blue: 0.6, width: 1200, height: 800)
-        #expect(try Self.readAsTheIndexDoes(blank).isEmpty)
+        try withKnownIssue("Vision's text reader was lost for this process to a cache purge", isIntermittent: true) {
+            let image = try #require(Self.picture(saying: "OTOS SEARCH 2026"))
+            let read = try Self.readAsTheIndexDoes(image)
+            #expect(Self.matches("otos search", in: SearchTextReading.searchable(read)))
+            #expect(SearchTextReading.certain(read) == ["OTOS SEARCH 2026"])
+            let blank = SearchModelTests.solid(red: 0.4, green: 0.5, blue: 0.6, width: 1200, height: 800)
+            #expect(try Self.readAsTheIndexDoes(blank).isEmpty)
+        } matching: { issue in
+            issue.error.map(SearchTextReading.losesTheProcess) ?? false
+        }
     }
 
     /// The shape of Vision's `TextRecognition.CRImageReaderError`, whose `e5rtError` case is
@@ -241,13 +251,15 @@ struct SearchReadingTests {
     /// cold reading on its own: it cancels an operation that overran its internal deadline
     /// (`e5rt` "has timed out", error 10) while it compiles the text models, which takes
     /// minutes under parallel checks. The attempts are counted, not timed, and a reading that
-    /// fails every attempt throws the last error, so a Vision that cannot read still fails.
+    /// fails every attempt throws the last error, so a Vision that cannot read still fails. An
+    /// error that loses the reader for the process is thrown at once, as the product stops at
+    /// it (`SearchTextReading.losesTheProcess`): no later attempt in the process can read.
     static func readAsTheIndexDoes(_ image: CGImage) throws -> [RecognizedTextLine] {
         let attempts = 3
         for attempt in 1 ... attempts {
             do {
                 return try SearchTextReading.read(image)
-            } catch where attempt < attempts {
+            } catch where attempt < attempts && !SearchTextReading.losesTheProcess(error) {
                 print("op=test.searchReading phase=retry attempt=\(attempt) error=\(error)")
             }
         }
