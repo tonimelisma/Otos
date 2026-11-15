@@ -1499,6 +1499,10 @@ nonisolated struct SourceListedItem: Hashable, Sendable {
     /// The source's own digest of the item's bytes (an uploaded Immich asset's SHA-1,
     /// ADR 0054), which the row takes as its digest; nil when the source states none.
     var sourceDigest: ContentDigest?
+    /// The source's checksum of the item's path on its server (an external library's
+    /// Immich asset, ADR 0054), by which the library file it mirrors finds it; nil when the
+    /// source states none.
+    var sourcePathChecksum: ImmichPathChecksum?
 }
 
 /// A full resync a source owes (`library_root.resync_owed`, ADR 0046 §5): the revision of

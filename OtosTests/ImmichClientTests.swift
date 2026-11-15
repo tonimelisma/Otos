@@ -207,7 +207,8 @@ struct ImmichClientTests {
             "id": "m1", "originalFileName": "IMG_1.MOV", "type": "VIDEO", "visibility": "hidden",
             "fileCreatedAt": "2025-06-13T00:48:36.603Z", "fileModifiedAt": "2026-01-01T00:00:00.000Z",
             "isTrashed": false, "livePhotoVideoId": NSNull(), "exifInfo": ["fileSizeInByte": 2_414_759, "make": NSNull()],
-            "thumbhash": NSNull(),
+            "thumbhash": NSNull(), "originalPath": "/mnt/onedrive/Pictures/Camera Roll/2024/IMG_1.MOV",
+            "libraryId": "lib-1", "checksum": "YSh/w9kgVtWGbzD5f2uUP5/HYag=",
         ]
         let reply = try JSONSerialization.data(withJSONObject: body)
         let session = ImmichStubProtocol.session(host: "asset.test") { request, _ in
@@ -223,6 +224,10 @@ struct ImmichClientTests {
         #expect(detail.fileSize == 2_414_759)
         #expect(detail.fileModifiedAt == Date(timeIntervalSince1970: 1_767_225_600))
         #expect(!detail.hasPreview)
+        // An external library's asset: its checksum is of its server path, which it names.
+        #expect(detail.originalPath == "/mnt/onedrive/Pictures/Camera Roll/2024/IMG_1.MOV")
+        #expect(detail.contentDigest == nil)
+        #expect(detail.pathChecksum == ImmichAsset.pathChecksum(checksum: "YSh/w9kgVtWGbzD5f2uUP5/HYag=", libraryID: "lib-1"))
     }
 
     @Test func theSyncStreamIsReadAsLines() async throws {

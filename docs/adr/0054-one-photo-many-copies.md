@@ -39,10 +39,35 @@ The owner decided, on 2026-11-14:
 is the SHA-1 of its original. It arrives with its listing (`SourceListedItem.sourceDigest`)
 and is the row's digest, stamped with the facts the same listing wrote. A size the server
 reports later, of the same bytes, takes the place of the missing size in the stamp.
-- An external library's asset (`libraryId` set) has a checksum of its path, not its bytes. It
-  has no digest until its original is downloaded for the user's own work, so it is shown
-  beside any copy of it.
+- An external library's asset (`libraryId` set) has a checksum of its path, not its bytes:
+  the SHA-1 of `path:<its path on the server>` (`ImmichPathChecksum`, stored as
+  `media_asset.source_path_sha1`). It takes a digest only as a mirrored library file's copy
+  (below), or when its original is downloaded for the user's own work.
 - A name and size that match are never treated as proof.
+
+**A mirrored library file names its external-library asset by its path** (owner's mirror,
+2026-11-15; decided by the agent on the owner's delegation, because the other way, hashing
+each original, would download every one of them).
+- A mirror (`immich_mirror`) is the server path a library's relative paths follow on an
+  account's server. After every completed sync pass, `ImmichCatalogSync` finds up to three
+  library files with an external asset of the same name, size and whole-second modification
+  time. It asks the server for one such asset's `originalPath` (`GET /api/assets/{id}`) and
+  takes the prefix before the file's relative path, compared as bytes. The asset's own
+  checksum must equal the checksum of that prefix plus the relative path. A same-named file
+  from another folder confirms nothing, and the next candidate is asked. A stored prefix that
+  a candidate still confirms is kept with no request.
+- An asset is a library file's copy when its path checksum is that of the prefix plus the
+  file's relative path, and the server lists it with the size and whole-second modification
+  time that the file's digest was read at. This is rsync's quick check, on the exact path. The
+  asset then takes the file's digest, stamped with its own listed facts, so a later listing of
+  other bytes makes the digest stale for it.
+- `MirrorGateway.pair` is the one rule. The digest write of a library file (enrichment,
+  `applyContentHash`, an import's landing) pairs its mirrored assets in the same transaction.
+  Each pass pairs every file again, in batches of 500 files per transaction, so an asset
+  listed after its file's digest pairs at the end of the pass that lists it. A write path that
+  missed the call would only delay a pair to the next pass.
+- On the owner's catalog, 16,683 Camera Roll files have an Immich asset with the same name and
+  size. Every one of them also has the same whole-second modification time.
 
 **The shown copy is a library's before an account's, then the first by root and path.**
 - A library's copy is the one Otos renders itself, can edit in full resolution without a
@@ -77,7 +102,10 @@ is never reported as none.
 | Computing the hidden set once per window pass | 0.6–1.3 s per pass at owner scale, repeated on every catalog change. |
 | A Swift owner that recomputes the column after writes | Every write that moves a digest, a presence or a path would have to call it, and a missed path leaves a photo hidden. The triggers cover every write by construction. |
 | Matching by name and size | A guess. Names repeat every 10,000 iPhone photos, and OneDrive's camera upload renames and converts. |
-| Trusting an external library's checksum | It is the SHA-1 of `path:<path>`, which no library file's bytes can match. |
+| Trusting an external library's checksum as a digest | It is the SHA-1 of `path:<path>`, which no library file's bytes can match. It names the asset a mirrored file's path points at instead. |
+| Downloading every external-library original to hash it | About 147k downloads on the owner's account, against ADR 0046 §4: an account's original is downloaded only for the user's own work. |
+| Matching a mirror by name, size and date alone | A guess across folders. The path checksum makes the path exact, and the size and date only say the bytes are the same version. |
+| Listing every asset's `originalPath` (`POST /api/search/metadata`) | It is about 150 requests per resync, and a second record of a path the stream's checksum already names. One path per library teaches the prefix. |
 | Showing the copy with the user's work (edited, liked) first | Liking or un-liking would swap which file the tile is, under the pointer. |
 | Keeping XXH3 and adding SHA-1 beside it | Two digests answering one question. Immich speaks SHA-1, so one digest serves both. |
 | Collapsing copies in one library's or folder's view | The owner wants that view to show exactly what is on disk (2026-11-14). |
@@ -89,6 +117,12 @@ is never reported as none.
   bytes once, downloading an evicted cloud file under the free-space floor (ENR-008). Every
   Immich account owes a full resync, which lists each asset with its checksum.
 - Until a row's digest is read, its copies are not known, and a copy shows beside it.
+- Migration v61 adds `source_path_sha1` and `immich_mirror` and owes every Immich account a
+  full resync, so each external asset is listed with its path checksum. A library's mirror is
+  learned from the server once, with one asset request, and pairing a whole library is a
+  pass's batched writes. A mirror goes with either root.
+- A file renamed on one side but not yet on the other pairs again once both sides list it at
+  the same path.
 - Duplicates lists a mirror's pairs only while the user has it compare across libraries
   (ADR 0042). Then an account's copy is never tagged Trash (ADR 0046 §8), and by default
   each library and account keeps its own, so nothing moves unless the user chooses it. On

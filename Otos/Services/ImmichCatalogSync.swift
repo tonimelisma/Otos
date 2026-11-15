@@ -152,9 +152,80 @@ actor ImmichCatalogSync {
         let outcome = await syncListing(answered: &answered)
         if case .synced = outcome {
             await onReport(.listed)
+            await pairMirrors()
             _ = await fetchProducts()
         }
         return outcome
+    }
+
+    // MARK: - Mirrors (ADR 0054)
+
+    /// Learns where the server holds each library it mirrors, then gives every mirrored
+    /// asset its library file's digest. It runs once the stream is applied, so every asset
+    /// the pass listed is there to pair. A read that fails pairs nothing new, is logged, and
+    /// is asked again next pass.
+    private func pairMirrors() async {
+        let probes: [MirrorGateway.Probe]
+        do {
+            probes = try await store.mirrorProbes(account: rootPath)
+        } catch {
+            OtosLog.catalog.errorOperation("immich.mirror", phase: "probeFailed", fields: [
+                "rootPath": rootPath.rawValue, "error": String(describing: error),
+            ])
+            return
+        }
+        for probe in probes {
+            await learnMirror(probe)
+        }
+        do {
+            _ = try await store.pairMirroredCopies(account: rootPath)
+        } catch {
+            OtosLog.catalog.errorOperation("immich.mirror", phase: "pairFailed", fields: [
+                "rootPath": rootPath.rawValue, "error": String(describing: error),
+            ])
+        }
+    }
+
+    /// A library's mirror: kept while one of its files still names its asset under the
+    /// prefix, else learned from the server's path of a candidate asset, which its own
+    /// checksum must confirm. A same-named file from another folder confirms nothing, and the
+    /// next candidate is asked.
+    private func learnMirror(_ probe: MirrorGateway.Probe) async {
+        let fields = ["accountRootPath": rootPath.rawValue, "libraryRootPath": probe.libraryRootPath.rawValue]
+        if let prefix = probe.serverPrefix, probe.candidates.contains(where: {
+            ImmichPathChecksum(serverPath: prefix + $0.relativePath.rawValue) == $0.pathChecksum
+        }) {
+            OtosLog.catalog.noticeOperation("immich.mirror", phase: "kept", fields: fields)
+            return
+        }
+        for candidate in probe.candidates {
+            let detail: ImmichAssetDetail
+            do {
+                detail = try await source.asset(id: candidate.assetID)
+            } catch {
+                OtosLog.catalog.errorOperation("immich.mirror", phase: "pathReadFailed", fields: fields.merging([
+                    "assetID": candidate.assetID, "error": String(describing: error),
+                ]) { current, _ in current })
+                return
+            }
+            guard let originalPath = detail.originalPath,
+                  let prefix = MirrorGateway.serverPrefix(of: originalPath, relativePath: candidate.relativePath),
+                  ImmichPathChecksum(serverPath: prefix + candidate.relativePath.rawValue) == candidate.pathChecksum
+            else {
+                continue
+            }
+            do {
+                try await store.recordMirror(account: rootPath, library: probe.libraryRootPath, serverPrefix: prefix)
+            } catch {
+                OtosLog.catalog.errorOperation("immich.mirror", phase: "recordFailed", fields: fields.merging([
+                    "error": String(describing: error),
+                ]) { current, _ in current })
+            }
+            return
+        }
+        OtosLog.catalog.noticeOperation("immich.mirror", phase: "notMirrored", fields: fields.merging([
+            "candidates": "\(probe.candidates.count)", "known": "\(probe.serverPrefix != nil)",
+        ]) { current, _ in current })
     }
 
     /// The stream applied to its end: from zero while a resync is owed, else from the
@@ -393,7 +464,7 @@ actor ImmichCatalogSync {
             return ImmichAssetDetail(
                 id: id, originalFileName: line.originalFileName, type: line.type,
                 fileCreatedAt: created, fileModifiedAt: modified, fileSize: sizes[id],
-                hasPreview: line.hasPreview, contentDigest: line.contentDigest
+                hasPreview: line.hasPreview, contentDigest: line.contentDigest, pathChecksum: line.pathChecksum
             )
         }
     }
@@ -731,7 +802,8 @@ actor ImmichCatalogSync {
             sourceItemID: asset.id,
             isHiddenBySource: asset.deletedAt != nil,
             sourceHasProducts: asset.hasPreview,
-            sourceDigest: asset.contentDigest
+            sourceDigest: asset.contentDigest,
+            sourcePathChecksum: asset.pathChecksum
         )
     }
 
@@ -752,7 +824,8 @@ actor ImmichCatalogSync {
             sourceItemID: motion.id,
             isHiddenBySource: still.deletedAt != nil,
             sourceHasProducts: motion.hasPreview,
-            sourceDigest: motion.contentDigest
+            sourceDigest: motion.contentDigest,
+            sourcePathChecksum: motion.pathChecksum
         )
     }
 
@@ -773,7 +846,8 @@ actor ImmichCatalogSync {
             sourceItemID: asset.id,
             isHiddenBySource: row.isHiddenBySource,
             sourceHasProducts: asset.hasPreview,
-            sourceDigest: asset.contentDigest
+            sourceDigest: asset.contentDigest,
+            sourcePathChecksum: asset.pathChecksum
         )
     }
 

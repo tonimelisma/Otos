@@ -372,6 +372,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.mirrorsMigrationIdentifier) { db in
+            for statement in CatalogSchema.mirrorsStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -872,6 +877,9 @@ extension CatalogStore {
                     libraryRootID,
                     result.id.relativePath.rawValue,
                 ]
+            )
+            _ = try MirrorGateway.pairMirroredAssets(
+                libraryRootID: libraryRootID, relativePath: result.id.relativePath.rawValue, db: db
             )
         }
         if let metadata = result.metadata {

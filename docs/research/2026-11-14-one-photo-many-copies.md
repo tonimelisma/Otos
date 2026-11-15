@@ -182,3 +182,18 @@ measurable.
 2. The digest is SHA-1, so an uploaded Immich asset's checksum is its digest without a download.
 3. Which copy is shown is a stored column kept by triggers, carried by the window's indexes,
    and decided per scope by whether the shown copy's root is in the scope.
+
+## Pairing an external library's asset with the file it mirrors (2026-11-15)
+
+Read from the installed app's catalog, opened read-only.
+
+- 16,683 Camera Roll files have an Immich asset with the same name and byte size. All
+  16,683 also have the same modification time in whole seconds, and 16,647 match to the
+  millisecond. So the server's mirror keeps each file's mtime.
+- The sync stream (`SyncAssetV2Schema`) has no `originalPath`. `GET /api/assets/{id}`
+  (`AssetResponseDto`) does. An external asset's checksum is the SHA-1 of
+  `path:${assetPath}` (`library.service.ts`, line 414 on main, read 2026-11-15), so a
+  library file's server path can be checked against it with no download.
+- The rule: learn the server prefix from one asset's `originalPath`, confirmed by that
+  asset's checksum. Then a file pairs with the asset whose checksum is that of the prefix plus
+  its relative path, listed with its size and mtime.

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import OSLog
 import Synchronization
@@ -145,7 +146,9 @@ nonisolated struct ImmichClient: Sendable {
             fileModifiedAt: Self.date(body.fileModifiedAt),
             fileSize: body.exifInfo?.fileSizeInByte,
             hasPreview: body.thumbhash != nil,
-            contentDigest: ImmichAsset.contentDigest(checksum: body.checksum, libraryID: body.libraryId, assetID: body.id)
+            contentDigest: ImmichAsset.contentDigest(checksum: body.checksum, libraryID: body.libraryId, assetID: body.id),
+            pathChecksum: ImmichAsset.pathChecksum(checksum: body.checksum, libraryID: body.libraryId),
+            originalPath: body.originalPath
         )
     }
 
@@ -172,6 +175,7 @@ nonisolated struct ImmichClient: Sendable {
         let thumbhash: String?
         let checksum: String?
         let libraryId: String?
+        let originalPath: String?
     }
 
     /// Downloads an asset's original to a temporary file the caller moves into place
@@ -456,6 +460,9 @@ nonisolated struct ImmichAsset: Equatable, Sendable {
     /// The SHA-1 of the original's bytes, as the server reports it; nil for an asset whose
     /// checksum is not of its bytes (ADR 0054).
     var contentDigest: ContentDigest?
+    /// An external library's asset's checksum: the SHA-1 of its path on the server, which
+    /// pairs it with the library file it mirrors (ADR 0054); nil for an uploaded asset.
+    var pathChecksum: ImmichPathChecksum?
     /// A Live Photo still's motion part, an asset of its own (`visibility: hidden`).
     var livePhotoVideoID: String?
 
@@ -476,6 +483,36 @@ nonisolated struct ImmichAsset: Equatable, Sendable {
         }
         return digest
     }
+
+    /// The path checksum an external library's asset's `checksum` states; nil for an
+    /// uploaded asset, whose checksum is of its bytes, and for text that is not a SHA-1.
+    static func pathChecksum(checksum: String?, libraryID: String?) -> ImmichPathChecksum? {
+        guard libraryID != nil, let checksum, let data = Data(base64Encoded: checksum) else {
+            return nil
+        }
+        return ImmichPathChecksum(data: data)
+    }
+}
+
+/// The checksum Immich gives an external library's asset: the SHA-1 of the text
+/// `path:<the file's path on the server>` (`LibraryService`, `ChecksumAlgorithm.sha1Path`,
+/// `docs/research/2026-11-14-one-photo-many-copies.md`). It names where the file is, never
+/// what it holds, so it is never a content digest; Otos computes it for a library file's
+/// path under a mirror's server prefix to find the asset that file is (ADR 0054).
+nonisolated struct ImmichPathChecksum: Equatable, Hashable, Sendable {
+    let data: Data
+
+    init?(data: Data) {
+        guard data.count == ContentDigest.byteCount else {
+            return nil
+        }
+        self.data = data
+    }
+
+    /// The checksum Immich computes for a file at `serverPath`.
+    init(serverPath: String) {
+        data = Data(Insecure.SHA1.hash(data: Data("path:\(serverPath)".utf8)))
+    }
 }
 
 /// One asset's own facts, read on their own rather than from the sync stream.
@@ -491,6 +528,11 @@ nonisolated struct ImmichAssetDetail: Equatable, Sendable {
     let hasPreview: Bool
     /// The SHA-1 of the original's bytes (`ImmichAsset.contentDigest`).
     var contentDigest: ContentDigest?
+    /// An external library's asset's path checksum (`ImmichAsset.pathChecksum`).
+    var pathChecksum: ImmichPathChecksum?
+    /// The original's path on the server, which names where an external library's file
+    /// is mounted there (ADR 0054); nil when the server does not send it.
+    var originalPath: String?
 }
 
 /// One line of the sync stream. Every line carries the `ack` that moves the cursor past it.
@@ -569,6 +611,7 @@ nonisolated enum ImmichSyncEvent: Equatable, Sendable {
                 fileModifiedAt: data.fileModifiedAt.map(Self.date),
                 hasPreview: data.thumbhash != nil,
                 contentDigest: ImmichAsset.contentDigest(checksum: data.checksum, libraryID: data.libraryId, assetID: data.id),
+                pathChecksum: ImmichAsset.pathChecksum(checksum: data.checksum, libraryID: data.libraryId),
                 livePhotoVideoID: data.livePhotoVideoId
             ), ack: ack)
         case .assetDeleted:

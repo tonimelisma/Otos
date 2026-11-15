@@ -223,6 +223,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.photoDescriptionMigrationIdentifier,
             CatalogSchema.stackCandidatePathMigrationIdentifier,
             CatalogSchema.copiesMigrationIdentifier,
+            CatalogSchema.mirrorsMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -550,6 +551,39 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(named == ["2026/a.jpg=nil", "a1/IMG_1.JPG=a1", "b2/IMG_2.HEIC=b2"])
     }
 
+    /// v61 (ADR 0054): every Immich account owes a full resync, so each external asset is
+    /// listed with its path checksum, and a mirror goes with either of its roots.
+    @Test func theMirrorsMigrationOwesEveryAccountAResyncAndAMirrorGoesWithItsRoots() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.copiesMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/RemoteStaging/family', 'immichAccount')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (3, '/Other', 'library')")
+        }
+        try CatalogStore.migrator.migrate(queue)
+
+        let owed = try await queue.write { db -> Int? in
+            try MirrorGateway.record(accountRootID: 2, libraryRootID: 1, serverPrefix: "/mnt/od/", db: db)
+            try MirrorGateway.record(accountRootID: 2, libraryRootID: 3, serverPrefix: "/mnt/other/", db: db)
+            try MirrorGateway.record(accountRootID: 2, libraryRootID: 1, serverPrefix: "/mnt/od/Pictures/", db: db)
+            return try Int.fetchOne(db, sql: "SELECT resync_owed FROM library_root WHERE id = 2")
+        }
+        #expect(owed == 1)
+        try await queue.write { db in
+            #expect(try MirrorGateway.serverPrefix(accountRootID: 2, libraryRootID: 1, db: db) == "/mnt/od/Pictures/")
+            try db.execute(sql: "DELETE FROM library_root WHERE id = 3")
+            #expect(try MirrorGateway.mirrors(ofLibrary: 3, db: db).isEmpty)
+            try db.execute(sql: "DELETE FROM library_root WHERE id = 2")
+            #expect(try MirrorGateway.mirrors(ofLibrary: 1, db: db).isEmpty)
+        }
+    }
+
     /// v60 (ADR 0054, ADR 0018): every XXH3 digest is cleared, so its row owes a SHA-1, and
     /// every Immich account owes a full resync, which lists each asset with its checksum. Once
     /// two rows hold the same SHA-1, the triggers name the library's copy as the one shown.
@@ -576,7 +610,7 @@ struct CatalogStoreSchemaMigrationTests {
                 )
             }
         }
-        try CatalogStore.migrator.migrate(queue)
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.copiesMigrationIdentifier)
 
         let (digests, owed) = try await queue.read { db in
             try (

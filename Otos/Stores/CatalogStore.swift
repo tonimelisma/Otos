@@ -3733,6 +3733,9 @@ extension CatalogStore {
                     ]
                 )
                 let written = db.changesCount
+                if written > 0 {
+                    _ = try MirrorGateway.pairMirroredAssets(libraryRootID: rootRowID, relativePath: relativePath, db: db)
+                }
                 if written == 0 {
                     // The file changed while it was read: the digest is for other bytes.
                     try db.execute(
@@ -5281,6 +5284,16 @@ extension CatalogStore {
             WHERE library_root_id = ? AND relative_path = ? AND source_item_id IS NOT ?
             """).execute(
                 arguments: [item.sourceItemID, rootRowID, file.relativePath.rawValue, item.sourceItemID]
+            )
+            // Where the source holds the item on its server: what a mirrored library file
+            // finds it by (ADR 0054), not shown.
+            try db.cachedStatement(sql: """
+            UPDATE media_asset SET source_path_sha1 = ?
+            WHERE library_root_id = ? AND relative_path = ? AND source_path_sha1 IS NOT ?
+            """).execute(
+                arguments: [
+                    item.sourcePathChecksum?.data, rootRowID, file.relativePath.rawValue, item.sourcePathChecksum?.data,
+                ]
             )
             // Whether the source has its own images of the row: what the product pass
             // asks for, not shown, so not a change the window hears either.
@@ -8308,6 +8321,93 @@ extension CatalogStore {
             }
             return (copies, Set(keptPairs), reach)
         }
+    }
+
+    // MARK: - Mirrors (ADR 0054)
+
+    /// Each library as `account`'s mirror discovery sees it: the server prefix learned for
+    /// it and files that may be the account's assets (`MirrorGateway.Probe`).
+    func mirrorProbes(account: LibraryRootPath) async throws -> [MirrorGateway.Probe] {
+        guard let accountRootID = roots[account]?.rowID else {
+            return []
+        }
+        let libraries = roots.values.filter { $0.root.kind == .library }.map { (id: $0.rowID, path: $0.path) }
+        return try await database().read { db in
+            try libraries.map { library in
+                try MirrorGateway.Probe(
+                    libraryRootID: library.id,
+                    libraryRootPath: library.path,
+                    serverPrefix: MirrorGateway.serverPrefix(accountRootID: accountRootID, libraryRootID: library.id, db: db),
+                    candidates: MirrorGateway.candidates(libraryRootID: library.id, accountRootID: accountRootID, db: db)
+                )
+            }
+        }
+    }
+
+    /// Records where `account`'s server holds `library`'s files: the server path its
+    /// relative paths follow.
+    func recordMirror(account: LibraryRootPath, library: LibraryRootPath, serverPrefix: String) async throws {
+        guard let accountRootID = roots[account]?.rowID, let libraryRootID = roots[library]?.rowID else {
+            return
+        }
+        try await database().write { db in
+            try MirrorGateway.record(
+                accountRootID: accountRootID, libraryRootID: libraryRootID, serverPrefix: serverPrefix, db: db
+            )
+        }
+        OtosLog.catalog.noticeOperation("immich.mirror", phase: "recorded", fields: [
+            "accountRootPath": account.rawValue, "libraryRootPath": library.rawValue,
+        ])
+    }
+
+    /// Gives every asset of `account` that is a mirrored library file the file's digest
+    /// (`MirrorGateway.pair`), a batch of files per transaction; returns how many took one.
+    func pairMirroredCopies(account: LibraryRootPath) async throws -> Int {
+        guard let accountRootID = roots[account]?.rowID else {
+            return 0
+        }
+        let dbQueue = try database()
+        let started = ContinuousClock.now
+        let mirrors = try await dbQueue.read { db in
+            try Row.fetchAll(
+                db,
+                sql: "SELECT library_root_id, server_prefix FROM immich_mirror WHERE account_root_id = ?",
+                arguments: [accountRootID]
+            ).map { row -> (libraryRootID: Int64, serverPrefix: String) in
+                (row["library_root_id"], row["server_prefix"])
+            }
+        }
+        var paired = 0
+        var files = 0
+        for mirror in mirrors {
+            var after: String?
+            while true {
+                let batch = try await dbQueue.write { [after] db in
+                    let batch = try MirrorGateway.digestedFiles(libraryRootID: mirror.libraryRootID, after: after, db: db)
+                    let paired = try MirrorGateway.pair(
+                        batch, accountRootID: accountRootID, serverPrefix: mirror.serverPrefix, db: db
+                    )
+                    return (last: batch.last?.relativePath, count: batch.count, paired: paired)
+                }
+                paired += batch.paired
+                files += batch.count
+                guard let last = batch.last, batch.count == MirrorGateway.pairBatchSize else {
+                    break
+                }
+                after = last
+            }
+        }
+        OtosLog.catalog.noticeOperation("immich.mirror", phase: "paired", fields: [
+            "rootPath": account.rawValue,
+            "mirrors": "\(mirrors.count)",
+            "files": "\(files)",
+            "paired": "\(paired)",
+            "ms": "\(DiagnosticsTiming.milliseconds(from: started, to: ContinuousClock.now))",
+        ])
+        if paired > 0 {
+            notifyCatalogChanged(.changed(.copies))
+        }
+        return paired
     }
 
     /// Keep All Copies: remembers every pair of copies in each group as kept together.

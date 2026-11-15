@@ -1556,6 +1556,35 @@ nonisolated enum CatalogSchema {
         return statements
     }
 
+    /// Mirrors (ADR 0054): an Immich external library that holds a library's files.
+    /// - `source_path_sha1` is an external library's asset's checksum, the SHA-1 of its path
+    ///   on the server, written by its listing; its index finds the asset a library file's
+    ///   path names.
+    /// - `immich_mirror` is where an account's server holds one library's files: the server
+    ///   path a library file's relative path follows. It is learned from the server and goes
+    ///   with either root.
+    /// - Every Immich account owes a full resync, so every asset is listed again with its
+    ///   path checksum.
+    static let mirrorsMigrationIdentifier = "v61_immich_mirrors"
+
+    static let mirrorsStatements = [
+        "ALTER TABLE media_asset ADD COLUMN source_path_sha1 BLOB",
+        """
+        CREATE INDEX idx_media_asset_source_path_sha1 ON media_asset(library_root_id, source_path_sha1)
+        WHERE source_path_sha1 IS NOT NULL
+        """,
+        """
+        CREATE TABLE immich_mirror (
+            account_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
+            library_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
+            server_prefix TEXT NOT NULL,
+            PRIMARY KEY (account_root_id, library_root_id)
+        )
+        """,
+        "CREATE INDEX idx_immich_mirror_library ON immich_mirror(library_root_id)",
+        "UPDATE library_root SET resync_owed = resync_owed + 1 WHERE kind = 'immichAccount'",
+    ]
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

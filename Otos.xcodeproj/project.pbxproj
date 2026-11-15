@@ -86,6 +86,7 @@
 				Services/StoryPlaybackPolicy.swift,
 				Stores/AnniversaryMatch.swift,
 				Stores/CatalogStoreDuplicates.swift,
+				Stores/CatalogStoreMirrors.swift,
 				Stores/PhotoDescriptionStorage.swift,
 				ViewModels/CatalogWindowViewModelDuplicates.swift,
 				ViewModels/CatalogWindowViewModelStory.swift,
