@@ -105,7 +105,7 @@ nonisolated enum PhotoDescriptionAvailability: Equatable, Sendable {
 /// The model's typed answer for one photo.
 @Generable
 nonisolated struct GeneratedPhotoDescription {
-    @Guide(description: "Two or three lively, warm sentences about the photo, naming the people given where their faces are.")
+    @Guide(description: "Two or three lively, playful sentences about the photo.")
     var description: String
 }
 

@@ -188,9 +188,26 @@ struct PhotoDescriptionTests {
         Taken on Saturday, 18 July 2026, in the afternoon, in Espoo, Finland.
         People in the photo, by where their faces are:
         - Jamie, 38 years old: face at the top left.
-        - Someone not named: face at the bottom right.
+        1 more person is not named.
+        Call each named person by name, and give no one else a name.
         Text in the photo: "SAUNA / OPEN".
         Recognized in the scene: blue sky.
+        """)
+    }
+
+    /// A photo naming no one says so, so the model gives no one a name; one naming everyone
+    /// asks for each by name.
+    @Test func thePromptSaysWhetherAnyoneMayBeNamed() {
+        let facts = PhotoDescriptionFacts(faces: [], capturedAt: nil, town: nil, country: nil, textLines: [], labels: [])
+        let unnamed = PhotoDescriptionPrompt.Face(box: CGRect(x: 0.4, y: 0.4, width: 0.1, height: 0.1), name: nil, age: nil)
+        let mia = PhotoDescriptionPrompt.Face(box: CGRect(x: 0.4, y: 0.4, width: 0.1, height: 0.1), name: "Mia", age: nil)
+        #expect(PhotoDescriptionPrompt(faces: [], facts: facts).facts == "No one in the photo is named, so give no one a name.")
+        #expect(PhotoDescriptionPrompt(faces: [unnamed, unnamed], facts: facts).facts
+            == "No one in the photo is named, so give no one a name.")
+        #expect(PhotoDescriptionPrompt(faces: [mia], facts: facts).facts == """
+        People in the photo, by where their faces are:
+        - Mia: face in the middle.
+        Call each of them by name.
         """)
     }
 

@@ -48,15 +48,23 @@ model is told:
 
 - when it was taken (the capture clock's day and part of day) and where (the map cell's town
   and country, ADR 0051);
-- each face's position in the picture (thirds across and down), left to right, with its
+- each named face's position in the picture (thirds across and down), left to right, with its
   person's name and age on that day — whole years, months under two, "about" from a birth year
-  alone. A face given to no one, to an unnamed person or to a hidden one is "Someone not
-  named". Faces are stored on the upright photo and carried onto the preview through its edit
-  (`EditGeometry`); a face the crop leaves out is not told;
+  alone — then how many more people are not named. A face given to no one, to an unnamed person
+  or to a hidden one is not named. Faces are stored on the upright photo and carried onto the
+  preview through its edit (`EditGeometry`); a face the crop leaves out is not told;
+- **whether anyone may be named, in the photo's own facts:** "Call each of them by name", "Call
+  each named person by name, and give no one else a name", or "No one in the photo is named, so
+  give no one a name". The first version said this only in the instructions; on the owner's
+  library it gave people in photos with no faces read invented names ("Jasper", "Aunt Per",
+  "Toby, 7, and Claire, 4") and a named person an invented age ("Mia, 8"). Told only "use no
+  other names", it named no one at all, the listed people included. Said per photo, it named
+  Mia, Jamie and Tyler at their faces and no one in the photos naming no one (revision 2);
 - the text Vision is certain of and its confident scene labels.
 
-The instructions ask for two or three lively, warm sentences for the family to enjoy, the given
-names at their faces, no guessed identity, nothing invented. English only: the system model
+The instructions ask for two or three lively, playful sentences for the family to enjoy, only
+the names the facts give, an age only when given, nothing invented, and no closing remark about
+memories (the first version closed nearly every description with one). English only: the system model
 does not write Finnish, and search reads English (ADR 0048).
 
 ### When a description is written

@@ -9,6 +9,13 @@ import Foundation
 /// facts tell it what it cannot see — who people are — and what Otos already knows, so it
 /// names the right person at the right face and never guesses an identity.
 ///
+/// Whether anyone may be named is said in each photo's own facts, not only in the instructions:
+/// told generally to name no one unlisted, the model named no one at all, and told only to name
+/// the listed people, it gave invented names to the people in photos that listed none ("Jasper",
+/// "Aunt Per") and invented ages (measured on the owner's library, ADR 0053). Each photo's facts
+/// therefore end by saying to call the named people by name and give no one else a name, or that
+/// no one is named, so no one gets a name.
+///
 /// The text is built here, once, as a value: the writer passes it to the model, and a test
 /// reads exactly what the model would be told. `revision` is part of every stored
 /// description's source, so a change to what the model is told writes every description
@@ -16,17 +23,16 @@ import Foundation
 nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
     /// What the stored descriptions were written from; raised whenever the instructions or the
     /// facts' wording change.
-    static let revision = 1
+    static let revision = 2
 
     /// What the model is asked to be: the same for every photo.
     static let instructions = """
     You write short descriptions of the photos in a family's photo library, for the family to \
-    enjoy reading. Write two or three lively, warm sentences about what is happening in the \
-    photo and what makes it worth remembering. When people are named, call each one by name \
-    where their face is. Never name anyone who is not named, and never guess who someone is. \
-    Ages help you tell people apart and choose words such as baby, toddler or grandparent; \
-    mention an age only when it adds something. Describe only what is visible: do not invent \
-    events, feelings or relationships. Write in English.
+    enjoy reading. Write two or three lively, playful sentences about what is happening in the \
+    photo and what makes it fun to look at. Use only the names the facts give, each at the place \
+    where that person's face is, and never guess who someone is. Give an age only when the facts \
+    give it. Describe only what is visible: do not invent events, feelings or relationships. Do \
+    not end with a remark about memories. Write in English.
     """
 
     /// One face as the model is told of it: where it is in the picture it is shown.
@@ -46,13 +52,20 @@ nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
         if let taken = Self.taken(facts) {
             lines.append(taken)
         }
-        let shown = faces.sorted { ($0.box.midX, $0.box.midY) < ($1.box.midX, $1.box.midY) }
-        if !shown.isEmpty {
+        let named = faces.filter { $0.name != nil }.sorted { ($0.box.midX, $0.box.midY) < ($1.box.midX, $1.box.midY) }
+        let unnamed = faces.count - named.count
+        if named.isEmpty {
+            lines.append("No one in the photo is named, so give no one a name.")
+        } else {
             lines.append("People in the photo, by where their faces are:")
-            for face in shown {
-                let who = face.name.map { name in face.age.map { "\(name), \($0)" } ?? name } ?? "Someone not named"
+            for face in named {
+                let who = face.name.map { name in face.age.map { "\(name), \($0)" } ?? name } ?? ""
                 lines.append("- \(who): face \(Self.position(of: face.box)).")
             }
+            if unnamed > 0 {
+                lines.append(unnamed == 1 ? "1 more person is not named." : "\(unnamed) more people are not named.")
+            }
+            lines.append(unnamed > 0 ? "Call each named person by name, and give no one else a name." : "Call each of them by name.")
         }
         let text = facts.textLines.prefix(Self.maximumTextLines).joined(separator: " / ")
         if !text.isEmpty {

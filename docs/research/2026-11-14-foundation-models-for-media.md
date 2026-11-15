@@ -235,6 +235,24 @@ Both named the right person at the right face. Each run was a new process, so ev
 paid the model's load; the 2.4 s warm figure is from the keyword-search probe
 (`2026-11-09-keyword-search.md` §2).
 
+### First pass on the owner's library, and the fix [measured]
+
+The installed app's first 16 descriptions (revision 1) gave invented names to people in photos
+with no faces read: "Eight-year-old Jasper holds a stick…", "Aunt Per is helping Baby Mia…",
+"Toby, 7, and Claire, 4…"; a named person with no birthday got an invented age ("Mia, 8");
+and nearly every one ended "…a memory the family will cherish forever". The rule against other
+names was only in the instructions.
+
+Probed on the same previews with the same model:
+
+| Instructions and facts | Mia photo (named, no birthday) | Jamie and Tyler | Photos naming no one |
+| --- | --- | --- | --- |
+| Rule only in the instructions: "use no other names" | "A boy lies on his stomach…" | "Jamie holds a child…" | "A toddler…", no names |
+| The rule in each photo's facts (revision 2) | "Mia is lying on his stomach, peering over a blue barrier." | "Jamie holds Tyler in front of a fence…" | "A toddler holds a fishing rod…"; "A box of San Pellegrino fruit drink sits on a table." |
+
+Two requests failed with `ModelManagerError` 1001 and 1032 while the installed Otos was using the
+model at the same time; one process at a time gets the model.
+
 ### Private Cloud Compute [source: WWDC26 session 319]
 
 - `PrivateCloudComputeLanguageModel()` in a `LanguageModelSession`, the same API as the
