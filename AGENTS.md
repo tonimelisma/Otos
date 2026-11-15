@@ -381,7 +381,8 @@ A failed run says why in the same log, one line per issue:
 
 xcodebuild's console never prints Swift Testing's issue text and DerivedData keeps only
 the newest few result bundles, so `test.sh` reads these from the run's bundle the moment
-it ends. Read them before rerunning anything.
+it ends. Read them before rerunning anything. A failed `script/bench.sh` run prints the same
+lines, since a measured commit's checkout is removed with its log.
 
 A run at 3× normal is hung, not slow. Diagnose it rather than waiting it out:
 `xcrun swift-inspect dump-concurrency <xctest pid>` prints each parked task's async

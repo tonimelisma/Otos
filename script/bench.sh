@@ -87,6 +87,7 @@ run() {
   local tree="${1:-$ROOT_DIR}"
   source "$ROOT_DIR/script/lib/xcode.sh"
   source "$ROOT_DIR/script/lib/run-context.sh"
+  source "$ROOT_DIR/script/lib/test-failures.sh"
   otos_require_full_xcode
   otos_hold_build_folder "$tree/build/DerivedData" bench
   # What this run measures, read before the build: a pull during the run must not
@@ -127,6 +128,8 @@ run() {
       -only-testing:OtosTests/BenchmarkTests \
       OTOS_BENCHMARK=1 >> "$log_file" 2>&1 || {
       echo "op=bench phase=failed reason=test process=$process log=$log_file" >&2
+      # A measured commit's checkout is removed with this log, so the reasons are printed now.
+      otos_print_test_failure_reasons "$log_file" >&2
       exit 1
     }
     if [[ ! -s "$results" ]]; then
