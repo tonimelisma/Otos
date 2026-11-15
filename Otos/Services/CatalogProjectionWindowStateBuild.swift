@@ -101,11 +101,16 @@ extension CatalogProjection {
             )
             if let built = ordered.builtStacks {
                 // Stacks handed back unchanged keep the revisions they were read at.
-                let heldStill = heldStacks.map { $0.rootPaths == built.rootPaths } ?? false
+                let heldStill = heldStacks.map { $0.rootPaths == built.rootPaths && $0.span == built.span } ?? false
                 reuse.stacks = heldStill
                 if !heldStill {
                     stackReadCount &+= 1
-                    reads.stacks = CatalogProjectionReads.Stacks(built: built, revisions: revisions)
+                    // Only a whole-roots build answers the next scope over the same roots; a
+                    // keyed scope's own stacks answer that scope alone, and are read again,
+                    // in milliseconds, rather than replace held whole-roots stacks.
+                    if built.span == .roots {
+                        reads.stacks = CatalogProjectionReads.Stacks(built: built, revisions: revisions)
+                    }
                 }
             }
         }

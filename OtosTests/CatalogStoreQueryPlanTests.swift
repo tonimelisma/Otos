@@ -126,6 +126,7 @@ struct CatalogStoreQueryPlanTests {
             ("members", CatalogScopePredicate(rootIDs: roots, content: .members([
                 CatalogScopePredicate.MemberKey(rootID: rootID1, relativePath: "a.jpg"),
             ])), "sqlite_autoindex_media_asset_1"),
+            ("person", CatalogScopePredicate(rootIDs: roots, content: .person(1)), "sqlite_autoindex_media_asset_1"),
         ]
         let sorts = [
             MediaSortOrder(field: .bestDate, direction: .descending),
@@ -142,7 +143,11 @@ struct CatalogStoreQueryPlanTests {
                         db: db
                     ))
                     return try explainPlan(db, query: query)
-                }
+                } + [
+                    // The filter's types and the counts reach the rows the same way.
+                    explainPlan(db, query: #require(try CatalogQueryGateway.distinctFilterableTypesQuery(scope: scope, db: db))),
+                    explainPlan(db, query: #require(try CatalogQueryGateway.countQuery(scope: scope, db: db))),
+                ]
                 let places = try #require(try CatalogQueryGateway.placeOptionsQuery(
                     scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
                 ))
@@ -365,6 +370,20 @@ struct CatalogStoreQueryPlanTests {
         #expect(plan.contains("SEARCH media_asset USING"))
         #expect(!plan.contains("SCAN media_asset"))
         #expect(!plan.contains("SCAN still"))
+
+        // A keyed scope's candidates start from its rows' folders and bursts, and
+        // seek every step by index; no step walks a root (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
+        let scoped = PhotoStackSQL.scopedCandidateQuery(folders: #"[[\#(rootID1),"a/"]]"#, bursts: #"[[\#(rootID1),"B1"]]"#)
+        let scopedPlan = try await dbQueue.read { db in try explainPlan(db, query: scoped) }
+        #expect(scopedPlan.contains("SCAN seed"), "\(scopedPlan)")
+        #expect(scopedPlan.contains("SEARCH still USING INDEX idx_media_asset_stack_candidate"), "\(scopedPlan)")
+        #expect(scopedPlan.contains("SEARCH still USING INDEX idx_media_asset_burst"), "\(scopedPlan)")
+        #expect(scopedPlan.contains("SEARCH raw EXISTS USING INDEX idx_media_asset_stack_candidate"), "\(scopedPlan)")
+        // The CTEs are scanned by design (`SCAN raw_folder`); no table is.
+        let scans = scopedPlan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        for table in ["media_asset", "still", "raw"] {
+            #expect(!scans.contains { $0 == "SCAN \(table)" || $0.hasPrefix("SCAN \(table) ") }, "\(scopedPlan)")
+        }
     }
 
     /// v55: the window's reads test every row they walk for whether it is shown and whether it
@@ -579,10 +598,12 @@ struct CatalogStoreQueryPlanTests {
     }
 
     /// Whether a row holds a face of one person is answered with one seek by person and
-    /// photo, never by walking every face of the person: the person's own photos (in date
-    /// and likeness order), the People filter, for one library and for several. On the
-    /// owner's catalog (2026-11-14: 147,024 rows of one account, 14,614 faces of its most
-    /// photographed person) the walk never let a person's photos open.
+    /// photo, never by walking every face of the person: the likeness a person's photos are
+    /// ordered by and the People filter, for one library and for several. On the owner's
+    /// catalog (2026-11-14: 147,024 rows of one account, 14,614 faces of its most
+    /// photographed person) the walk never let a person's photos open. The person's photos
+    /// themselves are found from the person's faces, once each: a keyed scope
+    /// (`keyedScopesSeekTheirOwnRowsInsteadOfWalkingTheOrder`).
     @Test func whetherARowHoldsAPersonIsOneSeekByPersonAndPhoto() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -597,8 +618,6 @@ struct CatalogStoreQueryPlanTests {
             .flatMap { roots in
                 let name = "\(roots.count) libraries"
                 return [
-                    ("person \(name)", CatalogQueryDescriptor(scope: .person(person)),
-                     CatalogScopePredicate(rootIDs: roots, content: .person(person.rawValue))),
                     ("person by likeness \(name)",
                      CatalogQueryDescriptor(scope: .person(person), sort: MediaSortOrder(field: .likeness, direction: .descending)),
                      CatalogScopePredicate(rootIDs: roots, content: .person(person.rawValue))),
@@ -613,7 +632,9 @@ struct CatalogStoreQueryPlanTests {
             }
         }
         for (name, plan) in plans {
-            let faceLines = plan.split(separator: "\n").filter { $0.contains(" face ") }
+            // The person scope's own walk of the person's faces (`(person_id=?)`) finds its
+            // photos; every other face read is one seek.
+            let faceLines = plan.split(separator: "\n").filter { $0.contains(" face ") && !$0.contains("(person_id=?)") }
             #expect(!faceLines.isEmpty, "\(name): \(plan)")
             for line in faceLines {
                 #expect(line.contains("idx_face_person_photo (person_id=? AND library_root_id=? AND relative_path=?"),

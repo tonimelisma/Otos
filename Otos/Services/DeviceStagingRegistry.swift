@@ -222,16 +222,13 @@ final class DeviceStagingRegistry {
         {
             let source = enrichmentURL
             let destination = destinationTempURL
-            let outcome: CopyfileTransfer.Outcome = await withCheckedContinuation { continuation in
-                Task.detached {
-                    let copyOutcome = CopyfileTransfer.copy(
-                        from: source,
-                        to: destination,
-                        onProgress: { _ in },
-                        shouldContinue: { true }
-                    )
-                    continuation.resume(returning: copyOutcome)
-                }
+            let outcome = await CopyfileTransfer.offCooperativePool {
+                CopyfileTransfer.copy(
+                    from: source,
+                    to: destination,
+                    onProgress: { _ in },
+                    shouldContinue: { true }
+                )
             }
             switch outcome {
             case .completed:

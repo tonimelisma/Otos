@@ -2052,10 +2052,12 @@ extension CatalogStore {
     /// index-paired with the returned IDs (DES-069; see
     /// `CatalogMediaGridState.dayBuckets`).
     ///
-    /// `heldStacks`, when given and built over exactly the roots this read's stacks span, are
-    /// used instead of reading the stack candidates again: the caller holds them while nothing
-    /// they are built from moved (`CatalogChangedFacts.stackInputs`). The stacks used, read or
-    /// held, come back in `CatalogOrderedAssets.builtStacks`.
+    /// `heldStacks`, when given, built over exactly the roots this read's stacks span and
+    /// answering its scope (`PhotoStackSQL.Span.answers`), are used instead of reading the
+    /// stack candidates again: the caller holds them while nothing they are built from moved
+    /// (`CatalogChangedFacts.stackInputs`). Otherwise a keyed scope reads only its own
+    /// folders' stacks (`PhotoStackSQL.build`). The stacks used, read or held, come back in
+    /// `CatalogOrderedAssets.builtStacks`.
     func orderedAssetIDs(
         for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths: Set<LibraryRootPath>,
@@ -2090,8 +2092,18 @@ extension CatalogStore {
         }
         // One read transaction: a row this read sees under a new identity always comes
         // with the pending batch that renamed it (ARC-052).
-        let held = heldStacks.flatMap { $0.rootPaths == stackRootPaths ? $0 : nil }
+        let held = heldStacks.flatMap { $0.rootPaths == stackRootPaths && $0.span == .roots ? $0 : nil }
+        // A keyed scope's own stacks are built from its rows, so its rows are read first.
+        let readsRowsFirst = try held == nil && PhotoStackSQL.isKeyed(scope)
         let timedRows = try await timedRead(dbWriter) { db in
+            if readsRowsFirst {
+                let rows = try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, db: db)
+                return try (
+                    rows: rows,
+                    pending: Self.fetchPendingIdentityRemapBatches(db: db),
+                    stacks: PhotoStackSQL.build(rootPaths: stackRootPaths, holding: rows, db: db)
+                )
+            }
             let stacks = try held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, db: db)
             return try (
                 rows: CatalogQueryGateway.fetchOrderedAssetIDRows(
@@ -2188,7 +2200,7 @@ extension CatalogStore {
             ])
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stacks=\(held == nil ? "read" : "held", privacy: .public) stackCandidates=\(held == nil ? builtStacks.candidateCount : 0, privacy: .public) stackReadMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) : 0, privacy: .public) stackRuleMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stacks=\(held == nil ? "read" : "held", privacy: .public) stackSpan=\(builtStacks.span == .roots ? "roots" : "rows", privacy: .public) stackCandidates=\(held == nil ? builtStacks.candidateCount : 0, privacy: .public) stackReadMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) : 0, privacy: .public) stackRuleMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return CatalogOrderedAssets(
             ids: ids,

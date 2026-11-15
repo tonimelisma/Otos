@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 @testable import OtosKit
 import Testing
 
@@ -111,9 +112,62 @@ struct PhotoStackStoreTests {
         }
     }
 
+    /// An import batch reads the stacks of its own folders and bursts, not every candidate of
+    /// its libraries, and they are the stacks the whole library has for its rows: a pair
+    /// whose RAW is not in the batch, and a burst whose other frame is in another folder,
+    /// stay whole; a pair and a burst that hold no batch row are not read.
+    @Test func anImportBatchReadsTheStacksOfItsOwnFoldersWhole() async throws {
+        let files = [
+            "a/DSC1.ARW", "a/DSC1.JPG", "a/DSC2.JPG",
+            "b/DSC5.ARW", "b/DSC5.JPG",
+            "c/IMG_1.HEIC", "d/IMG_2.HEIC",
+            "e/IMG_7.HEIC", "e/IMG_8.HEIC",
+        ]
+        let bursts = ["c/IMG_1.HEIC": "B1", "d/IMG_2.HEIC": "B1", "e/IMG_7.HEIC": "B2", "e/IMG_8.HEIC": "B2"]
+        try await withLibrary(files) { library in
+            let assets = try await library.store.mediaAssets(for: bursts.keys.map(library.id))
+            _ = await library.store.applyEnrichmentBatch(assets.values.map { asset in
+                EnrichmentResult(
+                    id: asset.id,
+                    metadata: AssetMetadata(timestamps: [], burstIdentifier: bursts[asset.id.relativePath.rawValue]),
+                    enrichedKind: .image,
+                    thumbnailPath: nil,
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                    contentHash: nil
+                )
+            })
+            let batch = ImportBatchID(unixMilliseconds: 1_800_000_000_000)
+            let stamp = try DatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
+            try await stamp.write { db in
+                try db.execute(
+                    sql: "UPDATE media_asset SET import_batch_unix_ms = ? WHERE relative_path IN ('a/DSC1.JPG', 'a/DSC2.JPG', 'c/IMG_1.HEIC')",
+                    arguments: [batch.unixMilliseconds]
+                )
+            }
+            try stamp.close()
+
+            let whole = try await library.ordered()
+            let ordered = try await library.store.orderedAssetIDs(
+                for: CatalogQueryDescriptor(scope: .importBatch(batch)),
+                availableLibraryPaths: [library.rootPath]
+            )
+            let built = try #require(ordered.builtStacks)
+            #expect(Set(ordered.ids.map(\.relativePath.rawValue)) == ["a/DSC1.JPG", "a/DSC2.JPG", "c/IMG_1.HEIC"])
+            #expect(built.span != .roots)
+            // The folders a and c, and the burst's other frame in d.
+            #expect(built.candidateCount == 5)
+            let pair = try #require(whole.stacks.stack(containing: library.id("a/DSC1.JPG")))
+            let burst = try #require(whole.stacks.stack(containing: library.id("c/IMG_1.HEIC")))
+            #expect(Set(burst.members) == [library.id("c/IMG_1.HEIC"), library.id("d/IMG_2.HEIC")])
+            #expect(ordered.stacks == CatalogStacks([pair, burst]))
+        }
+    }
+
     private struct Library {
         let store: CatalogStore
         let rootPath: LibraryRootPath
+        let databaseURL: URL
 
         func id(_ path: String) -> MediaAssetID {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: path))
@@ -149,7 +203,7 @@ struct PhotoStackStoreTests {
             let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning }
             try #require(scanned.testAssets.count == files.count)
             let rootPath = try CatalogPath.normalizedExistingDirectoryPath(for: root)
-            try await body(Library(store: store, rootPath: rootPath))
+            try await body(Library(store: store, rootPath: rootPath, databaseURL: databaseURL))
         } catch {
             await store.shutdown()
             throw error

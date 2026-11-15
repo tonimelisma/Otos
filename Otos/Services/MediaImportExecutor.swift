@@ -1090,8 +1090,9 @@ actor MediaImportExecutor {
         return nil
     }
 
-    /// The injected `transfer` blocks for the whole copy, so it runs on a detached task
-    /// rather than on a cooperative-pool thread or the executor actor.
+    /// The injected `transfer` blocks for the whole copy, so it runs on the copy queue
+    /// (`CopyfileTransfer.offCooperativePool`), never on the executor actor or the
+    /// cooperative pool.
     private nonisolated func copyOffActor(
         from sourceURL: URL,
         to stagingURL: URL,
@@ -1099,15 +1100,13 @@ actor MediaImportExecutor {
     ) async -> CopyfileTransfer.Outcome {
         let sharedCancel = cancelFlag
         let transfer = transfer
-        return await withCheckedContinuation { continuation in
-            Task.detached {
-                continuation.resume(returning: transfer(
-                    sourceURL,
-                    stagingURL,
-                    { progress in onByteProgress(progress.completedBytes) },
-                    { !sharedCancel.isCancelled }
-                ))
-            }
+        return await CopyfileTransfer.offCooperativePool {
+            transfer(
+                sourceURL,
+                stagingURL,
+                { progress in onByteProgress(progress.completedBytes) },
+                { !sharedCancel.isCancelled }
+            )
         }
     }
 

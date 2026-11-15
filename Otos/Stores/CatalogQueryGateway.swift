@@ -50,6 +50,7 @@ nonisolated enum CatalogQueryGateway {
         // per row is the read's own cost on a large order. Each row is mapped as the cursor
         // reaches it, so no copy of every row is made first.
         let likedColumn = scope.requiresLocation ? 5 : 3
+        let burstColumn: Int? = try PhotoStackSQL.isKeyed(scope) ? likedColumn + (scope.isAnniversary ? 1 : 0) : nil
         return try Array(Row.fetchCursor(
             db,
             sql: query.sql,
@@ -68,7 +69,8 @@ nonisolated enum CatalogQueryGateway {
                 relativePath: MediaRelativePath(rawValue: row[1]),
                 captureLocalTime: (row[2] as Double?).map(CaptureLocalTime.init(seconds:)),
                 coordinate: coordinate,
-                isLiked: scope.isAnniversary ? row[likedColumn] : false
+                isLiked: scope.isAnniversary ? row[likedColumn] : false,
+                burstIdentifier: burstColumn.flatMap { row[$0] }
             )
         })
     }
@@ -82,6 +84,9 @@ nonisolated enum CatalogQueryGateway {
         let coordinate: PlaceCoordinate?
         /// Read only for On This Day, which puts a day's Liked photos first.
         var isLiked = false
+        /// The burst a still carries, read only for a keyed scope, whose stacks are built from
+        /// its rows (`PhotoStackSQL.build(rootPaths:holding:db:)`).
+        var burstIdentifier: String?
     }
 
     /// `db` is the read's own transaction: a scope with a date dimension decides its
@@ -111,12 +116,16 @@ nonisolated enum CatalogQueryGateway {
             : ""
         // Read by position in `fetchOrderedAssetIDRows`: keep this column order.
         let likedColumn = scope.isAnniversary ? ", media_asset.media_choice = 'liked' AS is_liked" : ""
+        // A keyed scope's stacks are built from its rows, so its rows carry their stills' bursts.
+        let burstColumn = try PhotoStackSQL.isKeyed(scope)
+            ? ", CASE WHEN media_asset.best_kind IN ('raw', 'image') THEN media_asset.burst_identifier END"
+            : ""
         // A wide scope walks the order's index, which hands its rows over in order. A keyed
         // scope seeks its own rows by their key and sorts the few it finds: walking the order
         // index for them reads every row of the catalog (`ScopeClause.keyIndex`).
         return SQLQuery(
             sql: """
-            SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_local\(locationColumns)\(likedColumn)
+            SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_local\(locationColumns)\(likedColumn)\(burstColumn)
             FROM media_asset INDEXED BY \(scopeClause.keyIndex ?? order.indexName)\(scopeClause.join)
             WHERE \(scopeClause.sql)\(filterSQL)
             ORDER BY \(order.orderBy)
@@ -283,12 +292,30 @@ nonisolated enum CatalogQueryGateway {
         return SQLQuery(
             sql: """
             SELECT DISTINCT best_kind, best_format
-            FROM media_asset\(scopeClause.join)
+            FROM \(scopeClause.from)
             WHERE \(scopeClause.sql)
               AND best_kind IS NOT NULL
             ORDER BY best_kind, best_format
             """,
             arguments: StatementArguments(scopeClause.arguments)
+        )
+    }
+
+    /// The count of a scope other than On This Day's (whose count judges its stacks in
+    /// Swift, `countAssets`); a keyed scope counts from its key index (`ScopeClause.from`).
+    static func countQuery(scope: CatalogScopePredicate, filter: MediaFilter = .all, db: Database) throws -> SQLQuery? {
+        guard let scopeClause = try scopeClause(scope, db: db) else {
+            return nil
+        }
+        let filterPredicate = filterPredicate(for: filter)
+        let filterSQL = filterPredicate.sql.map { "\n  AND \($0)" } ?? ""
+        return SQLQuery(
+            sql: """
+            SELECT COUNT(*)
+            FROM \(scopeClause.from)
+            WHERE \(scopeClause.sql)\(filterSQL)
+            """,
+            arguments: StatementArguments(scopeClause.arguments + filterPredicate.arguments)
         )
     }
 
@@ -302,32 +329,25 @@ nonisolated enum CatalogQueryGateway {
         filter: MediaFilter = .all,
         db: Database
     ) throws -> Int {
-        let picks: PhotoStackSQL.Built? = scope.isAnniversary && !scope.selectsNothing
-            ? try AnniversaryStacks.readWhenNeeded.resolved(rootIDs: scope.rootIDs, db: db)
-            : nil
-        guard let scopeClause = try scopeClause(scope, stacks: picks.map(AnniversaryStacks.built) ?? .readWhenNeeded, db: db) else {
+        guard scope.isAnniversary, !scope.selectsNothing else {
+            guard let query = try countQuery(scope: scope, filter: filter, db: db) else {
+                return 0
+            }
+            return try Int.fetchOne(db, sql: query.sql, arguments: query.arguments) ?? 0
+        }
+        let picks = try AnniversaryStacks.readWhenNeeded.resolved(rootIDs: scope.rootIDs, db: db)
+        guard let scopeClause = try scopeClause(scope, stacks: .built(picks), db: db) else {
             return 0
         }
         var arguments = scopeClause.arguments
         let filterPredicate = filterPredicate(for: filter)
         arguments.append(contentsOf: filterPredicate.arguments)
         let filterSQL = filterPredicate.sql.map { "\n  AND \($0)" } ?? ""
-        guard let picks else {
-            return try Int.fetchOne(
-                db,
-                sql: """
-                SELECT COUNT(*)
-                FROM media_asset\(scopeClause.join)
-                WHERE \(scopeClause.sql)\(filterSQL)
-                """,
-                arguments: StatementArguments(arguments)
-            ) ?? 0
-        }
         let rows = try Row.fetchCursor(
             db,
             sql: """
             SELECT media_asset.library_root_id, media_asset.relative_path
-            FROM media_asset\(scopeClause.join)
+            FROM \(scopeClause.from)
             WHERE \(scopeClause.sql)\(filterSQL)
             """,
             arguments: StatementArguments(arguments)
@@ -625,22 +645,126 @@ nonisolated enum PhotoStackSQL {
         let readDuration: Duration
     }
 
-    /// Every stack of some roots as one read built them: the stacks, the root paths their
-    /// files are named under, and what the read and the rule cost, which the order query
-    /// reports apart from its own work.
+    /// What one build of stacks covers. `.roots`: every stack of its roots, which answers any
+    /// scope over them and is what a reader holds. `.rows`: only the stacks that hold one of
+    /// the rows a keyed scope's order read found, which answers that read alone.
+    enum Span: Equatable, Sendable {
+        case roots
+        case rows
+    }
+
+    /// Stacks of some roots as one read built them: the stacks, the root paths their files are
+    /// named under, what they cover, and what the read and the rule cost, which the order
+    /// query reports apart from its own work.
     struct Built: Sendable {
         let stacks: CatalogStacks
         let rootPaths: [Int64: LibraryRootPath]
+        let span: Span
         let candidateCount: Int
         let readDuration: Duration
         let ruleDuration: Duration
     }
 
-    /// Reads the candidates of `rootPaths`' roots and runs `PhotoStackRule` over them, in the
+    /// Every stack of `rootPaths`' roots, from every candidate (`Span.roots`), in the
     /// caller's read, so the stacks come from the snapshot its rows do.
     static func build(rootPaths: [Int64: LibraryRootPath], db: Database) throws -> Built {
         let candidates = try fetchCandidates(rootIDs: rootPaths.keys.sorted(), db: db)
         let ruleStart = ContinuousClock.now
+        return Built(
+            stacks: CatalogStacks(stacks(of: candidates, rootPaths: rootPaths)),
+            rootPaths: rootPaths,
+            span: .roots,
+            candidateCount: candidates.count,
+            readDuration: candidates.readDuration,
+            ruleDuration: ContinuousClock.now - ruleStart
+        )
+    }
+
+    /// Whether `scope` names its rows by a key (`ScopeClause.keyIndex`): a few hundred rows of
+    /// a catalog of hundreds of thousands, whose stacks are built from its own rows
+    /// (`build(rootPaths:holding:db:)`). A scope with a date dimension decides its match
+    /// inside its read, and none is keyed.
+    static func isKeyed(_ scope: CatalogScopePredicate) throws -> Bool {
+        guard !scope.selectsNothing, scope.date == .any else {
+            return false
+        }
+        return try scopeClause(scope, anniversary: nil)?.keyIndex != nil
+    }
+
+    /// The stacks that hold one of `rows` (`Span.rows`), in the caller's read, after the rows.
+    /// A pair is two files of one folder and a burst is its frames' identifier within a root,
+    /// so every such stack is built whole from the candidates of the rows' folders that hold
+    /// a RAW, the stills of the bursts the rows and those candidates carry, and the candidates
+    /// of those stills' folders that hold a RAW; a stack the rule builds there that holds none
+    /// of the rows may be partial, so it is left out. Every candidate of every root was 25,700
+    /// rows for a batch of two, read in 2–7 s on the owner's loaded machine
+    /// (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
+    static func build(
+        rootPaths: [Int64: LibraryRootPath],
+        holding rows: [CatalogQueryGateway.OrderedAssetIDRow],
+        db: Database
+    ) throws -> Built {
+        let start = ContinuousClock.now
+        var folders = Set<RootedName>()
+        var bursts = Set<RootedName>()
+        for row in rows where rootPaths[row.libraryRootID] != nil {
+            folders.insert(RootedName(rootID: row.libraryRootID, name: folder(of: row.relativePath)))
+            if let burst = row.burstIdentifier {
+                bursts.insert(RootedName(rootID: row.libraryRootID, name: burst))
+            }
+        }
+        let candidates = try folders.isEmpty
+            ? Candidates(byRoot: [:], count: 0, readDuration: ContinuousClock.now - start)
+            : fetchCandidates(
+                query: scopedCandidateQuery(folders: RootedName.json(folders), bursts: RootedName.json(bursts)),
+                start: start,
+                db: db
+            )
+        let ruleStart = ContinuousClock.now
+        var stacks = stacks(of: candidates, rootPaths: rootPaths)
+        if !stacks.isEmpty {
+            let held = Set(rows.compactMap { row in
+                rootPaths[row.libraryRootID].map { MediaAssetID(libraryRootPath: $0, relativePath: row.relativePath) }
+            })
+            stacks.removeAll { stack in !stack.members.contains(where: held.contains) }
+        }
+        return Built(
+            stacks: CatalogStacks(stacks),
+            rootPaths: rootPaths,
+            span: .rows,
+            candidateCount: candidates.count,
+            readDuration: candidates.readDuration,
+            ruleDuration: ContinuousClock.now - ruleStart
+        )
+    }
+
+    /// A folder or a burst identifier within one root: `[rootID, name]` in the scoped
+    /// candidates' arguments.
+    private struct RootedName: Hashable, Encodable {
+        let rootID: Int64
+        let name: String
+
+        func encode(to encoder: any Encoder) throws {
+            var row = encoder.unkeyedContainer()
+            try row.encode(rootID)
+            try row.encode(name)
+        }
+
+        static func json(_ names: Set<Self>) throws -> String {
+            try String(decoding: JSONEncoder().encode(Array(names)), as: UTF8.self)
+        }
+    }
+
+    /// A path's folder as `media_asset.parent_path` stores it (schema v9): through its last
+    /// `/`, empty at the root.
+    private static func folder(of path: MediaRelativePath) -> String {
+        guard let slash = path.rawValue.lastIndex(of: "/") else {
+            return ""
+        }
+        return String(path.rawValue[...slash])
+    }
+
+    private static func stacks(of candidates: Candidates, rootPaths: [Int64: LibraryRootPath]) -> [PhotoStack] {
         var stacks: [PhotoStack] = []
         for (rowID, rootCandidates) in candidates.byRoot {
             guard let rootPath = rootPaths[rowID] else {
@@ -648,13 +772,7 @@ nonisolated enum PhotoStackSQL {
             }
             stacks += PhotoStackRule.stacks(candidates: rootCandidates, libraryRootPath: rootPath)
         }
-        return Built(
-            stacks: CatalogStacks(stacks),
-            rootPaths: rootPaths,
-            candidateCount: candidates.count,
-            readDuration: candidates.readDuration,
-            ruleDuration: ContinuousClock.now - ruleStart
-        )
+        return stacks
     }
 
     /// The columns `candidateQuery` selects, in order: each row is read by position.
@@ -668,7 +786,13 @@ nonisolated enum PhotoStackSQL {
         guard let query = candidateQuery(rootIDs: rootIDs) else {
             return Candidates(byRoot: [:], count: 0, readDuration: .zero)
         }
-        let rows = try Row.fetchCursor(db, sql: query.sql, arguments: query.arguments)
+        return try fetchCandidates(query: query, start: start, db: db)
+    }
+
+    private static func fetchCandidates(query: SQLQuery, start: ContinuousClock.Instant, db: Database) throws -> Candidates {
+        // Prepared once per connection: the text depends only on the root count, and a keyed
+        // scope's read runs on every publication of a batch while it imports.
+        let rows = try Row.fetchCursor(db.cachedStatement(sql: query.sql), arguments: query.arguments)
         var byRoot: [Int64: [PhotoStackCandidate]] = [:]
         var count = 0
         while let row = try rows.next() {
@@ -730,6 +854,89 @@ nonisolated enum PhotoStackSQL {
               AND \(CatalogVisibilitySQL.isPresent("still"))
             """,
             arguments: StatementArguments(rootIDs + rootIDs)
+        )
+    }
+
+    /// The candidates of the stacks that can hold some rows, from `folders` (`[[rootID,
+    /// folder], …]`: the rows' folders) and `bursts` (`[[rootID, identifier], …]`: the bursts
+    /// the rows' stills carry): the present RAWs and processed images of each folder that holds
+    /// a present RAW; every still of those bursts and of the bursts those folders' stills
+    /// carry, through `idx_media_asset_burst`; and the RAWs and processed images of those
+    /// stills' folders that hold a present RAW. Folders are read through
+    /// `idx_media_asset_stack_candidate` (root, kind, folder), and a folder without a RAW is
+    /// never walked: it pairs nothing, and the rows in it name their own bursts. The
+    /// candidates `candidateQuery` reads for these folders and bursts, and no others. The join
+    /// order is fixed (`CROSS JOIN`): each step starts from the few rows the step before found.
+    static func scopedCandidateQuery(folders: String, bursts: String) -> SQLQuery {
+        let columns = """
+        still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
+                   still.sort_key, still.stack_key_chosen_at_unix_ms, still.burst_identifier,
+                   still.best_capture_local, still.media_choice, still.burst_key_chosen_at_unix_ms
+        """
+        func holdsRaw(_ folder: String) -> String {
+            """
+            EXISTS (
+                    SELECT 1 FROM media_asset AS raw INDEXED BY idx_media_asset_stack_candidate
+                    WHERE raw.library_root_id = \(folder).library_root_id
+                      AND raw.best_kind = 'raw'
+                      AND raw.parent_path = \(folder).parent_path
+                      AND \(CatalogVisibilitySQL.isPresent("raw"))
+                )
+            """
+        }
+        return SQLQuery(
+            sql: """
+            WITH seed_folder AS (
+                SELECT json_extract(seed.value, '$[0]') AS library_root_id,
+                       json_extract(seed.value, '$[1]') AS parent_path
+                FROM json_each(?) AS seed
+            ),
+            seed_raw_folder AS (
+                SELECT seed_folder.library_root_id, seed_folder.parent_path FROM seed_folder
+                WHERE \(holdsRaw("seed_folder"))
+            ),
+            seed_burst AS (
+                SELECT json_extract(seed.value, '$[0]') AS library_root_id,
+                       json_extract(seed.value, '$[1]') AS burst_identifier
+                FROM json_each(?) AS seed
+                UNION
+                SELECT still.library_root_id, still.burst_identifier
+                FROM seed_raw_folder
+                CROSS JOIN media_asset AS still INDEXED BY idx_media_asset_stack_candidate
+                  ON still.library_root_id = seed_raw_folder.library_root_id
+                  AND still.best_kind IN ('raw', 'image')
+                  AND still.parent_path = seed_raw_folder.parent_path
+                WHERE still.burst_identifier IS NOT NULL
+                  AND \(CatalogVisibilitySQL.isPresent("still"))
+            ),
+            burst_still AS (
+                SELECT still.rowid AS still_rowid, still.library_root_id, still.parent_path
+                FROM seed_burst
+                CROSS JOIN media_asset AS still INDEXED BY idx_media_asset_burst
+                  ON still.library_root_id = seed_burst.library_root_id
+                  AND still.burst_identifier = seed_burst.burst_identifier
+                WHERE still.best_kind IN ('raw', 'image')
+                  AND \(CatalogVisibilitySQL.isPresent("still"))
+            ),
+            raw_folder AS (
+                SELECT library_root_id, parent_path FROM seed_raw_folder
+                UNION
+                SELECT burst_still.library_root_id, burst_still.parent_path FROM burst_still
+                WHERE \(holdsRaw("burst_still"))
+            )
+            SELECT \(columns)
+            FROM raw_folder
+            CROSS JOIN media_asset AS still INDEXED BY idx_media_asset_stack_candidate
+              ON still.library_root_id = raw_folder.library_root_id
+              AND still.best_kind IN ('raw', 'image')
+              AND still.parent_path = raw_folder.parent_path
+            WHERE \(CatalogVisibilitySQL.isPresent("still"))
+            UNION
+            SELECT \(columns)
+            FROM burst_still
+            CROSS JOIN media_asset AS still ON still.rowid = burst_still.still_rowid
+            """,
+            arguments: [folders, bursts]
         )
     }
 }
@@ -884,13 +1091,19 @@ private nonisolated struct ScopeClause {
     let sql: String
     let arguments: [any DatabaseValueConvertible]
     /// The index that seeks the scope's rows by the key that names them — a stack's members,
-    /// a set of identical copies, an import batch — or nil for a scope that spans whole
+    /// a set of identical copies, an import batch, a person's photos — or nil for a scope that spans whole
     /// libraries. A keyed scope is a few hundred rows of a catalog of hundreds of thousands,
     /// so its reads start from this index; a read that walks an order index or every named
     /// place cell first reads the whole catalog to find them (16–36 s on the owner's catalog,
     /// `docs/research/2026-11-15-keyed-scope-query-plans.md`). A wide scope's reads keep
     /// their own fixed plans.
     let keyIndex: String?
+
+    /// `media_asset` as a read that has no order of its own reaches the scope's rows: by the
+    /// key index for a keyed scope, with the scope's join.
+    var from: String {
+        "media_asset" + (keyIndex.map { " INDEXED BY \($0)" } ?? "") + join
+    }
 }
 
 /// `media_asset`'s primary key, `(library_root_id, relative_path)`: what a stack's members are
@@ -1075,17 +1288,20 @@ private nonisolated func scopeClause(
           )
         """
     case let .person(person):
+        // A person's photos are named by their faces (`idx_face_person_photo`), and each is
+        // then found by its key: a person is a few dozen to a few thousand photos, and
+        // testing every row of the catalog for one of their faces read 3,500–157,000 pages
+        // per read on the owner's catalog
+        // (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
         predicate += """
 
-          AND EXISTS (
-              SELECT 1 FROM face
-              WHERE face.library_root_id = media_asset.library_root_id
-                AND face.relative_path = media_asset.relative_path
-                AND face.is_not_face = 0
-                AND face.person_id = ?
+          AND (media_asset.library_root_id, media_asset.relative_path) IN (
+              SELECT face.library_root_id, face.relative_path FROM face
+              WHERE face.person_id = ? AND face.is_not_face = 0
           )
         """
         arguments.append(person)
+        keyIndex = mediaAssetKeyIndexName
     }
     if let anniversary {
         predicate += "\n  AND \(anniversary.sql(column: "media_asset.best_capture_local"))"

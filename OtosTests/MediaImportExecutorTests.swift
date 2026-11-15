@@ -1295,6 +1295,54 @@ struct ImportExecutionProgressTests {
         #expect(failedCount == 0)
     }
 
+    /// Every worker's copy blocks its thread for as long as the volume takes, so the copies
+    /// run on their own queue, never on the cooperative pool: with all eight workers' copies
+    /// held, other async work still runs. On the cooperative pool (one thread per core) eight
+    /// held copies took every thread of an eight-core Mac, and a visible tile's read waited
+    /// 7–25 s for one (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
+    @Test func heldCopiesLeaveTheCooperativePoolFree() async throws {
+        let fixture = try await makeCardFixture(count: MediaImportExecutor.workerCount, bytesEach: 1024)
+        let (started, startedSink) = AsyncStream<Void>.makeStream(bufferingPolicy: .unbounded)
+        let release = DispatchSemaphore(value: 0)
+        let executor = MediaImportExecutor(
+            store: fixture.store,
+            volumeCapacity: { _ in nil },
+            transfer: { source, destination, onProgress, shouldContinue in
+                startedSink.yield()
+                release.wait()
+                return CopyfileTransfer.copy(from: source, to: destination, onProgress: onProgress, shouldContinue: shouldContinue)
+            }
+        )
+        let run = Task {
+            await executor.execute(
+                plan: fixture.plan,
+                batch: ImportBatchID(),
+                sourceKind: .removableVolume,
+                sourceDeviceIdentity: .volume(uuid: "held"),
+                deleteSourceRequested: false,
+                runID: UUID().uuidString
+            ) { _ in }
+        }
+        var held = 0
+        for await _ in started {
+            held += 1
+            if held == MediaImportExecutor.workerCount {
+                break
+            }
+        }
+        // Every worker is inside its copy; work on the cooperative pool still runs.
+        let ran = await Task.detached { true }.value
+        #expect(ran)
+        for _ in 0 ..< MediaImportExecutor.workerCount {
+            release.signal()
+        }
+        guard case let .completed(tally, _, _) = await run.value else {
+            Issue.record("Expected a completed run")
+            return
+        }
+        #expect(tally.publishedCount == MediaImportExecutor.workerCount)
+    }
+
     // MARK: - Companions travel only when their bytes do
 
     /// A copied companion lands beside its primary, is recorded with it, and its

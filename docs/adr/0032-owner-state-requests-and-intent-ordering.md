@@ -81,7 +81,12 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    such work is a named task property cancelled at teardown, or a stream's one consumer.
 6. **Blocking work leaves the actor explicitly.** Filesystem walks, planning, decoding and
    hashing enter through `@concurrent`, `Task.detached`, a task-group child, or a dedicated
-   queue. A comment saying "off the actor" or "off main" names which.
+   queue. A comment saying "off the actor" or "off main" names which. The first three run on
+   the cooperative pool, one thread per core, so they carry work that computes. Work that
+   waits — a copy, a device or network read, anything that holds its thread while the
+   volume or peer takes seconds — runs on a dedicated queue: eight held copies on the pool
+   took every thread of an eight-core Mac, and a visible tile's few-millisecond read waited
+   7–25 s for one (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
 7. **Interleavings are tested deterministically.** Every `await` in an owner is a place
    another event can arrive, so each gets a test that delivers an event exactly there: a
    sequence of `handle(_:)` calls for a pure machine, a seam that parks the async work for

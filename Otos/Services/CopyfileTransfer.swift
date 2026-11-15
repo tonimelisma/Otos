@@ -20,6 +20,27 @@ nonisolated enum CopyfileTransfer {
         let completedBytes: Int64
     }
 
+    /// The queue every blocking copy runs on. A copy holds its thread for as long as the
+    /// volume takes — seconds for a card's video — so it never runs on the cooperative pool:
+    /// that pool is one thread per core, and an import's eight copies on it took every
+    /// thread, so a visible tile's few-millisecond read waited 7–25 s for one to come free
+    /// (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`). A dispatch queue's
+    /// threads are its own, and Dispatch adds one when a copy blocks.
+    private static let queue = DispatchQueue(
+        label: "net.melisma.Otos.copyfile",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
+    /// Runs `copy`, a blocking transfer, on the copy queue and returns its outcome.
+    static func offCooperativePool(_ copy: @escaping @Sendable () -> Outcome) async -> Outcome {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume(returning: copy())
+            }
+        }
+    }
+
     static func copy(
         from source: URL,
         to destination: URL,
