@@ -99,7 +99,9 @@ struct InfoPaneView: View {
                     if section.id == .location, let coordinate = shown.coordinate {
                         map(coordinate)
                     }
-                    if section.id == .people {
+                    if section.id == .description {
+                        InfoPaneDescriptionSection(description: shown.photoDescription, hasItem: shown.id != nil)
+                    } else if section.id == .people {
                         InfoPanePeopleSection(people: people)
                     } else if section.id == .recognized {
                         InfoPaneRecognizedSection(recognized: shown.recognized, search: search)
@@ -149,6 +151,54 @@ struct InfoPaneView: View {
         .frame(height: 140)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .accessibilityLabel("Map of \(shown.placeName ?? "where it was taken")")
+    }
+}
+
+/// The Description section (ADR 0053): what Apple's on-device model wrote about the still,
+/// selectable, over the line that says who wrote it (the HIG asks that generated content be
+/// identified). `No Description` when the model declined; while one is owed, `Not Written
+/// Yet`, or why none can be written on this Mac; with no single item, `—`.
+private struct InfoPaneDescriptionSection: View {
+    let description: PhotoInfo.Description?
+    let hasItem: Bool
+
+    var body: some View {
+        switch description {
+        case let .written(text):
+            VStack(alignment: .leading, spacing: 4) {
+                Text(text)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(InfoPaneDescriptionSection.attribution)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        case .declined:
+            secondary("No Description")
+        case let .owed(availability):
+            secondary(Self.owedText(availability))
+        case nil:
+            secondary(hasItem ? PhotoInfo.unknown : PhotoInfo.notApplicable)
+        }
+    }
+
+    static let attribution = "Written by Apple Intelligence"
+
+    static func owedText(_ availability: PhotoDescriptionAvailability) -> String {
+        switch availability {
+        case .available: "Not Written Yet"
+        case .appleIntelligenceOff: "Turn on Apple Intelligence in System Settings to describe photos."
+        case .notEligible: "This Mac can’t describe photos."
+        case .notReady: "Not Written Yet — Apple Intelligence isn’t ready."
+        }
+    }
+
+    private func secondary(_ text: String) -> some View {
+        Text(text)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

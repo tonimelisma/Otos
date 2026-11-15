@@ -214,12 +214,66 @@ which costs a re-description per affected photo.
 3. Hybrid FTS5 + SigLIP recall@10 on the 52-query set.
 4. If 2 is too slow or too loose: LFM2.5-VL-450M through Core ML on the CPU, same set.
 
+## 7. Follow-up: the owner's choices, a probe, Private Cloud Compute and the HIG
+
+The owner chose (2026-11-14): descriptions shown at the top of the Info pane and titles for
+On This Day; names and ages given to the model so it knows which face is whom; a description
+written again whenever its facts change ("2.4 s is nothing"), so §3's face slots are not
+needed; no editing; no audio; Private Cloud Compute acceptable. Built in ADR 0053.
+
+### Probe on the owner's photos [measured]
+
+A command-line probe passed a stored 2560 px preview, downscaled to 1,024 px, with the faces
+listed left to right by position and the people's names and ages:
+
+- *"Jamie holds Tyler in an outdoor setting. Jamie wears a grey sweatshirt and sunglasses,
+  while Tyler wears a patterned onesie and a wide-brimmed hat."* — 23.1 s, a cold process.
+- *"Taylor holds Tyler, wearing a pink hat and a patterned sweater, while standing outdoors."* —
+  15.9 s, a cold process.
+
+Both named the right person at the right face. Each run was a new process, so every request
+paid the model's load; the 2.4 s warm figure is from the keyword-search probe
+(`2026-11-09-keyword-search.md` §2).
+
+### Private Cloud Compute [source: WWDC26 session 319]
+
+- `PrivateCloudComputeLanguageModel()` in a `LanguageModelSession`, the same API as the
+  on-device model, with reasoning levels and a 32k context.
+- No token cost to the developer for apps under 2 million downloads; access is applied for on
+  the developer website. An unsigned probe failed with `ModelManagerError 1046`.
+- **The user pays in quota:** "Each user gets a daily limit. And users can upgrade to iCloud+ to
+  get higher limits", counted against the user's iCloud account; a request over it throws
+  (`quotaLimitReached`), and `quotaUsage` reports where the user stands.
+- Needs an internet connection and an Apple Intelligence device. Apple says user data is never
+  stored and is used only for the request.
+- For Otos: a library of ~19,000 photos would spend the user's quota for days, so descriptions
+  stay on the device.
+
+### Apple HIG [source]
+
+- *Generative AI*: "Clearly identify when and where you use AI"; "clearly communicate that
+  AI-generated content may contain errors"; make it easy to refine or revert results. Otos
+  labels each description `Written by Apple Intelligence`; the owner chose no editing.
+- *Materials*: content over photos needs a dimming layer (35% over bright content) or glass.
+  *VoiceOver*: describe meaningful images, keep descriptions current.
+- Photos for Mac's caption lives in its Info window (⌘I), for search; its guide says nothing
+  of captions drawn over photos. Otos keeps the description in the inspector, never over the
+  photo.
+
 ## Sources
 
 - Apple, *What's new in the Foundation Models framework*, WWDC26 session 241:
   https://developer.apple.com/videos/play/wwdc2026/241/
 - Apple, *What's new in image understanding*, WWDC26 session 237:
   https://developer.apple.com/videos/play/wwdc2026/237/
+- Apple, *Build with the new Apple Foundation Model on Private Cloud Compute*, WWDC26 session 319:
+  https://developer.apple.com/videos/play/wwdc2026/319/
+- Apple HIG, *Generative AI*, *Materials*, *VoiceOver*:
+  https://developer.apple.com/design/human-interface-guidelines/generative-ai ,
+  https://developer.apple.com/design/human-interface-guidelines/materials ,
+  https://developer.apple.com/design/human-interface-guidelines/voiceover
+- Apple, *Add titles, captions, and more to photos and videos on Mac*:
+  https://support.apple.com/guide/photos/add-titles-captions-and-more-phta4e5a733f/mac
 - Apple, *Platforms State of the Union*, WWDC26: https://developer.apple.com/videos/play/wwdc2026/102/
 - Apple, *Foundation Models framework*: https://developer.apple.com/foundation-models-framework/
 - I. Magda, *Foundation Models, year two*: https://ivanmagda.dev/posts/wwdc26-foundation-models-year-two/

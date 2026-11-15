@@ -23,8 +23,10 @@ Which item the facts describe: its file name, `No Selection`, or `3 Items`.
 | String | Level |
 | --- | --- |
 | File name / `No Selection` / `3 Items` | L1 (`title2`, semibold, middle-truncated) |
+| The description (`Jamie holds Tyler by the fence…`) | L2 (`body`), selectable |
+| `Written by Apple Intelligence`, `No Description`, `Not Written Yet` | L2 in secondary color (`body`) |
 | When it was taken (`Saturday, November 7, 2026 at 3:42 PM UTC+02:00`) | L2 in secondary color (`body`) |
-| Section heading (`People`, `In This Photo`, `Location`, `File`, `Camera`, `Exposure`, `Video`) | `.title3`, regular, beside the section's symbol |
+| Section heading (`Description`, `People`, `In This Photo`, `Location`, `File`, `Camera`, `Exposure`, `Video`) | `.title3`, regular, beside the section's symbol |
 | A scene label (`Pool`, `Blue sky`) | L2, a small bordered button (`.bordered`, `.controlSize(.small)`), as People's suggestions are |
 | `Text` over the recognised lines | L2 in secondary color, then the lines L2 (`body`), selectable |
 | Row label (`Shutter Speed`) | L2 in secondary color (`body`) |
@@ -36,12 +38,13 @@ Three sizes, two weights (DES-004).
 
 A header zone (name over date, 4 pt apart), then one zone per section, 12 pt either side
 of each section's hairline. A section's heading is the disclosure triangle, its symbol
-(`camera`, `camera.aperture`, `film`, `person.2`, `viewfinder`, `mappin.and.ellipse`, `doc`) and its
+(`text.quote`, `camera`, `camera.aperture`, `film`, `person.2`, `viewfinder`, `mappin.and.ellipse`, `doc`) and its
 title; its rows sit 8 pt below, indented 16 pt so they start under the symbol, 4 pt apart.
 Labels share one leading edge; a long value wraps beside its label rather than under it.
 
 | Section | Rows |
 | --- | --- |
+| Description (a still) | what the model wrote, then `Written by Apple Intelligence` |
 | People | each face of the targeted photos, with the face acts (`docs/design/people.md`, DES-113) |
 | In This Photo | the scene labels Vision is confident of, as buttons wrapping in rows, most confident first; then `Text` and the lines Vision is certain of |
 | Location | a 140 pt still map with one pin (when located), Place, Coordinates, Altitude |
@@ -50,9 +53,10 @@ Labels share one leading edge; a long value wraps beside its label rather than u
 | Exposure (a still) | Shutter Speed, Aperture, ISO, Focal Length, Compensation, Program, Metering, Flash, White Balance |
 | Video (a movie) | Duration, Frame Rate, Codec |
 
-The order puts first what the user acts on and looks for — who is in the photo, what is in
-it, where and which file it is — and the capture's own facts after (owner decision,
-2026-11-12).
+The order puts first what the user reads — the description (owner decision, 2026-11-14) —
+then what they act on and look for — who is in the photo, what is in it, where and which file
+it is — and the capture's own facts after (owner decision, 2026-11-12). A movie has no
+Description.
 
 Which sections show depends only on the kind, so every still has the same rows and every
 movie the same rows (DES-053). With no single item the still layout shows with every
@@ -60,6 +64,12 @@ value `—`. The map is the one element that comes and goes: it is there only wh
 has a location to show, as a control whose subject does not exist is omitted (DES-053).
 
 ## States
+
+- **Description, one still:** the text and `Written by Apple Intelligence`; `No Description`
+  when the model declined; while owed, `Not Written Yet`, `Not Written Yet — Apple
+  Intelligence isn’t ready.`, `Turn on Apple Intelligence in System Settings to describe
+  photos.` or `This Mac can’t describe photos.`; with no single item, `—`. A description
+  written while the pane shows its photo fills in without the photo being reselected.
 
 - **One item:** every value the catalog holds, `Unknown` for one it lacks. The place name
   reads `Unknown` until MapKit names the coordinate.
@@ -79,6 +89,16 @@ has a location to show, as a control whose subject does not exist is omitted (DE
   in without being reselected.
 - **A read failed:** the pane keeps what it showed for the same item, or empties for
   another, and the next refresh reads again (APP-041).
+
+## Description
+
+What Apple's on-device model wrote about the still (ADR 0053): two or three sentences naming
+the people at their faces, written again whenever a fact it was written from changes. The
+owner chose it for the top of the pane and asked for no editing (2026-11-14), so it has no
+Edit, Retry or Revert control. Generated text is identified, as the HIG asks
+(`Written by Apple Intelligence`). It stays in the inspector, never over the photo: Photos
+for Mac shows a caption only in its Info window, and text over a photo needs a dimming layer
+or glass that covers the picture under review (DES-060A).
 
 ## In This Photo
 

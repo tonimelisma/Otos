@@ -21,8 +21,8 @@ struct InThisPhotoRefreshTests {
             let model = makeEditModel(store: library.store, ids: library.ids)
             defer { model.editCommandTask?.cancel() }
             defer { model.editRenderTask?.cancel() }
-            model.startRecognizedRefresh()
-            defer { model.recognizedRefreshTask?.cancel() }
+            model.startReadingsRefresh()
+            defer { model.readingsRefreshTask?.cancel() }
 
             model.openLoupe(id: id)
             model.toggleInspector(.info)
@@ -35,7 +35,7 @@ struct InThisPhotoRefreshTests {
                 labels: ["pool": 0.88], confidentLabels: ["pool"]
             )])
             let named = try await model.sceneLabelNames.labels(of: ["pool"], in: Locale.current.language)
-            model.recognizedDoorbell?.yield()
+            model.readingsDoorbell?.yield()
             try await waitUntil { model.photoInfo?.recognized?.labels == named }
             #expect(model.photoInfo?.id == id)
         }

@@ -307,6 +307,9 @@ struct OnThisDayPolicyTests {
         #expect(OnThisDayPresentation.cardCaption(year, locale: british, calendar: gregorian) == "9 Nov 2023 · 14")
         #expect(OnThisDayPresentation.cardAccessibilityLabel(year, today: today, locale: british, calendar: gregorian)
             == "3 years ago, 14 items, 9 November 2023")
+        #expect(OnThisDayPresentation.cardAccessibilityLabel(
+            year, title: "Berry Picking", today: today, locale: british, calendar: gregorian
+        ) == "Berry Picking, 3 years ago, 14 items, 9 November 2023")
         #expect(OnThisDayPresentation.fullDate(year.day, locale: british, calendar: gregorian) == "9 November 2023")
         #expect(OnThisDayPresentation.barSummary(itemCount: 14, runCount: 4, isYears: true)
             == "14 photos and videos from 4 years")

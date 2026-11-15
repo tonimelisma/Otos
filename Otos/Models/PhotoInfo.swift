@@ -5,10 +5,11 @@ import MediaMetadata
 /// Photo info guide
 ///
 /// What the inspector's Info pane shows for the current target (APP-041, DES-088): a
-/// header (the file name and when it was taken) and sections — People, In This Photo,
-/// Location, File, Camera, Exposure or Video — in the Edit pane's layout (DES-092). People is
-/// the faces of the selected photos, which the pane edits (`SelectionFaces`); In This Photo is
-/// what search recognised in it (`Recognized`); the rest are label and value rows.
+/// header (the file name and when it was taken) and sections — a still's Description, People,
+/// In This Photo, Location, File, Camera, Exposure or Video — in the Edit pane's layout
+/// (DES-092). Description is what Apple's on-device model wrote about the still (ADR 0053);
+/// People is the faces of the selected photos, which the pane edits (`SelectionFaces`); In This
+/// Photo is what search recognised in it (`Recognized`); the rest are label and value rows.
 ///
 /// Every value is something Otos already holds: the asset row, the metadata record the
 /// library reported (ADR 0039), the overlay Otos keeps for the item, and where its original
@@ -25,6 +26,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
     static let notApplicable = "—"
 
     nonisolated enum SectionID: String, CaseIterable, Sendable {
+        case description
         case camera
         case exposure
         case video
@@ -35,6 +37,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
 
         var title: String {
             switch self {
+            case .description: "Description"
             case .camera: "Camera"
             case .exposure: "Exposure"
             case .video: "Video"
@@ -47,6 +50,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
 
         var symbol: String {
             switch self {
+            case .description: "text.quote"
             case .camera: "camera"
             case .exposure: "camera.aperture"
             case .video: "film"
@@ -67,7 +71,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
                     "Program", "Metering", "Flash", "White Balance",
                 ]
             case .video: ["Duration", "Frame Rate", "Codec"]
-            case .people, .recognized: []
+            case .description, .people, .recognized: []
             case .location: ["Coordinates", "Altitude"]
             case .file: [
                     "Kind", "Dimensions", "Size", "Folder", "Original",
@@ -152,6 +156,31 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         }
     }
 
+    /// A still's description (ADR 0053): what the model wrote, that it declined, or — while one
+    /// is owed — whether one can be written on this Mac.
+    nonisolated enum Description: Equatable, Sendable {
+        case written(String)
+        case declined
+        case owed(PhotoDescriptionAvailability)
+
+        init(_ reading: PhotoDescriptionReading?, availability: PhotoDescriptionAvailability) {
+            switch reading {
+            case let .written(text): self = .written(text)
+            case .declined: self = .declined
+            case nil: self = .owed(availability)
+            }
+        }
+
+        /// For a log line: `written`, `declined` or `owed`.
+        var diagnosticState: String {
+            switch self {
+            case .written: "written"
+            case .declined: "declined"
+            case .owed: "owed"
+            }
+        }
+    }
+
     /// The asset these facts describe; nil with no single item.
     let id: MediaAssetID?
     /// L1: the file name, `No Selection`, or `3 Items`.
@@ -169,6 +198,8 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
     var uprightSize: CGSize?
     /// What search recognised in the item; nil with no single item.
     var recognized: Recognized?
+    /// A still's description; nil with no single item and for a movie, which has none.
+    var photoDescription: Description?
     private var sectionRows: [SectionID: [Row]]
     private let sectionOrder: [SectionID]
 
@@ -203,10 +234,14 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         )
     }
 
-    /// People, In This Photo, Location and File first, the facts the user acts on and looks
-    /// for, then the capture's own: Camera, then Exposure for a still or Video for a movie.
+    /// A still's Description first, what the user reads (owner, 2026-11-14); then People, In
+    /// This Photo, Location and File, the facts the user acts on and looks for; then the
+    /// capture's own: Camera, then Exposure for a still or Video for a movie. A movie has no
+    /// description.
     static func sectionOrder(kind: MediaKind?) -> [SectionID] {
-        [.people, .recognized, .location, .file, .camera, kind == .video ? .video : .exposure]
+        kind == .video
+            ? [.people, .recognized, .location, .file, .camera, .video]
+            : [.description, .people, .recognized, .location, .file, .camera, .exposure]
     }
 
     // MARK: - One item
@@ -227,6 +262,8 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         var editRecipe: EditRecipe?
         /// The overlay's confident scene labels, named in the Mac's language.
         var labelNames: [Recognized.Label]?
+        /// Whether a description can be written on this Mac, for a still owed one.
+        var descriptionAvailability: PhotoDescriptionAvailability = .available
     }
 
     /// Everything Otos holds for one item, as the pane shows it.
@@ -239,6 +276,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         rows[.camera] = cameraRows(metadata)
         rows[.exposure] = exposureRows(metadata?.exposure?.exposure)
         rows[.video] = videoRows(metadata, asset: asset)
+        rows[.description] = []
         rows[.people] = []
         rows[.recognized] = []
         rows[.location] = locationRows(location)
@@ -252,6 +290,9 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             editRecipe: source.editRecipe,
             uprightSize: source.nativePixelSize,
             recognized: Recognized(overlay: source.overlay, labels: source.labelNames, readsText: resolvedKind != .video),
+            photoDescription: resolvedKind == .video
+                ? nil
+                : Description(source.overlay?.photoDescription, availability: source.descriptionAvailability),
             sectionRows: rows,
             sectionOrder: order
         )
@@ -536,4 +577,6 @@ nonisolated struct PhotoInfoOverlay: Equatable, Sendable {
     var isEdited: Bool
     var sceneLabels: [String]?
     var textLines: [String]?
+    /// The still's current description; nil while one is owed.
+    var photoDescription: PhotoDescriptionReading?
 }

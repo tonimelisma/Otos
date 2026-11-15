@@ -25,6 +25,8 @@ struct StoryPlayerView: View {
     var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
+    /// Each anniversary's title, once one is written (ADR 0053).
+    var titles: [CalendarDay: String] = [:]
     let actions: StoryPlayerActions
     @FocusState private var isFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
@@ -41,6 +43,7 @@ struct StoryPlayerView: View {
                 item: item,
                 place: place,
                 today: today,
+                title: place.flatMap { titles[$0.anniversary.day] },
                 videoState: videoState,
                 actions: actions
             )
@@ -162,6 +165,8 @@ private struct StoryPlayerBar: View {
     let item: MediaAssetID
     let place: (anniversary: OnThisDayAnniversary, position: Int)?
     let today: CalendarDay
+    /// The anniversary's title; nothing shows until one is written.
+    let title: String?
     let videoState: LoupeVideoState?
     let actions: StoryPlayerActions
     @Environment(\.colorScheme) private var colorScheme
@@ -174,6 +179,12 @@ private struct StoryPlayerBar: View {
                 .foregroundStyle(DesignPalette.label(for: colorScheme))
                 .monospacedDigit()
                 .lineLimit(1)
+                .layoutPriority(1)
+            Text(title ?? "")
+                .font(.subheadline)
+                .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 8)
             barButton(
                 story.isPaused ? "Play" : "Pause",

@@ -77,12 +77,13 @@ extension CatalogWindowViewModel {
         let materialization = materializationCoordinator
         let libraryName = sourceName(for: id.libraryRootPath)
         let labelNames = sceneLabelNames
+        let availability = descriptionAvailability
         photoInfoTask = Task { [weak self] in
             let read: PhotoInfo
             do {
                 read = try await Self.readPhotoInfo(
                     id: id, store: store, reader: reader, materialization: materialization, libraryName: libraryName,
-                    labelNames: labelNames
+                    labelNames: labelNames, descriptionAvailability: availability()
                 )
             } catch {
                 guard !Task.isCancelled, let self, targetIDs(.current) == [id], showsInfo else { return }
@@ -102,9 +103,10 @@ extension CatalogWindowViewModel {
             guard !Task.isCancelled, let self, targetIDs(.current) == [id], showsInfo else { return }
             photoInfo = read.withStack(state.mediaGrid.stacks.stack(shownBy: id))
             photoInfoTask = nil
-            // This read's In This Photo may predate a reading search announced while it ran,
-            // when the refresh still re-read the item shown before; one more re-read covers it.
-            recognizedDoorbell?.yield()
+            // This read's In This Photo and Description may predate a reading announced while
+            // it ran, when the refresh still re-read the item shown before; one more re-read
+            // covers it.
+            readingsDoorbell?.yield()
             OtosLog.ui.debugOperation("photo.info", phase: "applied", fields: [
                 "id": id.relativePath.rawValue,
                 "located": read.coordinate == nil ? "false" : "true",
@@ -125,7 +127,8 @@ extension CatalogWindowViewModel {
         reader: MediaTileDetailReader,
         materialization: MaterializationCoordinator,
         libraryName: String?,
-        labelNames: SceneLabelNames
+        labelNames: SceneLabelNames,
+        descriptionAvailability: PhotoDescriptionAvailability
     ) async throws -> PhotoInfo {
         async let asset = store.mediaAssets(for: [id])[id]
         async let metadata = store.metadata(for: id)
@@ -146,7 +149,8 @@ extension CatalogWindowViewModel {
             libraryName: libraryName,
             locality: locality,
             editRecipe: recipe?.recipe,
-            labelNames: names
+            labelNames: names,
+            descriptionAvailability: descriptionAvailability
         ))
     }
 
@@ -157,30 +161,33 @@ extension CatalogWindowViewModel {
         return try await labelNames.labels(of: labels, in: Locale.current.language)
     }
 
-    /// The item In This Photo describes, while the Info pane shows one.
-    private var recognizedTarget: MediaAssetID? {
+    /// The item the Info pane's readings describe, while the pane shows one.
+    private var readingsTarget: MediaAssetID? {
         showsInfo ? photoInfo?.id : nil
     }
 
-    /// Keeps In This Photo current while search reads: each ring re-reads the shown item's
-    /// labels and text and applies them if it is still the one shown. Only that section is
-    /// re-read, so the place lookup is not restarted.
+    /// Keeps In This Photo and Description current while they are read: each ring re-reads
+    /// the shown item's labels, text and description and applies them if it is still the one
+    /// shown. Only those sections are re-read, so the place lookup is not restarted.
     ///
-    /// One loop, woken by a newest-wins doorbell that two sources ring: search's index each time
-    /// it announces new readings, and each Info read as it lands. The second closes the one
-    /// order the first cannot: a reading announced while an Info read is in flight is re-read
-    /// for the item shown then, and the Info read lands afterwards with what it read before the
-    /// reading. A ring during a re-read is kept, so the last write to the section is always
-    /// followed by a fresh read. The loop holds the view model weakly across each wait and ends
-    /// with it; the index's stream is forwarded by a child of the same task, so teardown ends
-    /// both. A failed read is logged and changes nothing (ADR 0032 rule 4).
-    func startRecognizedRefresh() {
+    /// One loop, woken by a newest-wins doorbell that three sources ring: search's index each
+    /// time it announces new readings, the description writer each time it writes, and each
+    /// Info read as it lands. The last closes the one order the others cannot: a reading
+    /// announced while an Info read is in flight is re-read for the item shown then, and the
+    /// Info read lands afterwards with what it read before the reading. A ring during a re-read
+    /// is kept, so the last write to the sections is always followed by a fresh read. The loop
+    /// holds the view model weakly across each wait and ends with it; the announcers' streams
+    /// are forwarded by children of the same task, so teardown ends them all. A failed read is
+    /// logged and changes nothing (ADR 0032 rule 4).
+    func startReadingsRefresh() {
         let (rings, doorbell) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        recognizedDoorbell = doorbell
+        readingsDoorbell = doorbell
         let index = photoSearchIndex
+        let writer = photoDescriptionWriter
         let store = catalogStore
         let labelNames = sceneLabelNames
-        recognizedRefreshTask = Task { [weak self] in
+        let availability = descriptionAvailability
+        readingsRefreshTask = Task { [weak self] in
             await withDiscardingTaskGroup { group in
                 if let index {
                     group.addTask {
@@ -189,22 +196,32 @@ extension CatalogWindowViewModel {
                         }
                     }
                 }
+                if let writer {
+                    group.addTask {
+                        for await _ in await writer.changes() {
+                            doorbell.yield()
+                        }
+                    }
+                }
                 for await _ in rings {
-                    guard let id = self?.recognizedTarget else {
+                    guard let id = self?.readingsTarget else {
                         if self == nil {
                             break
                         }
                         continue
                     }
                     let readsText = self?.photoInfo?.recognized?.readsText ?? true
+                    let describes = self?.photoInfo?.photoDescription != nil
                     let recognized: PhotoInfo.Recognized
+                    let description: PhotoInfo.Description?
                     do {
                         let overlay = try await store.photoInfoOverlay(for: id)
                         recognized = try await PhotoInfo.Recognized(
                             overlay: overlay, labels: Self.name(overlay?.sceneLabels, labelNames: labelNames), readsText: readsText
                         )
+                        description = describes ? PhotoInfo.Description(overlay?.photoDescription, availability: availability()) : nil
                     } catch {
-                        OtosLog.ui.errorOperation("photo.info.recognized", phase: "readFailed", fields: [
+                        OtosLog.ui.errorOperation("photo.info.readings", phase: "readFailed", fields: [
                             "id": id.relativePath.rawValue,
                             "error": String(describing: error),
                         ])
@@ -213,14 +230,18 @@ extension CatalogWindowViewModel {
                     guard !Task.isCancelled, let self else {
                         break
                     }
-                    guard self.recognizedTarget == id, self.photoInfo?.recognized != recognized else {
+                    guard self.readingsTarget == id,
+                          self.photoInfo?.recognized != recognized || self.photoInfo?.photoDescription != description
+                    else {
                         continue
                     }
                     self.photoInfo?.recognized = recognized
-                    OtosLog.ui.debugOperation("photo.info.recognized", phase: "applied", fields: [
+                    self.photoInfo?.photoDescription = description
+                    OtosLog.ui.debugOperation("photo.info.readings", phase: "applied", fields: [
                         "id": id.relativePath.rawValue,
                         "labels": recognized.labels.map { "\($0.count)" } ?? "owed",
                         "lines": recognized.text.diagnosticCount,
+                        "description": description?.diagnosticState ?? "none",
                     ])
                 }
                 group.cancelAll()

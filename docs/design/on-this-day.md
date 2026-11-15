@@ -61,7 +61,7 @@ margins, leading-aligned, newest first; it scrolls when the cards do not fit.
 | --- | --- |
 | Face | 16:9, radius 9; the anniversary's key photo — the first item of its run, its newest capture — aspect-filled **[deviation DES-060A]**: a cover stands for the anniversary and is not the photograph under review; Immich, Apple and Google crop covers too |
 | L1 on the photo | `3 years ago` / `1 year ago`, or `1 month ago` / `14 months ago` (months are never rounded to years), white `.title3` semibold at the bottom left, 12 pt inset, over `DesignPalette.photoScrim` (black 40 %) fading to clear upward |
-| Under the face | L3 `.subheadline` `9 Nov 2023 · 14` (`dMMMy`, tabular digits), 7 pt below |
+| Under the face | 7 pt below: the anniversary's title (ADR 0053), L2 `.body`, one line truncated at its end, held empty until one is written; then, 2 pt below, L3 `.subheadline` `9 Nov 2023 · 14` (`dMMMy`, tabular digits) |
 | Before the first decode | DES-063's kind glyph at tertiary strength on the `content` well (DES-022) |
 | Painted | The cover stays until a newer thumbnail for the same key item replaces it (the grid's no-blank rule, in spirit); a card made again — after a story closes, or recycled by the grid — reads the shared tile store while rendering, so it paints its cover in its first frame; the covers are pinned in that store while the scope shows, as the grid pins its visible tiles, so no budget pressure can drop one |
 | Focus | The system focus ring, never suppressed (DES-081), and DES-061's 3 pt accent border on the focused card's face |
@@ -72,7 +72,15 @@ margins, leading-aligned, newest first; it scrolls when the cards do not fit.
 | Return or Space | Plays the focused card's anniversary. |
 | ← → ↑ ↓ | Move focus among the cards, by one or by a row. |
 
-VoiceOver reads a card as a button: `3 years ago, 14 items, 9 November 2023` (DES-082).
+VoiceOver reads a card as a button: `Berry Picking, 3 years ago, 14 items, 9 November 2023`, the
+title first once one is written (DES-082).
+
+## Titles
+
+Apple's on-device model titles each anniversary from the descriptions of up to eight of its
+photos, in play order, and how long ago it is: at most six words, the people's names where
+they fit (`AnniversaryTitleWriter`, ADR 0053). An anniversary none of whose photos is
+described yet has no title; the title is written again when those descriptions change.
 
 ## Empty states
 
@@ -93,7 +101,7 @@ the anniversary's last item.
 
 | Zone | Content |
 | --- | --- |
-| Leading | `Close` (`xmark`), then L1 `1 year ago` or `1 month ago` (`.title3` semibold) |
+| Leading | `Close` (`xmark`), then L1 `1 year ago` or `1 month ago` (`.title3` semibold), then the anniversary's title, L3 `.subheadline`, one line truncated at its end, nothing until one is written |
 | Center | `Pause` / `Play` (`pause.fill` / `play.fill`), the segments, then `4/12` (`.subheadline`, L3, tabular) |
 | Trailing | `Previous` (`chevron.left`), `Next` (`chevron.right`) |
 

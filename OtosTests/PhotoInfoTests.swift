@@ -75,7 +75,7 @@ struct PhotoInfoTests {
             calendar: Calendar(identifier: .gregorian)
         )
 
-        #expect(info.sections.map(\.id) == [.people, .recognized, .location, .file, .camera, .exposure])
+        #expect(info.sections.map(\.id) == [.description, .people, .recognized, .location, .file, .camera, .exposure])
         #expect(info.captured.hasSuffix(" UTC+02:00"))
         #expect(info.value("Camera") == "SONY ILCE-7M4")
         #expect(info.value("Lens") == "FE 24-70mm F2.8 GM II")
@@ -143,9 +143,29 @@ struct PhotoInfoTests {
         let several = PhotoInfo.none(itemCount: 3)
         #expect(none.title == "No Selection")
         #expect(several.title == "3 Items")
-        #expect(none.sections.map(\.id) == [.people, .recognized, .location, .file, .camera, .exposure])
+        #expect(none.sections.map(\.id) == [.description, .people, .recognized, .location, .file, .camera, .exposure])
         #expect(none.sections.flatMap(\.rows).allSatisfy { $0.value == PhotoInfo.notApplicable })
         #expect(none.captured == PhotoInfo.notApplicable)
+    }
+
+    /// A still's Description says what the model wrote, that it declined, or — while owed —
+    /// whether one can be written here; a movie has none, and no single item none either.
+    @Test func descriptionSaysWhatTheModelWrote() {
+        func overlay(_ reading: PhotoDescriptionReading?) -> PhotoInfoOverlay {
+            PhotoInfoOverlay(companionFileNames: [], importedAt: nil, isEdited: false, photoDescription: reading)
+        }
+        let written = PhotoInfo.make(PhotoInfo.Source(id: still, overlay: overlay(.written("A lake.")), kind: .image))
+        #expect(written.photoDescription == .written("A lake."))
+        let declined = PhotoInfo.make(PhotoInfo.Source(id: still, overlay: overlay(.declined), kind: .image))
+        #expect(declined.photoDescription == .declined)
+        let off = PhotoInfo.make(PhotoInfo.Source(
+            id: still, overlay: overlay(nil), kind: .raw, descriptionAvailability: .appleIntelligenceOff
+        ))
+        #expect(off.photoDescription == .owed(.appleIntelligenceOff))
+        let movie = PhotoInfo.make(PhotoInfo.Source(id: still, overlay: overlay(.written("A lake.")), kind: .video))
+        #expect(movie.photoDescription == nil)
+        #expect(!movie.sections.map(\.id).contains(.description))
+        #expect(PhotoInfo.none(itemCount: 0).photoDescription == nil)
     }
 
     /// In This Photo holds the named labels and the certain text; a reading still owed stays

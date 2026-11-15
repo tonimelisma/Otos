@@ -1357,6 +1357,27 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// v58 a still's description, written by Apple's on-device language model from its stored
+    /// preview and the facts Otos holds about it (ADR 0053, `PhotoDescriptionStorage`): one
+    /// row per asset naming everything it was written from, its text NULL when the model
+    /// declined. A move carries it and a proven deletion ends it, by cascade.
+    static let photoDescriptionMigrationIdentifier = "v58_photo_description"
+
+    static let photoDescriptionStatements: [String] = [
+        """
+        CREATE TABLE photo_description (
+            library_root_id INTEGER NOT NULL,
+            relative_path TEXT NOT NULL,
+            source TEXT NOT NULL,
+            text TEXT,
+            PRIMARY KEY (library_root_id, relative_path),
+            FOREIGN KEY (library_root_id, relative_path)
+                REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        )
+        """,
+    ]
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

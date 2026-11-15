@@ -392,6 +392,26 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    /// The description writer's reads (ADR 0053): its candidates walk the roots' stills by the
+    /// asset key, and each still's faces, people, place, readings and description row are
+    /// found by their own keys — no table but `media_asset` is scanned.
+    @Test func theDescriptionReadsFindEachFactByItsKey() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        let plans = try await dbQueue.read { db in
+            try [
+                ("candidates", explainPlan(db, sql: PhotoDescriptionStorage.candidatesSQL(rootCount: 2), arguments: [1, 2, 16])),
+                ("faces", explainPlan(db, sql: PhotoDescriptionStorage.facesSQL, arguments: [1, "a.jpg"])),
+                ("readings", explainPlan(db, sql: PhotoDescriptionStorage.readingsSQL, arguments: [1, "a.jpg"])),
+                ("current", explainPlan(db, sql: PhotoDescriptionStorage.currentRowSQL, arguments: [1, "a.jpg"])),
+            ]
+        }
+        for (name, plan) in plans {
+            let scans = plan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.hasPrefix("SCAN ") }
+            #expect(scans.allSatisfy { $0.hasPrefix("SCAN (subquery") }, "\(name): \(plan)")
+        }
+    }
+
     /// v53's one-time cleanup visits each text reading once, as it must to find the empty ones,
     /// and finds each reading's asset by the asset's key: it never scans `media_asset`.
     @Test func theEmptyTextReadingsCleanupFindsEachAssetByItsKey() async throws {

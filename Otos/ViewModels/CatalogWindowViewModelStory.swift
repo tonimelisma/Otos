@@ -114,6 +114,9 @@ extension CatalogWindowViewModel {
         } else if previous.onThisDay != nil {
             tileContentStore.pinVisible([])
         }
+        if next.onThisDay != previous.onThisDay || next.mediaGrid.orderedAssetIDs != previous.mediaGrid.orderedAssetIDs {
+            anniversaryTitleRequests?.yield(Self.titledAnniversaries(next))
+        }
         let scopeChanged = previous.mediaGrid.descriptor.scope != next.mediaGrid.descriptor.scope
         if story != nil, scopeChanged {
             closeStory(reason: "scopeChanged")
@@ -130,6 +133,48 @@ extension CatalogWindowViewModel {
                 "anniversaries": "\(onThisDay.anniversaries.count)",
                 "items": "\(onThisDay.itemCount)",
             ])
+        }
+    }
+
+    /// The anniversaries `state` shows, as On This Day's titles are written for them: none
+    /// outside the scope.
+    nonisolated static func titledAnniversaries(_ state: CatalogWindowState) -> [AnniversaryTitleWriter.Anniversary] {
+        guard let onThisDay = state.onThisDay else { return [] }
+        let ordered = state.mediaGrid.orderedAssetIDs
+        return onThisDay.anniversaries.compactMap { anniversary in
+            guard anniversary.indexes.upperBound <= ordered.count else { return nil }
+            return AnniversaryTitleWriter.Anniversary(
+                day: anniversary.day,
+                ago: OnThisDayPresentation.ago(anniversary, today: onThisDay.day),
+                items: Array(ordered[anniversary.indexes])
+            )
+        }
+    }
+
+    /// Hands the anniversaries shown to the title writer, newest wins, and assigns the titles
+    /// it publishes (ADR 0053). One forwarding loop and one consumer, both children of one
+    /// task the window owns; they hold the view model weakly and end with it.
+    func startAnniversaryTitles() {
+        guard let writer = anniversaryTitleWriter else { return }
+        let (requests, continuation) = AsyncStream<[AnniversaryTitleWriter.Anniversary]>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        anniversaryTitleRequests = continuation
+        anniversaryTitleTask = Task { [weak self] in
+            await withDiscardingTaskGroup { group in
+                group.addTask {
+                    for await anniversaries in requests {
+                        await writer.show(anniversaries)
+                    }
+                }
+                for await titles in await writer.titles() {
+                    guard !Task.isCancelled, let self else { break }
+                    if self.anniversaryTitles != titles {
+                        self.anniversaryTitles = titles
+                    }
+                }
+                group.cancelAll()
+            }
         }
     }
 

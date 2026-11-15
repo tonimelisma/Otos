@@ -17,6 +17,8 @@ struct OnThisDayView: View {
     var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
+    /// Each anniversary's title, once one is written (ADR 0053).
+    var titles: [CalendarDay: String] = [:]
     let play: (CalendarDay) -> Void
     var clearFilters: () -> Void = {}
     @FocusState private var focused: CalendarDay?
@@ -59,6 +61,7 @@ struct OnThisDayView: View {
                 ForEach(anniversaries) { anniversary in
                     OnThisDayCard(
                         anniversary: anniversary,
+                        title: titles[anniversary.day],
                         today: today,
                         isFocused: focused == anniversary.day,
                         tileContentStore: tileContentStore,
@@ -161,9 +164,11 @@ private struct OnThisDayBar: View {
 
 /// One anniversary: its key photo on a 16:9 card, aspect-filled **[deviation DES-060A]** —
 /// a cover stands for the anniversary, it is not the photograph under review — with its
-/// distance on the photo and its date and count under it (DES-112).
+/// distance on the photo, and under it its title and its date and count (DES-112).
 private struct OnThisDayCard: View {
     let anniversary: OnThisDayAnniversary
+    /// The title written for the anniversary; its line is kept, empty, until one is.
+    let title: String?
     let today: CalendarDay
     let isFocused: Bool
     let tileContentStore: TileContentStore?
@@ -177,15 +182,23 @@ private struct OnThisDayCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             face
-            Text(OnThisDayPresentation.cardCaption(anniversary))
-                .font(.subheadline)
-                .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                .monospacedDigit()
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                // The line holds its height before a title arrives (DES-053).
+                Text(title ?? " ")
+                    .font(.body)
+                    .foregroundStyle(DesignPalette.label(for: colorScheme))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(OnThisDayPresentation.cardCaption(anniversary))
+                    .font(.subheadline)
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(OnThisDayPresentation.cardAccessibilityLabel(anniversary, today: today))
+        .accessibilityLabel(OnThisDayPresentation.cardAccessibilityLabel(anniversary, title: title, today: today))
         .accessibilityAddTraits(.isButton)
         .task(id: anniversary.keyItem) {
             await loadCover()

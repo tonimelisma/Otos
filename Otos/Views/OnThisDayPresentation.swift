@@ -72,13 +72,14 @@ nonisolated enum OnThisDayPresentation {
     /// A card's VoiceOver label: `3 years ago, 14 items, 9 November 2023` (DES-082).
     static func cardAccessibilityLabel(
         _ anniversary: OnThisDayAnniversary,
+        title: String? = nil,
         today: CalendarDay,
         locale: Locale = .current,
         calendar: Calendar = .current
     ) -> String {
         let items = anniversary.count == 1 ? "1 item" : "\(anniversary.count.formatted()) items"
         let date = fullDate(anniversary.day, locale: locale, calendar: calendar)
-        return "\(ago(anniversary, today: today)), \(items), \(date)"
+        return ([title].compactMap(\.self) + [ago(anniversary, today: today), items, date]).joined(separator: ", ")
     }
 
     /// The date on the story's picture and in VoiceOver: `9 November 2023`.

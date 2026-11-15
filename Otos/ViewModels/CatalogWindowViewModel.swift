@@ -346,11 +346,16 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var placeNameLookup: PlaceNameLookup = .mapKit
     /// Names the Info pane's scene labels in the Mac's language (`SceneLabelNames`).
     @ObservationIgnored let sceneLabelNames = SceneLabelNames(bundle: Bundle(for: CatalogWindowViewModel.self))
-    /// Re-reads In This Photo as search's index reads (`startRecognizedRefresh`).
-    @ObservationIgnored var recognizedRefreshTask: Task<Void, Never>?
-    /// Rings `recognizedRefreshTask`: search's index rings it as it reads, and every Info read
-    /// rings it as it lands.
-    @ObservationIgnored var recognizedDoorbell: AsyncStream<Void>.Continuation?
+    /// Re-reads In This Photo and Description as they are read (`startReadingsRefresh`).
+    @ObservationIgnored var readingsRefreshTask: Task<Void, Never>?
+    /// Rings `readingsRefreshTask`: search's index and the description writer ring it as they
+    /// read, and every Info read rings it as it lands.
+    @ObservationIgnored var readingsDoorbell: AsyncStream<Void>.Continuation?
+    /// Whether descriptions can be written on this Mac, for the Info pane's owed state.
+    @ObservationIgnored var descriptionAvailability: @Sendable () -> PhotoDescriptionAvailability = {
+        PhotoDescriber.liveAvailability
+    }
+
     /// The window's undo stack: likes (APP-039), Move to Trash (ADR 0022) and edits (ADR
     /// 0036). One window, one manager, owned here so Edit ▸ Undo renders `undoMenuState`
     /// rather than searching a responder chain that ends in an AppKit collection view.
@@ -413,6 +418,11 @@ final class CatalogWindowViewModel {
     /// Keyword search's index (ADR 0048), paired with the live enrichment pipeline like the
     /// render signature refresher: it reads the thumbnails enrichment writes.
     @ObservationIgnored let photoSearchIndex: PhotoSearchIndex?
+    /// Writes stills' descriptions with Apple's on-device model (ADR 0053), from the stored
+    /// previews and readings enrichment and search write; starts with enrichment.
+    @ObservationIgnored let photoDescriptionWriter: PhotoDescriptionWriter?
+    /// Writes On This Day's titles from its photos' descriptions (ADR 0053).
+    @ObservationIgnored let anniversaryTitleWriter: AnniversaryTitleWriter?
     @ObservationIgnored let materializationCoordinator: MaterializationCoordinator
     /// Reads a volume's free space for every free-space floor this window's owners keep
     /// (ADR 0027): the system's reading in the app, a test's own so no outcome depends on
@@ -611,6 +621,10 @@ final class CatalogWindowViewModel {
     /// The year the On This Day collection should bring keyboard focus to: the year a
     /// closed story was on. The view applies each request once, by its revision.
     var onThisDayFocusRequest: OnThisDayFocusRequest?
+    /// On This Day's titles by anniversary, as the title writer publishes them (ADR 0053).
+    var anniversaryTitles: [CalendarDay: String] = [:]
+    @ObservationIgnored var anniversaryTitleRequests: AsyncStream<[AnniversaryTitleWriter.Anniversary]>.Continuation?
+    @ObservationIgnored var anniversaryTitleTask: Task<Void, Never>?
     /// Counts focus changes: `setFocus` adds one on every call, the same item included. A
     /// story's state and every report made for it carry the visit they belong to.
     @ObservationIgnored var focusVisit: UInt64 = 0
@@ -799,6 +813,17 @@ final class CatalogWindowViewModel {
                 bundle: Bundle(for: CatalogWindowViewModel.self)
             )
             : nil
+        photoDescriptionWriter = startsEnrichment && enrichmentCoordinator == nil
+            ? PhotoDescriptionWriter(
+                store: catalogStore,
+                searchIndex: photoSearchIndex,
+                thumbnailDirectory: catalogStore.thumbnailDirectory,
+                describe: PhotoDescriber.live
+            )
+            : nil
+        anniversaryTitleWriter = photoDescriptionWriter.map { writer in
+            AnniversaryTitleWriter(store: catalogStore, descriptions: writer, writeTitle: AnniversaryTitler.live)
+        }
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
@@ -896,8 +921,10 @@ final class CatalogWindowViewModel {
         peopleIntentTask?.cancel()
         openWithMenuTask?.cancel()
         photoInfoTask?.cancel()
-        recognizedRefreshTask?.cancel()
-        recognizedDoorbell?.finish()
+        readingsRefreshTask?.cancel()
+        readingsDoorbell?.finish()
+        anniversaryTitleTask?.cancel()
+        anniversaryTitleRequests?.finish()
         facesReadTask?.cancel()
         facesReadDoorbell?.finish()
         faceCandidatesTask?.cancel()
@@ -1004,7 +1031,8 @@ extension CatalogWindowViewModel {
         )
 
         startQueryForwarding(projection: projection)
-        startRecognizedRefresh()
+        startReadingsRefresh()
+        startAnniversaryTitles()
         startFacesReadRefresh()
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startMediaChoiceForwarding(store: store)
@@ -1120,7 +1148,7 @@ extension CatalogWindowViewModel {
         // `startCatalog` runs.
         enrichmentStartTask = Task { [
             coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, previewFaceReader, photoSearchIndex,
-            placeNameReader, store = catalogStore
+            placeNameReader, photoDescriptionWriter, store = catalogStore
         ] in
             do {
                 try await store.start()
@@ -1134,6 +1162,7 @@ extension CatalogWindowViewModel {
             await previewFaceReader?.start()
             await placeNameReader?.start()
             await photoSearchIndex?.start()
+            await photoDescriptionWriter?.start()
             await metadataRefresher?.refresh()
         }
     }

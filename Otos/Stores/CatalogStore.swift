@@ -920,9 +920,10 @@ extension CatalogStore {
     }
 
     /// The overlay the Info pane shows for `id` (APP-041): its companion files, the import it
-    /// arrived in, whether it carries an edit, and what search recognised in it — the confident
+    /// arrived in, whether it carries an edit, what search recognised in it — the confident
     /// scene labels of its current embedding row and the certain lines of its current text
-    /// reading, each nil while that reading is owed. Nil when the asset is not cataloged.
+    /// reading — and its current description (ADR 0053), each nil while owed. Nil when the
+    /// asset is not cataloged.
     func photoInfoOverlay(for id: MediaAssetID) async throws -> PhotoInfoOverlay? {
         guard let rootRowID = roots[id.libraryRootPath]?.rowID else {
             return nil
@@ -970,12 +971,18 @@ extension CatalogStore {
                 """,
                 arguments: arguments
             )
+            let description = try Row.fetchOne(db, sql: PhotoDescriptionStorage.currentRowSQL, arguments: arguments)
+                .map { row -> PhotoDescriptionReading in
+                    let text: String? = row["text"]
+                    return text.map(PhotoDescriptionReading.written) ?? .declined
+                }
             return try PhotoInfoOverlay(
                 companionFileNames: companions,
                 importedAt: batch.map { Date(timeIntervalSince1970: Double($0) / 1000) },
                 isEdited: asset["edited"],
                 sceneLabels: labels,
-                textLines: lines.map { try SearchTextReading.certain(SearchTextStorage.lines(fromJSON: $0)) }
+                textLines: lines.map { try SearchTextReading.certain(SearchTextStorage.lines(fromJSON: $0)) },
+                photoDescription: description
             )
         }
         guard roots[id.libraryRootPath]?.rowID == rootRowID else {
@@ -8482,6 +8489,132 @@ extension CatalogStore {
                 written.append(result)
             }
             return written
+        }
+    }
+
+    /// Stills owed a description (ADR 0053), newest capture first, each with the facts the
+    /// model is told, but those in `excluding`, which a pass already tried and could not
+    /// describe. Read from the roots whose stills are read for faces, since a still is
+    /// described only once its faces are read. A row whose edit cannot be read is passed over
+    /// and logged.
+    func photoDescriptionCandidates(limit: Int, excluding: Set<MediaAssetID> = []) async throws -> [PhotoDescriptionCandidate] {
+        let rootIDs = roots.values.filter(\.root.kind.readsFaces).map(\.rowID).sorted()
+        guard !rootIDs.isEmpty else { return [] }
+        let pathsByRowID = roots.pathsByRowID
+        return try await database().read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: PhotoDescriptionStorage.candidatesSQL(rootCount: rootIDs.count),
+                arguments: StatementArguments(rootIDs + [limit + excluding.count])
+            )
+            var candidates: [PhotoDescriptionCandidate] = []
+            for row in rows where candidates.count < limit {
+                guard let root = pathsByRowID[row["library_root_id"]] else { continue }
+                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
+                guard !excluding.contains(id) else { continue }
+                let renderedRevision: Int64 = row["rendered_revision"]
+                let recipe: EditRecipe
+                do {
+                    recipe = renderedRevision == 0 ? .neutral : try Self.editRecipe(json: row["edit_recipe_json"]) ?? .neutral
+                } catch {
+                    OtosLog.metadata.errorOperation("description", phase: "recipeUnreadable", fields: [
+                        "relativePath": id.relativePath.rawValue, "error": String(describing: error),
+                    ])
+                    continue
+                }
+                let key: StatementArguments = [row["library_root_id"] as Int64, id.relativePath.rawValue]
+                try candidates.append(PhotoDescriptionCandidate(
+                    id: id,
+                    previewPath: row["preview_path"],
+                    source: row["source"],
+                    recipe: recipe,
+                    facts: Self.photoDescriptionFacts(db, key: key)
+                ))
+            }
+            return candidates
+        }
+    }
+
+    /// What the model is told about one still: its faces with their people, when and where it
+    /// was taken, the text Vision is certain of and its confident scene labels. A hidden
+    /// person is never named.
+    private nonisolated static func photoDescriptionFacts(_ db: Database, key: StatementArguments) throws -> PhotoDescriptionFacts {
+        let faces = try Row.fetchAll(db, sql: PhotoDescriptionStorage.facesSQL, arguments: key).map { row in
+            let hidden: Bool = row["hidden"]
+            let name: String? = row["name"]
+            let birthday: String? = row["birthday"]
+            return PhotoDescriptionFacts.Face(
+                box: CGRect(
+                    x: row["box_x"] as Double, y: row["box_y"] as Double,
+                    width: row["box_width"] as Double, height: row["box_height"] as Double
+                ),
+                name: hidden ? nil : name.flatMap { $0.isEmpty ? nil : $0 },
+                birthday: hidden ? nil : birthday.flatMap(PersonBirthday.init)
+            )
+        }
+        let readings = try Row.fetchOne(db, sql: PhotoDescriptionStorage.readingsSQL, arguments: key)
+        let captured: Double? = readings?["best_capture_local"]
+        let lines: String? = readings?["lines"]
+        let labels: String? = readings?["confident_labels"]
+        return try PhotoDescriptionFacts(
+            faces: faces,
+            capturedAt: captured.map(CaptureLocalTime.init(seconds:)),
+            town: readings?["town"],
+            country: readings?["country"],
+            textLines: lines.map { try SearchTextReading.certain(SearchTextStorage.lines(fromJSON: $0)) } ?? [],
+            labels: SearchEmbeddingStorage.confidentLabels(from: labels)
+        )
+    }
+
+    /// Writes descriptions for stills whose facts are still the ones described; returns those
+    /// written.
+    func applyPhotoDescriptions(_ results: [PhotoDescriptionResult]) async throws -> [PhotoDescriptionResult] {
+        let rowIDs = roots.rowIDSnapshot()
+        return try await database().write { db -> [PhotoDescriptionResult] in
+            var written: [PhotoDescriptionResult] = []
+            for result in results {
+                guard let rootID = rowIDs[result.id.libraryRootPath] else { continue }
+                let path = result.id.relativePath.rawValue
+                guard try Bool.fetchOne(
+                    db,
+                    sql: """
+                    SELECT \(PhotoDescriptionStorage.currentSource("media_asset")) = ?
+                    FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+                    """,
+                    arguments: [result.source, rootID, path]
+                ) == true else {
+                    continue
+                }
+                try db.execute(
+                    sql: """
+                    INSERT INTO photo_description (library_root_id, relative_path, source, text) VALUES (?, ?, ?, ?)
+                    ON CONFLICT (library_root_id, relative_path) DO UPDATE SET source = excluded.source, text = excluded.text
+                    """,
+                    arguments: [rootID, path, result.source, result.text]
+                )
+                written.append(result)
+            }
+            return written
+        }
+    }
+
+    /// The current descriptions of `ids` that the model wrote, by asset; a still owed one or
+    /// declined is absent. What On This Day's titles are written from.
+    func currentPhotoDescriptions(for ids: [MediaAssetID]) async throws -> [MediaAssetID: String] {
+        let rowIDs = roots.rowIDSnapshot()
+        return try await database().read { db in
+            var texts: [MediaAssetID: String] = [:]
+            for id in ids {
+                guard let rootID = rowIDs[id.libraryRootPath],
+                      let text = try String.fetchOne(
+                          db, sql: PhotoDescriptionStorage.currentRowSQL, arguments: [rootID, id.relativePath.rawValue]
+                      )
+                else {
+                    continue
+                }
+                texts[id] = text
+            }
+            return texts
         }
     }
 

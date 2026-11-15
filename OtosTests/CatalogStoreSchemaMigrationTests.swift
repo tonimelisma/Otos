@@ -220,6 +220,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.windowReadIndexesMigrationIdentifier,
             CatalogSchema.wholeSecondCaptureLocalMigrationIdentifier,
             CatalogSchema.assignedFacePhotoIndexMigrationIdentifier,
+            CatalogSchema.photoDescriptionMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

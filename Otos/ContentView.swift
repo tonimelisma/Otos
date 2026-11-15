@@ -615,6 +615,7 @@ struct ContentView: View {
                     tileContentStore: viewModel.tileContentStore,
                     thumbnailDirectory: viewModel.thumbnailDirectory,
                     detailReader: viewModel.tileDetailReader,
+                    titles: viewModel.anniversaryTitles,
                     actions: StoryPlayerActions(
                         canTogglePause: viewModel.canToggleStoryPause,
                         canPrevious: viewModel.canStoryPrevious,
@@ -634,6 +635,7 @@ struct ContentView: View {
                     tileContentStore: viewModel.tileContentStore,
                     thumbnailDirectory: viewModel.thumbnailDirectory,
                     detailReader: viewModel.tileDetailReader,
+                    titles: viewModel.anniversaryTitles,
                     play: { viewModel.playStory(anniversary: $0) },
                     clearFilters: viewModel.clearMediaFilter
                 )
