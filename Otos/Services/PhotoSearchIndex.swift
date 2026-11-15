@@ -35,6 +35,8 @@ nonisolated struct SearchMatches: Sendable, Equatable {
     let allowed: Set<MediaAssetID>?
     /// The scope's assets compared: those with a current embedding.
     let searchedCount: Int
+    /// The index's `revision` the answer was computed at.
+    let indexRevision: UInt64
 }
 
 /// Photo search index guide (ADR 0048)
@@ -63,8 +65,12 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///   that fails) records nothing, so the asset stays owed; a pass pages past it to the rest and
 ///   tries it again after the backoff.
 ///
-/// `changes` yields after memory gains or loses embeddings, so a projection showing results
-/// can ask again. The forwarder and the loop hold this actor weakly and end with it.
+/// `revision` moves whenever memory gains or loses an embedding or a text reading, and every
+/// answer carries the revision it was computed at: the same query over the same scope and
+/// facts at the same revision is the same answer, so a projection holding one need not ask
+/// again (`CatalogProjectionReads.Search`). `changes` yields after it moves, so a projection
+/// showing results can ask again. The forwarder and the loop hold this actor weakly and end
+/// with it.
 actor PhotoSearchIndex {
     private let store: CatalogStore
     private let thumbnailDirectory: URL?
@@ -83,6 +89,10 @@ actor PhotoSearchIndex {
     /// Every non-empty text reading, by asset, folded once for matching
     /// (`SearchTextReading.folded`).
     private var texts: [MediaAssetID: String] = [:]
+    /// Moves with every change to the embeddings and readings in memory (`announce()`), in the
+    /// same step as the change: what an answer is computed from. Never reset, so an equal
+    /// revision means the same memory.
+    private(set) var revision: UInt64 = 0
     private let textReader = SearchTextReader()
     private let bundle: Bundle
     private var loaded = false
@@ -168,11 +178,20 @@ actor PhotoSearchIndex {
         return stream
     }
 
-    /// The assets of `scope` that `encoding` matches, among those with a current embedding. The
-    /// cut and the label gate's near-best band follow the best match in the scope, not the
-    /// library's: the scope is what the user asked to be searched.
-    func matches(_ encoding: SearchQueryEncoding, among scope: [MediaAssetID]) async throws -> SearchMatches {
+    /// The assets of `scope` that `encoding` matches, among those with a current embedding, and
+    /// that the Store finds for `facts`: the query's facts as of the asker's now
+    /// (`SearchFacts.filter(at:in:)`), nil when it names none. The cut and the label gate's
+    /// near-best band follow the best match in the scope, not the library's: the scope is what
+    /// the user asked to be searched. The vocabulary is loaded and memory read before the one
+    /// await, so the answer is what the index held at the revision it carries.
+    func matches(
+        _ encoding: SearchQueryEncoding,
+        facts: SearchFactFilter?,
+        among scope: [MediaAssetID]
+    ) async throws -> SearchMatches {
         let start = ContinuousClock.now
+        let vocabulary = encoding.embedding == nil ? nil : labelVocabulary()
+        let computedAt = revision
         let inScope = Set(scope)
         let rows = scope.compactMap { rowOf[$0] }
         var matched: [MediaAssetID: Float]?
@@ -182,7 +201,7 @@ actor PhotoSearchIndex {
             let scores = Self.scores(vectors, count: ids.count, query: query)
             let best = rows.lazy.map { scores[$0] }.max() ?? 0
             let threshold = cutoff.threshold(best: best)
-            named = labelVocabulary()?.labels(namedBy: query) ?? []
+            named = vocabulary?.labels(namedBy: query) ?? []
             var picture: [MediaAssetID: Float] = [:]
             for row in rows
                 where scores[row] >= threshold && SearchLabelGate.keeps(score: scores[row], best: best, labels: labels[row], named: named)
@@ -202,7 +221,10 @@ actor PhotoSearchIndex {
             }
             matched = picture
         }
-        let allowed = encoding.facts.isEmpty ? nil : try await store.searchFactMatches(encoding.facts.filter(at: Date(), in: .current))
+        var allowed: Set<MediaAssetID>?
+        if let facts {
+            allowed = try await store.searchFactMatches(facts)
+        }
         OtosLog.catalog.noticeOperation("search.match", phase: "done", fields: [
             "scope": "\(scope.count)",
             "searched": "\(rows.count)",
@@ -213,7 +235,9 @@ actor PhotoSearchIndex {
             "reading": encoding.reading.rawValue,
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
-        return SearchMatches(encoding: encoding, scores: matched, allowed: allowed, searchedCount: rows.count)
+        return SearchMatches(
+            encoding: encoding, scores: matched, allowed: allowed, searchedCount: rows.count, indexRevision: computedAt
+        )
     }
 
     /// Added to a text match's picture score for a query about words, so it ranks above every
@@ -449,6 +473,7 @@ actor PhotoSearchIndex {
     }
 
     private func announce() {
+        revision &+= 1
         for continuation in changeContinuations.values {
             continuation.yield()
         }

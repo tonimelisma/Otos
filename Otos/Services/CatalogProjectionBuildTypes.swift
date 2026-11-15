@@ -70,6 +70,11 @@ nonisolated extension CatalogChangedFacts {
     /// Immich still alone in its asset's folder — leaves them standing.
     static let stackInputs: CatalogChangedFacts = [.membership, .choices, .stacks]
 
+    /// What the Store's answer to a query's facts (`CatalogStore.searchFactMatches`) reads:
+    /// which rows exist on which reachable roots, their capture dates, their locations, and
+    /// who their faces are.
+    static let searchFactInputs: CatalogChangedFacts = [.membership, .captureDate, .location, .faces]
+
     /// What the filter's options for the sidebar row `row` depend on: which rows the row
     /// shows, their kinds and formats, and the places named for them.
     static func filterOptionsInputs(of row: SidebarSelection) -> CatalogChangedFacts {
@@ -140,10 +145,24 @@ nonisolated struct CatalogProjectionReads: Sendable {
         let revisions: CatalogFactRevisions
     }
 
+    /// The last search answer (ADR 0048): what the index matched for one query over one scope.
+    /// The index says when what it answers from moved (`PhotoSearchIndex.revision`, carried by
+    /// the answer); the Store's fact matches move with the kinds of fact they read
+    /// (`CatalogChangedFacts.searchFactInputs`), and only when the query names a fact; the date
+    /// is in `facts`, resolved for the pass's now.
+    struct Search: Sendable {
+        let index: PhotoSearchIndex
+        let facts: SearchFactFilter?
+        let scope: [MediaAssetID]
+        let revisions: CatalogFactRevisions
+        let matches: SearchMatches
+    }
+
     var order: Order?
     var filterOptions: FilterOptions?
     var collapse: Collapse?
     var stacks: Stacks?
+    var search: Search?
 
     /// No answer yet: every read is made.
     static let none = CatalogProjectionReads()
@@ -161,6 +180,27 @@ nonisolated struct CatalogProjectionReads: Sendable {
             return nil
         }
         return order.answer
+    }
+
+    /// The last search answer, when it answers `encoding` with `facts` over `scope` from the
+    /// index `index` at `indexRevision`, and, for a query naming facts, no kind of fact the
+    /// Store's matches read changed after `revisions`.
+    func search(
+        _ encoding: SearchQueryEncoding,
+        facts: SearchFactFilter?,
+        among scope: [MediaAssetID],
+        index: PhotoSearchIndex,
+        indexRevision: UInt64,
+        at revisions: CatalogFactRevisions
+    ) -> Search? {
+        guard let search, search.index === index, search.matches.indexRevision == indexRevision,
+              search.matches.encoding == encoding, search.facts == facts,
+              facts == nil || !revisions.moved(CatalogChangedFacts.searchFactInputs, since: search.revisions),
+              search.scope == scope
+        else {
+            return nil
+        }
+        return search
     }
 
     /// The last stacks, while nothing they are built from changed after `revisions`. The
@@ -213,10 +253,14 @@ nonisolated struct CatalogProjectionReuse: Equatable {
     var collapse = false
     /// The order was read again over the stacks the last read built.
     var stacks = false
+    /// The index was not asked: the last search answer still held.
+    var search = false
 
     var diagnosticDescription: String {
-        let reused = [("order", order), ("filterOptions", filterOptions), ("collapse", collapse), ("stacks", stacks)]
-            .filter(\.1).map(\.0)
+        let reused = [
+            ("order", order), ("filterOptions", filterOptions), ("collapse", collapse), ("stacks", stacks), ("search", search),
+        ]
+        .filter(\.1).map(\.0)
         return reused.isEmpty ? "none" : reused.joined(separator: ",")
     }
 }

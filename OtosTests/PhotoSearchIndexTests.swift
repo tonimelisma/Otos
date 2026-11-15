@@ -186,7 +186,7 @@ struct PhotoSearchIndexTests {
         }
 
         let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "a red picture")
-        let matches = try await index.matches(query, among: [catalog.red, catalog.blue])
+        let matches = try await index.matches(query, facts: nil, among: [catalog.red, catalog.blue])
         #expect(matches.searchedCount == 2)
         let red = try #require(matches.scores?[catalog.red])
         let blue = try #require(matches.scores?[catalog.blue])
@@ -210,8 +210,8 @@ struct PhotoSearchIndexTests {
             break
         }
         let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "a red picture")
-        #expect(try await index.matches(query, among: [catalog.red, catalog.blue]).scores.map { Set($0.keys) } == [catalog.red])
-        let blueOnly = try await index.matches(query, among: [catalog.blue])
+        #expect(try await index.matches(query, facts: nil, among: [catalog.red, catalog.blue]).scores.map { Set($0.keys) } == [catalog.red])
+        let blueOnly = try await index.matches(query, facts: nil, among: [catalog.blue])
         #expect(blueOnly.scores.map { Set($0.keys) } == [catalog.blue])
         #expect(blueOnly.searchedCount == 1)
         await index.shutdown()
@@ -276,6 +276,98 @@ struct PhotoSearchIndexTests {
         await index.shutdown()
         await nothing.shutdown()
         await catalog.store.shutdown()
+    }
+
+    /// A window showing "a red picture" over the red and blue library, settled: the grid shows
+    /// the red one and no pass is owed.
+    private struct ShownSearch {
+        let catalog: Catalog
+        let index: PhotoSearchIndex
+        let projection: CatalogProjection
+        let recorder: AsyncValueRecorder<CatalogWindowState>
+        let recording: Task<Void, Never>
+
+        func tearDown() async {
+            recording.cancel()
+            await index.shutdown()
+            await catalog.store.shutdown()
+        }
+    }
+
+    private func showRedSearch() async throws -> ShownSearch {
+        let catalog = try await makeCatalog()
+        let bundle = Bundle(for: CatalogWindowViewModel.self)
+        let encoder = SearchQueryEncoder(bundle: bundle)
+        let english: SearchQueryReader.Encode = { try await encoder.englishEncoding(of: $0.text) }
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: SearchQueryReader(encode: english)
+        )
+        let changes = await index.changes()
+        await index.start()
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        let projection = CatalogProjection(cadence: .milliseconds(10))
+        await projection.attachSearchIndex(index)
+        let stream = await projection.states(
+            store: catalog.store,
+            initialDescriptor: CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "a red picture"))
+        )
+        let recorder = AsyncValueRecorder<CatalogWindowState>()
+        let recording = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        let red = catalog.red
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [red] }
+        try await waitForProjectionQuiescence(projection)
+        return ShownSearch(catalog: catalog, index: index, projection: projection, recorder: recorder, recording: recording)
+    }
+
+    /// A lap that takes up only a fact the search does not read — a choice the user made,
+    /// which reads the order again — publishes from the answer it holds: the index is not
+    /// asked to match again.
+    @Test func aLapWithFactsTheSearchDoesNotReadMatchesNothingAgain() async throws {
+        let shown = try await showRedSearch()
+        let projection = shown.projection
+        let matched = await projection.searchMatchCount
+        let ordered = await projection.orderQueryCount
+        let revision = await shown.index.revision
+        let refreshed = await shown.recorder.snapshot().last?.mediaGrid.detailRefreshGeneration ?? 0
+
+        _ = try await shown.catalog.store.setMediaChoice(.liked, for: [shown.catalog.blue])
+        let lap = await shown.recorder.waitForValues { ($0.last?.mediaGrid.detailRefreshGeneration ?? 0) > refreshed }.last
+        try await waitForProjectionQuiescence(projection)
+
+        #expect(lap?.mediaGrid.orderedAssetIDs == [shown.catalog.red])
+        #expect(await projection.orderQueryCount > ordered)
+        #expect(await shown.index.revision == revision)
+        #expect(await projection.searchMatchCount == matched)
+        await shown.tearDown()
+    }
+
+    /// A new thumbnail moves what the index holds: the red photo's embedding is stale and read
+    /// again, its revision moves, and the window asks the index to match again.
+    @Test func aLapAfterTheIndexMovedMatchesAgain() async throws {
+        let shown = try await showRedSearch()
+        let projection = shown.projection
+        let matched = await projection.searchMatchCount
+        let revision = await shown.index.revision
+        let red = try #require(shown.catalog.assets.first { $0.id == shown.catalog.red })
+
+        try Self.writeJPEG(
+            SearchModelTests.solid(red: 0.9, green: 0, blue: 0),
+            to: shown.catalog.thumbnails.appending(path: "red-thumb-2.jpg")
+        )
+        try await enrich(shown.catalog.store, red, thumbnail: "red-thumb-2.jpg")
+        try await waitUntil { await projection.searchMatchCount > matched }
+
+        #expect(await shown.index.revision > revision)
+        let redID = shown.catalog.red
+        _ = await shown.recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [redID] }
+        await shown.tearDown()
     }
 
     /// A query being read (here a wedged Translation, held at its suspension) keeps what the
@@ -440,7 +532,7 @@ struct PhotoSearchIndexTests {
             break
         }
         let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "insurance")
-        let matches = try await index.matches(query, among: [catalog.red, catalog.blue])
+        let matches = try await index.matches(query, facts: nil, among: [catalog.red, catalog.blue])
         let scores = try #require(matches.scores)
         #expect(try #require(scores[catalog.blue]) > PhotoSearchIndex.textMatchScore - 1)
         #expect(try #require(scores[catalog.blue]) > (scores[catalog.red] ?? -1))

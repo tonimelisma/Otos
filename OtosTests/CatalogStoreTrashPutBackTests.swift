@@ -38,13 +38,16 @@ struct CatalogStoreTrashPutBackTests {
     }
 
     /// Moves each item's file into the test's Trash folder and reports it to the Store the
-    /// way the queue does after `trashItem`.
+    /// way the queue does after `trashItem`: under the root's namespace lease, so no scan and
+    /// no reconcile of the root runs between the moves and the report.
     private static func moveToTrash(
         _ ids: [MediaAssetID],
         in library: Library,
         store: CatalogStore,
         batch: MediaTrashBatchID
     ) async throws {
+        let rootPath = try #require(ids.first?.libraryRootPath)
+        let lease = try await acquireLease(rootPath, store: store)
         var results: [MediaTrashPathResult] = []
         for id in ids {
             let source = library.root.appending(path: id.relativePath.rawValue)
@@ -59,7 +62,40 @@ struct CatalogStoreTrashPutBackTests {
                 trashURL: destination
             ))
         }
-        await store.reconcileTrashedPaths(results, batch: batch)
+        await store.reconcileTrashedPaths(results, batch: batch, under: lease)
+        #expect(await store.releaseNamespaceMutationLease(lease))
+    }
+
+    private static func acquireLease(_ rootPath: LibraryRootPath, store: CatalogStore) async throws -> RootNamespaceMutationLease {
+        guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(for: rootPath, owner: .mediaTrash) else {
+            throw LeaseUnavailable()
+        }
+        return lease
+    }
+
+    private struct LeaseUnavailable: Error {}
+
+    /// A report from an owner that no longer holds the root marks nothing: only the lease that
+    /// covered the moves keeps the root's own reconcile from purging a moved row before the
+    /// row names the Trash.
+    @Test func aTrashReportWithoutTheRootsLeaseMarksNothing() async throws {
+        let (library, store) = try await Self.makeLibrary(names: ["a.jpg"])
+        let id = library.ids[0]
+        _ = try await store.markPendingTrash([id], batch: MediaTrashBatchID())
+        let released = try await Self.acquireLease(id.libraryRootPath, store: store)
+        #expect(await store.releaseNamespaceMutationLease(released))
+
+        await store.reconcileTrashedPaths([MediaTrashPathResult(
+            id: id,
+            rootPath: id.libraryRootPath,
+            relativePath: id.relativePath,
+            role: .primary,
+            succeeded: true,
+            trashURL: library.trash.appending(path: "a.jpg")
+        )], batch: MediaTrashBatchID(), under: released)
+
+        #expect(try await store.pendingTrashItems().map(\.item.id) == [id])
+        await store.shutdown()
     }
 
     @Test func putBackAfterARelaunchShowsTheItemWithItsChoiceAndEdit() async throws {

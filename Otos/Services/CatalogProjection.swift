@@ -20,10 +20,12 @@ import OSLog
 /// A pass repeats a catalog read only when its answer can have changed (ADR 0005). Each Store
 /// change says which kinds of fact it touched (`CatalogChangedFacts`), and `storeDidChange`
 /// counts them in `factRevisions`. `reads` keeps the last answer of the order read, of the
-/// filter's options and of the stack collapse, each with what it was read for and the
-/// revisions its pass started from; a pass reuses one while those inputs are unchanged and no
-/// kind of fact it depends on moved (`CatalogChangedFacts.orderInputs(of:)`,
-/// `filterOptionsInputs(of:)`), and reads it again otherwise. An enrichment write that
+/// filter's options, of the stack collapse and of the search, each with what it was read for
+/// and the revisions its pass started from; a pass reuses one while those inputs are unchanged
+/// and no kind of fact it depends on moved (`CatalogChangedFacts.orderInputs(of:)`,
+/// `filterOptionsInputs(of:)`, `searchFactInputs`), and reads it again otherwise. The search
+/// answer is also keyed by the index's own `revision`, which moves when what it answers from
+/// does. An enrichment write that
 /// touched only faces or a tile's detail therefore publishes its detail refresh without
 /// reading the order or the options, while one that moved a capture date reads the order
 /// again. A pass takes `reads` as a value and keeps the reads it built from only when it
@@ -133,6 +135,9 @@ actor CatalogProjection {
     /// Count of order reads that read the stack candidates rather than reusing the stacks
     /// the last read built (`CatalogProjectionReads.Stacks`).
     var stackReadCount: UInt64 = 0
+    /// Count of searches the index was asked to match rather than answered from the last
+    /// answer (`CatalogProjectionReads.Search`).
+    var searchMatchCount: UInt64 = 0
     /// Count of passes whose build or owed read an intent superseded (`supersede()`).
     private(set) var supersededCount: UInt64 = 0
     /// The build or owed options read the loop is waiting on: what it is for, and how to

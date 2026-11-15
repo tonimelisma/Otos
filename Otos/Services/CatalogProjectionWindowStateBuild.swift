@@ -127,7 +127,12 @@ extension CatalogProjection {
         if let search = resolvedDescriptor.effectiveSearch, let searchStatus {
             switch searchStatus {
             case let .read(encoding):
-                try await applySearch(search, encoding: encoding, to: &unsearched, store: store)
+                let matches = try await searchMatches(
+                    encoding, among: unsearched.scopedAssetIDs, previous: previous, revisions: revisions
+                )
+                reads.search = matches.made
+                reuse.search = matches.reused
+                try await applySearch(search, matches: matches.made.matches, to: &unsearched, store: store)
             case .failed:
                 Self.failSearch(in: &unsearched)
             case .reading:
@@ -318,18 +323,46 @@ extension CatalogProjection {
         facts.scopedCoordinates = []
     }
 
-    /// Narrows the scope to what the read query matches (ADR 0048), among the scope's own
-    /// assets.
-    private func applySearch(
-        _ search: CatalogSearch,
-        encoding: SearchQueryEncoding,
-        to facts: inout CatalogProjectionBuildFacts,
-        store: CatalogStore
-    ) async throws {
+    /// What the read query matches among `scope` (ADR 0048): the last answer while it holds
+    /// (`CatalogProjectionReads.search`), and otherwise the index's answer now. The query's
+    /// facts are resolved for this pass's now, so a date it names ("yesterday") moves with the
+    /// day. Returns the answer, with what it is keyed by, for the next pass, and whether it
+    /// was the last one.
+    private func searchMatches(
+        _ encoding: SearchQueryEncoding,
+        among scope: [MediaAssetID],
+        previous: CatalogProjectionReads,
+        revisions: CatalogFactRevisions
+    ) async throws -> (made: CatalogProjectionReads.Search, reused: Bool) {
         guard let searchIndex else {
             throw CatalogProjectionSearchUnavailable()
         }
-        let matches = try await searchIndex.matches(encoding, among: facts.scopedAssetIDs)
+        let facts = encoding.facts.filter(at: Date(), in: .current)
+        if let held = await previous.search(
+            encoding,
+            facts: facts,
+            among: scope,
+            index: searchIndex,
+            indexRevision: searchIndex.revision,
+            at: revisions
+        ) {
+            return (held, true)
+        }
+        searchMatchCount &+= 1
+        let matches = try await searchIndex.matches(encoding, facts: facts, among: scope)
+        let made = CatalogProjectionReads.Search(
+            index: searchIndex, facts: facts, scope: scope, revisions: revisions, matches: matches
+        )
+        return (made, false)
+    }
+
+    /// Narrows the scope to `matches` (ADR 0048), among the scope's own assets.
+    private func applySearch(
+        _ search: CatalogSearch,
+        matches: SearchMatches,
+        to facts: inout CatalogProjectionBuildFacts,
+        store: CatalogStore
+    ) async throws {
         let unsearched = facts.scopedAssetIDs.count
         let searched = CatalogWindowPolicy.searched(
             ids: facts.scopedAssetIDs,

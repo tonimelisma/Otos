@@ -167,9 +167,15 @@ against 77.3, 85 in English for both), and every asset has one.
   time, on `SearchImageEmbedder`'s queue.
 - **Memory:** every current embedding as one matrix. A query is one matrix–vector product
   (about 3 ms over 19,000 photos), with no SQLite read.
-- **Answers:** `CatalogProjection` hands it the query's encoding and the scope's assets, and
-  shows the matches. The index's `changes` stream asks for a new publication while a
-  search is shown.
+- **Answers:** `CatalogProjection` hands it the query's encoding, its facts resolved for the
+  pass's now, and the scope's assets, and shows the matches. The index's `changes` stream
+  asks for a new publication while a search is shown. The index's `revision` moves in the
+  same step as every change to its memory, and each answer carries the revision it was
+  computed at. The projection holds the last answer (`CatalogProjectionReads.Search`) and
+  reuses it while the index, its revision, the encoding, the resolved facts and the scope
+  are what they were and, for a query naming facts, no kind of fact the Store's fact
+  matches read (rows shown, capture dates, locations, faces) moved. A window lap that took
+  up only other facts asks the index nothing: at 164k items one match is 350–500 ms.
 
 ### Where results stop: a cutoff relative to the best match
 

@@ -33,8 +33,11 @@ bounded background persistence). Downloads run without the root lease. Once
 every member is local, the coordinator acquires the `RootNamespaceMutationLease`
 for the root, revalidates ownership and rechecks that each member is still local
 (a provider may evict again), calls `FileManager.trashItem` off the MainActor,
-companions before the primary, and releases the lease. The lease is never held
-across a download.
+companions before the primary, reports the moves to the Store
+(`reconcileTrashedPaths`, which takes that lease and refuses a report without it),
+and releases the lease. Without it the reconcile a report requests could find a moved
+file gone before its row names the Trash and purge the row with its overlay. The
+lease is never held across a download.
 
 Download outcomes split three ways. Transient ones (timeout, provider unavailable,
 cancellation) leave the item pending and retry with backoff. A definitive refusal

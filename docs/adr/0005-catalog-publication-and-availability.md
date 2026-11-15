@@ -109,7 +109,9 @@ choices always, and on locations and place names, faces, copies or On This Day's
 where the scope or the filter is by them (`CatalogChangedFacts.orderInputs(of:)`); the
 options depend on rows shown, kinds, formats, grouping, locations and place names
 (`filterOptionsInputs(of:)`); the collapse is a pure step over the scoped order, its stacks
-and expansions. The filter's options are read beside the order, since neither depends on
+and expansions. A shown search's answer is held the same way, keyed also by the search
+index's own revision, which only the index moves (ADR 0048); its Store fact matches depend
+on rows shown, capture dates, locations and faces (`searchFactInputs`). The filter's options are read beside the order, since neither depends on
 the other. Every change still advances `detailRefreshGeneration`, so a pass that reused
 every read publishes the refresh the grid's visible tiles read their details by.
 

@@ -726,7 +726,7 @@ actor MediaTrashCoordinator {
         }
         // The catalog follows the moves while the lease that covers them is still held,
         // so no scan or reconcile of this root can run between the two.
-        await store.reconcileTrashedPaths(results.filter(\.succeeded), batch: batch)
+        await store.reconcileTrashedPaths(results.filter(\.succeeded), batch: batch, under: lease)
         _ = await store.releaseNamespaceMutationLease(lease)
         await settleMove(
             TrashedItem(item: item, members: moved),
@@ -783,7 +783,7 @@ actor MediaTrashCoordinator {
             }
         }
         // Deleted, not in the Trash: no location is passed, so the rows leave the catalog.
-        await store.reconcileTrashedPaths(results.filter(\.succeeded), batch: MediaTrashBatchID())
+        await store.reconcileTrashedPaths(results.filter(\.succeeded), batch: MediaTrashBatchID(), under: lease)
         _ = await store.releaseNamespaceMutationLease(lease)
         forget([item.id])
         if results.contains(where: { !$0.succeeded }) {

@@ -7937,7 +7937,28 @@ extension CatalogStore {
     /// (ADR 0008, ADR 0022), and a scan purges the row only once that file is gone. A
     /// companion, or a file deleted immediately (no Trash location), leaves the catalog.
     /// Unmoved members are not passed in and stay cataloged for the next retry.
-    func reconcileTrashedPaths(_ paths: [MediaTrashPathResult], batch: MediaTrashBatchID) async {
+    ///
+    /// Only the holder of the root's namespace lease, the one that covered the moves, may
+    /// report them. Each path's dirt is recorded before its row is marked, and the reconcile
+    /// it requests runs at the write's suspension: without the lease it finds the file gone
+    /// from its path and the row not yet naming the Trash, and purges the row with the
+    /// user's choice and edit. Under the lease that reconcile defers (`isCurrent`), and so
+    /// does any scan, until the release, when every row says where its file went.
+    func reconcileTrashedPaths(
+        _ paths: [MediaTrashPathResult],
+        batch: MediaTrashBatchID,
+        under lease: RootNamespaceMutationLease
+    ) async {
+        precondition(
+            paths.allSatisfy { $0.rootPath == lease.libraryRootPath },
+            "a Trash report covers only the root its lease holds"
+        )
+        guard ownsNamespaceMutationLease(lease) else {
+            OtosLog.catalog.errorOperation("mediaTrash.reconcile", phase: "refused", fields: [
+                "reason": "leaseNotHeld", "rootPath": lease.libraryRootPath.rawValue, "paths": "\(paths.count)",
+            ])
+            return
+        }
         var changed = false
         for path in paths where path.succeeded {
             guard let rootRowID = roots[path.rootPath]?.rowID else {

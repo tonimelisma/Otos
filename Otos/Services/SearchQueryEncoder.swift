@@ -64,9 +64,10 @@ nonisolated struct SearchFacts: Hashable, Sendable {
         date == nil && place == nil && people.isEmpty
     }
 
-    /// What the Store is asked when the query is answered: the date as a span of `now`'s calendar.
-    func filter(at now: Date, in calendar: Calendar) -> SearchFactFilter {
-        SearchFactFilter(dateSpan: date?.span(at: now, in: calendar), place: place, people: people)
+    /// What the Store is asked when the query is answered: the date as a span of `now`'s
+    /// calendar. Nil when the query names no fact, so nothing narrows it.
+    func filter(at now: Date, in calendar: Calendar) -> SearchFactFilter? {
+        isEmpty ? nil : SearchFactFilter(dateSpan: date?.span(at: now, in: calendar), place: place, people: people)
     }
 }
 
