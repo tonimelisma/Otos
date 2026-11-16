@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct FilesystemNamespaceSemanticsTests {
     private func key(_ path: String, _ capabilities: VolumeNamespaceCapabilities) -> FilesystemNameKey {
         FilesystemNamespaceSemantics.nameKey(

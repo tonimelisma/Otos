@@ -5,7 +5,7 @@ import Testing
 /// The catalog database must always store the latest scanned filesystem facts. A
 /// whole-second date change affects Date sort and enrichment priority, so it
 /// also republishes (ARC-038).
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreScanFreshnessTests {
     @Test func reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged() async throws {
         let temp = try makeTestDirectory()
@@ -15,7 +15,7 @@ struct CatalogStoreScanFreshnessTests {
         try writeCatalogStoreFile(file, contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         let firstScan = try await waitForCatalogStoreState(firstStore) { snapshot in
@@ -35,7 +35,7 @@ struct CatalogStoreScanFreshnessTests {
 
         // A fresh store reloads the stale date from SQLite, then the launch scan
         // re-observes the file and must refresh the row and republish.
-        let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let secondStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
         let reScanned = try await waitForCatalogStoreState(secondStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1

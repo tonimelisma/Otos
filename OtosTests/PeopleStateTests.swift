@@ -8,6 +8,7 @@ import Testing
 /// what one assignment writes, the people a selection's faces most likely are, the hard rules
 /// the acts are held to, and the words the surfaces use. On embeddings whose similarities are
 /// exact by construction (`FaceAssignmentPolicyTests.face`).
+@Suite(.testScope)
 struct PeopleStateTests {
     typealias Fixture = FaceAssignmentPolicyTests
     static let sam = Fixture.sam
@@ -333,7 +334,7 @@ struct PeopleStateTests {
     /// photo, is carried onto the stored preview through the crop and the quarter turn that
     /// preview shows; a face the crop leaves out has no tile. The upright photo is 400 × 200
     /// with the face at x 240–280, y 80–120.
-    @Test(.testDirectory) func anEditedPhotosFaceTileShowsTheFace() async throws {
+    @Test func anEditedPhotosFaceTileShowsTheFace() async throws {
         let directory = try makeTestDirectory()
         let box = CGRect(x: 0.6, y: 0.4, width: 0.1, height: 0.2)
 

@@ -6,7 +6,7 @@ import Testing
 /// Every choice travels the view model's one media-choice lane, so
 /// `hasSettledMediaChoices` is the fact that it has been written or refused; each test
 /// waits for that and then asserts the exact outcome.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelCurationTests {
     @Test func rapidChoicesRemainLosslessAndOrdered() async throws {
@@ -133,7 +133,7 @@ struct CatalogWindowViewModelCurationTests {
 @MainActor
 private func makeCurationModel() -> CatalogWindowViewModel {
     CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: makeTestStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,

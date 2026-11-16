@@ -7,6 +7,7 @@ import Testing
 /// Gesture rules themselves live in `GridSelectionTests`; these tests prove the
 /// ViewModel owns the value, intents update it, and applyState prunes/clears it
 /// before any AppKit renderer sees the new order.
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelSelectionTests {
     @Test func emptySpaceClears() {
@@ -199,7 +200,7 @@ struct CatalogWindowViewModelSelectionTests {
 private func makeSelectionViewModel() -> CatalogWindowViewModel {
     let temp = PreferencesDomain.suite(UUID().uuidString)
     return CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: makeTestStore(location: .inMemory),
         enrichmentCoordinator: nil,
         startsStallMonitor: false,
         startsEnrichment: false,

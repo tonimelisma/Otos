@@ -6,6 +6,7 @@ import Testing
 /// Loupe zoom intents (APP-040) and the info overlay (APP-041) at the ViewModel: menu
 /// items dispatch by mode, Escape unwinds zoom before the mode, a report past the held
 /// decode requests full resolution once, and focus changes reset everything.
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelLoupeZoomTests {
     @Test func zoomInChangesColumnsInGridAndMagnificationInLoupe() {
@@ -151,7 +152,7 @@ struct CatalogWindowViewModelLoupeZoomTests {
 @MainActor
 private func makeZoomModel(loader: FakePreviewLoader) -> CatalogWindowViewModel {
     CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: makeTestStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,

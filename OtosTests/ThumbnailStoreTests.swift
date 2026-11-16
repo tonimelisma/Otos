@@ -5,7 +5,7 @@ import ImageIO
 import Testing
 import UniformTypeIdentifiers
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ThumbnailStoreTests {
     /// ADR 0035: the preview is an 8-bit Display P3 HEIC under the asset's `.heic` name, and
     /// `scaled` never enlarges.

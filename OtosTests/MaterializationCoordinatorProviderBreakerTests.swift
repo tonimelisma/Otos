@@ -9,6 +9,7 @@ import Testing
 /// one file (`120s → ~2s`); the coordinator fixes the next 31 files on the
 /// same root by suppressing background dispatch for 60s after two consecutive
 /// `providerUnavailable` on that root.
+@Suite(.testScope)
 struct MaterializationCoordinatorProviderBreakerTests {
     private func makeCoordinator(
         executor: @escaping MaterializationCoordinator.Executor,
@@ -17,7 +18,7 @@ struct MaterializationCoordinatorProviderBreakerTests {
         // In-memory Store is enough: the coordinator only calls
         // `beginKnownMaterialization`/`endKnownMaterialization`, which no-ops
         // until roots exist. No scan/enrichment work touches this Store.
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         return MaterializationCoordinator(
             store: store,
             executor: executor,

@@ -3,7 +3,7 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreQueryPlanTests {
     @Test func descriptorQueryFiltersAndSortsBySQLiteBestValues() async throws {
         let temp = try makeTestDirectory()

@@ -7,7 +7,7 @@ import Testing
 
 /// A store read frees its connection as its body ends, whatever its caller is waiting for
 /// (`DatabaseReader.readFreeingConnection`), and a cancelled read stops its statement.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ReadFreeingConnectionTests {
     /// A task executor whose jobs wait while its queue is suspended: a reading task held on
     /// it cannot resume, as a background read cannot when no thread of its priority is free.

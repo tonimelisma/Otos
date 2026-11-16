@@ -4,7 +4,7 @@ import Testing
 
 /// ADR 0052: expanding a stack is a window intent outside the descriptor, so it re-collapses
 /// the order the projection last published and never runs the order query again.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ProjectionStackExpansionTests {
     @Test func expandingAStackReCollapsesThePublishedOrderWithoutAQuery() async throws {
         let temp = try makeTestDirectory()
@@ -13,7 +13,7 @@ struct ProjectionStackExpansionTests {
         for name in ["DSC1.ARW", "DSC1.JPG", "DSC2.JPG"] {
             try Data(name.utf8).write(to: rootURL.appending(path: name))
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }

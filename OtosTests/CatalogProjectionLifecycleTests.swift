@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogProjectionLifecycleTests {
     /// A projection's publication loop must end when the projection does, not merely
     /// skip a beat. Both long-lived loops hold their owner weakly across an indefinite
@@ -27,7 +27,7 @@ struct CatalogProjectionLifecycleTests {
                 _ = sentinel
                 return .empty
             }
-            let store = CatalogStore(location: .inMemory, scanner: scanner)
+            let store = makeTestStore(location: .inMemory, scanner: scanner)
             let projection = CatalogProjection(cadence: .milliseconds(10))
             let stream = await projection.states(store: store, initialDescriptor: .default)
             let recordingTask = Task {
@@ -51,7 +51,7 @@ struct CatalogProjectionLifecycleTests {
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let scanner = CatalogScanner { _, _, _ in .empty }
-        let store = CatalogStore(location: .inMemory, scanner: scanner)
+        let store = makeTestStore(location: .inMemory, scanner: scanner)
         let projection = CatalogProjection(cadence: .milliseconds(50))
         let recorder = LifecycleStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
@@ -91,7 +91,7 @@ struct CatalogProjectionLifecycleTests {
             LibraryRootPath(rawValue: "/Users/example/Newer")
         )
         let gate = ArrivalGate()
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         let projection = selectionNormalizingProjection(missing: missing, gate: gate)
         let recorder = LifecycleStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)

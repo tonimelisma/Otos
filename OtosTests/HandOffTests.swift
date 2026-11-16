@@ -11,7 +11,7 @@ import Testing
 /// The fixtures are local files, so nothing is ever fetched.
 private let localOriginals = ClosureMaterializationRequester { _ in .cancelled }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct HandOffTests {
     @Test func eachPhotoIsHandedOverInTheFormItsEditCalls() {

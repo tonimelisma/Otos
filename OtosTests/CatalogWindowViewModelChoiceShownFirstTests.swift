@@ -7,7 +7,7 @@ import Testing
 /// the write at its suspension (`HeldChoiceWrites`) and asserts what the window shows in the
 /// step that handled the intent, then lets the write answer, land or fail, and asserts what
 /// the window shows after.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelChoiceShownFirstTests {
     @Test func aChoiceShowsOnItsTileTheToolbarAndTheUndoMenuBeforeItsWriteReturns() async throws {

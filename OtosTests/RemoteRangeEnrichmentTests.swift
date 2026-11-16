@@ -5,7 +5,7 @@ import Testing
 
 /// ADR 0046 §5: an Immich account's metadata is read from its server in byte ranges, and
 /// only while the server answers. The server here is a fixture file served from memory.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct RemoteRangeEnrichmentTests {
     /// How many ranges the server was asked for.
     private final class RequestCount: Sendable {
@@ -77,7 +77,7 @@ struct RemoteRangeEnrichmentTests {
     /// An account is not claimed until its owner says its server answers, and stops being
     /// claimed when it says the server does not.
     @Test func anAccountIsEnrichableOnlyWhileItsServerAnswers() async throws {
-        let store = try CatalogStore(
+        let store = try makeTestStore(
             location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
         )
         try await store.start(scansSavedLibraries: false)
@@ -99,7 +99,7 @@ struct RemoteRangeEnrichmentTests {
     @Test func anAccountRowsMetadataIsReadInRanges() async throws {
         let data = try Data(contentsOf: SourceTree.mediaFixtures.appending(path: "jpeg-exif-offset-date.jpg"))
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
+        let store = makeTestStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
             server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family"

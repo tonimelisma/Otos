@@ -3,7 +3,7 @@ import Foundation
 import Synchronization
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreRemovableSourceTests {
     /// ADR 0013 / owner decision 2026-10-25: at launch a card or camera unseen for 90 days is
     /// forgotten, and detaching it records when it was last seen — 89 days after the detach
@@ -15,7 +15,7 @@ struct CatalogStoreRemovableSourceTests {
         let attachedAt = Date(timeIntervalSince1970: 1_800_000_000)
         let now = Mutex(attachedAt)
         let containers = StagingContainers(base: temp)
-        let first = CatalogStore(
+        let first = makeTestStore(
             location: .databaseFile(database), wallClock: { now.withLock { $0 } }, stagingContainers: containers
         )
         try await first.start(scansSavedLibraries: false)
@@ -28,7 +28,7 @@ struct CatalogStoreRemovableSourceTests {
         try await first.detachRemovableSource(identity: .camera(id: "serial"), reason: .disconnected)
         await first.shutdown()
 
-        let kept = CatalogStore(
+        let kept = makeTestStore(
             location: .databaseFile(database),
             wallClock: { attachedAt.addingTimeInterval(94 * day) },
             stagingContainers: containers
@@ -37,7 +37,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(try await catalogStoreTestState(kept).removableSources.map(\.path) == [rootPath])
         await kept.shutdown()
 
-        let expired = CatalogStore(
+        let expired = makeTestStore(
             location: .databaseFile(database),
             wallClock: { attachedAt.addingTimeInterval(96 * day) },
             stagingContainers: containers
@@ -52,7 +52,7 @@ struct CatalogStoreRemovableSourceTests {
     @Test func aCameraReturningWithoutSomeFilesLosesTheirRows() async throws {
         let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         func file(_ name: String) -> ScannedMediaFile {
             ScannedMediaFile(
@@ -319,7 +319,7 @@ struct CatalogStoreRemovableSourceTests {
     @Test func mtpCatalogRowsAreScopedToCameraAndStagingSurvivesDetach() async throws {
         let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
 
         let rootPath = try await store.attachDeviceMTP(
@@ -382,7 +382,7 @@ struct CatalogStoreRemovableSourceTests {
     @Test func staleDeviceEnumerationCannotWriteOrReconcileNewerRows() async throws {
         let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
 
         let rootPath = try await store.attachDeviceMTP(
@@ -442,7 +442,7 @@ struct CatalogStoreRemovableSourceTests {
         try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
 
         let watcherHarness = CatalogFilesystemWatcher.testingWithRootInspection()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             filesystemWatcher: watcherHarness.watcher
         )
@@ -481,7 +481,7 @@ private func makeRemountFixture() async throws -> RemovableRemountFixture {
     try writeCatalogStoreFile(firstMount.appending(path: "card.jpg"), contents: "jpeg")
     try writeCatalogStoreFile(secondMount.appending(path: "card.jpg"), contents: "jpeg")
 
-    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+    let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
     try await store.start(scansSavedLibraries: false)
     try await store.addLibrary(url: fixedRoot)
     _ = try await waitForCatalogStoreState(store) { snapshot in

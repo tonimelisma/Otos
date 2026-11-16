@@ -6,7 +6,7 @@ import Testing
 /// The tour measures the app the owner uses, so it must start every background owner unless
 /// a tour asks otherwise, take each step through the window's own intents, wait on what the
 /// window reports, and leave the window as it found it.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct SmokeTourTests {
     private func libraryState(path: String) -> CatalogLibraryState {
         CatalogLibraryState(
@@ -161,7 +161,7 @@ struct SmokeTourTests {
     @MainActor
     @Test func theTourSelectsEachScopeWaitsForItsPaintAndPutsTheWindowBack() async throws {
         let viewModel = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
+            catalogStore: makeTestStore(location: .inMemory, scanCadence: .milliseconds(10)),
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,

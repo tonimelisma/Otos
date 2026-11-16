@@ -9,7 +9,7 @@ import Testing
 
 /// A library video's faces (ADR 0047): read by enrichment from six frames, one face per
 /// person, stored with the frame each was read in, and shown and counted as a video's.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct VideoFaceTests {
     // MARK: - One face per person
 
@@ -375,7 +375,7 @@ struct VideoFaceTests {
             try writeCatalogStoreFile(root.appending(path: "clip.mov"), contents: "movie")
             let databaseURL = directory.appending(path: "db/catalog.sqlite")
             let (watcher, _) = CatalogFilesystemWatcher.testing()
-            let store = CatalogStore(location: .databaseFile(databaseURL), filesystemWatcher: watcher)
+            let store = makeTestStore(location: .databaseFile(databaseURL), filesystemWatcher: watcher)
             try await store.start(scansSavedLibraries: false)
             try await store.addLibrary(url: root)
             _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }

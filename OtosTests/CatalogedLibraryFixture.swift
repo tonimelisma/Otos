@@ -4,7 +4,7 @@ import Testing
 
 /// A library of one-byte `.jpg` files in the test's directory, cataloged by an
 /// in-memory store, for view-model tests that need real catalog rows behind real files.
-/// Needs the `.testDirectory` trait.
+/// Needs the `.testScope` trait.
 struct CatalogedLibrary {
     let store: CatalogStore
     let root: URL
@@ -32,7 +32,7 @@ func withCatalogedLibrary(
     }
     let rootPath = try CatalogPath.normalizedExistingDirectoryPath(for: root)
     let ids = names.map { MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: $0)) }
-    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(5))
+    let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(5))
     do {
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning }

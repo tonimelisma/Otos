@@ -7,7 +7,7 @@ import Testing
 /// listing. These tests drive that listing by hand, as the sync will: the account sits in
 /// the Libraries section, its rows are in All Media, Places and Duplicates, and a launch
 /// with no server shows them from the catalog alone.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ImmichAccountCatalogTests {
     private static let server = URL(string: "https://photos.example.com")!
     private static let helsinki = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
@@ -52,7 +52,7 @@ struct ImmichAccountCatalogTests {
     }
 
     @Test func anAccountIsALibraryWhoseListedRowsAreInAllMediaAndPlaces() async throws {
-        let store = try CatalogStore(
+        let store = try makeTestStore(
             location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
         )
         try await store.start(scansSavedLibraries: false)
@@ -101,7 +101,7 @@ struct ImmichAccountCatalogTests {
         let folder = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try writeCatalogStoreFile(folder.appending(path: "IMG_1.JPG"), contents: "same")
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: folder)
         let library = try CatalogPath.normalizedDirectoryPath(for: folder)
@@ -141,7 +141,7 @@ struct ImmichAccountCatalogTests {
     /// changed file's new Immich images land at the same path and still make the old
     /// signature stale, and Otos's rendering moves the still to Otos's pipeline.
     @Test func aSignatureFollowsTheSourceImagesAndTheRenderingThatReplacesThem() async throws {
-        let store = try CatalogStore(
+        let store = try makeTestStore(
             location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
         )
         try await store.start(scansSavedLibraries: false)
@@ -200,7 +200,7 @@ struct ImmichAccountCatalogTests {
     /// is never a version of a photo to keep in place of another; an uploaded asset, which
     /// holds its own bytes, is compared.
     @Test func anExternalLibrarysAssetIsNeverComparedAsAVersionOfAPhoto() async throws {
-        let store = try CatalogStore(
+        let store = try makeTestStore(
             location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
         )
         try await store.start(scansSavedLibraries: false)
@@ -252,13 +252,13 @@ struct ImmichAccountCatalogTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "Catalog.sqlite")
         let containers = StagingContainers(base: temp)
-        let first = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10), stagingContainers: containers)
+        let first = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10), stagingContainers: containers)
         try await first.start(scansSavedLibraries: false)
         let rootPath = try await addAccount(first)
         try await list(["IMG_1.JPG"], into: rootPath, store: first)
         await first.shutdown()
 
-        let relaunched = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10), stagingContainers: containers)
+        let relaunched = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10), stagingContainers: containers)
         try await relaunched.start(scansSavedLibraries: true)
         let account = try #require(await relaunched.currentLibraries().first { $0.path == rootPath })
         #expect(account.isAvailable)
@@ -269,7 +269,7 @@ struct ImmichAccountCatalogTests {
 
     /// One server typed two ways is one account; another user on it is another.
     @Test func theSameAccountAddedAgainIsTheSameRoot() async throws {
-        let store = try CatalogStore(
+        let store = try makeTestStore(
             location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
         )
         try await store.start(scansSavedLibraries: false)
@@ -295,7 +295,7 @@ struct ImmichAccountCatalogTests {
     /// Removing an account deletes its rows and its staging folder; nothing on the server
     /// is touched, because Otos never writes to it.
     @Test func removingAnAccountDeletesItsRowsAndStaging() async throws {
-        let store = try CatalogStore(
+        let store = try makeTestStore(
             location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
         )
         try await store.start(scansSavedLibraries: false)
@@ -339,7 +339,7 @@ extension ImmichAccountCatalogTests {
         let databaseURL = temp.appending(path: "db/Catalog.sqlite")
         let elsewhere = StagingContainers(base: temp.appending(path: "Shared", directoryHint: .isDirectory))
         let own = StagingContainers(base: temp.appending(path: "Own", directoryHint: .isDirectory))
-        let first = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10), stagingContainers: elsewhere)
+        let first = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10), stagingContainers: elsewhere)
         try await first.start(scansSavedLibraries: false)
         let oldPath = try await addAccount(first)
         try await list(["IMG_1.JPG"], into: oldPath, store: first)
@@ -393,7 +393,7 @@ extension ImmichAccountCatalogTests {
         }
         try queue.close()
 
-        let relaunched = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10), stagingContainers: own)
+        let relaunched = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10), stagingContainers: own)
         try await relaunched.start(scansSavedLibraries: false)
         let newPath = try CatalogPath.normalizedDirectoryPath(for: own.sessionRoot(in: .remote, identity: identity))
         let roots = await relaunched.currentLibraries().filter { $0.kind == .immichAccount }

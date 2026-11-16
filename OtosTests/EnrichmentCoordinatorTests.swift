@@ -3,11 +3,11 @@ import Foundation
 import Synchronization
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct EnrichmentCoordinatorTests {
     @Test func unchangedAdmissionRejectionsEmitOneTransitionAcrossOneHundredWakes() async {
         let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient }
         )
         for _ in 0 ..< 100 {
@@ -26,7 +26,7 @@ struct EnrichmentCoordinatorTests {
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: fixedScanner([
                 ("v1.mov", 100, "public.mpeg-4"),
@@ -69,7 +69,7 @@ struct EnrichmentCoordinatorTests {
         let rootPath = LibraryRootPath(
             rawValue: temp.appending(path: "DeviceStaging/Camera").path(percentEncoded: false)
         )
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
@@ -94,7 +94,7 @@ struct EnrichmentCoordinatorTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let relativeNames = ["a.jpg", "b.jpg", "c.jpg"]
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: fixedScanner(relativeNames)
         )
@@ -129,7 +129,7 @@ struct EnrichmentCoordinatorTests {
         let root = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let relativeNames = ["a.jpg", "b.jpg", "c.jpg"]
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(relativeNames))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(relativeNames))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
@@ -173,7 +173,7 @@ struct EnrichmentCoordinatorTests {
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let names = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg"]
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(names))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(names))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 6 }
@@ -212,7 +212,7 @@ struct EnrichmentCoordinatorTests {
         let temp = try makeTestDirectory()
         let card = temp.appending(path: "CARD", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: card, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg", "b.jpg", "c.jpg"]))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(["a.jpg", "b.jpg", "c.jpg"]))
         try await store.start(scansSavedLibraries: false)
         try await store.attachRemovableVolume(
             mountURL: card,
@@ -260,7 +260,7 @@ struct EnrichmentCoordinatorTests {
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: fixedScanner(["a.jpg", "b.jpg"])
         )
@@ -290,7 +290,7 @@ struct EnrichmentCoordinatorTests {
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         let relativeNames = ["a.jpg", "b.jpg", "c.jpg"]
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: fixedScanner(relativeNames)
         )
@@ -345,7 +345,7 @@ struct EnrichmentCoordinatorTests {
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -388,7 +388,7 @@ struct EnrichmentCoordinatorTests {
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -430,7 +430,7 @@ struct EnrichmentCoordinatorTests {
     @Test func zeroByteClaimedAssetShortCircuitsWithoutMaterializeOrEnricher() async throws {
         let root = try makeTestDirectory().appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: fixedScanner([("empty.jpg", 0), ("ok.jpg", 100)])
         )
@@ -485,7 +485,7 @@ struct EnrichmentCoordinatorTests {
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let names = (0 ..< 25000).map { "asset-\($0).jpg" }
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(names))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(names))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) {
@@ -529,7 +529,7 @@ struct EnrichmentCoordinatorTests {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["fresh.jpg"]))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(["fresh.jpg"]))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -601,7 +601,7 @@ struct EnrichmentCoordinatorTests {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner([("a.jpg", 100)]))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner([("a.jpg", 100)]))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -641,7 +641,7 @@ struct EnrichmentCoordinatorTests {
         // (same capture date, tie-broken by relative path) ranks every blocked
         // candidate ahead of the one real candidate.
         let names = (0 ..< 4).map { "blocked-\($0).jpg" } + ["fresh.jpg"]
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(names))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(names))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) {
@@ -676,7 +676,7 @@ struct EnrichmentCoordinatorTests {
     /// ENR-011 says every connected-source item is staged.
     @Test func stageDeviceQueuesEverySeedPastTheOutstandingLimit() async {
         let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             originalStatus: { _ in .materialized }
@@ -711,7 +711,7 @@ struct EnrichmentCoordinatorTests {
     /// minutes before the Import button could appear.
     @Test func aRangeCapableDeviceIsNotSeededForDownload() async {
         let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             originalStatus: { _ in .materialized }
@@ -744,7 +744,7 @@ struct EnrichmentCoordinatorTests {
     /// rather than an error path.
     @Test func aDeviceThatCannotServeRangesStillStagesEverything() async {
         let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             originalStatus: { _ in .materialized }
@@ -775,7 +775,7 @@ struct EnrichmentCoordinatorTests {
     /// reading from a session that is gone.
     @Test func aRowWithoutALiveSessionFallsBackToItsLocalFile() async {
         let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             originalStatus: { _ in .materialized }
@@ -807,7 +807,7 @@ struct EnrichmentCoordinatorTests {
     /// ranges needs none, so it is dispatched, never parked on a readiness retry or demanded
     /// as a whole-file download.
     @Test func rowsOnARangeCapableDeviceAreDispatchedDespiteHavingNoLocalFile() async throws {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: URL(fileURLWithPath: "/tmp/RangedCameraRoute", isDirectory: true),
@@ -851,7 +851,7 @@ struct EnrichmentCoordinatorTests {
     /// byte work, and is demanded from the device rather than parked on a probe that can
     /// never succeed.
     @Test func aStagedOriginalNotYetCopiedIsDemandedNotEnriched() async throws {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: makeTestDirectory().appending(path: "Camera", directoryHint: .isDirectory),
@@ -899,7 +899,7 @@ struct EnrichmentCoordinatorTests {
     /// handed to an enricher that has nothing to read.
     @Test func rowsOnADeviceWithoutRangedReadsStillFollowTheFilesystem() async {
         let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             originalStatus: { _ in .unknown }
@@ -917,7 +917,7 @@ struct EnrichmentCoordinatorTests {
 
     @Test func stageDeviceSkipsSeedAlreadyMaterializing() async {
         let coordinator = EnrichmentCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             originalStatus: { _ in .materialized }
@@ -945,7 +945,7 @@ struct EnrichmentCoordinatorTests {
     }
 
     @Test func ejectDrainIgnoresPureInteractivePreviewTraffic() async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         let executor = HeldMaterializationExecutor()
         let materializer = MaterializationCoordinator(
             store: store,
@@ -993,7 +993,7 @@ struct EnrichmentCoordinatorTests {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]))
         try await store.start(scansSavedLibraries: false)
         let recorder = ScopeRecorder()
         let digest = try #require(ContentDigest(data: Data(repeating: 7, count: ContentDigest.byteCount)))
@@ -1047,7 +1047,7 @@ struct EnrichmentCoordinatorTests {
             try await batchHandler([file])
             return .mediaOnly([file.relativePath])
         }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: fixedRoot)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }

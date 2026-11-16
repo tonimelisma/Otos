@@ -7,7 +7,7 @@ import Testing
 /// Put Back, even after a relaunch, shows the row again with its choice and edit; emptying
 /// the Trash lets the next scan purge it; and the trash bar's Cancel withdraws what has not
 /// moved yet from a queue that has no undo entry left.
-@Suite("Trash put back", .testDirectory)
+@Suite("Trash put back", .testScope)
 struct CatalogStoreTrashPutBackTests {
     private struct Library {
         let temp: URL
@@ -27,7 +27,7 @@ struct CatalogStoreTrashPutBackTests {
             try writeCatalogStoreFile(root.appending(path: name), contents: "jpeg \(name)")
         }
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) {
@@ -119,7 +119,7 @@ struct CatalogStoreTrashPutBackTests {
         )
         try FileManager.default.removeItem(at: library.trash.appending(path: "b.jpg"))
 
-        let relaunched = CatalogStore(location: .databaseFile(library.databaseURL), scanCadence: .milliseconds(10))
+        let relaunched = makeTestStore(location: .databaseFile(library.databaseURL), scanCadence: .milliseconds(10))
         try await relaunched.start(scansSavedLibraries: true)
         let settled = try await waitForCatalogStoreState(relaunched) {
             !$0.isScanning && $0.testAssets.count == 1

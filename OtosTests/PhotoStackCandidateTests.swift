@@ -8,7 +8,7 @@ import Testing
 /// carrying a burst identifier. On a catalog of the owner's shape (`OwnerShapedCatalog`) the
 /// read builds exactly the stacks the read of every RAW folder's stills built, from fewer
 /// candidates, through indexes alone, with no sort of the candidates.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct PhotoStackCandidateTests {
     /// The candidates before folders that cannot hold a pair were left out: every present still
     /// of every folder holding a present RAW, and every present burst still. The oracle the

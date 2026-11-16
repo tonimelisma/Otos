@@ -97,6 +97,14 @@ custom_rules:
     message: "Tasks started one per callback have no order, so a later report can be handled before an earlier one (ADR 0032, rule 5). Yield into one ordered AsyncStream with one consumer, assert MainActor.assumeIsolated where the API documents the main thread, or own the task as a named property."
     severity: error
 
+  test_store_owned_by_scope:
+    name: "A test's catalog store is owned by its test scope"
+    included: 'OtosTests/.*\.swift'
+    regex: '\bCatalogStore\('
+    match_kinds: [identifier]
+    message: "A store a test constructs itself is shut down only if the test remembers to, and a forgotten one leaves its reconcile loop and integrity scheduler idling in the test host for the rest of the run. Make it with makeTestStore(...) inside a .testScope suite, which shuts it down when the test ends."
+    severity: error
+
   unowned_view_model_task:
     name: "View-model work is owned by a named task or an ordered stream"
     included: 'Otos/ViewModels/.*\.swift'

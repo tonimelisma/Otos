@@ -3,7 +3,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreTargetedEligibilityTests {
     @Test func targetedFileEventDeletesCatalogRowWhenPathBecomesIneligible() async throws {
         let temp = try makeTestDirectory()
@@ -14,7 +14,7 @@ struct CatalogStoreTargetedEligibilityTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,

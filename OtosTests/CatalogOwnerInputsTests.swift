@@ -9,7 +9,7 @@ import Testing
 /// are derived from its statements (`CatalogOwnerInputs`), so these tests hold the derivation
 /// to the schema and each owner to its wakes, with each change delivered in order through the
 /// Store's own notifications (no time waited out).
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogOwnerInputsTests {
     /// One owner: its inputs, the tables only it writes (whose rows no other owner reads),
     /// kinds its inputs must hold, and kinds they must not (its own writes, what it never reads).
@@ -88,7 +88,7 @@ struct CatalogOwnerInputsTests {
     /// What each owner's SQL reads, as derived: the kinds that move its work, and not its own
     /// writes or what it never reads.
     @Test func eachOwnersInputsAreWhatItsSQLReadsLessItsOwnWrites() async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         for owner in Self.owners {
             let facts = await owner.inputs.facts(in: store, owner: owner.name)
@@ -204,7 +204,7 @@ struct CatalogOwnerInputsTests {
     private static func store() async throws -> (CatalogStore, URL) {
         let library = try makeTestDirectory().appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         return (store, library)
     }

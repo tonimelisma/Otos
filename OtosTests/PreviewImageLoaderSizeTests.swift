@@ -8,7 +8,7 @@ import Testing
 /// Two requests for one asset share a decode only when that decode is at least as large as
 /// the one the second request needs; otherwise the second is handed a smaller image than it
 /// asked for.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct PreviewImageLoaderSizeTests {
     private actor Gate {
         private var waiters: [CheckedContinuation<Void, Never>] = []

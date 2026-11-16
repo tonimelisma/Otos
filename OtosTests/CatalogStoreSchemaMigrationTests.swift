@@ -100,7 +100,7 @@ struct CaptureWallClockTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreSchemaMigrationTests {
     /// The open applies a catalog's pending migrations one at a time, saying which of how
     /// many runs before each starts, and applies nothing to a current catalog (DES-121).
@@ -179,7 +179,7 @@ struct CatalogStoreSchemaMigrationTests {
             }
             try queue.close()
         }
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
 
         var reports: [CatalogOpening] = []
@@ -197,7 +197,7 @@ struct CatalogStoreSchemaMigrationTests {
     @Test(arguments: ["v999_future_history", "v21_enrichment_claim_is_a_process_fact"])
     func aCatalogWithUnknownHistoryIsRefusedWithoutErase(identifier: String) async throws {
         let fixture = try await Self.makeUnknownHistoryFixture(identifier: identifier)
-        let store = CatalogStore(location: .databaseFile(fixture.databaseURL))
+        let store = makeTestStore(location: .databaseFile(fixture.databaseURL))
 
         do {
             try await store.start(scansSavedLibraries: false)
@@ -243,7 +243,7 @@ struct CatalogStoreSchemaMigrationTests {
             """)
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -387,7 +387,7 @@ struct CatalogStoreSchemaMigrationTests {
             )
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -634,7 +634,7 @@ struct CatalogStoreSchemaMigrationTests {
             }
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -878,7 +878,7 @@ struct CatalogStoreSchemaMigrationTests {
             }
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -899,7 +899,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
 
@@ -929,7 +929,7 @@ struct CatalogStoreSchemaMigrationTests {
             )
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -950,7 +950,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
 
@@ -983,7 +983,7 @@ struct CatalogStoreSchemaMigrationTests {
             )
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -1060,7 +1060,7 @@ struct CatalogStoreSchemaMigrationTests {
             """)
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -1121,7 +1121,7 @@ struct CatalogStoreSchemaMigrationTests {
             }
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -1156,7 +1156,7 @@ struct CatalogStoreSchemaMigrationTests {
             """)
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -1180,7 +1180,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
 
@@ -1213,7 +1213,7 @@ struct CatalogStoreSchemaMigrationTests {
             )
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -1286,7 +1286,7 @@ struct CatalogStoreSchemaMigrationTests {
             }
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -1339,7 +1339,7 @@ struct CatalogStoreSchemaMigrationTests {
             }
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -1403,7 +1403,7 @@ struct CatalogStoreSchemaMigrationTests {
             }
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -1429,7 +1429,7 @@ struct CatalogStoreSchemaMigrationTests {
         let persistedRoot = try await DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
             try String.fetchOne(db, sql: "SELECT path FROM library_root")
         }
-        let store = CatalogStore(location: .databaseFile(fixture.databaseURL))
+        let store = makeTestStore(location: .databaseFile(fixture.databaseURL))
 
         let acquisition = try await store.acquireNamespaceMutationLease(
             for: LibraryRootPath(rawValue: #require(persistedRoot)),
@@ -1470,7 +1470,7 @@ struct CatalogStoreSchemaMigrationTests {
             try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/legacy"])
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         do {
             try await store.start(scansSavedLibraries: false)
             Issue.record("Expected unsupportedCatalogSchema")
@@ -1489,7 +1489,7 @@ struct CatalogStoreSchemaMigrationTests {
         try writeCatalogStoreFile(root.appending(path: "c.jpg"), contents: "c")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
@@ -1519,7 +1519,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "shot.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
             scanCadence: .milliseconds(10)
         )

@@ -6,6 +6,7 @@ import Testing
 /// and the zoom in/out convenience intents. Each test uses its own in-memory `.suite`
 /// domain (never `.standard`) so tests cannot leak a real column-count preference into
 /// the developer's actual defaults domain or into each other.
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelGridZoomTests {
     @Test func garbageStoredPreferenceFallsBackToDefault() {
@@ -80,7 +81,7 @@ struct CatalogWindowViewModelGridZoomTests {
 @MainActor
 private func makeViewModel(domain: PreferencesDomain) -> CatalogWindowViewModel {
     CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: makeTestStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,

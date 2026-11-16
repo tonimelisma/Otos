@@ -10,7 +10,7 @@ import Testing
 ///
 /// Each step waits on the task that made the read, so "nothing was published" is checked
 /// after the failure, never after a delay.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelDetailReadFailureTests {
     @Test func aFailedReadPublishesNoPanePreviewAndTheNextReconcileDoes() async throws {

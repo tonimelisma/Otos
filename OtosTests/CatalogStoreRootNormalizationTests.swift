@@ -3,12 +3,12 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreRootNormalizationTests {
     @Test func addLibraryResolvesSymlinkedRootBeforeScanning() async throws {
         let fixture = try makeSymlinkedOneDrivePicturesFixture()
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: fixture.symlinkedPictures)
 
@@ -50,7 +50,7 @@ struct CatalogStoreRootNormalizationTests {
         let resolvedPath = try CatalogPath.normalizedDirectoryPath(for: fixture.pictures)
         try await writeSavedSymlinkCatalog(databaseURL: databaseURL, rootPath: savedSymlinkPath)
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(databaseURL),
             scanCadence: .milliseconds(10)
         )
@@ -90,7 +90,7 @@ struct CatalogStoreRootNormalizationTests {
         try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
         try Data("thumbnail".utf8).write(to: thumbnailDirectory.appending(path: oldThumbnail))
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(databaseURL),
             scanCadence: .milliseconds(10)
         )

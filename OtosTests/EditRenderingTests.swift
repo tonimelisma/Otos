@@ -5,7 +5,7 @@ import Testing
 
 /// ADR 0036: a recipe changes the rendered pixels, a neutral one changes nothing, and the
 /// live renderer and the stored-image renderer agree.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct EditRenderingTests {
     @Test func exposureBrightensAndANeutralRecipeLeavesThePhotoAsItIs() async throws {
         let url = try makeTestDirectory().appending(path: "gradient.jpg")

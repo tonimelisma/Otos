@@ -9,7 +9,7 @@ import Testing
 /// files follow from one asset's own path, confirmed by its checksum, and an asset listed
 /// at a library file's path with the size and modification time its digest was read at
 /// takes that digest, so the two are one photo with no download.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ImmichMirrorTests {
     private static let server = URL(string: "https://photos.example.com")!
     private static let serverPrefix = "/mnt/onedrive/Pictures/Camera Roll/"
@@ -69,7 +69,7 @@ struct ImmichMirrorTests {
         if secondCopy {
             try writeCatalogStoreFile(folder.appending(path: "2024/IMG_1 copy.JPG"), contents: "same")
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: folder)
         let library = try CatalogPath.normalizedDirectoryPath(for: folder)

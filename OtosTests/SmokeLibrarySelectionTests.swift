@@ -5,7 +5,7 @@ import Testing
 /// The smoke seam may steer which root a developer run looks at; it may never
 /// change which roots exist. These cover resolution: which requested paths select
 /// something, and what an unregistered path reports instead of registering itself.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct SmokeLibrarySelectionTests {
     private func libraryState(
         path: String,
@@ -129,7 +129,7 @@ struct SmokeLibrarySelectionTests {
         let directory = try makeTestDirectory()
         let requested = try CatalogPath.normalizedDirectoryPath(for: directory)
         let viewModel = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
+            catalogStore: makeTestStore(location: .inMemory, scanCadence: .milliseconds(10)),
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,

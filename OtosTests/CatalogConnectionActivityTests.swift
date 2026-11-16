@@ -8,7 +8,7 @@ import Testing
 /// A read that waited names what held it as its body starts (`CatalogConnectionActivity`):
 /// the connection whose transaction ended during its wait, or the ones still in one, with
 /// what the Store named each for and its first statement.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogConnectionActivityTests {
     /// A pool configured as the Store configures its file's, reporting every read as a stall
     /// and keeping every transaction, so a test sees the report without waiting a second.

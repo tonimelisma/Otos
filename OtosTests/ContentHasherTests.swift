@@ -4,7 +4,7 @@ import Foundation
 import Synchronization
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ContentHasherTests {
     @Test func fipsVectorsAndDigestRoundTrip() throws {
         // FIPS 180 examples: the empty message, "abc", and the 448-bit two-block message.

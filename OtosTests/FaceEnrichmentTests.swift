@@ -6,7 +6,7 @@ import Testing
 
 /// Faces in the catalog (ADR 0047): enrichment never reads a still's, and the catalog stores,
 /// replaces, moves and purges a still's faces read from its stored preview.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct FaceEnrichmentTests {
     // MARK: - Enrichment
 
@@ -158,7 +158,7 @@ struct FaceEnrichmentTests {
                 try FileManager.default.createDirectory(at: database.deletingLastPathComponent(), withIntermediateDirectories: true)
             }
             let (watcher, emit) = CatalogFilesystemWatcher.testing()
-            let store = CatalogStore(
+            let store = makeTestStore(
                 location: database.map { .databaseFile($0) } ?? .inMemory, filesystemWatcher: watcher, scanCadence: .milliseconds(10)
             )
             try await store.start(scansSavedLibraries: false)

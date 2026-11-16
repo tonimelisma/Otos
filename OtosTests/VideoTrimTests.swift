@@ -5,7 +5,7 @@ import Testing
 
 /// ADR 0036 video trim: a trim is a recipe the player plays and the trim UI reads back, and
 /// saving one renders nothing.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct VideoTrimTests {
     private var fixture: URL {
@@ -37,7 +37,7 @@ struct VideoTrimTests {
         let root = try makeTestDirectory().appending(path: "Clips", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: fixture, to: root.appending(path: "clip.mov"))
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(5))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(5))
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
         let id = try MediaAssetID(

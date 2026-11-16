@@ -5,7 +5,7 @@ import Testing
 
 /// "Cannot decode" is the decoder's verdict, stored with the decoder that gave it, and a
 /// still an earlier decoder could not read is tried again (ENR-029).
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct DecodeVerdictTests {
     private static func id(_ name: String) -> MediaAssetID {
         MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: name))
@@ -70,7 +70,7 @@ struct DecodeVerdictTests {
     @Test func launchReleasesOnlyStillsAnotherDecoderCouldNotRead() async throws {
         let databaseURL = try makeTestDirectory().appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
@@ -84,7 +84,7 @@ struct DecodeVerdictTests {
             }
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -101,7 +101,7 @@ struct DecodeVerdictTests {
     @Test func launchReleasesOnlyVideosAnotherFrameReaderCouldNotDecode() async throws {
         let databaseURL = try makeTestDirectory().appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
@@ -120,7 +120,7 @@ struct DecodeVerdictTests {
             try Self.insertStampedStill("videoReader.jpg", undecodableBy: VideoFaceReader.decoderIdentity, preview: nil, db: db)
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
@@ -148,7 +148,7 @@ struct DecodeVerdictTests {
     @Test func theVerdictMigrationRetriesStillsRenderedWithoutAPreview() async throws {
         let databaseURL = try makeTestDirectory().appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
@@ -165,7 +165,7 @@ struct DecodeVerdictTests {
             try Self.insertStampedStill("clip.mov", undecodableBy: nil, preview: nil, kind: "video", db: db, withVerdictColumn: false)
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 

@@ -3,7 +3,7 @@ import Foundation
 import Synchronization
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ReorganizationRecoveryObservationTests {
     @Test func classifiesWillMoveMatrix() throws {
         let temp = try makeTestDirectory()
@@ -61,10 +61,10 @@ struct ReorganizationRecoveryObservationTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ActiveReorganizationJournalTests {
     @Test func journalRoundTripsThroughStore() async throws {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
 
         let now = Date(timeIntervalSince1970: 1_700_000_100)
@@ -129,7 +129,7 @@ struct ActiveReorganizationJournalTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ReorganizationLeaseTests {
     @Test func leaseDefersScanUntilRelease() async throws {
         let temp = try makeTestDirectory()
@@ -137,7 +137,7 @@ struct ReorganizationLeaseTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
             scanCadence: .milliseconds(10)
         )
@@ -157,7 +157,7 @@ struct ReorganizationLeaseTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ReorganizationSettlementTests {
     @Test func setBasedSwapRemapsWithoutCollision() async throws {
         let temp = try makeTestDirectory()
@@ -166,7 +166,7 @@ struct ReorganizationSettlementTests {
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "aaaa")
         try writeCatalogStoreFile(root.appending(path: "b.jpg"), contents: "bbbb")
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
             scanCadence: .milliseconds(10)
         )
@@ -318,7 +318,7 @@ struct ReorganizationSettlementTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ReorganizationExecutorMoveTests {
     @Test func executesSingleMoveAndMarksComplete() async throws {
         let fixture = try await ExecutorFixture.make(files: ["old.jpg": [0x11, 0x22]])
@@ -412,7 +412,7 @@ private struct ExecutorFixture {
             try Data(bytes).write(to: url)
             try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
         }
-        let store = CatalogStore(location: .inMemory, filesystemWatcher: .noop)
+        let store = makeTestStore(location: .inMemory, filesystemWatcher: .noop)
         try await store.start(scansSavedLibraries: false)
         return ExecutorFixture(
             store: store,

@@ -13,7 +13,7 @@ import Testing
 /// The generator writes its rows through the products' own current SQL, which names the
 /// newest schema's indexes, so the catalog is generated whole and then put back to the schema
 /// before the newest migration (`schemaBeforeNewest`), which the pass then applies.
-@Suite(.testDirectory, .serialized)
+@Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
     /// schema before it: v69's name and size order indexes made as v68 left them, with their

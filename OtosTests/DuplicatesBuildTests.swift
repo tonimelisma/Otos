@@ -8,7 +8,7 @@ import Testing
 /// stills again only when they, the identical copies or the reach moved, and reads a still's
 /// evidence only when its stamp moved. What it publishes is, after every change, what a build
 /// from nothing publishes.
-@Suite(.testDirectory, .serialized)
+@Suite(.testScope, .serialized)
 struct DuplicatesBuildTests {
     /// The generated library the benchmarks build from, at a size a test can afford: versions
     /// of one photo, identical copies and unrelated stills.
@@ -97,7 +97,7 @@ struct DuplicatesBuildTests {
     /// stills and their pairing columns, never from the wide asset or record rows.
     @Test func theComparedStillsAreReadFromTheirCoveringIndexesOnAnOwnerShapedCatalog() async throws {
         let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
-        let store = CatalogStore(location: .databaseFile(catalog.databaseURL))
+        let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
         let dbQueue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))

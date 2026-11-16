@@ -6,7 +6,7 @@ import Testing
 
 /// ADR 0042: versions of the same photo group, separate captures never do — whatever the
 /// pixels say — and nothing reads an original.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct SamePhotoTests {
     private static let root = LibraryRootPath(rawValue: "/Users/me/Photos")
 
@@ -242,7 +242,7 @@ struct SamePhotoTests {
         let library = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         try writeCatalogStoreFile(library.appending(path: "a.jpg"), contents: "jpeg")
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: library)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }

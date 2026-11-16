@@ -8,7 +8,7 @@ import Testing
 /// whatever the sort control says — with every scoped read agreeing. Store answers what
 /// the scope holds; `CatalogWindowPolicy` turns it into the anniversaries and the empty
 /// state.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogOnThisDayScopeTests {
     private static let today = CalendarDay(year: 2026, month: 11, day: 9)
 
@@ -41,7 +41,7 @@ struct CatalogOnThisDayScopeTests {
         // Never enriched: no capture date, so no anniversary.
         try writeCatalogStoreFile(root.appending(path: "undated.jpg"), contents: "undated")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count + 1 }
@@ -120,7 +120,7 @@ struct CatalogOnThisDayScopeTests {
         for (name, _) in captured {
             try writeCatalogStoreFile(root.appending(path: name), contents: name)
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
@@ -204,7 +204,7 @@ struct CatalogOnThisDayScopeTests {
         for (name, _) in captured {
             try writeCatalogStoreFile(root.appending(path: name), contents: name)
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
@@ -265,7 +265,7 @@ struct CatalogOnThisDayScopeTests {
         for (name, _) in captured {
             try writeCatalogStoreFile(root.appending(path: name), contents: name)
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
@@ -347,7 +347,7 @@ struct CatalogOnThisDayScopeTests {
         for (name, _, _) in captured {
             try writeCatalogStoreFile(root.appending(path: name), contents: name)
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
@@ -398,7 +398,7 @@ struct CatalogOnThisDayScopeTests {
         for (name, _, _) in captured {
             try writeCatalogStoreFile(root.appending(path: name), contents: name)
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
@@ -466,7 +466,7 @@ struct CatalogOnThisDayScopeTests {
         for (name, _, _) in captured {
             try writeCatalogStoreFile(root.appending(path: name), contents: name)
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }

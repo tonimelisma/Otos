@@ -4,7 +4,7 @@ import Testing
 
 /// DES-069 day buckets: `CatalogStore.orderedAssetIDs` only populates them under
 /// `.bestDate` sort, and pairs them index-for-index with the returned IDs.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreDayBucketTests {
     @Test func bestDateSortReturnsStartOfDayBucketsPairedWithIDs() async throws {
         let temp = try makeTestDirectory()
@@ -15,7 +15,7 @@ struct CatalogStoreDayBucketTests {
         try writeCatalogStoreFile(root.appending(path: "newer.jpg"), contents: "two")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }

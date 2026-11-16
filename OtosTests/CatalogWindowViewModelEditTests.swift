@@ -9,7 +9,7 @@ import Testing
 ///
 /// Every save travels the view model's one edit lane, so `hasSettledEdits` is the fact
 /// that it has been saved, rendered and applied (or refused); each step waits for that.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelEditTests {
     @Test func draggingRendersLiveAndLettingGoSavesAndRendersTheProducts() async throws {

@@ -6,7 +6,7 @@ import Testing
 /// Adversarial lifecycle tests for MediaOperationCoordinator.
 /// These prove stale-completion rejection, ledger release, and deterministic
 /// execution boundaries via the controlled plan-builder and execution controls.
-@Suite(.serialized, .testDirectory)
+@Suite(.serialized, .testScope)
 struct MediaOperationCoordinatorAdversarialTests {
     // MARK: - Helpers
 
@@ -95,7 +95,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 1, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -154,7 +154,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 5, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -205,7 +205,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 2, count: 1024).write(to: cardURL.appending(path: "b.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -280,7 +280,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 4, count: 1024).write(to: cardURL.appending(path: "d.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -357,7 +357,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardAURL, withIntermediateDirectories: true)
         try Data(repeating: 5, count: 1024).write(to: cardAURL.appending(path: "shared.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -431,7 +431,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try Data(repeating: 7, count: 512 * 1024).write(to: cardAURL.appending(path: "shared.jpg"))
         try Data(repeating: 8, count: 1024).write(to: cardBURL.appending(path: "shared.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -538,7 +538,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try Data(repeating: 9, count: 1024).write(to: cardAURL.appending(path: "shared.jpg"))
         try Data(repeating: 10, count: 1024).write(to: cardBURL.appending(path: "shared.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -627,7 +627,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try Data(repeating: 11, count: 1024).write(to: cardAURL.appending(path: "shared.jpg"))
         try Data(repeating: 12, count: 1024).write(to: cardBURL.appending(path: "shared.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -710,7 +710,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // planner must not skip it as already imported, and must name around A's.
         try Data(repeating: 14, count: 2048).write(to: cardBURL.appending(path: "shared.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -785,7 +785,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 15, count: 1024).write(to: cardURL.appending(path: "e.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -850,7 +850,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 7, count: 1024).write(to: cardURL.appending(path: "f.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -932,7 +932,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 7, count: 1024).write(to: cardURL.appending(path: "f.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1029,7 +1029,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 9, count: 1024).write(to: cardURL.appending(path: "g.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1095,7 +1095,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 4, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1163,7 +1163,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 6, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1231,7 +1231,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 8, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1308,7 +1308,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 9, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1378,7 +1378,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 2, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1454,7 +1454,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         try Data(repeating: 2, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: firstURL)
         try await store.addLibrary(url: secondURL)
@@ -1530,7 +1530,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 3, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1587,7 +1587,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             try Data(repeating: 5, count: 1024).write(to: cardURL.appending(path: name))
         }
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1657,7 +1657,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             try Data(repeating: 7, count: 1024).write(to: cardURL.appending(path: name))
         }
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1742,7 +1742,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         try Data(repeating: 9, count: 1024).write(to: cardURL.appending(path: "f.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: firstDestURL)
         try await store.addLibrary(url: secondDestURL)
@@ -1829,7 +1829,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try Data(repeating: 16, count: 1024).write(to: cardAURL.appending(path: "f.jpg"))
         try Data(repeating: 17, count: 1024).write(to: cardBURL.appending(path: "g.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1906,7 +1906,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             try Data(repeating: UInt8(index), count: 1024).write(to: cardURL.appending(path: "h\(index).jpg"))
         }
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -1980,7 +1980,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             ])
             return .mediaOnly([relative])
         }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         try await store.attachRemovableVolume(
@@ -2052,7 +2052,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try Data(repeating: 3, count: 1024).write(to: cardURL.appending(path: "first.jpg"))
 
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             filesystemWatcher: watcher,
             scanCadence: .milliseconds(10)
@@ -2144,7 +2144,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             ])
             return .mediaOnly([relative])
         }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         try await store.attachRemovableVolume(
@@ -2229,7 +2229,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try Data(repeating: 18, count: 1024).write(to: destFile)
         try giveDestination(destFile, theModificationDateOf: srcFile)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -2297,7 +2297,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try Data(repeating: 19, count: 1024).write(to: destFile)
         try giveDestination(destFile, theModificationDateOf: srcFile)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -2355,7 +2355,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -2417,7 +2417,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -2521,7 +2521,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 4, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -2568,7 +2568,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 5, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }

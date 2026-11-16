@@ -3,14 +3,14 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreTests {
     @Test func changeNotificationsAreCheapTypedSignals() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let scanner = CatalogScanner { _, _, _ in .empty }
-        let store = CatalogStore(location: .inMemory, scanner: scanner)
+        let store = makeTestStore(location: .inMemory, scanner: scanner)
         let recorder = ChangeRecorder()
         let stream = await store.changeNotifications()
         let recordingTask = Task {
@@ -46,7 +46,7 @@ struct CatalogStoreTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
         let watcher = CatalogFilesystemWatcher.testingWithRootInspection()
-        let store = CatalogStore(location: .inMemory, filesystemWatcher: watcher.watcher, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, filesystemWatcher: watcher.watcher, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
@@ -115,7 +115,7 @@ struct CatalogStoreTests {
             )
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         do {
             try await store.start(scansSavedLibraries: false)
             Issue.record("Expected unsupportedCatalogSchema for legacy v1")
@@ -145,7 +145,7 @@ struct CatalogStoreTests {
         )
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
 
@@ -159,7 +159,7 @@ struct CatalogStoreTests {
         #expect(scanned.testAssets.allSatisfy { $0.byteSize != nil })
         #expect(scanned.testAssets.allSatisfy { $0.createdAt != nil })
 
-        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
+        let reloadedStore = makeTestStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = try await catalogStoreTestState(reloadedStore)
         #expect(reloaded.libraries.count == 1)
@@ -177,7 +177,7 @@ struct CatalogStoreTests {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         for url in urls {
             try await store.addLibrary(url: url)
@@ -198,7 +198,7 @@ struct CatalogStoreTests {
         try await store.moveLibrary(paths[0], .before(paths[0]))
         #expect(await store.currentLibraries().map(\.path) == reordered)
 
-        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
+        let reloadedStore = makeTestStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         #expect(await reloadedStore.currentLibraries().map(\.path) == reordered)
     }
@@ -212,7 +212,7 @@ struct CatalogStoreTests {
         for url in urls {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
-        let store = CatalogStore(location: .inMemory, filesystemWatcher: .noop)
+        let store = makeTestStore(location: .inMemory, filesystemWatcher: .noop)
         try await store.start(scansSavedLibraries: false)
         for url in urls {
             try await store.addLibrary(url: url)
@@ -241,7 +241,7 @@ struct CatalogStoreTests {
         try writeCatalogStoreFile(root.appending(path: "b.jpg"), contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
@@ -257,7 +257,7 @@ struct CatalogStoreTests {
         #expect(repeatedWrite.changedCount == 0)
         #expect(try await store.mediaAssets(for: ids).values.allSatisfy { $0.mediaChoice == .liked })
 
-        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
+        let reloadedStore = makeTestStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = try await reloadedStore.mediaAssets(for: ids)
         #expect(reloaded.values.allSatisfy { $0.mediaChoice == .liked })
@@ -271,7 +271,7 @@ struct CatalogStoreTests {
         try FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
         try writeCatalogStoreFile(sourceRoot.appending(path: "source.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(location: .databaseFile(temp.appending(path: "db/catalog.sqlite")))
+        let store = makeTestStore(location: .databaseFile(temp.appending(path: "db/catalog.sqlite")))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: sourceRoot)
         try await store.addLibrary(url: destinationRoot)
@@ -409,7 +409,7 @@ struct CatalogStoreTests {
         try writeCatalogStoreFile(root.appending(path: "visible.jpg"), contents: "jpeg")
         try writeCatalogStoreFile(package.appending(path: "hidden-inside-package.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
             scanCadence: .milliseconds(10)
         )
@@ -428,7 +428,7 @@ struct CatalogStoreTests {
         let child = parent.appending(path: "Child", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: parent)
 
@@ -454,7 +454,7 @@ struct CatalogStoreTests {
         try writeCatalogStoreFile(original, contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { snapshot in
@@ -474,7 +474,7 @@ struct CatalogStoreTests {
         #expect(snapshot.testAssets.isEmpty)
         #expect(FileManager.default.fileExists(atPath: original.path(percentEncoded: false)))
 
-        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
+        let reloadedStore = makeTestStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = try await catalogStoreTestState(reloadedStore)
         #expect(reloaded.libraries.isEmpty)
@@ -489,7 +489,7 @@ struct CatalogStoreTests {
         try writeCatalogStoreFile(first, contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(firstStore) { snapshot in
@@ -499,7 +499,7 @@ struct CatalogStoreTests {
         try FileManager.default.removeItem(at: first)
         try writeCatalogStoreFile(root.appending(path: "b.jpg"), contents: "jpeg")
 
-        let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let secondStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
         let reconciled = try await waitForCatalogStoreState(secondStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["b.jpg"]
@@ -518,7 +518,7 @@ struct CatalogStoreTests {
         try writeCatalogStoreFile(root.appending(path: "copied.jpg"), contents: "copied-bytes")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(firstStore) { snapshot in
@@ -534,7 +534,7 @@ struct CatalogStoreTests {
         try FileManager.default.copyItem(at: root.appending(path: "copied.jpg"), to: root.appending(path: "copy.jpg"))
         try FileManager.default.removeItem(at: root.appending(path: "copied.jpg"))
 
-        let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let secondStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
         let reconciled = try await waitForCatalogStoreState(secondStore) { snapshot in
             !snapshot.isScanning && Set(snapshot.testAssets.map(\.relativePath.rawValue)) == ["Sub/renamed.jpg", "copy.jpg"]
@@ -552,7 +552,7 @@ struct CatalogStoreTests {
         try writeCatalogStoreFile(first, contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(firstStore) { snapshot in
@@ -574,7 +574,7 @@ struct CatalogStoreTests {
             throw CatalogScanError.filesystemErrorsEncountered(count: 1, summaries: [])
         }
 
-        let secondStore = CatalogStore(
+        let secondStore = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: failingScanner,
             scanCadence: .milliseconds(10)
@@ -594,7 +594,7 @@ struct CatalogStoreTests {
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(firstStore) { snapshot in
@@ -605,7 +605,7 @@ struct CatalogStoreTests {
             await suspendUntilCancelled()
             throw CancellationError()
         }
-        let secondStore = CatalogStore(
+        let secondStore = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: hangingScanner,
             scanCadence: .milliseconds(10)
@@ -616,7 +616,7 @@ struct CatalogStoreTests {
         }
         await secondStore.shutdown()
 
-        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
+        let reloadedStore = makeTestStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = try await catalogStoreTestState(reloadedStore)
         #expect(reloaded.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])

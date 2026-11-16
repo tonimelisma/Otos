@@ -11,7 +11,7 @@ extension AppKitWindowTests {
     struct SearchFieldWindowTests {
         @Test func typingInTheToolbarFieldSearchesAndFindFocusesIt() async throws {
             let model = CatalogWindowViewModel(
-                catalogStore: CatalogStore(location: .inMemory),
+                catalogStore: makeTestStore(location: .inMemory),
                 startsStallMonitor: false,
                 startsEnrichment: false,
                 startsSourceMonitoring: false,
@@ -49,7 +49,7 @@ extension AppKitWindowTests {
         /// `.searchable` alone does not report, or Escape while it is — the search ends.
         @Test func clearingTheFieldEndsTheSearchWhereverTheKeyboardIs() async throws {
             let model = CatalogWindowViewModel(
-                catalogStore: CatalogStore(location: .inMemory),
+                catalogStore: makeTestStore(location: .inMemory),
                 startsStallMonitor: false,
                 startsEnrichment: false,
                 startsSourceMonitoring: false,

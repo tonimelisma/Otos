@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogScannerIssueAggregationTests {
     @Test func scanAggregatesRepeatedRelativePathIssuesForMismatchedRootSpelling() async throws {
         let temp = try makeTestDirectory()

@@ -11,7 +11,7 @@ import Testing
 /// Each case is a path a user waits for, or one that runs in the background at a size where
 /// its cost shows. Every case also checks that it did its work, so a broken fixture fails
 /// rather than measuring nothing.
-@Suite(.serialized, .testDirectory, .enabled(if: Benchmark.isEnabled))
+@Suite(.serialized, .testScope, .enabled(if: Benchmark.isEnabled))
 struct BenchmarkTests {
     @Test func catalogCases() async throws {
         let directory = try makeTestDirectory()
@@ -334,7 +334,7 @@ struct BenchmarkTests {
     /// first sync stalls its own stream.
     @Test func immichListingCases() async throws {
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
+        let store = makeTestStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
             server: #require(URL(string: "https://photos.example.com")), userID: "u1", displayName: "Family"
@@ -397,7 +397,7 @@ struct BenchmarkTests {
             try await batchHandler(files)
             return .mediaOnly(Set(files.map(\.relativePath)))
         }
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")), scanner: scanner,
             stagingContainers: StagingContainers(base: temp)
         )
@@ -838,7 +838,7 @@ struct BenchmarkTests {
     @MainActor
     @Test func windowApplyCases() async throws {
         let model = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory),
+            catalogStore: makeTestStore(location: .inMemory),
             enrichmentCoordinator: nil,
             startsStallMonitor: false,
             startsEnrichment: false,

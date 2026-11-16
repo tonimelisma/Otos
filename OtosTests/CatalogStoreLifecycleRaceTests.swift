@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreLifecycleRaceTests {
     @Test func concurrentStartupAndMutationShareOneInitialLoad() async throws {
         let temp = try makeTestDirectory()
@@ -10,7 +10,7 @@ struct CatalogStoreLifecycleRaceTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let gate = ArrivalGate()
         let scanner = CatalogScanner { _, _, _ in .empty }
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: scanner,
             initialLoadDidRead: {
@@ -49,7 +49,7 @@ struct CatalogStoreLifecycleRaceTests {
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         let emptyScanner = CatalogScanner { _, _, _ in .empty }
 
-        let firstStore = CatalogStore(
+        let firstStore = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: emptyScanner
         )
@@ -62,7 +62,7 @@ struct CatalogStoreLifecycleRaceTests {
             await recorder.record(rootPath)
             return .empty
         }
-        let secondStore = CatalogStore(
+        let secondStore = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: recordingScanner
         )
@@ -111,7 +111,7 @@ struct CatalogStoreLifecycleRaceTests {
             await probe.recordBatch(invocation, accepted: accepted)
             return .mediaOnly([file.relativePath])
         }
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: scanner
         )

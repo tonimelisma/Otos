@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogProjectionTests {
     /// Library-kind roots preserve their incoming (`sort_index`) order rather
     /// than being re-sorted by name — the user's own Settings → Libraries order.
@@ -145,7 +145,7 @@ struct CatalogProjectionTests {
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         let projection = CatalogProjection(cadence: .milliseconds(10))
         let recorder = StateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
@@ -175,7 +175,7 @@ struct CatalogProjectionTests {
     /// and published while the build it superseded is still parked, and what that build
     /// returns when it ends is never published.
     @Test func anIntentNeverWaitsForTheBuildItSuperseded() async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         let projection = makeProbedProjection(probe, cadence: .seconds(3600))
@@ -210,7 +210,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func publicationLoopRunsOneProjectionAtATimeAndRerunsWhenDirtyDuringRun() async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         // Projection builds only for a loaded catalog (APP-044).
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
@@ -252,7 +252,7 @@ struct CatalogProjectionTests {
     /// intent, delivered while that build is parked, cancels it; what it built is never
     /// published, and the new scope's build runs next.
     @Test func anIntentForAnotherScopeSupersedesTheBuildOfTheScopeLeft() async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         let projection = CatalogProjection(
@@ -297,7 +297,7 @@ struct CatalogProjectionTests {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         let projection = CatalogProjection(
@@ -336,7 +336,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func aFailedBuildPublishesNothingAndTheNextIntentRetries() async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         await probe.failCall(1)
@@ -375,7 +375,7 @@ struct CatalogProjectionTests {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         // An hour-long cadence: only the finishing pass noticing the new request can
@@ -407,7 +407,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func teardownDuringABuildPublishesNothing() async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         let projection = makeProbedProjection(probe, cadence: .seconds(3600))
@@ -468,7 +468,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func publicationLoopDoesNotYieldUnchangedWindowState() async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             stateBuilder: { _, _, _ in .empty }
@@ -795,7 +795,7 @@ private func makeDetailRefreshFixture() async throws -> DetailRefreshFixture {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
 
-    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+    let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
     let projection = CatalogProjection(cadence: .milliseconds(10))
     let recorder = StateRecorder()
     let stream = await projection.states(store: store, initialDescriptor: .default)

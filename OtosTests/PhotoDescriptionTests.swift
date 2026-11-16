@@ -8,7 +8,7 @@ import Testing
 /// Stills' descriptions (ADR 0053): when a still is owed one, what the model is told, how a
 /// change to any fact it was written from makes it owed again, how a declined or stale answer
 /// is stored, the writer end to end, and On This Day's titles written from them.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct PhotoDescriptionTests {
     /// Every prompt the stand-in model was handed.
     private final class Prompts: Sendable {

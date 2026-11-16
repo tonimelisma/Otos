@@ -7,7 +7,7 @@ import Testing
 /// ADR 0036: a photo's edit is a recipe saved under an increasing revision, and the
 /// thumbnail and preview rendered from it are promoted only while that revision is still
 /// current and the original is the file it was rendered from.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreEditRecipeTests {
     @Test func savingARecipeIncrementsItsRevisionAndReportsTheOneItReplaced() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
@@ -40,7 +40,7 @@ struct CatalogStoreEditRecipeTests {
     @Test func anEditAfterNoEditCountsOnFromTheLastRevision() async throws {
         let databaseURL = try makeTestDirectory().appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let fresh = CatalogStore(location: .databaseFile(databaseURL))
+        let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
@@ -51,7 +51,7 @@ struct CatalogStoreEditRecipeTests {
             VALUES (1, 'a.jpg', 'a.jpg', 'a.jpg', 'a.jpg', 'image', NULL, 2, 1)
             """)
         }
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
 

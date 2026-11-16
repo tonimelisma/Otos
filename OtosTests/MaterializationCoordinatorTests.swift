@@ -3,6 +3,7 @@ import Foundation
 import Synchronization
 import Testing
 
+@Suite(.testScope)
 struct MaterializationCoordinatorTests {
     /// ADR 0046 §4: an in-place original's locality is its `SF_DATALESS` status; a staged
     /// root's file absent from its staging folder is one its source has yet to send.
@@ -54,7 +55,7 @@ struct MaterializationCoordinatorTests {
         )
         for (status, locality) in [(FileMaterializationStatus.dataless, OriginalLocality.fetchable), (.materialized, .local)] {
             let coordinator = MaterializationCoordinator(
-                store: CatalogStore(location: .inMemory),
+                store: makeTestStore(location: .inMemory),
                 executor: { _ in .cancelled },
                 volumeCapacity: { _ in nil },
                 status: { _ in status }
@@ -86,7 +87,7 @@ struct MaterializationCoordinatorTests {
         let started = Mutex<[String]>([])
         let available = Mutex<Int64?>(FreeSpaceFloor.bytes + 1000)
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { request in
                 started.withLock { $0.append(request.id.relativePath.rawValue) }
                 return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 0)
@@ -117,7 +118,7 @@ struct MaterializationCoordinatorTests {
     @Test func aFileAlreadyLocalGivesItsRoomBackWhileOthersAreInFlight() async throws {
         let held = HeldInteractiveExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { request in
                 switch request.id.relativePath.rawValue {
                 case "held.jpg":
@@ -159,7 +160,7 @@ struct MaterializationCoordinatorTests {
             changes: { _ in AsyncStream { $0.finish() } }
         )
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await FileMaterialization.materialize($0, providers: refusing) },
             volumeCapacity: ampleVolumeCapacity
         )
@@ -172,7 +173,7 @@ struct MaterializationCoordinatorTests {
     @Test func sameIDRequestsShareOnePhysicalTransfer() async throws {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity
         )
@@ -203,7 +204,7 @@ struct MaterializationCoordinatorTests {
         policy.deviceConcurrency = 2
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity,
             policy: policy
@@ -264,7 +265,7 @@ struct MaterializationCoordinatorTests {
     @Test func onlyOneDeviceTransferRunsAtATime() async throws {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity
         )
@@ -292,7 +293,7 @@ struct MaterializationCoordinatorTests {
     @Test func deviceCapDoesNotThrottleOtherTransports() async throws {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity
         )
@@ -313,7 +314,7 @@ struct MaterializationCoordinatorTests {
         let cap = MaterializationAdmissionPolicy.production.backgroundPerRootCap
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity
         )
@@ -345,7 +346,7 @@ struct MaterializationCoordinatorTests {
         let cap = MaterializationAdmissionPolicy.production.backgroundPerRootCap
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity
         )
@@ -376,7 +377,7 @@ struct MaterializationCoordinatorTests {
         policy.globalConcurrency = 3
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity,
             policy: policy
@@ -419,7 +420,7 @@ struct MaterializationCoordinatorTests {
         policy.globalConcurrency = 1
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity,
             policy: policy
@@ -442,7 +443,7 @@ struct MaterializationCoordinatorTests {
         policy.globalConcurrency = 3
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity,
             policy: policy
@@ -480,7 +481,7 @@ struct MaterializationCoordinatorTests {
         policy.deviceConcurrency = 2
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             executor: { await executor.run($0.id.fileURL) },
             volumeCapacity: ampleVolumeCapacity,
             policy: policy
@@ -546,7 +547,7 @@ struct MaterializationCoordinatorTests {
     /// a Move to Trash cancelled before its download lands leaves nothing running.
     @Test(arguments: [MaterializationCoordinator.Priority.interactive, .command])
     func theLastWaiterLeavingEndsTheTransferAndReleasesAccounting(priority: MaterializationCoordinator.Priority) async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         let executor = HeldInteractiveExecutor()
         let coordinator = MaterializationCoordinator(
             store: store,

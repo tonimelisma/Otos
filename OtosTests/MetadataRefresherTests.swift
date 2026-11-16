@@ -7,7 +7,7 @@ import Testing
 
 /// ADR 0039: a metadata record an older MediaMetadata revision produced is re-read from
 /// local bytes only, and only for library rows whose enrichment is otherwise current.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct MetadataRefresherTests {
     @Test func aStaleRecordIsReReadWhenItsOriginalIsLocalAndLeftWhenItIsNot() async throws {
@@ -85,7 +85,7 @@ struct MetadataRefresherTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let creator = CatalogStore(location: .databaseFile(databaseURL))
+        let creator = makeTestStore(location: .databaseFile(databaseURL))
         try await creator.start(scansSavedLibraries: false)
         await creator.shutdown()
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
@@ -121,7 +121,7 @@ struct MetadataRefresherTests {
                 )
             }
         }
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         let candidates = try await store.metadataRefreshCandidates(after: nil, limit: 10)
         await store.shutdown()
@@ -138,7 +138,7 @@ struct MetadataRefresherTests {
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
-        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["IMG_1.HEIC", "b.heic"]))
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(["IMG_1.HEIC", "b.heic"]))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }

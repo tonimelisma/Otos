@@ -6,7 +6,7 @@ import Testing
 /// stages each camera under the catalog's own containers (`CatalogStore.stagingContainers`),
 /// so the root the Store loads for a remembered camera is the folder a returning camera's
 /// session stages into.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct CameraStagingCompositionTests {
     @Test func theWindowsCameraMonitorStagesWhereTheStoreLoadsTheCamera() async throws {
@@ -14,7 +14,7 @@ struct CameraStagingCompositionTests {
         let database = temp.appending(path: "catalog.sqlite")
         let containers = StagingContainers(base: temp.appending(path: "Containers", directoryHint: .isDirectory))
         let camera = DeviceIdentity.camera(id: "serial")
-        let first = CatalogStore(location: .databaseFile(database), stagingContainers: containers)
+        let first = makeTestStore(location: .databaseFile(database), stagingContainers: containers)
         try await first.start(scansSavedLibraries: false)
         _ = try await first.attachDeviceMTP(
             stagingRootURL: containers.sessionRoot(in: .device, identity: camera), identity: camera, displayName: "Camera"
@@ -22,7 +22,7 @@ struct CameraStagingCompositionTests {
         try await first.detachRemovableSource(identity: camera, reason: .disconnected)
         await first.shutdown()
 
-        let store = CatalogStore(location: .databaseFile(database), stagingContainers: containers)
+        let store = makeTestStore(location: .databaseFile(database), stagingContainers: containers)
         try await store.start(scansSavedLibraries: false)
         let model = CatalogWindowViewModel(
             catalogStore: store,

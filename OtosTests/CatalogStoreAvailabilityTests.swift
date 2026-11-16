@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreAvailabilityTests {
     /// A saved library whose folder is there is available, and its rows shown, the moment the
     /// catalog loads: no scan has to start before the window shows what the catalog holds
@@ -14,7 +14,7 @@ struct CatalogStoreAvailabilityTests {
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(firstStore) { snapshot in
@@ -22,7 +22,7 @@ struct CatalogStoreAvailabilityTests {
         }
         await firstStore.shutdown()
 
-        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
+        let reloadedStore = makeTestStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let loaded = try await catalogStoreTestState(reloadedStore)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
@@ -40,14 +40,14 @@ struct CatalogStoreAvailabilityTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(firstStore) { !$0.isScanning }
         await firstStore.shutdown()
         try FileManager.default.removeItem(at: root)
 
-        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
+        let reloadedStore = makeTestStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let loaded = try await catalogStoreTestState(reloadedStore)
 
@@ -62,7 +62,7 @@ struct CatalogStoreAvailabilityTests {
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(firstStore) { snapshot in
@@ -77,7 +77,7 @@ struct CatalogStoreAvailabilityTests {
 
         try FileManager.default.removeItem(at: root)
 
-        let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let secondStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
 
         let unavailable = try await waitForCatalogStoreState(secondStore) { snapshot in
@@ -96,7 +96,7 @@ struct CatalogStoreAvailabilityTests {
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(firstStore) { snapshot in
@@ -107,7 +107,7 @@ struct CatalogStoreAvailabilityTests {
             try FileManager.default.removeItem(at: rootPath.url)
             throw CatalogScanError.filesystemErrorsEncountered(count: 1, summaries: [])
         }
-        let secondStore = CatalogStore(
+        let secondStore = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: disappearingScanner,
             scanCadence: .milliseconds(10)

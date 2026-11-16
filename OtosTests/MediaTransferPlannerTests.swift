@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct MediaTransferPlannerTests {
     private static let source = LibraryRootPath(rawValue: "/tmp/card")
     private static let destination = LibraryRootPath(rawValue: "/tmp/library")

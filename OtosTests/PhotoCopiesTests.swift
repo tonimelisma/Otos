@@ -7,7 +7,7 @@ import Testing
 /// photos, People and the People filter find a photo by a face on a copy the scope does not
 /// show, whether the person's photos are sought or the order is walked, and a person's photo
 /// count counts the photo once.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct PhotoCopiesTests {
     /// Library rows in root 1, `IMG_0001.JPG`…; the first `copied` of them also in account
     /// root 2 as `a/IMG_….JPG`, with the same digest.

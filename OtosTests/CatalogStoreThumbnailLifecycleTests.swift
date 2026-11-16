@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreThumbnailLifecycleTests {
     @Test func acceptedStagedThumbnailPromotesAndStampsCatalog() async throws {
         let fixture = try await makeThumbnailLifecycleFixture()
@@ -274,7 +274,7 @@ private func makeThumbnailLifecycleFixture() async throws -> ThumbnailLifecycleF
     let mtime = ThumbnailLifecycleSeconds(1000)
     let (watcher, emit) = CatalogFilesystemWatcher.testing()
     let databaseURL = temp.appending(path: "db/catalog.sqlite")
-    let store = CatalogStore(
+    let store = makeTestStore(
         location: .databaseFile(databaseURL),
         scanner: thumbnailLifecycleScanner(rel, mtime: mtime),
         filesystemWatcher: watcher

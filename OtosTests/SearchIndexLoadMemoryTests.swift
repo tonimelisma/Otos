@@ -9,13 +9,13 @@ import Testing
 /// SearchIndexLoadMemoryTests`); it writes `build/search-index-memory/owner.txt`. A measurement,
 /// not a benchmark. The load it replaced (every embedding decoded into one array, then copied
 /// into the matrix) took this test host past its 2 GB ceiling, so it is not measured beside it.
-@Suite(.testDirectory, .serialized)
+@Suite(.testScope, .serialized)
 struct SearchIndexLoadMemoryTests {
     @Test(.enabled(if: StallReproductionTests.ownerSize))
     func thePagedLoadHoldsTheMatrixAndOnePage() async throws {
         let directory = try makeTestDirectory()
         let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
-        let store = CatalogStore(location: .databaseFile(catalog.databaseURL))
+        let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let index = PhotoSearchIndex(store: store, thumbnailDirectory: nil, bundle: Bundle(for: CatalogWindowViewModel.self))
 

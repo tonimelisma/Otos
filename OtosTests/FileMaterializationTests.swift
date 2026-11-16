@@ -8,7 +8,7 @@ import Testing
 /// result cannot be produced in a unit test because only a File Provider can create
 /// a dataless placeholder; that branch was validated against a real OneDrive library
 /// (see `docs/research/2026-07-11-onedrive-materialization-fsevents.md`).
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct FileMaterializationTests {
     @Test func localFileIsMaterialized() throws {
         let directory = try makeTestDirectory()

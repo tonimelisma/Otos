@@ -5,7 +5,7 @@ import Testing
 
 /// ADR 0036 geometry: quarter turns and flips in the displayed frame, then straighten,
 /// then crop — as recipe math, as rendered pixels, and back again for the picker.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct EditGeometryTests {
     @Test func fourQuarterTurnsAndTwoFlipsComeBackToTheStart() {
         let crop = EditCrop(left: 0.1, top: 0.2, width: 0.3, height: 0.4)

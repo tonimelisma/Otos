@@ -6,7 +6,7 @@ import Testing
 /// ADR 0046 §5, §6: adding an account logs in and starts its sync; each account's
 /// status is what its server last answered; forgetting one ends its session. The server
 /// is a stubbed transport per test host; sessions live in memory.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ImmichAccountsTests {
     private final class MemorySessions: ImmichSessionStoring, Sendable {
         private let tokens = Mutex<[DeviceIdentity: String]>([:])
@@ -115,7 +115,7 @@ struct ImmichAccountsTests {
     private static let quick = ImmichAccounts.Schedule(poll: .seconds(3600), backoff: [.zero])
 
     private func makeStore() async throws -> CatalogStore {
-        let store = try CatalogStore(
+        let store = try makeTestStore(
             location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
         )
         try await store.start(scansSavedLibraries: false)

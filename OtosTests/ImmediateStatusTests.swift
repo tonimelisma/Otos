@@ -5,7 +5,7 @@ import Testing
 /// The acts whose result needs a read show their status in the step that handles them
 /// (DES-120): a filter or sort change keeps the grid and says so in its controls and the
 /// window subtitle, and Import is held from the click on.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct ImmediateStatusTests {
     @Test func aFilterAndASortShowInTheirControlsBeforeTheirReadWhileTheGridKeepsItsItems() {
@@ -53,7 +53,7 @@ struct ImmediateStatusTests {
 @MainActor
 private func makeStatusModel() -> CatalogWindowViewModel {
     CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: makeTestStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,

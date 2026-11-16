@@ -11,7 +11,7 @@ import Testing
 /// (`docs/research/2026-11-15-large-narrow-scopes.md`). Each pair below sits on either side of
 /// the boundary: one candidate fewer than the catalog's rows divided by the ratio seeks, one
 /// more walks.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ScopeReachPlanTests {
     /// The catalog's rows, all in the first of two roots: the walk visits every row of the
     /// catalog under the global order indexes.

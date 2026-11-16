@@ -8,7 +8,7 @@ import Testing
 /// Place names and the Places filter (ADR 0051): cells of the map computed in Swift and SQL
 /// alike, each named once per language from its center, a throttled Maps waited out, and the
 /// filter narrowing by country and town.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct PlaceNamesTests {
     static let helsinki = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
     static let espoo = PlaceCoordinate(latitude: 60.21, longitude: 24.66)
@@ -160,7 +160,7 @@ struct PlaceNamesTests {
             }
         }
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         #expect(try await store.unnamedPlaceCells(language: PlaceNameLanguage(Locale(identifier: "en_GB")), limit: 10).isEmpty)
         #expect(try await store.unnamedPlaceCells(language: PlaceNameLanguage(Locale(identifier: "fi_FI")), limit: 10).count == 2)

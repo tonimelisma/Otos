@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// End-to-end reorganization runs over a real catalog and a real library folder.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct LibraryReorganizationRunnerTests {
     /// A run that stops partway keeps every component that settled before the failure,
     /// rolls the failing one back, and leaves the settled remaps for the window to apply
@@ -135,7 +135,7 @@ struct LibraryReorganizationRunnerTests {
         try await fixture.store.prepareReorganizationComponent(component)
         await fixture.store.shutdown()
 
-        let relaunched = CatalogStore(
+        let relaunched = makeTestStore(
             location: .databaseFile(fixture.root.deletingLastPathComponent().appending(path: "db/catalog.sqlite")),
             filesystemWatcher: .noop
         )
@@ -164,7 +164,7 @@ struct LibraryReorganizationRunnerTests {
         try Data("another a.jpg".utf8).write(to: fixture.root.appending(path: "a.jpg"))
         await fixture.store.shutdown()
 
-        let relaunched = CatalogStore(
+        let relaunched = makeTestStore(
             location: .databaseFile(fixture.root.deletingLastPathComponent().appending(path: "db/catalog.sqlite")),
             filesystemWatcher: .noop
         )
@@ -208,7 +208,7 @@ private struct RunnerFixture {
             try Data(name.utf8).write(to: url)
             try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
         }
-        let store = CatalogStore(location: .databaseFile(temp.appending(path: "db/catalog.sqlite")), filesystemWatcher: .noop)
+        let store = makeTestStore(location: .databaseFile(temp.appending(path: "db/catalog.sqlite")), filesystemWatcher: .noop)
         try await store.start(scansSavedLibraries: false)
         try await store.ensureLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == files.count }

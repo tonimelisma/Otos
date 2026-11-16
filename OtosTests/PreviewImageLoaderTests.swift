@@ -5,7 +5,7 @@ import ImageIO
 import Synchronization
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct PreviewImageLoaderTests {
     @Test func datalessPreviewSubmitsInteractiveRequestThenDecodes() async throws {
         let directory = try makeTestDirectory()
@@ -269,7 +269,7 @@ struct PreviewImageLoaderTests {
     /// device executor, and the loupe decodes the staged file.
     @Test func unstagedCameraOriginalOpenedAtFullResolutionIsStaged() async throws {
         let staging = try makeTestDirectory().appending(path: "Staging")
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.attachDeviceMTP(
             stagingRootURL: staging, identity: DeviceIdentity(rawValue: "camera:test"), displayName: "Camera"

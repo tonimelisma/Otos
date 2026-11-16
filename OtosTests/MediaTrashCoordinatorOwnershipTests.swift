@@ -7,7 +7,7 @@ import Testing
 /// to decide what it publishes. These pin the rules that keep that honest: a failed read
 /// publishes nothing, an item the user took back is never moved, and an unreadable overlay
 /// defers a move instead of losing the user's choice.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct MediaTrashCoordinatorOwnershipTests {
     private struct InjectedReadFailure: Error {}
 
@@ -59,7 +59,7 @@ struct MediaTrashCoordinatorOwnershipTests {
             for name in names {
                 try writeCatalogStoreFile(root.appending(path: name), contents: "jpeg")
             }
-            let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+            let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
             try await store.start(scansSavedLibraries: false)
             try await store.addLibrary(url: root)
             let scanned = try await waitForCatalogStoreState(store) {

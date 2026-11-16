@@ -6,6 +6,7 @@ import Testing
 /// Otos comes back where the user left it (APP-043): the query, the view mode, the
 /// selection and the position survive a relaunch, and anything that no longer exists falls
 /// back to the launch defaults instead of being trusted.
+@Suite(.testScope)
 @MainActor
 struct BrowserPlaceTests {
     private static let today = CalendarDay(year: 2026, month: 11, day: 9)
@@ -504,7 +505,7 @@ private func makePlace(
 @MainActor
 private func makeViewModel(_ domain: PreferencesDomain) -> CatalogWindowViewModel {
     CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
+        catalogStore: makeTestStore(location: .inMemory, scanCadence: .milliseconds(10)),
         catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
         startsStallMonitor: false,
         startsEnrichment: false,

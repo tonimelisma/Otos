@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// ADR 0042: the keeper rule, what a pick or a folder rule keeps, and the Store's read.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct DuplicatesTests {
     private static let photos = LibraryRootPath(rawValue: "/Users/me/Photos")
     private static let backup = LibraryRootPath(rawValue: "/Volumes/Backup/Photos")
@@ -638,7 +638,7 @@ struct DuplicatesTests {
         for url in [first.appending(path: "a.jpg"), first.appending(path: "b.jpg"), second.appending(path: "a.jpg"), second.appending(path: "c.jpg")] {
             try writeCatalogStoreFile(url, contents: url.lastPathComponent == "c.jpg" ? "other" : "same")
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: first)
         try await store.addLibrary(url: second)
@@ -698,7 +698,7 @@ struct DuplicatesTests {
         for path in ["empty.jpg", "Print/empty.avi"] {
             try writeCatalogStoreFile(root.appending(path: path), contents: "")
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let library = try CatalogPath.normalizedDirectoryPath(for: root)
@@ -747,7 +747,7 @@ struct DuplicatesTests {
         for path in ["a.jpg", "Print/a.jpg"] {
             try writeCatalogStoreFile(root.appending(path: path), contents: "same")
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let library = try CatalogPath.normalizedDirectoryPath(for: root)

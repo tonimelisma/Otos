@@ -93,7 +93,7 @@ struct LoadAdmissionMachineTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct LoadAdmissionTests {
     @Test func twoLoadsNeverRunTogether() async throws {
         let admission = LoadAdmission(isOpen: true)
@@ -183,7 +183,7 @@ struct LoadAdmissionTests {
     /// People pass never run at once, and neither runs before the admission opens.
     @Test func duplicatesAndPeopleTakeTurns() async throws {
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .databaseFile(temp.appending(path: "catalog.sqlite")), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(temp.appending(path: "catalog.sqlite")), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let admission = LoadAdmission()
         let duplicates = ArrivalGate()
@@ -230,7 +230,7 @@ struct LoadAdmissionTests {
     @MainActor
     @Test func heavyLoadsWaitForTheWindowsFirstGrid() async throws {
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .databaseFile(temp.appending(path: "catalog.sqlite")), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(temp.appending(path: "catalog.sqlite")), scanCadence: .milliseconds(10))
         let admission = LoadAdmission()
         let model = CatalogWindowViewModel(
             catalogStore: store,

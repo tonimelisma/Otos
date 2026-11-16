@@ -6,7 +6,7 @@ import Testing
 /// view model's refresh re-reads the shown item's labels whenever its doorbell rings, which
 /// search's index does as it reads and every Info read does as it lands. This window has no
 /// index, so the test rings it as the index would.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct InThisPhotoRefreshTests {
     @Test func inThisPhotoReadsTheShownItemAgainWhenItsDoorbellRings() async throws {

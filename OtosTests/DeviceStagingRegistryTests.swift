@@ -9,7 +9,7 @@ import Testing
 /// Run in parallel, one test's cleanup revokes another's claim, the sweep can then take that
 /// tree's lock, and it is deleted. Observed 2026-09-01 as a flaky failure of
 /// `theSweepLeavesATreeALiveInstanceHolds`, which had passed in the preceding runs.
-@Suite(.serialized, .testDirectory)
+@Suite(.serialized, .testScope)
 struct DeviceStagingRegistryTests {
     /// `stagingRootURL` is a directory URL, so its path already ends in "/". Appending
     /// another produced a "…/root//" prefix that no requested path could match, so
@@ -49,7 +49,7 @@ struct DeviceStagingRegistryTests {
         )
         try Data(repeating: 7, count: 2048).write(to: staged)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         _ = try await store.attachDeviceMTP(
             stagingRootURL: stagingRoot,
@@ -181,7 +181,7 @@ struct DeviceStagingRegistryTests {
         }
         let containers = try StagingContainers(base: makeTestDirectory())
         let container = containers.url(.remote)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: containers)
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: containers)
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
             server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family"
@@ -241,14 +241,14 @@ struct DeviceStagingRegistryTests {
     /// catalog's a temporary folder of its own; a given value wins.
     @Test func aCatalogsStagingFollowsItsLocation() throws {
         let directory = try makeTestDirectory()
-        let file = CatalogStore(location: .databaseFile(directory.appending(path: "db/catalog.sqlite")))
+        let file = makeTestStore(location: .databaseFile(directory.appending(path: "db/catalog.sqlite")))
         #expect(file.stagingContainers.base == directory.appending(path: "db/Staging", directoryHint: .isDirectory))
         let app = CatalogStore.stagingContainers(for: .application(bundleIdentifier: "net.melisma.Otos.test"))
         #expect(app.base.lastPathComponent == "net.melisma.Otos.test")
         #expect(app.base.deletingLastPathComponent().lastPathComponent == "Caches")
-        #expect(CatalogStore(location: .inMemory).stagingContainers != CatalogStore(location: .inMemory).stagingContainers)
+        #expect(makeTestStore(location: .inMemory).stagingContainers != makeTestStore(location: .inMemory).stagingContainers)
         let given = StagingContainers(base: directory)
-        #expect(CatalogStore(location: .inMemory, stagingContainers: given).stagingContainers == given)
+        #expect(makeTestStore(location: .inMemory, stagingContainers: given).stagingContainers == given)
     }
 
     /// A1's guard: a release path outside staging is refused, never followed. The intent

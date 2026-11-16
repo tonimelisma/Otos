@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.serialized)
+@Suite(.serialized, .testScope)
 struct CatalogWindowViewModelQueryIntentTests {
     @MainActor
     @Test func normalizedNoOpQueryIntentDoesNotBumpOrRollbackGeneration() async throws {
@@ -82,7 +82,7 @@ private func waitForRequestsReleasingBuilds(
 private func makeQueryIntentModel(temp: PreferencesDomain)
     -> (model: CatalogWindowViewModel, gate: WindowStateBuildGate)
 {
-    let store = CatalogStore(location: .inMemory)
+    let store = makeTestStore(location: .inMemory)
     let gate = WindowStateBuildGate()
     let projection = CatalogProjection(
         cadence: .milliseconds(10),

@@ -7,6 +7,7 @@ import Testing
 /// Intent-level coverage for File ▸ Open / Open With (APP-035): targets resolve through
 /// the current-item resolver, opening hands URLs to the injected workspace and nothing
 /// else, and the menu model is rebuilt newest-wins.
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelOpenWithTests {
     @Test func openInDefaultOpensEachGroupOnce() async throws {
@@ -123,7 +124,7 @@ struct CatalogWindowViewModelOpenWithTests {
 private func makeOpenWithModel(workspace: RecordingWorkspace) -> CatalogWindowViewModel {
     // Open, Open With, Share and Copy are hand-offs, consumed by the hand-off lane.
     let model = CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: makeTestStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,

@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogProjectionEmptyStateTests {
     @Test func storeBackedAllMediaEmptyStateCountsUnavailableCatalogedMedia() async throws {
         let temp = try makeTestDirectory()
@@ -11,7 +11,7 @@ struct CatalogProjectionEmptyStateTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try "jpeg".write(to: root.appending(path: "hidden.jpg"), atomically: true, encoding: .utf8)
 
-        let firstStore = CatalogStore(
+        let firstStore = makeTestStore(
             location: .databaseFile(databaseURL),
             scanCadence: .milliseconds(10)
         )
@@ -23,7 +23,7 @@ struct CatalogProjectionEmptyStateTests {
         await firstStore.shutdown()
         try FileManager.default.removeItem(at: root)
 
-        let secondStore = CatalogStore(
+        let secondStore = makeTestStore(
             location: .databaseFile(databaseURL),
             scanCadence: .milliseconds(10)
         )
@@ -62,7 +62,7 @@ struct CatalogProjectionEmptyStateTests {
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try "jpeg".write(to: root.appending(path: "a.jpg"), atomically: true, encoding: .utf8)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -103,7 +103,7 @@ struct CatalogProjectionEmptyStateTests {
     /// catalog holds still rebuilds them.
     @Test func addedRowsArePublishedWithoutRebuildingDuplicates() async throws {
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
             server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family"
@@ -180,7 +180,7 @@ struct CatalogProjectionEmptyStateTests {
         for name in ["a.jpg", "b.jpg"] {
             try "jpeg \(name)".write(to: root.appending(path: name), atomically: true, encoding: .utf8)
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let state = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
@@ -242,7 +242,7 @@ struct CatalogProjectionEmptyStateTests {
     /// tally counts it, though neither the groups nor the assignment are rebuilt for it.
     @Test func addedRowsAreCountedInPeoplesTallyWithoutRebuildingDuplicates() async throws {
         let temp = try makeTestDirectory()
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
             server: #require(URL(string: "https://photos.example.com")), userID: "user-1", displayName: "Family"
@@ -314,7 +314,7 @@ struct CatalogProjectionEmptyStateTests {
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try "jpeg".write(to: root.appending(path: "a.jpg"), atomically: true, encoding: .utf8)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -359,7 +359,7 @@ struct CatalogProjectionEmptyStateTests {
     /// Before the catalog's first load nothing is known, so nothing is claimed: no
     /// "No Media", no title (APP-044). A catalog that really is empty says so once loaded.
     @Test func beforeTheCatalogLoadsNoEmptinessIsClaimed() async throws {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         let projection = CatalogProjection(cadence: .milliseconds(10))
         let recorder = EmptyStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
@@ -395,7 +395,7 @@ struct CatalogProjectionEmptyStateTests {
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(firstStore) { snapshot in
@@ -403,7 +403,7 @@ struct CatalogProjectionEmptyStateTests {
         }
         await firstStore.shutdown()
 
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         let projection = CatalogProjection(cadence: .seconds(60))
         let recorder = EmptyStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)

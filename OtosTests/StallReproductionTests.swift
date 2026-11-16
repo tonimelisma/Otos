@@ -21,7 +21,7 @@ import Testing
 /// (`OTOS_SCALE_TEST=1 script/check.sh --only StallReproductionTests`), because building a
 /// 2.4 GB catalog is not a per-PR cost. The small variant runs in every check and proves the
 /// generator's backlog and the measurement themselves.
-@Suite(.testDirectory, .serialized)
+@Suite(.testScope, .serialized)
 struct StallReproductionTests {
     /// Xcode's scheme always defines the key, empty unless the build-setting override is
     /// passed (`ProjectionEnrichmentScaleTests`), so the value is what is checked.
@@ -38,7 +38,7 @@ struct StallReproductionTests {
     /// reads count it.
     @Test func theGeneratedCatalogHoldsTheOwnersBacklog() async throws {
         let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
-        let store = CatalogStore(location: .databaseFile(catalog.databaseURL))
+        let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let libraries = try #require(await store.loadedLibraries())
         let available = CatalogWindowPolicy.availablePaths(from: libraries)
@@ -198,7 +198,7 @@ enum StallReproduction {
     /// Every read once, one after another, on a Store whose connections count what each
     /// statement visited (`StatementVisits`). Nothing else runs.
     private static func measureQuiet(_ catalog: OwnerShapedCatalog, into report: inout Report) async throws {
-        let store = CatalogStore(location: .databaseFile(catalog.databaseURL))
+        let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let visits = StatementVisits()
         try await visits.install(on: store)
@@ -310,7 +310,7 @@ enum StallReproduction {
         into report: inout Report
     ) async throws {
         let logStart = Date()
-        let store = CatalogStore(location: .databaseFile(catalog.databaseURL))
+        let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let libraries = try #require(await store.loadedLibraries())
         let available = CatalogWindowPolicy.availablePaths(from: libraries)

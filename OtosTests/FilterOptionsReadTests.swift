@@ -9,7 +9,7 @@ import Testing
 /// options read is parked, and an intent for another row cancels the read, whose answer is
 /// never kept. On the owner's catalog a search, a clear and a sort each waited 15–23 s for
 /// the options read of the pass before them.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct FilterOptionsReadTests {
     /// A projection over an in-memory catalog of one empty library, whose options reads park
     /// at `gate` and answer `answer`.
@@ -28,7 +28,7 @@ struct FilterOptionsReadTests {
         let directory = try makeTestDirectory()
         let root = directory.appending(path: "Pictures", directoryHint: .isDirectory)
         let other = directory.appending(path: "Archive", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         for url in [root, other] {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

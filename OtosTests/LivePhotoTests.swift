@@ -7,7 +7,7 @@ import Testing
 /// ADR 0041: a still and a movie that share a folder and Apple's content identifier, and are
 /// the only still and movie there that do, are one Live Photo — one item whose movie is a
 /// member of the still's.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct LivePhotoTests {
     private let identifier = "66E9019A-9CAF-4603-A6C3-2F22030B7C65"
@@ -195,7 +195,7 @@ struct LivePhotoTests {
         }
         let databaseURL = temp.appending(path: "Catalog/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(5))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(5))
         let models = EditModels()
         do {
             try await store.addLibrary(url: root)

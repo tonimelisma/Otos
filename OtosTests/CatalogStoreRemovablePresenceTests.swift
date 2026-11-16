@@ -5,7 +5,7 @@ import Testing
 /// APP-016–018 / ADR 0013: a card or camera shows what its current attachment has read,
 /// as it reads it — never what it held last time — and an erase takes its files out of
 /// the catalog as it takes them off the card.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreRemovablePresenceTests {
     private let identity = DeviceIdentity.camera(id: "presence-serial")
 
@@ -37,7 +37,7 @@ struct CatalogStoreRemovablePresenceTests {
 
     @Test func aReturningSourceShowsOnlyTheFilesItsCurrentReadHasSeen() async throws {
         let staging = try makeTestDirectory().appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let kept = file("IMG_0001.JPG"), erased = file("IMG_0002.JPG")
         let rootPath = try await attachEnumerated(store, staging: staging, files: [kept, erased])
@@ -59,7 +59,7 @@ struct CatalogStoreRemovablePresenceTests {
 
     @Test func aReadCutShortByDetachLeavesTheOfflineSourceShowingWhatItLastHeld() async throws {
         let staging = try makeTestDirectory().appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let first = file("IMG_0001.JPG"), second = file("IMG_0002.JPG")
         let rootPath = try await attachEnumerated(store, staging: staging, files: [first, second])
@@ -80,7 +80,7 @@ struct CatalogStoreRemovablePresenceTests {
     /// partial — or empty — card.
     @Test func aReadThatEndsIncompleteShowsTheRowsTheSourceLastHeld() async throws {
         let staging = try makeTestDirectory().appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let first = file("IMG_0001.JPG"), second = file("IMG_0002.JPG")
         let rootPath = try await attachEnumerated(store, staging: staging, files: [first, second])
@@ -123,14 +123,14 @@ struct CatalogStoreRemovablePresenceTests {
         let database = temp.appending(path: "catalog.sqlite")
         let containers = StagingContainers(base: temp)
         let staging = containers.sessionRoot(in: .device, identity: identity)
-        let first = CatalogStore(location: .databaseFile(database), stagingContainers: containers)
+        let first = makeTestStore(location: .databaseFile(database), stagingContainers: containers)
         try await first.start(scansSavedLibraries: false)
         let rootPath = try await attachEnumerated(first, staging: staging, files: [file("IMG_0001.JPG")])
         try await first.detachRemovableSource(identity: identity, reason: .disconnected)
         _ = try await first.attachDeviceMTP(stagingRootURL: staging, identity: identity, displayName: "Camera")
         await first.shutdown()
 
-        let relaunched = CatalogStore(location: .databaseFile(database), stagingContainers: containers)
+        let relaunched = makeTestStore(location: .databaseFile(database), stagingContainers: containers)
         try await relaunched.start(scansSavedLibraries: false)
         #expect(try await relaunched.catalogedAssetCount(for: .library(rootPath)) == 1)
         await relaunched.shutdown()
@@ -138,7 +138,7 @@ struct CatalogStoreRemovablePresenceTests {
 
     @Test func anErasedFileLeavesTheCatalogTogetherWithItsJournal() async throws {
         let staging = try makeTestDirectory().appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let kept = file("IMG_0001.JPG"), erased = file("IMG_0002.JPG")
         let rootPath = try await attachEnumerated(store, staging: staging, files: [kept, erased])
@@ -182,7 +182,7 @@ struct CatalogStoreRemovablePresenceTests {
             }
             return try await CatalogScanner.live.scanRoot(rootPath, cadence, batchHandler)
         }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: libraryRoot)
         await libraryScanHeld.waitForArrivals(1)
@@ -215,7 +215,7 @@ struct CatalogStoreRemovablePresenceTests {
             try Task.checkCancellation()
             return try await CatalogScanner.live.scanRoot(rootPath, cadence, batchHandler)
         }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let card = DeviceIdentity.volume(uuid: "presence-resume")
         try await store.attachRemovableVolume(mountURL: cardRoot, identity: card, displayName: "Card", isEjectable: true, capabilities: .unknown)

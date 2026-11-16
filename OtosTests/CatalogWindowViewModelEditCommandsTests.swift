@@ -6,7 +6,7 @@ import Testing
 /// The edit panel's commands beyond its controls (ADR 0036): Show Original, Revert to
 /// Original, the keyboard's selected adjustment, resetting one control, and the histogram,
 /// against a real catalog and real photos.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelEditCommandsTests {
     @Test func showOriginalRendersTheUneditedPhotoUntilTheEditChanges() async throws {

@@ -7,7 +7,7 @@ import Testing
 /// with neither can never satisfy it, so it reads "stale" forever — even after
 /// enrichment has supplied the capture wall that names it. Planning asks a
 /// different question and must not inherit that permanent answer.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ImportPlanningNamingFactsTests {
     @Test func aKnownCaptureWallIsTerminalEvenWhenEnrichmentCanNeverSettle() async throws {
         let temp = try makeTestDirectory()
@@ -36,7 +36,7 @@ struct ImportPlanningNamingFactsTests {
             return .mediaOnly([relative])
         }
 
-        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationURL)
         try await store.attachRemovableVolume(
@@ -137,7 +137,7 @@ struct ImportPlanningNamingFactsTests {
             return .mediaOnly([relative])
         }
 
-        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationURL)
         try await store.attachRemovableVolume(

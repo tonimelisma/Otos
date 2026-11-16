@@ -109,7 +109,7 @@ private func result(_ outcome: MaterializationOutcome) -> MaterializationResult 
 
 private let fastRetry = MediaTrashCoordinator.RetryPolicy(delays: [.milliseconds(20)])
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct MediaTrashCoordinatorTests {
     @Test func pendingItemsAreTrashedCompanionFirstAndTheirRowsLeave() async throws {
         let fixture = try await TrashFixture.make()
@@ -480,7 +480,7 @@ extension MediaTrashCoordinatorTests {
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
         let database = temp.appending(path: "catalog.sqlite")
 
-        let first = CatalogStore(location: .databaseFile(database), scanCadence: .milliseconds(10))
+        let first = makeTestStore(location: .databaseFile(database), scanCadence: .milliseconds(10))
         try await first.start(scansSavedLibraries: false)
         try await first.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(first) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -488,7 +488,7 @@ extension MediaTrashCoordinatorTests {
         _ = try await first.markPendingTrash([id], batch: MediaTrashBatchID())
         await first.shutdown()
 
-        let relaunched = CatalogStore(location: .databaseFile(database), scanCadence: .milliseconds(10))
+        let relaunched = makeTestStore(location: .databaseFile(database), scanCadence: .milliseconds(10))
         let calls = TrashCallRecorder()
         let coordinator = MediaTrashCoordinator(
             store: relaunched,
@@ -534,7 +534,7 @@ private struct TrashFixture {
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: String(repeating: "j", count: primaryBytes))
         try writeCatalogStoreFile(root.appending(path: "a.xmp"), contents: "sidecar")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }

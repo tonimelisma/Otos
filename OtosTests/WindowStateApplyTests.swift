@@ -6,6 +6,7 @@ import Testing
 /// How the window takes in a publication (ADR 0004, ADR 0005): Projection hands unchanged
 /// parts on as the last publication's own, the window tells what changed by identity, every
 /// scope is titled by one owner, and nothing on a pane the user has left acts.
+@Suite(.testScope)
 @MainActor
 struct WindowStateApplyTests {
     // MARK: - Publication shares what did not change
@@ -405,7 +406,7 @@ private func makeIDs(_ count: Int) -> [MediaAssetID] {
 @MainActor
 private func makeViewModel() -> CatalogWindowViewModel {
     CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: makeTestStore(location: .inMemory),
         enrichmentCoordinator: nil,
         startsStallMonitor: false,
         startsEnrichment: false,

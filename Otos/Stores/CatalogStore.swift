@@ -868,6 +868,28 @@ actor CatalogStore {
         self.initialLoadDidRead = initialLoadDidRead
         self.importJournalFailure = importJournalFailure
     }
+
+    /// A store released without `shutdown()` ends what it started. Its reconcile loop,
+    /// filesystem-event consumer and integrity scheduler hold it weakly and would otherwise
+    /// wait forever on a doorbell, an event or a 15-minute sleep that no one will ring, and its
+    /// subscribers' streams would never end.
+    deinit {
+        reconcileDoorbell?.finish()
+        reconcileLoop?.cancel()
+        filesystemEventSink?.finish()
+        filesystemEventConsumer?.cancel()
+        integrityScanTask?.cancel()
+        for task in scanTasks.values {
+            task.cancel()
+        }
+        for continuation in changeContinuations.values {
+            continuation.finish()
+        }
+        for continuation in planningChangeContinuations.values {
+            continuation.finish()
+        }
+        openingContinuation.finish()
+    }
 }
 
 extension CatalogStore {

@@ -7,7 +7,7 @@ import Testing
 /// the day its own clock read when it was taken — in the grid's day sections, the Date sort
 /// and On This Day alike — whatever zone this Mac is in. An item whose file records no wall
 /// clock is placed by its absolute time in the zone Otos assumed when it recorded that time.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CaptureLocalTimeTests {
     private static let utc = TimeZone(secondsFromGMT: 0) ?? .gmt
 
@@ -48,7 +48,7 @@ struct CaptureLocalTimeTests {
         for file in files {
             try writeCatalogStoreFile(root.appending(path: file.name), contents: file.name)
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == files.count }

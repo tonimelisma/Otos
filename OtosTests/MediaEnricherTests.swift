@@ -5,7 +5,7 @@ import MediaMetadata
 import Synchronization
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct MediaEnricherTests {
     private final class SequencedReadinessChecker: EnrichmentReadinessChecking, Sendable {
         private let statuses: Mutex<[FileMaterializationStatus]>

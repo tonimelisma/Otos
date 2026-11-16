@@ -11,7 +11,7 @@ import Testing
 /// *current* predicate still implies the frozen index (the everyday case) and that a
 /// logically-equivalent but re-parenthesized predicate fails to prepare against it (the
 /// hazard this freeze exists to prevent from ever reaching a migration again).
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct EnrichmentClaimIndexContractTests {
     /// Catalogs migrated to v13 hold claim indexes created from this exact text, and
     /// `INDEXED BY` matches a partial index by its text, so changing it without a

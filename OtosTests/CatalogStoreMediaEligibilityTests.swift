@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreMediaEligibilityTests {
     @Test func scanCatalogsImageAndVideoMediaAndSkipsNonMedia() async throws {
         let temp = try makeTestDirectory()
@@ -13,7 +13,7 @@ struct CatalogStoreMediaEligibilityTests {
         try writeCatalogStoreFile(root.appending(path: "notes.txt"), contents: "text")
         try writeCatalogStoreFile(root.appending(path: "track.mp3"), contents: "mp3")
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
             scanCadence: .milliseconds(10)
         )
@@ -52,7 +52,7 @@ struct CatalogStoreMediaEligibilityTests {
         try writeCatalogStoreFile(root.appending(path: "AVF_INFO/clip.jpg"), contents: "jpeg")
         try writeCatalogStoreFile(root.appending(path: "M4ROOT/SUB/proxy.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanCadence: .milliseconds(10)
         )

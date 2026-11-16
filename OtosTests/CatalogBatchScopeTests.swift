@@ -10,7 +10,7 @@ import Testing
 ///
 /// Store answers *what the scope holds*; `CatalogWindowPolicy` turns that into
 /// *what the window says*. They are tested at their own boundaries.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogBatchScopeTests {
     private static let batch = ImportBatchID(unixMilliseconds: 1_785_908_514_176)
 
@@ -26,7 +26,7 @@ struct CatalogBatchScopeTests {
         try writeCatalogStoreFile(root.appending(path: "earlier.heic"), contents: "still")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }

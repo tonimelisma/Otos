@@ -4,7 +4,7 @@ import Testing
 
 /// The live plan builder performs work off the coordinator actor and returns the plan
 /// plus namespace counts and timing.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ImportPlanBuilderTests {
     /// A path identifier only: planning never reads the source root.
     private static let sourceRoot = LibraryRootPath(rawValue: "/Volumes/PLAN-BUILDER-CARD")

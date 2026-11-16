@@ -3,7 +3,7 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreEnrichmentTests {
     // MARK: - Pure model: staleness signature and best-date
 
@@ -91,7 +91,7 @@ struct CatalogStoreEnrichmentTests {
 
         let mtime = MutableSeconds(1000)
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: singleFileScanner(rel, mtime: mtime),
             filesystemWatcher: watcher
@@ -148,7 +148,7 @@ struct CatalogStoreEnrichmentTests {
         let rel = MediaRelativePath(rawValue: "a.jpg")
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: rel)
 
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -182,7 +182,7 @@ struct CatalogStoreEnrichmentTests {
             store: store
         )
 
-        let reloaded = CatalogStore(location: .databaseFile(databaseURL))
+        let reloaded = makeTestStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
         let asset = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(asset.thumbnailPath == "thumb.jpg")
@@ -199,7 +199,7 @@ struct CatalogStoreEnrichmentTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -224,7 +224,7 @@ struct CatalogStoreEnrichmentTests {
                 arguments: [Data(repeating: 0, count: 15), asset.relativePath.rawValue]
             )
         }
-        let reloaded = CatalogStore(location: .databaseFile(databaseURL))
+        let reloaded = makeTestStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
         let persisted = try #require(try await catalogStoreTestState(reloaded).testAssets.first {
             $0.libraryRootPath == rootPath
@@ -244,7 +244,7 @@ struct CatalogStoreEnrichmentTests {
         let mtime = MutableSeconds(1000)
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: singleFileScanner(rel, mtime: mtime),
             filesystemWatcher: watcher
@@ -281,7 +281,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(current.metadataSourceMTimeSeconds == nil)
         #expect(current.needsEnrichment(.products))
 
-        let reloaded = CatalogStore(location: .databaseFile(databaseURL))
+        let reloaded = makeTestStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
         let persisted = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(persisted.thumbnailPath == nil)
@@ -319,7 +319,7 @@ struct CatalogStoreEnrichmentTests {
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: rel)
 
         let mtime = MutableSeconds(1000)
-        let store = CatalogStore(location: .inMemory, scanner: singleFileScanner(rel, mtime: mtime))
+        let store = makeTestStore(location: .inMemory, scanner: singleFileScanner(rel, mtime: mtime))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -386,7 +386,7 @@ struct CatalogStoreEnrichmentTests {
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destination)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: source)
         try await store.addLibrary(url: destination)
@@ -486,7 +486,7 @@ struct CatalogStoreEnrichmentTests {
 
         let present = MutablePresence(true)
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: presenceScanner(rel, present: present),
             filesystemWatcher: watcher
@@ -531,7 +531,7 @@ struct CatalogStoreEnrichmentTests {
         let rel = MediaRelativePath(rawValue: "a.jpg")
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: rel)
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: singleFileScanner(rel, mtime: MutableSeconds(1000))
         )
@@ -572,7 +572,7 @@ struct CatalogStoreEnrichmentTests {
         let rel = MediaRelativePath(rawValue: "broken.jpg")
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: rel)
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: singleFileScanner(rel, mtime: MutableSeconds(1000))
         )
@@ -732,7 +732,7 @@ private func enrichedCardImportFixture(rendered: Bool = true) async throws -> En
     try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
     let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destination)
 
-    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+    let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
     try await store.start(scansSavedLibraries: false)
     try await store.attachRemovableVolume(
         mountURL: card,

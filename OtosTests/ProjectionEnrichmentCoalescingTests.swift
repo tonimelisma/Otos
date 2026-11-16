@@ -6,7 +6,7 @@ import Testing
 /// repeats a read only when a kind it depends on was touched. An enrichment write that cannot
 /// change the shown order or the filter's options publishes its detail refresh without reading
 /// either; one that can — a capture date read from bytes, a stack fact — reads the order again.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ProjectionEnrichmentCoalescingTests {
     private static let assetCount = 2000
     private static let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
@@ -35,7 +35,7 @@ struct ProjectionEnrichmentCoalescingTests {
         let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, scanner: seededScanner())
+        let store = makeTestStore(location: .inMemory, scanner: seededScanner())
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         let state = try await waitForCatalogStoreState(store) {
@@ -73,7 +73,7 @@ struct ProjectionEnrichmentCoalescingTests {
         let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, scanner: seededScanner())
+        let store = makeTestStore(location: .inMemory, scanner: seededScanner())
         let projection = CatalogProjection(cadence: .milliseconds(25))
         let recorder = AsyncValueRecorder<CatalogWindowState>()
         let stream = await projection.states(store: store, initialDescriptor: .default)
@@ -151,7 +151,7 @@ struct ProjectionEnrichmentCoalescingTests {
             try await batchHandler(files)
             return .mediaOnly(Set(files.map(\.relativePath)))
         }
-        let store = CatalogStore(location: .inMemory, scanner: pair)
+        let store = makeTestStore(location: .inMemory, scanner: pair)
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         let state = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
@@ -322,7 +322,7 @@ struct ProjectionEnrichmentCoalescingTests {
         for url in [firstURL, secondURL] {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
-        let store = CatalogStore(location: .inMemory, scanner: seededScanner())
+        let store = makeTestStore(location: .inMemory, scanner: seededScanner())
         let projection = CatalogProjection(cadence: .milliseconds(25))
         let recorder = AsyncValueRecorder<CatalogWindowState>()
         let stream = await projection.states(store: store, initialDescriptor: .default)

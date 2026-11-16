@@ -62,7 +62,7 @@ extension AppKitWindowTests {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 let model = CatalogWindowViewModel(
-                    catalogStore: CatalogStore(location: .inMemory),
+                    catalogStore: makeTestStore(location: .inMemory),
                     enrichmentCoordinator: nil,
                     startsStallMonitor: false,
                     startsEnrichment: false,
@@ -156,7 +156,7 @@ extension AppKitWindowTests {
 
         private static func model() -> CatalogWindowViewModel {
             let model = CatalogWindowViewModel(
-                catalogStore: CatalogStore(location: .inMemory),
+                catalogStore: makeTestStore(location: .inMemory),
                 enrichmentCoordinator: nil,
                 startsStallMonitor: false,
                 startsEnrichment: false,

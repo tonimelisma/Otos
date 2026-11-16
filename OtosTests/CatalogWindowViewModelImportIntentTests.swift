@@ -5,7 +5,7 @@ import Testing
 /// Import intents reach the coordinator in the order the user made them. The view model
 /// funnels them through one lossless stream with one consumer, because Swift does not order
 /// separate `Task {}` blocks started from the main actor.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelImportIntentTests {
     /// "Change the destination, then Import" — two synchronous calls, back to back — must
@@ -20,7 +20,7 @@ struct CatalogWindowViewModelImportIntentTests {
         }
         try Data(repeating: 3, count: 4096).write(to: cardURL.appending(path: "f.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: firstURL)
         try await store.addLibrary(url: secondURL)

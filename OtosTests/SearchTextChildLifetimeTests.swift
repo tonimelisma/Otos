@@ -7,7 +7,7 @@ import Testing
 /// exits when its input ends, even while a reading holds its reading thread, so Otos's end —
 /// closing the session, quitting, crashing, being killed — ends it, and the reader's shutdown
 /// returns only once its child is gone.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct SearchTextChildLifetimeTests {
     /// Requests for a picture that does not exist, each answered `.undecodable` at once. Their
     /// answers (19 bytes each) overfill a pipe (64 KB at most) several times over, so a child

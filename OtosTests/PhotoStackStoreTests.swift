@@ -5,7 +5,7 @@ import Testing
 
 /// ADR 0052 through the Store: a RAW and its JPEG are read as one stack with the order,
 /// whatever the filter, and the user's key choice is kept on the member it names.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct PhotoStackStoreTests {
     @Test func theOrderIsReadWithItsPairs() async throws {
@@ -282,7 +282,7 @@ struct PhotoStackStoreTests {
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(5))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(5))
         do {
             try await store.addLibrary(url: root)
             let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning }

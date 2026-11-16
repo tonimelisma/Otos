@@ -7,7 +7,7 @@ import Testing
 /// presentation, the camera is asked for on entry and on return, stacks follow the
 /// viewport through the cluster lane, and a place under the map is a scope reached
 /// and left by two intents.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogWindowViewModelMapTests {
     private static let helsinki = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
     private let pictures = CatalogLibraryState(
@@ -385,7 +385,7 @@ struct CatalogWindowViewModelMapTests {
     @MainActor
     private func makeViewModel() -> CatalogWindowViewModel {
         CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
+            catalogStore: makeTestStore(location: .inMemory, scanCadence: .milliseconds(10)),
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,

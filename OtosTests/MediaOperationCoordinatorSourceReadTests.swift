@@ -4,7 +4,7 @@ import Testing
 
 /// ENR-017: an import run brackets its read of the source in the Store, so enrichment
 /// leaves a card alone exactly while it is copied, however the run ends.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct MediaOperationCoordinatorSourceReadTests {
     @Test func aCardIsNotEnrichedWhileItsImportRunsAndIsAfterItFails() async throws {
         let temp = try makeTestDirectory()
@@ -14,7 +14,7 @@ struct MediaOperationCoordinatorSourceReadTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 7, count: 1024).write(to: cardURL.appending(path: "f.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }

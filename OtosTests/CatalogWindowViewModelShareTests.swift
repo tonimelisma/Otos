@@ -6,6 +6,7 @@ import Testing
 /// Intent-level coverage for Share (APP-036): the shareable list is the current-item
 /// resolver's answer per view mode, and nothing is presented without a target. The
 /// picker itself is the system's; these tests stop at the URLs handed to it.
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelShareTests {
     @Test func gridSharesOrderedSelection() {
@@ -59,7 +60,7 @@ struct CatalogWindowViewModelShareTests {
 private func makeShareModel() -> CatalogWindowViewModel {
     // Open, Open With, Share and Copy are hand-offs, consumed by the hand-off lane.
     let model = CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: makeTestStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,

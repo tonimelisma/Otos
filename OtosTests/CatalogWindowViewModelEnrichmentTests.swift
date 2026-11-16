@@ -6,7 +6,7 @@ import Testing
 /// viewport, and (critically) starts it only after the catalog has loaded so persisted
 /// assets enrich on launch even when the launch rescan is a no-op that fires no
 /// notification. These tests drive that wiring with an injected fake enricher.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogWindowViewModelEnrichmentTests {
     @MainActor
     @Test func persistedAssetsEnrichOnRelaunchAfterNoOpLaunchScan() async throws {
@@ -26,7 +26,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         let (secondWatcher, _) = CatalogFilesystemWatcher.testing()
 
         // First launch: persist the cataloged asset with no enrichment (no coordinator).
-        let firstStore = CatalogStore(
+        let firstStore = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: fixedOneFileScanner("one.jpg"),
             filesystemWatcher: firstWatcher,
@@ -42,7 +42,7 @@ struct CatalogWindowViewModelEnrichmentTests {
 
         // Relaunch: a fresh store reloads the persisted, un-enriched asset from SQLite; its
         // launch rescan re-observes identical facts and fires no notification.
-        let secondStore = CatalogStore(
+        let secondStore = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: fixedOneFileScanner("one.jpg"),
             filesystemWatcher: secondWatcher,

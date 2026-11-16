@@ -88,6 +88,7 @@ final class FakePreviewLoader: PreviewLoading {
     func resume(under root: LibraryRootPath) async {}
 }
 
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelViewModeTests {
     @Test func staleDecodeDiscardedByIdentity() async throws {
@@ -385,7 +386,7 @@ struct CatalogWindowViewModelViewModeTests {
 private func makeViewModeModel(loader: FakePreviewLoader) -> CatalogWindowViewModel {
     let temp = PreferencesDomain.suite(UUID().uuidString)
     return CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory),
+        catalogStore: makeTestStore(location: .inMemory),
         enrichmentCoordinator: nil,
         startsStallMonitor: false,
         startsEnrichment: false,

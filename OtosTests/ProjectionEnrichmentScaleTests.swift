@@ -16,7 +16,7 @@ import Testing
 /// not inferred from process presence). Inventing a number here would violate that
 /// instruction; only `orderQueryCount` — a mechanism assertion, not a performance
 /// budget — is checked.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ProjectionEnrichmentScaleTests {
     private static let assetCount = 25000
     private static let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
@@ -63,7 +63,7 @@ struct ProjectionEnrichmentScaleTests {
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
 
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanner: seededScanner())
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanner: seededScanner())
         let projection = CatalogProjection(cadence: .milliseconds(25))
         let recorder = AsyncValueRecorder<CatalogWindowState>()
         let stream = await projection.states(store: store, initialDescriptor: .default)

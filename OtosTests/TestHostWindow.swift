@@ -12,7 +12,7 @@ import Testing
 /// suites nested in it — so it is applied here, once, and every window-hosting test runs
 /// one at a time relative to every other. Tests that never order a window in stay
 /// parallel.
-@Suite(.serialized)
+@Suite(.serialized, .testScope)
 @MainActor
 enum AppKitWindowTests {}
 

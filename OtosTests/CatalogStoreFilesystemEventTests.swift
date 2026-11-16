@@ -3,7 +3,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreFilesystemEventTests {
     @Test func eventRescansOnlyAffectedRoot() async throws {
         let temp = try makeTestDirectory()
@@ -14,7 +14,7 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingScanner(recorder),
             filesystemWatcher: watcher
@@ -54,7 +54,7 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingScanner(recorder),
             filesystemWatcher: watcher
@@ -93,7 +93,7 @@ struct CatalogStoreFilesystemEventTests {
         let probe = FilesystemScanProbe()
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: deferredHangingScanner(probe: probe, recorder: recorder),
             filesystemWatcher: watcher
@@ -125,7 +125,7 @@ struct CatalogStoreFilesystemEventTests {
         let probe = FilesystemScanProbe()
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: deferredHangingScanner(probe: probe, recorder: recorder),
             filesystemWatcher: watcher
@@ -165,7 +165,7 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
@@ -205,7 +205,7 @@ struct CatalogStoreFilesystemEventTests {
         let probe = FilesystemScanProbe()
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: firstScanHangingScanner(probe: probe, recorder: recorder),
             filesystemWatcher: watcher
@@ -233,7 +233,7 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingScanner(recorder),
             filesystemWatcher: watcher
@@ -260,7 +260,7 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
@@ -303,7 +303,7 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
@@ -340,7 +340,7 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
@@ -392,7 +392,7 @@ struct CatalogStoreFilesystemEventTests {
             return observation
         }
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: scanner,
             filesystemWatcher: watcher,
@@ -448,7 +448,7 @@ struct CatalogStoreFilesystemEventTests {
         let probe = FilesystemScanProbe()
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: snapshotHangingScanner(
                 snapshot: snapshot,
@@ -505,7 +505,7 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
@@ -549,7 +549,7 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,

@@ -8,7 +8,7 @@ import Testing
 /// temporary domain persists and isolates, and that reconstructing actors from the
 /// same domain observes the same persisted state while a distinct control suite
 /// remains unchanged.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct PreferencesDomainTests {
     @Test func temporaryDomainPersistsViewModelStateAndIsolatesControl() {
@@ -17,7 +17,7 @@ struct PreferencesDomainTests {
 
         // First ViewModel persists grid column count and ImportPreferences into temp.
         let first = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory),
+            catalogStore: makeTestStore(location: .inMemory),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
@@ -42,7 +42,7 @@ struct PreferencesDomainTests {
 
         // Reconstructing from the same domain observes the persisted values.
         let second = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory),
+            catalogStore: makeTestStore(location: .inMemory),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,

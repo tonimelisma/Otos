@@ -7,7 +7,7 @@ import Testing
 /// Faces read from stored previews (ADR 0047): which rows owe them in a library and an Immich
 /// account, how a new version or a new edit is read, how a face read through an edit lands on
 /// the upright photo, and the reader end to end.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct PreviewFaceReaderTests {
     /// How many previews the stand-in analyser was handed.
     private final class Calls: Sendable {
@@ -385,7 +385,7 @@ struct PreviewFaceReaderTests {
         let rootPath: LibraryRootPath
 
         static func make(in directory: URL) async throws -> ImmichAccount {
-            let store = CatalogStore(
+            let store = makeTestStore(
                 location: .databaseFile(directory.appending(path: "db/catalog.sqlite")), scanCadence: .milliseconds(10),
                 stagingContainers: StagingContainers(base: directory)
             )

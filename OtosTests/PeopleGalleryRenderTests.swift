@@ -164,7 +164,7 @@ extension AppKitWindowTests {
     /// The People gallery's main-thread cost at the owner's scale and beyond: opening it,
     /// and applying the People update a face read publishes every few seconds.
     @MainActor
-    @Suite(.testDirectory)
+    @Suite(.testScope)
     struct PeopleGalleryRenderTests {
         @Test(arguments: [738, 5000])
         func openingAndUpdatingTheGallery(people count: Int) async throws {
@@ -177,7 +177,7 @@ extension AppKitWindowTests {
             let first = built[0]
             let directory = try makeTestDirectory()
             let model = CatalogWindowViewModel(
-                catalogStore: CatalogStore(
+                catalogStore: makeTestStore(
                     location: .databaseFile(directory.appending(path: "Catalog.sqlite")),
                     stagingContainers: StagingContainers(base: directory)
                 ),

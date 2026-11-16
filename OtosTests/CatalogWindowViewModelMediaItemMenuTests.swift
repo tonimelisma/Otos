@@ -7,6 +7,7 @@ import Testing
 /// ViewModel side of the media context menu (APP-037): the right-click selection rule
 /// through the real grid controller, synchronous model freshness, and the command
 /// mapping onto the menu-bar intents.
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelMediaItemMenuTests {
     @Test func contextClickOutsideSelectionSelectsOnlyTheHit() async throws {
@@ -89,7 +90,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
 
     /// Reveal shows where a photo lives, not what a hand-off gives: an edited photo is
     /// revealed as its original, and nothing is rendered for it (ADR 0037).
-    @Test(.testDirectory) func revealShowsTheOriginalOfAnEditedPhoto() async throws {
+    @Test func revealShowsTheOriginalOfAnEditedPhoto() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
             _ = try await library.store.setEditRecipe(EditRecipe(exposure: 1), for: library.ids[1])
             let workspace = MenuRecordingWorkspace()
@@ -149,7 +150,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
 @MainActor
 private func makeMenuModel(
     workspace: MenuRecordingWorkspace,
-    store: CatalogStore = CatalogStore(location: .inMemory)
+    store: CatalogStore = makeTestStore(location: .inMemory)
 ) -> CatalogWindowViewModel {
     // Open, Open With, Share, Copy and Reveal are hand-offs, consumed by the hand-off lane.
     let model = CatalogWindowViewModel(

@@ -9,7 +9,7 @@ import Testing
 /// they are held to, what undoing each writes back, what a new reading of a photo keeps,
 /// how assignment's guesses are written without ever overwriting the user's word, and the
 /// People filter and likeness order the browser reads.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct PeopleStoreTests {
     @Test func theUsersActsAreReadBackAsFacts() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
@@ -501,7 +501,7 @@ struct PeopleStoreTests {
         let (library, databaseURL) = try await Self.lookalikes(count, in: makeTestDirectory())
         await library.store.shutdown()
         // A store opened on the catalog afresh counts only the pass's transactions.
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         let libraries = try #require(await store.loadedLibraries())
         let state = try await PeopleAssignment.settle(store: store, libraries: libraries)
@@ -525,7 +525,7 @@ struct PeopleStoreTests {
         #expect(first.person(sam)?.media.total == 4)
         await library.store.shutdown()
 
-        let store = CatalogStore(location: .databaseFile(databaseURL))
+        let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         let libraries = try #require(await store.loadedLibraries())
         /// A read is counted as its transaction ends, which can be after its caller resumed
@@ -584,7 +584,7 @@ struct PeopleStoreTests {
             }
         }
         try queue.close()
-        let store = CatalogStore(location: .databaseFile(catalog.databaseURL))
+        let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let libraries = try #require(await store.loadedLibraries())
         let before = ProcessResourceSample.current().footprintBytes

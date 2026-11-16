@@ -5,7 +5,7 @@ import Testing
 /// Projection shows an act's result from what it holds, before the Store's write or a pass
 /// (DES-120): a choice the shown filter excludes takes its item out, and an expansion is
 /// published in the step that applies it.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogProjectionShownFirstTests {
     /// Liked only: a Dislike takes its photo out with no read; a withdrawn one brings it back;
     /// an undo held after it puts it back at once; the read of the landed write retires it.
@@ -62,7 +62,7 @@ struct CatalogProjectionShownFirstTests {
         for name in ["DSC1.ARW", "DSC1.JPG", "DSC2.JPG"] {
             try Data(name.utf8).write(to: rootURL.appending(path: name))
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }

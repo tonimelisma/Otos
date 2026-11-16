@@ -13,7 +13,7 @@ import Testing
 /// The model is not started: People states are settled from the store with
 /// `PeopleAssignment.settle` and applied by hand, so each test decides which state arrives
 /// when.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct PeopleViewModelTests {
     @MainActor

@@ -5,7 +5,7 @@ import NaturalLanguage
 import Testing
 
 /// The facts a query names besides the picture (ADR 0048): when, where, who.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct SearchQueryFactsTests {
     private static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
@@ -205,7 +205,7 @@ struct SearchQueryFactsTests {
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         let file = library.appending(path: "a.jpg")
         try writeCatalogStoreFile(file, contents: "jpeg")
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: library)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }

@@ -4,7 +4,7 @@ import Testing
 
 /// A bundled model is loaded from the path its link resolves to, so every checkout's tests
 /// give Core ML one path per model version and share its compiled copy (ADR 0044 §11).
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct BundledModelTests {
     @Test func aLinkedModelIsLoadedFromWhereItsLinkLeads() throws {
         let temp = try makeTestDirectory()

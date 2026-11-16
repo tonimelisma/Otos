@@ -6,6 +6,7 @@ import Testing
 /// drawn only on a removable source's own row, and an import moves the selection
 /// to its batch once, when the batch's row first exists. These tests exercise the ViewModel's public
 /// `applyImportPresentations`/`applyState` entry points.
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelMediaOperationsTests {
     private static let cardPath = LibraryRootPath(rawValue: "/Volumes/CARD")
@@ -69,7 +70,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
     private func makeModel() -> CatalogWindowViewModel {
         let temp = PreferencesDomain.suite(UUID().uuidString)
         return CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory),
+            catalogStore: makeTestStore(location: .inMemory),
             enrichmentCoordinator: nil,
             startsStallMonitor: false,
             startsEnrichment: false,

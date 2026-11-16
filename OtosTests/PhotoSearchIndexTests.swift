@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 // Serialized: every case builds its own index, which loads the image and text models
 // (hundreds of megabytes) and Vision's readers. Run side by side they took the test host
 // past its 2 GB ceiling (2,142 MB) under the full suite.
-@Suite(.serialized, .testDirectory)
+@Suite(.serialized, .testScope)
 struct PhotoSearchIndexTests {
     private struct Catalog {
         let store: CatalogStore
@@ -38,7 +38,7 @@ struct PhotoSearchIndexTests {
             try Data("not an image".utf8).write(to: thumbnails.appending(path: "broken-thumb.jpg"))
         }
         let count = broken ? 3 : 2
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: library)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == count }

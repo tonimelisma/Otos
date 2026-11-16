@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct MediaOperationCoordinatorTests {
     @Test func repeatedIntentAndOccupancyChangeStartOneBatch() async throws {
         let temp = try makeTestDirectory()
@@ -15,7 +15,7 @@ struct MediaOperationCoordinatorTests {
                 to: sourceURL.appending(path: "image-\(index).jpg")
             )
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationURL)
         let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
@@ -76,7 +76,7 @@ struct MediaOperationCoordinatorTests {
         try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
         try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: fixedRoot)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -151,7 +151,7 @@ struct MediaOperationCoordinatorTests {
             ])
             return .mediaOnly([relative])
         }
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: scanner,
             scanCadence: .milliseconds(10)
@@ -234,7 +234,7 @@ struct MediaOperationCoordinatorTests {
         try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
         try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: fixedRoot)
         let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
@@ -319,7 +319,7 @@ struct MediaOperationCoordinatorTests {
         try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
         try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: fixedRoot)
         let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
@@ -390,7 +390,7 @@ struct MediaOperationCoordinatorTests {
         try writeCatalogStoreFile(cardRoot.appending(path: "first.jpg"), contents: "jpeg-bytes")
 
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             filesystemWatcher: watcher,
             scanCadence: .milliseconds(10)
@@ -493,7 +493,7 @@ struct MediaOperationCoordinatorTests {
             }
         )
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: scanner,
             filesystemWatcher: watcher,
@@ -575,7 +575,7 @@ struct MediaOperationCoordinatorTests {
         }
         try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: firstRoot)
         try await store.addLibrary(url: secondRoot)
@@ -643,7 +643,7 @@ struct MediaOperationCoordinatorTests {
         try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
         try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: fixedRoot)
         let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
@@ -713,7 +713,7 @@ struct MediaOperationCoordinatorTests {
         try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
         try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: fixedRoot)
         let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
@@ -782,7 +782,7 @@ struct MediaOperationCoordinatorTests {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: firstURL)
         try await firstStore.addLibrary(url: secondURL)
@@ -791,7 +791,7 @@ struct MediaOperationCoordinatorTests {
         }
         try FileManager.default.removeItem(at: firstURL)
 
-        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start()
         _ = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.libraries.count == 2
@@ -996,7 +996,7 @@ struct MediaOperationCoordinatorTests {
         for url in libraryURLs + [cardURL] {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         for url in libraryURLs {
             try await store.addLibrary(url: url)

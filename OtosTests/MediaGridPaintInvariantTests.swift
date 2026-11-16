@@ -131,7 +131,7 @@ extension AppKitWindowTests {
         /// APP-015 and ADR 0032 rule 4: a visible-detail query that fails merges nothing,
         /// so the painted tile keeps its thumbnail, and it leaves the request outstanding,
         /// so the next scroll flush over the same tiles asks again and merges the rows.
-        @Test(.testDirectory) func failedDetailQueryKeepsThePaintedTileAndAsksAgain() async throws {
+        @Test func failedDetailQueryKeepsThePaintedTileAndAsksAgain() async throws {
             try await withEditableLibrary(fileCount: 2) { library in
                 let harness = try PaintInvariantHarness(ids: library.ids)
                 harness.controller.detailReader = MediaTileDetailReader(store: library.store)

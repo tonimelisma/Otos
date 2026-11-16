@@ -6,7 +6,7 @@ import Testing
 
 /// The models Auto crop and Auto straighten read with (ADR 0043), and the solver that turns
 /// GeoCalib's fields into a roll and its uncertainty.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct AutoEditModelTests {
     // MARK: - Solver
 

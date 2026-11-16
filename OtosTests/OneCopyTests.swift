@@ -7,7 +7,7 @@ import Testing
 /// identical copies, a library's before an account's; one root's scope and Duplicates show
 /// every file. An uploaded Immich asset's checksum is its digest, so its copy of a library
 /// file is found with no download.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct OneCopyTests {
     private static let server = URL(string: "https://photos.example.com")!
     private static let date = Date(timeIntervalSince1970: 1_700_000_000)
@@ -30,7 +30,7 @@ struct OneCopyTests {
         if let twin {
             try writeCatalogStoreFile(folder.appending(path: twin), contents: "same")
         }
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: folder)
         let library = try CatalogPath.normalizedDirectoryPath(for: folder)

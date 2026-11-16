@@ -7,7 +7,7 @@ import Testing
 /// latitude/longitude box, and every scoped read — order, counts, filter options —
 /// agrees about both. Store answers *what the scope holds*; `CatalogWindowPolicy`
 /// turns that into *what the window says*, tested at its own boundary below.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogPlacesScopeTests {
     private static let helsinki = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
     private static let sydney = PlaceCoordinate(latitude: -33.87, longitude: 151.21)
@@ -25,7 +25,7 @@ struct CatalogPlacesScopeTests {
             try writeCatalogStoreFile(root.appending(path: name), contents: name)
         }
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 4 }

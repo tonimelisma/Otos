@@ -5,7 +5,7 @@ import Testing
 /// The remembered destination per source reaches Settings through one ordered stream:
 /// it opens with the current map, and each pick the coordinator applies is published in
 /// the order it was applied, so a later pick is never followed by an earlier map.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct MediaOperationDestinationStreamTests {
     @Test func destinationPicksArePublishedInTheOrderTheyWereApplied() async throws {
         let temp = try makeTestDirectory()
@@ -13,7 +13,7 @@ struct MediaOperationDestinationStreamTests {
         let first = LibraryRootPath(rawValue: temp.appending(path: "First").path(percentEncoded: false))
         let second = LibraryRootPath(rawValue: temp.appending(path: "Second").path(percentEncoded: false))
         let coordinator = MediaOperationCoordinator(
-            store: CatalogStore(location: .inMemory),
+            store: makeTestStore(location: .inMemory),
             preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
             volumeCapacity: ampleVolumeCapacity
         )

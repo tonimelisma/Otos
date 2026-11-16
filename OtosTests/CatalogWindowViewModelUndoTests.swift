@@ -8,7 +8,7 @@ import Testing
 /// Every choice, undo and redo travels the view model's one media-choice lane, so
 /// `hasSettledMediaChoices` is the fact that it has been written (or refused) and its
 /// undo registered; each step waits for that and then asserts the exact outcome.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelUndoTests {
     @Test func likeThenUndoRestoresNotRatedAndRedoReappliesLike() async throws {

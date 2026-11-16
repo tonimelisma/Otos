@@ -5,7 +5,7 @@ import Testing
 /// A People act shows its result before People is built with it (DES-120, APP-087): the acts
 /// are taken off the stream by hand, so each test decides when the store answers and which
 /// People state arrives when.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct PeopleShownFirstTests {
     typealias Fixture = PeopleViewModelTests.Fixture

@@ -87,12 +87,12 @@ private enum SnapshotError: Error {
     case digestFailed(String)
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct OriginalsReadOnlyTests {
     @Test func addLibraryAndFullScanLeaveOriginalTreeUnchanged() async throws {
         let root = try makeFixtureRoot(named: "scan")
         let before = try FilesystemTreeSnapshot.capture(root: root)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -103,7 +103,7 @@ struct OriginalsReadOnlyTests {
         let root = try makeFixtureRoot(named: "companions")
         try Data("sidecar".utf8).write(to: root.appending(path: "photo.xmp"))
         try Data("captions".utf8).write(to: root.appending(path: "photo.srt"))
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
@@ -161,7 +161,7 @@ struct OriginalsReadOnlyTests {
     @Test func materializationCoordinatorLeavesOriginalTreeUnchanged() async throws {
         let root = try makeFixtureRoot(named: "materialization")
         let before = try FilesystemTreeSnapshot.capture(root: root)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         let coordinator = MaterializationCoordinator(
             store: store,
@@ -220,7 +220,7 @@ struct OriginalsReadOnlyTests {
     @Test func externalChangeRescanWindowDoesNotRewriteExistingOriginals() async throws {
         let root = try makeFixtureRoot(named: "rescan")
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(location: .inMemory, filesystemWatcher: watcher, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, filesystemWatcher: watcher, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning }

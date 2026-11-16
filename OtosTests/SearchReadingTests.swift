@@ -39,7 +39,7 @@ final class ExitingSession: SearchTextSession {
 
 /// What search reads besides the picture's embedding (ADR 0048): the text in a photo, and the
 /// scene labels that gate a query naming a thing.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct SearchReadingTests {
     /// Whether `query` matches `text` as a search pass matches it (`PhotoSearchIndex`): the
     /// reading kept folded, the query's words read once.
@@ -305,7 +305,7 @@ struct SearchReadingTests {
         let library = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         try writeCatalogStoreFile(library.appending(path: "sign.jpg"), contents: "jpeg sign")
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: library)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -335,7 +335,7 @@ struct SearchReadingTests {
         let library = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         try writeCatalogStoreFile(library.appending(path: "pool.jpg"), contents: "jpeg pool")
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: library)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }

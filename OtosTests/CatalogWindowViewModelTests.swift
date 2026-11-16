@@ -2,11 +2,11 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogWindowViewModelTests {
     @MainActor
     @Test func activeStateSubscriptionDoesNotRetainViewModel() async throws {
-        let store = CatalogStore(location: .inMemory)
+        let store = makeTestStore(location: .inMemory)
         let builds = AsyncValueRecorder<CatalogQueryRequest>()
         var projection: CatalogProjection? = CatalogProjection(
             cadence: .milliseconds(10),
@@ -71,7 +71,7 @@ struct CatalogWindowViewModelTests {
             picturesPath: "one.jpg",
             archivePath: "two.jpg",
         ])
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: scanner,
             scanCadence: .milliseconds(10)
@@ -114,7 +114,7 @@ struct CatalogWindowViewModelTests {
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
@@ -151,7 +151,7 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
@@ -190,7 +190,7 @@ struct CatalogWindowViewModelTests {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Holiday", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, scanner: CatalogScanner { _, _, _ in .empty })
+        let store = makeTestStore(location: .inMemory, scanner: CatalogScanner { _, _, _ in .empty })
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
@@ -238,7 +238,7 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
 
         let scanner = CatalogScanner { _, _, _ in .empty }
-        let store = CatalogStore(location: .inMemory, scanner: scanner)
+        let store = makeTestStore(location: .inMemory, scanner: scanner)
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
@@ -274,7 +274,7 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
 
         let scanner = CatalogScanner { _, _, _ in .empty }
-        let store = CatalogStore(location: .inMemory, scanner: scanner)
+        let store = makeTestStore(location: .inMemory, scanner: scanner)
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
@@ -322,7 +322,7 @@ struct CatalogWindowViewModelTests {
 
         let loadGate = ArrivalGate()
         let scanner = CatalogScanner { _, _, _ in .empty }
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: scanner,
             initialLoadDidRead: {
@@ -366,7 +366,7 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: picturesURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: archiveURL, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,

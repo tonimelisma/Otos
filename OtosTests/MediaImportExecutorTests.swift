@@ -3,7 +3,7 @@ import Foundation
 import Synchronization
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ExclusivePublicationTests {
     @Test func refusesOverwriteWhenFinalExists() throws {
         let temp = try makeTestDirectory()
@@ -28,7 +28,7 @@ extension ExclusivePublicationTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CopyfileTransferTests {
     /// copyfile(3) writes a failed data or attribute step again when the callback answers
     /// continue, so a full disk retried forever. A failed step quits, and cancellation
@@ -84,10 +84,10 @@ struct CopyfileTransferTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ActiveFileOperationJournalTests {
     @Test func journalRoundTripsThroughStore() async throws {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
 
         let operation = ActiveFileOperation(
@@ -128,7 +128,7 @@ struct ActiveFileOperationJournalTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ImportRecoveryTests {
     private func operation(
         rootPath: LibraryRootPath,
@@ -179,7 +179,7 @@ struct ImportRecoveryTests {
         )
 
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destination)
         let operation = ActiveFileOperation(
@@ -225,7 +225,7 @@ struct ImportRecoveryTests {
             return
         }
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destination)
         let op = operation(
@@ -258,7 +258,7 @@ struct ImportRecoveryTests {
             return
         }
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destination)
         let op = operation(
@@ -292,7 +292,7 @@ struct ImportRecoveryTests {
             return
         }
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destination)
         let op = operation(
@@ -322,7 +322,7 @@ struct ImportRecoveryTests {
         let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, filesystemWatcher: .noop)
+        let store = makeTestStore(location: .inMemory, filesystemWatcher: .noop)
         try await store.start(scansSavedLibraries: false)
         try await store.ensureLibrary(url: destination)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
@@ -363,7 +363,7 @@ struct ImportRecoveryTests {
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let locked = destination.appending(path: "locked", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, filesystemWatcher: .noop)
+        let store = makeTestStore(location: .inMemory, filesystemWatcher: .noop)
         try await store.start(scansSavedLibraries: false)
         try await store.ensureLibrary(url: destination)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
@@ -403,7 +403,7 @@ struct ImportRecoveryTests {
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
 
-        let previousLaunch = CatalogStore(location: .databaseFile(databaseURL))
+        let previousLaunch = makeTestStore(location: .databaseFile(databaseURL))
         try await previousLaunch.start(scansSavedLibraries: false)
         try await previousLaunch.addLibrary(url: destination)
         _ = try await waitForCatalogStoreState(previousLaunch) { !$0.isScanning }
@@ -416,7 +416,7 @@ struct ImportRecoveryTests {
             phase: .copying
         ))
 
-        let relaunched = CatalogStore(location: .databaseFile(databaseURL))
+        let relaunched = makeTestStore(location: .databaseFile(databaseURL))
         let coordinator = MediaOperationCoordinator(
             store: relaunched,
             preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
@@ -430,7 +430,7 @@ struct ImportRecoveryTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CameraImportAccessTests {
     /// A camera download refused for space is typed from the error chain, not
     /// its wording, so the executor can stop at the floor for a camera the way
@@ -458,7 +458,7 @@ struct CameraImportAccessTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ImportExecutionProgressTests {
     @Test func byteProgressIsMonotonicAndReachesPlanTotals() async throws {
         let temp = try makeTestDirectory()
@@ -473,7 +473,7 @@ struct ImportExecutionProgressTests {
             expectedBytes += Int64(payload.count)
         }
         let sourceBefore = try FilesystemTreeSnapshot.capture(root: sourceURL)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationURL)
         let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
@@ -596,7 +596,7 @@ struct ImportExecutionProgressTests {
         let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.entries.count == 2)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
         let result = await MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity).execute(
@@ -676,7 +676,7 @@ struct ImportExecutionProgressTests {
         // entry's success.
         try Data(repeating: 0x03, count: 20).write(to: staleURL)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
         let result = await MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity).execute(
@@ -761,7 +761,7 @@ struct ImportExecutionProgressTests {
         // check to skip it as foreign at execution time.
         try Data(repeating: 0x02, count: 20).write(to: destinationRoot.appending(path: finalDestination.rawValue))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
         let result = await MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity).execute(
@@ -1099,7 +1099,7 @@ struct ImportExecutionProgressTests {
         )
         let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.totals.copyCount == count)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
         // Attached the way a card is, so erasing from it takes its namespace lease.
@@ -1491,7 +1491,7 @@ struct ImportExecutionProgressTests {
             destinationCapabilities: .unknown
         ))
         #expect(plan.entries.first?.companionDestinations == [sidecar: sidecar])
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
         try await store.attachRemovableVolume(
@@ -1572,7 +1572,7 @@ struct ImportExecutionProgressTests {
         )
         let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.entries.first?.isSkipPreexisting == true)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
         // The card is attached, not merely a path on disk. `MediaOperationCoordinator`
@@ -1618,7 +1618,7 @@ private final class ProgressCollector: Sendable {
 
 /// ADR 0018: a card row's digest, read while the card sat idle, is what its staged copy
 /// must hash to. A copy that does not is never published.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ImportVerifiesTheStagedCopyTests {
     @Test func aStagedCopyThatDoesNotMatchTheCardsDigestIsNeverPublished() async throws {
         let temp = try makeTestDirectory()
@@ -1628,7 +1628,7 @@ struct ImportVerifiesTheStagedCopyTests {
         try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
         try Data("first".utf8).write(to: sourceURL.appending(path: "a.jpg"))
         try Data("second".utf8).write(to: sourceURL.appending(path: "b.jpg"))
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationURL)
         let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
@@ -1702,14 +1702,14 @@ struct ImportVerifiesTheStagedCopyTests {
 
 /// ADR 0018: what an import may treat as "already in a library" is re-read from the
 /// catalog when a card is erased; a library copy waiting for the Trash no longer counts.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct LibraryContentRecheckTests {
     @Test func aLibraryCopyWaitingForTheTrashNoLongerHoldsTheContent() async throws {
         let temp = try makeTestDirectory()
         let libraryURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: libraryURL, withIntermediateDirectories: true)
         try Data("held".utf8).write(to: libraryURL.appending(path: "a.jpg"))
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: libraryURL)
         let library = try CatalogPath.normalizedDirectoryPath(for: libraryURL)

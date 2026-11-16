@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogProjectionOrderingTests {
     @Test func detailOnlyStoreChangePublishesRefreshAndChecksOrder() async throws {
         let temp = try makeTestDirectory()
@@ -10,7 +10,7 @@ struct CatalogProjectionOrderingTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         let projection = CatalogProjection(cadence: .milliseconds(10))
         let recorder = OrderingStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)

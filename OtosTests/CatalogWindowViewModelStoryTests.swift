@@ -12,7 +12,7 @@ import Testing
 /// player deliver for the visit they were made for. The model is not started: each test
 /// starts only the lane it needs and applies states by hand. Stories run over a real
 /// catalog, so the kind read and the pane's detail read are the real ones.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelStoryTests {
     private nonisolated static let today = CalendarDay(year: 2026, month: 11, day: 9)
@@ -33,7 +33,7 @@ struct CatalogWindowViewModelStoryTests {
     }
 
     private func makeModel(
-        store: CatalogStore = CatalogStore(location: .inMemory),
+        store: CatalogStore = makeTestStore(location: .inMemory),
         loader: FakePreviewLoader = FakePreviewLoader(),
         day: DayBox = DayBox(today),
         center: NotificationCenter = NotificationCenter(),

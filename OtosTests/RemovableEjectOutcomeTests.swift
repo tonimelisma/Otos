@@ -4,13 +4,13 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct RemovableEjectOutcomeTests {
     @MainActor
     @Test func missingIdentitySurfacesEjectFailure() {
         let temp = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory),
+            catalogStore: makeTestStore(location: .inMemory),
             catalogProjection: CatalogProjection(),
             startsStallMonitor: false,
             startsEnrichment: false,
@@ -189,7 +189,7 @@ struct RemovableEjectOutcomeTests {
         let temp = try makeTestDirectory()
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.attachRemovableVolume(
             mountURL: cardURL,

@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ViewModelDefaultSelectionTests {
     @MainActor
     @Test func startupSelectsSingleLibraryWhenAllMediaIsHidden() async throws {
@@ -11,7 +11,7 @@ struct ViewModelDefaultSelectionTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try Data("jpeg".utf8).write(to: root.appending(path: "one.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
@@ -106,7 +106,7 @@ struct ViewModelDefaultSelectionTests {
 
     @MainActor
     private func makePolicyTestViewModel() -> CatalogWindowViewModel {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         let temp = PreferencesDomain.suite(UUID().uuidString)
         return CatalogWindowViewModel(
             catalogStore: store,

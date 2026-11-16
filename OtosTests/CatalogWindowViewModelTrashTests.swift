@@ -7,7 +7,7 @@ import Testing
 /// (APP-039): undo puts the files back from the Trash, redo moves them again. Each test's
 /// Trash is a folder it owns, so a run never touches the user's Trash (ADR 0020).
 @MainActor
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogWindowViewModelTrashTests {
     @Test func moveToTrashActsWithoutAskingAndRegistersUndo() async throws {
         try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
@@ -219,7 +219,7 @@ struct CatalogWindowViewModelTrashTests {
 /// test holds the mark at its suspension (`trashMarkHook`) and delivers the competing event
 /// there — the mark landing, failing, an undo, a second Move to Trash, a scope change.
 @MainActor
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogWindowViewModelTrashInterleavingTests {
     @Test func theItemsLeaveThePublishedGridBeforeTheMarkReturns() async throws {
         try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
@@ -427,7 +427,7 @@ private func withSizedLibrary(_ body: (CatalogedLibrary) async throws -> Void) a
     let ids = ["big.jpg", "small.jpg"].map {
         MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: $0))
     }
-    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(5))
+    let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(5))
     do {
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }

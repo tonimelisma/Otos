@@ -167,7 +167,7 @@ struct BenchmarkLibrary {
     static func make(in directory: URL, stills count: Int = stillCount) async throws -> BenchmarkLibrary {
         let rootURL = directory.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(directory.appending(path: "db/catalog.sqlite")),
             scanner: scanner(count: count)
         )
@@ -310,7 +310,7 @@ struct BenchmarkPairLibrary {
     static func make(in directory: URL) async throws -> BenchmarkPairLibrary {
         let rootURL = directory.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(directory.appending(path: "db/catalog.sqlite")),
             scanner: scanner()
         )

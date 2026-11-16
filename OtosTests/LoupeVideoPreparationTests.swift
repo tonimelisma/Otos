@@ -7,7 +7,7 @@ import Testing
 /// playback with no click, exactly as opening an image decodes it. These run against a
 /// real `CatalogStore` because `bestKind` — the fact that starts preparation — is a
 /// catalog answer, and a fake reader would assert the trigger against itself.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct LoupeVideoPreparationTests {
     private func makeVideoCatalog() async throws -> (CatalogStore, MediaAssetID) {
@@ -17,7 +17,7 @@ struct LoupeVideoPreparationTests {
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         let rel = MediaRelativePath(rawValue: "clip.mov")
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: rel)
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
             scanner: CatalogScanner { _, _, batchHandler in
                 try await batchHandler([

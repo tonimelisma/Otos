@@ -50,7 +50,7 @@ enum ImmichLiveServer {
     }()
 }
 
-@Suite(.testDirectory, .enabled(if: ImmichLiveServer.credentials != nil))
+@Suite(.testScope, .enabled(if: ImmichLiveServer.credentials != nil))
 struct ImmichLiveServerTests {
     /// A login and one pass bring every owned asset into an account's root, each with
     /// its EXIF size and a thumbnail from the server's preview; the session is logged out
@@ -64,7 +64,7 @@ struct ImmichLiveServerTests {
         let outcome: ImmichSyncPassOutcome
         let listed: [MediaAsset]
         do {
-            let store = try CatalogStore(
+            let store = try makeTestStore(
                 location: .databaseFile(makeTestDirectory().appending(path: "Catalog.sqlite")),
                 scanCadence: .milliseconds(10),
                 stagingContainers: StagingContainers(base: makeTestDirectory())
@@ -162,7 +162,7 @@ struct ImmichLiveServerTests {
             let stillID = try await Self.upload(still, hidden: false, linking: motionID, server: credentials.server, token: token)
             uploaded.append(stillID)
 
-            let store = try CatalogStore(
+            let store = try makeTestStore(
                 location: .databaseFile(directory.appending(path: "Catalog.sqlite")), scanCadence: .milliseconds(10),
                 stagingContainers: StagingContainers(base: directory)
             )

@@ -3,7 +3,7 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreEnrichmentClaimTests {
     @Test func startupClearsAbandonedEnrichmentClaims() async throws {
         let temp = try makeTestDirectory()
@@ -12,7 +12,7 @@ struct CatalogStoreEnrichmentClaimTests {
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         let rel = MediaRelativePath(rawValue: "a.jpg")
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(databaseURL),
             scanner: claimTestSingleFileScanner(rel)
         )
@@ -26,7 +26,7 @@ struct CatalogStoreEnrichmentClaimTests {
         #expect(blockedByLease.isEmpty)
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 1)
 
-        let reloaded = CatalogStore(location: .databaseFile(databaseURL))
+        let reloaded = makeTestStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
 
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 0)
@@ -36,7 +36,7 @@ struct CatalogStoreEnrichmentClaimTests {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: claimTestMultiFileScanner([
                 EnrichmentClaimScanFixture(name: "claimed.jpg", modifiedAt: 1000),
@@ -68,7 +68,7 @@ struct CatalogStoreEnrichmentClaimTests {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: claimTestMultiFileScanner([
                 EnrichmentClaimScanFixture(name: "old.jpg", modifiedAt: 1000),
@@ -107,7 +107,7 @@ struct CatalogStoreEnrichmentClaimTests {
             try await batchHandler([file])
             return .mediaOnly([file.relativePath])
         }
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: scanner,
             scanCadence: .milliseconds(10)
@@ -160,7 +160,7 @@ struct CatalogStoreEnrichmentClaimTests {
             try await batchHandler(files)
             return .mediaOnly(Set(files.map(\.relativePath)))
         }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: older)
         try await store.addLibrary(url: newer)

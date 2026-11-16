@@ -117,7 +117,7 @@ struct MediaCompanionPairingTests {
     }
 }
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct MediaCompanionInventoryTests {
     @Test func scanInventoriesCompanionsWithoutEnteringMediaQueries() async throws {
         let temp = try makeTestDirectory()
@@ -127,7 +127,7 @@ struct MediaCompanionInventoryTests {
         try writeCatalogStoreFile(root.appending(path: "IMG_1.xmp"), contents: "<xmp/>")
         try writeCatalogStoreFile(root.appending(path: "notes.txt"), contents: "skip")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
@@ -152,7 +152,7 @@ struct MediaCompanionInventoryTests {
 
         let recorder = FilesystemEventScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .inMemory,
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,

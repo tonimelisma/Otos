@@ -11,7 +11,7 @@ private let localOriginals = ClosureMaterializationRequester { _ in .cancelled }
 
 /// ADR 0038: File ▸ Export… writes one new file per photo into the
 /// chosen folder, never overwriting, in the chosen format and size, with or without location.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct ExportTests {
     /// Several photos, one edited, exported as JPEG into a folder that already holds a file
@@ -182,7 +182,7 @@ struct ExportTests {
     @Test func settingsAreRememberedAndKeptInRange() {
         let domain = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory),
+            catalogStore: makeTestStore(location: .inMemory),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,

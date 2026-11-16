@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct CatalogStoreEnsureLibraryTests {
     @Test func ensureLibraryAddsMissingRootAndNoOpsExistingRoot() async throws {
         let temp = try makeTestDirectory()
@@ -10,7 +10,7 @@ struct CatalogStoreEnsureLibraryTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(
+        let store = makeTestStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
             scanCadence: .milliseconds(10)
         )

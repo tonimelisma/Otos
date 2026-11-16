@@ -4,7 +4,7 @@ import Testing
 
 /// A query in a language Translation does not offer, read through Otos's glossary of it
 /// (ADR 0048).
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct SearchGlossaryTests {
     private static let bundle = Bundle(for: CatalogWindowViewModel.self)
 

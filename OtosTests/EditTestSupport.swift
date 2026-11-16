@@ -5,7 +5,7 @@ import ImageIO
 import Testing
 
 /// A library of real JPEGs cataloged by a store with an on-disk database, so it has a
-/// thumbnail directory edit renders can be promoted into. Needs the `.testDirectory` trait.
+/// thumbnail directory edit renders can be promoted into. Needs the `.testScope` trait.
 struct EditableLibrary {
     let store: CatalogStore
     let root: URL
@@ -93,7 +93,7 @@ func withEditableLibrary(
     try FileManager.default.createDirectory(
         at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
     )
-    let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(5))
+    let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(5))
     let models = EditModels()
     let thumbnailDirectory = try #require(store.thumbnailDirectory)
     try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)

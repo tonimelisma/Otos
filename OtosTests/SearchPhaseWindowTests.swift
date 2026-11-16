@@ -4,6 +4,7 @@ import Testing
 
 /// ADR 0048 and DES-108: what the window says for each state of a shown search. The states are
 /// applied by hand and the model's projection is never started, so nothing races them.
+@Suite(.testScope)
 @MainActor
 struct SearchPhaseWindowTests {
     /// While the query is read the subtitle says so, beside `Filtered` when a filter narrows
@@ -39,7 +40,7 @@ struct SearchPhaseWindowTests {
 
     private func makeModel() -> CatalogWindowViewModel {
         CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory),
+            catalogStore: makeTestStore(location: .inMemory),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,

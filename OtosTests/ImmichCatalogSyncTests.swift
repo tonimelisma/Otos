@@ -8,7 +8,7 @@ import Testing
 /// ADR 0046 §5: an account's rows follow its server's sync stream. A scripted stream
 /// stands in for the server: each pass hands out the next script, and every
 /// acknowledgement is recorded with what the catalog held when it was sent.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct ImmichCatalogSyncTests {
     private static let server = URL(string: "https://photos.example.com")!
 
@@ -192,7 +192,7 @@ struct ImmichCatalogSyncTests {
 
         static func make() async throws -> Fixture {
             let staging = try makeTestDirectory()
-            let store = CatalogStore(
+            let store = makeTestStore(
                 location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: staging)
             )
             try await store.start(scansSavedLibraries: false)
@@ -557,7 +557,7 @@ struct ImmichCatalogSyncTests {
 
         static func make() async throws -> FileFixture {
             let temp = try makeTestDirectory()
-            let store = CatalogStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
+            let store = makeTestStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
             try await store.start(scansSavedLibraries: false)
             let rootPath = try await store.addImmichAccount(
                 server: ImmichCatalogSyncTests.server, userID: "user-1", displayName: "Family"
@@ -872,7 +872,7 @@ struct ImmichCatalogSyncTests {
             func walBytes() throws -> Int {
                 try #require(FileManager.default.attributesOfItem(atPath: wal)[.size] as? Int)
             }
-            let store = CatalogStore(location: .databaseFile(file), walByteBudget: budget, stagingContainers: StagingContainers(base: temp))
+            let store = makeTestStore(location: .databaseFile(file), walByteBudget: budget, stagingContainers: StagingContainers(base: temp))
             try await store.start(scansSavedLibraries: false)
             let rootPath = try await store.addImmichAccount(
                 server: Self.server, userID: "user-1", displayName: "Family"

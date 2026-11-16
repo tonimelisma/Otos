@@ -5,7 +5,7 @@ import Testing
 /// A failed tile-detail read is an error to its reader, never an empty result (ADR 0032,
 /// rule 4): an asset without a row reads as nil, a read that failed throws, and the next
 /// read after the failure returns the row.
-@Suite(.testDirectory)
+@Suite(.testScope)
 @MainActor
 struct MediaTileDetailReaderTests {
     @Test func aFailedReadThrowsAndTheNextReadReturnsTheRow() async throws {

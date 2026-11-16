@@ -3,6 +3,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+@Suite(.testScope)
 struct IdentityRemapUITests {
     @Test func gridSelectionRemapsSelectionAnchorAndBase() {
         let root = LibraryRootPath(rawValue: "/Library")
@@ -36,7 +37,7 @@ struct IdentityRemapUITests {
         let newID = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "new.jpg"))
         let other = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "other.jpg"))
         let viewModel = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
+            catalogStore: makeTestStore(location: .inMemory, scanCadence: .milliseconds(10)),
             startsSourceMonitoring: false,
             preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
             volumeCapacity: ampleVolumeCapacity,

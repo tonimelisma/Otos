@@ -4,7 +4,7 @@ import Testing
 
 /// Execution progress reaches the coordinator through one per-run stream, so a sample can
 /// neither arrive after the run settled nor overtake a newer one.
-@Suite(.testDirectory)
+@Suite(.testScope)
 struct MediaOperationCoordinatorProgressTests {
     private static func progress(_ completed: Int, bytes: Int64) -> MediaOperationProgress {
         MediaOperationProgress(
@@ -24,7 +24,7 @@ struct MediaOperationCoordinatorProgressTests {
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
         try Data(repeating: 7, count: 1024).write(to: cardURL.appending(path: "f.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
