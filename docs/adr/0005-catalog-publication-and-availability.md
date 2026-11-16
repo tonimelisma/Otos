@@ -154,9 +154,24 @@ window, the change summary and SwiftUI then tell an unchanged part by identity (
 
 Rejected: a time-based throttle on background passes beyond the existing cadence (ADR
 0033: whether a read can have changed is a fact the Store holds), a generic query cache in
-the Store (the Store would have to know who reads what; the reader knows its inputs), and
-patching the order incrementally from the changed rows (a second ordering path beside the
-SQL that owns it).
+the Store (the Store would have to know who reads what; the reader knows its inputs).
+
+**Keyed re-reads.** A change that moved only capture dates, of rows it names
+(`CatalogStoreChange.changed(facts, rows:)`), re-reads those rows alone. The projection numbers
+the changes it hears with their rows (`CatalogChangeLog`). A held date order keeps each row's
+`best_capture_local` and the roots' row IDs (`CatalogOrderKeys`). When every change since the
+order was read that moved a fact the order or its stacks depend on moved only capture dates
+of named rows, a pass reads those rows by key through the scope's own predicate and sort
+(`CatalogStore.orderedAssetIDs(ofRows:for:availableLibraryPaths:)`) and merges them into the
+held order: the changed rows leave it, and one walk puts each re-read row where `ORDER BY`
+would (`CatalogOrderPatch`). The comparator is the SQL's: capture time in the order's
+direction with NULL the least value, then root row ID, then path by its bytes. The SQL still
+owns the order; the merge places rows the SQL itself sorted, so there is no second rule.
+Anything else is read whole: another kind of fact, a change that names no rows, a stack fact,
+more than 5,000 rows, changes older than the 256 kept, and a scope by place, day, batch or
+content. Before this, the earlier rejection of patching held. On the owner's catalog, while
+a sync brought metadata for 152 rows, the order was read whole 125 times, 33.7 s of reader
+time (installed 66153b4a; `docs/research/2026-11-16-window-reads-owner-catalog.md`).
 
 Before the Store's initial load has applied, its roots are unknown, not absent.
 `CatalogStore.loadedLibraries()` returns nil until then, and Projection publishes a

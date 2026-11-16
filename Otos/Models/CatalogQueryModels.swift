@@ -547,6 +547,9 @@ nonisolated struct CatalogOrderedAssets: Equatable, Sendable {
     /// reader holds them for its next read while nothing they are built from moves. Nil where
     /// the read built none (a scope that selects nothing).
     let builtStacks: PhotoStackSQL.Built?
+    /// What the date order sorted each row by, where the order is by date: what a keyed
+    /// re-read places a changed row by (`CatalogOrderPatch`). Nil for any other order.
+    let keys: CatalogOrderKeys?
 
     init(
         ids: [MediaAssetID],
@@ -554,7 +557,8 @@ nonisolated struct CatalogOrderedAssets: Equatable, Sendable {
         coordinates: [PlaceCoordinate] = [],
         pendingIdentityRemaps: [CatalogIdentityRemapBatch],
         stacks: CatalogStacks = .empty,
-        builtStacks: PhotoStackSQL.Built? = nil
+        builtStacks: PhotoStackSQL.Built? = nil,
+        keys: CatalogOrderKeys? = nil
     ) {
         self.ids = ids
         self.dayBuckets = dayBuckets
@@ -562,11 +566,104 @@ nonisolated struct CatalogOrderedAssets: Equatable, Sendable {
         self.pendingIdentityRemaps = pendingIdentityRemaps
         self.stacks = stacks
         self.builtStacks = builtStacks
+        self.keys = keys
     }
 
     /// The answer, not how it was made: the held stacks' read timings are not compared.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.ids == rhs.ids && lhs.dayBuckets == rhs.dayBuckets && lhs.coordinates == rhs.coordinates
             && lhs.pendingIdentityRemaps == rhs.pendingIdentityRemaps && lhs.stacks == rhs.stacks
+    }
+}
+
+/// What a date order sorts its rows by beyond their IDs: each row's `best_capture_local`,
+/// index-paired with the order, and the catalog row ID of each root, which breaks a tie in
+/// capture time before the path does (`orderPlan`).
+nonisolated struct CatalogOrderKeys: Equatable, Sendable {
+    let captureSeconds: [Double?]
+    let rootIDs: [LibraryRootPath: Int64]
+}
+
+/// A date order with some of its rows read again (ADR 0005, "Keyed re-reads"): the changed
+/// rows leave the held order, and the ones the scope still holds, read with their new capture
+/// times in the order's own sort, are merged back where the order's sort puts them. The
+/// result is the order a full read would give, at the cost of the changed rows' read and one
+/// walk of the held order.
+nonisolated enum CatalogOrderPatch {
+    /// `held` with every row of `changed` taken out and `reread` — those of them the scope holds,
+    /// in the order's sort, with their capture times — merged in. Nil when `held` has no keys or
+    /// a root of `reread` is not among them, which only a full read answers.
+    static func patching(
+        _ held: CatalogOrderedAssets,
+        changed: Set<MediaAssetID>,
+        reread: CatalogOrderedAssets,
+        descending: Bool
+    ) -> CatalogOrderedAssets? {
+        guard let keys = held.keys, let rereadKeys = reread.keys,
+              keys.captureSeconds.count == held.ids.count, held.dayBuckets.count == held.ids.count,
+              rereadKeys.captureSeconds.count == reread.ids.count, reread.dayBuckets.count == reread.ids.count,
+              reread.ids.allSatisfy({ keys.rootIDs[$0.libraryRootPath] != nil })
+        else {
+            return nil
+        }
+        var ids: [MediaAssetID] = []
+        var dayBuckets: [Date?] = []
+        var seconds: [Double?] = []
+        let capacity = held.ids.count + reread.ids.count
+        ids.reserveCapacity(capacity)
+        dayBuckets.reserveCapacity(capacity)
+        seconds.reserveCapacity(capacity)
+        /// Whether the row `(lhsID, lhsSeconds)` sorts before the other, as `orderPlan`'s
+        /// `ORDER BY` does: capture time in the order's direction, a row with none last when
+        /// descending and first when ascending (SQLite's NULL is the least value), then root
+        /// row ID, then path by its bytes (SQLite's BINARY collation).
+        func precedes(_ lhsID: MediaAssetID, _ lhsSeconds: Double?, _ rhsID: MediaAssetID, _ rhsSeconds: Double?) -> Bool {
+            if lhsSeconds != rhsSeconds {
+                switch (lhsSeconds, rhsSeconds) {
+                case let (lhs?, rhs?): return descending ? lhs > rhs : lhs < rhs
+                case (nil, _): return !descending
+                case (_, nil): return descending
+                }
+            }
+            let lhsRoot = keys.rootIDs[lhsID.libraryRootPath] ?? 0
+            let rhsRoot = keys.rootIDs[rhsID.libraryRootPath] ?? 0
+            if lhsRoot != rhsRoot {
+                return lhsRoot < rhsRoot
+            }
+            return lhsID.relativePath.rawValue.utf8.lexicographicallyPrecedes(rhsID.relativePath.rawValue.utf8)
+        }
+        var next = 0
+        for position in held.ids.indices {
+            let id = held.ids[position]
+            guard !changed.contains(id) else {
+                continue
+            }
+            let heldSeconds = keys.captureSeconds[position]
+            while next < reread.ids.count,
+                  precedes(reread.ids[next], rereadKeys.captureSeconds[next], id, heldSeconds)
+            {
+                ids.append(reread.ids[next])
+                dayBuckets.append(reread.dayBuckets[next])
+                seconds.append(rereadKeys.captureSeconds[next])
+                next += 1
+            }
+            ids.append(id)
+            dayBuckets.append(held.dayBuckets[position])
+            seconds.append(heldSeconds)
+        }
+        while next < reread.ids.count {
+            ids.append(reread.ids[next])
+            dayBuckets.append(reread.dayBuckets[next])
+            seconds.append(rereadKeys.captureSeconds[next])
+            next += 1
+        }
+        return CatalogOrderedAssets(
+            ids: ids,
+            dayBuckets: dayBuckets,
+            pendingIdentityRemaps: [],
+            stacks: held.stacks,
+            builtStacks: held.builtStacks,
+            keys: CatalogOrderKeys(captureSeconds: seconds, rootIDs: keys.rootIDs)
+        )
     }
 }

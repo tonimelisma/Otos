@@ -29,6 +29,7 @@ extension CatalogProjection {
         request: CatalogQueryRequest,
         reads previous: CatalogProjectionReads,
         revisions: CatalogFactRevisions,
+        changes: CatalogChangeLog = CatalogChangeLog(),
         answerFromHeld: Bool = false
     ) async throws -> CatalogProjectionBuild {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
@@ -129,6 +130,24 @@ extension CatalogProjection {
             orderQueryMs = 0
             reuse.order = true
             reuse.held = true
+        } else if let patched = try await keyedOrder(
+            previous.heldOrder(for: resolvedDescriptor, availableLibraryPaths: availableLibraryPaths),
+            descriptor: resolvedDescriptor,
+            availableLibraryPaths: availableLibraryPaths,
+            changes: changes,
+            store: store
+        ) {
+            keyedOrderQueryCount &+= 1
+            ordered = patched.answer
+            orderQueryMs = patched.ms
+            reuse.keyed = true
+            reads.orders[CatalogProjectionReads.Slot(resolvedDescriptor.scope)] = CatalogProjectionReads.Order(
+                descriptor: resolvedDescriptor,
+                availableLibraryPaths: availableLibraryPaths,
+                revisions: revisions,
+                sequence: changes.sequence,
+                answer: patched.answer
+            )
         } else {
             orderQueryCount &+= 1
             let orderStart = ContinuousClock.now
@@ -143,6 +162,7 @@ extension CatalogProjection {
                 descriptor: resolvedDescriptor,
                 availableLibraryPaths: availableLibraryPaths,
                 revisions: revisions,
+                sequence: changes.sequence,
                 answer: ordered
             )
             if let built = ordered.builtStacks {
@@ -264,6 +284,35 @@ extension CatalogProjection {
         )
         state.mediaEmptyState = CatalogWindowPolicy.peopleGalleryLibrariesState(libraries: allRoots)
         return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: 0, reuse: reuse), reads, nil)
+    }
+
+    /// The held order for `descriptor` with only the rows the Store's changes since its read
+    /// named read again and merged in (`CatalogOrderPatch`), when every such change moved only
+    /// capture dates (`CatalogChangeLog.keyedRows`) and nothing the held stacks are built from;
+    /// nil when a full read is owed. On the owner's catalog, while a sync brought metadata for
+    /// 152 rows, the order was read whole 125 times
+    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+    private func keyedOrder(
+        _ held: CatalogProjectionReads.Order?,
+        descriptor: CatalogQueryDescriptor,
+        availableLibraryPaths: Set<LibraryRootPath>,
+        changes: CatalogChangeLog,
+        store: CatalogStore
+    ) async throws -> (answer: CatalogOrderedAssets, ms: Int)? {
+        guard let held, held.answer.keys != nil,
+              let rows = changes.keyedRows(since: held.sequence, for: descriptor)
+        else {
+            return nil
+        }
+        let start = ContinuousClock.now
+        guard let reread = try await store.orderedAssetIDs(
+            ofRows: rows, for: descriptor, availableLibraryPaths: availableLibraryPaths
+        ), let patched = CatalogOrderPatch.patching(
+            held.answer, changed: rows, reread: reread, descending: descriptor.effectiveSort.direction == .descending
+        ) else {
+            return nil
+        }
+        return (patched, DiagnosticsTiming.milliseconds(since: start))
     }
 
     /// Reads the options `owed` names: the read a pass asks for (`askFilterOptions`) after the

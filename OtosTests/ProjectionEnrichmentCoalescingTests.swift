@@ -60,6 +60,13 @@ struct ProjectionEnrichmentCoalescingTests {
             }
         }
 
+        /// Order reads answered by re-reading only the changed rows (`CatalogOrderPatch`).
+        var keyedReads: UInt64 {
+            get async {
+                await projection.keyedOrderQueryCount
+            }
+        }
+
         /// Waits for `write`'s change to be published: a newer detail refresh, settled.
         func publish(_ write: () async throws -> Void) async throws {
             let generation = await recorder.snapshot().last?.mediaGrid.detailRefreshGeneration ?? 0
@@ -174,8 +181,8 @@ struct ProjectionEnrichmentCoalescingTests {
     }
 
     /// End-to-end: detail-only enrichment batches read neither the order nor the options; a
-    /// capture date read from bytes reads the order once and reorders, and leaves the options
-    /// standing, since a date offers no other type or place.
+    /// capture date read from bytes reads that one row again, keyed, and reorders, and leaves
+    /// the options standing, since a date offers no other type or place.
     @Test func detailOnlyEnrichmentBatchesSkipTheOrderAndOptionsReads() async throws {
         let window = try await settledWindow()
         defer { window.recording.cancel() }
@@ -207,8 +214,43 @@ struct ProjectionEnrichmentCoalescingTests {
         #expect(reordered.last?.mediaGrid.orderedAssetIDs.first == reorderTarget)
         try await waitForProjectionQuiescence(window.projection)
         let final = await window.reads
-        #expect(final.order == afterDetail.order + 1, "afterDetail=\(afterDetail) final=\(final)")
+        #expect(final.order == afterDetail.order, "afterDetail=\(afterDetail) final=\(final)")
+        #expect(await window.keyedReads == 1)
         #expect(final.options == afterDetail.options, "afterDetail=\(afterDetail) final=\(final)")
+        await window.store.shutdown()
+    }
+
+    /// N capture-date writes cost reads in proportion to N, never N times the library (plan
+    /// 0116 bet 4): each re-reads only the rows its change named and merges them into the
+    /// order held, which is then exactly what a full read gives. On the owner's catalog, while
+    /// a sync brought metadata for 152 rows, the order was read whole 125 times.
+    @Test func captureDateWritesReadOnlyTheirRowsAndKeepTheOrderAFullReadGives() async throws {
+        let window = try await settledWindow()
+        defer { window.recording.cancel() }
+        let before = await window.reads
+        // Rows from the middle and both ends move to the top, the bottom, and between others,
+        // some onto another row's exact time, one write at a time as a sync writes them.
+        let moves: [(index: Int, offset: TimeInterval)] = [
+            (1000, 10000), (0, -500), (1999, 1000.0), (10, 999), (500, 1000.0), (1500, -0.25), (42, 5000),
+        ]
+        for move in moves {
+            let asset = try #require(window.assets[window.ids[move.index]])
+            try await window.publish {
+                _ = await window.store.applyEnrichmentBatch([
+                    detailEnrichment(for: asset, captureDate: Self.baseDate.addingTimeInterval(move.offset)),
+                ])
+            }
+        }
+        let after = await window.reads
+        #expect(after.order == before.order, "before=\(before) after=\(after)")
+        #expect(await window.keyedReads == UInt64(moves.count))
+        let shown = try #require(await window.recorder.snapshot().last)
+        let full = try await window.store.orderedAssetIDs(
+            for: shown.queryDescriptor,
+            availableLibraryPaths: Set(shown.libraries.map(\.path))
+        )
+        #expect(shown.mediaGrid.orderedAssetIDs == full.ids)
+        #expect(shown.mediaGrid.dayBuckets == full.dayBuckets)
         await window.store.shutdown()
     }
 
@@ -381,8 +423,8 @@ struct ProjectionEnrichmentCoalescingTests {
     }
 
     /// ARC-018: a return to a scope whose facts moved while the user was elsewhere paints what
-    /// it last showed at once, without a read, and the pass after it reads the moved order
-    /// again and republishes: a capture date moved in the library reorders All Media only in
+    /// it last showed at once, without a read, and the pass after it reads the moved row again
+    /// and republishes: a capture date moved in the library reorders All Media only in
     /// the second publication.
     @Test func aReturnToAScopeWhoseFactsMovedPaintsWhatItHeldThenReadsAgain() async throws {
         let (window, library) = try await windowInALibraryAfterAllMedia()
@@ -395,6 +437,7 @@ struct ProjectionEnrichmentCoalescingTests {
             ])
         }
         let before = await window.reads
+        let keyedBefore = await window.keyedReads
         let published = await window.recorder.count()
 
         await window.projection.updateSidebarSelection(.allMedia)
@@ -410,7 +453,9 @@ struct ProjectionEnrichmentCoalescingTests {
         #expect(returns.first?.mediaGrid.orderedAssetIDs == window.ids, "the first paint is the held order")
         #expect(returns.last?.mediaGrid.orderedAssetIDs.first == oldest, "the next pass read the moved date")
         let after = await window.reads
-        #expect(after.order == before.order + 1, "before=\(before) after=\(after)")
+        // The moved date is one named row: the pass reads it again by key, not the order whole.
+        #expect(after.order == before.order, "before=\(before) after=\(after)")
+        #expect(await window.keyedReads == keyedBefore + 1)
         await window.store.shutdown()
     }
 

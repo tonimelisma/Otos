@@ -2634,6 +2634,7 @@ extension CatalogStore {
         var ids = timedRows.value.order.ids
         var dayBuckets = timedRows.value.order.dayBuckets
         var coordinates = timedRows.value.order.coordinates
+        var captureSeconds = timedRows.value.order.captureSeconds
         if rootPathsAfterRead != stackRootPaths {
             let remaining = Set(rootPathsAfterRead.values)
             let kept = ids.indices.filter { remaining.contains(ids[$0].libraryRootPath) }
@@ -2641,6 +2642,7 @@ extension CatalogStore {
             // Each is empty or index-paired with the order.
             dayBuckets = dayBuckets.isEmpty ? [] : kept.map { dayBuckets[$0] }
             coordinates = coordinates.isEmpty ? [] : kept.map { coordinates[$0] }
+            captureSeconds = captureSeconds.isEmpty ? [] : kept.map { captureSeconds[$0] }
         }
         let queryMs = timedRows.totalMs
         // The log reports the stacks' read and rule apart from the order's own work (ADR 0052).
@@ -2674,7 +2676,65 @@ extension CatalogStore {
             coordinates: coordinates,
             pendingIdentityRemaps: timedRows.value.pending,
             stacks: catalogStacks,
-            builtStacks: builtStacks
+            builtStacks: builtStacks,
+            keys: captureSeconds.isEmpty ? nil : CatalogOrderKeys(
+                captureSeconds: captureSeconds, rootIDs: Dictionary(uniqueKeysWithValues: rootPathsAfterRead.map { ($1, $0) })
+            )
+        )
+    }
+
+    /// The rows of `changed` that the scope of `descriptor` holds, in its order, with what the
+    /// order sorts them by (`CatalogOrderedAssets.keys`): what a keyed re-read merges into the
+    /// order it holds (`CatalogOrderPatch`). Each row is sought by its key, so the read costs
+    /// the changed rows, not the scope. Nil for a scope the merge cannot answer: one not by
+    /// date, or whose rows are named by anything but their roots, the filter and visibility.
+    func orderedAssetIDs(
+        ofRows changed: Set<MediaAssetID>,
+        for descriptor: CatalogQueryDescriptor,
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) async throws -> CatalogOrderedAssets? {
+        let scope = scopePredicate(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
+        guard descriptor.effectiveSort.field == .bestDate, scope.content == .any, scope.date == .any,
+              scope.location == .any, scope.importBatchUnixMs == nil, !scope.selectsNothing
+        else {
+            return nil
+        }
+        let rootPaths = roots.pathsByRowID.filter { rowID, path in
+            scope.rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
+        }
+        let rowIDs = Dictionary(uniqueKeysWithValues: rootPaths.map { ($1, $0) })
+        let keys = changed.compactMap { id in
+            rowIDs[id.libraryRootPath].map { CatalogScopePredicate.MemberKey(rootID: $0, relativePath: id.relativePath.rawValue) }
+        }
+        let empty = CatalogOrderedAssets(
+            ids: [], dayBuckets: [], pendingIdentityRemaps: [],
+            keys: CatalogOrderKeys(captureSeconds: [], rootIDs: rowIDs)
+        )
+        guard !keys.isEmpty else {
+            return empty
+        }
+        let members = CatalogScopePredicate(
+            rootIDs: scope.rootIDs,
+            content: .members(keys),
+            showsOneCopy: scope.showsOneCopy,
+            holdsEveryCopyRoot: scope.holdsEveryCopyRoot
+        )
+        let timed = try await timedRead(database()) { db in
+            let rows = try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, scope: members, db: db)
+            return Self.orderedAssets(from: rows, stacks: .empty, rootPathsByRowID: rootPaths, scope: members, groupsByDate: true)
+        }
+        OtosLog.catalog.noticeOperation("catalog.store.query.order", phase: "keyed", fields: [
+            "descriptor": descriptor.diagnosticDescription,
+            "changed": "\(changed.count)",
+            "count": "\(timed.value.ids.count)",
+            "waitMs": "\(timed.waitMs)",
+            "execMs": "\(timed.execMs)",
+        ])
+        return CatalogOrderedAssets(
+            ids: timed.value.ids,
+            dayBuckets: timed.value.dayBuckets,
+            pendingIdentityRemaps: [],
+            keys: CatalogOrderKeys(captureSeconds: timed.value.captureSeconds, rootIDs: rowIDs)
         )
     }
 
@@ -2687,16 +2747,18 @@ extension CatalogStore {
         rootPathsByRowID: [Int64: LibraryRootPath],
         scope: CatalogScopePredicate,
         groupsByDate: Bool
-    ) -> (ids: [MediaAssetID], dayBuckets: [Date?], coordinates: [PlaceCoordinate]) {
+    ) -> MappedOrder {
         // On This Day shows each day's Liked photos first (`OnThisDayPicks`).
         let orderedRows = scope.isAnniversary ? OnThisDayPicks.likedFirst(rows) : rows
         var ids: [MediaAssetID] = []
         var dayBuckets: [Date?] = []
         var dayStarts: [Int: Date] = [:]
         var coordinates: [PlaceCoordinate] = []
+        var captureSeconds: [Double?] = []
         ids.reserveCapacity(orderedRows.count)
         if groupsByDate {
             dayBuckets.reserveCapacity(orderedRows.count)
+            captureSeconds.reserveCapacity(orderedRows.count)
         }
         if scope.requiresLocation {
             coordinates.reserveCapacity(orderedRows.count)
@@ -2727,6 +2789,7 @@ extension CatalogStore {
             }
             ids.append(MediaAssetID(libraryRootPath: rootPath, relativePath: row.relativePath))
             if groupsByDate {
+                captureSeconds.append(row.captureLocalTime?.seconds)
                 // The day the item was taken on (`CaptureLocalTime.dayNumber`), as the start
                 // of that day here, which is what the header formats. A day's start is made
                 // once per day, not once per row.
@@ -2752,9 +2815,21 @@ extension CatalogStore {
                 // Each is empty or index-paired with the order.
                 dayBuckets = dayBuckets.isEmpty ? [] : kept.map { dayBuckets[$0] }
                 coordinates = coordinates.isEmpty ? [] : kept.map { coordinates[$0] }
+                captureSeconds = captureSeconds.isEmpty ? [] : kept.map { captureSeconds[$0] }
             }
         }
-        return (ids, dayBuckets, coordinates)
+        return MappedOrder(ids: ids, dayBuckets: dayBuckets, coordinates: coordinates, captureSeconds: captureSeconds)
+    }
+
+    /// The window's order as `orderedAssets(from:…)` makes it from the read's rows, each
+    /// list empty or index-paired with `ids`. `captureSeconds` is each row's
+    /// `best_capture_local` where the order is by date: what a keyed re-read places a changed
+    /// row by (`CatalogOrderPatch`).
+    struct MappedOrder {
+        var ids: [MediaAssetID]
+        var dayBuckets: [Date?]
+        var coordinates: [PlaceCoordinate]
+        var captureSeconds: [Double?]
     }
 
     func orderedAssetIDs(

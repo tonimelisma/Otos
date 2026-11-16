@@ -110,6 +110,8 @@ actor CatalogProjection {
     private var covered: UInt64 = 0
     /// How many times each kind of catalog fact changed, by the Store's own account.
     private var factRevisions = CatalogFactRevisions()
+    /// The Store's recent changes with the rows each named, for keyed re-reads.
+    private var changeLog = CatalogChangeLog()
     /// The last published pass's reads, which the next pass answers from while they hold.
     private var reads = CatalogProjectionReads.none
     /// Passes between their first and last line. Not request state: a count rather than
@@ -165,6 +167,9 @@ actor CatalogProjection {
     /// answers skips it; the count is the observable "full-catalog re-sort per enrichment
     /// batch" metric (ADR 0005) and drives the regression tests.
     var orderQueryCount: UInt64 = 0
+    /// Count of order reads answered by a keyed re-read of the held order's changed rows
+    /// (`CatalogOrderPatch`) instead of a full read.
+    var keyedOrderQueryCount: UInt64 = 0
     /// Count of filter-option reads executed by publications, likewise.
     var filterOptionsQueryCount: UInt64 = 0
     /// Count of order reads that read the stack candidates rather than reusing the stacks
@@ -834,6 +839,7 @@ private extension CatalogProjection {
         }
         detailRefreshGeneration &+= 1
         factRevisions.record(change.facts)
+        changeLog.record(change)
         // Rows that were only added carry nothing the groups or the assignment are built
         // from; they change People's unchecked tally alone. Any other change asks each owner
         // whose answer is built from a kind of fact it touched.
@@ -935,6 +941,7 @@ private extension CatalogProjection {
         let tallyStartedFrom = tallyRequested
         let startedReads = reads
         let startedRevisions = factRevisions
+        let startedChanges = changeLog
         let selectedRequest = queryRequest
         OtosLog.catalog.noticeOperation("projection.publish", phase: "start", fields: [
             "projection": diagnosticID,
@@ -976,6 +983,7 @@ private extension CatalogProjection {
                     request: selectedRequest,
                     reads: startedReads,
                     revisions: startedRevisions,
+                    changes: startedChanges,
                     answerFromHeld: answerFromHeld
                 )
             }
@@ -1378,12 +1386,14 @@ private extension CatalogProjection {
         requested = 0
         covered = 0
         reads = .none
+        changeLog = CatalogChangeLog()
         lastPublishedState = nil
         lastBuiltState = nil
         holds = [:]
         duplicates = nil
         people = nil
         orderQueryCount = 0
+        keyedOrderQueryCount = 0
         filterOptionsQueryCount = 0
         stackReadCount = 0
         inFlight = nil

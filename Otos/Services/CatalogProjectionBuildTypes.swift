@@ -140,6 +140,9 @@ nonisolated struct CatalogProjectionReads: Sendable {
         let descriptor: CatalogQueryDescriptor
         let availableLibraryPaths: Set<LibraryRootPath>
         let revisions: CatalogFactRevisions
+        /// The Store change the read started after (`CatalogChangeLog.sequence`): the changes
+        /// after it are what a keyed re-read reads again (`keyedRows(since:in:for:)`).
+        var sequence: UInt64 = 0
         let answer: CatalogOrderedAssets
     }
 
@@ -382,11 +385,14 @@ nonisolated struct CatalogProjectionReuse: Equatable {
     /// The pass answered from what it held although a fact it depends on moved since: the
     /// first pass of a scope the user returned to, which the next pass reads again.
     var held = false
+    /// The order was the held one with the rows the Store's changes named read again.
+    var keyed = false
 
     var diagnosticDescription: String {
         let reused = [
             ("order", order), ("filterOptions", filterOptions), ("collapse", collapse), ("stacks", stacks), ("search", search),
             ("importBatches", importBatches), ("placeNameLanguages", placeNameLanguages), ("held", held),
+            ("keyed", keyed),
         ]
         .filter(\.1).map(\.0)
         return reused.isEmpty ? "none" : reused.joined(separator: ",")
@@ -463,4 +469,66 @@ nonisolated struct OwedFilterOptions: Equatable, Sendable {
     let availableLibraryPaths: Set<LibraryRootPath>
     let placeNameLanguages: Set<PlaceNameLanguage>
     let revisions: CatalogFactRevisions
+}
+
+/// The Store changes the projection heard, numbered, with the rows each named (ADR 0005,
+/// "Keyed re-reads"): what tells a pass which rows of a held order a change can have moved.
+/// Bounded: a held order read before the oldest change kept is read again whole.
+nonisolated struct CatalogChangeLog: Sendable {
+    struct Entry: Sendable {
+        let sequence: UInt64
+        let facts: CatalogChangedFacts
+        let rows: CatalogChangedRows
+    }
+
+    /// The changes kept, oldest first.
+    private(set) var entries: [Entry] = []
+    /// The number of the newest change heard.
+    private(set) var sequence: UInt64 = 0
+    /// Every change after this one is kept.
+    private(set) var keptAfter: UInt64 = 0
+
+    /// How many changes are kept: a sync's metadata arrives in batches of a few dozen rows,
+    /// a pass at most a second apart, so a held order is behind by a handful of changes.
+    static let capacity = 256
+    /// The most rows a keyed re-read reads: past it, a full read costs no more.
+    static let rowCapacity = 5000
+
+    mutating func record(_ change: CatalogStoreChange) {
+        sequence &+= 1
+        entries.append(Entry(sequence: sequence, facts: change.facts, rows: change.rows))
+        if entries.count > Self.capacity {
+            let dropped = entries.count - Self.capacity
+            keptAfter = entries[dropped - 1].sequence
+            entries.removeFirst(dropped)
+        }
+    }
+
+    /// The rows a keyed re-read of an order for `descriptor`, read after change `since`, reads
+    /// again: the named rows of every later change that moved a fact the order depends on,
+    /// when every such change moved only capture dates and named its rows. Nil when a full
+    /// read is owed: a change that moved another fact the order depends on (which rows are
+    /// shown, kinds, grouping, choices, a stack), one that named no rows, more rows than
+    /// `rowCapacity`, or changes no longer kept.
+    func keyedRows(since: UInt64, for descriptor: CatalogQueryDescriptor) -> Set<MediaAssetID>? {
+        guard since >= keptAfter else {
+            return nil
+        }
+        let inputs = CatalogChangedFacts.orderInputs(of: descriptor).union(CatalogChangedFacts.stackInputs)
+        var rows = Set<MediaAssetID>()
+        for entry in entries where entry.sequence > since {
+            let moved = entry.facts.intersection(inputs)
+            guard !moved.isEmpty else {
+                continue
+            }
+            guard moved.isSubset(of: .captureDate), case let .named(named) = entry.rows else {
+                return nil
+            }
+            rows.formUnion(named)
+            if rows.count > Self.rowCapacity {
+                return nil
+            }
+        }
+        return rows
+    }
 }
