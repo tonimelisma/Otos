@@ -72,7 +72,8 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 /// facts at the same revision is the same answer, so a projection holding one need not ask
 /// again (`CatalogProjectionReads.Search`). `changes` yields after it moves, so a projection
 /// showing results can ask again. The forwarder and the loop hold this actor weakly and end
-/// with it.
+/// with it. `shutdown` also ends the text reader's child process, a reading in it or not,
+/// and returns once it is gone; the still whose reading it cut short stays owed.
 actor PhotoSearchIndex {
     typealias ReadTexts = @Sendable (Set<MediaAssetID>) async throws -> [MediaAssetID: String]
 
@@ -164,8 +165,11 @@ actor PhotoSearchIndex {
         }
     }
 
-    /// Ends the loop now — a test's teardown; in the app, the loops end with the actor.
+    /// Ends the loop and the text reader's child now: the window's teardown and a test's. A
+    /// quit needs none of it — the loops end with the process, and so does the child, whose
+    /// input closes with Otos (`SearchTextChild`).
     func shutdown() async {
+        await textReader.shutdown()
         await queries.shutdown()
         forwarder?.cancel()
         loop?.cancel()

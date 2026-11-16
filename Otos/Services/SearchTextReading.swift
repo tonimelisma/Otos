@@ -3,6 +3,7 @@ import CoreML
 import Foundation
 import ImageIO
 import OSLog
+import Synchronization
 import Vision
 
 /// Search text reading guide (ADR 0048)
@@ -184,6 +185,9 @@ nonisolated extension SearchTextReading {
 /// `.ended` is never asked again.
 nonisolated protocol SearchTextSession: AnyObject {
     func read(_ url: URL) -> SearchTextPreviewReading
+    /// Ends the session from any thread, a reading in it or not, and returns once its process
+    /// is gone: a reading in it then comes back without an answer (`.exited`).
+    var end: @Sendable () async -> Void { get }
 }
 
 /// What reading a page of previews came to.
@@ -207,6 +211,11 @@ nonisolated enum SearchTextPageReading: Equatable, Sendable {
 /// starts a new session. `op=search.text phase=sessionEnded` says so each time. The index's
 /// own backoff paces the next page (`PhotoSearchIndex`), so a disk whose purges empty the
 /// cache every few minutes starts a session at most once a backoff.
+///
+/// `shutdown` ends the reader from outside its queue, which a reading holds for as long as it
+/// takes: it ends the live session, so the reading in it comes back unanswered and its still
+/// stays owed, and no session starts after it. The session is started and recorded under one
+/// lock with the shutdown's mark, so a session is either never started or ended by it.
 actor SearchTextReader {
     typealias StartSession = @Sendable () throws -> any SearchTextSession
 
@@ -214,8 +223,22 @@ actor SearchTextReader {
     /// Starts a session: Otos's reading process, unless a test gives its own.
     private let startSession: StartSession
     private var session: (any SearchTextSession)?
+    /// What `shutdown` reads beside a reading in progress: whether it came, and how to end
+    /// the live session.
+    private let lifetime = Mutex(Lifetime())
     /// How many sessions this reader has started.
     private(set) var sessionsStarted = 0
+
+    private struct Lifetime {
+        var shutDown = false
+        var endSession: (@Sendable () async -> Void)?
+    }
+
+    private enum Start {
+        case started(any SearchTextSession)
+        case failed(any Error)
+        case shutDown
+    }
 
     init(startSession: @escaping StartSession = SearchTextChild.start) {
         self.startSession = startSession
@@ -225,11 +248,44 @@ actor SearchTextReader {
         queue.asUnownedSerialExecutor()
     }
 
+    /// Ends the live session and every later one, and returns once its process is gone. Not
+    /// isolated to the reader: a reading holds the reader's queue until its session answers or
+    /// ends, and ending it is what makes the reading return.
+    nonisolated func shutdown() async {
+        let endSession = lifetime.withLock { lifetime in
+            lifetime.shutDown = true
+            defer { lifetime.endSession = nil }
+            return lifetime.endSession
+        }
+        await endSession?()
+    }
+
+    /// Starts a session unless the reader was shut down, recording how to end it under the
+    /// same lock.
+    private func start() -> Start {
+        lifetime.withLock { lifetime in
+            guard !lifetime.shutDown else { return .shutDown }
+            do {
+                let session = try startSession()
+                lifetime.endSession = session.end
+                return .started(session)
+            } catch {
+                return .failed(error)
+            }
+        }
+    }
+
+    /// The live session ended by itself: nothing is left for `shutdown` to end.
+    private func sessionGone() {
+        session = nil
+        lifetime.withLock { $0.endSession = nil }
+    }
+
     /// Reads `page` in order. A preview that does not decode, or a recognition that fails
     /// about one picture, is no reading: it has no result, so the still stays owed and is read
     /// again after the index's backoff (ADR 0032 rule 4), and the rest of the page is read. A
-    /// session that ends, or cannot start, ends the page there. A failure is never a still
-    /// with no text: it stamps nothing.
+    /// session that ends, or cannot start, ends the page there, and so does the reader's
+    /// shutdown. A failure is never a still with no text: it stamps nothing.
     func read(_ page: [SearchTextCandidate], directory: URL?) -> SearchTextPageReading {
         guard let directory else { return .read([]) }
         var results: [SearchTextResult] = []
@@ -238,11 +294,17 @@ actor SearchTextReader {
             if let current = self.session {
                 session = current
             } else {
-                do {
-                    session = try startSession()
-                } catch {
+                switch start() {
+                case let .started(started):
+                    session = started
+                case let .failed(error):
                     OtosLog.thumbnails.errorOperation("search.text", phase: "sessionFailedToStart", fields: [
                         "error": String(describing: error),
+                    ])
+                    return .sessionEnded(before: results)
+                case .shutDown:
+                    OtosLog.thumbnails.noticeOperation("search.text", phase: "readerShutDown", fields: [
+                        "read": "\(results.count)", "unread": "\(page.count - results.count)",
                     ])
                     return .sessionEnded(before: results)
                 }
@@ -262,13 +324,13 @@ actor SearchTextReader {
                 // Paged past, not the page's end: a picture that ends every process it is
                 // asked of would otherwise come first in every page and stop every other
                 // still from being read.
-                self.session = nil
+                sessionGone()
                 OtosLog.thumbnails.errorOperation("search.text", phase: "sessionExited", fields: [
                     "id": candidate.id.relativePath.rawValue, "reason": reason,
                     "sessionsStarted": "\(sessionsStarted)",
                 ])
             case let .ended(reason):
-                self.session = nil
+                sessionGone()
                 OtosLog.thumbnails.errorOperation("search.text", phase: "sessionEnded", fields: [
                     "reason": reason, "sessionsStarted": "\(sessionsStarted)",
                 ])

@@ -209,6 +209,15 @@ struct RemovableEjectOutcomeTests {
 
 /// The eject itself, against a real disk: DiskArbitration's own report decides the
 /// outcome. ExFAT, as camera cards are formatted.
+///
+/// An unmount asks every DiskArbitration client on the Mac that registered for unmount
+/// approval, and any of them may dissent with `kDAReturnBusy`: a holder outside Otos, which
+/// `DiskEjector` reports as `.busy` like an open file. Under a full suite beside other
+/// checks, one such client dissented about ten seconds after the released volume's unmount
+/// was asked for (`docs/research/2026-11-15-a-released-card-refused-by-another-client.md`).
+/// So the released volume is ejected as Otos ejects a card (`performEjectRemovableSource`):
+/// a busy refusal is asked again after its backoff, which nothing can replace — no client
+/// reports when it stops dissenting.
 struct DiskEjectorLiveDiskImageTests {
     @Test func aHeldVolumeIsBusyAndAReleasedOneEjects() async throws {
         let image = try MountedTestDiskImage.attach(filesystem: "ExFAT")
@@ -221,7 +230,13 @@ struct DiskEjectorLiveDiskImageTests {
         #expect(FileManager.default.fileExists(atPath: image.mountURL.path(percentEncoded: false)))
 
         try handle.close()
-        #expect(await DiskEjector.eject(volumeAt: image.mountURL) == .ejected)
+        var outcome = await DiskEjector.eject(volumeAt: image.mountURL)
+        for delay in CatalogWindowViewModel.ejectBusyRetryDelays where outcome == .busy {
+            // time: backoff — a DiskArbitration client outside Otos dissented; none reports when it stops
+            try await Task.sleep(for: delay)
+            outcome = await DiskEjector.eject(volumeAt: image.mountURL)
+        }
+        #expect(outcome == .ejected)
         #expect(!FileManager.default.fileExists(atPath: held.path(percentEncoded: false)))
     }
 }

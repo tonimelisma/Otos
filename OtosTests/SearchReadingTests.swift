@@ -9,6 +9,8 @@ import Testing
 /// reading process reads with Vision's (`SearchTextReading.readPreview`).
 final class RecognizingSession: SearchTextSession {
     private let recognize: (CGImage) throws -> [RecognizedTextLine]
+    /// It has no process of its own to end.
+    let end: @Sendable () async -> Void = {}
 
     init(_ recognize: @escaping (CGImage) throws -> [RecognizedTextLine]) {
         self.recognize = recognize
@@ -22,6 +24,7 @@ final class RecognizingSession: SearchTextSession {
 /// A session whose process ends, without answering, on the pictures `exitsOn` names.
 final class ExitingSession: SearchTextSession {
     private let exitsOn: Set<String>
+    let end: @Sendable () async -> Void = {}
 
     init(exitsOn: Set<String>) {
         self.exitsOn = exitsOn

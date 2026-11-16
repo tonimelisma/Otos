@@ -9,7 +9,10 @@ import OSLog
 /// is read from that status and never from an error message. Measured on macOS 27.0.1
 /// against a held file on a scratch ExFAT volume
 /// (`docs/research/2026-10-23-diskarbitration-eject-status.md`): a busy volume refuses
-/// with `unix_err(EBUSY)` (`0xC010`) and no status string.
+/// with `unix_err(EBUSY)` (`0xC010`) and no status string. Another DiskArbitration client
+/// asked to approve the unmount can dissent with `kDAReturnBusy`, and that is `.busy` too: a
+/// holder outside Otos, which the caller asks again after its backoff
+/// (`docs/research/2026-11-15-a-released-card-refused-by-another-client.md`).
 nonisolated enum DiskEjector {
     enum Outcome: Equatable, Sendable {
         case ejected
@@ -24,15 +27,16 @@ nonisolated enum DiskEjector {
     @concurrent
     static func eject(volumeAt url: URL) async -> Outcome {
         guard let session = DASessionCreate(kCFAllocatorDefault) else {
-            return .diskUnavailable
+            return unavailable(step: "session", url: url)
         }
         let queue = DispatchQueue(label: "net.melisma.Otos.disk-eject")
         DASessionSetDispatchQueue(session, queue)
         defer { DASessionSetDispatchQueue(session, nil) }
-        guard let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url as CFURL),
-              let whole = DADiskCopyWholeDisk(disk)
-        else {
-            return .diskUnavailable
+        guard let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url as CFURL) else {
+            return unavailable(step: "volumeDisk", url: url)
+        }
+        guard let whole = DADiskCopyWholeDisk(disk) else {
+            return unavailable(step: "wholeDisk", url: url)
         }
         if let status = await request({ context in
             DADiskUnmount(whole, DADiskUnmountOptions(kDADiskUnmountOptionWhole), requestFinished, context)
@@ -58,6 +62,15 @@ nonisolated enum DiskEjector {
             "volume": url.path(percentEncoded: false),
         ])
         return outcome
+    }
+
+    /// No disk to eject, logged with the step that found none.
+    private static func unavailable(step: String, url: URL) -> Outcome {
+        OtosLog.fileAccess.noticeOperation("disk.eject", phase: "unavailable", fields: [
+            "step": step,
+            "volume": url.path(percentEncoded: false),
+        ])
+        return .diskUnavailable
     }
 
     /// `unix_err(errno)` from `<mach/error.h>`: `err_kern | err_sub(3) | errno`, the

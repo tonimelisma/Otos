@@ -243,8 +243,17 @@ the index's retry after its backoff (30 s doubling to 15 minutes) starts a new c
 recompiles what the purge removed (4 s for a file, minutes for an emptied cache) and reads the
 rest. The backoff bounds the recompiling a disk purged every few minutes would cause to one
 child a backoff, where a reader lost for the app's process read nothing until the owner
-relaunched. A child that exits while reading a picture, without answering, may have been ended by that picture (a decoder or recognizer crash), so the picture is paged past for the pass like a failed reading (`phase=sessionExited`) and the rest of the page is read by a new child: one such picture would otherwise come first in every page and stop every other still from being read. A child that neither answers nor exits is ended after 20 minutes and its picture is paged past the same way (`phase=sessionOverran`): nothing reports a reading that will never finish — the child's output stays open, and a heartbeat from it would beat on while Vision is stuck in another of its threads — so this is a deadline (ADR 0033), set at about twice the slowest reading measured, a cold first one under parallel load at 649 s, where a warm one takes 0.15–3.4 s (`docs/research/2026-11-14-vision-text-reading-breaks-for-its-process.md`). One serial queue reads every preview, so Otos never starts two first readings at
-once. At 512 px the fast level read noise, so the full preview is read; an original
+relaunched. A child that exits while reading a picture, without answering, may have been ended by that picture (a decoder or recognizer crash), so the picture is paged past for the pass like a failed reading (`phase=sessionExited`) and the rest of the page is read by a new child: one such picture would otherwise come first in every page and stop every other still from being read. A child that neither answers nor exits is ended after 20 minutes and its picture is paged past the same way (`phase=sessionOverran`): nothing reports a reading that will never finish — the child's output stays open, and a heartbeat from it would beat on while Vision is stuck in another of its threads — so this is a deadline (ADR 0033), set at about twice the slowest reading measured, a cold first one under parallel load at 649 s, where a warm one takes 0.15–3.4 s (`docs/research/2026-11-14-vision-text-reading-breaks-for-its-process.md`). A child never
+outlives the Otos that started it: its requests pipe has one writer, Otos (`Process` closes
+every other descriptor in a child it starts), so the pipe ends when Otos ends the session,
+quits, crashes or is killed, and the child reads that pipe on a thread that never reads a
+picture and exits at its end at once, mid-reading or not (`phase=childInputEnded`). Read
+between readings, as it first was, the end reached the child only after Vision's reading
+finished, and every quit left a child holding Vision's model for minutes. The window's
+teardown ends the live child and waits for its exit (`SearchTextReader.shutdown`); a quit needs
+no step of its own. The still whose reading was cut short is stamped nothing, so it stays owed
+(`docs/research/2026-11-15-text-reading-child-outlived-otos.md`). One serial queue reads every
+preview, so Otos never starts two first readings at once. At 512 px the fast level read noise, so the full preview is read; an original
 is not, since nearly every original in the owner's library is a cloud placeholder. Text is read
 after every embedding is made.
 

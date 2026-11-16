@@ -147,6 +147,38 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    /// The index's shutdown while a text reading is in flight ends that reading's child and
+    /// returns once it is gone, and the still being read, like every still not yet read, stays
+    /// owed: it is not stamped as holding no text. `cat` stands in for a child mid-reading: it
+    /// keeps its output open (as descriptor 3) and never answers, and exits at its input's end.
+    @Test func aReadingCutShortByShutdownStaysOwed() async throws {
+        let catalog = try await makeCatalog()
+        try await givePreviews(catalog)
+        let started = Mutex<[Int32]>([])
+        let reader = SearchTextReader {
+            let child = try SearchTextChild(executable: URL(filePath: "/bin/sh"), arguments: ["-c", "exec cat 3>&1 > /dev/null"])
+            started.withLock { $0.append(child.processIdentifier) }
+            return child
+        }
+        defer {
+            for pid in started.withLock({ $0 }) {
+                kill(pid, SIGKILL)
+            }
+        }
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
+            cutoff: .none, backoff: (.zero, .zero), textReader: reader
+        )
+        await index.start()
+        let pid = try await waitForValue { started.withLock { $0.first } }
+
+        await index.shutdown()
+        #expect(kill(pid, 0) == -1 && errno == ESRCH)
+        #expect(started.withLock { $0.count } == 1)
+        #expect(try await catalog.store.searchTextCandidates(limit: 10).count == 2)
+        await catalog.store.shutdown()
+    }
+
     static func writeJPEG(_ image: CGImage, to url: URL) throws {
         let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
         CGImageDestinationAddImage(destination, image, nil)

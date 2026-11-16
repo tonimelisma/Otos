@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Search text reading process guide (ADR 0048)
 ///
@@ -21,13 +22,20 @@ import Foundation
 /// one under parallel load at 649 s (a warm one takes 0.15–3.4 s;
 /// `docs/research/2026-11-14-vision-text-reading-breaks-for-its-process.md`).
 ///
+/// A child lives no longer than its session, and no session outlives Otos. The child exits
+/// when its input ends, even mid-reading (`SearchTextReadingProcess.serve`), and Otos holds
+/// that input's only writer: ending a session closes it (`end`, and `deinit` for a session
+/// dropped), and Otos's own end — a quit, a crash, a kill — closes it with every other
+/// descriptor. `end` returns once the child's exit is reported (`Process.terminationHandler`),
+/// so a shutdown that awaits it leaves no child behind.
+///
 /// The child is the app's executable in the installed app, beside the `OtosKit` framework it
 /// embeds, and the built `Otos.app` beside the framework when tests load it from the build's
 /// products. It reads the same previews from Application Support the app does, and reads
 /// nothing else.
 final nonisolated class SearchTextChild: SearchTextSession {
     private let process: Process
-    private let requests: FileHandle
+    private let lifetime: SearchTextChildLifetime
     private let answers: FileHandle
     private var pending = Data()
     private let answerDeadline: Duration
@@ -54,6 +62,8 @@ final nonisolated class SearchTextChild: SearchTextSession {
         guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EINVAL)
         }
+        let lifetime = SearchTextChildLifetime(input: input.fileHandleForWriting)
+        self.lifetime = lifetime
         process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -62,8 +72,8 @@ final nonisolated class SearchTextChild: SearchTextSession {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { _ in lifetime.reportExit() }
         try process.run()
-        requests = input.fileHandleForWriting
         answers = output.fileHandleForReading
         OtosLog.thumbnails.noticeOperation("search.text", phase: "sessionStarted", fields: [
             "pid": "\(process.processIdentifier)",
@@ -71,15 +81,8 @@ final nonisolated class SearchTextChild: SearchTextSession {
     }
 
     deinit {
-        // Closing its input ends the child; terminating it ends one that is mid-reading.
-        do {
-            try requests.close()
-        } catch {
-            OtosLog.thumbnails.errorOperation("search.text", phase: "sessionCloseFailed", fields: [
-                "pid": "\(process.processIdentifier)", "error": String(describing: error),
-            ])
-        }
-        process.terminate()
+        // Its input's end ends the child, mid-reading or not.
+        lifetime.closeInput()
     }
 
     /// The child's process identifier, for a test that ends it.
@@ -87,18 +90,25 @@ final nonisolated class SearchTextChild: SearchTextSession {
         process.processIdentifier
     }
 
+    var end: @Sendable () async -> Void {
+        let lifetime = lifetime
+        return { await lifetime.end() }
+    }
+
     func read(_ url: URL) -> SearchTextPreviewReading {
         do {
             var request = try JSONEncoder().encode(SearchTextReadingProcess.Request(path: url.path(percentEncoded: false)))
             request.append(0x0A)
-            try requests.write(contentsOf: request)
+            try lifetime.write(request)
             switch nextAnswer(by: ContinuousClock.now + answerDeadline) {
             case let .line(answer):
                 return try JSONDecoder().decode(SearchTextPreviewReading.self, from: answer)
             case .closed:
                 return .exited("the reading process exited before it answered")
             case .overran:
-                // Ended here, so the reader's next page starts a new child; `deinit` reaps it.
+                // Ended here, so the reader's next page starts a new child. A child stuck in
+                // Vision still reads its input's end, but a stand-in that never reads its input
+                // does not, so this one is terminated.
                 process.terminate()
                 OtosLog.thumbnails.errorOperation("search.text", phase: "sessionOverran", fields: [
                     "pid": "\(process.processIdentifier)", "deadlineSeconds": "\(answerDeadline.components.seconds)",
@@ -176,6 +186,77 @@ nonisolated enum SearchTextChildError: Error {
     case noExecutable(String)
 }
 
+/// A child's input and its exit, shared by the session that reads through it, the reader's
+/// shutdown that ends it from another thread mid-reading, and `Process`'s termination handler
+/// that reports its exit.
+final nonisolated class SearchTextChildLifetime: Sendable {
+    private struct State {
+        /// The child's input, until it is closed.
+        var input: FileHandle?
+        var exited = false
+        var exitWaiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let state: Mutex<State>
+
+    init(input: FileHandle) {
+        state = Mutex(State(input: input))
+    }
+
+    /// Writes one request to the child's input; a closed input throws.
+    func write(_ request: Data) throws {
+        try state.withLock { state in
+            guard let input = state.input else {
+                throw POSIXError(.EPIPE)
+            }
+            try input.write(contentsOf: request)
+        }
+    }
+
+    /// Closes the child's input, once: the child exits at its end.
+    func closeInput() {
+        guard let input = state.withLock({ state in
+            defer { state.input = nil }
+            return state.input
+        }) else { return }
+        do {
+            try input.close()
+        } catch {
+            OtosLog.thumbnails.errorOperation("search.text", phase: "sessionCloseFailed", fields: [
+                "error": String(describing: error),
+            ])
+        }
+    }
+
+    /// Ends the child and returns once its exit is reported.
+    func end() async {
+        closeInput()
+        await withCheckedContinuation { continuation in
+            let exited = state.withLock { state in
+                if !state.exited {
+                    state.exitWaiters.append(continuation)
+                }
+                return state.exited
+            }
+            if exited {
+                continuation.resume()
+            }
+        }
+    }
+
+    /// The child exited: what `Process.terminationHandler` reports.
+    func reportExit() {
+        let waiters = state.withLock { state in
+            state.exited = true
+            defer { state.exitWaiters = [] }
+            return state.exitWaiters
+        }
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+}
+
 /// The child's side: what `main.swift` runs when Otos is started to read text.
 public nonisolated enum SearchTextReadingProcess {
     /// The argument that starts Otos as a text-reading child.
@@ -185,28 +266,54 @@ public nonisolated enum SearchTextReadingProcess {
         let path: String
     }
 
-    /// Answers each request on standard input, one line each, until the input closes or
+    /// Answers each request on standard input, one line each, until the input ends or
     /// Vision's reader is lost for this process.
+    ///
+    /// The input's end is this process's end, whatever a reading is doing. Otos holds the only
+    /// writer of this pipe (`Process` closes every other descriptor in a child it starts), so
+    /// the input ends when Otos ends the session, quits, crashes or is killed: the kernel
+    /// closes a dead process's descriptors. A reading holds its thread inside Vision for as
+    /// long as Vision takes — minutes, cold and under load — so the input is read on a thread
+    /// that never reads a picture, and at the input's end it exits the process at once
+    /// (`_exit`), mid-reading or not. No one is left to read that reading's answer, and its
+    /// picture stays owed in Otos's catalog, which only a written reading stamps.
     public static func serve() -> Never {
-        while let line = readLine(strippingNewline: true) {
-            let reading: SearchTextPreviewReading
-            do {
-                let request = try JSONDecoder().decode(Request.self, from: Data(line.utf8))
-                reading = SearchTextReading.readPreview(at: URL(filePath: request.path))
-            } catch {
-                reading = .failed("unreadable request: \(error)")
+        let readings = DispatchSerialQueue(label: "net.melisma.Otos.search.text.child", qos: .utility)
+        let input = Thread {
+            while let line = readLine(strippingNewline: true) {
+                // Otos asks for one picture at a time and waits for its answer, so at most
+                // one reading is queued here.
+                readings.async { answer(line) }
             }
-            do {
-                var answer = try JSONEncoder().encode(reading)
-                answer.append(0x0A)
-                try FileHandle.standardOutput.write(contentsOf: answer)
-            } catch {
-                exit(1)
-            }
-            if case .ended = reading {
-                exit(0)
-            }
+            OtosLog.thumbnails.noticeOperation("search.text", phase: "childInputEnded", fields: [
+                "pid": "\(getpid())",
+            ])
+            _exit(0)
         }
-        exit(0)
+        input.qualityOfService = .utility
+        input.start()
+        dispatchMain()
+    }
+
+    /// Reads one request's picture and writes its answer. The process exits after an answer
+    /// that ends it, and when an answer cannot be written.
+    private static func answer(_ line: String) {
+        let reading: SearchTextPreviewReading
+        do {
+            let request = try JSONDecoder().decode(Request.self, from: Data(line.utf8))
+            reading = SearchTextReading.readPreview(at: URL(filePath: request.path))
+        } catch {
+            reading = .failed("unreadable request: \(error)")
+        }
+        do {
+            var answer = try JSONEncoder().encode(reading)
+            answer.append(0x0A)
+            try FileHandle.standardOutput.write(contentsOf: answer)
+        } catch {
+            exit(1)
+        }
+        if case .ended = reading {
+            exit(0)
+        }
     }
 }

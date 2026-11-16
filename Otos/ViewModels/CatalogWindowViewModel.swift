@@ -1042,17 +1042,20 @@ final class CatalogWindowViewModel {
         // its coordinator. `shutdown()` is async and teardown cannot await, so one task,
         // which nothing here outlives to own, stops them side by side — an import's
         // shutdown waits for its run, and nothing else should wait behind that.
-        // Materialization stops after enrichment, which feeds it.
+        // Materialization stops after enrichment, which feeds it. The search index's pass holds
+        // it for as long as a text reading takes, and its shutdown ends that reading's child.
         let mediaOps = mediaOperationCoordinator
         let mediaTrash = mediaTrashCoordinator
         let enrichment = enrichmentCoordinator
         let materialization = materializationCoordinator
         let refresher = metadataRefresher
         let immich = immichAccounts
+        let searchIndex = photoSearchIndex
         // swiftlint:disable:next unowned_view_model_task
         Task {
             await withDiscardingTaskGroup { group in
                 group.addTask { await immich?.shutdown() }
+                group.addTask { await searchIndex?.shutdown() }
                 group.addTask { await mediaOps?.shutdown() }
                 group.addTask { await mediaTrash.shutdown() }
                 group.addTask { await refresher?.shutdown() }
