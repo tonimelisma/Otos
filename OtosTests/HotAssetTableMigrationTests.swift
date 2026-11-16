@@ -291,8 +291,8 @@ struct HotAssetTableMigrationTests {
     }
 }
 
-/// The open's compaction (`CatalogStore.compactIfOwed`): a catalog a quarter or more free is
-/// rewritten without its free pages, keeping every row, once; one without room above the
+/// The open's compaction (`CatalogStore.compactIfOwed`): a catalog a tenth or more free, and at least
+/// 256 MB of it, is rewritten without its free pages, keeping every row, once; one without room above the
 /// free-space floor is left as it is and asked again at the next open.
 @Suite(.testScope)
 struct CatalogCompactionTests {
@@ -313,7 +313,7 @@ struct CatalogCompactionTests {
         return (pool, url)
     }
 
-    @Test func aCatalogAQuarterFreeIsRewrittenOnceAndKeepsItsRows() throws {
+    @Test func aCatalogWithFreePagesIsRewrittenOnceAndKeepsItsRows() throws {
         let (pool, url) = try Self.catalogWithFreePages()
         var told = 0
         let outcome = try CatalogStore.compactIfOwed(pool, fileURL: url, minimumFreeBytes: 0) { told += 1 }
@@ -337,6 +337,16 @@ struct CatalogCompactionTests {
             return
         }
         #expect(told == 1)
+    }
+
+    /// The owner's catalog after v71: 162,334 of 687,016 pages free (23.6 %, 634 MB of 2.8 GB),
+    /// which a quarter's rule left in place. A tenth and 256 MB owe it; a smaller share, or
+    /// fewer bytes, do not.
+    @Test func theOwnersFileAfterV71IsOwedItsCompaction() {
+        let minimum = CatalogStore.compactionMinimumFreeBytes
+        #expect(CatalogStore.compactionOwed(pages: 687_016, freePages: 162_334, pageSize: 4096, minimumFreeBytes: minimum))
+        #expect(!CatalogStore.compactionOwed(pages: 687_016, freePages: 68000, pageSize: 4096, minimumFreeBytes: minimum))
+        #expect(!CatalogStore.compactionOwed(pages: 200_000, freePages: 60000, pageSize: 4096, minimumFreeBytes: minimum))
     }
 
     @Test func aCatalogWithoutRoomAboveTheFloorIsLeftForTheNextOpen() throws {

@@ -617,14 +617,22 @@ extension CatalogStore {
         }
     }
 
-    /// The file is compacted when at least this share of its pages is free…
-    static let compactionFreeShare = 0.25
+    /// The file is compacted when at least this share of its pages is free… A tenth: on the
+    /// owner's catalog v71 left 23.6 % of 2.8 GB free (634 MB), which a quarter left in place;
+    /// below a tenth, the reads of what remains are spread over a file barely larger.
+    static let compactionFreeShare = 0.10
     /// …and the free pages hold at least this much: rewriting the file costs about as long per
     /// byte as reading it, so a few free megabytes are not worth a launch's wait.
     static let compactionMinimumFreeBytes: Int64 = 256 * 1024 * 1024
 
-    /// Rewrites the catalog without its free pages (`VACUUM`) when a quarter of it or more is
-    /// free, after the migrations and before anything else reads it. A table rebuild (v71's
+    /// Whether a file of `pages` pages, `freePages` of them free, is worth rewriting: a tenth or
+    /// more of it free, and at least `minimumFreeBytes`.
+    static func compactionOwed(pages: Int64, freePages: Int64, pageSize: Int64, minimumFreeBytes: Int64) -> Bool {
+        pages > 0 && Double(freePages) >= compactionFreeShare * Double(pages) && freePages * pageSize >= minimumFreeBytes
+    }
+
+    /// Rewrites the catalog without its free pages (`VACUUM`) when a tenth of it or more, and at
+    /// least 256 MB, is free, after the migrations and before anything else reads it. A table rebuild (v71's
     /// `media_asset`) or a removed library leaves its old pages free in the file, where SQLite
     /// reuses them but never gives them back; on the owner's catalog v71 freed about 1.2 GB of
     /// 2.8 GB, and the reads of what remains are spread over a file twice their size. VACUUM
@@ -647,9 +655,7 @@ extension CatalogStore {
             }
         }
         let pages = counts[0], free = counts[1], pageSize = counts[2]
-        guard pages > 0, Double(free) >= compactionFreeShare * Double(pages),
-              free * pageSize >= minimumFreeBytes
-        else {
+        guard compactionOwed(pages: pages, freePages: free, pageSize: pageSize, minimumFreeBytes: minimumFreeBytes) else {
             return .notOwed(freePages: free, pages: pages)
         }
         let needed = 2 * (pages - free) * pageSize

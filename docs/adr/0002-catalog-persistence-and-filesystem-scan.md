@@ -251,10 +251,10 @@ none, and the log said nothing about the wait
   rows rather than maintained for every write. An applied migration's body changes only when
   its outcome — schema text, row contents, object order — stays identical: GRDB knows a
   migration by its name, and a catalog that applied it never runs it again.
-- **The open compacts a file a quarter free.** SQLite reuses a dropped table's pages but
+- **The open compacts a file a tenth free.** SQLite reuses a dropped table's pages but
   never returns them, and `VACUUM` cannot run inside a migration's transaction, so after the
-  migrations the open rewrites the file (`CatalogStore.compactIfOwed`) when at least a quarter
-  of its pages and 256 MB are free — v71 frees about 1.2 GB of the owner's 2.8 GB — and says so
+  migrations the open rewrites the file (`CatalogStore.compactIfOwed`) when at least a tenth
+  of its pages and 256 MB are free — v71 left 634 MB of the owner's 2.8 GB free, 23.6 % — and says so
   (`Optimizing catalog…`, DES-121). It needs twice the used pages free above the free-space
   floor (a temporary copy, then the log, ADR 0027); without that room it is skipped, logged
   (`op=catalog.compaction phase=skipped reason=freeSpaceFloor`), and the next open asks again.
