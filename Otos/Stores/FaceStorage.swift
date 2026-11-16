@@ -2,9 +2,9 @@ import CoreGraphics
 import Foundation
 import GRDB
 
-/// The byte form of a face's vectors in the catalog's `face` table (ADR 0047), in
-/// `Float32Storage`'s form. An embedding is `FaceEmbeddingModel.dimensions` values; the
-/// landmarks are five (x, y) pairs.
+/// The byte form of a face's vectors in the catalog (ADR 0047), in `Float32Storage`'s form:
+/// the landmarks on the `face` row, five (x, y) pairs, and the embedding in its own
+/// `face_embedding` row (`FaceEmbeddingSQL`), `FaceEmbeddingModel.dimensions` values.
 nonisolated enum FaceStorage {
     static func embeddingData(_ embedding: FaceEmbedding) -> Data {
         Float32Storage.data(embedding.values)
@@ -26,6 +26,30 @@ nonisolated enum FaceStorage {
             CGPoint(x: Double(values[$0]), y: Double(values[$0 + 1]))
         })
     }
+}
+
+/// A face's embedding row (v66, ADR 0047): `face_embedding`, one row per face, keyed by the
+/// face with cascades from it, numbered by `id` in the order readings wrote them. A reading
+/// writes a new row, and `AUTOINCREMENT` never repeats a number, so a reader that holds the
+/// vectors up to some `id` is owed exactly the rows above it.
+nonisolated enum FaceEmbeddingSQL {
+    /// The unique index of the face key, which every join from a face reaches its vector by.
+    static let faceIndexName = "idx_face_embedding_face"
+
+    /// Joins `face` (as `face`) to its vector's row (as `embedding`); a face whose row is
+    /// missing is no reading's and joins NULL.
+    static func join(face: String, embedding: String) -> String {
+        """
+        LEFT JOIN face_embedding AS \(embedding)
+            ON \(embedding).library_root_id = \(face).library_root_id
+            AND \(embedding).relative_path = \(face).relative_path
+            AND \(embedding).face_index = \(face).face_index
+        """
+    }
+
+    static let insertSQL = """
+    INSERT INTO face_embedding (library_root_id, relative_path, face_index, embedding) VALUES (?, ?, ?, ?)
+    """
 }
 
 /// Which face of a new reading each face of the previous reading of the same photo became
@@ -320,13 +344,14 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
     case captureLocal, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown
     case faceFramesPath, frameIndex, isVideo
 
-    /// The expression each column is read from, over `face f` joined to `media_asset m`.
+    /// The expression each column is read from, over `face f` joined to `media_asset m` and
+    /// to its vector's row `e` (`FaceEmbeddingSQL.join`).
     var sql: String {
         switch self {
         case .rootID: "f.library_root_id"
         case .path: "f.relative_path"
         case .faceIndex: "f.face_index"
-        case .embedding: "f.embedding"
+        case .embedding: "e.embedding"
         case .personID: "f.person_id"
         case .assignment: "f.assignment"
         case .likeness: "f.likeness"

@@ -1916,6 +1916,95 @@ nonisolated enum CatalogSchema {
         }
     }
 
+    /// v66 a face's embedding moves out of its row into `face_embedding` (ADR 0047, Storage).
+    /// A face row was 2.1 KB, its 2,048-byte embedding most of it, so one row filled a page
+    /// and every People read of who the faces are read 403 MB on the owner's catalog to learn
+    /// 100 bytes a face. The face row keeps everything but the vector; the vector's row
+    /// carries the face's key, with cascades from it, and `id`, the reading's number: a new
+    /// reading of a face inserts a new vector row, and `AUTOINCREMENT` never gives a number
+    /// twice, so the vectors written since any moment are the rows above the largest `id`
+    /// then. The number is never an identity: a face is its photo's path and place (ADR 0008).
+    ///
+    /// SQLite cannot drop a column without rewriting every row in place, which would write the
+    /// whole 403 MB table to the log a second time, so the face table is rebuilt (SQLite's
+    /// twelve steps): the vectors are copied out, the narrow rows copied into a new table, the
+    /// old one dropped and the new one renamed, and the indexes made after the rows. Dropping
+    /// a table other tables reference needs foreign keys off, so the migration registers its
+    /// own deferred check, of only the three tables it rewrote (`checkedTables`).
+    static let faceEmbeddingTableMigrationIdentifier = "v66_face_embedding_table"
+
+    /// The tables v66 rewrote, whose foreign keys its deferred check reads.
+    static let faceEmbeddingTableCheckedTables = ["face", "face_embedding", "face_rejection"]
+
+    static var faceEmbeddingTableStatements: [String] {
+        let narrowColumns = """
+        library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height, landmarks, quality,
+        analysis_revision, person_id, is_not_face, assignment, likeness, is_key_photo, frame_index
+        """
+        return [
+            """
+            CREATE TABLE face_embedding (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                library_root_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                face_index INTEGER NOT NULL,
+                embedding BLOB NOT NULL,
+                FOREIGN KEY (library_root_id, relative_path, face_index)
+                    REFERENCES face(library_root_id, relative_path, face_index)
+                    ON UPDATE CASCADE ON DELETE CASCADE
+            )
+            """,
+            """
+            INSERT INTO face_embedding (library_root_id, relative_path, face_index, embedding)
+            SELECT library_root_id, relative_path, face_index, embedding FROM face
+            ORDER BY library_root_id, relative_path, face_index
+            """,
+            """
+            CREATE TABLE face_narrow (
+                library_root_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                face_index INTEGER NOT NULL,
+                box_x REAL NOT NULL,
+                box_y REAL NOT NULL,
+                box_width REAL NOT NULL,
+                box_height REAL NOT NULL,
+                landmarks BLOB NOT NULL,
+                quality REAL NOT NULL,
+                analysis_revision INTEGER NOT NULL,
+                person_id INTEGER REFERENCES person(id) ON DELETE SET NULL,
+                is_not_face INTEGER NOT NULL DEFAULT 0,
+                assignment INTEGER NOT NULL DEFAULT 0,
+                likeness REAL,
+                is_key_photo INTEGER NOT NULL DEFAULT 0,
+                frame_index INTEGER,
+                PRIMARY KEY (library_root_id, relative_path, face_index),
+                FOREIGN KEY (library_root_id, relative_path)
+                    REFERENCES media_asset(library_root_id, relative_path)
+                    ON UPDATE CASCADE ON DELETE CASCADE
+            )
+            """,
+            """
+            INSERT INTO face_narrow (\(narrowColumns))
+            SELECT \(narrowColumns) FROM face ORDER BY library_root_id, relative_path, face_index
+            """,
+            "DROP TABLE face",
+            "ALTER TABLE face_narrow RENAME TO face",
+            """
+            CREATE UNIQUE INDEX \(FaceEmbeddingSQL.faceIndexName)
+            ON face_embedding(library_root_id, relative_path, face_index)
+            """,
+            "CREATE UNIQUE INDEX idx_face_key_photo ON face(person_id) WHERE is_key_photo = 1",
+            """
+            CREATE INDEX idx_face_person_photo
+            ON face(person_id, library_root_id, relative_path, is_not_face) WHERE person_id IS NOT NULL
+            """,
+            """
+            CREATE INDEX idx_face_assigned_photo
+            ON face(library_root_id, relative_path) WHERE person_id IS NOT NULL AND is_not_face = 0
+            """,
+        ]
+    }
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

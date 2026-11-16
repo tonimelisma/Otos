@@ -185,7 +185,7 @@ struct PeopleStoreTests {
         ])
         let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
         try await database.write { db in
-            try db.execute(sql: "UPDATE face SET embedding = x'00' WHERE relative_path = 'a.jpg' AND face_index = 1")
+            try db.execute(sql: "UPDATE face_embedding SET embedding = x'00' WHERE relative_path = 'a.jpg' AND face_index = 1")
         }
 
         let snapshot = try await library.store.peopleSnapshot()

@@ -185,10 +185,20 @@ grouping had put with the right child.
 - **A face row** holds:
   - the face box and the five landmarks, as fractions of the upright photo;
   - the quality;
-  - the embedding, as 512 little-endian Float32 values;
   - the analysis revision that read it.
 
   Its person and whose word it is come with assignment.
+- **A face's embedding** is its own row in `face_embedding` (since v66): 512 little-endian
+  Float32 values, keyed by the face with `ON UPDATE CASCADE` and `ON DELETE CASCADE`, so a
+  move and a deletion carry it with its face. In the face row it was 2,048 of 2,100 bytes:
+  one row filled a page, and every read of who the faces are read 403 MB on the owner's
+  catalog to learn about 100 bytes a face. Its `id` (`AUTOINCREMENT`) is the reading's
+  number: every reading inserts a new vector row and no number is given twice, so the
+  vectors written since a reader last looked are the rows above the largest number it holds.
+  The number is never an identity; a face is its photo's path and its place in the reading.
+  Rejected: dropping the column in place, which rewrites every row of the table and so writes the
+  whole table to the log beside the copied vectors, and a covering index beside the wide rows, which
+  keeps the 403 MB table and still gives no reading a number.
 - **The faces stamp** is on the asset (`faces_source_size`, `faces_source_mtime`): the
   `(size, mtime)` of the source the preview read was made from. A reading replaces every face
   of its asset, and a still with no face has the stamp and no rows, so it is not read again

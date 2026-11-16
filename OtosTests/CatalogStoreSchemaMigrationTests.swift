@@ -112,8 +112,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == ["1/3", "2/3", "3/3"])
-        #expect(run.applied == 3)
+        #expect(steps.recorded == ["1/4", "2/4", "3/4", "4/4"])
+        #expect(run.applied == 4)
         let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
         #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
 
@@ -147,8 +147,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == ["1/3", "2/3", "3/3"])
-        #expect(run.applied == 3)
+        #expect(steps.recorded == ["1/4", "2/4", "3/4", "4/4"])
+        #expect(run.applied == 4)
     }
 
     private final class StepLog: Sendable {
@@ -318,6 +318,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.locationIndexMigrationIdentifier,
             CatalogSchema.photoCopiesMigrationIdentifier,
             CatalogSchema.owedWorkIndexesMigrationIdentifier,
+            CatalogSchema.faceEmbeddingTableMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -916,8 +917,8 @@ struct CatalogStoreSchemaMigrationTests {
             }
             try db.execute(sql: """
             INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                landmarks, quality, analysis_revision, embedding)
-            VALUES (1, 'withFace.arw', 0, 0, 0, 0.5, 0.5, x'00', 0.9, 1, x'00')
+                landmarks, quality, analysis_revision)
+            VALUES (1, 'withFace.arw', 0, 0, 0, 0.5, 0.5, x'00', 0.9, 1)
             """)
             try db.execute(
                 sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
@@ -967,8 +968,8 @@ struct CatalogStoreSchemaMigrationTests {
                 try db.execute(
                     sql: """
                     INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                        landmarks, quality, analysis_revision, embedding)
-                    VALUES (1, ?, 0, 0, 0, 0.5, 0.5, x'00', 0.9, ?, x'00')
+                        landmarks, quality, analysis_revision)
+                    VALUES (1, ?, 0, 0, 0, 0.5, 0.5, x'00', 0.9, ?)
                     """,
                     arguments: [path, revision]
                 )
@@ -1195,8 +1196,8 @@ struct CatalogStoreSchemaMigrationTests {
             }
             try db.execute(sql: """
             INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                landmarks, quality, analysis_revision, embedding)
-            VALUES (1, 'withFace.jpg', 0, 0, 0, 0.5, 0.5, x'00', 0.9, 2, x'00')
+                landmarks, quality, analysis_revision)
+            VALUES (1, 'withFace.jpg', 0, 0, 0, 0.5, 0.5, x'00', 0.9, 2)
             """)
             // The v18 pair, which v35 made again under the same names for the library claim.
             for name in libraryIndexes {
@@ -1747,5 +1748,72 @@ extension CatalogStoreSchemaMigrationTests {
         }
         #expect(readings == ["previewless.jpg", "sign.jpg"])
         #expect(owed == ["empty.jpg"])
+    }
+
+    /// v66: each face's embedding moves to its own row, numbered in face order, and the face
+    /// row keeps everything else: its person and whose word it is, its likeness, its key
+    /// photo, its rejections. The vector rows follow their face: a moved photo carries them and
+    /// a deleted one takes them, and a new vector is numbered above every vector before it.
+    @Test func theFaceEmbeddingMigrationMovesEachVectorToItsOwnRow() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.owedWorkIndexesMigrationIdentifier)
+        let vectors = (0 ..< 3).map { index in
+            FaceStorage.embeddingData(FaceEmbedding(normalizing: (0 ..< FaceEmbeddingModel.dimensions).map { $0 == index ? 1 : 0 })!)
+        }
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            for path in ["a.jpg", "b.jpg"] {
+                try db.execute(sql: """
+                INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key)
+                VALUES (1, ?, ?, ?, ?)
+                """, arguments: [path, path, path, path])
+            }
+            try db.execute(sql: "INSERT INTO person (id, name) VALUES (1, 'Sam'), (2, 'Ian')")
+            for (path, index, person, assignment, likeness, key) in [
+                ("b.jpg", 0, Int64?(1), FaceAssignmentColumn.user, Double?(0.8), 1),
+                ("a.jpg", 1, nil, .held, nil, 0),
+                ("a.jpg", 0, 2, .model, 0.6, 0),
+            ] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                        landmarks, quality, analysis_revision, embedding, person_id, assignment, likeness, is_key_photo)
+                    VALUES (1, ?, ?, 0.1, 0.2, 0.3, 0.4, x'01', 0.5, 7, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [path, index, vectors[path == "b.jpg" ? 2 : index], person, assignment.rawValue, likeness, key]
+                )
+            }
+            try db.execute(sql: "INSERT INTO face_rejection VALUES (1, 'a.jpg', 1, 2)")
+        }
+        try CatalogStore.migrator.migrate(queue)
+        try await queue.write { db in
+            let columns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('face')"))
+            #expect(!columns.contains("embedding"))
+            let faces = try Row.fetchAll(db, sql: """
+            SELECT relative_path, face_index, person_id, assignment, likeness, is_key_photo, analysis_revision
+            FROM face ORDER BY relative_path, face_index
+            """).map { "\($0[0] as String)#\($0[1] as Int) \($0[2] as Int64? ?? 0) \($0[3] as Int) \($0[4] as Double? ?? 0) \($0[5] as Int) \($0[6] as Int)" }
+            #expect(faces == ["a.jpg#0 2 1 0.6 0 7", "a.jpg#1 0 4 0.0 0 7", "b.jpg#0 1 3 0.8 1 7"])
+            let moved = try Row.fetchAll(db, sql: "SELECT id, relative_path, face_index, embedding FROM face_embedding ORDER BY id")
+            #expect(moved.map { "\($0[0] as Int64) \($0[1] as String)#\($0[2] as Int)" } == ["1 a.jpg#0", "2 a.jpg#1", "3 b.jpg#0"])
+            #expect(moved.map { $0[3] as Data } == [vectors[0], vectors[1], vectors[2]])
+            #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM face_rejection") == 1)
+            // A move carries the vectors, a deletion takes them, and a new one is numbered on.
+            try db.execute(sql: "UPDATE media_asset SET relative_path = 'c.jpg' WHERE relative_path = 'a.jpg'")
+            try db.execute(sql: "DELETE FROM media_asset WHERE relative_path = 'b.jpg'")
+            try db.execute(sql: """
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key)
+            VALUES (1, 'b.jpg', 'b.jpg', 'b.jpg', 'b.jpg')
+            """)
+            try db.execute(sql: """
+            INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                landmarks, quality, analysis_revision)
+            VALUES (1, 'b.jpg', 0, 0.1, 0.2, 0.3, 0.4, x'01', 0.5, 7)
+            """)
+            try db.execute(sql: FaceEmbeddingSQL.insertSQL, arguments: [1, "b.jpg", 0, vectors[0]])
+            let after = try Row.fetchAll(db, sql: "SELECT id, relative_path, face_index FROM face_embedding ORDER BY id")
+            #expect(after.map { "\($0[0] as Int64) \($0[1] as String)#\($0[2] as Int)" } == ["1 c.jpg#0", "2 c.jpg#1", "4 b.jpg#0"])
+            #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM face_rejection WHERE relative_path = 'c.jpg'") == 1)
+        }
     }
 }

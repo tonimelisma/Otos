@@ -372,12 +372,12 @@ struct OwnerShapedCatalog {
         let people = scaled(Owner.people, scale)
         let face = """
         SELECT library_root_id, relative_path, 0, 0.3, 0.3, 0.2, 0.2, zeroblob(40), 0.47, \(FaceAnalyzer.revision),
-               zeroblob(2048), CASE WHEN rowid % 33 = 0 THEN NULL ELSE 1 + rowid % \(people) END, 1
+               CASE WHEN rowid % 33 = 0 THEN NULL ELSE 1 + rowid % \(people) END, 1
         """
         try db.execute(
             sql: """
             INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                              landmarks, quality, analysis_revision, embedding, person_id, assignment)
+                              landmarks, quality, analysis_revision, person_id, assignment)
             \(face) FROM media_asset WHERE library_root_id IN (6, 7, 15) AND kind IN ('image', 'raw')
               AND preview_path IS NOT NULL \(spread) LIMIT ?
             """,
@@ -387,13 +387,18 @@ struct OwnerShapedCatalog {
         try db.execute(
             sql: """
             INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                              landmarks, quality, analysis_revision, embedding, person_id, assignment, frame_index)
+                              landmarks, quality, analysis_revision, person_id, assignment, frame_index)
             \(face), 0 FROM media_asset WHERE library_root_id IN (7, 15) AND kind = 'video'
               AND faces_source_size IS NOT NULL \(spread) LIMIT ?
             """,
             arguments: [scaled(Owner.frameFaces, scale)]
         )
         shape.faces += db.changesCount
+        try db.execute(sql: """
+        INSERT INTO face_embedding (library_root_id, relative_path, face_index, embedding)
+        SELECT library_root_id, relative_path, face_index, zeroblob(2048) FROM face
+        ORDER BY library_root_id, relative_path, face_index
+        """)
         // Metadata records of about 1.1 KB, three in four located in one of his 1,435 named
         // cells; a fifth read by an older parser.
         let cells = scaled(Owner.placeCells, scale)

@@ -202,8 +202,12 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
             .insert(tableName: "face"), .delete(tableName: "face"),
             .update(tableName: "face", columnNames: [
                 "library_root_id", "relative_path", "face_index", "box_x", "box_y", "box_width", "box_height", "landmarks",
-                "quality", "analysis_revision", "embedding", "person_id", "is_not_face", "assignment", "likeness",
+                "quality", "analysis_revision", "person_id", "is_not_face", "assignment", "likeness",
                 "is_key_photo", "frame_index",
+            ]),
+            .insert(tableName: "face_embedding"), .delete(tableName: "face_embedding"),
+            .update(tableName: "face_embedding", columnNames: [
+                "id", "library_root_id", "relative_path", "face_index", "embedding",
             ]),
             .insert(tableName: "face_rejection"), .delete(tableName: "face_rejection"),
             .update(tableName: "face_rejection", columnNames: ["library_root_id", "relative_path", "face_index", "person_id"]),
@@ -1405,17 +1409,16 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT box_x, box_y, box_width, box_height, landmarks, quality, embedding
-                FROM face
-                WHERE library_root_id = ? AND relative_path = ?
-                ORDER BY face_index
+                SELECT box_x, box_y, box_width, box_height, landmarks, quality, vector.embedding
+                FROM face \(FaceEmbeddingSQL.join(face: "face", embedding: "vector"))
+                WHERE face.library_root_id = ? AND face.relative_path = ?
+                ORDER BY face.face_index
                 """,
                 arguments: [rootRowID, id.relativePath.rawValue]
             ).map { row in
                 let landmarks: Data = row["landmarks"]
-                let embedding: Data = row["embedding"]
                 guard let points = FaceStorage.landmarks(from: landmarks),
-                      let vector = FaceStorage.embedding(from: embedding)
+                      let vector = (row["embedding"] as Data?).flatMap(FaceStorage.embedding(from:))
                 else {
                     throw CatalogStoreError.malformedFaceRow(id)
                 }
@@ -1480,6 +1483,7 @@ extension CatalogStore {
                 SELECT \(PeopleFaceColumn.selectList)
                 FROM face f
                 JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+                \(FaceEmbeddingSQL.join(face: "f", embedding: "e"))
                 WHERE m.trash_path IS NULL AND f.is_not_face = 0
                   AND NOT \(LivePhotoSQL.isPairedMotion("m"))
                 ORDER BY f.library_root_id, f.relative_path, f.face_index
@@ -1492,9 +1496,9 @@ extension CatalogStore {
                 )
                 guard let rootPath = pathsByRowID[key.rootID], !malformed.contains(key.photo) else { continue }
                 let asset = MediaAssetID(libraryRootPath: rootPath, relativePath: key.path)
-                let data: Data = row[PeopleFaceColumn.embedding.rawValue]
+                let data: Data? = row[PeopleFaceColumn.embedding.rawValue]
                 let person: Int64? = row[PeopleFaceColumn.personID.rawValue]
-                guard let embedding = FaceStorage.embedding(from: data),
+                guard let embedding = data.flatMap(FaceStorage.embedding(from:)),
                       let assignment = try? FaceAssignmentColumn.assignment(
                           column: row[PeopleFaceColumn.assignment.rawValue], person: person
                       )

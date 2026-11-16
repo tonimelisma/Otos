@@ -206,11 +206,12 @@ extension CatalogStore {
     /// default instead turns enforcement off and then runs `PRAGMA foreign_key_check`, which
     /// reads every table that holds a foreign key — on an owner-shaped catalog nearly the
     /// whole file, 0.6–8.8 s per migration (`docs/research/2026-11-15-catalog-open-cost.md`).
-    /// No migration here rebuilds a table, deletes a row another table refers to, or changes
-    /// a referenced key, so no foreign-key action fires and no constraint is tested that the
+    /// Those migrations rebuild no table, delete no row another table refers to, and change
+    /// no referenced key, so no foreign-key action fires and no constraint is tested that the
     /// final check would have caught: the outcome is the default's, without the read. A
-    /// migration that has to rebuild a table (SQLite's twelve-step `ALTER TABLE`) needs
-    /// enforcement off and registers its own `.deferred` check (ADR 0002).
+    /// migration that has to rebuild a table (SQLite's twelve-step `ALTER TABLE`, v66's face
+    /// table) needs enforcement off: it is registered `.deferred` on a migrator whose own
+    /// whole-file check is disabled, and checks the tables it rewrote itself (ADR 0002).
     static var migrator: DatabaseMigrator {
         migrator(observing: nil)
     }
@@ -538,6 +539,19 @@ extension CatalogStore {
         register(CatalogSchema.owedWorkIndexesMigrationIdentifier) { db in
             for statement in CatalogSchema.owedWorkIndexesStatements {
                 try db.execute(sql: statement)
+            }
+        }
+        // A table rebuild: foreign keys off while it runs, then checked in only the tables it
+        // rewrote. GRDB's own deferred check reads every table that holds a foreign key.
+        migrator = migrator.disablingDeferredForeignKeyChecks()
+        let faceEmbeddingTable = CatalogSchema.faceEmbeddingTableMigrationIdentifier
+        migrator.registerMigration(faceEmbeddingTable, foreignKeyChecks: .deferred) { db in
+            steps?.began(faceEmbeddingTable)
+            for statement in CatalogSchema.faceEmbeddingTableStatements {
+                try db.execute(sql: statement)
+            }
+            for table in CatalogSchema.faceEmbeddingTableCheckedTables {
+                try db.checkForeignKeys(in: table)
             }
         }
         return migrator
@@ -1154,7 +1168,7 @@ extension CatalogStore {
 
         /// Nil for a row no reading writes.
         init?(_ row: Row) {
-            guard let embedding = FaceStorage.embedding(from: row["embedding"]),
+            guard let embedding = (row["embedding"] as Data?).flatMap(FaceStorage.embedding(from:)),
                   let assignment = try? FaceAssignmentColumn.assignment(column: row["assignment"], person: row["person_id"])
             else {
                 return nil
@@ -1192,9 +1206,10 @@ extension CatalogStore {
         for face in try Row.fetchAll(
             db,
             sql: """
-            SELECT face_index, box_x, box_y, box_width, box_height, landmarks, quality, analysis_revision,
-                   embedding, person_id, assignment, is_key_photo, is_not_face
-            FROM face WHERE library_root_id = ? AND relative_path = ? ORDER BY face_index
+            SELECT face.face_index, box_x, box_y, box_width, box_height, landmarks, quality, analysis_revision,
+                   vector.embedding, person_id, assignment, is_key_photo, is_not_face
+            FROM face \(FaceEmbeddingSQL.join(face: "face", embedding: "vector"))
+            WHERE face.library_root_id = ? AND face.relative_path = ? ORDER BY face.face_index
             """,
             arguments: key
         ) {
@@ -1289,18 +1304,20 @@ extension CatalogStore {
             sql: """
             INSERT INTO face (
                 library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                landmarks, quality, analysis_revision, embedding, frame_index, person_id, assignment, is_key_photo,
+                landmarks, quality, analysis_revision, frame_index, person_id, assignment, is_key_photo,
                 is_not_face
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 row.rootID, row.relativePath.rawValue, face.index,
                 Double(face.box.minX), Double(face.box.minY), Double(face.box.width), Double(face.box.height),
-                face.landmarks, face.quality, face.analysisRevision, face.embedding, face.frameIndex,
+                face.landmarks, face.quality, face.analysisRevision, face.frameIndex,
                 face.assignment.person?.rawValue, FaceAssignmentColumn(face.assignment).rawValue,
                 face.isKeyPhoto ? 1 : 0, face.isNotFace ? 1 : 0,
             ]
         )
+        // A new vector row, so its number is above every vector a reader already holds.
+        try db.execute(sql: FaceEmbeddingSQL.insertSQL, arguments: [row.rootID, row.relativePath.rawValue, face.index, face.embedding])
         for person in face.rejections {
             try db.execute(
                 sql: """

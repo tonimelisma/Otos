@@ -215,8 +215,8 @@ struct ScopeReachPlanTests {
         for index in photos {
             try db.execute(sql: """
             INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                              landmarks, quality, analysis_revision, embedding, person_id)
-            VALUES (?, ?, 0, 0.1, 0.1, 0.2, 0.2, x'00', 0.8, 1, x'00', ?)
+                              landmarks, quality, analysis_revision, person_id)
+            VALUES (?, ?, 0, 0.1, 0.1, 0.2, 0.2, x'00', 0.8, 1, ?)
             """, arguments: [rootID, String(format: "IMG_%04d.JPG", index + 1), person])
         }
     }
