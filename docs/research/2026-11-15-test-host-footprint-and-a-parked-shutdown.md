@@ -57,8 +57,10 @@ hang.
 - The other blocking work is CPU-bound, such as model loads and Vision requests, and holds a
   thread for seconds, not minutes.
 
-**Conclusion.** The cause is unknown. Pool exhaustion would explain a delay of seconds, not a
-park long enough for the deadlock detector.
+**Conclusion.** Pool exhaustion would explain a delay of seconds, not a park long enough for
+the deadlock detector. A later pass reproduced the hang. The trash test had passed; the run
+waited on an import test left waiting for metadata
+(`2026-11-15-a-card-left-waiting-for-metadata.md`).
 
 **Instrumentation.** `check.sh`'s stall report already keeps a full `sample` beside the
 swift-inspect dump. Its excerpt now also counts the sampled threads by the queue they run. A

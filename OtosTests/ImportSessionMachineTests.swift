@@ -370,6 +370,27 @@ struct ImportSessionMachineTests {
         _ = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))
     }
 
+    /// The last enrichment batch of a card lands after the build's live read of the rows and
+    /// before the build is applied: its catalog change finds the session building, so the
+    /// build that then finds naming pending plans again instead of parking on a wake that
+    /// already went by. Under load this left a card waiting for metadata forever.
+    @Test func aCatalogChangeAfterTheBuildsReadIsTakenUpWhenTheBuildParks() {
+        var (machine, build) = Self.attachedWithBuildRunning()
+
+        #expect(Self.builds(in: machine.handle(.catalogChanged)).isEmpty)
+        let finished = machine.handle(.buildFinished(
+            build.id,
+            .namingPending(Machine.NamingPending(
+                settled: 0,
+                total: 1,
+                filesWithNoDateAtAll: 0,
+                liveNamingSettled: false
+            ))
+        ))
+
+        #expect(Self.builds(in: finished).count == 1)
+    }
+
     @Test func anUnreadableDestinationDefersTheBuildToItsRetry() {
         var (machine, build) = Self.attachedWithBuildRunning()
 

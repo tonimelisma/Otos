@@ -48,6 +48,11 @@ nonisolated struct ImportSessionMachine {
         /// Whether the source had finished being read (ADR 0024 readiness) when this build
         /// was taken up. A build taken up mid-read plans over the rows the read had reached.
         let sourceSettledAtTakeUp: Bool
+        /// The machine's `catalogChanges` when this build was taken up. A build that ends
+        /// waiting for metadata read its rows before its end, so a catalog change since
+        /// take-up may have settled them; the session then plans again instead of parking
+        /// on a wake that already went by.
+        let catalogChangesAtTakeUp: UInt64
     }
 
     /// A build that found a destination folder it could not read is deferred, not
@@ -367,6 +372,9 @@ nonisolated struct ImportSessionMachine {
     private(set) var libraries: [CatalogLibraryState] = []
     private var nextAttachmentGeneration: UInt64 = 1
     private var isShuttingDown = false
+    /// Catalog changes ever handled. A change is the one wake of a session waiting for
+    /// metadata; a build compares this with the count it started from (`BuildContext`).
+    private var catalogChanges: UInt64 = 0
 
     private let unreadableRetryDelays: [Duration]
     private let canExecuteCameraImport: Bool
@@ -868,7 +876,9 @@ nonisolated struct ImportSessionMachine {
 
     private mutating func applyCatalogChange(into effects: inout [Effect]) {
         // A catalog change revives every session parked on `.waitingForMetadata`: an
-        // enrichment batch is what moves a pending row to settled.
+        // enrichment batch is what moves a pending row to settled. A session still building
+        // is not parked yet; its build reads the count when it finishes (`applyNamingPending`).
+        catalogChanges &+= 1
         var waitingSources: [LibraryRootPath] = []
         for (source, session) in sessions {
             if case .waitingForMetadata = session.phase {
@@ -1021,7 +1031,8 @@ nonisolated struct ImportSessionMachine {
             generation: buildGen,
             runID: runID,
             destination: destination,
-            sourceSettledAtTakeUp: sourceSettled
+            sourceSettledAtTakeUp: sourceSettled,
+            catalogChangesAtTakeUp: catalogChanges
         ))
         let policy = ImportPolicy.from(session.preferences)
         sessions[source] = session
@@ -1074,7 +1085,7 @@ nonisolated struct ImportSessionMachine {
             sessions[source]?.phase = .planningFailed(reason: reason)
             effects.append(.publish)
         case let .namingPending(pending):
-            applyNamingPending(pending, id: id, runID: owned.context.runID)
+            applyNamingPending(pending, id: id, context: owned.context)
             effects.append(.publish)
         case let .built(built):
             if applyBuiltPlan(built, id: id, owned: owned, into: &effects) == .deferredOnUnreadableDestination {
@@ -1087,8 +1098,9 @@ nonisolated struct ImportSessionMachine {
         takeUpBuild(source, into: &effects)
     }
 
-    private mutating func applyNamingPending(_ pending: NamingPending, id: BuildID, runID: String) {
+    private mutating func applyNamingPending(_ pending: NamingPending, id: BuildID, context: BuildContext) {
         let source = id.source
+        let runID = context.runID
         if pending.liveNamingSettled {
             OtosLog.catalog.notice(
                 "op=import.readiness phase=namingSettledDuringBuild run=\(runID, privacy: .public) rootPath=\(source.rawValue, privacy: .public) total=\(pending.total, privacy: .public)"
@@ -1097,11 +1109,17 @@ nonisolated struct ImportSessionMachine {
             sessions[source]?.phase = .inventory
             return
         }
+        // The build's last read of the rows came before this event. A catalog change
+        // handled since the build was taken up found the session building, not parked, so
+        // it woke nothing: had it settled the rows (the last enrichment batch of a card),
+        // parking now would wait for a wake that already went by.
+        let changedDuringBuild = catalogChanges != context.catalogChangesAtTakeUp
         let message = "op=import.readiness phase=waitingForMetadata run=\(runID) "
             + "rootPath=\(source.rawValue) "
             + "settled=\(pending.settled) "
             + "total=\(pending.total) "
-            + "filesWithNoDateAtAll=\(pending.filesWithNoDateAtAll)"
+            + "filesWithNoDateAtAll=\(pending.filesWithNoDateAtAll) "
+            + "catalogChangedDuringBuild=\(changedDuringBuild)"
         OtosLog.catalog.notice("\(message, privacy: .public)")
         sessions[source]?.phase = .waitingForMetadata(done: pending.settled, total: max(pending.total, 1))
         sessions[source]?.lastNamingProgress = NamingProgress(done: pending.settled, total: max(pending.total, 1))
@@ -1112,6 +1130,10 @@ nonisolated struct ImportSessionMachine {
         // dropped for the same reason. What the run copied stays in `lastCompletion`.
         sessions[source]?.lastReadyContext = nil
         sessions[source]?.settledOutcome = nil
+        if changedDuringBuild {
+            // `finishBuild` takes this request up once the build is applied.
+            sessions[source]?.requestPlan()
+        }
     }
 
     private enum BuiltPlanResult {

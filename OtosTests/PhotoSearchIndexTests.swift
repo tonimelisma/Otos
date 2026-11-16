@@ -655,8 +655,8 @@ struct PhotoSearchIndexTests {
             return (matches.scores?[catalog.blue] ?? 0) > PhotoSearchIndex.textMatchScore - 1 ? matches : nil
         }
 
-        // Blue's reading goes stale (a new preview) and red gets one: the next pass removes
-        // one reading and reads the other.
+        // Blue's reading goes stale (a new preview) and red gets one: a pass removes the one
+        // and reads the other.
         try await giveReading(store, red, preview: "red-preview.heic", text: "Insurance policy")
         _ = await store.applyEnrichmentBatch([EnrichmentResult(
             id: blue.id, metadata: AssetMetadata(), enrichedKind: .image, thumbnailPath: "blue-thumb.jpg",
@@ -669,13 +669,17 @@ struct PhotoSearchIndexTests {
         try #require(during.indexRevision == before.indexRevision, "nothing but the held text read is in this pass")
         #expect(during == before)
 
+        // Blue's new preview can land after the held pass took its snapshot, under load, and
+        // then its reading leaves in the pass after that one: the answer settles once both
+        // changes are in, in whichever passes they came.
         await held.open()
-        let after = try await waitForValue {
+        _ = try await waitForValue {
             let matches = try await index.matches(query, facts: nil, among: scope)
-            return matches.indexRevision != before.indexRevision ? matches : nil
+            let settled = matches.indexRevision != before.indexRevision
+                && (matches.scores?[catalog.red] ?? 0) > PhotoSearchIndex.textMatchScore - 1
+                && (matches.scores?[catalog.blue] ?? 0) < PhotoSearchIndex.textMatchScore - 1
+            return settled ? matches : nil
         }
-        #expect((after.scores?[catalog.red] ?? 0) > PhotoSearchIndex.textMatchScore - 1)
-        #expect((after.scores?[catalog.blue] ?? 0) < PhotoSearchIndex.textMatchScore - 1)
         await index.shutdown()
         await store.shutdown()
     }

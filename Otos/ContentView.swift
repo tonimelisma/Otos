@@ -581,6 +581,7 @@ struct ContentView: View {
         if case let .waiting(showsIndicator) = viewModel.detailPane.content {
             ScopeWaitingView(
                 bar: waitingBar,
+                title: viewModel.windowTitle,
                 showsIndicator: showsIndicator,
                 framePresented: viewModel.waitingFramePresented
             )

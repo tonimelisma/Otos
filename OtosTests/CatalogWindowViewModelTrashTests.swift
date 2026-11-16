@@ -222,6 +222,15 @@ struct CatalogWindowViewModelTrashInterleavingTests {
         }
     }
 
+    /// A second Move to Trash right after the first, as a held mark lets it come, can be issued
+    /// in the same millisecond. It once took the first command's identity, so Projection held
+    /// one command's items under both and the second item stayed on the grid.
+    @Test func twoCommandsIssuedInOneMillisecondHaveTwoIdentities() {
+        let first = MediaTrashBatchID()
+        let second = MediaTrashBatchID()
+        #expect(first < second)
+    }
+
     @Test func aScopeChangedMidMarkStillShowsTheItemsGone() async throws {
         try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
             let gate = ArrivalGate()

@@ -555,10 +555,11 @@ actor MediaOperationCoordinator {
         // Revalidate the fact this decision rests on, against live rows rather than the
         // snapshot. The snapshot was read before an await, so an enrichment batch may have
         // landed since — and the catalog-change wake that revives a `.waitingForMetadata`
-        // session fires only for sessions *already* parked, so a batch landing mid-build is
-        // not replayed. Parking on a stale snapshot would then wait for a wake that never
+        // session fires only for sessions *already* parked, so a batch landing mid-build
+        // wakes nothing. Parking on a stale snapshot would then wait for a wake that never
         // comes, and the last batch of a card's enrichment has nothing behind it to rescue
-        // the session. The revision pair cannot answer this: a batch that reads a file and
+        // the session. A batch landing after this read is the machine's to take up: it
+        // counts the catalog changes a build was taken up before (`BuildContext`). The revision pair cannot answer this: a batch that reads a file and
         // finds no embedded capture wall moves the row from `.pending` to `.terminal`
         // without changing `capture_wall_compact`, so `namingRevision` stays put while the
         // gate's answer flips.

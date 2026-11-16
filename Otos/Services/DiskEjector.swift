@@ -37,14 +37,27 @@ nonisolated enum DiskEjector {
         if let status = await request({ context in
             DADiskUnmount(whole, DADiskUnmountOptions(kDADiskUnmountOptionWhole), requestFinished, context)
         }) {
-            return outcome(refusal: status)
+            return refused(status, step: "unmount", url: url)
         }
         if let status = await request({ context in
             DADiskEject(whole, DADiskEjectOptions(kDADiskEjectOptionDefault), requestFinished, context)
         }) {
-            return outcome(refusal: status)
+            return refused(status, step: "eject", url: url)
         }
         return .ejected
+    }
+
+    /// A refusal's outcome, logged with the step that was refused and DiskArbitration's
+    /// status, so a refusal can be told apart from another after the fact.
+    private static func refused(_ status: DAReturn, step: String, url: URL) -> Outcome {
+        let outcome = outcome(refusal: status)
+        OtosLog.fileAccess.noticeOperation("disk.eject", phase: "refused", fields: [
+            "step": step,
+            "status": "0x" + String(UInt32(bitPattern: status), radix: 16),
+            "outcome": "\(outcome)",
+            "volume": url.path(percentEncoded: false),
+        ])
+        return outcome
     }
 
     /// `unix_err(errno)` from `<mach/error.h>`: `err_kern | err_sub(3) | errno`, the

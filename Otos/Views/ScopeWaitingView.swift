@@ -31,6 +31,9 @@ enum ScopeWaitingBar {
 
 struct ScopeWaitingView: View {
     let bar: ScopeWaitingBar
+    /// The selected scope's name, the window's title: what VoiceOver says the indicator is
+    /// waiting for (DES-082).
+    let title: String
     let showsIndicator: Bool
     let framePresented: () -> Void
 
@@ -45,6 +48,7 @@ struct ScopeWaitingView: View {
                 if showsIndicator {
                     ProgressView()
                         .controlSize(.regular)
+                        .accessibilityLabel(title)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

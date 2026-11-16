@@ -308,12 +308,20 @@ report_parked_tests() {
   echo "--- parked tests in xctest $pid (OtosTests frames, innermost first; full dump: $dump) ---" >&2
   # One `Task N:` heading per task that has OtosTests frames, then those frames.
   # Thunks, partial applies and the macro-generated `$s…` entry points restate
-  # the test function they wrap, so they are dropped.
+  # the test function they wrap, so they are dropped. A test case runs in a task-group
+  # child of Swift Testing's runner; a task a test spawned with `Task {}` does not, and
+  # the dump lists such a task while anything still references it, after its test has
+  # finished too. It once read as a second parked test beside the real one
+  # (docs/research/2026-11-15-a-card-left-waiting-for-metadata.md), so it is labelled.
   awk '
-    /Task [0-9]+ - flags=/ { match($0, /Task [0-9]+/); task = substr($0, RSTART, RLENGTH); shown = 0; next }
+    /Task [0-9]+ - flags=/ {
+      match($0, /Task [0-9]+/); task = substr($0, RSTART, RLENGTH); shown = 0
+      kind = ($0 ~ /groupChildTask/) ? "test case" : "spawned by a test, not a test case"
+      next
+    }
     / in OtosTests$/ && !/resume function:|thunk for|partial apply|implicit closure|\$s[0-9]/ {
       frame = $0; sub(/^.*async backtrace: /, "", frame); sub(/^[ \t]+/, "", frame)
-      if (!shown) { print task ":"; shown = 1 }
+      if (!shown) { print task " (" kind "):"; shown = 1 }
       print "  " frame; found = 1
     }
     END {
