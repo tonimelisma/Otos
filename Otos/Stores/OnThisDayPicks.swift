@@ -2,16 +2,19 @@ import Foundation
 
 /// Which of a day's photos On This Day shows and in what order (ADR 0049, owner direction
 /// 2026-11-13, following Apple Photos' Memories): never a photo the user Disliked, never one
-/// Vision is confident is a screenshot or a document, and a day's Liked photos first. A
-/// photo not yet read for search has no labels and stays: an unknown is not a screenshot.
-/// A stack is judged by its key (`shows`).
+/// Vision is confident is a screenshot or a document, and a day's Liked photos first. Labels
+/// count only from the photo's current search row, the one read from the thumbnail it has
+/// now (`SearchEmbeddingStorage.currentSource`): a photo not yet read for search, or whose
+/// row was read from an earlier picture — a new thumbnail, a new file at the path, a new
+/// model — is unknown and stays, since an unknown is not a screenshot. A stack is judged by
+/// its key (`shows`).
 nonisolated enum OnThisDayPicks {
     /// The scene labels that leave a photo out: Vision's confident labels as search stores
     /// them (`search_embedding.confident_labels`, comma-separated identifiers).
     static let excludedLabels = ["screenshot", "document"]
 
-    /// Whether a `search_embedding` row's confident labels hold an excluded label: one text
-    /// for the scope's exclusion and for the Info pane's reading of one photo.
+    /// Whether a `search_embedding` row's confident labels hold an excluded label, whatever
+    /// picture the row was read from; `leftOutSQL` adds that it is the photo's current one.
     static var leftOutLabelSQL: String {
         excludedLabels
             .map { "(',' || confident_labels || ',') LIKE '%,\($0),%'" }
@@ -29,12 +32,25 @@ nonisolated enum OnThisDayPicks {
         """
 
           AND media_asset.media_choice <> 'disliked'
-          AND NOT EXISTS (
-              SELECT 1 FROM search_embedding
-              WHERE search_embedding.library_root_id = media_asset.library_root_id
-                AND search_embedding.relative_path = media_asset.relative_path
-                AND (\(leftOutLabelSQL))
-          )
+          AND NOT \(leftOutSQL("media_asset"))
+        """
+    }
+
+    /// Whether the labels leave `asset`'s photo out (`asset` a `media_asset` table or alias):
+    /// its search row, sought by the asset's key, is current for the thumbnail it has now and
+    /// holds an excluded label. The one rule for the scope's exclusion and for a label write's
+    /// question whether it moved a photo into or out of On This Day. The thumbnail columns the
+    /// currency reads come from the asset row the scope's media choice is already read from,
+    /// so the check adds no page to the scope's read (`CatalogStoreQueryPlanTests`).
+    static func leftOutSQL(_ asset: String) -> String {
+        """
+        EXISTS (
+            SELECT 1 FROM search_embedding
+            WHERE search_embedding.library_root_id = \(asset).library_root_id
+              AND search_embedding.relative_path = \(asset).relative_path
+              AND search_embedding.source = \(SearchEmbeddingStorage.currentSource(asset))
+              AND (\(leftOutLabelSQL))
+        )
         """
     }
 

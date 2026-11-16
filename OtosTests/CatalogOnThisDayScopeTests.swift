@@ -245,6 +245,91 @@ struct CatalogOnThisDayScopeTests {
         await store.shutdown()
     }
 
+    /// A label counts only from the search row read from the photo's thumbnail as it is now
+    /// (ADR 0048's staleness): a current screenshot or document row leaves its photo out; a
+    /// screenshot row read from an earlier thumbnail is no fact about the photo, which stays,
+    /// as one never read for search does. A new thumbnail is what On This Day is read again
+    /// for, and labelling the new picture a screenshot again puts it out with a change.
+    @Test func onThisDayLeavesOutOnlyByTheLabelsOfThePhotosCurrentThumbnail() async throws {
+        let temp = try makeTestDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let captured: [(String, Date)] = [
+            ("rerendered.png", Self.local(2023, 11, 9, 20)),
+            ("unread.jpg", Self.local(2023, 11, 9, 12)),
+            ("document.png", Self.local(2023, 11, 9, 10)),
+            ("screen.png", Self.local(2023, 11, 9, 9)),
+            ("photo.jpg", Self.local(2023, 11, 9, 8)),
+        ]
+        for (name, _) in captured {
+            try writeCatalogStoreFile(root.appending(path: name), contents: name)
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == captured.count }
+        let rootPath = try #require(await store.currentLibraries().first { $0.kind == .library }?.path)
+        func id(_ name: String) -> MediaAssetID {
+            MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
+        }
+        func render(_ name: String, thumbnail: String, instant: Date) async throws {
+            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            _ = await store.applyEnrichmentBatch([
+                EnrichmentResult(
+                    id: id(name),
+                    metadata: AssetMetadata.absoluteCapture(instant: instant),
+                    thumbnailPath: thumbnail,
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) },
+                    contentHash: .empty
+                ),
+            ])
+        }
+        for (name, instant) in captured {
+            try await render(name, thumbnail: "\(name)-thumb.jpg", instant: instant)
+        }
+        let vector = [Float](repeating: 0, count: SearchEmbedding.dimensions)
+        let labels = ["rerendered.png": ["screenshot"], "document.png": ["document"], "screen.png": ["screenshot"], "photo.jpg": ["people"]]
+        let candidates = try await store.searchEmbeddingCandidates(limit: 10).filter { labels[$0.id.relativePath.rawValue] != nil }
+        #expect(candidates.count == labels.count)
+        let written = try await store.applySearchEmbeddings(candidates.map { candidate in
+            SearchEmbeddingResult(
+                id: candidate.id, source: candidate.source, embedding: vector,
+                confidentLabels: labels[candidate.id.relativePath.rawValue] ?? []
+            )
+        })
+        #expect(written.count == labels.count)
+        let descriptor = CatalogQueryDescriptor(scope: .onThisDay(Self.today))
+        func onThisDay() async throws -> [MediaAssetID] {
+            try await store.orderedAssetIDs(for: descriptor, availableLibraryPaths: [rootPath]).ids
+        }
+        #expect(try await onThisDay() == [id("unread.jpg"), id("photo.jpg")])
+
+        // The thumbnail is rendered again: the screenshot row was read from the old one.
+        var changes = await store.changeNotifications().makeAsyncIterator()
+        try await render("rerendered.png", thumbnail: "rerendered.png-thumb-2.jpg", instant: captured[0].1)
+        guard case let .changed(facts) = await changes.next() else {
+            Issue.record("the new thumbnail is a catalog change")
+            return
+        }
+        #expect(facts.contains(.images))
+        #expect(CatalogChangedFacts.orderInputs(of: descriptor).contains(.images), "On This Day is read again for it")
+        // Required, so a stale label that still counts fails here rather than leaving the
+        // write below with no change to report.
+        try #require(try await onThisDay() == [id("rerendered.png"), id("unread.jpg"), id("photo.jpg")])
+
+        // The new picture read as a screenshot leaves again, and that write is a change.
+        let reread = try #require(try await store.searchEmbeddingCandidates(limit: 10).first { $0.id == id("rerendered.png") })
+        changes = await store.changeNotifications().makeAsyncIterator()
+        _ = try await store.applySearchEmbeddings([
+            SearchEmbeddingResult(id: reread.id, source: reread.source, embedding: vector, confidentLabels: ["screenshot"]),
+        ])
+        #expect(await changes.next() == .changed(.searchReadings))
+        #expect(try await onThisDay() == [id("unread.jpg"), id("photo.jpg")])
+        await store.shutdown()
+    }
+
     /// A RAW+JPEG pair is one photo, and a choice on it is its key's (ADR 0052): a Disliked
     /// key leaves the whole pair out, its RAW twin included; a Disliked RAW behind its key
     /// leaves the key on the day.

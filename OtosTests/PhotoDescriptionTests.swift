@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import GRDB
 @testable import OtosKit
 import Synchronization
 import Testing
@@ -63,6 +64,37 @@ struct PhotoDescriptionTests {
         _ = try await store.perform(.setHidden(sam, true))
         #expect(try await store.photoDescriptionCandidates(limit: 10).first?.facts.faces.map(\.name) == [nil])
         await store.shutdown()
+    }
+
+    /// What the model is told of a still's text and scene labels is only what was read from
+    /// the preview and thumbnail it has now: rows read from earlier ones tell it nothing.
+    @Test func theModelIsToldOnlyTheReadingsOfTheStillsCurrentPictures() async throws {
+        let directory = try makeTestDirectory()
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(
+            in: directory, files: ["a.jpg"], database: directory.appending(path: "db/catalog.sqlite")
+        )
+        try await library.readFaces([library.result(for: "a.jpg", faces: [FaceEnrichmentTests.face(seed: 1)])])
+        try await Self.readText(["SAUNA"], in: library.store)
+        try await Self.readLabels(["lake"], in: library.store)
+        let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
+        let rootID = try await database.read { db in
+            try #require(try Int64.fetchOne(db, sql: "SELECT library_root_id FROM media_asset WHERE relative_path = 'a.jpg'"))
+        }
+        let current = try await database.read { db in try CatalogStore.photoDescriptionFacts(db, key: [rootID, "a.jpg"]) }
+        #expect(current.textLines == ["SAUNA"])
+        #expect(current.labels == ["lake"])
+
+        // New pictures of the still; the rows were read from the old ones.
+        try await database.write { db in
+            try db.execute(sql: """
+            UPDATE media_asset SET thumbnail_path = 'other-thumb.jpg', preview_path = 'other-preview.jpg'
+            WHERE relative_path = 'a.jpg'
+            """)
+        }
+        let stale = try await database.read { db in try CatalogStore.photoDescriptionFacts(db, key: [rootID, "a.jpg"]) }
+        #expect(stale.textLines.isEmpty)
+        #expect(stale.labels.isEmpty)
+        await library.store.shutdown()
     }
 
     /// The writer reads the stored preview, tells the model who is where, and stores its

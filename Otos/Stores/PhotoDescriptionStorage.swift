@@ -116,7 +116,8 @@ nonisolated enum PhotoDescriptionStorage {
     ORDER BY f.face_index
     """
 
-    /// One still's capture time, place names and current readings, by the asset's key.
+    /// One still's capture time, place names and current readings, by the asset's key: a text
+    /// or search row read from an earlier preview or thumbnail is no reading of this still.
     static let readingsSQL = """
     SELECT a.best_capture_local, pc.town, pc.country, t.lines, e.confident_labels
     FROM media_asset AS a
@@ -126,8 +127,10 @@ nonisolated enum PhotoDescriptionStorage {
       ON pc.cell_latitude = pm.place_cell_latitude AND pc.cell_longitude = pm.place_cell_longitude
     LEFT JOIN search_text AS t
       ON t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path
+      AND t.source = \(SearchTextStorage.currentSource("a"))
     LEFT JOIN search_embedding AS e
       ON e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
+      AND e.source = \(SearchEmbeddingStorage.currentSource("a"))
     WHERE a.library_root_id = ? AND a.relative_path = ?
     """
 }

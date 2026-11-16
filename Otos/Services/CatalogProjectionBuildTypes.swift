@@ -50,7 +50,7 @@ nonisolated extension CatalogChangedFacts {
     /// What the ordered-asset read for `descriptor` depends on: which rows are shown, their
     /// dates, kinds and formats, how they group and the user's choices, always; their places where the scope or
     /// the filter is by place; faces where it is by person or by likeness; copies in the
-    /// Duplicates rows; and On This Day's labels there. Search is applied after the read,
+    /// Duplicates rows; and On This Day's labels, with the thumbnails they were read from, there. Search is applied after the read,
     /// from the index's own answer, so it is not among them.
     static func orderInputs(of descriptor: CatalogQueryDescriptor) -> CatalogChangedFacts {
         var facts: CatalogChangedFacts = [.membership, .captureDate, .kindAndFormat, .grouping, .choices]
@@ -97,7 +97,9 @@ nonisolated extension CatalogChangedFacts {
         case .places, .mapArea, .mapStack:
             [.location, .placeNames]
         case .onThisDay:
-            [.captureDate, .grouping, .choices, .searchReadings]
+            // Its labels count only while the thumbnail they were read from is the row's
+            // (`OnThisDayPicks.leftOutSQL`), so a new thumbnail can bring a photo back.
+            [.captureDate, .grouping, .choices, .searchReadings, .images]
         case .duplicates, .duplicateGroup:
             [.copies, .duplicateFacts]
         case .people, .person:

@@ -8819,7 +8819,9 @@ extension CatalogStore {
     /// confident screenshot or document label), a catalog change that scope is read again for.
     func applySearchEmbeddings(_ results: [SearchEmbeddingResult]) async throws -> [SearchEmbeddingResult] {
         let rowIDs = roots.rowIDSnapshot()
-        let leftOut = "SELECT \(OnThisDayPicks.leftOutLabelSQL) FROM search_embedding WHERE library_root_id = ? AND relative_path = ?"
+        let leftOut = """
+        SELECT \(OnThisDayPicks.leftOutSQL("media_asset")) FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+        """
         let (applied, changesOnThisDay) = try await database().write { db -> ([SearchEmbeddingResult], Bool) in
             var written: [SearchEmbeddingResult] = []
             var changesOnThisDay = false

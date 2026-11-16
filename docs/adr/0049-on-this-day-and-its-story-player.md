@@ -60,7 +60,15 @@ view mode for it.
    under the Japanese calendar (Reiwa 8) and 2569 under the Buddhist one. What the user
    reads is formatted in their own calendar and locale. The match is exact: on a common year, 29 February
    matches nothing, and a 30-day month has no 31st. Undated rows never match. It is a live query, never a snapshot, so a
-   late import appears and a deleted file goes (ADR 0008).
+   late import appears and a deleted file goes (ADR 0008). Of the rows that match, it
+   leaves out a Disliked photo (a stack by its key, ADR 0052) and one Vision is confident is
+   a screenshot or a document (`OnThisDayPicks`, owner direction 2026-11-13). Those labels
+   count only from the photo's current search row, the one read from the thumbnail it has
+   now (ADR 0048's staleness, `OnThisDayPicks.leftOutSQL`): a row read from an earlier
+   picture — a re-rendered thumbnail, a new file at a deleted photo's path, an older model —
+   says nothing about this one, so the photo stays, exactly as one not yet read for search
+   does, until its new reading arrives. The scope is read again for a new thumbnail as
+   for a new label.
 3. **Today is a typed value in the selection.** `SidebarSelection.onThisDay(CalendarDay)`,
    where `CalendarDay` is the Gregorian `{year, month, day}` in the user's time zone. The ViewModel owns
    `today`: it reads it at init and again whenever the platform reports

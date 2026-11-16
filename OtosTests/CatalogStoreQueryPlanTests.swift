@@ -785,6 +785,44 @@ struct CatalogStoreQueryPlanTests {
         #expect(!plan.contains("SCAN search_embedding"))
     }
 
+    /// On a catalog of the owner's shape, On This Day's read seeks the day's rows and, for
+    /// each, its search row by key; the check that the row is current for the photo's
+    /// thumbnail reads the asset row the media choice is read from, so the read seeks
+    /// `media_asset` once, through the day's index, and scans nothing. A label write's own
+    /// question of one photo finds the asset and its search row by their keys.
+    @Test func onThisDaysCurrentLabelsAreSoughtByKeyOnAnOwnerShapedCatalog() async throws {
+        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
+        let dbQueue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let match = try #require(AnniversaryMatch.years(for: CalendarDay(year: 2026, month: 11, day: 16)))
+        let (read, write) = try await dbQueue.read { db in
+            let scope = CatalogScopePredicate(rootIDs: [6, 7, 15])
+            let query = try #require(try CatalogQueryGateway.anniversaryRowsQuery(scope: scope, match: match))
+            let read = try explainPlan(db, sql: query.sql, arguments: query.arguments)
+            let write = try explainPlan(
+                db,
+                sql: "SELECT \(OnThisDayPicks.leftOutSQL("media_asset")) FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [15, "a.jpg"]
+            )
+            return (read, write)
+        }
+        let lines = read.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        #expect(
+            lines.filter { $0.contains(" media_asset ") } == [
+                "SEARCH media_asset USING INDEX idx_media_asset_capture_day (capture_day=? AND capture_month=? AND best_capture_local<?)",
+            ],
+            "\(read)"
+        )
+        let soughtByKey = { (line: Substring) in
+            line.hasPrefix("SEARCH search_embedding USING ") && line.contains("(library_root_id=? AND relative_path=?")
+        }
+        let embeddingLines = lines.filter { $0.contains(" search_embedding ") }
+        #expect(embeddingLines.count == 1 && embeddingLines.allSatisfy { soughtByKey(Substring($0)) }, "\(read)")
+        #expect(!lines.contains { $0.hasPrefix("SCAN ") }, "\(read)")
+        let writeLines = write.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        #expect(!writeLines.contains { $0.hasPrefix("SCAN ") }, "\(write)")
+        #expect(writeLines.contains { soughtByKey(Substring($0)) }, "\(write)")
+    }
+
     /// On This Day's years-or-months match seeks the day's rows in earlier years through the
     /// day's index, bounded by the year's start, never by a scan or a walk of every row.
     @Test func onThisDaysYearRowsAreSoughtThroughTheDayIndex() async throws {

@@ -148,7 +148,11 @@ against 77.3, 85 in English for both), and every asset has one.
 - **Staleness:** the row names the thumbnail it was read from and the model revision
   (`SearchEmbeddingStorage.currentSource`, built on `StoredThumbnailSQL.identity`, which
   render signatures also use). A new thumbnail or a new revision makes it stale, and no
-  thumbnail writer knows search exists (ADR 0009).
+  thumbnail writer knows search exists (ADR 0009). A stale row is no fact about the asset:
+  every read of `search_embedding` or `search_text` takes only a row whose source is the
+  asset's current one (the index's reconcile, the Info pane, a description's facts, and On
+  This Day's screenshot and document exclusion, ADR 0049), and a stale row reads as no
+  reading at all.
 - **Undecodable thumbnails:** no reading. Nothing is recorded, so the asset stays owed and is
   tried again after the index's backoff; a pass pages past it, and past a prediction that
   failed, so neither holds up the assets after it, nor the text readings after every
