@@ -205,6 +205,11 @@ actor EnrichmentCoordinator {
     /// both stand, another claim would find nothing again, so none is asked: an empty claim is
     /// still a write transaction, and an idle coordinator writes nothing (plan 0116).
     var exhaustedClaims: (revision: UInt64, videoFaces: VideoFacesAdmission)?
+    /// Bumped by every Store change that may have removed, moved or resized a demanded row,
+    /// and covered by the pass that asked the Store which of them it still offers (ADR 0032
+    /// rule 2): a demand ends when its row does, not when its transfer next fails.
+    var demandSourcesRequested: UInt64 = 0
+    var demandSourcesCovered: UInt64 = 0
 
     private var supervisor: Task<Void, Never>?
     private var changeConsumer: Task<Void, Never>?
@@ -272,11 +277,11 @@ extension EnrichmentCoordinator {
         }
         OtosLog.metadata.info("Enrichment coordinator started")
         changeConsumer = Task { [weak self] in
-            for await _ in changes {
+            for await change in changes {
                 guard let self else {
                     return
                 }
-                await markDirtyAndSignal()
+                await noteStoreChange(change)
             }
         }
         supervisor = Task { await self.runLoop() }
@@ -415,7 +420,8 @@ extension EnrichmentCoordinator {
                     isVideo: seed.isVideo,
                     isDeviceStaging: true
                 ),
-                ownsStoreClaim: false
+                ownsStoreClaim: false,
+                outstandingLimit: handoffPolicy.globalOutstandingLimit
             )
             admitted += 1
         }
@@ -468,7 +474,9 @@ extension EnrichmentCoordinator {
                 dropped += 1
             }
         }
-        dropped += schedule.dropWaitingDemands(under: rootPath)
+        // A transfer still running ends withdrawn, so its result neither retries nor holds a
+        // row of a source being ejected.
+        dropped += schedule.withdraw { id, _ in id.libraryRootPath == rootPath }.dropped
         let seedsBefore = pendingDeviceSeeds.count
         pendingDeviceSeeds.removeAll { $0.id.libraryRootPath == rootPath }
         return dropped + seedsBefore - pendingDeviceSeeds.count
@@ -536,6 +544,58 @@ extension EnrichmentCoordinator {
 }
 
 extension EnrichmentCoordinator {
+    /// A Store change: new claim inputs, and, when it may have removed, moved or resized a
+    /// demanded row — a membership change that names one, or names none — a question for the
+    /// next pass of which demanded rows the Store still offers (`reconcileDemandSources`).
+    func noteStoreChange(_ change: CatalogStoreChange) {
+        if case let .changed(facts, rows) = change, facts.contains(.membership), schedule.hasDemands {
+            switch rows {
+            case .unnamed:
+                demandSourcesRequested &+= 1
+            case let .named(ids) where ids.contains(where: schedule.hasDemand(for:)):
+                demandSourcesRequested &+= 1
+            case .named:
+                break
+            }
+        }
+        markDirtyAndSignal()
+    }
+
+    /// Asks the Store which demanded rows it still offers when a change asked it, and ends
+    /// the demands of rows it no longer has (`EnrichmentSchedule.reconcile`). A failed read
+    /// leaves the question outstanding for the next pass.
+    func reconcileDemandSources() async {
+        let requested = demandSourcesRequested
+        guard requested != demandSourcesCovered else {
+            return
+        }
+        let checked = schedule.demandedIDs
+        guard !checked.isEmpty else {
+            demandSourcesCovered = requested
+            return
+        }
+        let sources: [MediaAssetID: Int64?]
+        do {
+            sources = try await store.enrichmentDemandSources(checked)
+        } catch {
+            OtosLog.metadata.errorOperation("enrichment.demandSources", phase: "readFailed", fields: [
+                "count": "\(checked.count)", "error": String(describing: error),
+            ])
+            return
+        }
+        guard !isShuttingDown else {
+            return
+        }
+        let claims = schedule.reconcile(sources: sources, checked: checked)
+        demandSourcesCovered = requested
+        OtosLog.metadata.noticeOperation("enrichment.demandSources", phase: "reconciled", fields: [
+            "checked": "\(checked.count)", "gone": "\(checked.count - sources.count)",
+        ])
+        if !claims.isEmpty {
+            await releaseClaims(claims)
+        }
+    }
+
     func markDirtyAndSignal() {
         guard !isShuttingDown else {
             return

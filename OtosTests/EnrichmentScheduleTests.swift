@@ -36,7 +36,7 @@ struct EnrichmentScheduleTests {
     @Test func cloudDownloadHeldByTheFloorKeepsItsClaimAndRechecks() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("a.jpg")
-        schedule.demand(work(row), ownsStoreClaim: true)
+        schedule.demand(work(row), ownsStoreClaim: true, outstandingLimit: 16)
         #expect(submitAll(&schedule, at: start) == [row])
         let pending = try #require(schedule.materializations[row]?.work)
         let finished = schedule.finish(pending, outcome: .insufficientLocalSpace, now: start)
@@ -60,8 +60,8 @@ struct EnrichmentScheduleTests {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let first = id("a.jpg")
         let second = id("b.jpg")
-        schedule.demand(work(first), ownsStoreClaim: true)
-        schedule.hold(work(second))
+        schedule.demand(work(first), ownsStoreClaim: true, outstandingLimit: 16)
+        schedule.demand(work(second), ownsStoreClaim: true, outstandingLimit: 1)
         #expect(schedule.outstandingCount == 1)
         #expect(schedule.heldCount == 1)
         let taken = schedule.takeSubmissions(globalLimit: 1, backgroundPerRoot: 1, viewport: [], now: start)
@@ -79,7 +79,7 @@ struct EnrichmentScheduleTests {
     @Test func backgroundRetriesFollowTheScheduleThenPaceThroughTheLedger() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("a.jpg")
-        schedule.demand(work(row), ownsStoreClaim: true)
+        schedule.demand(work(row), ownsStoreClaim: true, outstandingLimit: 16)
         var now = start
         for delay in EnrichmentRetrySchedule.production.backgroundDownloadDelays {
             let submissions = schedule.takeSubmissions(globalLimit: 16, backgroundPerRoot: 2, viewport: [], now: now)
@@ -146,7 +146,7 @@ struct EnrichmentScheduleTests {
         schedule.pace(row, sourceSize: 100, now: start)
         #expect(schedule.retryLedger[row]?.attemptCount == 1)
 
-        schedule.demand(work(row), ownsStoreClaim: true)
+        schedule.demand(work(row), ownsStoreClaim: true, outstandingLimit: 16)
         _ = submitAll(&schedule, at: start)
         let finished = schedule.finish(work(row), outcome: .materialized, now: start)
         let settlement = try #require(finished)
@@ -158,7 +158,7 @@ struct EnrichmentScheduleTests {
     @Test func cancelledMaterializationReleasesItsClaimWithoutRetry() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("a.jpg")
-        schedule.demand(work(row), ownsStoreClaim: true)
+        schedule.demand(work(row), ownsStoreClaim: true, outstandingLimit: 16)
         _ = submitAll(&schedule, at: start)
         let finished = schedule.finish(work(row), outcome: .cancelled, now: start)
         let settlement = try #require(finished)
@@ -173,7 +173,7 @@ struct EnrichmentScheduleTests {
     @Test func deviceStagingGivesUpAfterItsAttemptsButWaitsOutDiskSpace() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("IMG_1.ARW", root: LibraryRootPath(rawValue: "/DeviceStaging/Camera"))
-        schedule.demand(work(row, isDeviceStaging: true), ownsStoreClaim: false)
+        schedule.demand(work(row, isDeviceStaging: true), ownsStoreClaim: false, outstandingLimit: 16)
         var now = start
         for attempt in 1 ..< EnrichmentRetrySchedule.production.deviceAttemptLimit {
             let pending = try #require(schedule.materializations[row]?.work)
@@ -193,7 +193,7 @@ struct EnrichmentScheduleTests {
         let givenUp = schedule.finish(finalWork, outcome: .requestFailed, now: now)
         #expect(givenUp == EnrichmentSchedule.Settlement(disposition: .unobtainable, releasesStoreClaim: false))
 
-        schedule.demand(work(row, isDeviceStaging: true, attemptCount: 40), ownsStoreClaim: false)
+        schedule.demand(work(row, isDeviceStaging: true, attemptCount: 40), ownsStoreClaim: false, outstandingLimit: 16)
         _ = submitAll(&schedule, at: now)
         let spaceFinished = schedule.finish(
             work(row, isDeviceStaging: true, attemptCount: 40), outcome: .insufficientLocalSpace, now: now
@@ -217,19 +217,21 @@ struct EnrichmentScheduleTests {
         let newer = id("newer.jpg", root: device)
         let background = (0 ..< 3).map { id("bg-\($0).jpg") }
         let visible = id("visible.jpg")
-        schedule.demand(work(video, isVideo: true, isDeviceStaging: true), ownsStoreClaim: false)
+        schedule.demand(work(video, isVideo: true, isDeviceStaging: true), ownsStoreClaim: false, outstandingLimit: 16)
         schedule.demand(
             work(older, isDeviceStaging: true, captureLocalTime: CaptureLocalTime(seconds: 100)),
-            ownsStoreClaim: false
+            ownsStoreClaim: false,
+            outstandingLimit: 16
         )
         schedule.demand(
             work(newer, isDeviceStaging: true, captureLocalTime: CaptureLocalTime(seconds: 200)),
-            ownsStoreClaim: false
+            ownsStoreClaim: false,
+            outstandingLimit: 16
         )
         for row in background {
-            schedule.demand(work(row), ownsStoreClaim: true)
+            schedule.demand(work(row), ownsStoreClaim: true, outstandingLimit: 16)
         }
-        schedule.demand(work(visible), ownsStoreClaim: true)
+        schedule.demand(work(visible), ownsStoreClaim: true, outstandingLimit: 16)
 
         // The viewport may list a row twice; it is still one transfer.
         let submitted = schedule.takeSubmissions(
@@ -282,7 +284,7 @@ struct EnrichmentScheduleTests {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let camera = LibraryRootPath(rawValue: "/DeviceStaging/BigCamera")
         for index in 0 ..< 16 {
-            schedule.demand(work(id("saturate_\(index).arw", root: camera), isDeviceStaging: true), ownsStoreClaim: false)
+            schedule.demand(work(id("saturate_\(index).arw", root: camera), isDeviceStaging: true), ownsStoreClaim: false, outstandingLimit: 16)
         }
         let saturated = submitAll(&schedule, at: start)
         #expect(saturated.count == 16)

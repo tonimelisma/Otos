@@ -58,17 +58,37 @@ nonisolated struct EnrichmentSchedule: Sendable {
     /// One row's materialization: the transfer it waits for or has in flight, and whether it
     /// holds the row's Store enrichment claim (a device seed holds none).
     ///
-    /// A held demand is one the hand-off cannot take now — no transfer slot was free when it
-    /// was claimed, the free-space floor turned it away, or its in-window retries are spent and
-    /// it waits out the pacing — and it keeps its Store claim while it waits. The blocked
-    /// state lives here, with the owner of the hand-off, so the row is not claimed and given
-    /// back on every pass to rediscover it, a claim write and a release write each time. A held demand
-    /// is not outstanding: it does not stop a device seed or a local row from being admitted.
+    /// A held demand is one the hand-off cannot take now, and it keeps its Store claim while
+    /// it waits. The blocked state lives here, with the owner of the hand-off, so the row is
+    /// not claimed and given back on every pass to rediscover it, a claim write and a release
+    /// write each time. A held demand is not outstanding: it does not stop a device seed or a
+    /// local row from being admitted. Every hold names the fact that ends it (`Hold`), and
+    /// every demand, held or not, also ends when its row or its root goes (`withdraw`).
     struct Materialization: Equatable, Sendable {
         var work: DownloadWork
         let ownsStoreClaim: Bool
         var isInFlight: Bool
-        var isHeld = false
+        var hold: Hold?
+        /// The row or its root went while its transfer ran: the transfer's result settles
+        /// nothing but the demand's end (`MaterializationDisposition.withdrawn`).
+        var isWithdrawn = false
+
+        var isHeld: Bool {
+            hold != nil
+        }
+    }
+
+    /// Why a demand waits outside the outstanding count, by the fact that ends the wait.
+    enum Hold: Equatable, Sendable {
+        /// No transfer slot was free when it was demanded: ends when one frees
+        /// (`takeSubmissions`).
+        case transferSlot
+        /// The free-space floor turned it away: ends at its recheck (`spaceRecheck`,
+        /// time: poll).
+        case freeSpace
+        /// Its in-window retries are spent: ends when the pacing passes (`ledgerPacing`,
+        /// time: backoff), or at once when its source changes (`reconcile`).
+        case pacing
     }
 
     /// What became of a finished materialization.
@@ -82,6 +102,8 @@ nonisolated struct EnrichmentSchedule: Sendable {
         case unobtainable
         /// Background retries exhausted: the ledger paces the row's next claim.
         case paced(RetryLedgerEntry)
+        /// The row or its root went while the transfer ran: nothing follows it.
+        case withdrawn
     }
 
     /// What finishing a materialization asks of the coordinator.
@@ -132,6 +154,10 @@ nonisolated struct EnrichmentSchedule: Sendable {
         materializations.values.count(where: \.isHeld)
     }
 
+    var hasDemands: Bool {
+        !materializations.isEmpty
+    }
+
     func hasDemand(for id: MediaAssetID) -> Bool {
         materializations[id] != nil
     }
@@ -144,28 +170,88 @@ nonisolated struct EnrichmentSchedule: Sendable {
         materializations.count { $0.key.libraryRootPath == rootPath && $0.value.isInFlight }
     }
 
-    /// Records that a row needs its bytes before it can be enriched. It replaces any
-    /// record for the row: a row whose enrichment found it dataless after an earlier
-    /// demand finished is demanded afresh.
-    mutating func demand(_ work: DownloadWork, ownsStoreClaim: Bool) {
-        materializations[work.id] = Materialization(work: work, ownsStoreClaim: ownsStoreClaim, isInFlight: false)
+    /// Records that a row needs its bytes before it can be enriched, and returns whether it
+    /// was held for want of a transfer slot. It replaces any record for the row: a row whose
+    /// enrichment found it dataless after an earlier demand finished is demanded afresh.
+    /// Below `outstandingLimit` the demand is outstanding, a slot the hand-off promises; at
+    /// it, the row keeps its claim and is held until a slot frees (`takeSubmissions`), never
+    /// claimed and given back to wait.
+    @discardableResult
+    mutating func demand(_ work: DownloadWork, ownsStoreClaim: Bool, outstandingLimit: Int) -> Bool {
+        let held = outstandingCount >= outstandingLimit
+        materializations[work.id] = Materialization(
+            work: work,
+            ownsStoreClaim: ownsStoreClaim,
+            isInFlight: false,
+            hold: held ? .transferSlot : nil
+        )
+        return held
     }
 
-    /// Holds a claimed row the hand-off has no slot for now: it keeps its claim and is handed
-    /// off when a slot frees (`takeSubmissions`), never claimed and given back to wait.
-    mutating func hold(_ work: DownloadWork) {
-        materializations[work.id] = Materialization(work: work, ownsStoreClaim: true, isInFlight: false, isHeld: true)
+    /// Every demanded row, in flight or not.
+    var demandedIDs: [MediaAssetID] {
+        Array(materializations.keys)
     }
 
-    /// Drops the demands under `rootPath` not yet handed to the materializer and returns
-    /// how many. Their Store claims are not owed: the Store released them when it
-    /// quiesced the source.
-    mutating func dropWaitingDemands(under rootPath: LibraryRootPath) -> Int {
-        let dropped = materializations.filter { $0.key.libraryRootPath == rootPath && !$0.value.isInFlight }.keys
-        for id in dropped {
+    /// Ends the demands `ends` names: their row or their root is gone, or the root no longer
+    /// lets enrichment read it. A demand not in flight is dropped; one in flight is marked
+    /// withdrawn and ends when its transfer comes back (`finish`), so the slot it holds is
+    /// counted until then. Returns how many were dropped now, and those whose Store claim the
+    /// demand held, for the coordinator to give back.
+    mutating func withdraw(
+        where ends: (MediaAssetID, Materialization) -> Bool
+    ) -> (dropped: Int, claimsToRelease: [MediaAssetID]) {
+        var dropped = 0
+        var claims: [MediaAssetID] = []
+        for (id, record) in materializations where !record.isWithdrawn && ends(id, record) {
+            if record.isInFlight {
+                materializations[id]?.isWithdrawn = true
+                continue
+            }
             materializations[id] = nil
+            dropped += 1
+            if record.ownsStoreClaim {
+                claims.append(id)
+            }
         }
-        return dropped.count
+        return (dropped, claims)
+    }
+
+    /// Applies what the Store reports of the rows in `checked`: `sources` holds each row it
+    /// still offers, with its current byte size. A row it no longer offers is withdrawn. A row
+    /// whose size changed is other bytes than the ones the demand failed on, so its attempts
+    /// and its pacing start over, as the ledger's changed signature does (ENR-007); a wait for
+    /// free space keeps its recheck, since other bytes need the space as much. A demand made
+    /// after the read started is not in `checked` and is left alone. Returns the claims to
+    /// give back.
+    mutating func reconcile(sources: [MediaAssetID: Int64?], checked: [MediaAssetID]) -> [MediaAssetID] {
+        let checkedSet = Set(checked)
+        let withdrawn = withdraw { id, _ in checkedSet.contains(id) && sources[id] == nil }
+        for id in checked {
+            guard let size = sources[id], var record = materializations[id], !record.isWithdrawn,
+                  record.work.sourceSize != size
+            else {
+                continue
+            }
+            let work = record.work
+            let keepsWait = record.isInFlight || record.hold == .freeSpace
+            record.work = DownloadWork(
+                id: work.id,
+                url: work.url,
+                sourceSize: size,
+                captureLocalTime: work.captureLocalTime,
+                isVideo: work.isVideo,
+                isDeviceStaging: work.isDeviceStaging,
+                attemptCount: keepsWait ? work.attemptCount : 0,
+                retryNotBefore: keepsWait ? work.retryNotBefore : nil
+            )
+            if record.hold == .pacing {
+                record.hold = .transferSlot
+            }
+            materializations[id] = record
+            retryLedger[id] = nil
+        }
+        return withdrawn.claimsToRelease
     }
 
     /// Picks the demands to hand to the materializer now and marks them in flight:
@@ -199,7 +285,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
                 continue
             }
             materializations[work.id]?.isInFlight = true
-            materializations[work.id]?.isHeld = false
+            materializations[work.id]?.hold = nil
             selected.append(work)
             available -= 1
         }
@@ -216,6 +302,10 @@ nonisolated struct EnrichmentSchedule: Sendable {
         guard let record = materializations[work.id] else {
             return nil
         }
+        if record.isWithdrawn {
+            materializations[work.id] = nil
+            return Settlement(disposition: .withdrawn, releasesStoreClaim: record.ownsStoreClaim)
+        }
         if outcome == .cancelled {
             materializations[work.id] = nil
             return Settlement(disposition: .cancelled, releasesStoreClaim: record.ownsStoreClaim)
@@ -229,14 +319,15 @@ nonisolated struct EnrichmentSchedule: Sendable {
                 attemptCount: work.attemptCount,
                 sourceSize: work.sourceSize
             )
-            holdUntil(entry.notBefore, work, attemptCount: work.attemptCount, record: record)
+            holdUntil(entry.notBefore, work, attemptCount: work.attemptCount, hold: .freeSpace, record: record)
             return Settlement(disposition: .paced(entry), releasesStoreClaim: false)
         }
         if let retry = retry(after: work, outcome: outcome, now: now) {
             materializations[work.id] = Materialization(
                 work: retry,
                 ownsStoreClaim: record.ownsStoreClaim,
-                isInFlight: false
+                isInFlight: false,
+                hold: nil
             )
             return Settlement(disposition: .retrying(retry), releasesStoreClaim: false)
         }
@@ -249,13 +340,14 @@ nonisolated struct EnrichmentSchedule: Sendable {
             return Settlement(disposition: .unobtainable, releasesStoreClaim: record.ownsStoreClaim)
         }
         // The in-window retries are spent: the row is held, with its claim, for the pacing,
-        // and then starts a fresh set of retries.
+        // and then starts a fresh set of retries. It ends sooner when the row or its root goes
+        // (`withdraw`) or its source changes (`reconcile`).
         let entry = RetryLedgerEntry(
             notBefore: now.advanced(by: retrySchedule.ledgerPacing),
             attemptCount: work.attemptCount,
             sourceSize: work.sourceSize
         )
-        holdUntil(entry.notBefore, work, attemptCount: 0, record: record)
+        holdUntil(entry.notBefore, work, attemptCount: 0, hold: .pacing, record: record)
         return Settlement(disposition: .paced(entry), releasesStoreClaim: false)
     }
 
@@ -264,6 +356,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         _ notBefore: ContinuousClock.Instant,
         _ work: DownloadWork,
         attemptCount: Int,
+        hold: Hold,
         record: Materialization
     ) {
         materializations[work.id] = Materialization(
@@ -279,7 +372,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
             ),
             ownsStoreClaim: record.ownsStoreClaim,
             isInFlight: false,
-            isHeld: true
+            hold: hold
         )
     }
 

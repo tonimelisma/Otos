@@ -64,8 +64,13 @@ extension EnrichmentCoordinator {
                 isVideo: work.isVideo,
                 isDeviceStaging: work.isDeviceStaging
             )
-            // The ready claim's Store claim passes to the demand.
-            schedule.demand(pending, ownsStoreClaim: record.ownsStoreClaim)
+            // The ready claim's Store claim passes to the demand, held like a routed row's when
+            // the hand-off has no slot for it.
+            schedule.demand(
+                pending,
+                ownsStoreClaim: record.ownsStoreClaim,
+                outstandingLimit: handoffPolicy.globalOutstandingLimit
+            )
             await recordVisibleThumbnailLifecycle(
                 phase: "notMaterialized",
                 id: id,
@@ -154,6 +159,13 @@ extension EnrichmentCoordinator {
         switch settlement.disposition {
         case .cancelled, .materialized:
             break
+        case .withdrawn:
+            // The row or its root went while the transfer ran: nothing is enriched from it,
+            // and its slot is free for another.
+            await recordVisibleThumbnailLifecycle(phase: "materializationWithdrawn", id: id)
+            admitPendingDeviceSeeds()
+            signal()
+            return
         case let .retrying(retry):
             await recordVisibleThumbnailLifecycle(
                 phase: "materializationRetryScheduled",

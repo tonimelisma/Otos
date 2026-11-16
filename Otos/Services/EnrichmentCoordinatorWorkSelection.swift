@@ -45,7 +45,7 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return []
         }
-        await dropQueuedClaims(outside: store.enrichableRootPaths())
+        await dropClaimedWork(outside: store.enrichableRootPaths())
         let availableSlots = admissionPolicy.enrichConcurrency - enrichingCount
         guard availableSlots > 0 else {
             return []
@@ -75,7 +75,7 @@ extension EnrichmentCoordinator {
                 routing.examined += claimed.count
                 routing.deferred += deferred.count
                 if !deferred.isEmpty {
-                    await releaseDeferredLedgerClaims(deferred)
+                    await releaseClaims(deferred)
                 }
                 await route(ready, now: now, into: &routing)
             }
@@ -93,7 +93,7 @@ extension EnrichmentCoordinator {
                 routing.examined += claimed.totalExamined
                 routing.deferred += claimed.deferredIDs.count
                 if !claimed.deferredIDs.isEmpty {
-                    await releaseDeferredLedgerClaims(claimed.deferredIDs)
+                    await releaseClaims(claimed.deferredIDs)
                 }
                 await route(claimed.ready, now: now, into: &routing)
                 items.append(contentsOf: drainQueuedEnrichment(limit: availableSlots - items.count))
@@ -191,13 +191,10 @@ extension EnrichmentCoordinator {
                 // With no slot for it, the row keeps its claim and waits held, handed off when
                 // a slot frees; given back, the next pass would claim it again to find the
                 // same full hand-off (plan 0116).
-                guard schedule.outstandingCount < handoffPolicy.globalOutstandingLimit else {
-                    schedule.hold(work)
-                    routing.readinessCounts["materializationBound", default: 0] += 1
-                    continue
-                }
-                schedule.demand(work, ownsStoreClaim: true)
-                routing.readinessCounts["needsMaterialization", default: 0] += 1
+                let held = schedule.demand(
+                    work, ownsStoreClaim: true, outstandingLimit: handoffPolicy.globalOutstandingLimit
+                )
+                routing.readinessCounts[held ? "materializationBound" : "needsMaterialization", default: 0] += 1
             case .fetchableForUserWork:
                 // Its source sends the whole original only for the user's work, and its
                 // ranges are not served now: nothing is asked of it. The row waits out the
@@ -213,7 +210,7 @@ extension EnrichmentCoordinator {
             }
         }
         if !releasedIDs.isEmpty {
-            await releaseDeferredLedgerClaims(releasedIDs)
+            await releaseClaims(releasedIDs)
         }
     }
 
@@ -272,14 +269,15 @@ extension EnrichmentCoordinator {
         return (ready, deferred)
     }
 
-    private func releaseDeferredLedgerClaims(_ ids: [MediaAssetID]) async {
+    /// Gives claims back to the Store: rows a pass will not work on now, and rows whose demand ended.
+    func releaseClaims(_ ids: [MediaAssetID]) async {
         claimInputsRevision &+= 1
         do {
             try await store.releaseEnrichmentClaims(ids)
         } catch {
             OtosLog.metadata.error(
                 """
-                op=catalog.enrichment.coordinator phase=ledgerDeferredReleaseFailed \
+                op=catalog.enrichment.coordinator phase=claimReleaseFailed \
                 count=\(ids.count, privacy: .public) error=\(String(describing: error), privacy: .public)
                 """
             )
@@ -287,6 +285,11 @@ extension EnrichmentCoordinator {
     }
 
     func dequeueMaterializationSubmissions(now: ContinuousClock.Instant = .now) async -> [DownloadWork] {
+        guard !isShuttingDown else {
+            return []
+        }
+        // A demand whose row went is ended before a transfer is spent on it.
+        await reconcileDemandSources()
         guard !isShuttingDown else {
             return []
         }
@@ -404,23 +407,41 @@ extension EnrichmentCoordinator {
         }
     }
 
-    /// Drops queued work whose root the Store has stopped offering — a card being
-    /// imported, a source quiesced for eject. A queued record is a Store claim that has
-    /// not started reading; the Store released those claims when it stopped offering the
-    /// root, so dropping them owes nothing, and the claim window they held is free for
-    /// rows enrichment may read. Work already reading is left to finish.
-    private func dropQueuedClaims(outside enrichableRoots: Set<LibraryRootPath>) {
+    /// Drops the claimed work whose root the Store has stopped offering — a library removed
+    /// or gone unreachable, a card being imported, a source quiesced for eject: queued
+    /// enrichment, and every materialization demand that holds a Store claim, held or not.
+    /// Neither has started reading, so the claim window and the transfer slots they held are
+    /// free for rows enrichment may read; a transfer already running ends withdrawn
+    /// (`EnrichmentSchedule.withdraw`). Their claims are given back here: the Store releases a
+    /// root's claims when it quiesces or detaches it, not when a library goes unreachable, and
+    /// a removed library's rows are gone. A device seed holds no claim and keeps its demand: a
+    /// camera paused for an import resumes, and nothing would offer the seed again.
+    private func dropClaimedWork(outside enrichableRoots: Set<LibraryRootPath>) async {
         var dropped: [LibraryRootPath: Int] = [:]
+        var claims: [MediaAssetID] = []
         for (id, record) in readyClaims where !enrichableRoots.contains(id.libraryRootPath) {
             if case .queuedEnrichment = record.state {
                 readyClaims[id] = nil
                 dropped[id.libraryRootPath, default: 0] += 1
+                if record.ownsStoreClaim {
+                    claims.append(id)
+                }
             }
         }
+        let withdrawn = schedule.withdraw { id, record in
+            record.ownsStoreClaim && !enrichableRoots.contains(id.libraryRootPath)
+        }
+        for id in withdrawn.claimsToRelease {
+            dropped[id.libraryRootPath, default: 0] += 1
+        }
+        claims += withdrawn.claimsToRelease
         for (rootPath, count) in dropped {
             OtosLog.metadata.notice(
                 "op=catalog.enrichment.coordinator phase=dropUnofferedRoot rootPath=\(rootPath.rawValue, privacy: .public) dropped=\(count, privacy: .public)"
             )
+        }
+        if !claims.isEmpty {
+            await releaseClaims(claims)
         }
     }
 

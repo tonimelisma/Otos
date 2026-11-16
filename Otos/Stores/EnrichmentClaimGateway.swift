@@ -292,6 +292,50 @@ nonisolated enum EnrichmentClaimGateway {
         }
     }
 
+    /// One row `demandSources` found, with its current byte size.
+    struct DemandSource: Sendable {
+        let rootID: Int64
+        let relativePath: MediaRelativePath
+        let byteSize: Int64?
+    }
+
+    /// The rows of `ids` that are present, not in the Trash and not awaiting presence, by key
+    /// through the primary key, one statement per root.
+    static func demandSources(
+        ids: [MediaAssetID],
+        rootIDsByPath: [LibraryRootPath: Int64],
+        db: Database
+    ) throws -> [DemandSource] {
+        var sources: [DemandSource] = []
+        for (rootPath, rootIDs) in Dictionary(grouping: ids, by: \.libraryRootPath) {
+            guard let rootID = rootIDsByPath[rootPath] else {
+                continue
+            }
+            var arguments: [any DatabaseValueConvertible] = [rootID]
+            arguments.append(contentsOf: rootIDs.map(\.relativePath.rawValue))
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT relative_path, byte_size
+                FROM media_asset
+                WHERE library_root_id = ?
+                  AND relative_path IN (\(sqlPlaceholders(count: rootIDs.count)))
+                  AND trash_path IS NULL
+                  AND awaiting_presence = 0
+                """,
+                arguments: StatementArguments(arguments)
+            )
+            sources += rows.map { row in
+                DemandSource(
+                    rootID: rootID,
+                    relativePath: MediaRelativePath(rawValue: row["relative_path"]),
+                    byteSize: row["byte_size"]
+                )
+            }
+        }
+        return sources
+    }
+
     static func releaseEnrichmentClaims(rootID: Int64, db: Database) throws {
         try db.execute(
             sql: """

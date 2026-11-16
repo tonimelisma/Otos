@@ -588,7 +588,8 @@ struct EnrichmentCoordinatorTests {
                     id: badID, url: badID.fileURL, sourceSize: 100, captureLocalTime: nil,
                     isVideo: false, isDeviceStaging: false, attemptCount: 4, retryNotBefore: nil
                 ),
-                ownsStoreClaim: true
+                ownsStoreClaim: true,
+                outstandingLimit: 32
             )
             badIDs.append(badID)
         }

@@ -3987,6 +3987,28 @@ extension CatalogStore {
         }
     }
 
+    /// Of `ids`, the rows enrichment may still fetch bytes for — present under a root the
+    /// Store holds, not in the Trash and not awaiting presence — each with its current byte
+    /// size. The facts that end a materialization demand: a row this leaves out is gone, and
+    /// a size that moved names other bytes (`EnrichmentSchedule.reconcile`).
+    func enrichmentDemandSources(_ ids: [MediaAssetID]) async throws -> [MediaAssetID: Int64?] {
+        guard !ids.isEmpty else {
+            return [:]
+        }
+        let rootIDsByPath = roots.rowIDSnapshot()
+        let rows = try await database().readFreeingConnection { db in
+            try EnrichmentClaimGateway.demandSources(ids: ids, rootIDsByPath: rootIDsByPath, db: db)
+        }
+        var sources: [MediaAssetID: Int64?] = [:]
+        for row in rows {
+            guard let rootPath = roots.pathsByRowID[row.rootID], roots[rootPath]?.rowID == row.rootID else {
+                continue
+            }
+            sources[MediaAssetID(libraryRootPath: rootPath, relativePath: row.relativePath)] = .some(row.byteSize)
+        }
+        return sources
+    }
+
     /// `bytesAreLocal` marks rows whose bytes just became local: a root first claimed for
     /// metadata alone (a card, a camera, an Immich account) is claimed for its rendering and
     /// digest too (`EnrichmentClaim.products`); a fixed library is claimed for its every
