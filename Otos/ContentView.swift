@@ -554,23 +554,22 @@ struct ContentView: View {
             Text(confirmation.summaryText)
         }
         .alert(
-            "Reorganization",
+            viewModel.reorganizationAlert?.title ?? "",
             isPresented: Binding(
-                get: { viewModel.reorganizationAlertMessage != nil },
+                get: { viewModel.reorganizationAlert != nil },
                 set: { isPresented in
                     if !isPresented {
-                        viewModel.reorganizationAlertMessage = nil
+                        viewModel.reorganizationAlert = nil
                     }
                 }
-            )
-        ) {
+            ),
+            presenting: viewModel.reorganizationAlert
+        ) { _ in
             Button("OK") {
-                viewModel.reorganizationAlertMessage = nil
+                viewModel.reorganizationAlert = nil
             }
-        } message: {
-            if let message = viewModel.reorganizationAlertMessage {
-                Text(message)
-            }
+        } message: { alert in
+            Text(alert.message)
         }
     }
 

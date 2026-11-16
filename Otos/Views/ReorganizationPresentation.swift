@@ -31,11 +31,28 @@ enum ReorganizationSummaryPresentation {
     }
 }
 
+/// The alert a reorganization that could not start or stopped partway shows: one value,
+/// so its title and message always describe the same outcome.
+nonisolated struct ReorganizationAlert: Equatable, Sendable {
+    let title: String
+    let message: String
+}
+
 /// The alert text for a reorganization that could not start or stopped partway, in the
 /// user's vocabulary (DES-035): items, files and folders, never journal, component or
 /// lease. The runner's typed outcome is the only input; its log code stays in the log.
-enum ReorganizationOutcomePresentation {
-    static func message(for reason: ReorganizationUnavailability) -> String {
+/// Each title is a fragment saying what happened, so it takes title case and no ending
+/// punctuation (DES-037).
+nonisolated enum ReorganizationOutcomePresentation {
+    static func alert(for reason: ReorganizationUnavailability) -> ReorganizationAlert {
+        ReorganizationAlert(title: "Couldn’t Reorganize Library", message: message(for: reason))
+    }
+
+    static func alert(for stop: ReorganizationStop) -> ReorganizationAlert {
+        ReorganizationAlert(title: "Reorganization Stopped", message: message(for: stop))
+    }
+
+    private static func message(for reason: ReorganizationUnavailability) -> String {
         switch reason {
         case let .libraryBusy(owner):
             switch owner {
@@ -57,11 +74,13 @@ enum ReorganizationOutcomePresentation {
         }
     }
 
-    static func message(for stop: ReorganizationStop) -> String {
+    private static func message(for stop: ReorganizationStop) -> String {
         let relocated = stop.progress.relocatedCount
-        let stopped = relocated == 0
-            ? "Reorganization stopped before any item moved because \(cause(stop.fault))."
-            : "Reorganized \(relocated) \(relocated == 1 ? "item" : "items"), then stopped because \(cause(stop.fault))."
+        let stopped = switch relocated {
+        case 0: "No item moved because \(cause(stop.fault))."
+        case 1: "1 item was reorganized before it stopped because \(cause(stop.fault))."
+        default: "\(relocated) items were reorganized before it stopped because \(cause(stop.fault))."
+        }
         let remainder = stop.libraryRestored
             ? "The other items were left as they were."
             : "Some files couldn’t be moved back. Otos will try again the next time it opens."

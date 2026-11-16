@@ -548,7 +548,8 @@ final class CatalogWindowViewModel {
     /// The plan the confirmation dialog shows, or nil when it is not shown. Confirming
     /// runs exactly this library at exactly this revision.
     var reorganizationConfirmation: ReorganizationConfirmation?
-    var reorganizationAlertMessage: String?
+    /// The outcome alert of a reorganization that could not start or stopped, or nil.
+    var reorganizationAlert: ReorganizationAlert?
     var trashAlertMessage: String?
     var trashFailedIDs: [MediaAssetID] = []
     /// The trash queue as the bottom status bar reports it (DES-089); idle when nothing

@@ -380,9 +380,9 @@ extension CatalogWindowViewModel {
         case .completed:
             break
         case let .unavailable(reason):
-            reorganizationAlertMessage = ReorganizationOutcomePresentation.message(for: reason)
+            reorganizationAlert = ReorganizationOutcomePresentation.alert(for: reason)
         case let .stopped(stop):
-            reorganizationAlertMessage = ReorganizationOutcomePresentation.message(for: stop)
+            reorganizationAlert = ReorganizationOutcomePresentation.alert(for: stop)
         }
     }
 
