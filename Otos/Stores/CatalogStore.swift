@@ -407,11 +407,15 @@ actor CatalogStore {
     /// Store continues: a cooperative-pool thread at `priority`, then the Store actor. Reads
     /// that hold every connection show in `waitMs` alone; a pool with no thread free at the
     /// caller's priority, or a busy Store, in `resumeMs`
-    /// (`docs/research/2026-11-15-cooperative-pool-holders.md`).
+    /// (`docs/research/2026-11-15-cooperative-pool-holders.md`). `lockMs` is the part of a
+    /// read's `waitMs` spent on SQLite's locks once it had a connection (`ReaderLockWait`);
+    /// the rest of `waitMs` is the wait for the connection. Writes do not log it: the writer
+    /// never waits on a lock, it fails.
     private struct DatabaseTimedValue<Value: Sendable> {
         let value: Value
         let waitMs: Int
         let execMs: Int
+        var lockMs = 0
         var resumeMs = 0
         /// The caller's priority when it asked; nil for a value summed from several.
         var priority: TaskPriority?
@@ -2158,6 +2162,10 @@ extension CatalogStore {
         // One read transaction: a row this read sees under a new identity always comes
         // with the pending batch that renamed it (ARC-052).
         let held = heldStacks.flatMap { $0.rootPaths == stackRootPaths && $0.span == .roots ? $0 : nil }
+        // The rows become the window's IDs inside the read, on the connection's queue: at
+        // 166,000 rows that is about half a second of work, and done here it held the Store
+        // for it, so every read and intent behind it waited, a visible tile's among them
+        // (`docs/research/2026-11-15-shared-reader-waits.md`).
         let timedRows = try await timedRead(dbWriter) { db in
             let order = try CatalogQueryGateway.readOrder(
                 descriptor: descriptor,
@@ -2166,18 +2174,79 @@ extension CatalogStore {
                 held: held,
                 db: db
             )
-            return try (rows: order.rows, pending: Self.fetchPendingIdentityRemapBatches(db: db), stacks: order.stacks)
+            return try (
+                order: Self.orderedAssets(
+                    from: order.rows,
+                    stacks: order.stacks.stacks,
+                    rootPathsByRowID: stackRootPaths,
+                    scope: scope,
+                    groupsByDate: descriptor.effectiveSort.field == .bestDate
+                ),
+                pending: Self.fetchPendingIdentityRemapBatches(db: db),
+                stacks: order.stacks
+            )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
 
-        let validRootPathsByRowID = roots.pathsByRowID.filter { rowID, path in
+        // A root that left while the read ran is no member of its answer.
+        let rootPathsAfterRead = roots.pathsByRowID.filter { rowID, path in
             scope.rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
         }
-        let groupsByDate = descriptor.effectiveSort.field == .bestDate
+        var ids = timedRows.value.order.ids
+        var dayBuckets = timedRows.value.order.dayBuckets
+        var coordinates = timedRows.value.order.coordinates
+        if rootPathsAfterRead != stackRootPaths {
+            let remaining = Set(rootPathsAfterRead.values)
+            let kept = ids.indices.filter { remaining.contains(ids[$0].libraryRootPath) }
+            ids = kept.map { ids[$0] }
+            // Each is empty or index-paired with the order.
+            dayBuckets = dayBuckets.isEmpty ? [] : kept.map { dayBuckets[$0] }
+            coordinates = coordinates.isEmpty ? [] : kept.map { coordinates[$0] }
+        }
+        let queryMs = timedRows.totalMs
+        // The log reports the stacks' read and rule apart from the order's own work (ADR 0052).
+        let builtStacks = timedRows.value.stacks
+        let catalogStacks = builtStacks.stacks
+        OtosLog.catalog.debug(
+            """
+            Catalog ordered asset IDs queried descriptor=\(descriptor.diagnosticDescription, privacy: .public) \
+            roots=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) \
+            waitMs=\(timedRows.waitMs, privacy: .public) \
+            execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
+            """
+        )
+        if case let .anniversary(day) = scope.date {
+            OtosLog.catalog.noticeOperation("onThisDay.query", phase: "finish", fields: [
+                "day": day.diagnosticDescription,
+                "count": "\(ids.count)",
+                "queryMs": "\(queryMs)",
+            ])
+        }
+        OtosLog.catalog.notice(
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stacks=\(held == nil ? "read" : "held", privacy: .public) stackSpan=\(builtStacks.span == .roots ? "roots" : "rows", privacy: .public) stackCandidates=\(held == nil ? builtStacks.candidateCount : 0, privacy: .public) stackReadMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) : 0, privacy: .public) stackRuleMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) lockMs=\(timedRows.lockMs, privacy: .public) resumeMs=\(timedRows.resumeMs, privacy: .public) priority=\(timedRows.priorityName, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+        )
+        return CatalogOrderedAssets(
+            ids: ids,
+            dayBuckets: dayBuckets,
+            coordinates: coordinates,
+            pendingIdentityRemaps: timedRows.value.pending,
+            stacks: catalogStacks,
+            builtStacks: builtStacks
+        )
+    }
+
+    /// The window's order from the read's rows: each row whose root is one of the scope's
+    /// as an ID, its capture day's start where the order groups by date, its coordinate where
+    /// the scope requires a location. Pure, so it runs inside the read rather than on the Store.
+    nonisolated static func orderedAssets(
+        from rows: [CatalogQueryGateway.OrderedAssetIDRow],
+        stacks: CatalogStacks,
+        rootPathsByRowID: [Int64: LibraryRootPath],
+        scope: CatalogScopePredicate,
+        groupsByDate: Bool
+    ) -> (ids: [MediaAssetID], dayBuckets: [Date?], coordinates: [PlaceCoordinate]) {
         // On This Day shows each day's Liked photos first (`OnThisDayPicks`).
-        let orderedRows = scope.isAnniversary
-            ? OnThisDayPicks.likedFirst(timedRows.value.rows)
-            : timedRows.value.rows
+        let orderedRows = scope.isAnniversary ? OnThisDayPicks.likedFirst(rows) : rows
         var ids: [MediaAssetID] = []
         var dayBuckets: [Date?] = []
         var dayStarts: [Int: Date] = [:]
@@ -2190,7 +2259,7 @@ extension CatalogStore {
             coordinates.reserveCapacity(orderedRows.count)
         }
         for row in orderedRows {
-            guard let rootPath = validRootPathsByRowID[row.libraryRootID] else {
+            guard let rootPath = rootPathsByRowID[row.libraryRootID] else {
                 continue
             }
             if scope.requiresLocation {
@@ -2220,15 +2289,11 @@ extension CatalogStore {
                 })
             }
         }
-        let queryMs = timedRows.totalMs
-        // The log reports the stacks' read and rule apart from the order's own work (ADR 0052).
-        let builtStacks = timedRows.value.stacks
-        let catalogStacks = builtStacks.stacks
         // On This Day judges a stack by its key: the SQL left out a Disliked key's row, and
         // its RAW twin or its burst's other frames leave with it (`OnThisDayPicks.shows`, the
         // rule its years-or-months match asks too).
-        if scope.isAnniversary, !catalogStacks.stacks.isEmpty {
-            let kept = ids.indices.filter { OnThisDayPicks.shows(ids[$0], stacks: catalogStacks) }
+        if scope.isAnniversary, !stacks.stacks.isEmpty {
+            let kept = ids.indices.filter { OnThisDayPicks.shows(ids[$0], stacks: stacks) }
             if kept.count != ids.count {
                 ids = kept.map { ids[$0] }
                 // Each is empty or index-paired with the order.
@@ -2236,32 +2301,7 @@ extension CatalogStore {
                 coordinates = coordinates.isEmpty ? [] : kept.map { coordinates[$0] }
             }
         }
-        OtosLog.catalog.debug(
-            """
-            Catalog ordered asset IDs queried descriptor=\(descriptor.diagnosticDescription, privacy: .public) \
-            roots=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) \
-            waitMs=\(timedRows.waitMs, privacy: .public) \
-            execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
-            """
-        )
-        if case let .anniversary(day) = scope.date {
-            OtosLog.catalog.noticeOperation("onThisDay.query", phase: "finish", fields: [
-                "day": day.diagnosticDescription,
-                "count": "\(ids.count)",
-                "queryMs": "\(queryMs)",
-            ])
-        }
-        OtosLog.catalog.notice(
-            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stacks=\(held == nil ? "read" : "held", privacy: .public) stackSpan=\(builtStacks.span == .roots ? "roots" : "rows", privacy: .public) stackCandidates=\(held == nil ? builtStacks.candidateCount : 0, privacy: .public) stackReadMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) : 0, privacy: .public) stackRuleMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) resumeMs=\(timedRows.resumeMs, privacy: .public) priority=\(timedRows.priorityName, privacy: .public) queryMs=\(queryMs, privacy: .public)"
-        )
-        return CatalogOrderedAssets(
-            ids: ids,
-            dayBuckets: dayBuckets,
-            coordinates: coordinates,
-            pendingIdentityRemaps: timedRows.value.pending,
-            stacks: catalogStacks,
-            builtStacks: builtStacks
-        )
+        return (ids, dayBuckets, coordinates)
     }
 
     func orderedAssetIDs(
@@ -2288,7 +2328,7 @@ extension CatalogStore {
             try CatalogQueryGateway.countAssets(scope: scope, db: db)
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.catalogedCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) resumeMs=\(timedCount.resumeMs, privacy: .public) priority=\(timedCount.priorityName, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
+            "op=catalog.store.query.catalogedCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) lockMs=\(timedCount.lockMs, privacy: .public) resumeMs=\(timedCount.resumeMs, privacy: .public) priority=\(timedCount.priorityName, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
         )
         return timedCount.value
     }
@@ -2311,7 +2351,7 @@ extension CatalogStore {
             try CatalogQueryGateway.countAssets(scope: scope, filter: filter, db: db)
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) filtered=\(filter.isActive, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) resumeMs=\(timedCount.resumeMs, privacy: .public) priority=\(timedCount.priorityName, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
+            "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) filtered=\(filter.isActive, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) lockMs=\(timedCount.lockMs, privacy: .public) resumeMs=\(timedCount.resumeMs, privacy: .public) priority=\(timedCount.priorityName, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
         )
         return timedCount.value
     }
@@ -2337,7 +2377,7 @@ extension CatalogStore {
             try CatalogQueryGateway.filterOptions(scope: scope, placeNameLanguage: language, db: db)
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.filterOptions phase=finish row=\(row.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.formatsByKind.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) countryCount=\(timedOptions.value.countries.count, privacy: .public) placeLanguage=\(language?.identifier ?? "none", privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) resumeMs=\(timedOptions.resumeMs, privacy: .public) priority=\(timedOptions.priorityName, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
+            "op=catalog.store.query.filterOptions phase=finish row=\(row.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.formatsByKind.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) countryCount=\(timedOptions.value.countries.count, privacy: .public) placeLanguage=\(language?.identifier ?? "none", privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) lockMs=\(timedOptions.lockMs, privacy: .public) resumeMs=\(timedOptions.resumeMs, privacy: .public) priority=\(timedOptions.priorityName, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
         )
         return timedOptions.value
     }
@@ -2406,18 +2446,25 @@ extension CatalogStore {
         return forgotten
     }
 
-    func mediaAssets(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaAsset] {
+    /// `askedAt` defaults to the instant the caller asks, before it reaches the Store.
+    func mediaAssets(
+        for ids: [MediaAssetID],
+        askedAt: ContinuousClock.Instant = .now
+    ) async throws -> [MediaAssetID: MediaAsset] {
         guard !ids.isEmpty else {
             return [:]
         }
 
-        let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreTileDetailQuery")
+        let storeMs = DiagnosticsTiming.milliseconds(since: askedAt)
+        let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreAssetsQuery")
         let rootIDsBeforeRead = roots.rowIDSnapshot()
-        let dbWriter = try database()
-        let timedAssets = try await timedRead(dbWriter) { db in
+        // The inspector's read of the selected item: a read a user waits on with something on
+        // screen, so it uses the interactive readers.
+        let reader = try interactiveDatabase()
+        let timedAssets = try await timedRead(reader) { db in
             try CatalogQueryGateway.fetchStoredAssets(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
         }
-        OtosSignpost.persistence.endInterval("CatalogStoreTileDetailQuery", signpost)
+        OtosSignpost.persistence.endInterval("CatalogStoreAssetsQuery", signpost)
 
         var assetsByID: [MediaAssetID: MediaAsset] = [:]
         assetsByID.reserveCapacity(timedAssets.value.count)
@@ -2431,22 +2478,28 @@ extension CatalogStore {
             assetsByID[asset.id] = asset
         }
 
-        let queryMs = timedAssets.totalMs
-        if queryMs > Self.slowQueryDiagnosticThresholdMs {
-            await recordSlowTileDetailQuery(
+        if storeMs + timedAssets.totalMs > Self.slowQueryDiagnosticThresholdMs {
+            recordSlowDetailQuery(
+                operation: "catalog.store.query.assets",
                 requestedCount: ids.count,
                 returnedCount: assetsByID.count,
+                storeMs: storeMs,
                 timing: timedAssets
             )
         }
         return assetsByID
     }
 
-    func mediaTileDetails(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaTileDetail] {
+    /// `askedAt` defaults to the instant the caller asks, before it reaches the Store.
+    func mediaTileDetails(
+        for ids: [MediaAssetID],
+        askedAt: ContinuousClock.Instant = .now
+    ) async throws -> [MediaAssetID: MediaTileDetail] {
         guard !ids.isEmpty else {
             return [:]
         }
 
+        let storeMs = DiagnosticsTiming.milliseconds(since: askedAt)
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreTileDetailQuery")
         let rootIDsBeforeRead = roots.rowIDSnapshot()
         let reader = try interactiveDatabase()
@@ -2474,15 +2527,18 @@ extension CatalogStore {
             fields: [
                 "requested": "\(ids.count)",
                 "returned": "\(detailsByID.count)",
+                "storeMs": "\(storeMs)",
                 "waitMs": "\(timedDetails.waitMs)",
                 "execMs": "\(timedDetails.execMs)",
                 "queryMs": "\(queryMs)",
             ]
         )
-        if queryMs > Self.slowQueryDiagnosticThresholdMs {
-            await recordSlowTileDetailQuery(
+        if storeMs + queryMs > Self.slowQueryDiagnosticThresholdMs {
+            recordSlowDetailQuery(
+                operation: "catalog.store.query.tileDetail",
                 requestedCount: ids.count,
                 returnedCount: detailsByID.count,
+                storeMs: storeMs,
                 timing: timedDetails
             )
         }
@@ -3207,21 +3263,17 @@ extension CatalogStore {
         try editRecipe(json: json).map { StoredEditRecipe(recipe: $0, revision: revision) }
     }
 
-    private func recordSlowTileDetailQuery(
+    /// A slow detail read's line. `storeMs` is asked → the Store ran it: the wait for the Store
+    /// actor, which `waitMs` does not see.
+    private func recordSlowDetailQuery(
+        operation: String,
         requestedCount: Int,
         returnedCount: Int,
+        storeMs: Int,
         timing: DatabaseTimedValue<some Any>
-    ) async {
-        OtosLog.catalog.debug(
-            """
-            Catalog slow tile details query requested=\(requestedCount, privacy: .public) \
-            returned=\(returnedCount, privacy: .public) \
-            waitMs=\(timing.waitMs, privacy: .public) \
-            execMs=\(timing.execMs, privacy: .public) queryMs=\(timing.totalMs, privacy: .public)
-            """
-        )
+    ) {
         OtosLog.catalog.notice(
-            "op=catalog.store.query.tileDetail phase=finish requested=\(requestedCount, privacy: .public) returned=\(returnedCount, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) resumeMs=\(timing.resumeMs, privacy: .public) priority=\(timing.priorityName, privacy: .public) queryMs=\(timing.totalMs, privacy: .public) thresholdMs=\(Self.slowQueryDiagnosticThresholdMs, privacy: .public)"
+            "op=\(operation, privacy: .public) phase=finish requested=\(requestedCount, privacy: .public) returned=\(returnedCount, privacy: .public) storeMs=\(storeMs, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) lockMs=\(timing.lockMs, privacy: .public) resumeMs=\(timing.resumeMs, privacy: .public) priority=\(timing.priorityName, privacy: .public) queryMs=\(timing.totalMs, privacy: .public) thresholdMs=\(Self.slowQueryDiagnosticThresholdMs, privacy: .public)"
         )
     }
 
@@ -3251,7 +3303,7 @@ extension CatalogStore {
             """
         )
         OtosLog.metadata.notice(
-            "op=catalog.store.query.metadata phase=finish 0=1 returned=\(timedMetadata.value == nil ? "0" : "1", privacy: .public) waitMs=\(timedMetadata.waitMs, privacy: .public) execMs=\(timedMetadata.execMs, privacy: .public) resumeMs=\(timedMetadata.resumeMs, privacy: .public) priority=\(timedMetadata.priorityName, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.metadata phase=finish 0=1 returned=\(timedMetadata.value == nil ? "0" : "1", privacy: .public) waitMs=\(timedMetadata.waitMs, privacy: .public) execMs=\(timedMetadata.execMs, privacy: .public) lockMs=\(timedMetadata.lockMs, privacy: .public) resumeMs=\(timedMetadata.resumeMs, privacy: .public) priority=\(timedMetadata.priorityName, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return timedMetadata.value
     }
@@ -5827,6 +5879,7 @@ private extension CatalogStore {
         let start = ContinuousClock.now
         let (timed, left) = try await dbWriter.readFreeingConnection { db in
             let entered = ContinuousClock.now
+            let lockMs = ReaderLockWait.takeWaitMs(from: db, askedAt: start)
             let value = try body(db)
             let left = ContinuousClock.now
             return (
@@ -5834,6 +5887,7 @@ private extension CatalogStore {
                     value: value,
                     waitMs: DiagnosticsTiming.milliseconds(from: start, to: entered),
                     execMs: DiagnosticsTiming.milliseconds(from: entered, to: left),
+                    lockMs: lockMs,
                     priority: priority
                 ),
                 left

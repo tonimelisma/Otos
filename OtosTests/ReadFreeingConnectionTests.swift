@@ -117,6 +117,45 @@ struct ReadFreeingConnectionTests {
         try pool.close()
     }
 
+    /// A read cancelled while every connection is taken throws at once, while the read ahead
+    /// of it still holds the connection, and never runs its body: a superseded read does not
+    /// keep its caller waiting for the pool.
+    @Test func aReadCancelledWhileItWaitsForAConnectionThrowsAtOnce() async throws {
+        let directory = try makeTestDirectory()
+        var configuration = Configuration()
+        configuration.maximumReaderCount = 1
+        let pool = try DatabasePool(path: directory.appending(path: "reads.sqlite").path(percentEncoded: false), configuration: configuration)
+        let gate = DispatchSemaphore(value: 0)
+        let (entered, enter) = AsyncStream<Void>.makeStream()
+        let holding = Task {
+            try await pool.readFreeingConnection { _ in
+                enter.yield()
+                gate.wait()
+                return 1
+            }
+        }
+        for await _ in entered {
+            break
+        }
+        let ran = Mutex(false)
+        let waiting = Task {
+            try await pool.readFreeingConnection { _ in
+                ran.withLock { $0 = true }
+            }
+        }
+        waiting.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await waiting.value
+        }
+        gate.signal()
+        #expect(try await holding.value == 1)
+        // The cancelled read reached the connection after the first and gave it straight back.
+        #expect(try await pool.readFreeingConnection { _ in 2 } == 2)
+        #expect(!ran.withLock { $0 })
+        try pool.close()
+    }
+
     /// A task cancelled before its read starts reads nothing.
     @Test func aReadCancelledBeforeItStartsRunsNoBody() async throws {
         let directory = try makeTestDirectory()

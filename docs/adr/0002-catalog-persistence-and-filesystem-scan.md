@@ -159,9 +159,17 @@ work (`docs/research/2026-11-14-scope-switch-and-background-laps.md`; at ~23k as
 same wait's p95 was 17 ms, `docs/research/2026-07-10-grdb-reader-pool-qos.md`). So a
 file-backed Store also opens a second, read-only `DatabasePool` of two readers on the same
 file after migrating it (`CatalogStore.interactiveReader`), and the reads a user waits on
-with something on screen — the visible tiles' details — use only it. No background read
-can occupy it, so it never queues behind one. It is not a cache: every read is a SQLite
-read of the current WAL snapshot. A truncating checkpoint (below) can find one of its short
+with something on screen — the visible tiles' details and the inspector's item — use only
+it. No background read can occupy it, so it never queues behind one. It is not a cache:
+every read is a SQLite read of the current WAL snapshot. A read reaches its connection
+through the Store actor, so the Store keeps O(rows) work off itself: an order read turns
+its rows into the window's IDs inside the read, on the connection's queue, because at
+166,000 rows that mapping held the Store for half a second per read and every visible
+tile's read queued behind it (`docs/research/2026-11-15-shared-reader-waits.md`). Readers
+wait on SQLite's locks through a busy handler of the Store's own (`ReaderLockWait`, with
+GRDB's ten-second limit), so a read's log line tells the wait for a lock (`lockMs`) from
+the wait for a connection, and a detail read's line carries the wait for the Store itself
+(`storeMs`). A truncating checkpoint (below) can find one of its short
 reads in flight; the checkpoint then fails, is logged, and the next bulk write retries it.
 Raising the shared pool's reader count was rejected: background work fans out to fill any
 count.

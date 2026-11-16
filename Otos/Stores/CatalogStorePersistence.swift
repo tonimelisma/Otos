@@ -58,14 +58,18 @@ extension CatalogStore {
             try db.execute(sql: "PRAGMA synchronous = NORMAL")
             try db.execute(sql: "PRAGMA cache_size = -32768")
             try db.execute(sql: "PRAGMA mmap_size = 268435456")
+            if db.configuration.readonly {
+                ReaderLockWait.install(on: db)
+            }
         }
         return configuration
     }
 
     /// The interactive readers' configuration (`CatalogStore.interactiveReader`): a second,
     /// read-only pool on the same file, opened after the writer has migrated it, with the
-    /// main pool's cache settings. Two readers: a visible-tile read is a few milliseconds, and
-    /// nothing else uses them.
+    /// main pool's cache settings. Two readers: the reads a user waits on with something on
+    /// screen (the visible tiles' details, the inspector's item) are a few milliseconds each,
+    /// and nothing else uses them.
     static func interactiveReaderConfiguration() -> Configuration {
         var configuration = fileBackedDatabaseConfiguration()
         configuration.readonly = true
@@ -2285,15 +2289,19 @@ extension DatabaseReader {
     /// Cancelling the task interrupts the body's statement, as GRDB's own read does, and the
     /// read throws `CancellationError`. The cancellation holds for the rest of the body: a
     /// statement that starts after it is stopped too, because SQLite clears an interrupt that
-    /// lands while no statement runs.
+    /// lands while no statement runs. A read cancelled while it still waits for a connection
+    /// throws at once: its caller does not wait out the reads ahead of it, and when the pool
+    /// reaches it, it gives the connection straight back without running its body.
     nonisolated func readFreeingConnection<T: Sendable>(
         _ body: @escaping @Sendable (Database) throws -> T
     ) async throws -> T {
         let interruption = ReadInterruption()
+        let resumption = ReadResumption<T>()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                resumption.install(continuation, unlessCancelled: interruption)
                 asyncRead { connection in
-                    continuation.resume(with: Result {
+                    resumption.resume(with: Result {
                         let db = try connection.get()
                         try interruption.begin(db)
                         defer { interruption.end(db) }
@@ -2310,7 +2318,26 @@ extension DatabaseReader {
             }
         } onCancel: {
             interruption.cancel()
+            resumption.resume(with: .failure(CancellationError()))
         }
+    }
+}
+
+/// The caller of one `readFreeingConnection`, resumed once: by the read's result, or by its
+/// cancellation if that comes first. The continuation is installed after a cancellation
+/// handler may already have run, so installing checks the cancellation too.
+private final nonisolated class ReadResumption<T: Sendable>: Sendable {
+    private let continuation = Mutex<CheckedContinuation<T, any Error>?>(nil)
+
+    func install(_ continuation: CheckedContinuation<T, any Error>, unlessCancelled interruption: ReadInterruption) {
+        self.continuation.withLock { $0 = continuation }
+        if interruption.wasCancelled {
+            resume(with: .failure(CancellationError()))
+        }
+    }
+
+    func resume(with result: Result<T, any Error>) {
+        continuation.withLock { $0.take() }?.resume(with: result)
     }
 }
 
@@ -2357,6 +2384,7 @@ private final nonisolated class ReadInterruption: Sendable {
 
     func end(_ db: Database) {
         sqlite3_progress_handler(db.sqliteConnection, 0, nil, nil)
+        ReaderLockWait.clear(on: db)
         state.withLock { $0.connection = nil }
     }
 
@@ -2367,5 +2395,90 @@ private final nonisolated class ReadInterruption: Sendable {
                 sqlite3_interrupt(connection)
             }
         }
+    }
+}
+
+// MARK: - Time a reader waits on SQLite's locks
+
+/// How long a reader connection's read waited on SQLite's locks before its body ran, kept
+/// apart from the wait for the connection itself: a store query's `waitMs` covers both, and
+/// visible tiles' reads waited seconds in it on the installed app while every SQLite lock a
+/// probe could hold delayed them by milliseconds
+/// (`docs/research/2026-11-15-shared-reader-waits.md`). A WAL reader meets a lock only in
+/// SQLite's rare cases (another connection's exclusive lock, a recovery), so the wait is
+/// SQLite's busy handler: this one replaces GRDB's ten-second timeout for readers with the
+/// same limit and notes when the read first found the database busy. The read's body takes
+/// that instant (`takeWaitMs`) and counts it only when it came after the read was asked, and
+/// every read that frees its connection clears it as it ends, so a wait is never charged to
+/// a later read.
+final nonisolated class ReaderLockWait: Sendable {
+    private static let name = "net.melisma.Otos.readerLockWait"
+    /// GRDB's reader default (`readonlyBusyMode = .timeout(10)`): a holder that never lets
+    /// go fails the read rather than holding it forever.
+    private static let limit: Duration = .seconds(10)
+    /// SQLite's own busy-timeout steps, in milliseconds.
+    private static let delays: [Int32] = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100]
+
+    private struct Waits {
+        /// When the current read first found the database busy.
+        var firstBusy: ContinuousClock.Instant?
+        /// When SQLite's current wait began (`tries == 0`), which the limit counts from.
+        var waitStarted: ContinuousClock.Instant?
+    }
+
+    private let waits = Mutex(Waits())
+
+    static func install(on db: Database) {
+        let wait = ReaderLockWait()
+        let context = Unmanaged.passRetained(wait).toOpaque()
+        sqlite3_set_clientdata(db.sqliteConnection, name, context) { context in
+            context.map { Unmanaged<ReaderLockWait>.fromOpaque($0).release() }
+        }
+        sqlite3_busy_handler(db.sqliteConnection, { context, tries in
+            guard let context else {
+                return 0
+            }
+            return Unmanaged<ReaderLockWait>.fromOpaque(context).takeUnretainedValue().busy(tries: tries) ? 1 : 0
+        }, context)
+    }
+
+    /// The milliseconds from the read's first busy answer until now; 0 when the read, asked
+    /// at `asked`, met none. A busy answer from before it was asked belongs to an earlier read.
+    static func takeWaitMs(from db: Database, askedAt asked: ContinuousClock.Instant) -> Int {
+        guard let wait = attached(to: db), let first = wait.waits.withLock({ $0.firstBusy.take() }), first >= asked else {
+            return 0
+        }
+        return DiagnosticsTiming.milliseconds(since: first)
+    }
+
+    static func clear(on db: Database) {
+        attached(to: db)?.waits.withLock { $0 = Waits() }
+    }
+
+    private static func attached(to db: Database) -> ReaderLockWait? {
+        sqlite3_get_clientdata(db.sqliteConnection, name).map { Unmanaged<ReaderLockWait>.fromOpaque($0).takeUnretainedValue() }
+    }
+
+    /// SQLite calls this each time it finds the database busy, `tries` counting from 0 within
+    /// one wait; `true` asks it to try again, `false` gives up with `SQLITE_BUSY`.
+    private func busy(tries: Int32) -> Bool {
+        let now = ContinuousClock.now
+        let started = waits.withLock { waits in
+            if waits.firstBusy == nil {
+                waits.firstBusy = now
+            }
+            if tries == 0 || waits.waitStarted == nil {
+                waits.waitStarted = now
+            }
+            return waits.waitStarted ?? now
+        }
+        let delay = Self.delays[min(Int(tries), Self.delays.count - 1)]
+        // time: deadline — the holder is outside this read and may never let go.
+        guard now - started + .milliseconds(Int(delay)) <= Self.limit else {
+            return false
+        }
+        // time: backoff — SQLite's own pause between asking for a lock again.
+        sqlite3_sleep(delay)
+        return true
     }
 }
