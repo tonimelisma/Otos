@@ -8,10 +8,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/run-context.sh"
+source "$ROOT_DIR/script/lib/xcode.sh"
+source "$ROOT_DIR/script/lib/build-folder.sh"
 APP_NAME="Otos"
 SUBSYSTEM="net.melisma.Otos"
 INSTALLED_APP="/Applications/Otos.app"
 DEV_APP="$ROOT_DIR/build/DerivedData/Build/Products/Debug/Otos.app"
+# The dev build compiled the way the installed app is (--optimized), in a folder of its own.
+OPTIMIZED_DERIVED_DATA="$ROOT_DIR/build/OptimizedDerivedData"
 TARGETS="$ROOT_DIR/docs/scorecard-targets.json"
 PARSER="$ROOT_DIR/script/lib/scorecard.py"
 SCORECARDS="$ROOT_DIR/build/scorecards"
@@ -23,7 +27,7 @@ usage:
       The newest session of the installed app (--dev: the dev build) in the last hour.
   script/scorecard.sh --input <log.ndjson> [--dev] [--session <id>] [--json <out>] [--compare <saved.json>]
       A saved `log show --style ndjson` capture.
-  script/scorecard.sh --tour [--dev [--home <dir>]] [--ablate none|all|<owner>[,<owner>…]] [--steps full|scopes]
+  script/scorecard.sh --tour [--dev [--optimized] [--home <dir>]] [--ablate none|all|<owner>[,<owner>…]] [--steps full|scopes]
                       [--idle <seconds>] [--deadline <seconds a step>] [--compare <saved.json>]
       Launches the app with OTOS_TOUR=1, waits for it to finish its read-only tour and quit,
       prints that session's scorecard and saves it under build/scorecards/.
@@ -33,7 +37,10 @@ usage:
 
 Owners: enrichment metadataRefresh renderSignatures previewFaces placeNames searchIndex
 descriptions duplicates people immich. --home gives the dev build a sandbox home
-(CFFIXED_USER_HOME and HOME). The tour never runs while Otos is already running.
+(CFFIXED_USER_HOME and HOME). --optimized first builds the dev app with the installed app's
+settings (-O, no coverage, no debug dylib; ADR 0030) into build/OptimizedDerivedData and
+tours that build: the dev bundle id, never /Applications. The tour never runs while Otos is
+already running.
 EOF
 }
 
@@ -52,9 +59,11 @@ STEPS="full"
 IDLE=""
 DEADLINE=""
 HOME_DIR=""
+OPTIMIZED=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dev) DEV=1; shift ;;
+    --optimized) OPTIMIZED=1; shift ;;
     --last) LAST="${2:?}"; shift 2 ;;
     --session) SESSION="${2:?}"; shift 2 ;;
     --input) INPUT="${2:?}"; shift 2 ;;
@@ -71,6 +80,39 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [[ "$OPTIMIZED" == 1 && ( "$DEV" != 1 || "$TOUR$MATRIX" == "00" ) ]]; then
+  echo "--optimized is for a dev tour (--tour or --ablation-matrix with --dev)." >&2
+  exit 2
+fi
+
+# Builds the dev app the way script/install.sh builds the installed one, so a sandbox tour
+# measures the code the owner runs, and points DEV_APP at it. Its own DerivedData, held for
+# this run, so a check's or an install's build folder is never touched.
+build_optimized_dev_app() {
+  otos_require_full_xcode
+  otos_hold_build_folder "$OPTIMIZED_DERIVED_DATA" scorecard.build
+  echo "op=scorecard.build phase=start folder=$OPTIMIZED_DERIVED_DATA optimization=-O" >&2
+  /usr/bin/xcodebuild \
+    -project "$ROOT_DIR/Otos.xcodeproj" \
+    -scheme Otos \
+    -configuration Debug \
+    -destination "platform=macOS" \
+    -derivedDataPath "$OPTIMIZED_DERIVED_DATA" \
+    ENABLE_CODE_COVERAGE=NO \
+    ENABLE_DEBUG_DYLIB=NO \
+    SWIFT_OPTIMIZATION_LEVEL=-O \
+    build >&2
+  DEV_APP="$OPTIMIZED_DERIVED_DATA/Build/Products/Debug/Otos.app"
+  local built_id
+  built_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$DEV_APP/Contents/Info.plist")"
+  if [[ "$built_id" != "net.melisma.Otos.dev" ]]; then
+    echo "op=scorecard.build phase=failed reason=bundleID built=$built_id expected=net.melisma.Otos.dev" >&2
+    exit 1
+  fi
+  echo "op=scorecard.build phase=finish app=$DEV_APP" >&2
+}
+[[ "$OPTIMIZED" == 1 ]] && build_optimized_dev_app
 
 parser_args() {
   local args=(--targets "$TARGETS")

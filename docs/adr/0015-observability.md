@@ -122,7 +122,9 @@ real backlog. Three instruments see those:
   the idle window, each number beside its target (`docs/scorecard-targets.json`); a number
   no line carries is listed as not measured, and a tour step that ended at its deadline
   is a FAIL row of its own. `--tour` runs a tour and saves the scorecard
-  under `build/scorecards/`; `--ablation-matrix` tours with every owner off, each alone
+  under `build/scorecards/`; `--optimized` with `--dev` first builds the dev app with the
+  installed app's compiler settings (ADR 0030) into a DerivedData of its own, so a sandbox
+  tour times the code the owner runs; `--ablation-matrix` tours with every owner off, each alone
   and none off, in one table. It is a report: it never fails a run and is not part of
   `script/check.sh`; its parser is tested there against synthetic lines.
 
