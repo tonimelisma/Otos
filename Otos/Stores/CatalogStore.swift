@@ -2196,33 +2196,65 @@ extension CatalogStore {
         let arguments = StatementArguments(rootIDs) + [cursor?.rootID ?? Int64.min, cursor?.relativePath ?? "", limit]
         return try await reader(for: lane).readFreeingConnection { db in
             let rows = try Row.fetchAll(db, sql: PreviewFaceSQL.candidatesSQL(rootCount: rootIDs.count), arguments: arguments)
-            let candidates = rows.compactMap { row -> PreviewFaceCandidate? in
-                guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
-                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
-                let renderedRevision: Int64 = row["rendered_revision"]
-                let recipe: EditRecipe
-                do {
-                    recipe = renderedRevision == 0 ? .neutral : try Self.editRecipe(json: row["edit_recipe_json"]) ?? .neutral
-                } catch {
-                    OtosLog.metadata.errorOperation("face.preview", phase: "recipeUnreadable", fields: [
-                        "relativePath": id.relativePath.rawValue, "error": String(describing: error),
-                    ])
-                    return nil
-                }
-                return PreviewFaceCandidate(
-                    id: id,
-                    previewPath: row["preview_path"],
-                    sourceSize: row["preview_source_size"],
-                    sourceMTimeSeconds: row["preview_source_mtime"],
-                    renderedRevision: renderedRevision,
-                    recipe: recipe
-                )
-            }
+            let candidates = rows.compactMap { Self.previewFaceCandidate($0, pathsByRowID: pathsByRowID) }
             let next = rows.count < limit ? nil : rows.last.map {
                 PreviewFaceCursor(rootID: $0["library_root_id"], relativePath: $0["relative_path"])
             }
             return PreviewFacePage(candidates: candidates, next: next)
         }
+    }
+
+    /// The stills of `ids` owed faces from their stored preview, by the same rule as the walk
+    /// (`previewFaceCandidates(after:limit:lane:)`), in catalog order: what the reader reads for a
+    /// change that names its rows and for the stills whose retry came due. Each is one seek of
+    /// its own row, never a walk, so the read costs what was asked.
+    func previewFaceCandidates(among ids: Set<MediaAssetID>, lane: CatalogReadLane) async throws -> [PreviewFaceCandidate] {
+        let rootIDs = Set(roots.values.filter(\.root.kind.readsFaces).map(\.rowID))
+        let rowIDs = roots.rowIDSnapshot()
+        let pathsByRowID = roots.pathsByRowID
+        let keys = ids.compactMap { id -> PreviewFaceCursor? in
+            guard let rootID = rowIDs[id.libraryRootPath], rootIDs.contains(rootID) else { return nil }
+            return PreviewFaceCursor(rootID: rootID, relativePath: id.relativePath.rawValue)
+        }.sorted { ($0.rootID, $0.relativePath) < ($1.rootID, $1.relativePath) }
+        var candidates: [PreviewFaceCandidate] = []
+        var start = 0
+        while start < keys.count {
+            let batch = keys[start ..< min(start + Self.currentEmbeddingBatch, keys.count)]
+            start += batch.count
+            candidates += try await reader(for: lane).readFreeingConnection(operation: "previewFaceCandidatesByKey") { db in
+                let statement = try db.cachedStatement(sql: PreviewFaceSQL.keyedCandidateSQL)
+                return try batch.compactMap { key in
+                    try Row.fetchOne(statement, arguments: [key.rootID, key.relativePath])
+                        .flatMap { Self.previewFaceCandidate($0, pathsByRowID: pathsByRowID) }
+                }
+            }
+        }
+        return candidates
+    }
+
+    /// One row of a preview face read as a candidate; nil for a root no longer held, or an edit
+    /// that cannot be read (logged).
+    private nonisolated static func previewFaceCandidate(_ row: Row, pathsByRowID: [Int64: LibraryRootPath]) -> PreviewFaceCandidate? {
+        guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
+        let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
+        let renderedRevision: Int64 = row["rendered_revision"]
+        let recipe: EditRecipe
+        do {
+            recipe = renderedRevision == 0 ? .neutral : try Self.editRecipe(json: row["edit_recipe_json"]) ?? .neutral
+        } catch {
+            OtosLog.metadata.errorOperation("face.preview", phase: "recipeUnreadable", fields: [
+                "relativePath": id.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return nil
+        }
+        return PreviewFaceCandidate(
+            id: id,
+            previewPath: row["preview_path"],
+            sourceSize: row["preview_source_size"],
+            sourceMTimeSeconds: row["preview_source_mtime"],
+            renderedRevision: renderedRevision,
+            recipe: recipe
+        )
     }
 
     /// Writes faces read from stored previews, for rows whose preview is still the one read;
@@ -5219,15 +5251,24 @@ extension CatalogStore {
     /// rendering stamps are cleared, the facts enrichment claims on: its stored products
     /// describe a reading the current reader would extend. A row whose file changed or whose record
     /// was re-read meanwhile is left alone. Returns how many rows were handed over.
+    ///
+    /// The rendering stamp is part of what a stored thumbnail is (`StoredThumbnailSQL`), so the
+    /// write is an image change of the rows it names: it clears their render signatures
+    /// (`CatalogSchema.renderSignatureStaleTrigger`) and leaves their embeddings and
+    /// descriptions read from another thumbnail, and it names what a face's tile, Duplicates
+    /// and those owners read, as every write of the stamp does.
     @discardableResult
     func requestEnrichmentDownload(_ candidates: [MetadataRefreshCandidate]) async throws -> Int {
         guard !candidates.isEmpty else { return 0 }
         let rootIDs = roots.rowIDSnapshot()
         let dbWriter = try database()
-        let requested = try await dbWriter.write { db in
-            var count = 0
+        let (requested, facts) = try await dbWriter.write { db -> (Set<MediaAssetID>, CatalogChangedFacts) in
+            var requested: Set<MediaAssetID> = []
+            var facts: CatalogChangedFacts = [.detail, .images]
             for candidate in candidates {
                 guard let rootID = rootIDs[candidate.id.libraryRootPath] else { continue }
+                let relativePath = candidate.id.relativePath.rawValue
+                let heldBefore = try DuplicatesHoldSQL.holds(libraryRootID: rootID, relativePath: relativePath, db: db)
                 try db.execute(
                     sql: """
                     UPDATE media_asset SET
@@ -5243,21 +5284,30 @@ extension CatalogStore {
                         )
                     """,
                     arguments: [
-                        rootID, candidate.id.relativePath.rawValue,
+                        rootID, relativePath,
                         candidate.sourceSize, candidate.sourceSize, candidate.sourceMTimeSeconds,
                     ]
                 )
-                count += db.changesCount
+                guard db.changesCount > 0 else { continue }
+                requested.insert(candidate.id)
+                if !facts.contains(.duplicateFacts), try DuplicatesHoldSQL.changesDuplicates(
+                    .images, heldBefore: heldBefore, libraryRootID: rootID, relativePath: relativePath, db: db
+                ) {
+                    facts.insert(.duplicateFacts)
+                }
+                if !facts.contains(.faceTiles), try Self.holdsFace(libraryRootID: rootID, relativePath: candidate.id.relativePath, db: db) {
+                    facts.insert(.faceTiles)
+                }
             }
-            return count
+            return (requested, facts)
         }
         OtosLog.metadata.noticeOperation("metadata.refresh", phase: "downloadRequested", fields: [
-            "candidates": "\(candidates.count)", "requested": "\(requested)",
+            "candidates": "\(candidates.count)", "requested": "\(requested.count)",
         ])
-        if requested > 0 {
-            notifyCatalogChanged(.changed(.detail))
+        if !requested.isEmpty {
+            notifyCatalogChanged(.changed(facts, rows: .rows(requested)))
         }
-        return requested
+        return requested.count
     }
 
     /// The library's current revision for `asset_metadata.family`, as SQL: one `WHEN` per
@@ -6855,8 +6905,10 @@ extension CatalogStore {
             notifyCatalogChanged(.changed(.membership, rows: .none))
         }
         // A completed enumeration has already deleted what it never saw; one that ended
-        // without completing leaves its unseen rows to be shown as last held.
-        if roots[scan.rootPath]?.rowID == scan.rootRowID {
+        // without completing leaves its unseen rows to be shown as last held. Only a removable
+        // source's rows wait for an attachment to see them (`markRetainedRowsAwaitingPresence`),
+        // so an account's listing has none to release, and writes nothing.
+        if roots[scan.rootPath]?.rowID == scan.rootRowID, roots[scan.rootPath]?.root.kind.isRemovable == true {
             await releaseAwaitingPresence(of: scan.rootPath, rootRowID: scan.rootRowID, reason: "enumerationEnded")
         }
     }

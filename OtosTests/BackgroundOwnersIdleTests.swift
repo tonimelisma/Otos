@@ -78,18 +78,21 @@ struct BackgroundOwnersIdleTests {
         )
 
         #expect(demands <= demandBound, "enrichment holds \(demands) demands, more than its window and hand-off (\(demandBound))")
-        withKnownIssue("\(KnownIdleIssue.renderSignatures.reason); \(KnownIdleIssue.immichSync.reason)") {
-            #expect(idle.changes == 0, "\(idle.summary)")
-            #expect(idle.writes.isEmpty, "\(idle.summary)")
-        }
+        // No catalog change: a root's own state, an account's listing starting and ending, is
+        // announced (`CatalogChangedRows.none`) and moves no read, once each per listing pass.
+        let listings = rounds.first { $0.owner == "immichSync" }?.work.passes ?? 0
+        #expect(idle.changes - idle.rootStateChanges == 0, "\(idle.summary)")
+        #expect(idle.rootStateChanges <= 2 * listings, "\(idle.summary)")
+        #expect(idle.writes.isEmpty, "\(idle.summary)")
+        let libraries = [catalog.pictures, catalog.archive].count
         for round in rounds {
             let check = {
                 #expect(round.work.written == 0, "\(round.summary)")
                 #expect(round.work.reads <= Self.readsPerOwner, "\(round.summary)")
-                #expect(round.work.rows <= Self.rowsPerOwner, "\(round.summary)")
+                #expect(round.work.rows <= Self.rowsPerOwner + IdleBound.rows(of: round.owner, libraries: libraries), "\(round.summary)")
             }
             if let known = KnownIdleIssue.of(round.owner) {
-                withKnownIssue(Comment(rawValue: known.reason), isIntermittent: known.isWokenByAnother, check)
+                withKnownIssue(Comment(rawValue: known.reason), isIntermittent: known.isIntermittent, check)
             } else {
                 check()
             }
@@ -98,30 +101,25 @@ struct BackgroundOwnersIdleTests {
     }
 }
 
+/// Rows an owner's idle round reads that are owed though nothing new arrived, with why.
+enum IdleBound {
+    /// An account's sync reads one mirror probe per fixed library each pass (ADR 0054): a
+    /// library's files gain the digests a mirror is learned from as enrichment hashes them,
+    /// which no listing reports to the sync, so each pass asks.
+    static func rows(of owner: String, libraries: Int) -> Int {
+        owner == "immichSync" ? libraries : 0
+    }
+}
+
 /// What an owner is known to do in the idle round, named so a fix shows as a known issue no
-/// longer recorded. The first five are each owner's own wake (figures at 1% / the owner's size);
-/// the rest are woken by the changes the first two announce, or by a backoff that comes due in
-/// the round, and are measured only once those are fixed.
+/// longer recorded (figures at 1% / the owner's size).
 enum KnownIdleIssue: String {
-    case renderSignatures, immichSync, previewFaces, descriptions, searchIndex
-    case people, peopleGallery, projection, duplicates, materialization
+    case peopleGallery, materialization
 
     /// What the owner does in the idle round.
     var reason: String {
         switch self {
-        case .renderSignatures:
-            "renderSignatures rewrites every still whose thumbnail does not decode on each walk (91 / 1,783 rows): "
-                + "it stays a candidate, and each write announces duplicateFacts"
-        case .immichSync:
-            "immichSync: a pass with no new line announces membership twice, rows unnamed, as its listing "
-                + "begins and ends (CatalogStore.beginSourceListing/endSourceListing)"
-        case .previewFaces: "previewFaces re-walks every still it paced after a failed read on each wake (26 / 2,696 pages, 819 / 86,243 rows)"
-        case .descriptions: "descriptions pages past the stills it paced: 13 / 1,294 reads that return no row"
-        case .searchIndex: "searchIndex re-reads its backlog's next page on each wake while no model loads (16 rows)"
-        case .people: "people reads every face again (1,030 / 102,979) after the listing's unnamed membership change"
-        case .peopleGallery: "peopleGallery reads the gallery again after the idle membership changes"
-        case .projection: "projection reads its order and options again after the idle changes"
-        case .duplicates: "duplicates builds again after the idle duplicateFacts change"
+        case .peopleGallery: "peopleGallery reads the gallery again on its own ring with nothing new (7 / 748 rows)"
         case .materialization:
             "materialization admits the downloads enrichment's retries hand it when their backoff comes due within the round "
                 + "(37 at the owner's size)"
@@ -132,9 +130,9 @@ enum KnownIdleIssue: String {
         KnownIdleIssue(rawValue: owner)
     }
 
-    /// Woken by another owner's idle change, so whether it is recorded depends on that one.
-    var isWokenByAnother: Bool {
-        [.people, .peopleGallery, .projection, .duplicates, .materialization].contains(self)
+    /// Whether it is recorded depends on a backoff coming due within the round.
+    var isIntermittent: Bool {
+        self == .materialization
     }
 }
 
@@ -164,6 +162,8 @@ struct OwnerRound {
 /// What the Store did between two of its use checkpoints.
 struct IdleUse {
     let changes: Int
+    /// Changes that named a root's own state alone (`CatalogChangedRows.none`).
+    let rootStateChanges: Int
     let changeFacts: [String: Int]
     /// Write transactions by operation.
     let writes: [String: Int]
@@ -172,6 +172,7 @@ struct IdleUse {
 
     init(from before: CatalogStoreUse, to after: CatalogStoreUse) {
         changes = after.changes.notifications - before.changes.notifications
+        rootStateChanges = after.changes.rootState - before.changes.rootState
         changeFacts = after.changes.byFact.reduce(into: [:]) { facts, fact in
             let count = fact.value - (before.changes.byFact[fact.key] ?? 0)
             if count > 0 {
@@ -201,7 +202,7 @@ struct IdleUse {
             counts.isEmpty ? "none" : counts.sorted { ($1.value, $0.key) < ($0.value, $1.key) }.map { "\($0.key):\($0.value)" }
                 .joined(separator: ",")
         }
-        return "changes=\(changes) facts=\(list(changeFacts)) writes=\(list(writes)) reads=\(list(reads))"
+        return "changes=\(changes) rootState=\(rootStateChanges) facts=\(list(changeFacts)) writes=\(list(writes)) reads=\(list(reads))"
     }
 
     static func write(_ text: String, named name: String) throws {

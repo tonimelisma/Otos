@@ -129,6 +129,49 @@ struct MetadataRefresherTests {
         #expect(candidates.map(\.id.relativePath.rawValue) == ["older.heic", "unknown.heic"])
     }
 
+    /// The hand-over clears the rendering stamp, which is part of what the stored thumbnail is,
+    /// so it announces an image change naming the rows it handed over: the owners that read a
+    /// thumbnail's identity (render signatures, preview faces, search, descriptions) hear it.
+    @Test func aDownloadHandOverAnnouncesAnImageChangeOfItsRows() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(["IMG_1.HEIC"]))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let apple = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "IMG_1.HEIC"))
+        _ = await store.applyEnrichmentBatch(scanned.testAssets.map { asset in
+            EnrichmentResult(
+                id: asset.id,
+                metadata: AssetMetadata(family: "heif", cameraMake: "Apple"),
+                enrichedKind: .image,
+                thumbnailPath: "old.jpg",
+                sourceSize: asset.byteSize,
+                sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                contentHash: ContentDigest(bytes: [UInt8](repeating: 7, count: ContentDigest.byteCount))
+            )
+        })
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
+
+        let summary = await MetadataRefresher(store: store, locality: { _ in .fetchable }).refresh()
+
+        #expect(summary.downloadsRequested == 1)
+        let heard = await changes.waitForValues { $0.contains { $0.facts.contains(.images) } }
+        let handOver = try #require(heard.first { $0.facts.contains(.images) })
+        #expect(handOver.facts.isSuperset(of: [.images, .detail]))
+        #expect(handOver.rows == .rows([apple]))
+        await store.shutdown()
+    }
+
     /// ADR 0041: a cloud-only, Apple-made record that predates the content identifier may be
     /// half of a Live Photo, so it is handed to enrichment, which downloads it once and
     /// writes every product from that one read — metadata, checksum and thumbnail. A

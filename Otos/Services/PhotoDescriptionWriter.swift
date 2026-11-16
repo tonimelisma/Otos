@@ -24,10 +24,11 @@ import ImageIO
 /// kind its walk reads (`inputs`: a still's faces and people, place names, capture time,
 /// preview, and the search embedding and text reading it waits for, which search's writes
 /// announce as `.searchContent`), and the retry wake. Each ring is a request
-/// (ADR 0032 rule 2), and a request is answered by one walk over the owed stills, newest first,
-/// a page at a time (`CandidateWalk`): a walk visits each still once, and a request made while
-/// it runs restarts it from the newest still at its next page, so an import's photos are not
-/// left behind a long backlog. Requests run one at
+/// (ADR 0032 rule 2); a change or a wake also owes a walk, and a request is answered by the walk
+/// owed, over the owed stills, newest first, a page at a time (`CandidateWalk`): a walk visits
+/// each still once, and a walk owed while one runs restarts it from the newest still at its next
+/// page, so an import's photos are not left behind a long backlog. A request that owes no walk
+/// reads nothing: every still the last walk passed over waits on its pacing's wake. Requests run one at
 /// a time: the model takes one photo at a time, and a second request would only wait in it. The
 /// forwarder and the loop hold this actor weakly and end with it. `changes()` rings after
 /// descriptions are written, which the Info pane and On This Day's titles read again on. The
@@ -44,6 +45,13 @@ actor PhotoDescriptionWriter: QuiescentOwner {
     private var failedUntil: [MediaAssetID: ContinuousClock.Instant] = [:]
     /// When requests may be made again after the model was unavailable or busy.
     private var modelNotBefore: ContinuousClock.Instant?
+    /// Walks owed, and the one the last walk that reached the end answered (ADR 0032 rule 2):
+    /// owed by the first subscription, by a Store change of a kind a walk reads and by a
+    /// pacing that ended, the facts that can make a still describable. Every still a finished
+    /// walk passed over is held paced with its deadline (`failedUntil`, `modelNotBefore`), so a
+    /// ring that owes no walk reads nothing.
+    private var walksOwed: UInt64 = 0
+    private var walksCovered: UInt64 = 0
     /// Walks asked for and the one the last finished walk answered (ADR 0032 rule 2).
     let activity = OwnerActivity(owner: "descriptions")
     /// What a test waits on to deliver an event while a walk is under way.
@@ -122,32 +130,38 @@ actor PhotoDescriptionWriter: QuiescentOwner {
     /// Store changes heard: what a test waits on before it counts `requested`.
     private(set) var changesHeard = 0
 
-    /// Asks for a walk when `change` is of a kind a walk reads.
+    /// Owes a walk when `change` is of a kind a walk reads.
     private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) {
         changesHeard += 1
         if change.touches(inputs) {
-            request()
+            oweWalk()
         }
         activity.actedOnChange()
         settleQuiescence()
     }
 
-    /// Asks for a walk from the newest still (ADR 0032 rule 2): a walk under way starts again
-    /// from the top at its next page, so a still made owed now — an import's newest photo — is
-    /// described before the rest of a long backlog.
+    /// Owes a walk from the newest still and asks for it (ADR 0032 rule 2): a walk under way
+    /// starts again from the top at its next page, so a still made owed now — an import's newest
+    /// photo — is described before the rest of a long backlog.
+    private func oweWalk() {
+        walksOwed &+= 1
+        request()
+    }
+
     private func request() {
         activity.request()
         doorbell?.yield()
     }
 
+    /// A ring that owes no walk: the pass it asks for walks only when one is already owed.
     func ringIdle() {
         request()
     }
 
-    /// The forwarder holds the change stream: the first walk is asked for.
+    /// The forwarder holds the change stream: the first walk is owed.
     private func subscribed() {
         subscribing = false
-        request()
+        oweWalk()
     }
 
     /// Started, with the forwarder not yet subscribed.
@@ -200,6 +214,9 @@ actor PhotoDescriptionWriter: QuiescentOwner {
     /// stays owed.
     private func drain() async -> UInt64? {
         defer { drains += 1 }
+        guard walksOwed != walksCovered else {
+            return activity.requested
+        }
         let now = ContinuousClock.now
         if let notBefore = modelNotBefore, notBefore > now {
             // The wake asks again when the model may answer.
@@ -210,14 +227,14 @@ actor PhotoDescriptionWriter: QuiescentOwner {
         failedUntil = failedUntil.filter { $0.value > now }
         var written = 0, declined = 0, failed = 0
         var stopped = false
-        // The request the walk answers; a newer one restarts it from the newest still. A walk
-        // that fails covers nothing, so the next ring walks again.
-        var walking = activity.requested
+        // The request and the owed walk the walk answers; a newer owed walk restarts it from the
+        // newest still. A walk that fails covers nothing, so the next ring walks again.
+        var walking = (request: activity.requested, walk: walksOwed)
         var answered: UInt64?
         var cursor: CaptureOrderCursor?
         while !Task.isCancelled, !stopped {
-            if activity.requested != walking {
-                walking = activity.requested
+            if walksOwed != walking.walk {
+                walking = (activity.requested, walksOwed)
                 cursor = nil
             }
             let page: CandidatePage<PhotoDescriptionCandidate, CaptureOrderCursor>
@@ -269,9 +286,12 @@ actor PhotoDescriptionWriter: QuiescentOwner {
                 ])
                 break
             }
-            // A model that stopped answering ends the walk; its wake asks for the next one.
+            // A model that stopped answering ends the walk; its wake owes the next one.
             guard let next = page.next, !stopped else {
-                answered = walking
+                answered = walking.request
+                if !stopped {
+                    walksCovered = walking.walk
+                }
                 break
             }
             cursor = next
@@ -320,7 +340,8 @@ actor PhotoDescriptionWriter: QuiescentOwner {
             wake = nil
             activity.wake = nil
         }
-        request()
+        // A pacing that ended makes its stills describable again.
+        oweWalk()
     }
 
     /// What describing one candidate came to.

@@ -446,6 +446,10 @@ extension CatalogReads where Lane == BackgroundLane {
         try await store.previewFaceCandidates(after: cursor, limit: limit, lane: lane)
     }
 
+    func previewFaceCandidates(among ids: Set<MediaAssetID>) async throws -> [PreviewFaceCandidate] {
+        try await store.previewFaceCandidates(among: ids, lane: lane)
+    }
+
     func unnamedPlaceCells(language: PlaceNameLanguage, after: PlaceCell? = nil, limit: Int) async throws -> [PlaceCell] {
         try await store.unnamedPlaceCells(language: language, after: after, limit: limit, lane: lane)
     }

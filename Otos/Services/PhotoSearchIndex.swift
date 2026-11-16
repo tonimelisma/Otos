@@ -154,6 +154,11 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// again from the newest only after a whole-library reconcile.
     private var embeddingWalk = BacklogWalk()
     private var textWalk = BacklogWalk()
+    /// The image model would not load, or the vector folder's volume reached the free-space
+    /// floor: no embedding can be made, and nothing reports when one could. Held until the
+    /// retry fires (`time: backoff`), so a pass before it reads neither the backlog nor the
+    /// rows a change named to find that out; those rows wait for the retry (`pagedPast`).
+    private var embeddingWaitsForRetry = false
 
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
@@ -699,6 +704,7 @@ actor PhotoSearchIndex: QuiescentOwner {
     private func retryFired() {
         retry = nil
         activity.wake = nil
+        embeddingWaitsForRetry = false
         namedRows.formUnion(pagedPast)
         pagedPast = []
         request()
@@ -924,6 +930,12 @@ actor PhotoSearchIndex: QuiescentOwner {
             pagedPast.formUnion(unread)
             logEmbedded(embedded, unread: unread.count, since: start)
         }
+        // No embedding can be made until the retry: what a change named waits for it, and the
+        // backlog is not read again to find that out.
+        if embeddingWaitsForRetry {
+            unread.formUnion(rows)
+            return false
+        }
         if !rows.isEmpty {
             let owed = try await store.backgroundReads.searchEmbeddingCandidates(for: rows)
             activity.read(rows: owed.count)
@@ -962,12 +974,14 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// takes what the catalog commits, so neither takes the page.
     private func embed(_ owed: [SearchEmbeddingCandidate], unread: inout Set<MediaAssetID>) async throws -> Int? {
         guard let results = await embedder.embed(owed, thumbnailDirectory: thumbnailDirectory) else {
+            embeddingWaitsForRetry = true
             return nil
         }
         guard let file = memory.vectors, file.admits(rows: results.count) else {
             OtosLog.thumbnails.noticeOperation("search.vectors", phase: "floorReached", fields: [
                 "rows": "\(results.count)",
             ])
+            embeddingWaitsForRetry = true
             return nil
         }
         let written = try await store.applySearchEmbeddings(results)

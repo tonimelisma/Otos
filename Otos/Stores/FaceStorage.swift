@@ -515,6 +515,18 @@ nonisolated enum PreviewFaceSQL {
         """
     }
 
+    /// One still, by its key (binds the root and the path), when it is owed faces by the walk's
+    /// rule: a seek of its own row (`CatalogStore.previewFaceCandidates(among:lane:)`).
+    static let keyedCandidateSQL = """
+    SELECT library_root_id, relative_path, preview_path, rendered_revision, edit_recipe_json,
+           \(previewSize) AS preview_source_size,
+           \(previewMTime) AS preview_source_mtime
+    FROM media_asset
+    WHERE library_root_id = ? AND relative_path = ?
+      AND \(stillOwesFaces)
+      AND \(previewEditIsKnown)
+    """
+
     /// What is not yet read for faces in `rootCount` roots (`CatalogStore.uncheckedForFaces`):
     /// the stills owed faces, the stills waiting for a preview, and the videos whose frames
     /// are unread, each counted from its own partial index, named: SQLite would otherwise seek

@@ -3176,6 +3176,9 @@ final nonisolated class CatalogChangeTally: Sendable {
         var notifications = 0
         /// By the kind's diagnostic name (`detail`, `images`).
         var byFact: [String: Int] = [:]
+        /// Those that named no row and no reach (`CatalogChangedRows.none`): a root's own order
+        /// or activity, which no catalog read depends on.
+        var rootState = 0
     }
 
     private let counts = Mutex(Counts())
@@ -3183,8 +3186,12 @@ final nonisolated class CatalogChangeTally: Sendable {
     func record(_ change: CatalogStoreChange) {
         let facts = change.facts
         let named = CatalogChangedFacts.names.filter { facts.contains($0.0) }.map(\.1)
+        let rootState = change.rows == .none
         counts.withLock { counts in
             counts.notifications += 1
+            if rootState {
+                counts.rootState += 1
+            }
             for name in named {
                 counts.byFact[name, default: 0] += 1
             }
@@ -3208,7 +3215,7 @@ nonisolated struct CatalogStoreUse: Equatable, Sendable {
     var backgroundReads = CatalogReadAdmission.Use()
 
     /// `busyMs=main.reader:1234,main.writer:56`, `holds=role:operation:totalMs:count:longestMs,…`,
-    /// `changes=12`, `changeFacts=detail:10,images:3`, and the background admission's
+    /// `changes=12`, of them `rootStateChanges=2`, `changeFacts=detail:10,images:3`, and the background admission's
     /// `backgroundReads`, `backgroundReadsWaited`, `backgroundWaitMs`, `backgroundLongestWaitMs`.
     var fields: [String: String] {
         let busy = connections.busy.sorted { $0.key < $1.key }
@@ -3222,6 +3229,7 @@ nonisolated struct CatalogStoreUse: Equatable, Sendable {
             "holds": holds.isEmpty ? "none" : holds.joined(separator: ","),
             "transactions": "\(connections.holds.reduce(0) { $0 + $1.count })",
             "changes": "\(changes.notifications)",
+            "rootStateChanges": "\(changes.rootState)",
             "changeFacts": facts.isEmpty ? "none" : facts.joined(separator: ","),
             "backgroundReads": "\(backgroundReads.admitted)",
             "backgroundReadsWaited": "\(backgroundReads.waited)",

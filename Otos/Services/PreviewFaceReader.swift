@@ -26,17 +26,24 @@ import ImageIO
 /// stops and reading resumes after the same pacing, not at the next catalog change.
 ///
 /// One loop, woken by a doorbell (ADR 0032 rule 3) that a Store change of a kind its walk reads
-/// (`inputs`; its own face writes do not) and the retry wake ring; each wake drains every stale row in pages. The previews are decoded
-/// and analysed off this actor, by `FaceAnalyzer` on its own queue. The forwarder, the loop
-/// and the wake hold this actor weakly and end with it. Each ring is a request
-/// (`OwnerActivity`), covered by a drain that read and wrote without failing; a drain that
-/// leaves stills paced arms the wake, which the reader's quiescence names (`QuiescentOwner`).
+/// (`inputs`; its own face writes do not) and the retry wake ring. The reader holds what a drain
+/// owes (`PreviewFaceDebt`): the whole walk, a page at a time, at the start, after a change that
+/// does not name its rows and when the model's pacing ends; else the stills a change named and
+/// those whose retry came due, each read by key. A still that cannot be read now is held paced
+/// with its deadline, which arms the wake, and no drain reads it before then: a ring that brings
+/// neither a change nor a deadline reads nothing. The previews are decoded and analysed off this
+/// actor, by `FaceAnalyzer` on its own queue. The forwarder, the loop and the wake hold this
+/// actor weakly and end with it. Each ring is a request (`OwnerActivity`), covered by a drain
+/// that read and wrote without failing; a drain that leaves stills paced arms the wake, which
+/// the reader's quiescence names (`QuiescentOwner`).
 actor PreviewFaceReader: QuiescentOwner {
     private let store: CatalogStore
     private let thumbnailDirectory: URL?
     private let analyzeFaces: FaceAnalysisReader
     private let pageSize: Int
     private var retries: PreviewFaceRetries
+    /// What the next drain owes; the whole walk until the first has run.
+    private var owed = PreviewFaceDebt.wholeWalk
     private var doorbell: AsyncStream<Void>.Continuation?
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
@@ -99,6 +106,7 @@ actor PreviewFaceReader: QuiescentOwner {
         doorbell?.yield()
     }
 
+    /// A ring that brings nothing new: the drain it asks for reads only what is already owed.
     func ringIdle() {
         request()
     }
@@ -114,18 +122,21 @@ actor PreviewFaceReader: QuiescentOwner {
     /// What a drain reads (`CatalogOwnerInputs`): its candidate walk's columns, less its own
     /// writes (faces), and which roots are reachable.
     static let inputs = CatalogOwnerInputs(
-        statements: [PreviewFaceSQL.candidatesSQL(rootCount: 1)], ownWrites: .faces, beyondSQL: .membership
+        statements: [PreviewFaceSQL.candidatesSQL(rootCount: 1), PreviewFaceSQL.keyedCandidateSQL], ownWrites: .faces,
+        beyondSQL: .membership
     )
 
     /// Store changes heard, and those that rang the doorbell: what a test waits on.
     private(set) var changesHeard = 0
     private(set) var wakes = 0
 
-    /// Rings for `change` when it is of a kind a drain reads.
+    /// Rings for `change` when it is of a kind a drain reads, owing the rows it names, or the
+    /// whole walk when it names none.
     private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) {
         changesHeard += 1
         if change.touches(inputs) {
             wakes += 1
+            owed.take(change.rows)
             request()
         }
         activity.actedOnChange()
@@ -144,11 +155,12 @@ actor PreviewFaceReader: QuiescentOwner {
         doorbell = nil
     }
 
-    /// Reads every row owed faces once, a page at a time in catalog order, each page after the
-    /// last row of the one before. A row whose read failed is left owed, paced and passed over,
-    /// so it never holds back the rows after it. A model that cannot be loaded stops the drain.
-    /// Returns whether the drain read and wrote without failing: a paced still is owed to the
-    /// wake, not to this drain.
+    /// Reads what is owed (`owed`): the whole walk, a page at a time in catalog order, each page
+    /// after the last row of the one before, or the owed stills by key. A row whose read failed
+    /// is left owed, paced and passed over, so it never holds back the rows after it. A model
+    /// that cannot be loaded stops the drain. Returns whether the drain read and wrote without
+    /// failing: a paced still is owed to the wake, not to this drain, and what a failed drain
+    /// took stays owed.
     private func drain() async -> Bool {
         defer { drains += 1 }
         let now = ContinuousClock.now
@@ -156,13 +168,41 @@ actor PreviewFaceReader: QuiescentOwner {
             armWake(after: now)
             return true
         }
+        let debt = owed
+        owed = .nothing
+        guard debt != .nothing else { return true }
+        var tally = DrainTally()
+        let drained = switch debt {
+        case .wholeWalk: await walk(at: now, tally: &tally)
+        case let .stills(ids): await read(ids, at: now, tally: &tally)
+        }
+        guard drained else {
+            owed.take(debt)
+            return false
+        }
+        armWake(after: now)
+        if tally.stored > 0 || tally.failed > 0 || tally.modelUnavailable {
+            OtosLog.metadata.noticeOperation("face.preview", phase: "read", fields: [
+                "count": "\(tally.stored)", "failed": "\(tally.failed)", "modelUnavailable": "\(tally.modelUnavailable)",
+                "paced": "\(retries.stills.count)", "drain": "\(drains)",
+            ])
+        }
+        return !Task.isCancelled
+    }
+
+    /// What one drain read and wrote.
+    private struct DrainTally {
         var stored = 0
         var failed = 0
+        var modelUnavailable = false
+    }
+
+    /// Every row owed faces, a page at a time. A still no longer owed has nothing to retry.
+    private func walk(at now: ContinuousClock.Instant, tally: inout DrainTally) async -> Bool {
         var cursor: PreviewFaceCursor?
         var offered: Set<MediaAssetID> = []
         var reachedEnd = false
-        var modelUnavailable = false
-        while !Task.isCancelled, !modelUnavailable {
+        while !Task.isCancelled, !tally.modelUnavailable {
             let page: PreviewFacePage
             do {
                 page = try await store.backgroundReads.previewFaceCandidates(after: cursor, limit: pageSize)
@@ -173,49 +213,77 @@ actor PreviewFaceReader: QuiescentOwner {
                 return false
             }
             activity.read(rows: page.candidates.count)
-            var results: [PreviewFaceResult] = []
-            for candidate in page.candidates where !modelUnavailable {
-                offered.insert(candidate.id)
-                guard retries.admits(candidate, at: now) else { continue }
-                switch await read(candidate) {
-                case let .faces(faces):
-                    retries.read(candidate)
-                    results.append(PreviewFaceResult(candidate: candidate, faces: faces))
-                case .failed:
-                    retries.failed(candidate, at: now)
-                    failed += 1
-                case .modelUnavailable:
-                    retries.modelFailed(at: now)
-                    modelUnavailable = true
-                }
-            }
-            do {
-                stored += try await store.applyPreviewFaces(results)
-                activity.wrote(results.count)
-            } catch {
-                OtosLog.metadata.errorOperation("face.preview", phase: "writeFailed", fields: [
-                    "count": "\(results.count)", "error": String(describing: error),
-                ])
-                return false
-            }
+            offered.formUnion(page.candidates.map(\.id))
+            guard await readAndWrite(page.candidates, at: now, tally: &tally) else { return false }
             guard let next = page.next else {
                 reachedEnd = true
                 break
             }
             cursor = next
         }
-        // A still no longer owed faces has nothing to retry.
-        if reachedEnd, !modelUnavailable {
+        if reachedEnd, !tally.modelUnavailable {
             retries.keep(only: offered)
         }
-        armWake(after: now)
-        if stored > 0 || failed > 0 || modelUnavailable {
-            OtosLog.metadata.noticeOperation("face.preview", phase: "read", fields: [
-                "count": "\(stored)", "failed": "\(failed)", "modelUnavailable": "\(modelUnavailable)",
-                "paced": "\(retries.stills.count)", "drain": "\(drains)",
+        return true
+    }
+
+    /// The stills of `ids` still owed faces, read by key, then a page at a time. A still asked
+    /// for that is no longer owed has nothing to retry.
+    private func read(_ ids: Set<MediaAssetID>, at now: ContinuousClock.Instant, tally: inout DrainTally) async -> Bool {
+        let owedStills: [PreviewFaceCandidate]
+        do {
+            owedStills = try await store.backgroundReads.previewFaceCandidates(among: ids)
+        } catch {
+            OtosLog.metadata.errorOperation("face.preview", phase: "readFailed", fields: [
+                "error": String(describing: error),
             ])
+            return false
         }
-        return !Task.isCancelled
+        activity.read(rows: owedStills.count)
+        retries.forget(ids.subtracting(owedStills.map(\.id)))
+        var at = 0
+        while at < owedStills.count, !Task.isCancelled, !tally.modelUnavailable {
+            let page = Array(owedStills[at ..< min(at + pageSize, owedStills.count)])
+            at += page.count
+            guard await readAndWrite(page, at: now, tally: &tally) else { return false }
+        }
+        return true
+    }
+
+    /// Reads the faces of each candidate the pacing admits and writes what was read, with no
+    /// write when nothing was; false when the write failed. A model that cannot be loaded stops
+    /// the reading.
+    private func readAndWrite(
+        _ candidates: [PreviewFaceCandidate],
+        at now: ContinuousClock.Instant,
+        tally: inout DrainTally
+    ) async -> Bool {
+        var results: [PreviewFaceResult] = []
+        for candidate in candidates where !tally.modelUnavailable {
+            guard retries.admits(candidate, at: now) else { continue }
+            switch await read(candidate) {
+            case let .faces(faces):
+                retries.read(candidate)
+                results.append(PreviewFaceResult(candidate: candidate, faces: faces))
+            case .failed:
+                retries.failed(candidate, at: now)
+                tally.failed += 1
+            case .modelUnavailable:
+                retries.modelFailed(at: now)
+                tally.modelUnavailable = true
+            }
+        }
+        guard !results.isEmpty else { return true }
+        do {
+            tally.stored += try await store.applyPreviewFaces(results)
+            activity.wrote(results.count)
+        } catch {
+            OtosLog.metadata.errorOperation("face.preview", phase: "writeFailed", fields: [
+                "count": "\(results.count)", "error": String(describing: error),
+            ])
+            return false
+        }
+        return true
     }
 
     /// Rings the doorbell when the earliest retry comes due, if one waits.
@@ -241,11 +309,14 @@ actor PreviewFaceReader: QuiescentOwner {
         }, due)
     }
 
+    /// The pacing that ended by `due` owes its stills, or the whole walk once the model's ended.
     private func wakeFired(at due: ContinuousClock.Instant) {
         if wake?.at == due {
             wake = nil
             activity.wake = nil
         }
+        let ended = retries.owed(at: due)
+        owed.take(ended)
         request()
     }
 
@@ -395,8 +466,53 @@ nonisolated struct PreviewFaceRetries: Sendable {
         stills = stills.filter { owed.contains($0.key) }
     }
 
+    /// Forgets stills no longer owed faces.
+    mutating func forget(_ ids: Set<MediaAssetID>) {
+        for id in ids {
+            stills[id] = nil
+        }
+    }
+
+    /// What a drain owes once the pacing has run to `now`: the whole walk when the model's has
+    /// ended, which this takes up, else the stills whose own has.
+    mutating func owed(at now: ContinuousClock.Instant) -> PreviewFaceDebt {
+        if let modelNotBefore, modelNotBefore <= now {
+            self.modelNotBefore = nil
+            return .wholeWalk
+        }
+        let due = Set(stills.filter { $0.value.notBefore <= now }.keys)
+        return due.isEmpty ? .nothing : .stills(due)
+    }
+
     /// The earliest retry still ahead of `now`, or nil when nothing waits.
     func nextWake(after now: ContinuousClock.Instant) -> ContinuousClock.Instant? {
         ([modelNotBefore].compactMap(\.self) + stills.values.map(\.notBefore)).filter { $0 > now }.min()
+    }
+}
+
+/// What the preview face reader's next drain owes (ADR 0032 rule 2 for its walk): every still
+/// owed faces, read by the walk; or the stills a change named, or whose retry came due, read by
+/// key; or nothing, when no change and no deadline reached the reader since its last drain.
+nonisolated enum PreviewFaceDebt: Equatable, Sendable {
+    case wholeWalk
+    case stills(Set<MediaAssetID>)
+
+    static let nothing = PreviewFaceDebt.stills([])
+
+    /// Adds what a change owes: the rows it names, or the whole walk when it names none.
+    mutating func take(_ rows: CatalogChangedRows) {
+        switch rows {
+        case .unnamed: self = .wholeWalk
+        case let .named(named): take(.stills(named.ids))
+        case .none: break
+        }
+    }
+
+    mutating func take(_ other: PreviewFaceDebt) {
+        switch (self, other) {
+        case (.wholeWalk, _): break
+        case (_, .wholeWalk): self = .wholeWalk
+        case let (.stills(held), .stills(more)): self = .stills(held.union(more))
+        }
     }
 }

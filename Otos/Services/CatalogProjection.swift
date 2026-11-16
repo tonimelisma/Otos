@@ -1097,6 +1097,14 @@ private extension CatalogProjection {
     }
 
     func storeDidChange(_ change: CatalogStoreChange) {
+        // A root's own order or activity (`CatalogChangedRows.none`: a scan or listing starting
+        // or ending) moves no row and no root's reach. The next pass shows it, since the roots
+        // are read every pass; no held read, tile detail or derived owner depends on it, so none
+        // is read again or asked.
+        if change.rows == .none {
+            requestPublication(ringNow: publishedBeforeCatalogLoad)
+            return
+        }
         // A remove and same-path add can coalesce into a final snapshot where the
         // path exists again. Store's typed removal signal preserves that transient
         // deletion fact without durable library-instance identity.
@@ -1123,7 +1131,6 @@ private extension CatalogProjection {
                 let incremental = change.facts.intersection(PeopleAssignment.inputs).isSubset(of: PeopleAssignment.incrementalInputs)
                 switch change.rows {
                 case let .named(rows) where incremental: peopleRows?.formUnion(rows.ids)
-                case .none where incremental: break
                 default: peopleRows = nil
                 }
             }

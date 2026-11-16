@@ -115,6 +115,14 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    `BackgroundOwnerSet`, which the idle guard runs too, and logs `op=owners.quiescent` when
    they first all owe nothing.
 
+   A request covers what the owner owes, not a fresh look. An owner that cannot make progress
+   on a row now — a still paced after a failed read, a model that would not load — holds
+   that fact with the deadline or event that ends it, arms its wake on that alone, and reads
+   nothing before it: a ring that brings no change of what it reads and no deadline reads
+   nothing (`PreviewFaceDebt`, `PhotoDescriptionWriter`'s owed walks, the search index's
+   wait for its retry, enrichment's parked rows). A change that names its rows owes those
+   rows; one that names none owes the whole walk.
+
 ## Rejected alternatives
 
 - **Keep fixing instances found by stress loops.** One finding per ~10 minutes under load,
@@ -134,6 +142,9 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
 - **A quiescence hook per owner.** Twelve shapes of one fact; one protocol and one bookkeeping
   value make a forgotten settle point the only way to be wrong, and the idle guard finds that
   as a hang.
+- **Walk again on every wake and skip what is paced.** Each skip is cheap, but the walk reads
+  every paced row to find it (86,243 rows over 2,696 pages for the preview face reader on a
+  catalog of the owner's shape), and the owner already holds the deadline that would end it.
 
 ## Consequences
 
