@@ -1167,6 +1167,8 @@ extension CatalogStoreQueryPlanTests {
             let digest = Data(repeating: 1, count: 20)
             let pair = try explainPlan(db, sql: MirrorGateway.pairSQL, arguments: [digest, 2, digest, 4, 1, digest])
             #expect(pair.contains("USING INDEX idx_media_asset_source_path_sha1"), "\(pair)")
+            let owed = try explainPlan(db, sql: MirrorGateway.owesPairSQL, arguments: [2, digest, 4, 1, digest])
+            #expect(owed.contains("USING INDEX idx_media_asset_source_path_sha1"), "\(owed)")
 
             let files = try explainPlan(
                 db, sql: MirrorGateway.digestedFilesSQL + "\n  AND relative_path > ?\nORDER BY relative_path LIMIT 500",

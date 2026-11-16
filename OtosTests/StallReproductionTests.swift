@@ -327,49 +327,10 @@ enum StallReproduction {
             }
         }
 
-        let materializer = MaterializationCoordinator(
-            store: store,
-            executor: { _ in MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 0) },
-            volumeCapacity: ampleVolumeCapacity,
-            status: { _ in .dataless }
-        )
-        let enrichment = EnrichmentCoordinator(
-            store: store,
-            enricher: MediaEnricher { _, _, _, _, _, _ in .notMaterialized },
-            materializationRequester: materializer
-        )
-        let renderSignatures = RenderSignatureRefresher(store: store, thumbnailDirectory: thumbnails)
-        let previewFaces = PreviewFaceReader(store: store, thumbnailDirectory: thumbnails) { _ in throw CocoaError(.featureUnsupported) }
-        let placeNames = PlaceNameReader(store: store, namer: PlaceNameReader.Namer { _, _ in .none })
-        // The test bundle holds no search model, so no embedding is made, as on a Mac whose
-        // model is still loading; every read before the model runs as in the app.
-        let searchIndex = try PhotoSearchIndex(
-            store: store,
-            thumbnailDirectory: thumbnails,
-            vectorDirectory: #require(store.searchIndexDirectory),
-            bundle: Bundle(for: BundleMarker.self),
-            textReader: SearchTextReader { RecognizingSession { _ in [] } }
-        )
-        let descriptions = PhotoDescriptionWriter(
-            store: store, thumbnailDirectory: thumbnails
-        ) { _, _ in throw CocoaError(.featureUnsupported) }
-        let metadata = MetadataRefresher(store: store) { _ in .unreachable }
-        // Duplicates and People run under the projection, which also reads All Media's order.
-        let projection = CatalogProjection()
-        let states = await projection.states(store: store, initialDescriptor: .default)
-        let projectionTask = Task {
-            for await _ in states {}
-        }
+        let owners = try RunningBackgroundOwners(store: store, thumbnails: thumbnails)
 
         let liveStart = ContinuousClock.now
-        await materializer.start()
-        await enrichment.start()
-        await renderSignatures.start()
-        await previewFaces.start()
-        await placeNames.start()
-        await searchIndex.start()
-        await descriptions.start()
-        let metadataTask = Task { await metadata.refresh() }
+        await owners.start(store: store)
         // An account's sync probes for mirrors once at launch (`ImmichCatalogSync`).
         let mirrorTask = Task { () -> Duration in
             let start = ContinuousClock.now
@@ -387,6 +348,8 @@ enum StallReproduction {
         report.liveDuration = liveStart.duration(to: .now)
         let shutdownStart = ContinuousClock.now
         report.mirrorProbe = try await mirrorTask.value
+        let renderSignatures = owners.renderSignatures, previewFaces = owners.previewFaces
+        let placeNames = owners.placeNames, searchIndex = owners.searchIndex, descriptions = owners.descriptions
         report.searchPasses = await searchIndex.passesFinished
         // Of the changes each owner heard, how many asked it for a pass.
         report.wakes = await [
@@ -397,16 +360,7 @@ enum StallReproduction {
             "descriptions": (descriptions.changesHeard, Int(descriptions.requested)),
         ]
 
-        await enrichment.shutdown()
-        await materializer.shutdown()
-        await renderSignatures.shutdown()
-        await previewFaces.shutdown()
-        await placeNames.shutdown()
-        await searchIndex.shutdown()
-        await descriptions.shutdown()
-        await metadata.shutdown()
-        _ = await metadataTask.value
-        projectionTask.cancel()
+        await owners.shutdown()
         changeTask.cancel()
         report.changes = changeLog.counts
         report.phases["shutdown"] = shutdownStart.duration(to: .now)
@@ -503,9 +457,6 @@ extension StallReproduction.Report {
         return lines.joined(separator: "\n")
     }
 }
-
-/// A class whose bundle is the test bundle, which holds no search model.
-private final class BundleMarker {}
 
 /// Counts by name, from any thread.
 final class Tally: Sendable {

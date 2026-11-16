@@ -572,3 +572,48 @@ nonisolated extension DuplicatesGateway {
         )
     }
 }
+
+/// Whether Duplicates compares or lists a row (ADR 0042): a still the same-photo rule compares
+/// (`SamePhotoSQL.candidatePredicate`), or a copy whose digest another copy holds. A write of a
+/// row's date, kind, record or images names `.duplicateFacts` only for such a row, before or
+/// after the write, so a write Duplicates cannot see — an Immich external asset's record, a
+/// video's thumbnail, a still with no signature — does not wake its build. A row enters the
+/// compared stills only by a signature written for its thumbnail, and the identical copies
+/// only by a digest it shares, which name `.duplicateFacts` and `.copies` themselves.
+nonisolated enum DuplicatesHoldSQL {
+    /// The kinds a row's own write can change of what Duplicates reads of it.
+    static let rowKinds: CatalogChangedFacts = [.captureDate, .kindAndFormat, .mediaRecord, .images]
+
+    static let comparedSQL = """
+    SELECT EXISTS (
+        SELECT 1 FROM media_asset INDEXED BY \(SamePhotoSQL.candidateIndexName)
+        WHERE library_root_id = ? AND relative_path = ? AND \(SamePhotoSQL.candidatePredicate)
+    )
+    """
+
+    /// One probe of the compared stills' index and one of the digest index.
+    static func holds(libraryRootID: Int64, relativePath: String, db: Database) throws -> Bool {
+        if try Bool.fetchOne(db.cachedStatement(sql: comparedSQL), arguments: [libraryRootID, relativePath]) == true {
+            return true
+        }
+        guard let standing = try DigestStanding.read(libraryRootID: libraryRootID, relativePath: relativePath, db: db) else {
+            return false
+        }
+        return standing.copyDigest != nil && standing.shared
+    }
+
+    /// Whether a write that changed `facts` of one row changed what Duplicates reads: a kind of
+    /// `rowKinds`, of a row Duplicates held before the write (`heldBefore`) or holds after it.
+    static func changesDuplicates(
+        _ facts: CatalogChangedFacts,
+        heldBefore: Bool,
+        libraryRootID: Int64,
+        relativePath: String,
+        db: Database
+    ) throws -> Bool {
+        guard !facts.isDisjoint(with: rowKinds) else {
+            return false
+        }
+        return try heldBefore || holds(libraryRootID: libraryRootID, relativePath: relativePath, db: db)
+    }
+}

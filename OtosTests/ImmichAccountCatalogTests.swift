@@ -243,6 +243,32 @@ struct ImmichAccountCatalogTests {
             RenderSignatureResult(id: $0.id, source: $0.source, signature: signature)
         }) == 2)
         #expect(try await store.samePhotoCandidates(availableLibraryPaths: [rootPath]).map(\.id) == [uploaded])
+
+        // A record arriving for the asset Duplicates never compares asks it for no build; one
+        // for the still it compares does.
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
+        for id in [external, uploaded] {
+            _ = await store.applyEnrichmentBatch([EnrichmentResult(
+                id: id,
+                metadata: EnrichedMetadata(
+                    metadata: AssetMetadata(cameraModel: "ILCE-6700", pixelWidth: 4000, pixelHeight: 3000),
+                    kind: .image, format: nil
+                ),
+                rendering: nil,
+                sourceSize: 42,
+                sourceMTimeSeconds: 1_700_000_000,
+                contentHash: nil
+            )])
+        }
+        let recorded = await changes.waitForValues { $0.count == 2 }
+        #expect(recorded.map { $0.touches(DuplicatesProjection.inputs) } == [false, true], "\(recorded)")
         await store.shutdown()
     }
 

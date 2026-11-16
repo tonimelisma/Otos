@@ -34,15 +34,14 @@ actor DuplicatesProjection {
     typealias Builder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws -> CatalogDuplicatesState
 
     /// What the groups are built from, so `CatalogProjection` asks for a build only when one
-    /// of these moved: which rows are shown and which movies a Live Photo hides; digests,
-    /// render signatures and the pairs kept together; and the facts a group's copies are
-    /// compared and listed by — kind, capture date, the record's dimensions, camera and
-    /// instant, the user's choice, and the images a signature is current for and the edit
-    /// they show. Faces, places, search readings and enrichment's own stamps are not among
-    /// them.
-    static let inputs: CatalogChangedFacts = [
-        .membership, .grouping, .copies, .duplicateFacts, .kindAndFormat, .captureDate, .mediaRecord, .choices, .images,
-    ]
+    /// of these moved: which rows are shown and which movies a Live Photo hides; digests and
+    /// the copies they make; the user's choices; and `.duplicateFacts` — the reach, the pairs
+    /// kept together, render signatures, and a date, kind, record or image of a row Duplicates
+    /// compares or lists (`DuplicatesHoldSQL`). A write of those kinds to a row Duplicates
+    /// cannot see — an Immich external asset's record, a video, a still with no signature —
+    /// names no `.duplicateFacts`, so it does not ask for a build. Faces, places, search
+    /// readings and enrichment's own stamps are not among them.
+    static let inputs: CatalogChangedFacts = [.membership, .grouping, .copies, .duplicateFacts, .choices]
 
     /// Built groups, each differing from the one before; only the newest matters. One
     /// consumer: `CatalogProjection`.

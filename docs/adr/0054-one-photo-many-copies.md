@@ -190,7 +190,9 @@ is never reported as none.
   pass's batched writes. A mirror goes with either root.
 - Every pass pairs every mirrored file again. On a generated library of 16,000 paired files
   (`immich.mirror.pass.of16k`), that pass costs about 3.6 G instructions and 0.4 s, off the
-  main actor, and writes nothing. `CatalogStoreQueryPlanTests.mirrorReadsSeekTheirIndexes`
+  main actor. Each batch is read first and written only for files whose asset lacks the
+  digest, so a pass over pairs that all stand opens no write transaction
+  (`BackgroundOwnersIdleTests`). `CatalogStoreQueryPlanTests.mirrorReadsSeekTheirIndexes`
   holds its reads to index seeks.
 - A file renamed on one side but not yet on the other pairs again once both sides list it at
   the same path.

@@ -129,11 +129,12 @@ run_tests_with_footprint_guard() {
   fi
   # `-only-testing:` matches by suite (type) name, not by file name, and a name
   # that matches nothing runs nothing and succeeds. A narrowed suite that ran no
-  # test case is a wrong name, never a pass. Only a case that passed or failed ran: a
-  # gated suite reports every case `skipped on`, and a skip executed nothing.
+  # test case is a wrong name, never a pass. Only a case that passed, failed or recorded
+  # an expected failure (a `withKnownIssue` that held) ran: a gated suite reports every
+  # case `skipped on`, and a skip executed nothing.
   for identifier in ${OTOS_ONLY_TESTING:-}; do
     local suite="${identifier#OtosTests/}"
-    if ! grep -qE "Test case '${suite}/[^']*' (passed|failed) on " "$LOG_FILE"; then
+    if ! grep -qE "Test case '${suite}/[^']*' (passed|failed|recorded an expected failure) on " "$LOG_FILE"; then
       echo "op=test.scope phase=noTestsRan suite=$suite — no test of a suite by that name passed or failed: the name matches no suite (suites are type names, not file names), or every case in it was skipped" >&2
       test_status=1
     fi

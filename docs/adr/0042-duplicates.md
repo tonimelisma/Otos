@@ -271,6 +271,13 @@ Other rules:
   stamp moved. A wake that moved nothing reads the two narrow sets and the groups' copies and
   pairs nothing. The memory lives in the process: the first build after launch reads
   everything once.
+- **A build is asked for only by what it reads.** A write of a row's date, kind, record, image
+  or edit names `.duplicateFacts` only when Duplicates compares or lists that row, before or
+  after the write: a compared still, or a copy whose digest another copy holds
+  (`DuplicatesHoldSQL`, one probe of each index). The build's own inputs are rows shown, Live
+  Photo grouping, copies, choices and `.duplicateFacts`, not those kinds in general. With
+  #814 installed, the owner's tour ran the build 87 times while 226 newly listed Immich
+  assets had their records read.
 - The build is written for the Debug build the app is installed as (ADR 0030), where every
   collection call costs. A still without capture metadata is tested against its aspect
   bucket in loops over unsafe buffers of hashes. Gate 3 collects each such file's edges in

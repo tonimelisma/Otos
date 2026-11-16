@@ -151,6 +151,15 @@ nonisolated enum MirrorGateway {
         ).map { row in (row["account_root_id"], row["server_prefix"]) }
     }
 
+    /// An account's asset at one path checksum (binds the account, the checksum, the size, the
+    /// whole-second mtime and the digest) listed with the size and mtime a file's digest was
+    /// read at, and not holding that digest already: the asset the file's pair writes.
+    static let owesPairCondition = """
+    library_root_id = ? AND source_path_sha1 = ?
+      AND byte_size = ? AND CAST(content_modified_at_unix AS INTEGER) = ?
+      AND (\(ContentDigestSQL.current("media_asset"))) IS NOT ?
+    """
+
     /// An account's asset at one path checksum takes a digest when listed with the size and
     /// whole-second mtime it was read at, unless it holds that digest already.
     static let pairSQL = """
@@ -158,10 +167,27 @@ nonisolated enum MirrorGateway {
         content_sha1 = ?,
         content_hash_source_size = byte_size,
         content_hash_source_mtime = CAST(content_modified_at_unix AS INTEGER)
-    WHERE library_root_id = ? AND source_path_sha1 = ?
-      AND byte_size = ? AND CAST(content_modified_at_unix AS INTEGER) = ?
-      AND (\(ContentDigestSQL.current("media_asset"))) IS NOT ?
+    WHERE \(owesPairCondition)
     """
+
+    static let owesPairSQL = "SELECT EXISTS (SELECT 1 FROM media_asset WHERE \(owesPairCondition))"
+
+    /// The files of `files` whose mirrored asset does not hold their digest yet: read first, so
+    /// a pass over a library whose pairs all stand opens no write.
+    static func unpaired(
+        _ files: [DigestedFile],
+        accountRootID: Int64,
+        serverPrefix: String,
+        db: Database
+    ) throws -> [DigestedFile] {
+        let statement = try db.cachedStatement(sql: owesPairSQL)
+        return try files.filter { file in
+            let checksum = ImmichPathChecksum(serverPath: serverPrefix + file.relativePath)
+            return try Bool.fetchOne(statement, arguments: [
+                accountRootID, checksum.data, file.size, file.mtime, file.digest.data,
+            ]) ?? false
+        }
+    }
 
     /// Gives each asset that is one of `files` under a mirror the file's digest; returns how
     /// many assets took one. The asset must be listed with the size and modification time

@@ -127,8 +127,9 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     /// (`EnrichmentOverlayBeforeWrite.changesStacks`).
     static let stacks = CatalogChangedFacts(rawValue: 1 << 13)
     /// What only Duplicates reads beyond which files are identical copies (ADR 0042): the reach
-    /// it compares within, the copies kept together, and the render signatures versions of
-    /// one photo are found by.
+    /// it compares within, the copies kept together, the render signatures versions of one
+    /// photo are found by, and a date, kind, record, image or edit of a row it compares or
+    /// lists (`DuplicatesHoldSQL`), which each such write names beside its own kinds.
     static let duplicateFacts = CatalogChangedFacts(rawValue: 1 << 14)
     /// What search read of a row: its embedding, scene labels and text reading (ADR 0048).
     /// What a description waits for and is told (ADR 0053); the search index writes it.
@@ -3436,7 +3437,7 @@ extension CatalogStore {
             return EditRecipeMutationResult(exists: false, previous: nil, saved: nil)
         }
         let json = try Self.editRecipeJSON(recipe)
-        let result = try await database().write { db -> EditRecipeMutationResult in
+        let (result, held) = try await database().write { db -> (EditRecipeMutationResult, Bool) in
             guard let row = try Row.fetchOne(
                 db,
                 sql: """
@@ -3445,12 +3446,14 @@ extension CatalogStore {
                 """,
                 arguments: [rootID, id.relativePath.rawValue]
             ) else {
-                return EditRecipeMutationResult(exists: false, previous: nil, saved: nil)
+                return (EditRecipeMutationResult(exists: false, previous: nil, saved: nil), false)
             }
             let previous = try Self.storedEditRecipe(json: row["edit_recipe_json"], revision: row["edit_revision"])
             guard (previous?.recipe ?? .neutral) != recipe else {
-                return EditRecipeMutationResult(exists: true, previous: previous, saved: nil)
+                return (EditRecipeMutationResult(exists: true, previous: previous, saved: nil), false)
             }
+            // An edit is a copy's work, which the keeper rule weighs (ADR 0042).
+            let held = try DuplicatesHoldSQL.holds(libraryRootID: rootID, relativePath: id.relativePath.rawValue, db: db)
             let modified: Double? = row["content_modified_at_unix"]
             let isVideo = (row["best_kind"] as String?) == MediaKind.video.rawValue
             // The row's revision, not the saved edit's: a photo with no edit saved (a reset, an
@@ -3465,17 +3468,17 @@ extension CatalogStore {
                 relativePath: id.relativePath.rawValue,
                 db: db
             )
-            return EditRecipeMutationResult(
+            return (EditRecipeMutationResult(
                 exists: true,
                 previous: previous,
                 saved: StoredEditRecipe(recipe: recipe, revision: revision),
                 sourceSize: row["byte_size"],
                 sourceMTimeSeconds: modified.map { Int($0.rounded(.down)) },
                 isVideo: isVideo
-            )
+            ), held)
         }
         if result.saved != nil {
-            notifyCatalogChanged(.changed([.images, .detail]))
+            notifyCatalogChanged(.changed(held ? [.images, .detail, .duplicateFacts] : [.images, .detail]))
         }
         OtosLog.catalog.noticeOperation("catalog.editRecipe", phase: "finish", fields: [
             "rootPath": id.libraryRootPath.rawValue,
@@ -3496,7 +3499,7 @@ extension CatalogStore {
             discardStagedImages(staged)
             return false
         }
-        let outcome: (applied: Bool, superseded: Set<String>)
+        let outcome: (applied: Bool, superseded: Set<String>, held: Bool)
         do {
             outcome = try await database().write { db in
                 guard let row = try Row.fetchOne(
@@ -3507,7 +3510,7 @@ extension CatalogStore {
                     """,
                     arguments: [rootID, products.id.relativePath.rawValue]
                 ) else {
-                    return (false, [])
+                    return (false, [], false)
                 }
                 let revision: Int64 = row["edit_revision"]
                 let byteSize: Int64? = row["byte_size"]
@@ -3516,8 +3519,12 @@ extension CatalogStore {
                       byteSize == products.sourceSize,
                       modified.map({ Int($0.rounded(.down)) }) == products.sourceMTimeSeconds
                 else {
-                    return (false, [])
+                    return (false, [], false)
                 }
+                // A new thumbnail leaves a compared still's signature stale (ADR 0042).
+                let held = try DuplicatesHoldSQL.holds(
+                    libraryRootID: rootID, relativePath: products.id.relativePath.rawValue, db: db
+                )
                 for image in staged {
                     try ThumbnailStore.promote(image, in: thumbnailDirectory)
                 }
@@ -3533,7 +3540,7 @@ extension CatalogStore {
                 )
                 let oldPaths: [String?] = [row["thumbnail_path"], row["preview_path"]]
                 let newPaths = Set(staged.map(\.finalRelativePath))
-                return (true, Set(oldPaths.compactMap(\.self)).subtracting(newPaths))
+                return (true, Set(oldPaths.compactMap(\.self)).subtracting(newPaths), held)
             }
         } catch {
             OtosLog.catalog.errorOperation("catalog.editProducts", phase: "failed", fields: [
@@ -3545,7 +3552,7 @@ extension CatalogStore {
         }
         if outcome.applied {
             deleteSupersededImages(outcome.superseded)
-            notifyCatalogChanged(.changed([.images, .detail]))
+            notifyCatalogChanged(.changed(outcome.held ? [.images, .detail, .duplicateFacts] : [.images, .detail]))
         } else {
             discardStagedImages(staged)
         }
@@ -3848,7 +3855,7 @@ extension CatalogStore {
         }
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
         let dbWriter = try database()
-        try await dbWriter.write { db in
+        _ = try await timedWrite(dbWriter) { db in
             try EnrichmentClaimGateway.releaseEnrichmentClaims(
                 ids: ids,
                 rootIDsByPath: rootIDsByPathBeforeWrite,
@@ -4466,6 +4473,7 @@ extension CatalogStore {
         let digestBefore = try result.contentHash == nil ? nil : DigestStanding.read(
             libraryRootID: rootID, relativePath: result.id.relativePath.rawValue, db: db
         )
+        let heldBefore = try DuplicatesHoldSQL.holds(libraryRootID: rootID, relativePath: result.id.relativePath.rawValue, db: db)
         try writeEnrichmentOverlay(result, libraryRootID: rootID, db: db)
         // Ask SQLite what it actually stored for the STORED generated columns rather
         // than predicting it: the COALESCE chain lives once, in the schema
@@ -4480,8 +4488,10 @@ extension CatalogStore {
             arguments: overlayColumnsArguments
         ).map(EnrichmentOverlayBeforeWrite.init(row:))
         outcome.facts.insert(.detail)
+        var rowFacts: CatalogChangedFacts = []
         if let old = oldRow, let newRow {
             let changed = old.changedFacts(to: newRow)
+            rowFacts.formUnion(changed)
             outcome.facts.formUnion(changed)
             if try old.changesStacks(
                 to: newRow, facts: changed, libraryRootID: rootID, relativePath: result.id.relativePath, db: db
@@ -4490,10 +4500,17 @@ extension CatalogStore {
             }
         }
         if result.metadata != nil {
+            rowFacts.insert(.mediaRecord)
             outcome.facts.insert(.mediaRecord)
         }
         if result.rendering != nil || result.provisionalThumbnail != nil || result.videoFaces?.frames != nil {
+            rowFacts.insert(.images)
             outcome.facts.insert(.images)
+        }
+        if try DuplicatesHoldSQL.changesDuplicates(
+            rowFacts, heldBefore: heldBefore, libraryRootID: rootID, relativePath: result.id.relativePath.rawValue, db: db
+        ) {
+            outcome.facts.insert(.duplicateFacts)
         }
         if result.videoFaces != nil {
             outcome.facts.insert(.faces)
@@ -4665,6 +4682,9 @@ extension CatalogStore {
                 let overlaySQL = EnrichmentOverlayBeforeWrite.columnsSQL
                 let oldRow = try Row.fetchOne(db, sql: overlaySQL, arguments: arguments)
                     .map(EnrichmentOverlayBeforeWrite.init(row:))
+                let heldBefore = try DuplicatesHoldSQL.holds(
+                    libraryRootID: rootID, relativePath: refresh.id.relativePath.rawValue, db: db
+                )
                 try Self.writeMetadataProjection(
                     refresh.metadata,
                     enrichedKind: refresh.enrichedKind,
@@ -4677,14 +4697,21 @@ extension CatalogStore {
                 let newRow = try Row.fetchOne(db, sql: overlaySQL, arguments: arguments)
                     .map(EnrichmentOverlayBeforeWrite.init(row:))
                 outcome.facts.formUnion([.detail, .mediaRecord])
+                var rowFacts: CatalogChangedFacts = .mediaRecord
                 if let oldRow, let newRow {
                     let changed = oldRow.changedFacts(to: newRow)
+                    rowFacts.formUnion(changed)
                     outcome.facts.formUnion(changed)
                     if try oldRow.changesStacks(
                         to: newRow, facts: changed, libraryRootID: rootID, relativePath: refresh.id.relativePath, db: db
                     ) {
                         outcome.facts.insert(.stacks)
                     }
+                }
+                if try DuplicatesHoldSQL.changesDuplicates(
+                    rowFacts, heldBefore: heldBefore, libraryRootID: rootID, relativePath: refresh.id.relativePath.rawValue, db: db
+                ) {
+                    outcome.facts.insert(.duplicateFacts)
                 }
                 if oldRow?.captureWallCompact != newRow?.captureWallCompact {
                     outcome.namingChangedRoots.insert(refresh.id.libraryRootPath)
@@ -8996,7 +9023,9 @@ extension CatalogStore {
     }
 
     /// Gives every asset of `account` that is a mirrored library file the file's digest
-    /// (`MirrorGateway.pair`), a batch of files per transaction; returns how many took one.
+    /// (`MirrorGateway.pair`), a batch of files at a time; returns how many took one. Each
+    /// batch is read first and written only for the files whose asset lacks the digest, so a
+    /// pass over pairs that all stand — every sync pass of a settled account — opens no write.
     func pairMirroredCopies(account: LibraryRootPath) async throws -> Int {
         guard let accountRootID = roots[account]?.rowID else {
             return 0
@@ -9015,8 +9044,7 @@ extension CatalogStore {
         struct Batch {
             let last: String?
             let count: Int
-            let paired: Int
-            let choicesJoined: Bool
+            let unpaired: [MirrorGateway.DigestedFile]
         }
         var paired = 0
         var files = 0
@@ -9024,20 +9052,29 @@ extension CatalogStore {
         for mirror in mirrors {
             var after: String?
             while true {
-                let batch = try await dbQueue.write { [after] db in
-                    let joinsBefore = try CatalogSchema.choiceJoins(db)
+                let batch = try await dbQueue.readFreeingConnection(operation: "mirrorPairsOwed") { [after] db in
                     let batch = try MirrorGateway.digestedFiles(libraryRootID: mirror.libraryRootID, after: after, db: db)
-                    let paired = try MirrorGateway.pair(
-                        batch, accountRootID: accountRootID, serverPrefix: mirror.serverPrefix, db: db
-                    )
                     return try Batch(
-                        last: batch.last?.relativePath, count: batch.count, paired: paired,
-                        choicesJoined: CatalogSchema.choiceJoins(db) != joinsBefore
+                        last: batch.last?.relativePath, count: batch.count,
+                        unpaired: MirrorGateway.unpaired(
+                            batch, accountRootID: accountRootID, serverPrefix: mirror.serverPrefix, db: db
+                        )
                     )
                 }
-                paired += batch.paired
+                if !batch.unpaired.isEmpty {
+                    // The write pairs again under its own conditions: a file whose digest or
+                    // asset moved since the read pairs only if it still should.
+                    let written = try await timedWrite(dbQueue, operation: "pairMirroredCopies") { db in
+                        let joinsBefore = try CatalogSchema.choiceJoins(db)
+                        let paired = try MirrorGateway.pair(
+                            batch.unpaired, accountRootID: accountRootID, serverPrefix: mirror.serverPrefix, db: db
+                        )
+                        return try (paired, CatalogSchema.choiceJoins(db) != joinsBefore)
+                    }.value
+                    paired += written.0
+                    choicesJoined = choicesJoined || written.1
+                }
                 files += batch.count
-                choicesJoined = choicesJoined || batch.choicesJoined
                 guard let last = batch.last, batch.count == MirrorGateway.pairBatchSize else {
                     break
                 }
