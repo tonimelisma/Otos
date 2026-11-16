@@ -39,12 +39,20 @@ design rules for user-facing surfaces; per-screen specs live beside it in
   requirement proves the simple path insufficient.
 - Do not guess. Inspect the repo, read the relevant APIs, and verify claims with
   code, docs, tests, profiling, or runtime evidence.
-- Never test, measure or verify on the owner's production data (owner, 2026-11-15): not
-  the installed app's catalog, a copy or backup of it, his libraries, his Immich account, or
-  the installed app's behaviour after an install. Owner-scale evidence comes from generated
-  catalogs shaped like his (benchmark fixtures, query-plan tests); a change's effect on his
-  data is verified by tests and stays unverified there. The one read of the installed app is
-  install's own check for an import or reorganization in flight.
+- The owner's production data is read, never changed (owner, 2026-11-15: "the rule says don't
+  test with my … production data by changing it", and "launch the app if needed! you are
+  supposed to use my production data for all read-only testing!"). Read-only work on it is
+  expected, and nobody asks first: launching the installed app and looking at it, visiting
+  its views, reading its unified log and crash reports, opening its catalog read-only
+  (`sqlite3 -readonly … ?mode=ro`) for schema, counts, plans and timings, and `stat`/`du` of
+  his libraries and app folders. What is never done there is anything that changes his data
+  or leaves state behind: no Move to Trash, Like or Dislike, naming or merging people,
+  import, erase, edit, reorganize or settings change; no write to the catalog; no copy or
+  backup of it, and no build launched on a copy (a copy's roots are his real folders and
+  devices); no reading a cloud-only file's bytes, which downloads it. An Otos the session
+  launched is quit when the look is done, and the quit is confirmed (`pgrep -x Otos`).
+  Experiments that write (migrations, fuzzing, destructive tests) use generated catalogs
+  shaped like his.
 - Do not fabricate user-visible or domain facts. Unknown dates, paths, provider
   state, progress, counts, diagnostics, and capabilities stay unknown or
   explicitly qualified until proven.
