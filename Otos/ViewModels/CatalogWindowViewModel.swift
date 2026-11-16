@@ -1692,13 +1692,17 @@ extension CatalogWindowViewModel {
     /// The window's title, the one every scope is named by: the person a person's photos
     /// show, else the selected scope's (`CatalogWindowPolicy.title(for:libraries:)`) — the
     /// one Projection published once the scope's state is applied, and the same policy's
-    /// answer from the click until then (DES-118).
+    /// answer from the click until then (DES-118). Before the catalog loads, the scope's own
+    /// name where the scope alone gives it, else the app's name (DES-121).
     var windowTitle: String {
         if let person = shownPerson {
             return person.displayName
         }
         guard !showsSelectedScope else {
             return state.title
+        }
+        guard state.isCatalogLoaded else {
+            return CatalogWindowPolicy.titleWithoutCatalog(for: queryDescriptor.scope) ?? "Otos"
         }
         return CatalogWindowPolicy.title(for: queryDescriptor.scope, libraries: state.libraries + state.removableSources)
     }

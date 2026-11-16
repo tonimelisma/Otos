@@ -146,7 +146,8 @@ struct WindowStateApplyTests {
     // MARK: - Titles
 
     /// Every scope the sidebar can show is titled by its name, from one owner: never the
-    /// app's name, never blank once the catalog has loaded.
+    /// app's name, never blank once the catalog has loaded; and before it loads, that same
+    /// name wherever the scope alone gives it, else the app's name.
     @Test func everyScopeHasItsTitle() {
         let card = LibraryRoot(path: LibraryRootPath(rawValue: "/Volumes/EOS_DIGITAL"), kind: .removableVolume, displayName: "EOS_DIGITAL")
         let camera = LibraryRoot(path: LibraryRootPath(rawValue: "mtp://camera"), kind: .deviceMTP, displayName: "X-T5")
@@ -172,9 +173,18 @@ struct WindowStateApplyTests {
             state.libraries = roots
             state.title = CatalogWindowPolicy.title(for: scope, libraries: roots)
             model.selectSidebar(scope)
+            let opening = model.windowTitle
             state.queryGeneration = model.queryGeneration
             model.applyState(state)
             #expect(model.windowTitle == expected, "scope=\(scope.diagnosticDescription)")
+            // Before the load, the title is already the loaded one, or the app's name where
+            // only the catalog names the scope (DES-121): it never changes to another name.
+            switch scope {
+            case .library, .person:
+                #expect(opening == "Otos", "scope=\(scope.diagnosticDescription)")
+            default:
+                #expect(opening == expected, "scope=\(scope.diagnosticDescription)")
+            }
             #expect(!model.windowTitle.isEmpty && model.windowTitle != "Otos", "scope=\(scope.diagnosticDescription)")
         }
     }

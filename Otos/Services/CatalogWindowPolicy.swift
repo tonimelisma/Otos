@@ -244,6 +244,21 @@ nonisolated enum CatalogWindowPolicy {
 
     static func title(for sidebarSelection: SidebarSelection, libraries: [CatalogLibraryState]) -> String {
         switch sidebarSelection {
+        case .person:
+            "People"
+        case let .library(path):
+            libraries.first { $0.path == path }?.displayName ?? "Library"
+        default:
+            titleWithoutCatalog(for: sidebarSelection) ?? "Otos"
+        }
+    }
+
+    /// A scope's title as far as the scope alone names it, read before the catalog loads
+    /// (DES-121): a fixed scope's name and an import's date. Nil for a scope named by a
+    /// catalog fact — a library's or account's stored name, a person's — which the window
+    /// leaves as the app's name until the catalog loads.
+    static func titleWithoutCatalog(for sidebarSelection: SidebarSelection) -> String? {
+        switch sidebarSelection {
         case .allMedia:
             "All Media"
         case .onThisDay:
@@ -252,10 +267,10 @@ nonisolated enum CatalogWindowPolicy {
             "Places"
         case .duplicates, .duplicateGroup:
             "Duplicates"
-        case .people, .person:
+        case .people:
             "People"
-        case let .library(path):
-            libraries.first { $0.path == path }?.displayName ?? "Library"
+        case .person, .library:
+            nil
         case let .importBatch(batchID):
             ImportBatchFormatting.sidebarTitle(for: batchID)
         case .allImports:
