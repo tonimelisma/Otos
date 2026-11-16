@@ -300,7 +300,10 @@ grouping had put with the right child.
   (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). What it builds per face
   is a few flat arrays, never an allocation per face: the kept bests are lists threaded
   through four arrays (`Bests`), and the snapshot's faces are columns over one table of the
-  photos' IDs held once (`PeopleFaces`). People holds the
+  photos' IDs, each held once per run of its faces with no lookup to find it, the stored
+  likeness among the columns (`PeopleFaces`), never a dictionary keyed by face. Chaining reads
+  its rows and its evidence by position in the faces, never copies of them, and a copy of every
+  face is made only when a seed lapsed. People holds the
   vectors at half precision (105 MB for 103k faces): on the owner's 102,978 vectors it changed
   no best person, threshold or margin decision in 3,029 faces sampled
   (`docs/research/2026-11-16-people-memory-and-kernel.md`). They are held in a file of their

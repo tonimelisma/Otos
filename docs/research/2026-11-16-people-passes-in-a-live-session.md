@@ -88,8 +88,76 @@ Assignments are identical: the file's vectors are the same Float16 values
 (`FaceVectorsTests.theFilesVectorsAssignAsVectorsOfTheirOwn`, and the People, kernel and policy
 suites unmodified).
 
-## What is left
+## The parts of a pass
 
-The kernel's working set (80–85 MB live at its peak) and the launch read's freed blocks are now
-the largest part of what People adds. Both are FaceID-keyed dictionaries and copies of every
-face's `FaceFact`, which a kernel over positions would not build.
+With the vectors in the file, the same catalog, each part alone in a fresh process. Live heap
+in megabytes: what it held at its most above where it started, and what it kept.
+
+| Part | Transient | Kept |
+| --- | --- | --- |
+| The snapshot's whole read | 64 | 44 |
+| — its faces with a likeness dictionary keyed by face, alone | 63 | 40 |
+| — the stacks of every root, alone | 16 | 0 |
+| — iterating the rows only | 0 | 0 |
+| Gallery facts | 12 | 0 |
+| Every face's `FaceFact` | 24 | 24 |
+| Lapsed seeds (each bare person's seeds copied) | 16 | 0 |
+| The faces copied with lapsed seeds opened | 12 | 12 |
+| One run of chaining | 24 | 0 |
+| A face-to-index dictionary | 26 | 0 |
+| The whole assignment | 51 | 18 |
+
+The generated catalog's faces are all anchors, so a run of chaining there has no open rows; on
+the owner's, most faces are guesses, so the rows a run copied are most of the faces.
+
+## Faces read by position
+
+- **The snapshot:** the stored likeness is a column of `PeopleFaces` (NaN for none), not a
+  dictionary keyed by `FaceID`. A photo is held once per run of its faces, which every read
+  gives together, so the lookup that found a photo already held is gone.
+- **The kernel:** a run of chaining reads its rows and its evidence through their positions
+  in the faces, never copies of them, and the evidence is grouped by person as positions. A
+  column's maximum into the rows is the same in any order of the run's columns, so this is not
+  `PersonRun`'s order. Lapsed seeds are found by position. The faces are copied only when a
+  seed lapsed, and the face-to-index dictionary is built once, only when grouping finds a
+  person.
+- **Identical results:** `KernelDifferentialTests`, `FaceAssignmentPolicyTests` and the People
+  suites, unmodified except where they read the snapshot's likeness dictionary.
+
+The live session's sequence, same probe, same catalog (footprint, MB):
+
+| Step | Heap vectors | File | File and positions |
+| --- | --- | --- | --- |
+| Launch pass | 44 → 165 | 44 → 172 | 44 → **109** |
+| First pass that assigns | 166 → 341 | 172 → 251 | 109 → **157** (+48) |
+| Five keyed passes | 341 → 358 | 251 → 287 | 157 → **161** (+4) |
+| Whole pass | 358 → 302 | 288 → 194 | 161 → 176 |
+| Held snapshot, live | 44 | 44 | **31** |
+| A pass's live peak above what it keeps | 81 | 86 | 72 |
+
+The on-demand owner-scale test, in one process after the earlier parts: five keyed passes
+249 → 251 MB.
+
+## Why the passes ran in a second session (#874 installed, 942d82d1)
+
+The owner's tour after #874 peaked at 812 MB. Its log, read-only:
+
+- **People passes:** five in the first 23 s, not six. `peopleBuilt` is written by each gallery
+  read, and there were more gallery reads than passes.
+  - 14:46:42: the launch pass, a whole read, with the hash equal.
+  - 14:46:44: a whole read after the first changes.
+  - 14:46:46, 14:46:53 and 14:46:59: three keyed passes, four photos each.
+    - The first read every vector (1.26 s) and assigned.
+    - The second assigned again, because Immich enrichment had changed the capture dates of
+      faced photos meanwhile (`facts=...faceTiles`, a capture time being an input). It wrote 9
+      rows: 4 guesses, 4 lapsed seeds and 1 person forgotten.
+    - Forgetting a person moves an input, so the third assigned once more and wrote nothing,
+      as designed.
+  - Every pass was owed by a change it reads. Changes that arrived during a pass cost one pass
+    after it.
+- **Footprint at each pass's end:** 491, 615, 711, 725 and 756 MB. These numbers include the
+  tour's grid, loupe and search steps, which ran at the same moments (`tourStep` samples up to
+  730 MB before the first assignment).
+- **Idle:** no People pass ran after 14:47:04. The peak of 812 MB came in idle, and no sample
+  logged near it says what reached it. The owners active then were enrichment (180 content
+  hashes, materialisation) and photo descriptions (114 written). People's part is unknown.

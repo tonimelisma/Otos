@@ -48,12 +48,20 @@ extension PeopleSnapshot {
         photoOf: [MediaAssetID: MediaAssetID] = [:]
     ) {
         self.init(
-            faces: PeopleFaces(facts.enumerated().map { Face($0.element, vector: Int64($0.offset + 1)) }),
+            faces: PeopleFaces(facts.enumerated().map { index, fact in
+                var face = Face(fact, vector: Int64(index + 1))
+                face.likeness = likeness[fact.id]
+                return face
+            }),
             people: people,
-            likeness: likeness,
             keyPhotos: keyPhotos,
             photoOf: photoOf
         )
+    }
+
+    /// Each face's stored likeness, by face.
+    var storedLikeness: [FaceID: Float] {
+        Dictionary(uniqueKeysWithValues: faces.compactMap { face in face.likeness.map { (face.id, $0) } })
     }
 }
 

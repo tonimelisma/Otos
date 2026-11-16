@@ -1591,7 +1591,6 @@ extension CatalogStore {
                 rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
             }
             var faces = PeopleFaces()
-            var likeness: [FaceID: Float] = [:]
             var keyPhotos: [PersonID: FaceID] = [:]
             // The digests of the files with a face and a present copy, whose copies follow.
             var copiedDigests: Set<Data> = []
@@ -1640,11 +1639,9 @@ extension CatalogStore {
                     vector: vector,
                     assignment: assignment,
                     rejected: rejections[key] ?? [],
-                    isInVideo: (row[PeopleFaceColumn.isVideo.rawValue] as Int) != 0
+                    isInVideo: (row[PeopleFaceColumn.isVideo.rawValue] as Int) != 0,
+                    likeness: (row[PeopleFaceColumn.likeness.rawValue] as Double?).map(Float.init)
                 ))
-                if let stored = row[PeopleFaceColumn.likeness.rawValue] as Double? {
-                    likeness[id] = Float(stored)
-                }
                 if let person, (row[PeopleFaceColumn.isKeyPhoto.rawValue] as Int) != 0 {
                     keyPhotos[PersonID(rawValue: person)] = id
                 }
@@ -1676,7 +1673,6 @@ extension CatalogStore {
                     take(row)
                 }
             }
-            faces.finish()
             // The present copies of each photo with a face, by the digest they share (ADR 0054).
             var copies: [[PeopleSnapshot.Copy]] = []
             let copiesOfDigest = try db.cachedStatement(sql: PhotoFaceSQL.presentCopiesOfDigest)
@@ -1726,7 +1722,6 @@ extension CatalogStore {
             var snapshot = PeopleSnapshot(
                 faces: malformed.isEmpty ? faces : PeopleFaces(faces.filter { left($0.id) }),
                 people: people,
-                likeness: malformed.isEmpty ? likeness : likeness.filter { left($0.key) },
                 keyPhotos: keyPhotos.filter { left($0.value) },
                 galleryFacts: galleryFacts,
                 photoOf: photoOf,

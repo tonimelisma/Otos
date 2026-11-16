@@ -67,14 +67,14 @@ nonisolated struct FacePreview: Hashable, Sendable {
 
 /// The faces of a People snapshot, held as columns (ADR 0047, "The kernel and its memory"):
 /// each face is a few numbers in flat arrays, and its photo a position in one table of the
-/// photos' IDs held once, so 103k faces are a handful of arrays, never an array or a path
-/// string per face. A face read from it (`subscript`) is a value made on the spot, whose ID
-/// shares its photo's strings with the table.
+/// photos' IDs, each held once per run of its faces, so 103k faces are a handful of arrays,
+/// never an array, a dictionary entry or a path string per face. The faces of a photo come
+/// together in every read (the catalog's order), so a photo is held once with no lookup to find
+/// it. A face read from it (`subscript`) is a value made on the spot, whose ID shares its
+/// photo's strings with the table.
 nonisolated struct PeopleFaces: RandomAccessCollection, Equatable, Sendable {
-    /// Each photo with a face, once.
+    /// Each photo with a face, once per run of its faces.
     private var photos: [MediaAssetID] = []
-    /// While the faces are appended: each photo's place in `photos`.
-    private var photoPlace: [MediaAssetID: Int32] = [:]
     private var photo: [Int32] = []
     private var index: [Int32] = []
     /// The capture time; NaN for none.
@@ -84,6 +84,8 @@ nonisolated struct PeopleFaces: RandomAccessCollection, Equatable, Sendable {
     private var kind: [UInt8] = []
     /// The person; 0 for none.
     private var person: [Int64] = []
+    /// The stored likeness; NaN for none.
+    private var likeness: [Float] = []
     /// The few faces the user said are not someone, by position.
     private var rejected: [Int32: Set<PersonID>] = [:]
 
@@ -95,7 +97,6 @@ nonisolated struct PeopleFaces: RandomAccessCollection, Equatable, Sendable {
         for face in faces {
             append(face)
         }
-        photoPlace = [:]
     }
 
     var startIndex: Int {
@@ -117,29 +118,25 @@ nonisolated struct PeopleFaces: RandomAccessCollection, Equatable, Sendable {
         case .open, nil: .open
         }
         let seconds = capture[position]
+        let stored = likeness[position]
         return PeopleSnapshot.Face(
             id: FaceID(asset: photos[Int(photo[position])], index: Int(index[position])),
             captureSeconds: seconds.isNaN ? nil : seconds,
             vector: vector[position],
             assignment: assignment,
             rejected: rejected[Int32(position)] ?? [],
-            isInVideo: row & Self.videoFlag != 0
+            isInVideo: row & Self.videoFlag != 0,
+            likeness: stored.isNaN ? nil : stored
         )
     }
 
-    /// Appends `face`; a photo already held is not held again.
+    /// Appends `face`; the photo of the face before it is not held again.
     mutating func append(_ face: PeopleSnapshot.Face) {
         let asset = face.id.asset
-        let place: Int32
-        if let last = photos.last, last == asset {
-            place = Int32(photos.count - 1)
-        } else if let known = photoPlace[asset] {
-            place = known
-        } else {
-            place = Int32(photos.count)
+        if photos.last != asset {
             photos.append(asset)
-            photoPlace[asset] = place
         }
+        let place = Int32(photos.count - 1)
         if !face.rejected.isEmpty {
             rejected[Int32(photo.count)] = face.rejected
         }
@@ -149,11 +146,7 @@ nonisolated struct PeopleFaces: RandomAccessCollection, Equatable, Sendable {
         vector.append(face.vector)
         kind.append(UInt8(FaceAssignmentColumn(face.assignment).rawValue) | (face.isInVideo ? Self.videoFlag : 0))
         person.append(face.assignment.person?.rawValue ?? 0)
-    }
-
-    /// Done appending: the lookup that kept each photo once is let go.
-    mutating func finish() {
-        photoPlace = [:]
+        likeness.append(face.likeness ?? .nan)
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -185,6 +178,8 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         let rejected: Set<PersonID>
         /// The face was read in a frame of a video.
         var isInVideo = false
+        /// How like its person the catalog stores the face to be (`FaceAssignmentResult.likeness`).
+        var likeness: Float?
 
         /// The face as assignment compares it, with its vector; nil when the vector is not
         /// held or holds no embedding.
@@ -203,8 +198,6 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     var vectorHorizon: Int64 = 0
     /// In creation order.
     let people: [Person]
-    /// Each face's stored likeness.
-    var likeness: [FaceID: Float] = [:]
     /// Each person's key photo, where the user chose one.
     var keyPhotos: [PersonID: FaceID] = [:]
     /// The gallery facts the catalog stores for each person (`PersonGalleryFacts`), read in
@@ -262,11 +255,9 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
                 nextRead = read.next()
             }
         }
-        merged.finish()
         var next = PeopleSnapshot(
             faces: merged,
             people: partial.people,
-            likeness: likeness.filter { !photos.contains($0.key.asset) }.merging(partial.likeness) { _, new in new },
             keyPhotos: partial.keyPhotos,
             galleryFacts: partial.galleryFacts,
             photoOf: photoOf.filter { !photos.contains($0.key) && partial.photoOf[$0.key] == nil }
@@ -549,7 +540,7 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
         var keeps: Set<PersonID> = []
         for face in snapshot.faces {
             let computed = result.likeness[face.id]
-            if Self.likenessMoved(from: snapshot.likeness[face.id], to: computed) {
+            if Self.likenessMoved(from: face.likeness, to: computed) {
                 plan.likeness[face.id] = .some(computed)
             }
             let lapsed = result.lapsedSeeds.contains(face.id)

@@ -292,7 +292,9 @@ nonisolated enum FaceAssignmentPolicy {
         photoOf: [MediaAssetID: MediaAssetID] = [:]
     ) -> FaceAssignmentResult {
         let lapsed = lapsedSeeds(faces, people: people)
-        let usable = faces.map { lapsed.contains($0.id) ? $0.opened : $0 }
+        // A copy of every face only when a seed lapsed: the faces are the largest thing the
+        // kernel holds, and most assignments release no seed.
+        let usable = lapsed.isEmpty ? faces : faces.map { lapsed.contains($0.id) ? $0.opened : $0 }
         let known = Set(people.map(\.id))
         let birthdays = PersonFact.birthdays(of: people)
         var anchors: [Int: FaceAssignmentResult.Person] = [:]
@@ -303,16 +305,19 @@ nonisolated enum FaceAssignmentPolicy {
         var result = FaceAssignmentResult()
         result.lapsedSeeds = lapsed
         var fill = Fill.run(faces: usable, anchors: anchors, birthdays: birthdays)
+        // Each face's index, built once and only when grouping finds a person.
+        var indexByID: [FaceID: Int]?
         for _ in 0 ..< maximumGroupings {
             let groups = unnamedGroups(fill.leftover.map { usable[$0] })
             guard !groups.isEmpty else { break }
-            let indexByID = Dictionary(uniqueKeysWithValues: usable.enumerated().map { ($1.id, $0) })
+            let index = indexByID ?? Dictionary(uniqueKeysWithValues: usable.enumerated().map { ($1.id, $0) })
+            indexByID = index
             for group in groups {
                 let person = FaceAssignmentResult.Person.new(result.newPeople.count)
                 result.newPeople.append(group)
                 for face in group {
-                    if let index = indexByID[face] {
-                        anchors[index] = person
+                    if let position = index[face] {
+                        anchors[position] = person
                     }
                 }
             }
@@ -333,12 +338,13 @@ nonisolated enum FaceAssignmentPolicy {
     /// than two days.
     static func lapsedSeeds(_ faces: [FaceFact], people: [PersonFact]) -> Set<FaceID> {
         let bare = Set(people.filter(\.isBare).map(\.id))
-        var seeds: [PersonID: [FaceFact]] = [:]
+        // Each bare person's seeds by position, never copies of the faces.
+        var seeds: [PersonID: [Int32]] = [:]
         var claimed: Set<PersonID> = []
-        for face in faces {
+        for (position, face) in faces.enumerated() {
             switch face.assignment {
             case let .seed(person) where bare.contains(person):
-                seeds[person, default: []].append(face)
+                seeds[person, default: []].append(Int32(position))
             case let .user(person):
                 claimed.insert(person)
             default:
@@ -346,12 +352,13 @@ nonisolated enum FaceAssignmentPolicy {
             }
         }
         var lapsed: Set<FaceID> = []
-        for (person, faces) in seeds where !claimed.contains(person) {
-            let standing = faces.filter(\.isRecognisable)
-            if Set(standing.compactMap { day($0.captureSeconds) }).count < 2 {
-                lapsed.formUnion(faces.map(\.id))
+        for (person, positions) in seeds where !claimed.contains(person) {
+            let seedFaces = positions.lazy.map { faces[Int($0)] }
+            let days = Set(seedFaces.filter(\.isRecognisable).compactMap { day($0.captureSeconds) })
+            if days.count < 2 {
+                lapsed.formUnion(seedFaces.map(\.id))
             } else {
-                lapsed.formUnion(faces.filter { !$0.isRecognisable }.map(\.id))
+                lapsed.formUnion(seedFaces.filter { !$0.isRecognisable }.map(\.id))
             }
         }
         return lapsed
@@ -545,10 +552,11 @@ nonisolated struct Fill {
         // An unrecognisable face is never a row or evidence; as an anchor it still keeps its
         // person out of the rest of its photo.
         let rows = faces.indices.filter { faces[$0].assignment.isGuessable && anchors[$0] == nil && faces[$0].isRecognisable }
-        let rowFaces = rows.map { faces[$0] }
-        let rowCaptures = rowFaces.map(\.captureSeconds)
-        let rowPhotos = rowFaces.map(\.id.asset)
-        let rejected = rowFaces.map { face in Set(face.rejected.compactMap { slotOf[.existing($0)] }) }
+        // The rows are read through `rows`, never copied: a copy of every open face was the
+        // largest thing a run held.
+        let rowCaptures = rows.map { faces[$0].captureSeconds }
+        let rowPhotos = rows.map { faces[$0].id.asset }
+        let rejected = rows.map { row in Set(faces[row].rejected.compactMap { slotOf[.existing($0)] }) }
         var assigned = anchors
         // Which person slots each photo holds, as one set of pairs rather than a set per photo.
         var photoPeople: Set<PhotoSlot> = []
@@ -587,8 +595,8 @@ nonisolated struct Fill {
 
         while !evidence.isEmpty, !open.isEmpty {
             raise(
-                &bests, layout: layout, rows: rowFaces, open: open, people: people.count,
-                evidence: evidence.map { (faces[$0], slotOf[assigned[$0]!]!) }, birthdays: birthdayOf
+                &bests, layout: layout, faces: faces, rows: rows, open: open, people: people.count,
+                evidence: evidence.map { (face: $0, slot: slotOf[assigned[$0]!]!) }, birthdays: birthdayOf
             )
             let ranked = open.compactMap { row -> (row: Int, slot: Int, value: Float)? in
                 guard let found = top(row, excludingPhoto: true),
@@ -599,7 +607,7 @@ nonisolated struct Fill {
             }
             evidence = []
             for candidate in ranked.sorted(by: { ($0.value, $1.row) > ($1.value, $0.row) }) {
-                let asset = rowFaces[candidate.row].id.asset
+                let asset = rowPhotos[candidate.row]
                 guard photoPeople.insert(PhotoSlot(photo: asset, slot: candidate.slot)).inserted else { continue }
                 assigned[rows[candidate.row]] = people[candidate.slot]
                 open.remove(candidate.row)
@@ -615,7 +623,7 @@ nonisolated struct Fill {
         }
         for candidate in close.sorted(by: { ($0.value, $1.row) > ($1.value, $0.row) }) {
             guard let found = top(candidate.row, excludingPhoto: true), found.value >= FaceAssignmentPolicy.threshold else { continue }
-            photoPeople.insert(PhotoSlot(photo: rowFaces[candidate.row].id.asset, slot: found.slot))
+            photoPeople.insert(PhotoSlot(photo: rowPhotos[candidate.row], slot: found.slot))
             assigned[rows[candidate.row]] = people[found.slot]
             open.remove(candidate.row)
         }
@@ -649,25 +657,32 @@ nonisolated struct Fill {
     private static func raise(
         _ bests: inout Bests,
         layout: RowLayout,
-        rows: [FaceFact],
+        faces: [FaceFact],
+        rows: [Int],
         open: Set<Int>,
         people: Int,
-        evidence: [(face: FaceFact, slot: Int)],
+        evidence: [(face: Int, slot: Int)],
         birthdays: [Double?]
     ) {
         let dimensions = FaceEmbeddingModel.dimensions
-        // The evidence by person, each person's laid out as `PersonRun` lays it out.
-        let bySlot = Dictionary(grouping: evidence, by: \.slot)
-        var columns: [FaceFact] = []
+        // The evidence by person, each person's faces one run of columns, by position, never
+        // copies of the faces: a column's maximum into the rows is the same in any order.
+        var bySlot: [Int: [Int]] = [:]
+        for (face, slot) in evidence {
+            bySlot[slot, default: []].append(face)
+        }
+        var columns: [Int] = []
+        columns.reserveCapacity(evidence.count)
         var columnRun: [Int] = []
+        columnRun.reserveCapacity(evidence.count)
         var runSlots: [Int] = []
         for slot in bySlot.keys.sorted() {
-            let run = PersonRun(faces: bySlot[slot]!.map(\.face), birthday: birthdays[slot])
-            columns += run.faces
-            columnRun += Array(repeating: runSlots.count, count: run.faces.count)
+            let run = bySlot[slot]!
+            columns += run
+            columnRun += repeatElement(runSlots.count, count: run.count)
             runSlots.append(slot)
         }
-        let columnTimes = columns.map(\.captureSeconds)
+        let columnTimes = columns.map { faces[$0].captureSeconds }
         let placed = open.map { layout.place[$0] }.sorted()
         let blockRows = FaceAssignmentPolicy.blockRows
         // The round's matrices, each its own region returned to the system when the round
@@ -687,7 +702,7 @@ nonisolated struct Fill {
             let blockHigh = positions.prefix(datedCount).map { layout.high[$0] }
             let blockCaptures = positions.prefix(datedCount).map { layout.captures[$0] }
             for (k, position) in positions.enumerated() {
-                rows[layout.order[position]].vector.copy(into: block.base + k * dimensions)
+                faces[rows[layout.order[position]]].vector.copy(into: block.base + k * dimensions)
             }
             vDSP_mtrans(block.base, 1, blockT.base, 1, vDSP_Length(dimensions), vDSP_Length(count))
             maxima.fill(with: -2)
@@ -698,7 +713,7 @@ nonisolated struct Fill {
             while chunkStart < columns.count {
                 let chunkCount = min(evidenceChunk, columns.count - chunkStart)
                 for j in 0 ..< chunkCount {
-                    columns[chunkStart + j].vector.copy(into: chunk.base + j * dimensions)
+                    faces[columns[chunkStart + j]].vector.copy(into: chunk.base + j * dimensions)
                 }
                 vDSP_mmul(
                     chunk.base, 1, blockT.base, 1, products.base, 1,

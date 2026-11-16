@@ -361,7 +361,7 @@ struct PeopleStoreTests {
 
         let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         #expect(snapshot.faces.map(\.assignment) == [.user(ian), .user(ian)])
-        #expect(snapshot.likeness == [a: 0.75])
+        #expect(snapshot.storedLikeness == [a: 0.75])
         #expect(snapshot.people.map(\.id) == [ian])
         #expect(try await library.store.applyAssignment(FaceAssignmentPlan()) == 0)
         await library.store.shutdown()
@@ -678,13 +678,18 @@ struct PeopleStoreTests {
         try reader.close()
         // One face read again: a new vector row for it, as a new reading writes.
         let writer = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
-        func readAgain() async throws {
+        /// A new reading of a face `offset` readings from the newest; returns its photo.
+        @discardableResult
+        func readAgain(_ offset: Int = 0) async throws -> MediaAssetID {
             try await writer.write { db in
-                let row = try #require(try Row.fetchOne(db, sql: "SELECT * FROM face_embedding ORDER BY id DESC LIMIT 1"))
+                let row = try #require(try Row.fetchOne(db, sql: "SELECT * FROM face_embedding ORDER BY id DESC LIMIT 1 OFFSET ?", arguments: [offset]))
                 try db.execute(sql: "DELETE FROM face_embedding WHERE id = ?", arguments: [row["id"] as Int64])
                 try db.execute(sql: FaceEmbeddingSQL.insertSQL, arguments: [
                     row["library_root_id"] as Int64, row["relative_path"] as String, row["face_index"] as Int, row["embedding"] as Data,
                 ])
+                let rootID: Int64 = row["library_root_id"]
+                let root = try #require(try String.fetchOne(db, sql: "SELECT path FROM library_root WHERE id = ?", arguments: [rootID]))
+                return MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: root), relativePath: MediaRelativePath(rawValue: row["relative_path"]))
             }
         }
         try await readAgain()
@@ -704,6 +709,13 @@ struct PeopleStoreTests {
         }
         await owner.request()
         try await phase("fullAssignment") { try await owner.settle() }
+        // Five keyed passes, as a session's readings ring them: each a new reading of one photo,
+        // named, read by key and assigned whole. Repeated passes reuse what the one before freed.
+        for pass in 1 ... 5 {
+            let photo = try await readAgain(pass * 37)
+            await owner.request(rows: .rows([photo]))
+            try await phase("keyedPass\(pass)") { try await owner.settle() }
+        }
         let line = "op=peopleCost " + fields.joined(separator: " ")
         let url = SourceTree.root.appending(path: "build/people-cost/owner.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -714,6 +726,11 @@ struct PeopleStoreTests {
             let (before, after) = try #require(footprints[name])
             #expect(mb(after) <= mb(before) + Self.strandedMarginMB, "\(name): \(mb(before)) MB → \(mb(after)) MB")
         }
+        // The guard against a ratchet: five keyed passes end within a stated bound of where the
+        // first found the footprint.
+        let (firstBefore, _) = try #require(footprints["keyedPass1"])
+        let (_, lastAfter) = try #require(footprints["keyedPass5"])
+        #expect(mb(lastAfter) <= mb(firstBefore) + Self.keyedRatchetBoundMB, "five keyed passes: \(mb(firstBefore)) MB → \(mb(lastAfter)) MB")
         try writer.close()
         await store.shutdown()
     }
@@ -757,7 +774,7 @@ struct PeopleStoreTests {
         #expect(held.faces == truth.faces)
         #expect(held.photoOf == truth.photoOf)
         #expect(held.people == truth.people)
-        #expect(held.likeness == truth.likeness)
+        #expect(held.storedLikeness == truth.storedLikeness)
         #expect(AssignmentInputs(held) == AssignmentInputs(truth))
         await library.store.shutdown()
     }
@@ -796,6 +813,11 @@ struct PeopleStoreTests {
     /// What reading every one of 103k vectors may add to the footprint: their numbers and the
     /// read's own pages, never the vectors, which are the mapped file's.
     static let vectorsFootprintBoundMB: UInt64 = 16
+
+    /// What five keyed passes over 103k faces may add to the footprint together: the
+    /// allocator's reuse slack. Measured in a fresh process on the same shape: +4 MB, with the
+    /// vectors on the heap +17 MB.
+    static let keyedRatchetBoundMB: UInt64 = 24
 
     /// What grouping 103k faces may hold live on the heap at once: its links are in a mapped
     /// region (`ScratchBuffer`), so this is the groups' own sets. With the links on the heap,
