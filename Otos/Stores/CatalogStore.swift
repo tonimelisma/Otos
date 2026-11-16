@@ -28,6 +28,50 @@ nonisolated enum CatalogStoreChange: Equatable, Sendable {
         case .libraryRemoved: .all
         }
     }
+
+    /// Whether this change can move what an owner of a derived product reads, given its
+    /// `inputs` (`CatalogOwnerInputs`). Rows only added carry nothing derived from them yet, so
+    /// they move none; the owner hears them when enrichment writes what it derives.
+    func touches(_ inputs: CatalogChangedFacts) -> Bool {
+        switch self {
+        case .assetsAdded: false
+        case let .changed(facts): !facts.isDisjoint(with: inputs)
+        case .libraryRemoved: true
+        }
+    }
+}
+
+/// What a background owner of a derived product wakes on (plan 0116 stage 2): the kinds of
+/// fact whose writes could change what its candidate statements read, derived from their
+/// SQL (`CatalogChangedFacts.read(by:)`), less the kinds its own writes name — no owner is rung
+/// by its own write — and with the facts its SQL does not read but its work depends on (which
+/// roots are reachable, held in the Store's memory and bound as arguments).
+nonisolated struct CatalogOwnerInputs: Sendable {
+    /// The owner's candidate statements, as it runs them (any placeholder count).
+    let statements: [String]
+    /// The kinds the owner's own writes name.
+    let ownWrites: CatalogChangedFacts
+    /// The kinds the owner's work depends on beyond its SQL.
+    let beyondSQL: CatalogChangedFacts
+
+    /// The inputs over `statements`' regions, read in `store`. A statement that cannot be
+    /// prepared leaves the owner rung by every change, and is logged: waking too often is
+    /// safe, and a missed wake would leave work owed.
+    func facts(in store: CatalogStore, owner: String) async -> CatalogChangedFacts {
+        do {
+            let read = try await store.factsRead(by: statements)
+            let inputs = read.subtracting(ownWrites).union(beyondSQL)
+            OtosLog.catalog.noticeOperation("owner.inputs", phase: "derived", fields: [
+                "owner": owner, "inputs": inputs.diagnosticDescription,
+            ])
+            return inputs
+        } catch {
+            OtosLog.catalog.errorOperation("owner.inputs", phase: "failed", fields: [
+                "owner": owner, "error": String(describing: error),
+            ])
+            return .all
+        }
+    }
 }
 
 /// What a catalog write touched, by the kind of fact (ADR 0005). The Store names it where
@@ -85,21 +129,139 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     /// it compares within, the copies kept together, and the render signatures versions of
     /// one photo are found by.
     static let duplicateFacts = CatalogChangedFacts(rawValue: 1 << 14)
+    /// What search read of a row: its embedding, scene labels and text reading (ADR 0048).
+    /// What a description waits for and is told (ADR 0053); the search index writes it.
+    static let searchContent = CatalogChangedFacts(rawValue: 1 << 15)
 
     static let all: CatalogChangedFacts = [
         .membership, .captureDate, .kindAndFormat, .grouping, .location, .placeNames, .faces, .copies,
-        .searchReadings, .detail, .choices, .images, .mediaRecord, .stacks, .duplicateFacts,
+        .searchReadings, .detail, .choices, .images, .mediaRecord, .stacks, .duplicateFacts, .searchContent,
     ]
 
     /// How many kinds there are: the bits `all` sets.
-    static let bitCount = 15
+    static let bitCount = 16
 
     static let names: [(CatalogChangedFacts, String)] = [
         (.membership, "membership"), (.captureDate, "captureDate"), (.kindAndFormat, "kindAndFormat"),
         (.grouping, "grouping"), (.location, "location"), (.placeNames, "placeNames"), (.faces, "faces"),
         (.copies, "copies"), (.searchReadings, "searchReadings"), (.detail, "detail"), (.choices, "choices"),
         (.images, "images"), (.mediaRecord, "mediaRecord"), (.stacks, "stacks"), (.duplicateFacts, "duplicateFacts"),
+        (.searchContent, "searchContent"),
     ]
+
+    /// What each kind's writes change, as the database events they make (plan 0116 stage 2).
+    /// A background owner's inputs are derived from it: the kinds whose events could change
+    /// what its candidate statements read (`read(by:)`, over GRDB's `Statement.databaseRegion`),
+    /// so no owner keeps a hand-written list of the facts its SQL reads, and an owner whose SQL
+    /// changes wakes on what it reads now. A write names its kinds where it writes (ADR 0005);
+    /// this is the one table of which columns each kind stands for.
+    /// `CatalogOwnerInputsTests` proves every column an owner's statements read is named here or
+    /// is the owner's own.
+    static let writes: [(facts: CatalogChangedFacts, events: [DatabaseEventKind])] = [
+        (.membership, [
+            .insert(tableName: "media_asset"), .delete(tableName: "media_asset"),
+            .update(tableName: "media_asset", columnNames: [
+                "library_root_id", "relative_path", "relative_path_key", "sort_key", "name_sort_key", "name",
+                "content_type_identifier", "byte_size", "created_at_unix", "content_modified_at_unix",
+                "file_identifier", "pending_trash_batch_unix_ms", "trash_path", "awaiting_presence",
+                "hidden_by_source", "source_item_id", "import_batch_unix_ms", "import_source_root_path",
+                "import_source_relative_path", "import_source_byte_size", "import_source_modified_at_epoch",
+                "import_destination_byte_size", "import_destination_modified_at_epoch",
+            ]),
+            .insert(tableName: "library_root"), .delete(tableName: "library_root"),
+            .update(tableName: "library_root", columnNames: [
+                "id", "path", "kind", "device_identity", "display_name", "last_seen_at", "sort_index",
+                "case_sensitive_names", "device_model", "remote_base_url", "last_synced_at", "resync_owed",
+            ]),
+            .insert(tableName: "media_companion"), .delete(tableName: "media_companion"),
+            .update(tableName: "media_companion", columnNames: [
+                "library_root_id", "relative_path", "primary_relative_path", "kind", "byte_size",
+                "content_modified_at", "relative_path_key",
+            ]),
+        ]),
+        (.captureDate, [.update(tableName: "media_asset", columnNames: [
+            "capture_wall_compact", "capture_wall_precision", "capture_instant_unix", "assumed_utc_offset_seconds",
+            "best_capture_local", "capture_day", "capture_month",
+        ])]),
+        (.kindAndFormat, [.update(tableName: "media_asset", columnNames: [
+            "kind", "format", "enriched_kind", "enriched_format", "best_kind", "best_format",
+        ])]),
+        (.grouping, [.update(tableName: "media_asset", columnNames: ["content_identifier", "burst_identifier", "parent_path"])]),
+        (.location, [.update(tableName: "asset_metadata", columnNames: [
+            "primary_latitude", "primary_longitude", "primary_altitude_meters", "place_cell_latitude", "place_cell_longitude",
+        ])]),
+        (.placeNames, [
+            .insert(tableName: "place_cell"), .delete(tableName: "place_cell"),
+            .update(tableName: "place_cell", columnNames: ["cell_latitude", "cell_longitude", "country", "town", "language"]),
+        ]),
+        (.faces, [
+            .update(tableName: "media_asset", columnNames: [
+                "faces_source_size", "faces_source_mtime", "faces_read_source_size", "faces_read_source_mtime",
+            ]),
+            .insert(tableName: "face"), .delete(tableName: "face"),
+            .update(tableName: "face", columnNames: [
+                "library_root_id", "relative_path", "face_index", "box_x", "box_y", "box_width", "box_height", "landmarks",
+                "quality", "analysis_revision", "embedding", "person_id", "is_not_face", "assignment", "likeness",
+                "is_key_photo", "frame_index",
+            ]),
+            .insert(tableName: "face_rejection"), .delete(tableName: "face_rejection"),
+            .update(tableName: "face_rejection", columnNames: ["library_root_id", "relative_path", "face_index", "person_id"]),
+            .insert(tableName: "person"), .delete(tableName: "person"),
+            .update(tableName: "person", columnNames: ["id", "name", "birthday", "is_hidden", "is_favorite"]),
+        ]),
+        (.copies, [
+            .update(tableName: "media_asset", columnNames: [
+                "content_sha1", "content_hash_source_size", "content_hash_source_mtime", "shown_copy_root_id",
+                "source_path_sha1", "has_copies",
+            ]),
+            .insert(tableName: "immich_mirror"), .delete(tableName: "immich_mirror"),
+            .update(tableName: "immich_mirror", columnNames: ["account_root_id", "library_root_id", "server_prefix"]),
+        ]),
+        (.searchReadings, [.update(tableName: "search_embedding", columnNames: ["confident_labels"])]),
+        (.detail, [.update(tableName: "media_asset", columnNames: [
+            "metadata_source_size", "metadata_source_mtime", "enrichment_claimed", "undecodable_by", "duration_seconds",
+        ])]),
+        (.choices, [
+            .update(tableName: "media_asset", columnNames: [
+                "media_choice", "media_choice_sequence", "stack_key_chosen_at_unix_ms", "burst_key_chosen_at_unix_ms",
+            ]),
+            .update(tableName: "choice_sequence", columnNames: ["value", "joins"]),
+        ]),
+        (.images, [.update(tableName: "media_asset", columnNames: [
+            "thumbnail_path", "preview_path", "face_frames_path", "edit_recipe_json", "edit_revision", "rendered_revision",
+            "rendered_source_size", "rendered_source_mtime", "source_products_size", "source_products_mtime",
+            "source_products_absent",
+        ])]),
+        (.mediaRecord, [
+            .insert(tableName: "asset_metadata"), .delete(tableName: "asset_metadata"),
+            .update(tableName: "asset_metadata", columnNames: [
+                "library_root_id", "relative_path", "family", "file_extension", "brand", "camera_make", "camera_model",
+                "lens_model", "serial_number", "orientation", "pixel_width", "pixel_height", "duration_seconds", "frame_rate",
+                "video_codec", "metadata_extra_json", "extraction_revision",
+            ]),
+        ]),
+        (.duplicateFacts, [
+            .update(tableName: "media_asset", columnNames: ["render_dhash", "render_gray", "render_signature_source"]),
+            .insert(tableName: "duplicate_kept_pair"), .delete(tableName: "duplicate_kept_pair"),
+        ]),
+        (.searchContent, [
+            .insert(tableName: "search_embedding"), .delete(tableName: "search_embedding"),
+            .update(tableName: "search_embedding", columnNames: [
+                "library_root_id", "relative_path", "source", "embedding", "labels", "confident_labels",
+            ]),
+            .insert(tableName: "search_text"), .delete(tableName: "search_text"),
+            .update(tableName: "search_text", columnNames: ["library_root_id", "relative_path", "source", "lines"]),
+        ]),
+    ]
+
+    /// The kinds whose writes could change what `region` reads.
+    static func read(by region: DatabaseRegion) -> CatalogChangedFacts {
+        writes.reduce(into: []) { facts, kind in
+            if kind.events.contains(where: region.isModified(byEventsOfKind:)) {
+                facts.formUnion(kind.facts)
+            }
+        }
+    }
 
     /// What a write of digests touched: which files are copies, and — when a copy that joined
     /// a photo took the photo's choice in the same write (ADR 0054, `CatalogSchema.choiceJoins`)
@@ -8819,14 +8981,26 @@ extension CatalogStore {
         }
     }
 
+    /// The kinds of fact whose writes could change what `statements` read: each statement is
+    /// prepared, never run, and its region (`Statement.databaseRegion`) is matched against
+    /// what each kind's writes change (`CatalogChangedFacts.writes`).
+    func factsRead(by statements: [String]) async throws -> CatalogChangedFacts {
+        try await database().readFreeingConnection { db in
+            try statements.reduce(into: CatalogChangedFacts()) { facts, sql in
+                try facts.formUnion(CatalogChangedFacts.read(by: db.makeStatement(sql: sql).databaseRegion))
+            }
+        }
+    }
+
     private func availableRootRowIDs() -> [Int64] {
         roots.values.filter { $0.availability == .available }.map(\.rowID).sorted()
     }
 
     /// Writes search embeddings for assets whose thumbnail is still the one they were read
-    /// from, and returns the ones written. `PhotoSearchIndex` keeps what it wrote, so a write
-    /// notifies only when it puts a photo into or out of On This Day (`OnThisDayPicks`: a
-    /// confident screenshot or document label), a catalog change that scope is read again for.
+    /// from, and returns the ones written. A write is a change of `.searchContent`, which a
+    /// description waits for (ADR 0053), and of `.searchReadings` too when it puts a photo into
+    /// or out of On This Day (`OnThisDayPicks`: a confident screenshot or document label), a
+    /// change that scope is read again for.
     func applySearchEmbeddings(_ results: [SearchEmbeddingResult]) async throws -> [SearchEmbeddingResult] {
         let rowIDs = roots.rowIDSnapshot()
         let leftOut = """
@@ -8870,8 +9044,8 @@ extension CatalogStore {
             }
             return (written, changesOnThisDay)
         }
-        if changesOnThisDay {
-            notifyCatalogChanged(.changed(.searchReadings))
+        if !applied.isEmpty {
+            notifyCatalogChanged(.changed(changesOnThisDay ? [.searchContent, .searchReadings] : .searchContent))
         }
         return applied
     }
@@ -9022,10 +9196,11 @@ extension CatalogStore {
         }
     }
 
-    /// Writes text readings for stills whose preview is still the one read; returns those written.
+    /// Writes text readings for stills whose preview is still the one read; returns those
+    /// written. A write is a change of `.searchContent`, which a description waits for.
     func applySearchTexts(_ results: [SearchTextResult]) async throws -> [SearchTextResult] {
         let rowIDs = roots.rowIDSnapshot()
-        return try await database().write { db -> [SearchTextResult] in
+        let applied = try await database().write { db -> [SearchTextResult] in
             var written: [SearchTextResult] = []
             for result in results {
                 guard let rootID = rowIDs[result.id.libraryRootPath] else { continue }
@@ -9051,6 +9226,10 @@ extension CatalogStore {
             }
             return written
         }
+        if !applied.isEmpty {
+            notifyCatalogChanged(.changed(.searchContent))
+        }
+        return applied
     }
 
     /// Stills owed a description (ADR 0053), newest capture first, each with the facts the

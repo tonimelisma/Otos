@@ -92,7 +92,7 @@ Each bet names the scorecard number it moves. "Building" means a PR is in progre
 | 4 | **The window's own reads.** `filterOptions` 106 s in 11 runs, `orderedAssetIDs` 64 s in 14, the stack-candidate read, sort, search and clear. Build the installed app with `-O`, though it stays a Debug build. | click to paint; search, sort and filter | building |
 | 5 | **Window isolation.** One pool of 8 readers. Background reads are admitted at most 4 at a time. The caller's handle (`WindowReads` or `BackgroundReads`) picks the lane, and a lint keeps it so. Passive checkpoints with `journal_size_limit` replace the truncating barrier. | stall lines; window waits | building |
 | 6 | **Staged launch.** Background owners start after the first grid paints; heavy loads run one at a time. | launch; footprint | not started |
-| 7 | **Wake on inputs.** Each owner wakes only on the facts its own SQL reads. | stall lines; CPU; disk reads | written (stage 2) |
+| 7 | **Wake on inputs.** Each owner wakes only on the facts its own SQL reads. | stall lines; CPU; disk reads | done (#807) |
 | 8 | **Split tables in the file, and one `VACUUM`.** `render_gray` and face embeddings move to their own tables. | disk reads; catalog size | not started; one-way, needs the owner's go |
 | 9 | **Disk.** Remove orphaned thumbnails; stop the test temp-folder leak; decide whether remote-library previews exist at full size (owner question). | disk growth | not started |
 | 10 | **The description and text-reading backlog.** About 43 h of text readings and 66 h of descriptions. Whether it runs while the window is in use is an owner question. | footprint; CPU while in use | not started |
@@ -113,6 +113,7 @@ experiment's tables are not yet in a research note; the bet's PR adds them.
 | #803 | `script/survey.sh` and the static survey |
 | #804 | The scorecard, resource checkpoints and the read-only tour |
 | #805 | Stage 1b: v65, an index for every "what is owed" read |
+| #807 | Stage 2: each owner wakes only on what its own SQL reads |
 
 ## 5. Rejected
 

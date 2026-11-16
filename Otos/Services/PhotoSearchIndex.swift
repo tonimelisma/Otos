@@ -44,8 +44,8 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 /// The one owner of keyword search over the catalog: it makes the search embeddings, keeps
 /// them in memory and answers queries.
 ///
-/// - **Embedding** is one loop, woken by a doorbell (ADR 0032 rule 3) that the Store's change
-///   notifications ring. Each wake reconciles memory with the catalog — embeddings whose asset
+/// - **Embedding** is one loop, woken by a doorbell (ADR 0032 rule 3) that a Store change of a
+///   kind a pass reads rings (`inputs`; its own writes do not). Each wake reconciles memory with the catalog — embeddings whose asset
 ///   moved, left or got a new thumbnail drop out, ones it does not hold are read in — then
 ///   embeds every asset whose stored thumbnail has no current embedding, a page at a time,
 ///   newest capture first (`SearchEmbeddingStorage`). The thumbnails are decoded and read by
@@ -108,8 +108,9 @@ actor PhotoSearchIndex {
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
     private var ring: AsyncStream<Void>.Continuation?
-    /// Passes asked for and the one the last finished pass answered (ADR 0032 rule 2).
-    private var requested: UInt64 = 0
+    /// Passes asked for and the one the last finished pass answered (ADR 0032 rule 2); a test
+    /// waits on `requested` to know a change asked for a pass.
+    private(set) var requested: UInt64 = 0
     private var covered: UInt64 = 0
     private var retry: Task<Void, Never>?
     private let backoff: (first: Duration, last: Duration)
@@ -152,12 +153,11 @@ actor PhotoSearchIndex {
         self.ring = ring
         ring.yield()
         requested &+= 1
+        let inputs = await Self.inputs.facts(in: store, owner: "search.index")
         forwarder = Task { [weak self] in
-            // Rows that were only added have no thumbnail to embed and no embedding to
-            // hold; the index hears them when enrichment renders them.
-            for await change in changes where change != .assetsAdded {
+            for await change in changes {
                 guard let self else { break }
-                await request()
+                await heard(change, inputs: inputs)
             }
             ring.finish()
         }
@@ -166,6 +166,32 @@ actor PhotoSearchIndex {
                 guard let self else { return }
                 await refreshIfRequested()
             }
+        }
+    }
+
+    /// What a pass reads (`CatalogOwnerInputs`): its embedding and text walks and its
+    /// reconciles, less what it writes itself (search content, and the labels On This Day
+    /// reads), and which roots are reachable. A change of none of these asks for no pass.
+    static let inputs = CatalogOwnerInputs(
+        statements: [
+            SearchEmbeddingStorage.candidatesSQL(rootCount: 1, position: "a.best_capture_local IS NOT NULL", order: ""),
+            SearchTextStorage.candidatesSQL(rootCount: 1, position: "a.best_capture_local IS NOT NULL", order: ""),
+            SearchEmbeddingStorage.currentEmbeddingIDsSQL(rootCount: 1),
+            SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: 1),
+            SearchTextStorage.currentReadingsSQL(rootCount: 1, lines: true),
+        ],
+        ownWrites: [.searchContent, .searchReadings],
+        beyondSQL: .membership
+    )
+
+    /// Store changes heard: what a test waits on before it counts `requested`.
+    private(set) var changesHeard = 0
+
+    /// Asks for a pass when `change` is of a kind a pass reads.
+    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) {
+        changesHeard += 1
+        if change.touches(inputs) {
+            request()
         }
     }
 

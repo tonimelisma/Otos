@@ -17,8 +17,9 @@ import MapKit
 /// that left a cell unnamed is followed by another, so the cell is asked again. Nothing it
 /// already stored is touched by a failure.
 ///
-/// One loop, woken by a doorbell (ADR 0032 rule 3) that the Store's change notifications
-/// ring; each wake drains every unnamed cell in pages, in cell order. The forwarder and the
+/// One loop, woken by a doorbell (ADR 0032 rule 3) that a Store change of a kind its read
+/// reads (`inputs`; its own name writes do not) and a change of the user's locale ring; each
+/// wake drains every unnamed cell in pages, in cell order. The forwarder and the
 /// loop hold this actor weakly and end with it.
 actor PlaceNameReader {
     /// How a cell is named. `mapKit` asks Apple Maps; tests substitute their own so none
@@ -50,12 +51,30 @@ actor PlaceNameReader {
         }
     }
 
+    /// The system's locale changes, one element each; the stream ends with its consumer.
+    static let systemLocaleChanges: @Sendable () -> AsyncStream<Void> = {
+        AsyncStream { continuation in
+            let relay = Task {
+                for await _ in NotificationCenter.default.notifications(named: NSLocale.currentLocaleDidChangeNotification) {
+                    continuation.yield()
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in
+                relay.cancel()
+            }
+        }
+    }
+
     static let firstBackoff: Duration = .seconds(2)
     static let maximumBackoff: Duration = .seconds(300)
 
     private let store: CatalogStore
     private let namer: Namer
     private let locale: @Sendable () -> Locale
+    /// Yields when the user's locale changes (`NSLocale.currentLocaleDidChangeNotification`);
+    /// a test delivers its own.
+    private let localeChanges: @Sendable () -> AsyncStream<Void>
     private let sleep: @Sendable (Duration) async throws -> Void
     private let pageSize: Int
     /// The language whose names alone the catalog holds, once a drain has forgotten the
@@ -68,6 +87,7 @@ actor PlaceNameReader {
         store: CatalogStore,
         namer: Namer = .mapKit,
         locale: @escaping @Sendable () -> Locale = { .current },
+        localeChanges: @escaping @Sendable () -> AsyncStream<Void> = PlaceNameReader.systemLocaleChanges,
         // time: backoff — the wait after a naming failed
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         pageSize: Int = 32
@@ -75,21 +95,59 @@ actor PlaceNameReader {
         self.store = store
         self.namer = namer
         self.locale = locale
+        self.localeChanges = localeChanges
         self.sleep = sleep
         self.pageSize = pageSize
+    }
+
+    /// What a drain reads (`CatalogOwnerInputs`): the located records' cells, less its own
+    /// writes (place names). Not root-scoped: every located item counts wherever it is.
+    static let inputs = CatalogOwnerInputs(
+        statements: [CatalogQueryGateway.unnamedPlaceCellsSQL(after: true)], ownWrites: .placeNames, beyondSQL: []
+    )
+
+    /// Store changes heard, and the changes that rang the doorbell, the locale's included:
+    /// what a test waits on.
+    private(set) var changesHeard = 0
+    private(set) var wakes = 0
+
+    private func woke() {
+        wakes += 1
+    }
+
+    /// Whether `change` rings: a change of a kind a drain reads.
+    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) -> Bool {
+        changesHeard += 1
+        guard change.touches(inputs) else { return false }
+        wakes += 1
+        return true
     }
 
     func start() async {
         guard loop == nil else { return }
         let (doorbell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let changes = await store.changeNotifications()
+        let inputs = await Self.inputs.facts(in: store, owner: "place.names")
+        let languages = localeChanges()
         ring.yield()
         forwarder = Task { [weak self] in
-            for await change in changes {
-                guard self != nil else { break }
-                if case .changed = change {
-                    ring.yield()
+            await withDiscardingTaskGroup { group in
+                // The language a drain names cells in is the locale's, read at its start: a
+                // change of locale is an input the catalog does not hold.
+                group.addTask { [weak self] in
+                    for await _ in languages {
+                        guard let self else { break }
+                        await woke()
+                        ring.yield()
+                    }
                 }
+                for await change in changes {
+                    guard let self else { break }
+                    if await self.heard(change, inputs: inputs) {
+                        ring.yield()
+                    }
+                }
+                group.cancelAll()
             }
             ring.finish()
         }

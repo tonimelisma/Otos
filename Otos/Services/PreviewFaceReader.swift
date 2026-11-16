@@ -25,8 +25,8 @@ import ImageIO
 /// (`PreviewFaceRetries`). When the model cannot be loaded no still can be read, so the drain
 /// stops and reading resumes after the same pacing, not at the next catalog change.
 ///
-/// One loop, woken by a doorbell (ADR 0032 rule 3) that the Store's change notifications and
-/// the retry wake ring; each wake drains every stale row in pages. The previews are decoded
+/// One loop, woken by a doorbell (ADR 0032 rule 3) that a Store change of a kind its walk reads
+/// (`inputs`; its own face writes do not) and the retry wake ring; each wake drains every stale row in pages. The previews are decoded
 /// and analysed off this actor, by `FaceAnalyzer` on its own queue. The forwarder and the loop
 /// hold this actor weakly and end with it; the wake holds only the doorbell.
 actor PreviewFaceReader {
@@ -71,10 +71,11 @@ actor PreviewFaceReader {
         doorbell = ring
         forwarder = Task { [weak self, store] in
             let changes = await store.changeNotifications()
+            let inputs = await Self.inputs.facts(in: store, owner: "face.preview")
             ring.yield()
             for await change in changes {
-                guard self != nil else { break }
-                if case .changed = change {
+                guard let self else { break }
+                if await heard(change, inputs: inputs) {
                     ring.yield()
                 }
             }
@@ -86,6 +87,24 @@ actor PreviewFaceReader {
                 await drain()
             }
         }
+    }
+
+    /// What a drain reads (`CatalogOwnerInputs`): its candidate walk's columns, less its own
+    /// writes (faces), and which roots are reachable.
+    static let inputs = CatalogOwnerInputs(
+        statements: [PreviewFaceSQL.candidatesSQL(rootCount: 1)], ownWrites: .faces, beyondSQL: .membership
+    )
+
+    /// Store changes heard, and those that rang the doorbell: what a test waits on.
+    private(set) var changesHeard = 0
+    private(set) var wakes = 0
+
+    /// Whether `change` rings: a change of a kind a drain reads.
+    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) -> Bool {
+        changesHeard += 1
+        guard change.touches(inputs) else { return false }
+        wakes += 1
+        return true
     }
 
     /// Ends the loop now — a test's teardown; in the app, the loops end with the actor.

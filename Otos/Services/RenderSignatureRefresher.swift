@@ -13,8 +13,9 @@ import OSLog
 /// enrichment renders a new thumbnail — a changed file, an edit — the source no longer
 /// matches and the row is offered again; no write site needs to know signatures exist.
 ///
-/// One loop, woken by a doorbell (ADR 0032 rule 3): the Store's change notifications ring it,
-/// and each wake drains every stale row in pages. The page is read as values, the
+/// One loop, woken by a doorbell (ADR 0032 rule 3): a Store change of a kind its walk reads
+/// rings it (`inputs`; its own signature writes do not), and each wake drains every stale row
+/// in pages. The page is read as values, the
 /// thumbnails are decoded off this actor (`@concurrent`), and the results are written only
 /// where the row's thumbnail is still the one decoded. A thumbnail that does not decode is
 /// recorded as such, so it is not offered again until it changes. The forwarder and the loop
@@ -32,15 +33,26 @@ actor RenderSignatureRefresher {
         self.pageSize = pageSize
     }
 
+    /// What a pass reads (`CatalogOwnerInputs`): its candidate walk's columns, less its own
+    /// writes (a signature is a duplicates fact), and which roots are reachable.
+    static let inputs = CatalogOwnerInputs(
+        statements: [RenderSignatureSQL.candidatesSQL], ownWrites: .duplicateFacts, beyondSQL: .membership
+    )
+
+    /// Store changes heard, and those that rang the doorbell: what a test waits on.
+    private(set) var changesHeard = 0
+    private(set) var wakes = 0
+
     func start() async {
         guard loop == nil else { return }
         let (doorbell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let changes = await store.changeNotifications()
+        let inputs = await Self.inputs.facts(in: store, owner: "renderSignature")
         ring.yield()
         forwarder = Task { [weak self] in
             for await change in changes {
-                guard self != nil else { break }
-                if case .changed = change {
+                guard let self else { break }
+                if await heard(change, inputs: inputs) {
                     ring.yield()
                 }
             }
@@ -52,6 +64,14 @@ actor RenderSignatureRefresher {
                 await drain()
             }
         }
+    }
+
+    /// Whether `change` rings: a change of a kind a pass reads.
+    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) -> Bool {
+        changesHeard += 1
+        guard change.touches(inputs) else { return false }
+        wakes += 1
+        return true
     }
 
     /// Ends the loop now — a test's teardown; in the app, the loops end with the actor.

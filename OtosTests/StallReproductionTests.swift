@@ -171,6 +171,9 @@ enum StallReproduction {
         var changes: [String: Int] = [:]
         var mirrorProbe: Duration?
         var searchPasses = 0
+        /// Each owner's changes heard and passes asked for (the search index's and the
+        /// description writer's count their first).
+        var wakes: [String: (heard: Int, wakes: Int)] = [:]
         var liveDuration: Duration = .zero
     }
 
@@ -343,7 +346,7 @@ enum StallReproduction {
             textReader: SearchTextReader { RecognizingSession { _ in [] } }
         )
         let descriptions = PhotoDescriptionWriter(
-            store: store, searchIndex: searchIndex, thumbnailDirectory: thumbnails
+            store: store, thumbnailDirectory: thumbnails
         ) { _, _ in throw CocoaError(.featureUnsupported) }
         let metadata = MetadataRefresher(store: store) { _ in .unreachable }
         // Duplicates and People run under the projection, which also reads All Media's order.
@@ -380,6 +383,14 @@ enum StallReproduction {
         let shutdownStart = ContinuousClock.now
         report.mirrorProbe = try await mirrorTask.value
         report.searchPasses = await searchIndex.passesFinished
+        // Of the changes each owner heard, how many asked it for a pass.
+        report.wakes = await [
+            "renderSignatures": (renderSignatures.changesHeard, renderSignatures.wakes),
+            "previewFaces": (previewFaces.changesHeard, previewFaces.wakes),
+            "placeNames": (placeNames.changesHeard, placeNames.wakes),
+            "searchIndex": (searchIndex.changesHeard, Int(searchIndex.requested)),
+            "descriptions": (descriptions.changesHeard, Int(descriptions.requested)),
+        ]
 
         await enrichment.shutdown()
         await materializer.shutdown()
@@ -480,6 +491,9 @@ extension StallReproduction.Report {
         }
         for (change, count) in changes.sorted(by: { $0.key < $1.key }) {
             lines.append("op=stallReproduction.change change=\(change) count=\(count)")
+        }
+        for (owner, counted) in wakes.sorted(by: { $0.key < $1.key }) {
+            lines.append("op=stallReproduction.wakes owner=\(owner) heard=\(counted.heard) wakes=\(counted.wakes)")
         }
         return lines.joined(separator: "\n")
     }

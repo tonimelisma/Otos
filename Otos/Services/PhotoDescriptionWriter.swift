@@ -20,9 +20,10 @@ import ImageIO
 /// drain until `retryPacing` or `busyPacing` passes, since nothing reports when it would
 /// answer.
 ///
-/// One loop, woken by a doorbell (ADR 0032 rule 3) that three sources ring: the Store's change
-/// notifications of a fact a description is written from (`inputs`), search's index each time
-/// it reads text (which the Store does not announce), and the retry wake. Each ring is a request
+/// One loop, woken by a doorbell (ADR 0032 rule 3) that two sources ring: a Store change of a
+/// kind its walk reads (`inputs`: a still's faces and people, place names, capture time,
+/// preview, and the search embedding and text reading it waits for, which search's writes
+/// announce as `.searchContent`), and the retry wake. Each ring is a request
 /// (ADR 0032 rule 2), and a request is answered by one walk over the owed stills, newest first,
 /// a page at a time (`CandidateWalk`): a walk visits each still once, and a request made while
 /// it runs restarts it from the newest still at its next page, so an import's photos are not
@@ -32,7 +33,6 @@ import ImageIO
 /// descriptions are written, which the Info pane and On This Day's titles read again on.
 actor PhotoDescriptionWriter {
     private let store: CatalogStore
-    private let searchIndex: PhotoSearchIndex?
     private let thumbnailDirectory: URL?
     private let describe: PhotoDescribing
     private let pageSize: Int
@@ -57,14 +57,20 @@ actor PhotoDescriptionWriter {
     static let retryPacing: Duration = .seconds(900)
     static let busyPacing: Duration = .seconds(60)
 
-    /// The kinds of catalog change that can alter what a still is told, or whether it is
-    /// describable: its faces and people, its place names, its capture time, its preview, and
-    /// its scene labels. A row only added carries none of them yet.
-    static let inputs: CatalogChangedFacts = [.faces, .placeNames, .captureDate, .images, .searchReadings]
+    /// What a walk reads (`CatalogOwnerInputs`): every fact a still's description names or
+    /// waits for, from the walk's own SQL and the facts it reads per still, and which roots are
+    /// reachable. Its own writes name no kind: a description is read by no other owner's SQL.
+    static let inputs = CatalogOwnerInputs(
+        statements: [
+            PhotoDescriptionStorage.candidatesSQL(rootCount: 1, position: "a.best_capture_local IS NOT NULL", order: ""),
+            PhotoDescriptionStorage.facesSQL, PhotoDescriptionStorage.readingsSQL,
+        ],
+        ownWrites: [],
+        beyondSQL: .membership
+    )
 
     init(
         store: CatalogStore,
-        searchIndex: PhotoSearchIndex? = nil,
         thumbnailDirectory: URL?,
         describe: @escaping PhotoDescribing,
         pageSize: Int = 16,
@@ -72,7 +78,6 @@ actor PhotoDescriptionWriter {
         busyPacing: Duration = PhotoDescriptionWriter.busyPacing
     ) {
         self.store = store
-        self.searchIndex = searchIndex
         self.thumbnailDirectory = thumbnailDirectory
         self.describe = describe
         self.pageSize = pageSize
@@ -87,26 +92,13 @@ actor PhotoDescriptionWriter {
         guard loop == nil else { return }
         let (bell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         doorbell = ring
-        forwarder = Task { [weak self, store, searchIndex] in
+        forwarder = Task { [weak self, store] in
             let changes = await store.changeNotifications()
-            let texts = await searchIndex?.changes()
+            let inputs = await Self.inputs.facts(in: store, owner: "description")
             await self?.request()
-            await withDiscardingTaskGroup { group in
-                if let texts {
-                    group.addTask { [weak self] in
-                        for await _ in texts {
-                            guard let self else { break }
-                            await request()
-                        }
-                    }
-                }
-                for await change in changes {
-                    guard let self else { break }
-                    if !change.facts.isDisjoint(with: Self.inputs) {
-                        await self.request()
-                    }
-                }
-                group.cancelAll()
+            for await change in changes {
+                guard let self else { break }
+                await heard(change, inputs: inputs)
             }
             ring.finish()
         }
@@ -115,6 +107,17 @@ actor PhotoDescriptionWriter {
                 guard let self else { return }
                 await drainIfRequested()
             }
+        }
+    }
+
+    /// Store changes heard: what a test waits on before it counts `requested`.
+    private(set) var changesHeard = 0
+
+    /// Asks for a walk when `change` is of a kind a walk reads.
+    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) {
+        changesHeard += 1
+        if change.touches(inputs) {
+            request()
         }
     }
 

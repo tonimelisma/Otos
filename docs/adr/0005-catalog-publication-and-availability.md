@@ -119,6 +119,16 @@ on rows shown, capture dates, locations and faces (`searchFactInputs`). The filt
 the other. Every change still advances `detailRefreshGeneration`, so a pass that reused
 every read publishes the refresh the grid's visible tiles read their details by.
 
+The owners of derived products — render signatures, preview faces, place names, the search
+index and descriptions — hear the same kinds, and each wakes only on a kind its own candidate
+SQL reads. Its inputs are derived, not listed: each prepared statement's GRDB region is
+matched against `CatalogChangedFacts.writes`, the one table of which columns each kind's
+writes change (`CatalogOwnerInputs`), less the kinds the owner's own writes name, with the
+facts its SQL binds rather than reads (which roots are reachable) and, for place names, the
+user's locale. A search write names `.searchContent`, the embedding or text reading a
+description waits for. `CatalogOwnerInputsTests` proves every column an owner reads is named
+by a kind, so a write the table does not name cannot leave an owner unwoken.
+
 Before this, the only distinction was detail-only versus structural, and every enrichment
 write that moved a stored date by any amount, every face assignment, every place name and
 every digest was structural: on the owner's 166,555-asset catalog, while faces and Immich

@@ -919,7 +919,6 @@ final class CatalogWindowViewModel {
         photoDescriptionWriter = startsEnrichment && enrichmentCoordinator == nil
             ? PhotoDescriptionWriter(
                 store: catalogStore,
-                searchIndex: photoSearchIndex,
                 thumbnailDirectory: catalogStore.thumbnailDirectory,
                 describe: PhotoDescriber.live
             )

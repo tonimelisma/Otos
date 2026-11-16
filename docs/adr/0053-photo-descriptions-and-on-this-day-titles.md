@@ -86,14 +86,15 @@ shown as `No Description`, not asked again until they change. A failed request w
 
 ### Who writes them
 
-`PhotoDescriptionWriter`, one actor, one loop (ADR 0032 rule 3) woken by the Store's change
-notifications of a fact a description is written from (faces, place names, capture time,
-images, search readings; a row only added is not one), by search's index as it reads text
-(the Store announces no text reading), and by its retry wake; newest capture first, one request
-at a time, sixteen to a page. Finding the owed stills reads every still's row: on the owner's
-catalog (57,040 describable stills of 144,189) the query took 6.9 s of wall time and 1.3 s of
-CPU, the same as the text reader's own owed query (6.3 s), so it follows that reader's shape;
-a page of sixteen is about 40 s of the model's time, so the read is a few percent of it. A failed preview or request is
+`PhotoDescriptionWriter`, one actor, one loop (ADR 0032 rule 3) woken by a Store change of a
+kind its walk reads — faces and people, place names and locations, capture time, images, and
+the search embedding and text reading a still waits for (`.searchContent`, which the Store
+announces with every search write); a row only added is not one — derived from its own SQL
+(`CatalogOwnerInputs`), and by its retry wake; newest capture first, one request at a time,
+sixteen to a page. Each wake is a request answered by one newest-first walk (`CandidateWalk`)
+that a newer request restarts from the top, read from indexes (v65): a page of sixteen read
+4.9k pages on the owner-shaped catalog, against 17 s for the whole-set query it replaced on
+the owner's. A failed preview or request is
 passed over for 15 minutes; an unavailable model (Apple Intelligence off, not eligible, not
 ready) stops the drain for 15 minutes and a busy one (rate-limited in the background) for a
 minute (`time: backoff`: nothing reports when it would answer). The model call is injected
