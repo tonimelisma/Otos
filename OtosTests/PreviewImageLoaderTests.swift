@@ -38,6 +38,37 @@ struct PreviewImageLoaderTests {
         #expect(request.priority == .interactive)
     }
 
+    /// A read-only tour's panes never download: a cloud-only original asked for at full
+    /// resolution is refused without a request reaching the coordinator, and the loader
+    /// answers `.unavailable`, so the loupe keeps the stored preview it shows.
+    @Test func aReadOnlyTourAsksNoDownloadOfACloudOnlyOriginal() async throws {
+        let directory = try makeTestDirectory()
+        try writeTinyJPEG(to: directory.appending(path: "cloud.jpg"))
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: directory.path(percentEncoded: false)),
+            relativePath: MediaRelativePath(rawValue: "cloud.jpg")
+        )
+        let status: @Sendable (URL) -> FileMaterializationStatus = { _ in .dataless }
+        let coordinator = PreviewMaterializationRecorder(status: status) {
+            Issue.record("A read-only tour must never ask for a download")
+            return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 1)
+        }
+        let readOnly = ReadOnlyOriginals(coordinator: coordinator)
+        #expect(await readOnly.locality(of: id) == .fetchable)
+        #expect(await readOnly.ensureLocal(.init(id: id, sourceSize: nil, isVideo: false, priority: .interactive))
+            == .notMaterialized(.refusedReadOnly))
+
+        let loader = PreviewImageLoader(status: status, materializationRequester: readOnly)
+        let outcome = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: PreviewImageLoader.fullResolution))
+        guard case .unavailable = outcome else {
+            Issue.record("Expected no image without a download, got \(outcome)")
+            return
+        }
+        #expect(coordinator.lastRequest() == nil)
+        #expect(PaneOriginalDownloads.configured(environment: [SmokeTour.tourVariable: "1"]) == .never)
+        #expect(PaneOriginalDownloads.configured(environment: [:]) == .whenNeeded)
+    }
+
     /// An eject quiesces the card's root: a decode already running finishes, a new one
     /// there is refused without reading the file, other roots are untouched, and resume
     /// lets decodes start again.

@@ -275,6 +275,7 @@ extension CatalogWindowViewModel {
         // list showed: read before the hide, since the groups leave the window with their
         // copies (ADR 0042).
         let receiptSizes = showsDuplicatesList ? duplicateSizes(for: ids) : nil
+        uiStallMonitor.beginActToResult(.moveToTrash, ids: ids)
         // Command: Projection takes the items off before it hears the mark landed.
         projectionIntentContinuation.yield(.hide(ids, batch: batch))
         navigateAfterHiding(Set(ids))

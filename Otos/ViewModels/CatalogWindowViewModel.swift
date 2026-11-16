@@ -487,6 +487,9 @@ final class CatalogWindowViewModel {
     private(set) var lastSidebarPaint: SidebarPaintReport?
     /// The newest moment every visible tile held its thumbnail, the fact a scroll waits on.
     private(set) var lastVisibleThumbnails: VisibleThumbnailsReport?
+    /// The newest act whose result reached the grid (`op=ui.actToResult phase=finish`), the
+    /// fact a sandboxed tour's act step waits on.
+    private(set) var lastActResult: ActResultReport?
     /// Removable-volume and camera monitoring observe hardware attached to the host
     /// machine, so a `true` default would make behavior depend on whatever card or
     /// camera happens to be plugged in. Production starts them; tests that assert on
@@ -739,6 +742,7 @@ final class CatalogWindowViewModel {
         startsEnrichment: Bool = true,
         startsSourceMonitoring: Bool = true,
         backgroundOwners: BackgroundOwners = .all,
+        paneOriginalDownloads: PaneOriginalDownloads = .whenNeeded,
         preferencesDomain: PreferencesDomain,
         previewLoader: (any PreviewLoading)? = nil,
         videoLoader: VideoPreviewLoader? = nil,
@@ -931,18 +935,23 @@ final class CatalogWindowViewModel {
         self.startsEnrichment = startsEnrichment
         self.startsSourceMonitoring = startsSourceMonitoring
         self.backgroundOwners = backgroundOwners
+        // The panes' one way to an original's bytes; a read-only tour's never downloads.
+        let paneOriginals: any MaterializationRequesting = switch paneOriginalDownloads {
+        case .whenNeeded: materializationCoordinator
+        case .never: ReadOnlyOriginals(coordinator: materializationCoordinator)
+        }
         if let previewLoader {
             self.previewLoader = previewLoader
         } else {
             self.previewLoader = PreviewImageLoader(
                 derivedImageDirectory: catalogStore.thumbnailDirectory,
-                materializationRequester: materializationCoordinator
+                materializationRequester: paneOriginals
             )
         }
         if let videoLoader {
             self.videoLoader = videoLoader
         } else {
-            self.videoLoader = VideoPreviewLoader(materializationRequester: materializationCoordinator)
+            self.videoLoader = VideoPreviewLoader(materializationRequester: paneOriginals)
         }
         self.projectionIntentStream = projectionIntentStream
         self.projectionIntentContinuation = projectionIntentContinuation
@@ -992,6 +1001,9 @@ final class CatalogWindowViewModel {
         }
         tileContentStore.onVisibleThumbnailsComplete = { [weak self] report in
             self?.lastVisibleThumbnails = report
+        }
+        stallMonitor.onActResult = { [weak self] report in
+            self?.lastActResult = report
         }
     }
 

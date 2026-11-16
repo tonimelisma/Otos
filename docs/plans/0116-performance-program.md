@@ -13,13 +13,13 @@ target (`docs/scorecard-targets.json`).
 | Target | Scorecard number | Today (tour, 661be172) |
 | --- | --- | --- |
 | Launch to a usable window ≤ 2 s | `launch.firstGridMs` ≤ 2,000 | 4,038 ms |
-| Click to paint ≤ 1 s for every view | `click.smallScopeMs` ≤ 1,000 | 137 to 48,818 ms; 3 of 7 met |
+| Click to paint ≤ 1 s for every view | `click.smallScopeMs` ≤ 1,000; the loupe, Compare and Info `photo.stepMs` ≤ 1,000 | 137 to 48,818 ms; 3 of 7 met; photo steps not measured |
 | First visit to All Media ≤ 2 s | `click.allMedia.firstMs` ≤ 2,000 | not visited first; 14,456 ms before stage 1 |
-| Return to any view ≤ 0.3 s | `click.allMedia.returnMs` ≤ 300 | 545 ms |
-| A search, sort or filter result ≤ 1 s | not yet a scorecard number | 9.3 to 41.8 s |
-| Every act's result visible ≤ 0.1 s (Like, Dislike, Move to Trash) | not yet a scorecard number | not measured |
-| No `op=catalog.store.stall` line in a 10-minute session | `stalls.count` = 0 | 62 in 4 minutes |
-| No main-thread stall over 250 ms in Otos code | not yet a scorecard number (the count includes stalls from 100 ms) | 0 stalls of any length |
+| Return to any view ≤ 0.3 s | `click.returnMs` ≤ 300 | 545 ms |
+| A search, sort or filter result ≤ 1 s | `query.resultMs` ≤ 1,000 | 9.3 to 41.8 s; filter not measured |
+| Every act's result visible ≤ 0.1 s (Like, Dislike, Move to Trash) | `act.resultMs` ≤ 100, from a tour in a sandbox home | not measured |
+| No `op=catalog.store.stall` line in a 10-minute session | `stalls.count` = 0 and `stalls.per10Min` = 0 | 62 in 4 minutes (158 per 10 minutes) |
+| No main-thread stall over 250 ms in Otos code | `mainThreadStalls.worstMs` ≤ 250 | 0 stalls of any length |
 | Peak app footprint ≤ 700 MB | `memory.peakFootprintMB` ≤ 700 | 3,730 MB |
 | `StallReproductionTests` passes with no known-issue marker | the test | still inside `withKnownIssue` |
 | The app's disk growth is measured and explained | the static survey | measured; orphans and remote previews open |

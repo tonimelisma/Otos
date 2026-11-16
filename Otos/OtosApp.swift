@@ -43,7 +43,7 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     /// (ADR 0020, ADR 0027).
     ///
     /// Every background owner starts, except in a debug tour that names some to leave out
-    /// (`BackgroundOwners.configured`).
+    /// (`BackgroundOwners.configured`); a tour's loupe and Compare never download an original.
     let catalogViewModel: CatalogWindowViewModel = {
         let owners = BackgroundOwners.configured()
         return CatalogWindowViewModel(
@@ -52,6 +52,7 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
             ),
             catalogProjection: CatalogProjection(backgroundOwners: owners),
             backgroundOwners: owners,
+            paneOriginalDownloads: .configured(),
             preferencesDomain: .standard,
             volumeCapacity: FreeSpaceFloor.availableBytes(onVolumeOf:),
             trashFiles: .live

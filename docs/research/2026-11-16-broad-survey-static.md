@@ -197,6 +197,11 @@ flag; `--dev --home <sandbox>` for this checkout's dev build in a sandbox home; 
   analysis, file provider, OneDrive, Spotlight, builds and agents.
 - Threads: a `sample` at the peak and after each of the first three stalls the app logs.
 - Files: `du` and file counts of every folder Otos owns, before and after.
+- Trace temporaries: xctrace stages each recording as a multi-GB `instruments*.ktrace` in
+  its temporary folder and leaves it there. The survey hands its recorders and exports a
+  temporary folder of its own and removes it when every recorder has stopped, with any
+  `instruments*.ktrace` staged in the per-user temporary folder since the run began that
+  no process holds open (`op=survey.traceTemp`).
 - Network: `nettop` byte counters for every process.
 
 The output is `build/surveys/<time>-<revision>/`, with `raw/` and one `summary.md` plus

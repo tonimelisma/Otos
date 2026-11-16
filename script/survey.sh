@@ -146,6 +146,12 @@ ERRORS="$RAW/errors.log"
 : > "$ERRORS"
 EVENTS="$RAW/events.tsv"
 printf 'epoch\tkind\tlabel\tdetail\n' > "$EVENTS"
+# xctrace stages each recording as an `instruments*.ktrace` in its temporary folder, several
+# GB a session, and leaves it there. The recorders and the exports get a temporary folder of
+# their own (TMPDIR), which cleanup removes once every recorder has stopped.
+TRACE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/otos-survey-trace.XXXXXX")"
+TRACE_MARK="$TRACE_TMP/.started"
+: > "$TRACE_MARK"
 
 event() { printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" "${3:-}" >> "$EVENTS"; }
 fail_note() { echo "$(date +%s) $*" >> "$ERRORS"; echo "op=survey.capture phase=failed $*" >&2; }
@@ -220,6 +226,25 @@ confirm_gone() {
   echo "op=survey.quit phase=confirmed app=gone reader=gone"
 }
 
+# Deletes this run's trace temporaries: its own TMPDIR folder, and any `instruments*.ktrace`
+# xctrace staged in the per-user temporary folder anyway since the run began that no process
+# still holds open (another session's recorder holds its own). Called only once every
+# recorder this run started has stopped.
+remove_trace_temps() {
+  [[ -n "${TRACE_TMP:-}" && -d "$TRACE_TMP" ]] || return 0
+  local user_tmp file bytes=0 removed=0 folder_kb
+  user_tmp="$(/usr/bin/getconf DARWIN_USER_TEMP_DIR)"
+  while IFS= read -r -d '' file; do
+    /usr/sbin/lsof -t -- "$file" >/dev/null 2>&1 && continue
+    bytes=$(( bytes + $(/usr/bin/stat -f %z "$file") ))
+    removed=$(( removed + 1 ))
+    rm -f -- "$file"
+  done < <(/usr/bin/find "$user_tmp" -maxdepth 1 -name 'instruments*.ktrace' -newer "$TRACE_MARK" -print0 2>/dev/null)
+  folder_kb="$(/usr/bin/du -sk "$TRACE_TMP" | cut -f1)"
+  rm -rf -- "$TRACE_TMP"
+  echo "op=survey.traceTemp phase=removed folderKB=$folder_kb strayKtraces=$removed strayBytes=$bytes"
+}
+
 CLEANED=0
 cleanup() {
   local status=$?
@@ -240,9 +265,11 @@ cleanup() {
   done
   if [[ -n "$leftovers" ]]; then
     echo "op=survey.recorders phase=failed alive=$leftovers" >&2
+    echo "op=survey.traceTemp phase=kept reason=recorderAlive folder=$TRACE_TMP" >&2
     status=1
   else
     echo "op=survey.recorders phase=stopped"
+    remove_trace_temps
   fi
   exit "$status"
 }
@@ -363,11 +390,11 @@ echo "op=survey.session phase=start mode=$MODE pid=$APP_PID out=$OUT_DIR"
 
 size_files "$RAW/files-before.tsv"
 
-/usr/bin/xcrun xctrace record --template 'Time Profiler' --attach "$APP_PID" \
+TMPDIR="$TRACE_TMP/" /usr/bin/xcrun xctrace record --template 'Time Profiler' --attach "$APP_PID" \
   --output "$RAW/cpu.trace" --no-prompt > "$RAW/xctrace.log" 2>&1 &
 XCTRACE_PID=$!
 if [[ "$WANT_ALLOCATIONS" == 1 ]]; then
-  /usr/bin/xcrun xctrace record --template 'Allocations' --attach "$APP_PID" \
+  TMPDIR="$TRACE_TMP/" /usr/bin/xcrun xctrace record --template 'Allocations' --attach "$APP_PID" \
     --output "$RAW/allocations.trace" --no-prompt > "$RAW/xctrace-allocations.log" 2>&1 &
   ALLOC_PID=$!
 fi
@@ -500,8 +527,8 @@ stop_recorder "$LOG_PID" TERM; LOG_PID=""
 size_files "$RAW/files-after.tsv"
 
 if [[ -d "$RAW/cpu.trace" ]]; then
-  "$ROOT_DIR/script/profile-export.sh" "$RAW/cpu.trace" --toc > "$RAW/cpu-toc.xml" 2>>"$ERRORS" || fail_note "export toc"
-  "$ROOT_DIR/script/profile-export.sh" "$RAW/cpu.trace" \
+  TMPDIR="$TRACE_TMP/" "$ROOT_DIR/script/profile-export.sh" "$RAW/cpu.trace" --toc > "$RAW/cpu-toc.xml" 2>>"$ERRORS" || fail_note "export toc"
+  TMPDIR="$TRACE_TMP/" "$ROOT_DIR/script/profile-export.sh" "$RAW/cpu.trace" \
     --xpath '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]' \
     > "$RAW/time-profile.xml" 2>>"$ERRORS" || fail_note "export time-profile"
 else

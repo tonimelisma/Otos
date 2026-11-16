@@ -322,6 +322,31 @@ def difference(later, earlier):
     }
 
 
+def acts(events):
+    """Every act timed from its intent to its result on the grid (`op=ui.actToResult`)."""
+    result = []
+    for line in of(events, "ui.actToResult"):
+        if line.phase in ("finish", "abandoned"):
+            result.append({"act": line.fields.get("act"), "outcome": "shown" if line.phase == "finish" else "abandoned",
+                           "ms": line.num("ms"), "surface": line.fields.get("surface"),
+                           "supersededBy": line.fields.get("supersededBy")})
+    return result
+
+
+QUERY_STEPS = ("search", "sort", "filter")
+PHOTO_STEPS = ("photo", "compare", "info")
+
+
+def step_ms(step):
+    """A step's own time: its `resultMs` (timed from the intent) when it carries one."""
+    for key in ("resultMs", "ms"):
+        try:
+            return int(step[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
+
+
 def background(events):
     """Passes each background owner began, by `op=… phase=start` lines that are not the window's."""
     window_ops = {"ui.sidebarSelectionToPaint", "projection.publish", "catalog.start", "tour", "smoke.select"}
@@ -425,7 +450,6 @@ NOT_MEASURED_ALWAYS = [
     "writer waits of writes outside CatalogStore.timedWrite (writeWait covers named writes only; "
     "the writer's busy time in catalog.store.use covers all)",
     "People snapshot bytes, thumbnail decode caches outside the grid's tile store, SQLite page cache per connection",
-    "act to result for Move to Trash and choices (no line carries both ends)",
 ]
 
 
@@ -449,8 +473,14 @@ def analyse(events, session_start):
         "memory": memory(start, events, toured["steps"], click_list),
         "resources": resources(events),
         "tour": toured,
+        "acts": acts(events),
     }
+    duration = report["durationS"]
+    report["stalls"]["per10Min"] = round(report["stalls"]["count"] * 600 / duration, 1) if duration else None
     missing = list(NOT_MEASURED_ALWAYS)
+    if not report["acts"]:
+        missing.append("act to result for choices and Move to Trash (no op=ui.actToResult line: no act ran, "
+                       "and a tour acts only in a sandbox home)")
     if not of(events, "process.memory"):
         missing.append("memory (no op=process.memory lines: a build older than the resource checkpoints)")
     if not of(events, "catalog.store.use"):
@@ -485,13 +515,27 @@ def verdicts(report, targets):
     for click in report["clicks"]:
         if click["outcome"] != "painted":
             continue
-        if click["kind"] == "all media":
-            metric = "click.allMedia.firstMs" if click["first"] else "click.allMedia.returnMs"
+        if not click["first"]:
+            metric = "click.returnMs"
+        elif click["kind"] == "all media":
+            metric = "click.allMedia.firstMs"
         else:
             metric = "click.smallScopeMs"
         add(metric, ("first " if click["first"] else "return ") + click["kind"], click["ms"])
+    for step in report["tour"]["steps"]:
+        if step.get("outcome") != "reported":
+            continue
+        if step.get("kind") in QUERY_STEPS:
+            add("query.resultMs", f"{step['kind']} {step.get('label')}", step_ms(step))
+        elif step.get("kind") in PHOTO_STEPS:
+            add("photo.stepMs", f"{step['kind']} {step.get('label')}", step_ms(step))
+    for act in report["acts"]:
+        if act["outcome"] == "shown":
+            add("act.resultMs", f"act {act['act']}", act["ms"])
     add("stalls.count", "store stall lines", report["stalls"]["count"])
+    add("stalls.per10Min", "store stall lines per 10 minutes", report["stalls"]["per10Min"])
     add("mainThreadStalls.count", "main-thread stalls", report["stalls"]["mainThread"]["count"])
+    add("mainThreadStalls.worstMs", "worst main-thread stall ms", report["stalls"]["mainThread"]["worstMs"] or 0)
     add("memory.peakFootprintMB", "peak footprint MB", report["memory"]["peakFootprintMB"])
     return rows
 
@@ -534,7 +578,7 @@ def print_report(report, rows, out):
           + (f" supersededBy={click['supersededBy']}" if click.get("supersededBy") else "") + "\n")
     s = report["stalls"]
     w("\nSTALLS\n")
-    w(f"  store stall lines {s['count']} per minute {s['perMinute']}; worst connectionMs {fmt(s['worstConnectionMs'])}; "
+    w(f"  store stall lines {s['count']} ({fmt(s.get('per10Min'))} per 10 minutes) per minute {s['perMinute']}; worst connectionMs {fmt(s['worstConnectionMs'])}; "
       f"window reads waited {s['windowReadStalls']} (worst {fmt(s['worstWindowReadConnectionMs'])})\n")
     w("  holders (operation: longest hold ms, times named)\n")
     for op, (longest, count) in list(s["holders"].items())[:15]:
@@ -543,6 +587,11 @@ def print_report(report, rows, out):
     w(f"  main-thread stalls {m['count']} worst {fmt(m['worstMs'])} ms by op {dict(list(m['byOp'].items())[:6])}\n")
     ww = s["writeWaits"]
     w(f"  writer waits {ww['count']} worst {fmt(ww['worstMs'])} ms by op {dict(list(ww['byOp'].items())[:6])}\n")
+    if report["acts"]:
+        w("\nACT TO RESULT (ms)\n")
+        for act in report["acts"]:
+            w(f"  {fmt(act['act']):14} {act['outcome']:9} {fmt(act['ms']):>7} ms  surface={fmt(act['surface'])}"
+              + (f" supersededBy={act['supersededBy']}" if act.get("supersededBy") else "") + "\n")
     w("\nBACKGROUND PASSES (phase=start lines)\n")
     for op, count in list(report["background"].items())[:15]:
         w(f"  {op:44} {count:>5}\n")

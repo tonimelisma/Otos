@@ -219,6 +219,7 @@ extension CatalogWindowViewModel {
         guard !ids.isEmpty else {
             return
         }
+        uiStallMonitor.beginActToResult(.choice(choice), ids: ids)
         let assignments = Dictionary(uniqueKeysWithValues: ids.map { ($0, choice) })
         let record = MediaChoiceUndoRecord(
             assignments: assignments,

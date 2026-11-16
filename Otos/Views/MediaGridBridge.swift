@@ -1154,6 +1154,8 @@ extension MediaGridViewController {
     private func renderItem(_ item: MediaGridItem, assetID: MediaAssetID, change: TileContentChange) {
         let content = ensureStoreEntry(for: assetID)
         item.render(content: content, change: change)
+        // The tile now shows what the store holds, a choice's result included.
+        stallMonitor?.completeChoiceToResult(rendered: assetID)
         applyHover(to: item, assetID: assetID)
         applyFaceOutlines(to: item, assetID: assetID)
         item.setStackPresentation(TileStackPresentation.of(assetID, in: gridStacks))
@@ -1254,6 +1256,7 @@ extension MediaGridViewController {
             return
         }
         item.render(content: tileContents.content(for: id), change: change)
+        stallMonitor?.completeChoiceToResult(rendered: id)
         applyHover(to: item, assetID: id)
         applyFaceOutlines(to: item, assetID: id)
     }

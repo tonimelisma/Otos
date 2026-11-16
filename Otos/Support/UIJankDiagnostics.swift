@@ -46,6 +46,30 @@ nonisolated struct SidebarPaintReport: Equatable, Sendable {
     let milliseconds: Int
 }
 
+/// An act whose result the window shows in the step that applies it (DES-120): a choice
+/// (Like, Dislike, Mark as Not Rated) or Move to Trash.
+nonisolated enum WindowAct: Equatable, Sendable {
+    case choice(MediaChoice)
+    case moveToTrash
+
+    /// The act's name in `op=ui.actToResult` lines: `liked`, `disliked`, `notRated`, `moveToTrash`.
+    var name: String {
+        switch self {
+        case let .choice(choice): choice.rawValue
+        case .moveToTrash: "moveToTrash"
+        }
+    }
+}
+
+/// An act's result reached the grid (`op=ui.actToResult phase=finish`): `revision` counts
+/// these reports.
+nonisolated struct ActResultReport: Equatable, Sendable {
+    let revision: UInt64
+    let act: WindowAct
+    let surface: String
+    let milliseconds: Int
+}
+
 @MainActor
 final class MainRunLoopStallMonitor {
     private struct OperationRecord {
@@ -83,6 +107,23 @@ final class MainRunLoopStallMonitor {
     private var lastLongOperation: CompletedOperationRecord?
     private var pendingIntentToPaint: PendingIntentToPaint?
     private var paintReports: UInt64 = 0
+
+    /// One act awaiting the grid change that shows its result: the tiles' badges
+    /// reconfigured (a choice) or the items gone from an applied structure (Move to Trash).
+    /// Begins where the act's intent is applied and ends in the grid controller. A newer act
+    /// abandons a pending one, so at most one interval is open; an act whose items are not
+    /// in the grid (the loupe, a filtered-out photo) stays pending until then.
+    private struct PendingActToResult {
+        let act: WindowAct
+        let ids: Set<MediaAssetID>
+        let startedAt: ContinuousClock.Instant
+    }
+
+    private var pendingActToResult: PendingActToResult?
+    private var actReports: UInt64 = 0
+    /// Told each time an act's result reaches the grid: the fact the window's owner
+    /// republishes for whoever waits on it (a sandboxed tour).
+    var onActResult: ((ActResultReport) -> Void)?
     /// Told each time a scope intent's surface paints: the fact the window's owner republishes
     /// for whoever waits on a paint (the tour) and checkpoints resources at.
     var onIntentPainted: ((SidebarPaintReport) -> Void)?
@@ -163,6 +204,54 @@ final class MainRunLoopStallMonitor {
         )
         paintReports &+= 1
         onIntentPainted?(SidebarPaintReport(revision: paintReports, scope: appliedScope, surface: surface, milliseconds: ms))
+        return true
+    }
+
+    /// Starts the act→result interval for an act on `ids`, abandoning a pending one.
+    func beginActToResult(_ act: WindowAct, ids: some Sequence<MediaAssetID>, now: ContinuousClock.Instant = .now) {
+        if let pending = pendingActToResult {
+            OtosLog.ui.noticeOperation("ui.actToResult", phase: "abandoned", fields: [
+                "act": pending.act.name,
+                "supersededBy": act.name,
+                "ms": "\(DiagnosticsTiming.milliseconds(since: pending.startedAt))",
+            ])
+        }
+        let ids = Set(ids)
+        pendingActToResult = PendingActToResult(act: act, ids: ids, startedAt: now)
+        OtosLog.ui.noticeOperation("ui.actToResult", phase: "start", fields: ["act": act.name, "count": "\(ids.count)"])
+    }
+
+    /// The grid drew `id`'s tile from the tile store, which holds a choice from the step that
+    /// applied it: a pending choice on it has its result on screen. Any render counts — the
+    /// choice's own reconfigure, or the tile laid out later when it was not on screen then.
+    @discardableResult
+    func completeChoiceToResult(rendered id: MediaAssetID) -> Bool {
+        guard let pending = pendingActToResult, case .choice = pending.act, pending.ids.contains(id) else {
+            return false
+        }
+        return completeActToResult(pending, surface: "grid")
+    }
+
+    /// The grid committed `grid`: a pending Move to Trash whose items it no longer shows has
+    /// its result on screen.
+    @discardableResult
+    func completeTrashToResult(committed grid: CatalogMediaGridState) -> Bool {
+        guard let pending = pendingActToResult, pending.act == .moveToTrash,
+              !pending.ids.contains(where: grid.content.contains)
+        else {
+            return false
+        }
+        return completeActToResult(pending, surface: "grid")
+    }
+
+    private func completeActToResult(_ pending: PendingActToResult, surface: String) -> Bool {
+        pendingActToResult = nil
+        let ms = DiagnosticsTiming.milliseconds(since: pending.startedAt)
+        OtosLog.ui.noticeOperation("ui.actToResult", phase: "finish", fields: [
+            "act": pending.act.name, "count": "\(pending.ids.count)", "surface": surface, "ms": "\(ms)",
+        ])
+        actReports &+= 1
+        onActResult?(ActResultReport(revision: actReports, act: pending.act, surface: surface, milliseconds: ms))
         return true
     }
 

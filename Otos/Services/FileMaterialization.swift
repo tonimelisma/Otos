@@ -591,13 +591,16 @@ nonisolated enum MaterializationOutcome: Equatable {
     /// request. Like `deviceUnavailable`, a state the source is in (ADR 0046 §6), not a
     /// file provider's failure.
     case serverUnreachable
+    /// Nothing was requested: the session is a read-only tour (`ReadOnlyOriginals`), which
+    /// shows what is on this Mac or stored and never downloads an original.
+    case refusedReadOnly
 
     var isMaterialized: Bool {
         switch self {
         case .alreadyMaterialized, .materialized:
             true
         case .requestFailed, .timedOut, .providerUnavailable, .insufficientLocalSpace, .cancelled,
-             .statusUnavailable, .deviceUnavailable, .serverUnreachable:
+             .statusUnavailable, .deviceUnavailable, .serverUnreachable, .refusedReadOnly:
             false
         }
     }
@@ -611,7 +614,7 @@ nonisolated enum MaterializationOutcome: Equatable {
         case .materialized:
             size
         case .alreadyMaterialized, .requestFailed, .timedOut, .providerUnavailable, .insufficientLocalSpace,
-             .cancelled, .statusUnavailable, .deviceUnavailable, .serverUnreachable:
+             .cancelled, .statusUnavailable, .deviceUnavailable, .serverUnreachable, .refusedReadOnly:
             0
         }
     }
@@ -638,6 +641,8 @@ nonisolated enum MaterializationOutcome: Equatable {
             "deviceUnavailable"
         case .serverUnreachable:
             "serverUnreachable"
+        case .refusedReadOnly:
+            "refusedReadOnly"
         }
     }
 }

@@ -123,18 +123,28 @@ run_one_tour() {
   [[ -n "$IDLE" ]] && env_args+=("OTOS_TOUR_IDLE_SECONDS=$IDLE")
   [[ -n "$DEADLINE" ]] && env_args+=("OTOS_TOUR_STEP_DEADLINE_SECONDS=$DEADLINE")
   [[ -n "$HOME_DIR" ]] && env_args+=("CFFIXED_USER_HOME=$HOME_DIR" "HOME=$HOME_DIR")
+  # The dev build's saved window state is the account's, not the sandbox home's (AppKit keeps
+  # it per bundle id through its restoration service), and every worktree's dev build shares
+  # that id. A session that last quit with the window closed restores no window, so the
+  # window never attaches and the tour, which starts with it, never runs: a dev tour opens
+  # its window fresh.
+  local app_args=()
+  [[ "$DEV" == 1 ]] && app_args+=(-ApplePersistenceIgnoreState YES)
   local started
   started="$(date '+%Y-%m-%d %H:%M:%S')"
   otos_log_stream_open "process == \"$APP_NAME\" AND subsystem == \"$SUBSYSTEM\" AND eventMessage BEGINSWITH \"op=tour \""
-  env "${env_args[@]}" "$app/Contents/MacOS/$APP_NAME" >/dev/null 2>&1 3<&- &
+  env "${env_args[@]}" "$app/Contents/MacOS/$APP_NAME" ${app_args[@]+"${app_args[@]}"} >/dev/null 2>&1 3<&- &
   TOUR_PID="$!"
   echo "op=scorecard.tour phase=launched pid=$TOUR_PID ablate=$ablate steps=$steps app=$app" >&2
   local line="" quiet=0 ended=0
   # The tour reports each step and its finish, and the process's exit ends the wait too: the
   # stream is read in 10 s slices only so an exit is noticed between them. A stream quiet for
   # longer than any step's deadline means the tour is stuck. time: deadline
+  # Only this run's process: another Otos touring at the same time (another worktree's dev
+  # build, or the installed app) logs the same lines under its own pid (`Otos[pid:tid]`).
+  local own_tour_line="\\[${TOUR_PID}:[^]]*\\].*op=tour (phase=(finish|step|config|failed|plan|restored))"
   while kill -0 "$TOUR_PID" 2>/dev/null; do
-    if ! line="$(otos_log_stream_await 'op=tour (phase=(finish|step|config|failed|plan|restored))' 10)"; then
+    if ! line="$(otos_log_stream_await "$own_tour_line" 10)"; then
       quiet=$((quiet + 10))
       if (( quiet >= 300 )); then
         echo "op=scorecard.tour phase=silent pid=$TOUR_PID — no tour line for 300 s (if none came at all, the window never attached: the tour starts with it)" >&2

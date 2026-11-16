@@ -639,7 +639,9 @@ actor MediaTrashCoordinator {
         case .alreadyMaterialized, .materialized:
             attempts[id] = nil
             retryAt[id] = nil
-        case .requestFailed:
+        case .requestFailed, .refusedReadOnly:
+            // A refusal is as definite as the provider's: the download will not come, so the
+            // user decides (the queue is handed the shared coordinator, which never refuses).
             OtosLog.catalog.noticeOperation("mediaTrash.queue", phase: "downloadFailed", fields: [
                 "path": id.relativePath.rawValue, "outcome": outcome.diagnosticDescription,
             ])

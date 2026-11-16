@@ -92,10 +92,20 @@ real backlog. Three instruments see those:
   for the writer logs `op=catalog.store.writeWait`; the order read splits its SQL
   (`orderSqlMs`) from making the window's IDs (`mapMs`).
 - **The tour** (`SmokeTour`, debug builds, which the installed app is). `OTOS_TOUR=1` makes
-  a session walk the sidebar, scroll, open photos already on this Mac, compare, show Info,
-  search, filter, sort and sit idle, each through the gesture's own intent and each waiting
-  on the fact the app reports (a paint, the visible thumbnails, the loupe's image, a
-  query's state), then put the window back and quit. `OTOS_TOUR_ABLATE` leaves named
+  a session walk the sidebar, scroll, open four neighbouring stills the loupe can show
+  without a download (an original on this Mac, or a stored preview), step through them,
+  compare two, show Info, search, filter by a kind the scope's published options offer,
+  sort and sit idle, each through the gesture's own intent and each waiting on the fact
+  the app reports (a paint, the visible thumbnails, the loupe's image, a query's state),
+  then put the window back and quit. A tour's loupe and Compare never download an original:
+  their requester refuses every download for the session (`PaneOriginalDownloads.never`,
+  `ReadOnlyOriginals`), so a cloud-only photo shows its stored preview and nothing more.
+  The act steps (Like, Dislike, Not Rated, Move to Trash then Undo) run only in a sandbox
+  home (`CFFIXED_USER_HOME`, not the account's home) whose every source lies inside it, and
+  are skipped as `notSandboxHome` elsewhere. Each act is timed from its intent to the grid
+  change that shows it, `op=ui.actToResult` (the grid drawing the act's tile, now or when it is next laid out, or
+  committing an order without the trashed items), in every session, toured or not.
+  `OTOS_TOUR_ABLATE` leaves named
   background owners unstarted for that session ("what if it were free"); it is read only
   beside the tour flag, every owner starts otherwise (`BackgroundOwners`, tested), and a
   session with any off says so at `.error`.

@@ -71,6 +71,18 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
     }
 }
 
+extension PaneOriginalDownloads {
+    /// The panes' downloads this launch allows: never in a tour, which is read-only (a
+    /// release build has no tour), whenever needed otherwise.
+    nonisolated static func configured(environment: [String: String] = ProcessInfo.processInfo.environment) -> PaneOriginalDownloads {
+        #if DEBUG
+            SmokeTour.Configuration(environment: environment) == nil ? .whenNeeded : .never
+        #else
+            .whenNeeded
+        #endif
+    }
+}
+
 #if DEBUG
     /// Read-only performance tour guide
     ///
@@ -85,9 +97,18 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
     /// reports is logged as one and cannot hang the tour.
     ///
     /// The tour changes nothing: no choice, Trash, edit, import, naming or download. A photo
-    /// is opened only when its original is already on this Mac (`OriginalLocality.local`),
-    /// and the window is put back as it was — scope, filter, sort, search, mode, focus,
-    /// selection, inspector — before the app quits, so the place it saves is the owner's.
+    /// is opened only when the loupe can show it without a download — its original is on
+    /// this Mac (`OriginalLocality.local`) or its preview is stored (ADR 0035) — and the
+    /// panes' requester refuses every download for the session (`PaneOriginalDownloads.never`),
+    /// so a full-resolution decode of a cloud-only photo is never asked of its provider. The
+    /// window is put back as it was — scope, filter, sort, search, mode, focus, selection,
+    /// inspector — before the app quits, so the place it saves is the owner's.
+    ///
+    /// The one exception is the act steps (Like, Dislike, Not Rated, Move to Trash), which
+    /// time an act to its result on the grid. They run only in a sandbox home
+    /// (`CFFIXED_USER_HOME`, not the user's own) whose every source lies inside it, put each
+    /// photo back as it was (the last choice is its own, Undo puts the trashed photo back),
+    /// and are skipped with `reason=notSandboxHome` everywhere else.
     ///
     /// Each step logs `op=tour phase=step`; the session opens with `op=tour phase=config`
     /// and ends with `op=tour phase=finish`, after which the app quits itself.
@@ -104,8 +125,10 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
         static let fewResultsQuery = "lighthouse"
         /// How far apart the scroll steps land, in items, so each moves the viewport.
         static let scrollStride = 300
-        /// How many of a scope's first items are looked at for a photo already on this Mac.
-        static let localPhotoSearchLimit = 400
+        /// How many of a scope's first items are looked at for photos the loupe can open.
+        static let openablePhotoSearchLimit = 400
+        /// The photos the photo steps open, in order: the first, three next, three back.
+        static let openablePhotoRun = 4
 
         struct Configuration: Equatable, Sendable {
             enum Steps: String, Sendable {
@@ -149,8 +172,16 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
             case previousPhoto
             case compare
             case info
+            /// The `n`th choice (0, 1, 2) on the first photo, timed to its result: the three
+            /// choices in turn, starting after the photo's own and ending on it. Only in a
+            /// sandbox home.
+            case choiceAct(Int)
+            /// Move to Trash on the first photo, timed to its result, then undone. Only in a
+            /// sandbox home.
+            case trashAct
             case search(label: String, text: String)
-            case filterVideos
+            /// A kind the scope's published filter options offer, chosen when the step runs.
+            case filterByOfferedKind
             case sortByName
             case idle
         }
@@ -213,10 +244,11 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
                 .previousPhoto, .previousPhoto, .previousPhoto,
                 .compare,
                 .info,
+                .choiceAct(0), .choiceAct(1), .choiceAct(2), .trashAct,
                 .search(label: "searchMany", text: manyResultsQuery),
                 .search(label: "searchFew", text: fewResultsQuery),
                 .search(label: "searchClear", text: ""),
-                .filterVideos,
+                .filterByOfferedKind,
                 .sortByName,
                 .idle,
             ]
@@ -236,6 +268,73 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
             }
         }
 
+        /// The sandbox home this session runs in: `CFFIXED_USER_HOME`, resolved, when it is the
+        /// process's home and neither the user's own home nor a folder holding it. Nil
+        /// otherwise, and then the act steps are refused.
+        static func sandboxHome(
+            environment: [String: String],
+            processHome: String = NSHomeDirectory(),
+            userHome: String? = SmokeTour.accountHome()
+        ) -> String? {
+            guard let fixed = environment["CFFIXED_USER_HOME"], !fixed.isEmpty, let userHome else {
+                return nil
+            }
+            let sandbox = resolved(fixed)
+            let user = resolved(userHome)
+            guard sandbox != "/", sandbox == resolved(processHome), sandbox != user,
+                  !user.hasPrefix(sandbox + "/")
+            else {
+                return nil
+            }
+            return sandbox
+        }
+
+        /// Whether every source the window lists lies inside `sandbox`, so an act there
+        /// touches only files the sandbox holds.
+        static func sourcesLie(_ state: CatalogWindowState, inside sandbox: String) -> Bool {
+            let roots = state.libraries.map(\.path) + state.removableSources.map(\.path)
+            return !roots.isEmpty && roots.allSatisfy { resolved($0.rawValue).hasPrefix(sandbox + "/") }
+        }
+
+        /// The account's own home from the user database, which `CFFIXED_USER_HOME` does not
+        /// change.
+        static func accountHome() -> String? {
+            guard let entry = getpwuid(getuid()), let directory = entry.pointee.pw_dir else {
+                return nil
+            }
+            return String(cString: directory)
+        }
+
+        /// A folder's path with its symlinks resolved and no trailing slash.
+        private static func resolved(_ path: String) -> String {
+            let url = URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
+            let text = url.path(percentEncoded: false)
+            return text.count > 1 && text.hasSuffix("/") ? String(text.dropLast()) : text
+        }
+
+        /// The three choices in turn, starting after `original` and ending on it, so every act
+        /// changes what the tile shows and the last puts it back.
+        static func choiceCycle(after original: MediaChoice) -> [MediaChoice] {
+            let all = MediaChoice.allCases
+            let start = (all.firstIndex(of: original) ?? 0) + 1
+            return (0 ..< all.count).map { all[(start + $0) % all.count] }
+        }
+
+        /// The first run of `openablePhotoRun` neighbours in `order` that all satisfy
+        /// `openable`, as their ids; nil when the order has none.
+        static func firstOpenableRun(in order: [MediaAssetID], openable: Set<MediaAssetID>) -> [MediaAssetID]? {
+            guard order.count >= openablePhotoRun else {
+                return nil
+            }
+            for start in 0 ... (order.count - openablePhotoRun) {
+                let run = Array(order[start ..< start + openablePhotoRun])
+                if run.allSatisfy(openable.contains) {
+                    return run
+                }
+            }
+            return nil
+        }
+
         /// Starts the tour when the environment asks for one. The tour holds the view model
         /// weakly and ends with it; `quit` ends the app once the window is put back.
         @MainActor
@@ -247,7 +346,7 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
             guard let configuration = Configuration(environment: environment) else {
                 return
             }
-            let runner = SmokeTourRunner(viewModel: viewModel, configuration: configuration, quit: quit)
+            let runner = SmokeTourRunner(viewModel: viewModel, configuration: configuration, environment: environment, quit: quit)
             Task { await runner.run() }
         }
     }
@@ -259,13 +358,22 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
         private weak var viewModel: CatalogWindowViewModel?
         private let configuration: SmokeTour.Configuration
         private let quit: @MainActor () -> Void
+        private let environment: [String: String]
         private var visited: Set<SidebarSelection> = []
-        /// The photos the tour may open: originals already on this Mac.
-        private var localPhotos: [MediaAssetID] = []
+        /// The photos the photo steps open: neighbours the loupe shows without a download.
+        private var openablePhotos: [MediaAssetID] = []
+        /// The first photo's choice before the act steps, which the last one puts back.
+        private var originalChoice: MediaChoice?
 
-        init(viewModel: CatalogWindowViewModel, configuration: SmokeTour.Configuration, quit: @escaping @MainActor () -> Void) {
+        init(
+            viewModel: CatalogWindowViewModel,
+            configuration: SmokeTour.Configuration,
+            environment: [String: String],
+            quit: @escaping @MainActor () -> Void
+        ) {
             self.viewModel = viewModel
             self.configuration = configuration
+            self.environment = environment
             self.quit = quit
         }
 
@@ -403,12 +511,14 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
                 return await ("compare", "compare", compare())
             case .info:
                 return await ("info", "info", info())
+            case let .choiceAct(index):
+                return await choiceAct(index)
+            case .trashAct:
+                return await ("act", WindowAct.moveToTrash.name, trashAct())
             case let .search(label, text):
                 return await ("search", label, query { $0.setSearchText(text) })
-            case .filterVideos:
-                return await ("filter", "videos", query { $0.setMediaKind(.image, included: false)
-                    $0.setMediaKind(.raw, included: false)
-                })
+            case .filterByOfferedKind:
+                return await filterByOfferedKind()
             case .sortByName:
                 return await ("sort", "name", query { $0.setSortOrder(.filenameAscending) })
             case .idle:
@@ -469,30 +579,63 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
             return .reported(["position": "\(index)", "visible": "\(report.visible)", "thumbnailsMs": "\(report.milliseconds)"])
         }
 
-        /// Opens the loupe on the first photo near the top whose original is on this Mac.
+        /// Which of `ids` the loupe can show without a download: stills whose original is on
+        /// this Mac (`local`, also in `openable`) or whose preview is stored. Throws when their
+        /// details cannot be read.
+        private func openability(of ids: [MediaAssetID], in viewModel: CatalogWindowViewModel) async throws -> (
+            openable: Set<MediaAssetID>, local: Set<MediaAssetID>, details: [MediaAssetID: MediaTileDetail]
+        ) {
+            let reader = viewModel.tileDetailReader
+            let materialization = viewModel.materializationCoordinator
+            let details = try await reader.details(for: ids)
+            var openable = Set<MediaAssetID>()
+            var local = Set<MediaAssetID>()
+            for id in ids {
+                guard let detail = details[id], detail.bestKind != .video else {
+                    continue
+                }
+                // Locality is the file's `SF_DATALESS` flag, read without its bytes.
+                if await materialization.locality(of: id) == .local {
+                    local.insert(id)
+                    openable.insert(id)
+                } else if detail.previewPath != nil {
+                    openable.insert(id)
+                }
+            }
+            return (openable, local, details)
+        }
+
+        /// Opens the loupe on the first of four neighbours near the top that it can show
+        /// without a download.
         private func openPhoto() async -> Outcome {
             guard let viewModel else {
                 return .skipped("windowGone")
             }
-            let order = viewModel.state.mediaGrid.orderedAssetIDs
-            localPhotos = []
-            for id in order.prefix(SmokeTour.localPhotoSearchLimit) {
-                if await viewModel.materializationCoordinator.locality(of: id) == .local {
-                    localPhotos.append(id)
-                    if localPhotos.count == 2 {
-                        break
-                    }
-                }
+            let candidates = Array(viewModel.state.mediaGrid.orderedAssetIDs.prefix(SmokeTour.openablePhotoSearchLimit))
+            let found: (openable: Set<MediaAssetID>, local: Set<MediaAssetID>, details: [MediaAssetID: MediaTileDetail])
+            do {
+                found = try await openability(of: candidates, in: viewModel)
+            } catch {
+                return Outcome(result: "skipped", fields: ["reason": "detailReadFailed", "error": String(describing: error)])
             }
-            guard let photo = localPhotos.first, let viewModel = self.viewModel else {
-                return .skipped("noLocalOriginal")
+            guard let run = SmokeTour.firstOpenableRun(in: candidates, openable: found.openable),
+                  let photo = run.first, let viewModel = self.viewModel
+            else {
+                openablePhotos = []
+                return .skipped("noOpenablePhotos")
             }
+            openablePhotos = run
+            originalChoice = found.details[photo]?.mediaChoice
             viewModel.openLoupe(id: photo)
-            return await loupeShows(photo)
+            var outcome = await loupeShows(photo)
+            outcome.fields["local"] = "\(run.count(where: found.local.contains))"
+            outcome.fields["storedPreview"] = "\(run.count(where: { !found.local.contains($0) }))"
+            return outcome
         }
 
-        /// The arrow keys' step, to a neighbour whose original is on this Mac; a neighbour that
-        /// is not is recorded and not opened.
+        /// The arrow keys' step, to the neighbour the order holds now (enrichment can move it)
+        /// when the loupe can show it without a download; one it cannot is recorded and not
+        /// opened.
         private func stepPhoto(by delta: Int) async -> Outcome {
             guard let viewModel, viewModel.viewMode == .loupe, let focus = viewModel.focusedAssetID else {
                 return .skipped("noLoupe")
@@ -501,8 +644,14 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
             guard let next = BrowserModePolicy.neighbor(of: focus, in: order, delta: delta), next != focus else {
                 return .skipped("noNeighbour")
             }
-            guard await viewModel.materializationCoordinator.locality(of: next) == .local, let viewModel = self.viewModel else {
-                return .skipped("notLocal")
+            let openable: Bool
+            do {
+                openable = try await openability(of: [next], in: viewModel).openable.contains(next)
+            } catch {
+                return Outcome(result: "skipped", fields: ["reason": "detailReadFailed", "error": String(describing: error)])
+            }
+            guard openable, let viewModel = self.viewModel, viewModel.focusedAssetID == focus else {
+                return .skipped("notOpenable")
             }
             if delta > 0 {
                 viewModel.focusNext()
@@ -517,15 +666,15 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
             return shown ? .reported() : .deadline
         }
 
-        /// Compares the two local photos the loupe found, then returns to the grid.
+        /// Compares the first two photos the loupe opened, then returns to the grid.
         private func compare() async -> Outcome {
-            guard let viewModel, localPhotos.count == 2 else {
-                return .skipped("needsTwoLocalPhotos")
+            guard let viewModel, openablePhotos.count >= 2 else {
+                return .skipped("noOpenablePhotos")
             }
+            let pair = Array(openablePhotos.prefix(2))
             viewModel.exitToGrid()
-            viewModel.selectAssets(localPhotos)
+            viewModel.selectAssets(pair)
             viewModel.enterCompare()
-            let pair = Set(localPhotos)
             let shown = await until { model in
                 Set(model.panePreviews.values.map(\.id)).isSuperset(of: pair)
             }
@@ -534,25 +683,118 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
         }
 
         private func info() async -> Outcome {
-            guard let viewModel, let photo = localPhotos.first else {
-                return .skipped("noLocalOriginal")
+            guard let viewModel, let photo = openablePhotos.first else {
+                return .skipped("noOpenablePhotos")
             }
             viewModel.selectAssets([photo])
             viewModel.setInspectorPane(.info)
-            let shown = await until { $0.photoInfo != nil }
+            let shown = await until { $0.photoInfo?.id == photo }
             return shown ? .reported() : .deadline
         }
 
-        /// A query intent (search, filter, sort) and the published state that answers it.
+        /// Why the act steps may not run here, or nil when they may: a sandbox home whose
+        /// every source lies inside it.
+        private func actsRefusal() -> String? {
+            guard let viewModel else {
+                return "windowGone"
+            }
+            guard let sandbox = SmokeTour.sandboxHome(environment: environment) else {
+                return "notSandboxHome"
+            }
+            guard SmokeTour.sourcesLie(viewModel.state, inside: sandbox) else {
+                return "sourceOutsideSandbox"
+            }
+            guard !openablePhotos.isEmpty, originalChoice != nil else {
+                return "noOpenablePhotos"
+            }
+            return nil
+        }
+
+        /// The `index`th of the three choices on the first photo, in the grid, timed from the
+        /// intent to the grid's reconfigured tile. The third puts back the photo's own choice.
+        private func choiceAct(_ index: Int) async -> (String, String, Outcome) {
+            if let refusal = actsRefusal() {
+                return ("act", "choice\(index)", .skipped(refusal))
+            }
+            guard let viewModel, let photo = openablePhotos.first, let originalChoice else {
+                return ("act", "choice\(index)", .skipped("windowGone"))
+            }
+            let choice = SmokeTour.choiceCycle(after: originalChoice)[index]
+            if viewModel.viewMode != .grid {
+                viewModel.exitToGrid()
+            }
+            viewModel.selectAssets([photo])
+            let before = viewModel.lastActResult?.revision ?? 0
+            viewModel.submitMediaChoice(choice)
+            return await ("act", WindowAct.choice(choice).name, actResult(after: before))
+        }
+
+        /// Move to Trash on the first photo, timed from the intent to the grid without it, then
+        /// undone; the step ends once the photo is back in the window.
+        private func trashAct() async -> Outcome {
+            if let refusal = actsRefusal() {
+                return .skipped(refusal)
+            }
+            guard let viewModel, let photo = openablePhotos.first else {
+                return .skipped("windowGone")
+            }
+            if viewModel.viewMode != .grid {
+                viewModel.exitToGrid()
+            }
+            viewModel.selectAssets([photo])
+            guard viewModel.canMoveTargetedMediaToTrash else {
+                return .skipped("cannotTrash")
+            }
+            let before = viewModel.lastActResult?.revision ?? 0
+            viewModel.moveTargetedMediaToTrash()
+            var outcome = await actResult(after: before)
+            self.viewModel?.undoLastChange()
+            let back = await until { $0.state.mediaGrid.content.contains(photo) }
+            outcome.fields["putBack"] = "\(back)"
+            return outcome
+        }
+
+        private func actResult(after revision: UInt64) async -> Outcome {
+            let shown = await until { ($0.lastActResult?.revision ?? 0) > revision }
+            guard shown, let report = viewModel?.lastActResult else {
+                return .deadline
+            }
+            return .reported(["resultMs": "\(report.milliseconds)", "surface": report.surface])
+        }
+
+        /// Filters by a kind the scope's published options offer — videos when offered, else
+        /// the first kind offered — once the options are in, timed from the intent alone.
+        private func filterByOfferedKind() async -> (String, String, Outcome) {
+            let waitStart = ContinuousClock.now
+            guard await until({ !$0.state.filterOptions.formatsByKind.isEmpty }), let viewModel else {
+                return ("filter", "kind", Outcome(result: "deadline", fields: ["reason": "noFilterOptions"]))
+            }
+            let optionsWaitMs = DiagnosticsTiming.milliseconds(since: waitStart)
+            let offered = Set(viewModel.state.filterOptions.formatsByKind.keys)
+            let kinds = ([MediaKind.video] + MediaKind.displayOrder).filter(offered.contains)
+            for kind in kinds {
+                var outcome = await query { $0.setMediaKind(kind, included: true) }
+                guard outcome.fields["reason"] != "queryUnchanged" else {
+                    continue
+                }
+                outcome.fields["optionsWaitMs"] = "\(optionsWaitMs)"
+                return ("filter", kind.rawValue, outcome)
+            }
+            return ("filter", "kind", .skipped("queryUnchanged"))
+        }
+
+        /// A query intent (search, filter, sort) and the published state that answers it,
+        /// timed from the intent (`resultMs`).
         private func query(_ act: (CatalogWindowViewModel) -> Void) async -> Outcome {
             guard let viewModel else {
                 return .skipped("windowGone")
             }
             let before = viewModel.queryGeneration
+            let started = ContinuousClock.now
             act(viewModel)
             let generation = viewModel.queryGeneration
             guard generation != before else {
-                // The intent left the query as it was (a filter this scope offers nothing to).
+                // The intent left the query as it was (a filter the descriptor already holds).
                 return .skipped("queryUnchanged")
             }
             let answered = await until { model in
@@ -561,7 +803,10 @@ nonisolated struct BackgroundOwners: Equatable, Sendable {
             guard answered, let viewModel = self.viewModel else {
                 return .deadline
             }
-            return .reported(["items": "\(viewModel.state.mediaGrid.orderedAssetIDs.count)"])
+            return .reported([
+                "items": "\(viewModel.state.mediaGrid.orderedAssetIDs.count)",
+                "resultMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+            ])
         }
 
         /// The app left alone. time: measurement — the idle window is what is measured; the

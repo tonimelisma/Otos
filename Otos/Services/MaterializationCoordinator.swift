@@ -114,6 +114,32 @@ extension MaterializationRequesting {
     }
 }
 
+/// Whether the loupe and Compare may download an original they need: a cloud-only photo's
+/// full-resolution decode, or a still with no stored preview. Always, except in a read-only
+/// tour (`SmokeTour`), which shows only what is on this Mac or stored.
+nonisolated enum PaneOriginalDownloads: Equatable, Sendable {
+    case whenNeeded
+    case never
+}
+
+/// The panes' requester in a read-only tour: locality is the shared coordinator's own
+/// answer, and a download is never asked for (`MaterializationOutcome.refusedReadOnly`), so
+/// the panes show the stored preview and nothing more.
+nonisolated struct ReadOnlyOriginals: MaterializationRequesting {
+    let coordinator: any MaterializationRequesting
+
+    func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult {
+        OtosLog.mediaIO.noticeOperation("original.download", phase: "refusedReadOnly", fields: [
+            "id": request.id.relativePath.rawValue, "priority": "\(request.priority)",
+        ])
+        return MaterializationResult(outcome: .refusedReadOnly, rerequestCount: 0, elapsedMs: 0)
+    }
+
+    func locality(of id: MediaAssetID) async -> OriginalLocality {
+        await coordinator.locality(of: id)
+    }
+}
+
 /// Process-lifetime owner of every deliberate provider or device materialization.
 ///
 /// Callers only register demand. One actor-owned supervisor performs priority selection
@@ -904,7 +930,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 wake()
             }
         case .requestFailed, .timedOut, .insufficientLocalSpace, .cancelled, .statusUnavailable,
-             .deviceUnavailable, .serverUnreachable:
+             .deviceUnavailable, .serverUnreachable, .refusedReadOnly:
             // Inconclusive / slow / cancelled: neither opens nor closes the breaker.
             // `deviceUnavailable` and `serverUnreachable` belong here rather than with the
             // failures: an absent camera or a silent server says nothing about a

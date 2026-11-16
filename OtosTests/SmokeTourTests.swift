@@ -89,6 +89,64 @@ struct SmokeTourTests {
         #expect(!single.contains(.scope(label: "allMedia", selection: .allMedia)))
     }
 
+    /// The act steps run only in a sandbox home: `CFFIXED_USER_HOME` set, the process's own
+    /// home, and neither the account's home nor a folder holding it.
+    @Test func actsRunOnlyInASandboxHome() {
+        let user = "/Users/someone"
+        let sandbox = "/private/tmp/otos-sandbox-home"
+        let fixed = ["CFFIXED_USER_HOME": sandbox]
+        #expect(SmokeTour.sandboxHome(environment: fixed, processHome: sandbox, userHome: user) == sandbox)
+        #expect(SmokeTour.sandboxHome(environment: [:], processHome: sandbox, userHome: user) == nil)
+        #expect(SmokeTour.sandboxHome(environment: ["CFFIXED_USER_HOME": user], processHome: user, userHome: user) == nil)
+        #expect(SmokeTour.sandboxHome(environment: ["CFFIXED_USER_HOME": "/Users"], processHome: "/Users", userHome: user) == nil)
+        #expect(SmokeTour.sandboxHome(environment: ["CFFIXED_USER_HOME": "/"], processHome: "/", userHome: user) == nil)
+        // Set, but not the home this process runs in.
+        #expect(SmokeTour.sandboxHome(environment: fixed, processHome: user, userHome: user) == nil)
+
+        var state = CatalogWindowState.empty
+        state.libraries = [libraryState(path: sandbox + "/Pictures")]
+        #expect(SmokeTour.sourcesLie(state, inside: sandbox))
+        state.libraries.append(libraryState(path: user + "/Pictures"))
+        #expect(!SmokeTour.sourcesLie(state, inside: sandbox))
+        #expect(!SmokeTour.sourcesLie(.empty, inside: sandbox))
+    }
+
+    /// The three choices each change what the tile shows, and the last puts the photo's own
+    /// choice back.
+    @Test func theChoiceStepsEndOnThePhotosOwnChoice() {
+        for original in MediaChoice.allCases {
+            let cycle = SmokeTour.choiceCycle(after: original)
+            #expect(cycle.count == 3)
+            #expect(Set(cycle) == Set(MediaChoice.allCases))
+            #expect(cycle.first != original)
+            #expect(cycle.last == original)
+        }
+    }
+
+    /// The photo steps open four neighbours the loupe can show without a download, the first
+    /// such run in the order, or none.
+    @Test func thePhotoStepsChooseTheFirstRunOfOpenableNeighbours() {
+        let ids = (0 ..< 8).map {
+            MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: "\($0).jpg"))
+        }
+        // 2 is a video (not openable), so the first run of four starts at 3.
+        let openable = Set(ids.enumerated().filter { $0.offset != 2 }.map(\.element))
+        #expect(SmokeTour.firstOpenableRun(in: ids, openable: openable) == Array(ids[3 ..< 7]))
+        #expect(SmokeTour.firstOpenableRun(in: ids, openable: [ids[0], ids[1], ids[2]]) == nil)
+        #expect(SmokeTour.firstOpenableRun(in: Array(ids.prefix(3)), openable: Set(ids)) == nil)
+    }
+
+    /// A full tour plans the act steps (each refused outside a sandbox home when it runs) and
+    /// a filter chosen from the options the scope publishes.
+    @Test func aFullTourPlansTheActsAndAnOfferedFilter() throws {
+        var state = CatalogWindowState.empty
+        state.libraries = [libraryState(path: "/Pictures"), libraryState(path: "/Archive")]
+        let full = try #require(SmokeTour.Configuration(environment: [SmokeTour.tourVariable: "1"]))
+        let plan = SmokeTour.plan(for: state, configuration: full, today: CalendarDay.today())
+        #expect(plan.contains(.choiceAct(0)) && plan.contains(.choiceAct(2)) && plan.contains(.trashAct))
+        #expect(plan.contains(.filterByOfferedKind))
+    }
+
     /// A scroll lands on a position the order has, and is skipped for an order too short to
     /// move the viewport.
     @Test func scrollPositionsLandInsideTheOrder() {

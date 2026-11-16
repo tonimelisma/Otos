@@ -20,7 +20,13 @@ TARGETS = {
     "launch.firstGridMs": {"metric": "launch.firstGridMs", "maxMs": None},
     "click.smallScopeMs": {"metric": "click.smallScopeMs", "maxMs": 1000},
     "click.allMedia.firstMs": {"metric": "click.allMedia.firstMs", "maxMs": None},
+    "click.returnMs": {"metric": "click.returnMs", "maxMs": 300},
+    "query.resultMs": {"metric": "query.resultMs", "maxMs": 1000},
+    "photo.stepMs": {"metric": "photo.stepMs", "maxMs": 1000},
+    "act.resultMs": {"metric": "act.resultMs", "maxMs": 100},
     "stalls.count": {"metric": "stalls.count", "max": 0},
+    "stalls.per10Min": {"metric": "stalls.per10Min", "max": 0},
+    "mainThreadStalls.worstMs": {"metric": "mainThreadStalls.worstMs", "maxMs": 250},
 }
 
 
@@ -163,8 +169,53 @@ class ScorecardTests(unittest.TestCase):
         _, rows, _ = run(SESSION)
         by_label = {r["label"]: r["verdict"] for r in rows}
         self.assertEqual(by_label["first all media"], "NO-TARGET")
-        self.assertEqual(by_label["return import"], "PASS")
+        # A return to any view is held to the return target, not the first visit's.
+        self.assertEqual(by_label["return import"], "FAIL")
         self.assertEqual(by_label["store stall lines"], "FAIL")
+        self.assertEqual(by_label["worst main-thread stall ms"], "PASS")
+
+    def test_stalls_are_counted_per_ten_minutes_of_session(self):
+        report, rows, text = run(SESSION)
+        # One stall line in a 41 s session.
+        self.assertEqual(report["stalls"]["per10Min"], round(600 / 41.0, 1))
+        self.assertIn("per 10 minutes", text)
+        self.assertEqual({r["label"]: r["verdict"] for r in rows}["store stall lines per 10 minutes"], "FAIL")
+
+    def test_query_and_photo_steps_are_held_to_their_targets(self):
+        steps = SESSION[:-1] + [
+            line(40.5, "op=tour phase=step index=20 kind=photo label=open outcome=reported ms=300 local=0 storedPreview=4"),
+            line(40.6, "op=tour phase=step index=25 kind=search label=searchMany outcome=reported ms=1500 resultMs=1400 items=9"),
+            line(40.7, "op=tour phase=step index=28 kind=filter label=video outcome=reported ms=2500 resultMs=800 optionsWaitMs=1700"),
+            line(40.8, "op=tour phase=step index=29 kind=act label=liked outcome=skipped ms=0 reason=notSandboxHome"),
+            SESSION[-1],
+        ]
+        _, rows, _ = run(steps)
+        by_label = {r["label"]: (r["value"], r["verdict"]) for r in rows}
+        self.assertEqual(by_label["photo open"], (300, "PASS"))
+        self.assertEqual(by_label["search searchMany"], (1400, "FAIL"))
+        # The filter is timed from its intent, not from the wait for the options it chose from.
+        self.assertEqual(by_label["filter video"], (800, "PASS"))
+        self.assertNotIn("act liked", by_label)
+
+    def test_an_act_is_timed_from_its_intent_to_the_grid(self):
+        acted = SESSION[:-1] + [
+            line(40.1, "op=ui.actToResult phase=start act=liked count=1"),
+            line(40.2, "op=ui.actToResult phase=finish act=liked count=1 surface=grid ms=40"),
+            line(40.3, "op=ui.actToResult phase=start act=moveToTrash count=1"),
+            line(40.4, "op=ui.actToResult phase=abandoned act=moveToTrash ms=90 supersededBy=disliked"),
+            line(40.5, "op=ui.actToResult phase=start act=disliked count=1"),
+            line(40.7, "op=ui.actToResult phase=finish act=disliked count=1 surface=grid ms=180"),
+            SESSION[-1],
+        ]
+        report, rows, text = run(acted)
+        self.assertEqual([(a["act"], a["outcome"], a["ms"]) for a in report["acts"]],
+                         [("liked", "shown", 40), ("moveToTrash", "abandoned", 90), ("disliked", "shown", 180)])
+        by_label = {r["label"]: r["verdict"] for r in rows}
+        self.assertEqual((by_label["act liked"], by_label["act disliked"]), ("PASS", "FAIL"))
+        self.assertIn("ACT TO RESULT", text)
+        self.assertFalse(any("act to result" in item for item in report["notMeasured"]))
+        report, _, _ = run(SESSION)
+        self.assertTrue(any("act to result" in item for item in report["notMeasured"]))
 
     def test_the_newest_session_of_the_asked_build_is_read(self):
         dev = "/Users/someone/build/DerivedData/Build/Products/Debug/Otos.app/Contents/MacOS/Otos"
