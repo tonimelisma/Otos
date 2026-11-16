@@ -45,7 +45,13 @@ runs) animate as a batch of moves, which moves surviving items
 instead of recreating them — the measured synchronous apply call (the structural-apply line's `commitMs`) for K = 1–3 movers at n ≈ 23k
 is in the low tens of milliseconds (`docs/research/grid-reorder-cadence-and-appkit-diffable-apply.md`).
 Descriptor-changed reorders and large membership applies keep the reloadData-class
-path. The once-per-second reorder cadence is intentional; the hitch was the
+path. AppKit holds the grid's order as one section — an item's index path is its
+position, a day header's is keyed by its day — and the day sections are the layout's,
+because AppKit does work for every section it holds on each update: at the owner's 5,000
+days a one-photo batch cost about 93 M main-thread instructions against about 30 M with one
+section, so a small removal or insertion (Move to Trash, a stack expanding, an import's
+arrival) animates as a batch at any grid size
+(`docs/research/2026-11-15-grid-removal-without-a-reload.md`). The once-per-second reorder cadence is intentional; the hitch was the
 reloadData teardown, not how often applies run.
 
 ## Alternatives
@@ -228,8 +234,8 @@ skips `TileContentStore.prune` (membership identical by definition). The
 apply-policy summary reads membership from the previous structure's own identity
 index, so no apply rebuilds a set of the identities on screen.
 Descriptor-changed reorders (sort/scope/filter flips) and large membership
-applies (`n ≥ 1000` on either side: the grid on screen or the next one, because
-an animated batch pays for every removed item as well as every inserted one) use `reloadData`,
+applies (`n ≥ 1000` items inserted plus removed, because an animated batch pays for
+every removed item as well as every inserted one) use `reloadData`,
 completely unaffected by the animation tuning
 above. Same-descriptor reorders keep only the longest in-order run in place and move
 the rest, so their batch is as small as the change. This is

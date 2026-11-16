@@ -1222,15 +1222,11 @@ nonisolated struct CatalogMediaGridState: Equatable {
         return shown
     }
 
-    /// This grid, its descriptor and detail refresh kept, showing another collapse of its
-    /// stacks (`CatalogProjection.expanding`).
-    func replacingContent(
-        orderedAssetIDs: [MediaAssetID],
-        dayBuckets: [Date?],
-        stacks: CatalogGridStacks
-    ) -> CatalogMediaGridState {
+    /// This grid, its descriptor and detail refresh kept, showing `content`: another
+    /// collapse of its stacks (`CatalogProjection.expanding`).
+    func replacingContent(_ content: CatalogGridContent) -> CatalogMediaGridState {
         var shown = self
-        shown.content = CatalogGridContent(orderedAssetIDs: orderedAssetIDs, dayBuckets: dayBuckets, stacks: stacks)
+        shown.content = content
         return shown
     }
 
@@ -1303,19 +1299,33 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
     /// Shared by every content holding this very order and days (`replacing(stacks:)`).
     private let order: Order
 
-    /// The identity of one publication of an order and its days, and, for one `removing`
-    /// made, the order it was made from and the positions it dropped.
+    /// How an order was made from another by dropping and adding items, survivors keeping
+    /// their relative order: a Move to Trash's removal (`removing`), a stack expanding or
+    /// collapsing (`editing`). A grid showing the other order takes this one in by these
+    /// positions alone (`MediaGridStructure.init(grid:following:)`).
+    struct Edit: Equatable, Sendable {
+        /// The other order's positions this one dropped, ascending.
+        let removed: [Int]
+        /// This order's positions that the other does not hold, ascending.
+        let inserted: [Int]
+
+        var isEmpty: Bool {
+            removed.isEmpty && inserted.isEmpty
+        }
+    }
+
+    /// The identity of one publication of an order and its days, and, for one made by an
+    /// edit, the order it was made from and the edit.
     private final class Order: Sendable {
-        /// Held weakly: a content made by removal never keeps its source's order alive,
+        /// Held weakly: a content made by an edit never keeps its source's order alive,
         /// and once nothing holds that order, nothing can ask about it.
         weak let source: Order?
-        /// The source's positions this order dropped, ascending; empty for an order that
-        /// was not made by removal.
-        let removedPositions: [Int]
+        /// Empty for an order that was not made by an edit.
+        let edit: Edit
 
-        init(source: Order? = nil, removedPositions: [Int] = []) {
+        init(source: Order? = nil, edit: Edit = Edit(removed: [], inserted: [])) {
             self.source = source
-            self.removedPositions = removedPositions
+            self.edit = edit
         }
     }
 
@@ -1331,14 +1341,14 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         orderedAssetIDs: [MediaAssetID],
         dayBuckets: [Date?],
         stacks: CatalogGridStacks,
-        removing positions: [Int],
+        edit: Edit,
         from source: CatalogGridContent
     ) {
         self.orderedAssetIDs = orderedAssetIDs
         self.dayBuckets = dayBuckets
         self.stacks = stacks
         index = Mutex(nil)
-        order = Order(source: source.order, removedPositions: positions)
+        order = Order(source: source.order, edit: edit)
     }
 
     private init(_ content: CatalogGridContent, stacks: CatalogGridStacks) {
@@ -1370,37 +1380,41 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         guard !positions.isEmpty else {
             return nil
         }
-        // The runs between removed positions are copied whole.
-        var ids: [MediaAssetID] = []
-        ids.reserveCapacity(orderedAssetIDs.count - positions.count)
-        var buckets: [Date?] = []
-        buckets.reserveCapacity(dayBuckets.isEmpty ? 0 : orderedAssetIDs.count - positions.count)
-        var start = 0
-        for position in positions + [orderedAssetIDs.count] {
-            ids.append(contentsOf: orderedAssetIDs[start ..< position])
-            if !dayBuckets.isEmpty {
-                buckets.append(contentsOf: dayBuckets[start ..< position])
-            }
-            start = position + 1
-        }
         return CatalogGridContent(
-            orderedAssetIDs: ids,
-            dayBuckets: buckets,
+            orderedAssetIDs: orderedAssetIDs.editing(removing: positions, inserting: []),
+            dayBuckets: dayBuckets.isEmpty ? [] : dayBuckets.editing(removing: positions, inserting: []),
             stacks: stacks.removing(hidden),
-            removing: positions,
+            edit: Edit(removed: positions, inserted: []),
             from: self
         )
     }
 
-    /// The positions of `other`'s order this content's order was made from it by dropping
-    /// (`removing`), ascending; nil unless this order was made from that very order. A grid
-    /// that shows `other` takes this one in by those positions alone
-    /// (`MediaGridStructure.init(grid:following:)`).
-    func positionsRemoved(from other: CatalogGridContent) -> [Int]? {
+    /// `orderedAssetIDs` and `dayBuckets`, which `edit` made from this content's, showing
+    /// `stacks`: a content of its own that remembers the edit, so a grid showing this one
+    /// follows it by the edit alone (a stack expanding or collapsing,
+    /// `CatalogProjection.expanding`).
+    func edited(
+        by edit: Edit,
+        to orderedAssetIDs: [MediaAssetID],
+        dayBuckets: [Date?],
+        stacks: CatalogGridStacks
+    ) -> CatalogGridContent {
+        CatalogGridContent(
+            orderedAssetIDs: orderedAssetIDs,
+            dayBuckets: dayBuckets,
+            stacks: stacks,
+            edit: edit,
+            from: self
+        )
+    }
+
+    /// How this content's order was made from `other`'s by an edit (`removing`,
+    /// `editing`); nil unless it was made from that very order.
+    func edit(from other: CatalogGridContent) -> Edit? {
         guard let source = order.source, source === other.order else {
             return nil
         }
-        return order.removedPositions
+        return order.edit
     }
 
     var orderedIDs: [MediaAssetID] {
@@ -1456,6 +1470,38 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
             || (lhs.orderedAssetIDs == rhs.orderedAssetIDs
                 && lhs.dayBuckets == rhs.dayBuckets
                 && lhs.stacks == rhs.stacks)
+    }
+}
+
+extension Array {
+    /// This array without the elements at `removed` (ascending positions in it) and with
+    /// `inserted` added (ascending positions in the result), the rest keeping their order.
+    /// The runs between edits are copied whole.
+    nonisolated func editing(removing removed: [Int], inserting inserted: [(position: Int, element: Element)]) -> [Element] {
+        var result: [Element] = []
+        result.reserveCapacity(count - removed.count + inserted.count)
+        var source = 0
+        var nextRemoved = 0
+        /// Appends the next `survivors` elements of this array that are not removed.
+        func copy(_ survivors: Int) {
+            var remaining = survivors
+            while remaining > 0 {
+                while nextRemoved < removed.count, removed[nextRemoved] == source {
+                    source += 1
+                    nextRemoved += 1
+                }
+                let runEnd = Swift.min(nextRemoved < removed.count ? removed[nextRemoved] : count, source + remaining)
+                result.append(contentsOf: self[source ..< runEnd])
+                remaining -= runEnd - source
+                source = runEnd
+            }
+        }
+        for (position, element) in inserted {
+            copy(position - result.count)
+            result.append(element)
+        }
+        copy(count - source - (removed.count - nextRemoved))
+        return result
     }
 }
 

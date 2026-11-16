@@ -52,23 +52,67 @@ struct MediaGridStructureTests {
             orderedIDs: ids,
             dayBuckets: [Self.dayThree, Self.dayTwo, Self.dayTwo, Self.dayTwo, Self.dayOne, Self.dayOne]
         )
+        // AppKit holds the order as one section: an item's path is its position.
         #expect(structure.indexPath(of: ids[0]) == IndexPath(item: 0, section: 0))
-        #expect(structure.indexPath(of: ids[3]) == IndexPath(item: 2, section: 1))
-        #expect(structure.indexPath(of: ids[5]) == IndexPath(item: 1, section: 2))
+        #expect(structure.indexPath(of: ids[3]) == IndexPath(item: 3, section: 0))
+        #expect(structure.indexPath(of: ids[5]) == IndexPath(item: 5, section: 0))
         for id in ids {
             #expect(structure.indexPath(of: id).flatMap(structure.id(at:)) == id)
         }
-        #expect(structure.numberOfItems(inSection: 1) == 3)
+        #expect(structure.numberOfItems == 6)
+        #expect((0 ..< 6).map { structure.section(containing: $0) } == [0, 1, 1, 1, 2, 2])
     }
 
     @Test func pathsOutsideTheStructureNameNothing() {
         let structure = MediaGridStructure(orderedIDs: Self.ids("a", "b"), dayBuckets: [Self.dayTwo, Self.dayOne])
-        #expect(structure.id(at: IndexPath(item: 1, section: 0)) == nil)
-        #expect(structure.id(at: IndexPath(item: 0, section: 2)) == nil)
-        #expect(structure.id(at: IndexPath(item: -1, section: 1)) == nil)
+        #expect(structure.id(at: IndexPath(item: 2, section: 0)) == nil)
+        #expect(structure.id(at: IndexPath(item: 0, section: 1)) == nil)
+        #expect(structure.id(at: IndexPath(item: -1, section: 0)) == nil)
         #expect(structure.indexPath(of: Self.id("zzz")) == nil)
-        #expect(structure.numberOfItems(inSection: 5) == 0)
+        #expect(structure.section(containing: 2) == nil)
         #expect(structure.day(inSection: -1) == nil)
+    }
+
+    // MARK: - Day headers
+
+    /// A day's header keeps its index path in every structure holding that day, so a batch
+    /// keeps its view while days before it come and go.
+    @Test func aDaysHeaderSitsAtTheSamePathInEveryStructure() throws {
+        let three = Self.structure([("a", Self.dayThree), ("b", Self.dayOne)])
+        // Newest first, as Date sort shows them: a newer day lands above, another between.
+        let four = Self.structure([
+            ("n", Date(timeIntervalSince1970: 86400 * 4)), ("a", Self.dayThree), ("m", Self.dayTwo), ("b", Self.dayOne),
+        ])
+        #expect(three.keysAreUnique && four.keysAreUnique)
+        #expect(three.headerIndexPath(ofSection: 0) == four.headerIndexPath(ofSection: 1))
+        #expect(three.headerIndexPath(ofSection: 1) == four.headerIndexPath(ofSection: 3))
+        let paths = (0 ..< 4).compactMap(four.headerIndexPath(ofSection:))
+        #expect(Set(paths).count == 4)
+        for (section, path) in paths.enumerated() {
+            #expect(path.section == 0)
+            #expect(four.section(ofHeaderAt: path) == section)
+        }
+        let unknown = Self.structure([("a", Self.dayOne), ("u", nil)])
+        #expect(try unknown.section(ofHeaderAt: #require(unknown.headerIndexPath(ofSection: 1))) == 1)
+        // Oldest first, the unknown day between: each header is found by its day.
+        let ascending = Self.structure([("a", Self.dayZero), ("u", nil), ("b", Self.dayTwo), ("c", Self.dayThree)])
+        #expect(ascending.keysAreUnique)
+        for section in 0 ..< 4 {
+            #expect(try ascending.section(ofHeaderAt: #require(ascending.headerIndexPath(ofSection: section))) == section)
+            let input = ascending.layoutInput
+            #expect(input.headers.section(ofItem: input.headers.item(ofSection: section)) == section)
+        }
+    }
+
+    /// The ungrouped section has no header, and a day met twice has its headers by section,
+    /// never by day.
+    @Test func headersWithoutADayToKeyThem() {
+        let ungrouped = MediaGridStructure(orderedIDs: Self.ids("a", "b"))
+        #expect(ungrouped.headerIndexPath(ofSection: 0) == nil)
+        #expect(ungrouped.section(ofHeaderAt: IndexPath(item: 0, section: 0)) == nil)
+        let repeated = Self.structure([("a", Self.dayOne), ("b", Self.dayTwo), ("c", Self.dayOne)])
+        #expect(!repeated.keysAreUnique)
+        #expect((0 ..< 3).map(repeated.headerIndexPath(ofSection:)) == (0 ..< 3).map { IndexPath(item: $0, section: 0) })
     }
 
     // MARK: - Batch updates
@@ -105,7 +149,10 @@ struct MediaGridStructureTests {
         let old = Self.structure([("a", Self.dayThree), ("b", Self.dayOne)])
         let new = Self.structure([("a", Self.dayThree), ("n", Self.dayTwo), ("b", Self.dayOne)])
         let updates = try #require(MediaGridBatchUpdates.between(old, new))
-        #expect(updates == MediaGridBatchUpdates(insertedSections: [1]))
+        #expect(try updates == MediaGridBatchUpdates(
+            insertedItems: [IndexPath(item: 1, section: 0)],
+            headers: MediaGridHeaderUpdates(inserted: [#require(new.headerIndexPath(ofSection: 1))])
+        ))
         try Self.replay(updates, from: old, to: new)
     }
 
@@ -113,28 +160,39 @@ struct MediaGridStructureTests {
         let old = Self.structure([("a", Self.dayThree), ("b", Self.dayTwo), ("c", Self.dayOne)])
         let new = Self.structure([("a", Self.dayThree), ("c", Self.dayOne)])
         let updates = try #require(MediaGridBatchUpdates.between(old, new))
-        #expect(updates == MediaGridBatchUpdates(deletedSections: [1]))
+        #expect(try updates == MediaGridBatchUpdates(
+            deletedItems: [IndexPath(item: 1, section: 0)],
+            headers: MediaGridHeaderUpdates(deleted: [#require(old.headerIndexPath(ofSection: 1))])
+        ))
         try Self.replay(updates, from: old, to: new)
     }
 
     /// An enrichment that corrects a capture date moves a photo from one surviving day to
-    /// another: same membership, a different section.
+    /// another: same membership, a different section, and a move in the batch, though the
+    /// photo keeps its place in the order.
     @Test func aPhotoChangingDayBetweenSurvivingDaysIsAMove() throws {
         let old = Self.structure([("a", Self.dayTwo), ("b", Self.dayTwo), ("c", Self.dayOne)])
         let new = Self.structure([("a", Self.dayTwo), ("b", Self.dayOne), ("c", Self.dayOne)])
         let updates = try #require(MediaGridBatchUpdates.between(old, new))
         #expect(updates == MediaGridBatchUpdates(movedItems: [
-            .init(from: IndexPath(item: 1, section: 0), to: IndexPath(item: 0, section: 1)),
+            .init(from: IndexPath(item: 1, section: 0), to: IndexPath(item: 1, section: 0)),
         ]))
         try Self.replay(updates, from: old, to: new)
     }
 
-    /// AppKit cannot move an item into an inserted section or out of a deleted one.
-    @Test func aPhotoMovingToANewDayLeavingItsOldDayEmptyCrossesBothEdges() throws {
+    /// A photo moving to a new day and leaving its old one empty keeps its view: a move,
+    /// with one day's header going and the other's coming.
+    @Test func aPhotoMovingToANewDayLeavingItsOldDayEmptyKeepsItsView() throws {
         let old = Self.structure([("a", Self.dayThree), ("b", Self.dayOne)])
         let new = Self.structure([("a", Self.dayThree), ("b", Self.dayTwo)])
         let updates = try #require(MediaGridBatchUpdates.between(old, new))
-        #expect(updates == MediaGridBatchUpdates(deletedSections: [1], insertedSections: [1]))
+        #expect(try updates == MediaGridBatchUpdates(
+            movedItems: [.init(from: IndexPath(item: 1, section: 0), to: IndexPath(item: 1, section: 0))],
+            headers: MediaGridHeaderUpdates(
+                deleted: [#require(old.headerIndexPath(ofSection: 1))],
+                inserted: [#require(new.headerIndexPath(ofSection: 1))]
+            )
+        ))
         try Self.replay(updates, from: old, to: new)
 
         let crossing = Self.structure([("a", Self.dayThree), ("b", Self.dayThree), ("c", Self.dayOne)])
@@ -149,7 +207,10 @@ struct MediaGridStructureTests {
     @Test func aFirstApplyReplacesTheEmptyStructure() throws {
         let new = Self.structure([("a", Self.dayTwo), ("b", Self.dayOne)])
         let updates = try #require(MediaGridBatchUpdates.between(.empty, new))
-        #expect(updates == MediaGridBatchUpdates(insertedSections: [0, 1]))
+        #expect(updates == MediaGridBatchUpdates(
+            insertedItems: [IndexPath(item: 0, section: 0), IndexPath(item: 1, section: 0)],
+            headers: MediaGridHeaderUpdates(inserted: Set((0 ..< 2).compactMap(new.headerIndexPath(ofSection:))))
+        ))
         try Self.replay(updates, from: .empty, to: new)
 
         let ungroupedEmpty = MediaGridStructure(orderedIDs: [])
@@ -226,10 +287,11 @@ struct MediaGridStructureTests {
         return structure(entries.map { ($0.0, Optional($0.1)) })
     }
 
-    /// Applies `updates` to `old` the way `NSCollectionView.performBatchUpdates` does and
-    /// checks the result is `new`: deletions and move sources at old paths, insertions and
-    /// move destinations at new ones, an inserted section supplying its own items, and every
-    /// unmentioned item of a surviving section keeping its relative order.
+    /// Applies `updates` to `old` the way `NSCollectionView.performBatchUpdates` does to the
+    /// grid's one AppKit section and checks the result is `new`: deletions and move sources
+    /// at old positions, insertions and move destinations at new ones, every unmentioned
+    /// item keeping its relative order; and the headers that go and come are exactly the
+    /// days one structure has and the other lacks.
     static func replay(
         _ updates: MediaGridBatchUpdates,
         from old: MediaGridStructure,
@@ -242,48 +304,35 @@ struct MediaGridStructureTests {
         #expect(moveTargets.count == updates.movedItems.count, sourceLocation: sourceLocation)
         #expect(moveSources.isDisjoint(with: updates.deletedItems), sourceLocation: sourceLocation)
         #expect(moveTargets.isDisjoint(with: updates.insertedItems), sourceLocation: sourceLocation)
-
-        let survivingOld = (0 ..< old.numberOfSections).filter { !updates.deletedSections.contains($0) }
-        let survivingNew = (0 ..< new.numberOfSections).filter { !updates.insertedSections.contains($0) }
-        try #require(survivingOld.count == survivingNew.count, sourceLocation: sourceLocation)
         for path in updates.deletedItems.union(moveSources) {
-            #expect(!updates.deletedSections.contains(path.section), sourceLocation: sourceLocation)
             #expect(old.id(at: path) != nil, sourceLocation: sourceLocation)
         }
         for path in updates.insertedItems.union(moveTargets) {
-            #expect(!updates.insertedSections.contains(path.section), sourceLocation: sourceLocation)
             #expect(new.id(at: path) != nil, sourceLocation: sourceLocation)
         }
 
-        var result: [[MediaAssetID?]] = (0 ..< new.numberOfSections).map {
-            Array(repeating: nil, count: new.numberOfItems(inSection: $0))
-        }
-        for section in updates.insertedSections {
-            for item in result[section].indices {
-                result[section][item] = new.id(at: IndexPath(item: item, section: section))
-            }
-        }
+        var result = [MediaAssetID?](repeating: nil, count: new.numberOfItems)
         for path in updates.insertedItems {
-            result[path.section][path.item] = new.id(at: path)
+            result[path.item] = new.id(at: path)
         }
         for move in updates.movedItems {
-            result[move.to.section][move.to.item] = old.id(at: move.from)
+            result[move.to.item] = old.id(at: move.from)
         }
-        for (oldSection, newSection) in zip(survivingOld, survivingNew) {
-            let staying = (0 ..< old.numberOfItems(inSection: oldSection))
-                .map { IndexPath(item: $0, section: oldSection) }
-                .filter { !updates.deletedItems.contains($0) && !moveSources.contains($0) }
-                .compactMap(old.id(at:))
-            let openSlots = result[newSection].indices.filter { result[newSection][$0] == nil }
-            try #require(staying.count == openSlots.count, sourceLocation: sourceLocation)
-            for (slot, id) in zip(openSlots, staying) {
-                result[newSection][slot] = id
-            }
+        let staying = (0 ..< old.numberOfItems)
+            .map(MediaGridStructure.indexPath(atPosition:))
+            .filter { !updates.deletedItems.contains($0) && !moveSources.contains($0) }
+            .compactMap(old.id(at:))
+        let openSlots = result.indices.filter { result[$0] == nil }
+        try #require(staying.count == openSlots.count, sourceLocation: sourceLocation)
+        for (slot, id) in zip(openSlots, staying) {
+            result[slot] = id
         }
-        let expected = (0 ..< new.numberOfSections).map { section in
-            (0 ..< new.numberOfItems(inSection: section)).map { new.id(at: IndexPath(item: $0, section: section)) }
-        }
-        #expect(result == expected, sourceLocation: sourceLocation)
+        #expect(result == new.orderedIDs, sourceLocation: sourceLocation)
+
+        let oldHeaders = Set((0 ..< old.numberOfSections).compactMap(old.headerIndexPath(ofSection:)))
+        let newHeaders = Set((0 ..< new.numberOfSections).compactMap(new.headerIndexPath(ofSection:)))
+        #expect(updates.headers.deleted == oldHeaders.subtracting(newHeaders), sourceLocation: sourceLocation)
+        #expect(updates.headers.inserted == newHeaders.subtracting(oldHeaders), sourceLocation: sourceLocation)
     }
 }
 
@@ -351,6 +400,49 @@ extension AppKitWindowTests {
             #expect(Set(controller.collectionView.visibleItems().map(ObjectIdentifier.init)) == shown)
         }
 
+        /// Move to Trash's hide at a size the old policy reloaded (1,000 tiles or more):
+        /// a batch, so every surviving tile on screen keeps its view, and the header of a
+        /// day that survives keeps its view while the day before it empties.
+        @Test func aHideKeepsTheViewsOfWhatSurvives() async throws {
+            let controller = MediaGridViewController()
+            _ = controller.view
+            let window = orderedInTestWindow(width: 800, height: 600, contentView: controller.view)
+            defer { window.close() }
+            controller.view.layoutSubtreeIfNeeded()
+            let ids = (0 ..< 1500).map { MediaGridStructureTests.id("h\($0)") }
+            // Day three holds two photos, day two one, day one the rest.
+            let buckets = ids.indices.map { index -> Date? in
+                index < 2 ? MediaGridStructureTests.dayThree : index == 2 ? MediaGridStructureTests.dayTwo : MediaGridStructureTests.dayOne
+            }
+            let shown = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids, dayBuckets: buckets)
+            controller.receive(shown)
+            try await awaitGridShows(controller, shown)
+            controller.collectionView.layoutSubtreeIfNeeded()
+            let dayOneHeader = try #require(controller.structure.headerIndexPath(ofSection: 2))
+            let headerView = try #require(controller.collectionView.supplementaryView(
+                forElementKind: MediaGridDayHeaderView.elementKind, at: dayOneHeader
+            ))
+            let survivors = ids[3 ..< 8]
+            let tiles = try survivors.map { id in
+                let path = try #require(controller.structure.indexPath(of: id))
+                return try #require(controller.collectionView.item(at: path))
+            }
+
+            let hidden = shown.hiding([ids[1], ids[2]])
+            controller.receive(hidden)
+            try await awaitGridShows(controller, hidden)
+            controller.collectionView.layoutSubtreeIfNeeded()
+            #expect(controller.structure.numberOfSections == 2)
+            #expect(controller.structure.headerIndexPath(ofSection: 1) == dayOneHeader)
+            #expect(controller.collectionView.supplementaryView(
+                forElementKind: MediaGridDayHeaderView.elementKind, at: dayOneHeader
+            ) === headerView)
+            for (id, tile) in zip(survivors, tiles) {
+                let path = try #require(controller.structure.indexPath(of: id))
+                #expect(controller.collectionView.item(at: path) === tile)
+            }
+        }
+
         /// Applies each step in turn and returns the last grid applied.
         private func applyEach(
             _ steps: [[(String, Date?)]], to controller: MediaGridViewController
@@ -365,10 +457,8 @@ extension AppKitWindowTests {
                 controller.collectionView.layoutSubtreeIfNeeded()
                 let expected = MediaGridStructure(orderedIDs: ids, dayBuckets: entries.map(\.1))
                 #expect(controller.structure.sections == expected.sections)
-                #expect(controller.collectionView.numberOfSections == expected.numberOfSections)
-                for section in 0 ..< expected.numberOfSections {
-                    #expect(controller.collectionView.numberOfItems(inSection: section) == expected.numberOfItems(inSection: section))
-                }
+                #expect(controller.collectionView.numberOfSections == 1)
+                #expect(controller.collectionView.numberOfItems(inSection: 0) == ids.count)
             }
             return applied
         }

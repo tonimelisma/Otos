@@ -248,16 +248,32 @@ struct MediaGridLayoutTests {
 }
 
 extension AppKitWindowTests {
-    /// `MediaGridLayout` in a real collection view: it reads the counts AppKit holds, the
-    /// header flags it is given, the view's width and the window's backing scale, and
-    /// answers every query from the geometry those make.
+    /// `MediaGridLayout` in a real collection view, which holds the order as one section:
+    /// it lays out the sections it is given at the view's width and the window's backing
+    /// scale, answers every query at AppKit's index paths (an item's position in the order,
+    /// a header's item), and the collection view realizes what the geometry puts on screen.
     @MainActor
     struct MediaGridLayoutWindowTests {
-        @Test func theLayoutAnswersFromTheCollectionViewsCountsWidthAndScale() {
+        @Test func theLayoutAnswersAtAppKitsIndexPathsFromItsSectionsWidthAndScale() {
+            // Days newest first, the unknown day's run third.
             let counts = [3, 14, 1, 40, 7]
-            let source = LayoutTestSource(counts: counts)
+            let days: [Date?] = [5, 4, nil, 2, 1].map { $0.map { Date(timeIntervalSince1970: 86400 * $0) } }
+            var buckets: [Date?] = []
+            for (count, day) in zip(counts, days) {
+                buckets += Array(repeating: day, count: count)
+            }
+            let structure = MediaGridStructure(
+                orderedIDs: buckets.indices.map { MediaGridStructureTests.id("l\($0)") },
+                dayBuckets: buckets
+            )
+            var input = structure.layoutInput
+            let sections = input.sections
+            #expect(sections.map(\.itemCount) == counts)
+            let headerItems = counts.indices.map { input.headers.item(ofSection: $0) }
+            #expect(Set(headerItems).count == counts.count)
+            let source = LayoutTestSource(count: counts.reduce(0, +))
             let collectionView = NSCollectionView()
-            let layout = MediaGridLayout(columnCount: 5) { $0 != 2 }
+            let layout = MediaGridLayout(columnCount: 5) { _ in input }
             collectionView.collectionViewLayout = layout
             collectionView.register(LayoutTestTile.self, forItemWithIdentifier: LayoutTestSource.item)
             collectionView.register(
@@ -275,7 +291,7 @@ extension AppKitWindowTests {
             collectionView.layoutSubtreeIfNeeded()
 
             let expected = MediaGridLayoutGeometry(
-                sections: counts.enumerated().map { .init(itemCount: $1, hasHeader: $0 != 2) },
+                sections: sections,
                 columnCount: 5,
                 width: collectionView.bounds.width,
                 headerHeight: MediaGridDayHeaderView.height,
@@ -284,22 +300,33 @@ extension AppKitWindowTests {
             )
             #expect(collectionView.bounds.width > 0)
             #expect(layout.collectionViewContentSize == expected.contentSize)
+            var position = 0
             for (section, count) in counts.enumerated() {
                 let header = layout.layoutAttributesForSupplementaryView(
                     ofKind: MediaGridDayHeaderView.elementKind,
-                    at: IndexPath(item: 0, section: section)
+                    at: IndexPath(item: headerItems[section], section: 0)
                 )
                 #expect(header?.frame == expected.headerFrame(inSection: section))
                 for item in 0 ..< count {
-                    let indexPath = IndexPath(item: item, section: section)
-                    #expect(layout.layoutAttributesForItem(at: indexPath)?.frame == expected.itemFrame(at: indexPath))
+                    let frame = layout.layoutAttributesForItem(at: IndexPath(item: position, section: 0))?.frame
+                    #expect(frame == expected.itemFrame(at: IndexPath(item: item, section: section)))
+                    #expect(expected.indexPath(atPosition: position) == IndexPath(item: item, section: section))
+                    position += 1
                 }
+            }
+            #expect(layout.layoutAttributesForItem(at: IndexPath(item: position, section: 0)) == nil)
+            #expect(layout.layoutAttributesForSupplementaryView(
+                ofKind: MediaGridDayHeaderView.elementKind,
+                at: IndexPath(item: 6, section: 0)
+            ) == nil)
+            for (section, item) in headerItems.enumerated() {
+                #expect(input.headers.section(ofItem: item) == section)
             }
             // The collection view realizes exactly the items the viewport holds.
             let viewport = scrollView.documentVisibleRect
             let inViewport = Set(expected.elements(in: viewport).compactMap { element -> IndexPath? in
                 if case let .item(indexPath, _) = element {
-                    return indexPath
+                    return IndexPath(item: expected.position(of: indexPath), section: 0)
                 }
                 return nil
             })
@@ -318,7 +345,8 @@ extension AppKitWindowTests {
             #expect(layout.shouldInvalidateLayout(forBoundsChange: narrower))
 
             // A data change is read at the next prepare.
-            source.counts = [2]
+            input = MediaGridStructure(orderedIDs: [MediaGridStructureTests.id("a"), MediaGridStructureTests.id("b")]).layoutInput
+            source.count = 2
             collectionView.reloadData()
             collectionView.layoutSubtreeIfNeeded()
             #expect(layout.geometry.numberOfSections == 1)
@@ -332,18 +360,18 @@ private func path(_ item: Int) -> IndexPath {
 }
 
 private final class LayoutTestSource: NSObject, NSCollectionViewDataSource {
-    var counts: [Int]
+    var count: Int
 
-    init(counts: [Int]) {
-        self.counts = counts
+    init(count: Int) {
+        self.count = count
     }
 
     func numberOfSections(in _: NSCollectionView) -> Int {
-        counts.count
+        1
     }
 
-    func collectionView(_: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
-        counts[section]
+    func collectionView(_: NSCollectionView, numberOfItemsInSection _: Int) -> Int {
+        count
     }
 
     func collectionView(

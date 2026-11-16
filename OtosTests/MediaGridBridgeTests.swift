@@ -314,7 +314,7 @@ struct MediaGridBridgeTests {
         #expect(small.animatingDifferences)
         #expect(!small.usesReloadDataFallback)
 
-        let largePaths = (0 ..< MediaGridStructuralApplyPolicy.reloadDataFallbackItemCountThreshold)
+        let largePaths = (0 ..< MediaGridStructuralApplyPolicy.reloadDataFallbackChangedItemThreshold)
             .map { "asset-\($0).jpg" }
         let largePrevious = makeGrid(scope: .allMedia, paths: largePaths).orderedAssetIDs
         let largeReordered = Array(largePrevious.reversed())
@@ -324,7 +324,7 @@ struct MediaGridBridgeTests {
             descriptorChanged: false
         )
         #expect(large.reorderOnly)
-        #expect(large.largeApply)
+        #expect(!large.largeApply)
         #expect(large.animatingDifferences)
         #expect(!large.usesReloadDataFallback)
     }
@@ -345,7 +345,7 @@ struct MediaGridBridgeTests {
     @Test func structuralApplyPolicyFallsBackForLargeMembershipChange() {
         let largeApply = makeGrid(
             scope: .allMedia,
-            paths: (0 ..< MediaGridStructuralApplyPolicy.reloadDataFallbackItemCountThreshold).map { "asset-\($0).jpg" }
+            paths: (0 ..< MediaGridStructuralApplyPolicy.reloadDataFallbackChangedItemThreshold).map { "asset-\($0).jpg" }
         ).orderedAssetIDs
         let policy = MediaGridStructuralApplyPolicy.summarize(
             previous: .empty,
@@ -362,7 +362,7 @@ struct MediaGridBridgeTests {
     @Test func structuralApplyPolicyFallsBackWhenALargeGridShrinksToASmallOne() {
         let largePrevious = makeGrid(
             scope: .allMedia,
-            paths: (0 ..< MediaGridStructuralApplyPolicy.reloadDataFallbackItemCountThreshold).map { "asset-\($0).jpg" }
+            paths: (0 ..< MediaGridStructuralApplyPolicy.reloadDataFallbackChangedItemThreshold).map { "asset-\($0).jpg" }
         ).orderedAssetIDs
         let small = makeGrid(scope: .allMedia, paths: ["other-a.jpg", "other-b.jpg"]).orderedAssetIDs
         let policy = MediaGridStructuralApplyPolicy.summarize(

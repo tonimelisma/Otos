@@ -143,6 +143,14 @@ final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// The layout's frame, as given: every header is `height` tall and the grid's width,
+    /// so AppKit need not fit its constraints each time it realizes one.
+    func preferredLayoutAttributesFitting(
+        _ layoutAttributes: NSCollectionViewLayoutAttributes
+    ) -> NSCollectionViewLayoutAttributes {
+        layoutAttributes
+    }
+
     /// Every header's height, and the bar's (DES-069: one label drawn twice): the label's
     /// own fitting height with a date and a count in it, measured once.
     ///

@@ -380,14 +380,23 @@ nonisolated enum PhotoStackCollapse {
         let dayBuckets: [Date?]
         let coordinates: [PlaceCoordinate]
         let grid: CatalogGridStacks
+        /// The input's positions the collapse hides, ascending: an input position `p` it
+        /// keeps is at `p` minus the hidden positions before it in `ids`.
+        let hiddenPositions: [Int]
+        /// Where each file of a stack sits in the input, whatever the collapse did with it:
+        /// what a change of expansion recollapses (`changingExpansion`).
+        let stackedPositions: [MediaAssetID: Int]
     }
 
-    /// One level's pass: the positions it keeps in the original order, each kept ID's stack
-    /// at this level and whether it is expanded, and each hidden ID's shown ID.
+    /// One level's pass: the positions it keeps and hides in the original order, each kept
+    /// ID's stack at this level and whether it is expanded, each hidden ID's shown ID, and
+    /// where each ID of a stack at this level sits.
     private struct Level {
         var kept: [Int] = []
+        var hidden: [Int] = []
         var stackOf: [MediaAssetID: TileLevel] = [:]
         var shownFor: [MediaAssetID: MediaAssetID] = [:]
+        var stacked: [MediaAssetID: Int] = [:]
     }
 
     private struct TileLevel {
@@ -407,7 +416,10 @@ nonisolated enum PhotoStackCollapse {
         expanded: Set<PhotoStackID>
     ) -> Result {
         guard !stacks.stacks.isEmpty else {
-            return Result(ids: ids, dayBuckets: dayBuckets, coordinates: coordinates, grid: .empty)
+            return Result(
+                ids: ids, dayBuckets: dayBuckets, coordinates: coordinates, grid: .empty,
+                hiddenPositions: [], stackedPositions: [:]
+            )
         }
         // Each pass touches every ID once; a pass with no stacks of its kind is skipped, and
         // the tiles are built from the stacked IDs alone, a few percent of a library.
@@ -447,12 +459,128 @@ nonisolated enum PhotoStackCollapse {
 
         let kept = bursts.kept
         let keepsAll = kept.count == ids.count
+        var stacked = pairs.stacked
+        stacked.merge(bursts.stacked) { pair, _ in pair }
         return Result(
             ids: keepsAll ? ids : kept.map { ids[$0] },
             dayBuckets: dayBuckets.count != ids.count ? [] : keepsAll ? dayBuckets : kept.map { dayBuckets[$0] },
             coordinates: coordinates.count != ids.count ? [] : keepsAll ? coordinates : kept.map { coordinates[$0] },
-            grid: CatalogGridStacks(tiles: tiles, shownForHiddenMember: shownFor)
+            grid: CatalogGridStacks(tiles: tiles, shownForHiddenMember: shownFor),
+            hiddenPositions: Self.merged(pairs.hidden, bursts.hidden),
+            stackedPositions: stacked
         )
+    }
+
+    /// Two ascending runs of distinct positions as one.
+    private static func merged(_ lhs: [Int], _ rhs: [Int]) -> [Int] {
+        var result: [Int] = []
+        result.reserveCapacity(lhs.count + rhs.count)
+        var left = 0
+        var right = 0
+        while left < lhs.count || right < rhs.count {
+            if right == rhs.count || (left < lhs.count && lhs[left] < rhs[right]) {
+                result.append(lhs[left])
+                left += 1
+            } else {
+                result.append(rhs[right])
+                right += 1
+            }
+        }
+        return result
+    }
+
+    /// `held`, the collapse of `ids` (with `dayBuckets` and `coordinates`) under
+    /// `heldExpanded`, collapsed under `expanded` instead, and the edit that turns `held`'s
+    /// order into the new one. Only the stacks whose expansion changed are collapsed again,
+    /// with every stack that shares a file with them (a pair and the burst it is a frame
+    /// of), over their files alone: a stack's collapse reads nothing but its own files, so
+    /// the rest of `held` stands, and the cost is those files plus copying the order once.
+    /// The result is what `collapse(ids:…expanded:)` makes.
+    static func changingExpansion(
+        of held: Result,
+        ids: [MediaAssetID],
+        dayBuckets: [Date?],
+        coordinates: [PlaceCoordinate],
+        stacks: CatalogStacks,
+        from heldExpanded: Set<PhotoStackID>,
+        to expanded: Set<PhotoStackID>
+    ) -> (result: Result, edit: CatalogGridContent.Edit) {
+        // The stacks whose files the change can reach, closed over shared files.
+        var affected = Set<PhotoStackID>()
+        var pending = Array(heldExpanded.symmetricDifference(expanded))
+        while let stackID = pending.popLast() {
+            guard affected.insert(stackID).inserted else {
+                continue
+            }
+            for member in stacks.stacks[stackID]?.members ?? [] {
+                for related in [stacks.pairOfMember[member], stacks.burstOfMember[member]] {
+                    if let related, !affected.contains(related) {
+                        pending.append(related)
+                    }
+                }
+            }
+        }
+        var positionSet = Set<Int>()
+        for stackID in affected {
+            for member in stacks.stacks[stackID]?.members ?? [] {
+                if let position = held.stackedPositions[member] {
+                    positionSet.insert(position)
+                }
+            }
+        }
+        let positions = positionSet.sorted()
+        let files = positions.map { ids[$0] }
+        let before = collapse(ids: files, dayBuckets: [], coordinates: [], stacks: stacks, expanded: heldExpanded)
+        let after = collapse(ids: files, dayBuckets: [], coordinates: [], stacks: stacks, expanded: expanded)
+        let hiddenBefore = Set(before.hiddenPositions.map { positions[$0] })
+        let hiddenAfter = Set(after.hiddenPositions.map { positions[$0] })
+        let nowHidden = hiddenAfter.subtracting(hiddenBefore).sorted()
+        let nowShown = hiddenBefore.subtracting(hiddenAfter).sorted()
+
+        var hidden: [Int] = []
+        hidden.reserveCapacity(held.hiddenPositions.count + nowHidden.count)
+        for position in merged(held.hiddenPositions, nowHidden) where !hiddenBefore.contains(position) || hiddenAfter.contains(position) {
+            hidden.append(position)
+        }
+        /// A kept input position's place in the collapsed order: itself less the hidden
+        /// positions before it.
+        func collapsedPosition(_ position: Int, hiding hidden: [Int]) -> Int {
+            var low = 0
+            var high = hidden.count
+            while low < high {
+                let middle = (low + high) / 2
+                if hidden[middle] < position {
+                    low = middle + 1
+                } else {
+                    high = middle
+                }
+            }
+            return position - low
+        }
+        let removed = nowHidden.map { collapsedPosition($0, hiding: held.hiddenPositions) }
+        let inserted = nowShown.map { collapsedPosition($0, hiding: hidden) }
+
+        var tiles = held.grid.tiles
+        var shownFor = held.grid.shownForHiddenMember
+        for file in files {
+            tiles[file] = nil
+            shownFor[file] = nil
+        }
+        tiles.merge(after.grid.tiles) { _, recollapsed in recollapsed }
+        shownFor.merge(after.grid.shownForHiddenMember) { _, recollapsed in recollapsed }
+        let result = Result(
+            ids: held.ids.editing(removing: removed, inserting: zip(inserted, nowShown.map { ids[$0] }).map { (position: $0, element: $1) }),
+            dayBuckets: dayBuckets.count != ids.count
+                ? []
+                : held.dayBuckets.editing(removing: removed, inserting: zip(inserted, nowShown.map { dayBuckets[$0] }).map { (position: $0, element: $1) }),
+            coordinates: coordinates.count != ids.count
+                ? []
+                : held.coordinates.editing(removing: removed, inserting: zip(inserted, nowShown.map { coordinates[$0] }).map { (position: $0, element: $1) }),
+            grid: CatalogGridStacks(tiles: tiles, shownForHiddenMember: shownFor),
+            hiddenPositions: hidden,
+            stackedPositions: held.stackedPositions
+        )
+        return (result, CatalogGridContent.Edit(removed: removed, inserted: inserted))
     }
 
     /// How many units `members` are: each file is one, except that the files `framing` maps
@@ -506,9 +634,12 @@ nonisolated enum PhotoStackCollapse {
         var level = Level()
         level.kept.reserveCapacity(ids.count)
         for (offset, id) in ids.enumerated() {
-            guard let stackID = membership[id], let shownMember = shown[stackID],
-                  let stack = stacks.stacks[stackID]
-            else {
+            guard let stackID = membership[id] else {
+                level.kept.append(positions[offset])
+                continue
+            }
+            level.stacked[id] = positions[offset]
+            guard let shownMember = shown[stackID], let stack = stacks.stacks[stackID] else {
                 level.kept.append(positions[offset])
                 continue
             }
@@ -517,6 +648,7 @@ nonisolated enum PhotoStackCollapse {
                 level.kept.append(positions[offset])
                 level.stackOf[id] = TileLevel(stack: stack, expanded: isExpanded)
             } else {
+                level.hidden.append(positions[offset])
                 level.shownFor[id] = shownMember
             }
         }

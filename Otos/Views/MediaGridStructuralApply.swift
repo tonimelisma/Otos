@@ -477,6 +477,9 @@ extension MediaGridViewController {
         // and reject the batch; asking here, while `structure` is still the old value,
         // settles them first.
         _ = collectionView.numberOfSections
+        // The headers that go and come are the layout's to name to AppKit, which asks while
+        // it prepares the batch, inside `performBatchUpdates`.
+        (collectionView.collectionViewLayout as? MediaGridLayout)?.receiveHeaderUpdates(updates.headers)
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = animationSuppressed
             ? 0
@@ -487,8 +490,6 @@ extension MediaGridViewController {
                 return
             }
             structure = next
-            collectionView.deleteSections(updates.deletedSections)
-            collectionView.insertSections(updates.insertedSections)
             collectionView.deleteItems(at: updates.deletedItems)
             collectionView.insertItems(at: updates.insertedItems)
             for move in updates.movedItems {

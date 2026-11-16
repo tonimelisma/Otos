@@ -149,13 +149,18 @@ everything expensive happens on an actor off the main thread.
   sections as contiguous ranges, identity lookups through the publication's
   `CatalogGridContent` index) off the main actor
   (`buildStructure`) and hands it to AppKit on the main actor (`commitStructure`): `reloadData`
-  for query and large membership changes, `performBatchUpdates` with the derived
-  `MediaGridBatchUpdates` otherwise. The apply policy's summary and the batch both read
-  one `MediaGridStructureChange`, which looks up only the identities outside the runs
-  each day shares with its previous self. A grid whose order was made from the one on
-  screen by removing items (`CatalogGridContent.removing`, Move to Trash's hide) is taken
-  in by its removed positions alone (`MediaGridStructure.init(grid:following:)`), and the
-  layout takes the structure's sections in one value (`layoutSections`). The controller is the collection view's plain
+  for query changes and membership changes of 1,000 or more items, `performBatchUpdates`
+  with the derived `MediaGridBatchUpdates` otherwise. AppKit holds the order as one
+  section (an item's index path is its position; a day header's is keyed by its day,
+  `MediaGridStructure.Headers`), so a batch costs AppKit no per-day work; the day sections are
+  the layout's. The apply policy's summary and the batch both read one
+  `MediaGridStructureChange`, which looks up only the identities outside the runs each
+  day shares with its previous self. A grid whose order was made from the one on screen
+  by an edit (`CatalogGridContent.Edit`: Move to Trash's `removing`, a stack expanding or
+  collapsing, `edited`) is taken in by the edit's positions alone
+  (`MediaGridStructure.init(grid:following:)`) and applied as their inserts and deletes,
+  and the layout takes the structure's sections and header keys in one value
+  (`layoutInput`). The controller is the collection view's plain
   `NSCollectionViewDataSource` over that one value, which the layout, day bar, headers,
   selection, drag, prefetch, zoom and scroll anchoring also read. The grid's layout is
   Otos's own `MediaGridLayout`, arithmetic over the section counts
@@ -315,7 +320,9 @@ everything expensive happens on an actor off the main thread.
   `MediaTileDetailReader` read answers through, shown on the tile store's tiles (the grid
   reconfigures the visible ones, `TileChoiceChange`) and in Projection's `choose` hold; a
   People act is laid over People by `PendingPeopleActs` until a build covers its write
-  (`CatalogPeopleState.covers`); an expansion is published by `CatalogProjection.showExpansion`.
+  (`CatalogPeopleState.covers`); an expansion is published by `CatalogProjection.showExpansion`,
+  which collapses again only the stacks it changed (`PhotoStackCollapse.changingExpansion`)
+  and hands the grid the new order as an edit of the one it shows.
 - **Which pane shows**: `CatalogWindowViewModel.detailPane` (`CatalogDetailPane`) — the
   selected scope's surface from the click on, waiting (`ScopeWaitingView`) until its state
   is applied (DES-118).

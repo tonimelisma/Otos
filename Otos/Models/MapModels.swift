@@ -78,7 +78,36 @@ nonisolated struct CatalogMapState: Equatable, Sendable {
         panBand = MapClusterPolicy.panBand(for: located.map(\.coordinate))
     }
 
+    private init(located: [LocatedAsset], panBand: MapLatitudeBand) {
+        self.located = located
+        self.panBand = panBand
+    }
+
     static let empty = CatalogMapState(located: [])
+
+    /// This map with `edit` applied to `located`, which is index-paired with the order the
+    /// edit was made from, `inserted` holding the added items in order (a stack expanding or
+    /// collapsing in Places, `CatalogProjection.expanding`). The band widens by what is
+    /// added, and is measured again only when something removed reached its edge.
+    func editing(_ edit: CatalogGridContent.Edit, located inserted: [LocatedAsset]) -> CatalogMapState {
+        let located = located.editing(
+            removing: edit.removed,
+            inserting: zip(edit.inserted, inserted).map { (position: $0, element: $1) }
+        )
+        let margin = MapClusterPolicy.panItemMarginDegrees
+        let reachedEdge = edit.removed.contains { position in
+            let latitude = self.located[position].coordinate.latitude
+            return latitude - margin <= panBand.south || latitude + margin >= panBand.north
+        }
+        guard !reachedEdge else {
+            return CatalogMapState(located: located)
+        }
+        let added = MapClusterPolicy.panBand(for: inserted.map(\.coordinate))
+        return CatalogMapState(
+            located: located,
+            panBand: MapLatitudeBand(south: min(panBand.south, added.south), north: max(panBand.north, added.north))
+        )
+    }
 }
 
 /// Latitudes in degrees, south to north.

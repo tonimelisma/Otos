@@ -602,8 +602,11 @@ extension MediaGridViewController {
     /// reappearing from under the bar on a rubber-band scroll. Rendering no content is
     /// not something the collection view can undo. Set both ways, because supplementary
     /// views are recycled.
-    private func renderDayHeader(_ header: MediaGridDayHeaderView, section: Int) {
-        header.configure(MediaGridDayHeaderPolicy.presentation(section: section, in: structure))
+    private func renderDayHeader(_ header: MediaGridDayHeaderView, at indexPath: IndexPath) {
+        let presentation = structure.section(ofHeaderAt: indexPath).flatMap { section in
+            MediaGridDayHeaderPolicy.presentation(section: section, in: structure)
+        }
+        header.configure(presentation)
     }
 
     /// Redraws every header on screen from the days just applied.
@@ -624,7 +627,7 @@ extension MediaGridViewController {
             ) as? MediaGridDayHeaderView else {
                 continue
             }
-            renderDayHeader(header, section: indexPath.section)
+            renderDayHeader(header, at: indexPath)
         }
     }
 
@@ -1259,12 +1262,14 @@ extension MediaGridViewController {
 /// The collection view's data source: every count, item and header answered from
 /// `structure`, the one value `commitStructure` hands AppKit.
 extension MediaGridViewController: NSCollectionViewDataSource {
+    /// One section holding the whole order: the day sections are the layout's
+    /// (`MediaGridStructure`).
     func numberOfSections(in _: NSCollectionView) -> Int {
-        structure.numberOfSections
+        1
     }
 
-    func collectionView(_: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
-        structure.numberOfItems(inSection: section)
+    func collectionView(_: NSCollectionView, numberOfItemsInSection _: Int) -> Int {
+        structure.numberOfItems
     }
 
     func collectionView(
@@ -1289,7 +1294,7 @@ extension MediaGridViewController: NSCollectionViewDataSource {
             for: indexPath
         )
         if let header = view as? MediaGridDayHeaderView {
-            renderDayHeader(header, section: indexPath.section)
+            renderDayHeader(header, at: indexPath)
         }
         return view
     }

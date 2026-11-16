@@ -54,11 +54,11 @@ extension AppKitWindowTests {
                 newer.map { ($0, DayHeaderHarness.newerDay) } + older.map { ($0, DayHeaderHarness.olderDay) }
             )
             let layout = try #require(harness.controller.collectionView.collectionViewLayout)
+            let structure = harness.controller.structure
             let heights = (0 ..< 2).compactMap {
-                layout.layoutAttributesForSupplementaryView(
-                    ofKind: MediaGridDayHeaderView.elementKind,
-                    at: IndexPath(item: 0, section: $0)
-                )?.frame.height
+                structure.headerIndexPath(ofSection: $0).flatMap { header in
+                    layout.layoutAttributesForSupplementaryView(ofKind: MediaGridDayHeaderView.elementKind, at: header)
+                }?.frame.height
             }
             let barHeight = harness.controller.dayBar.frame.height
             #expect(barHeight > 0)
@@ -77,14 +77,14 @@ extension AppKitWindowTests {
 
             harness.receive(first)
             #expect(harness.controller.mutationGate.inFlight == .structuralApply)
-            #expect(harness.controller.collectionView.numberOfSections == 0)
+            #expect(harness.controller.collectionView.numberOfItems(inSection: 0) == 0)
             let secondGrid = harness.receive(second)
             #expect(harness.controller.mutationGate.stallDiagnosticFields["pendingGrid"] == "true")
 
             try await awaitGridShows(harness.controller, secondGrid)
             let applied = harness.controller.structure
             #expect(applied.orderedIDs == second.map(\.0))
-            #expect(harness.controller.collectionView.numberOfSections == 2)
+            #expect(harness.controller.collectionView.numberOfItems(inSection: 0) == 6)
             #expect(applied.sections.map(\.day) == [
                 MediaGridDayBarPolicy.Day(date: DayHeaderHarness.newerDay, itemCount: 2),
                 MediaGridDayBarPolicy.Day(date: DayHeaderHarness.olderDay, itemCount: 4),
@@ -145,10 +145,9 @@ private final class DayHeaderHarness {
 
     /// What the header AppKit shows for `section` draws; `nil` is a blank header.
     func header(section: Int) -> MediaGridDayLabelPresentation? {
-        let header = controller.collectionView.supplementaryView(
-            forElementKind: MediaGridDayHeaderView.elementKind,
-            at: IndexPath(item: 0, section: section)
-        ) as? MediaGridDayHeaderView
+        let header = controller.structure.headerIndexPath(ofSection: section).flatMap { indexPath in
+            controller.collectionView.supplementaryView(forElementKind: MediaGridDayHeaderView.elementKind, at: indexPath)
+        } as? MediaGridDayHeaderView
         #expect(header != nil, "no header on screen for section \(section)")
         return header?.presentation
     }

@@ -11,7 +11,8 @@
 import Foundation
 
 nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
-    static let reloadDataFallbackItemCountThreshold = 1000
+    /// Inserted plus removed items at and above which a membership change reloads.
+    static let reloadDataFallbackChangedItemThreshold = 1000
 
     let insertedCount: Int
     let removedCount: Int
@@ -27,12 +28,15 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
     /// - Descriptor-changed reorder (sort/scope/filter flip): reloadData fallback;
     ///   the position is reset or re-anchored rather than animated, and whole-list
     ///   moves hit the quadratic cliff.
-    /// - Large insert/remove — the grid on screen or the next one holds `n ≥ 1000`
-    ///   items: reloadData fallback. Both sides count because the animated diff pays for
-    ///   every removed item as well as every inserted one: shrinking 16,870 items to 881
-    ///   animated kept the main thread busy for about 430 ms, against about 150 ms for the
-    ///   reloadData switch the other way.
-    /// - Small insert/remove: animate.
+    /// - Large insert/remove — `n ≥ 1000` items inserted plus removed: reloadData
+    ///   fallback. AppKit's batch pays for every removed and every inserted item, a reload
+    ///   for the tiles on screen: shrinking 16,870 items to 881 animated kept the main
+    ///   thread busy for about 430 ms, against about 150 ms for the reloadData switch the
+    ///   other way.
+    /// - Small insert/remove, however large the grid: animate. With the grid's one AppKit
+    ///   section a batch costs AppKit's index map over the items (about 70 instructions an
+    ///   item) plus the change and the tiles on screen, under a reload's re-realizing of
+    ///   every visible tile (`docs/research/2026-11-15-grid-removal-without-a-reload.md`).
     ///
     /// Membership and order are read from the change between the two structures
     /// (`MediaGridStructureChange`), which looks up only what lies outside the runs each
@@ -58,8 +62,7 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
         let reorderOnly = insertedCount == 0
             && removedCount == 0
             && !change.orderIsUnchanged
-        let largeApply = max(previousOrderedIDs.count, nextOrderedIDs.count)
-            >= reloadDataFallbackItemCountThreshold
+        let largeApply = insertedCount + removedCount >= reloadDataFallbackChangedItemThreshold
         // Same membership in the same order reaches an apply only when photos changed day
         // (the gate refreshes otherwise): a few moves between sections, like a reorder.
         let sameMembership = insertedCount == 0 && removedCount == 0

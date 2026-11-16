@@ -334,9 +334,16 @@ actor CatalogProjection {
     }
 
     /// `state` with its stacks collapsed as `expanded` asks, from `held`, the collapse its grid
-    /// was made from; nil when the grid is not that collapse (On This Day's capped runs) or the
-    /// collapse already has this expansion. Only the grid changes: what else the collapse
-    /// feeds — the map, the counts — follows with the next pass.
+    /// was made from; nil when the grid is not that collapse (On This Day's capped runs), when
+    /// the new collapse would be capped, or when the collapse already has this expansion.
+    ///
+    /// Costs what the stacks that changed hold, plus one copy of the order: only their files
+    /// are collapsed again (`PhotoStackCollapse.changingExpansion`), and the grid takes the
+    /// new order as an edit of the one it shows (`CatalogGridContent.edited`), which it applies
+    /// as that edit's inserts and removals. Of what else the collapse feeds, the map's located
+    /// photos (Places) take the same edit and On This Day's anniversaries are counted again
+    /// from its few photos; the empty state cannot change, since a collapse keeps one tile of
+    /// every stack it shows, so an order is empty expanded exactly when it is collapsed.
     static func expanding(
         _ state: CatalogWindowState,
         held: CatalogProjectionReads.Collapse,
@@ -345,13 +352,19 @@ actor CatalogProjection {
         guard held.expanded != expanded, state.mediaGrid.orderedAssetIDs == held.result.ids else {
             return nil
         }
-        let result = PhotoStackCollapse.collapse(
+        let (result, edit) = PhotoStackCollapse.changingExpansion(
+            of: held.result,
             ids: held.ids,
             dayBuckets: held.dayBuckets,
             coordinates: held.coordinates,
             stacks: held.stacks,
-            expanded: expanded
+            from: held.expanded,
+            to: expanded
         )
+        let descriptor = state.queryDescriptor
+        if case .onThisDay = descriptor.scope, OnThisDayPicks.keptPositions(dayBuckets: result.dayBuckets) != nil {
+            return nil
+        }
         let collapse = CatalogProjectionReads.Collapse(
             ids: held.ids,
             dayBuckets: held.dayBuckets,
@@ -360,12 +373,24 @@ actor CatalogProjection {
             expanded: expanded,
             result: result
         )
+        let content = state.mediaGrid.content
         var shown = state
         shown.mediaGrid = state.mediaGrid.replacingContent(
-            orderedAssetIDs: result.ids,
-            dayBuckets: result.dayBuckets,
-            stacks: result.grid
+            edit.isEmpty
+                ? content.replacing(stacks: result.grid)
+                : content.edited(by: edit, to: result.ids, dayBuckets: result.dayBuckets, stacks: result.grid)
         )
+        if let map = state.map, !edit.isEmpty {
+            shown.map = map.located.count == state.mediaGrid.orderedAssetIDs.count
+                && result.coordinates.count == result.ids.count
+                ? map.editing(edit, located: edit.inserted.map { LocatedAsset(id: result.ids[$0], coordinate: result.coordinates[$0]) })
+                : CatalogWindowPolicy.mapState(for: descriptor, scopedAssetIDs: result.ids, scopedCoordinates: result.coordinates)
+        }
+        if state.onThisDay != nil, !edit.isEmpty {
+            shown.onThisDay = CatalogWindowPolicy.onThisDayState(
+                for: descriptor, scopedAssetIDs: result.ids, scopedDayBuckets: result.dayBuckets
+            )
+        }
         return (shown, collapse)
     }
 

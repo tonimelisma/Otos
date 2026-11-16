@@ -128,7 +128,7 @@ private final class MediaChoiceButton: NSButton {
 // Layer colors (selection ring, placeholder fill) are `CGColor`s and are re-resolved on
 // every effective-appearance change.
 
-final class MediaAssetTileView: NSView {
+final class MediaAssetTileView: NSView, NSCollectionViewElement {
     private typealias Layout = MediaAssetTileLayout
 
     private let contentView = FlippedView()
@@ -477,6 +477,17 @@ extension MediaAssetTileView {
     override func prepareForReuse() {
         super.prepareForReuse()
         clearLayerForReuse()
+    }
+
+    /// The layout's frame, as given: a tile is the square the grid's arithmetic gives it
+    /// (`MediaGridLayout`), never sized by its content. AppKit's default answer fits the
+    /// view's constraints in a temporary Auto Layout engine for every tile it realizes,
+    /// which was most of a batch's and a reload's per-tile main-thread cost
+    /// (`docs/research/2026-11-15-grid-removal-without-a-reload.md`).
+    func preferredLayoutAttributesFitting(
+        _ layoutAttributes: NSCollectionViewLayoutAttributes
+    ) -> NSCollectionViewLayoutAttributes {
+        layoutAttributes
     }
 
     override func layout() {

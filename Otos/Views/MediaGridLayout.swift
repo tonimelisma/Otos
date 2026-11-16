@@ -28,10 +28,11 @@ import AppKit
 /// pinned — `MediaGridDayLabel.swift` records why the bar holds the current day instead.
 ///
 /// `MediaGridLayout` is the `NSCollectionViewLayout` over that value. `prepare()` takes the
-/// sections in one value: in the grid, from the structure AppKit took in the same
-/// synchronous region (`MediaGridStructure.layoutSections`), whose counts are the ones
-/// AppKit holds, which inside a batch update are already the new ones, so a pass asks no
-/// per-section question of the collection view or the controller. Scrolling never
+/// sections and their header keys in one value: in the grid, from the structure AppKit
+/// took in the same synchronous region (`MediaGridStructure.layoutInput`), whose item count
+/// is the one AppKit holds, which inside a batch update is already the new one, so a pass
+/// asks no per-section question of the collection view or the controller. AppKit holds the
+/// order as one section; this layout maps its index paths to days and back. Scrolling never
 /// invalidates it: only a width change does, and a move to a screen
 /// of another backing scale (`MediaGridCollectionView`).
 ///
@@ -40,8 +41,9 @@ import AppKit
 /// fading in at its new frame, a delete fading out at its old one, measured identical to
 /// what the compositional layout supplied. This layout additionally shrinks *only* the
 /// items the batch explicitly inserted or deleted (`MediaGridAnimation.insertShrinkFraction`).
-/// Items of an inserted or deleted section, and every appearing item outside a batch,
-/// keep the base attributes. Bookkeeping is filled in `prepare(forCollectionViewUpdates:)`
+/// Every appearing item outside a batch keeps the base attributes, and a day header the
+/// batch removes or adds (`receiveHeaderUpdates`) fades as the base layout fades it; a
+/// header whose day survives keeps its view and moves. Bookkeeping is filled in `prepare(forCollectionViewUpdates:)`
 /// (once per batch, before the appear and disappear hooks) and cleared in
 /// `finalizeCollectionViewUpdates()`, AppKit's documented update lifecycle.
 ///
@@ -69,6 +71,9 @@ nonisolated struct MediaGridLayoutGeometry: Equatable, Sendable {
     /// Where each section starts, unrounded, plus one entry past the last: the unrounded
     /// content height. Rounding happens per frame, so no error accumulates down the grid.
     private let sectionMinY: [CGFloat]
+    /// Each section's first item as a position in the whole order, plus one entry past the
+    /// last: the item count. AppKit holds the order as one section (`MediaGridLayout`).
+    private let sectionFirstItem: [Int]
 
     init(
         sections: [Section],
@@ -87,18 +92,56 @@ nonisolated struct MediaGridLayoutGeometry: Equatable, Sendable {
         let cellEdge = max(0, width - 2 * Self.sectionInset) / CGFloat(self.columnCount)
         var minY: [CGFloat] = []
         minY.reserveCapacity(sections.count + 1)
+        var firstItem: [Int] = []
+        firstItem.reserveCapacity(sections.count + 1)
         var top: CGFloat = 0
+        var items = 0
         for section in sections {
             minY.append(top)
+            firstItem.append(items)
             let rows = (section.itemCount + self.columnCount - 1) / self.columnCount
             top += (section.hasHeader ? headerHeight : 0) + 2 * Self.sectionInset + CGFloat(rows) * cellEdge
+            items += section.itemCount
         }
         minY.append(top)
+        firstItem.append(items)
         sectionMinY = minY
+        sectionFirstItem = firstItem
     }
 
     var numberOfSections: Int {
         sections.count
+    }
+
+    /// Every section's items together: the length of the order.
+    var itemCount: Int {
+        sectionFirstItem[sections.count]
+    }
+
+    /// The position in the whole order of `indexPath`'s item (a section and an item in it).
+    func position(of indexPath: IndexPath) -> Int {
+        sectionFirstItem[indexPath.section] + indexPath.item
+    }
+
+    /// The section and item at `position` in the whole order, by binary search over the
+    /// sections' first items; nil past the end. An empty section holds no position.
+    func indexPath(atPosition position: Int) -> IndexPath? {
+        guard position >= 0, position < itemCount else {
+            return nil
+        }
+        var low = 0
+        var high = sections.count - 1
+        while low < high {
+            let middle = (low + high + 1) / 2
+            if sectionFirstItem[middle] <= position {
+                low = middle
+            } else {
+                high = middle - 1
+            }
+        }
+        // The last section starting at or before `position`: an empty section shares its
+        // first item with the one after it, so it is never the last.
+        return IndexPath(item: position - sectionFirstItem[low], section: low)
     }
 
     /// One cell's edge: the content width shared equally by the columns.
@@ -276,34 +319,51 @@ nonisolated enum MediaGridLayoutUpdatePolicy {
     }
 }
 
+/// What the grid's layout lays out, in one value: each section's count and whether it has
+/// a day header, and where the headers sit in AppKit's index space
+/// (`MediaGridStructure.layoutInput`, `MediaGridStructure.Headers`).
+nonisolated struct MediaGridLayoutInput: Equatable, Sendable {
+    let sections: [MediaGridLayoutGeometry.Section]
+    let headers: MediaGridStructure.Headers
+
+    static let empty = MediaGridLayoutInput(sections: [], headers: .none)
+}
+
+/// The day headers a batch removes and adds, at their supplementary index paths: AppKit
+/// fades a header out or in only when the layout names it
+/// (`indexPathsToDeleteForSupplementaryView(ofKind:)`).
+nonisolated struct MediaGridHeaderUpdates: Equatable, Sendable {
+    var deleted = Set<IndexPath>()
+    var inserted = Set<IndexPath>()
+}
+
+/// The grid's `NSCollectionViewLayout`. AppKit holds the whole order as **one section**:
+/// an item's index path is `IndexPath(item: position, section: 0)`, and the day sections
+/// are this layout's alone, mapped to and from positions by `MediaGridLayoutGeometry`.
+/// AppKit does work for every section it holds on each update — it re-asks every count,
+/// walks every section's supplementaries and maps every section — which made a batch at
+/// the owner's 5,000 days cost about 93 M instructions for one removed photo, where one
+/// section costs about 17 M (`docs/research/2026-11-15-grid-removal-without-a-reload.md`).
 final class MediaGridLayout: NSCollectionViewLayout {
     let columnCount: Int
-    /// The sections `prepare()` lays out, for the collection view it lays out.
-    private let sections: (NSCollectionView) -> [MediaGridLayoutGeometry.Section]
+    /// What `prepare()` lays out, for the collection view it lays out.
+    private let input: (NSCollectionView) -> MediaGridLayoutInput
     private(set) var geometry: MediaGridLayoutGeometry
+    private var headers = MediaGridStructure.Headers.none
     private var insertedIndexPaths: Set<IndexPath> = []
     private var deletedIndexPaths: Set<IndexPath> = []
+    /// The headers the batch in progress removes and adds, handed over by the controller in
+    /// the same synchronous region as `performBatchUpdates` (`receiveHeaderUpdates`), read
+    /// while AppKit prepares the batch, cleared when it finalizes it.
+    private var headerUpdates = MediaGridHeaderUpdates()
 
-    /// Lays out the counts the collection view holds, with the header flags
-    /// `sectionHasDayHeader` gives: one count and one flag asked per section.
-    convenience init(columnCount: Int, sectionHasDayHeader: @escaping (Int) -> Bool) {
-        self.init(columnCount: columnCount) { collectionView in
-            (0 ..< collectionView.numberOfSections).map { section in
-                MediaGridLayoutGeometry.Section(
-                    itemCount: collectionView.numberOfItems(inSection: section),
-                    hasHeader: sectionHasDayHeader(section)
-                )
-            }
-        }
-    }
-
-    /// Lays out the sections `sections` answers in one value: in the grid, the structure's
-    /// (`MediaGridStructure.layoutSections`). Asking for every section's count and flag one
+    /// Lays out what `input` answers in one value: in the grid, the structure's
+    /// (`MediaGridStructure.layoutInput`). Asking for every section's count and flag one
     /// at a time was most of a reload's main-thread cost at 5,000 days
     /// (`docs/research/2026-11-15-grid-hide-follows-the-removal.md`).
-    init(columnCount: Int, sections: @escaping (NSCollectionView) -> [MediaGridLayoutGeometry.Section]) {
+    init(columnCount: Int, input: @escaping (NSCollectionView) -> MediaGridLayoutInput) {
         self.columnCount = columnCount
-        self.sections = sections
+        self.input = input
         geometry = MediaGridLayoutGeometry(
             sections: [],
             columnCount: columnCount,
@@ -323,24 +383,25 @@ final class MediaGridLayout: NSCollectionViewLayout {
     /// One pass over the section counts; nothing per item.
     override func prepare() {
         super.prepare()
-        var sections: [MediaGridLayoutGeometry.Section] = []
+        var input = MediaGridLayoutInput.empty
         var width: CGFloat = 0
         var scale: CGFloat = 1
         var isRightToLeft = false
         if let collectionView {
-            sections = self.sections(collectionView)
+            input = self.input(collectionView)
             width = collectionView.bounds.width
             scale = collectionView.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
             isRightToLeft = collectionView.userInterfaceLayoutDirection == .rightToLeft
         }
         geometry = MediaGridLayoutGeometry(
-            sections: sections,
+            sections: input.sections,
             columnCount: columnCount,
             width: width,
             headerHeight: MediaGridDayHeaderView.height,
             scale: scale,
             isRightToLeft: isRightToLeft
         )
+        headers = input.headers
     }
 
     override var collectionViewContentSize: NSSize {
@@ -356,27 +417,40 @@ final class MediaGridLayout: NSCollectionViewLayout {
         geometry.elements(in: rect).map { element in
             switch element {
             case let .header(section, frame):
-                Self.headerAttributes(section: section, frame: frame)
+                Self.headerAttributes(at: headerIndexPath(ofSection: section), frame: frame)
             case let .item(indexPath, frame):
-                Self.itemAttributes(indexPath: indexPath, frame: frame)
+                Self.itemAttributes(
+                    indexPath: IndexPath(item: geometry.position(of: indexPath), section: 0),
+                    frame: frame
+                )
             }
         }
     }
 
     override func layoutAttributesForItem(at indexPath: IndexPath) -> NSCollectionViewLayoutAttributes? {
-        geometry.itemFrame(at: indexPath).map { Self.itemAttributes(indexPath: indexPath, frame: $0) }
+        guard indexPath.count == 2, indexPath.section == 0,
+              let local = geometry.indexPath(atPosition: indexPath.item)
+        else {
+            return nil
+        }
+        return geometry.itemFrame(at: local).map { Self.itemAttributes(indexPath: indexPath, frame: $0) }
     }
 
     override func layoutAttributesForSupplementaryView(
         ofKind elementKind: NSCollectionView.SupplementaryElementKind,
         at indexPath: IndexPath
     ) -> NSCollectionViewLayoutAttributes? {
-        guard elementKind == MediaGridDayHeaderView.elementKind, indexPath.count == 2 else {
+        guard elementKind == MediaGridDayHeaderView.elementKind, indexPath.count == 2, indexPath.section == 0,
+              let section = headers.section(ofItem: indexPath.item)
+        else {
             return nil
         }
-        return geometry.headerFrame(inSection: indexPath.section).map {
-            Self.headerAttributes(section: indexPath.section, frame: $0)
-        }
+        return geometry.headerFrame(inSection: section).map { Self.headerAttributes(at: indexPath, frame: $0) }
+    }
+
+    /// Where `section`'s header sits in AppKit's index space.
+    func headerIndexPath(ofSection section: Int) -> IndexPath {
+        IndexPath(item: headers.item(ofSection: section), section: 0)
     }
 
     private static func itemAttributes(indexPath: IndexPath, frame: CGRect) -> NSCollectionViewLayoutAttributes {
@@ -386,14 +460,34 @@ final class MediaGridLayout: NSCollectionViewLayout {
     }
 
     /// Above the tiles, as the compositional layout placed boundary supplementaries.
-    private static func headerAttributes(section: Int, frame: CGRect) -> NSCollectionViewLayoutAttributes {
+    private static func headerAttributes(at indexPath: IndexPath, frame: CGRect) -> NSCollectionViewLayoutAttributes {
         let attributes = NSCollectionViewLayoutAttributes(
             forSupplementaryViewOfKind: MediaGridDayHeaderView.elementKind,
-            with: IndexPath(item: 0, section: section)
+            with: indexPath
         )
         attributes.frame = frame
         attributes.zIndex = 1
         return attributes
+    }
+
+    /// The headers the next batch removes and adds. Called right before
+    /// `performBatchUpdates`, in the same synchronous region.
+    func receiveHeaderUpdates(_ updates: MediaGridHeaderUpdates) {
+        headerUpdates = updates
+    }
+
+    override func indexPathsToDeleteForSupplementaryView(
+        ofKind elementKind: NSCollectionView.SupplementaryElementKind
+    ) -> Set<IndexPath> {
+        let base = super.indexPathsToDeleteForSupplementaryView(ofKind: elementKind)
+        return elementKind == MediaGridDayHeaderView.elementKind ? base.union(headerUpdates.deleted) : base
+    }
+
+    override func indexPathsToInsertForSupplementaryView(
+        ofKind elementKind: NSCollectionView.SupplementaryElementKind
+    ) -> Set<IndexPath> {
+        let base = super.indexPathsToInsertForSupplementaryView(ofKind: elementKind)
+        return elementKind == MediaGridDayHeaderView.elementKind ? base.union(headerUpdates.inserted) : base
     }
 
     override func prepare(forCollectionViewUpdates updateItems: [NSCollectionViewUpdateItem]) {
@@ -414,6 +508,7 @@ final class MediaGridLayout: NSCollectionViewLayout {
         super.finalizeCollectionViewUpdates()
         insertedIndexPaths = []
         deletedIndexPaths = []
+        headerUpdates = MediaGridHeaderUpdates()
     }
 
     override func initialLayoutAttributesForAppearingItem(

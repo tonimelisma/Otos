@@ -264,3 +264,97 @@ struct PhotoStackTests {
         #expect(try burst(in: stacks([first, frame("IMG_2.HEIC", at: 2, liked: true)])).keyChoice == .liked)
     }
 }
+
+/// A change of expansion collapses again only the stacks it reaches
+/// (`PhotoStackCollapse.changingExpansion`): its result is the full collapse's, and its edit
+/// turns the collapsed order it started from into the new one.
+struct PhotoStackExpansionChangeTests {
+    private let root = LibraryRootPath(rawValue: "/Library")
+
+    private func id(_ index: Int) -> MediaAssetID {
+        MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "IMG_\(index).JPG"))
+    }
+
+    /// Forty files: some adjacent pairs, some runs of frames (a frame a file or a pair) as
+    /// bursts, keyed at a random member.
+    private func library(using generator: inout SplitMix) -> [PhotoStack] {
+        var stacks: [PhotoStack] = []
+        var index = 0
+        var burstFrames: [[MediaAssetID]] = []
+        func closeBurst() {
+            if burstFrames.count >= 2 {
+                let members = burstFrames.flatMap(\.self)
+                stacks.append(PhotoStack(
+                    id: PhotoStackID(kind: .burst, libraryRootPath: root, key: "b\(stacks.count)"),
+                    members: members,
+                    key: burstFrames.randomElement(using: &generator)![0],
+                    keyChoice: .notRated,
+                    rawMembers: [],
+                    photos: burstFrames.map { $0[0] }
+                ))
+            }
+            burstFrames = []
+        }
+        while index < 40 {
+            let isPair = index < 39 && Int.random(in: 0 ..< 3, using: &generator) == 0
+            let frame = isPair ? [id(index), id(index + 1)] : [id(index)]
+            if isPair {
+                stacks.append(PhotoStack(
+                    id: PhotoStackID(kind: .pair, libraryRootPath: root, key: "p\(index)"),
+                    members: frame,
+                    key: frame[Int.random(in: 0 ... 1, using: &generator)],
+                    keyChoice: .notRated,
+                    rawMembers: [frame[1]],
+                    photos: [frame[0]]
+                ))
+            }
+            index += frame.count
+            if Int.random(in: 0 ..< 3, using: &generator) == 0 {
+                closeBurst()
+            } else {
+                burstFrames.append(frame)
+            }
+        }
+        closeBurst()
+        return stacks
+    }
+
+    @Test func aChangedExpansionIsTheFullCollapse() {
+        var generator = SplitMix(seed: 52)
+        var changedOrders = 0
+        for _ in 0 ..< 300 {
+            let found = library(using: &generator)
+            let stacks = CatalogStacks(found)
+            // Some files filtered out, as a scope or filter leaves a stack partly present.
+            let ids = (0 ..< 40).filter { _ in Int.random(in: 0 ..< 6, using: &generator) != 0 }.map(id)
+            let dayBuckets = ids.indices.map { Optional(Date(timeIntervalSince1970: Double($0 / 7) * 86400)) }
+            let coordinates = ids.indices.map { PlaceCoordinate(latitude: Double($0), longitude: 0) }
+            let stackIDs = found.map(\.id)
+            func drawn() -> Set<PhotoStackID> {
+                Set(stackIDs.filter { _ in Bool.random(using: &generator) })
+            }
+            let before = drawn()
+            let after = drawn()
+            let held = PhotoStackCollapse.collapse(
+                ids: ids, dayBuckets: dayBuckets, coordinates: coordinates, stacks: stacks, expanded: before
+            )
+            let full = PhotoStackCollapse.collapse(
+                ids: ids, dayBuckets: dayBuckets, coordinates: coordinates, stacks: stacks, expanded: after
+            )
+            let changed = PhotoStackCollapse.changingExpansion(
+                of: held, ids: ids, dayBuckets: dayBuckets, coordinates: coordinates,
+                stacks: stacks, from: before, to: after
+            )
+            #expect(changed.result == full)
+            let edited = held.ids.editing(
+                removing: changed.edit.removed,
+                inserting: changed.edit.inserted.map { (position: $0, element: full.ids[$0]) }
+            )
+            #expect(edited == full.ids)
+            let removed = Set(changed.edit.removed.map { held.ids[$0] })
+            #expect(removed.isDisjoint(with: full.ids))
+            changedOrders += changed.edit.isEmpty ? 0 : 1
+        }
+        #expect(changedOrders > 100)
+    }
+}

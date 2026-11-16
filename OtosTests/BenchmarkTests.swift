@@ -563,6 +563,44 @@ struct BenchmarkTests {
             #expect(hidden.mediaGrid.orderedAssetIDs.count == 158_000 - trashed.count)
         }
         try await Self.measureOwnerScaleHide(owner, hidden: window.hidingItems(trashed).mediaGrid)
+        try await Self.measureOwnerScaleInsert(owner)
+    }
+
+    /// An import's arrival at the owner's size: ten new photos of a newer day land at the top
+    /// of the grid, each publication a fresh order (no edit to follow), alternating with the
+    /// order without them, so each iteration inserts or removes the same ten on screen.
+    @MainActor
+    private static func measureOwnerScaleInsert(_ owner: CatalogMediaGridState) async throws {
+        let arrivals = (0 ..< 10).map { index in
+            MediaAssetID(
+                libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
+                relativePath: MediaRelativePath(rawValue: "DCIM/new/IMG_\(index).HEIC")
+            )
+        }
+        let newDay = Optional(Date(timeIntervalSince1970: Double(5001) * 86400))
+        let arrived = CatalogMediaGridState(
+            scope: owner.scope,
+            orderedAssetIDs: arrivals + owner.orderedAssetIDs,
+            dayBuckets: Array(repeating: newDay, count: arrivals.count) + owner.dayBuckets
+        )
+        let without = CatalogMediaGridState(scope: owner.scope, orderedAssetIDs: owner.orderedAssetIDs, dayBuckets: owner.dayBuckets)
+        // Projection builds each publication's index off the main actor.
+        arrived.content.prepareIndex()
+        without.content.prepareIndex()
+        let controller = MediaGridViewController()
+        _ = controller.view
+        let window = orderedInTestWindow(width: 1200, height: 800, contentView: controller.view)
+        defer { window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        controller.receive(without)
+        try await awaitGridShows(controller, without)
+        var next = arrived
+        try await Benchmark.measure("grid.insertApply.days5000.mainThread", counting: .mainThread) {
+            controller.receive(next)
+            try await awaitGridShows(controller, next)
+            controller.collectionView.layoutSubtreeIfNeeded()
+            next = next.orderedAssetIDs.count == owner.orderedAssetIDs.count ? arrived : without
+        }
     }
 
     @MainActor
@@ -613,7 +651,7 @@ struct BenchmarkTests {
             libraries: [],
             removableSources: [],
             mediaGrid: owner.replacingContent(
-                orderedAssetIDs: collapsed.ids, dayBuckets: collapsed.dayBuckets, stacks: collapsed.grid
+                CatalogGridContent(orderedAssetIDs: collapsed.ids, dayBuckets: collapsed.dayBuckets, stacks: collapsed.grid)
             ),
             filterOptions: .empty,
             resolvedSidebarSelection: .allMedia,
@@ -625,6 +663,21 @@ struct BenchmarkTests {
             let shown = try #require(CatalogProjection.expanding(window, held: held, to: expanded))
             #expect(shown.state.mediaGrid.orderedAssetIDs.count == collapsed.ids.count + 1)
         }
+        // The grid's apply of the first tile's expansion, on screen, then of its collapse,
+        // alternately: each publication an edit of the one on screen, made off the main
+        // actor beforehand.
+        let onScreen: Set<PhotoStackID> = [pairs[0].id]
+        var shownStates: [CatalogMediaGridState] = []
+        var current = (state: window, collapse: held)
+        for index in 0 ..< 7 {
+            let next = try #require(CatalogProjection.expanding(
+                current.state, held: current.collapse, to: index.isMultiple(of: 2) ? onScreen : []
+            ))
+            next.state.mediaGrid.content.prepareIndex()
+            shownStates.append(next.state.mediaGrid)
+            current = next
+        }
+        try await Self.measureOwnerScaleExpand(window.mediaGrid, then: shownStates)
         let people = (0 ..< 2000).map { index in
             PersonSummary(
                 id: PersonID(rawValue: Int64(index)), name: "Person \(index)", birthday: nil, isHidden: false,
@@ -638,6 +691,31 @@ struct BenchmarkTests {
             #expect(state.overlaying(favourite).people.first?.id == PersonID(rawValue: 1999))
         }
         try await Self.measureOwnerScaleChoice(owner)
+    }
+
+    /// A stack expanding and collapsing in the grid at the owner's size: `shown` holds the
+    /// warm-up's grid and then one per measured iteration, each an edit of the one before.
+    @MainActor
+    private static func measureOwnerScaleExpand(
+        _ collapsed: CatalogMediaGridState,
+        then shown: [CatalogMediaGridState]
+    ) async throws {
+        collapsed.content.prepareIndex()
+        let controller = MediaGridViewController()
+        _ = controller.view
+        let window = orderedInTestWindow(width: 1200, height: 800, contentView: controller.view)
+        defer { window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        controller.receive(collapsed)
+        try await awaitGridShows(controller, collapsed)
+        var next = shown.makeIterator()
+        try await Benchmark.measure("grid.expandApply.days5000.mainThread", counting: .mainThread) {
+            let upcoming = next.next()
+            let grid = try #require(upcoming)
+            controller.receive(grid)
+            try await awaitGridShows(controller, grid)
+            controller.collectionView.layoutSubtreeIfNeeded()
+        }
     }
 
     @MainActor
@@ -691,7 +769,7 @@ struct BenchmarkTests {
                 controller.receive(next)
                 try await awaitGridShows(controller, next)
                 controller.collectionView.layoutSubtreeIfNeeded()
-                #expect(controller.collectionView.numberOfSections == 5000)
+                #expect(controller.structure.numberOfSections == 5000)
                 next = next.orderedAssetIDs == owner.orderedAssetIDs ? reordered : owner
             }
         }
@@ -919,7 +997,7 @@ struct BenchmarkTests {
                 controller.receive(next)
                 try await awaitGridShows(controller, next)
                 controller.collectionView.layoutSubtreeIfNeeded()
-                #expect(controller.collectionView.numberOfSections == 5000)
+                #expect(controller.structure.numberOfSections == 5000)
                 next = next.orderedAssetIDs == owner.orderedAssetIDs ? other : owner
             }
         }

@@ -42,14 +42,14 @@ extension MediaGridViewController {
     /// (`MediaGridZoom.swift`), since the column count is the one geometry input a data
     /// change never moves.
     ///
-    /// The sections, their counts and which carry a day header, are answered from
-    /// `structure`, which AppKit took in the same synchronous region that invalidated this
-    /// layout, so they are the counts AppKit holds: `.day` and `.ungrouped` sections never
-    /// coexist in one structure, but alternate as the sort changes, without rebuilding the
-    /// layout object.
+    /// The sections, their counts, which carry a day header and where the headers sit, are
+    /// answered from `structure`, which AppKit took in the same synchronous region that
+    /// invalidated this layout, so its count is the one AppKit holds: `.day` and
+    /// `.ungrouped` sections never coexist in one structure, but alternate as the sort
+    /// changes, without rebuilding the layout object.
     func makeLayout(columnCount: Int) -> MediaGridLayout {
         MediaGridLayout(columnCount: columnCount) { [weak self] _ in
-            self?.structure.layoutSections ?? []
+            self?.structure.layoutInput ?? .empty
         }
     }
 

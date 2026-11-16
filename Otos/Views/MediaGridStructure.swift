@@ -1,4 +1,5 @@
 import AppKit
+import Synchronization
 
 /// Media grid structure guide
 ///
@@ -7,15 +8,26 @@ import AppKit
 /// one capture day (DES-069, APP-030); under any other sort the whole order is one
 /// ungrouped section. `MediaGridViewController` is the collection view's data source and
 /// answers every count, item and index-path question from the structure it last handed to
-/// AppKit; the day bar, the day headers, the layout's section provider, selection, drag,
-/// prefetch, zoom and scroll anchoring all read that same value.
+/// AppKit; the day bar, the day headers, the layout, selection, drag, prefetch, zoom and
+/// scroll anchoring all read that same value.
+///
+/// AppKit holds the order as **one section**: an item's index path is
+/// `IndexPath(item: position, section: 0)`, and a day header's is
+/// `IndexPath(item: headerItem, section: 0)` (`MediaGridStructure.Headers`). The day sections are
+/// the layout's (`MediaGridLayout`), not AppKit's: AppKit re-asks every section's count,
+/// walks every section's supplementaries and maps every section on each update, which at the
+/// owner's 5,000 days made a one-photo batch cost about 93 M instructions on the main thread
+/// against about 17 M for one section
+/// (`docs/research/2026-11-15-grid-removal-without-a-reload.md`).
 ///
 /// It is Otos's own value rather than `NSDiffableDataSourceSnapshot` because AppKit's
-/// snapshot copies its whole item set on every mutating call and has no call that appends
-/// to more than one section, so a grid of D days and N items cost D × N to describe: 13–15
-/// seconds for the owner's 158,000 items over about 5,000 days. This is built in one linear
-/// pass, off the main actor, inside the mutation gate's exclusive slot
-/// (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`).
+/// snapshot copies its whole item set on every mutating call, so a grid of D days and N
+/// items cost D × N to describe: 13–15 seconds for the owner's 158,000 items over about
+/// 5,000 days. This is built in one linear pass, off the main actor, inside the mutation
+/// gate's exclusive slot (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`).
+/// A structure following an edit of the order on screen (a Move to Trash, a stack expanding
+/// or collapsing) is built from the old sections and the edit alone
+/// (`init(grid:following:)`).
 ///
 /// Index-path lookup by identity (selection, focus, anchoring, drag) and the identities
 /// `MediaGridStructureChange` looks up both read the position index of the `CatalogGridContent` the order
@@ -47,15 +59,175 @@ nonisolated struct MediaGridStructure: Sendable {
     }
 
     let sections: [Section]
-    /// Whether no two sections share a key, when known without a walk of the sections: a
-    /// structure that follows a removal from one whose keys are unique has unique keys.
-    private let knownKeysAreUnique: Bool?
+    /// Where each day section's header sits in AppKit's index space.
+    let headers: Headers
 
-    /// Whether no two sections share a key, which a removal's change needs to pair the
-    /// sections by position (`MediaGridStructureChange`). Always true under Date sort,
-    /// where sections are days in order.
+    /// Whether the sections' days run in one order, so no two sections share a key, which
+    /// every batch needs: sections pair by key, and a header keeps its index path across a
+    /// batch by its day. Always true under Date sort, where sections are days in order.
     var keysAreUnique: Bool {
-        knownKeysAreUnique ?? Self.keysAreUnique(sections)
+        headers.areKeyed
+    }
+
+    /// Where each section's day header sits in AppKit's one section: the supplementary view
+    /// at `IndexPath(item: headerItem, section: 0)`.
+    ///
+    /// Keyed by its day (`item(of:)`), so a header keeps its index path, and AppKit keeps its
+    /// view and moves it, while days before it come and go in a batch: AppKit carries a
+    /// supplementary view's index path across a batch by its section alone. Keyed headers run
+    /// in the sections' day order — one direction under Date sort, the unknown day anywhere —
+    /// so a header's section is found by binary search on its item. Positional — the
+    /// section's own index — when the days are not in one order (a day met twice), which no
+    /// batch describes: such a structure is only ever reloaded.
+    ///
+    /// Which of the two, and the direction, are told by one pass over the sections the first
+    /// time they are asked — by a batch's derivation off the main actor, or the layout's
+    /// first pass — and kept, so a fresh build pays nothing for them.
+    struct Headers: Equatable, Sendable {
+        fileprivate let sections: [Section]
+        private let told: Told
+
+        static let none = Headers(sections: [])
+
+        fileprivate init(sections: [Section]) {
+            self.sections = sections
+            told = Told()
+        }
+
+        /// Whether the headers are keyed by day.
+        var areKeyed: Bool {
+            told.order(of: sections).isOrdered
+        }
+
+        /// The header item of `section`.
+        func item(ofSection section: Int) -> Int {
+            areKeyed ? Self.item(of: sections[section].key) : section
+        }
+
+        /// The section whose header is at `item`, if any.
+        func section(ofItem item: Int) -> Int? {
+            let order = told.order(of: sections)
+            guard order.isOrdered else {
+                return item >= 0 && item < sections.count ? item : nil
+            }
+            if item == 0 {
+                return order.unknownSection
+            }
+            let known = sections.count - (order.unknownSection == nil ? 0 : 1)
+            func section(_ index: Int) -> Int {
+                guard let unknown = order.unknownSection, index >= unknown else {
+                    return index
+                }
+                return index + 1
+            }
+            var low = 0
+            var high = known
+            while low < high {
+                let middle = (low + high) / 2
+                let found = Self.item(of: sections[section(middle)].key)
+                if found == item {
+                    return section(middle)
+                }
+                if (found > item) == order.descending {
+                    low = middle + 1
+                } else {
+                    high = middle
+                }
+            }
+            return nil
+        }
+
+        /// The same sections: told by the arrays' own identity check when they are one.
+        static func == (lhs: Headers, rhs: Headers) -> Bool {
+            lhs.sections == rhs.sections
+        }
+
+        /// A day's header item: stable across structures, so a header keeps its index path
+        /// while other days come and go. A day bucket is the start of a day, a whole number of
+        /// seconds distinct from every other day's; the unknown day (and the ungrouped
+        /// section, which has no header) is 0, every known day positive.
+        fileprivate static func item(of key: SectionKey) -> Int {
+            guard case let .day(day) = key, let day else {
+                return 0
+            }
+            // Plain comparisons rather than `min`/`max`, which cost more than the rest of
+            // this in a Debug build.
+            var seconds = day.timeIntervalSinceReferenceDate
+            if seconds < -offset + 1 {
+                seconds = -offset + 1
+            } else if seconds > offset - 2 {
+                seconds = offset - 2
+            }
+            return 1 + Int(offset + seconds)
+        }
+
+        /// Seconds a day may lie before the reference date and still have a positive item.
+        private static let offset = Double(1 << 52)
+
+        /// How the sections' days run: the known days strictly one way, the unknown day at
+        /// most once and anywhere, the ungrouped section only alone.
+        fileprivate struct Order: Sendable {
+            var isOrdered = true
+            var descending = true
+            var unknownSection: Int?
+        }
+
+        private final class Told: Sendable {
+            private let told = Mutex<Order?>(nil)
+
+            func order(of sections: [Section]) -> Order {
+                told.withLock { told in
+                    let order = told ?? Self.tell(sections)
+                    told = order
+                    return order
+                }
+            }
+
+            /// One pass through the sections' buffer, comparing each known day's seconds with
+            /// the one before: plain loops and comparisons, because a Debug build's iterators
+            /// and generic comparisons cost several thousand instructions a section here.
+            private static func tell(_ sections: [Section]) -> Order {
+                var isOrdered = true
+                var unknownSection = -1
+                var direction = 0
+                var hasLast = false
+                var last = 0.0
+                sections.withUnsafeBufferPointer { buffer in
+                    var index = 0
+                    while index < buffer.count {
+                        switch buffer[index].key {
+                        case .ungrouped:
+                            if index != 0 {
+                                isOrdered = false
+                            }
+                        case .day(nil):
+                            if unknownSection >= 0 {
+                                isOrdered = false
+                            } else {
+                                unknownSection = index
+                            }
+                        case let .day(day?):
+                            let seconds = day.timeIntervalSinceReferenceDate
+                            if hasLast {
+                                let step = seconds < last ? -1 : seconds > last ? 1 : 0
+                                if step == 0 || (direction != 0 && step != direction) {
+                                    isOrdered = false
+                                }
+                                direction = step
+                            }
+                            hasLast = true
+                            last = seconds
+                        }
+                        index += 1
+                    }
+                }
+                return Order(
+                    isOrdered: isOrdered,
+                    descending: direction <= 0,
+                    unknownSection: unknownSection >= 0 ? unknownSection : nil
+                )
+            }
+        }
     }
 
     /// The order and its position index.
@@ -68,21 +240,25 @@ nonisolated struct MediaGridStructure: Sendable {
     /// No sections at all: what the collection view shows before its first apply.
     static let empty = MediaGridStructure(
         content: CatalogGridContent(orderedAssetIDs: [], dayBuckets: [], stacks: .empty),
-        sections: [],
-        keysAreUnique: true
+        sections: []
     )
 
-    private init(content: CatalogGridContent, sections: [Section], keysAreUnique: Bool? = nil) {
+    private init(content: CatalogGridContent, sections: [Section]) {
         self.content = content
         self.sections = sections
-        knownKeysAreUnique = keysAreUnique
+        headers = Headers(sections: sections)
     }
 
     /// The sections as the layout reads them (`MediaGridLayout`): each one's count and
-    /// whether it has a day header, in one value, written in place in one pass. Asking the
-    /// collection view for every count and the controller for every flag one at a time
-    /// cost about 65 M instructions of a reload's main-thread pass at 5,000 days; this
-    /// costs about 5 M (`docs/research/2026-11-15-grid-hide-follows-the-removal.md`).
+    /// whether it has a day header, in one value, written in place in one pass, with where
+    /// the headers sit. Asking the collection view for every count and the controller for
+    /// every flag one at a time cost about 65 M instructions of a reload's main-thread pass
+    /// at 5,000 days; this costs about 5 M
+    /// (`docs/research/2026-11-15-grid-hide-follows-the-removal.md`).
+    var layoutInput: MediaGridLayoutInput {
+        MediaGridLayoutInput(sections: layoutSections, headers: headers)
+    }
+
     var layoutSections: [MediaGridLayoutGeometry.Section] {
         sections.withUnsafeBufferPointer { source in
             Array(unsafeUninitializedCapacity: source.count) { buffer, initialized in
@@ -108,104 +284,85 @@ nonisolated struct MediaGridStructure: Sendable {
     }
 
     /// `grid`'s structure, taken from `previous` when `grid`'s order was made from the one
-    /// `previous` shows by removing positions (`CatalogGridContent.positionsRemoved`): each
-    /// section loses the positions that fell in it and the rest shift down, so the cost is
-    /// the sections and the removed positions, not the items. The sections are the ones a
-    /// fresh build of `grid` makes.
+    /// `previous` shows by an edit (`CatalogGridContent.edit(from:)`): each section loses
+    /// the removed positions that fell in it, the inserted items join the day they name,
+    /// and the rest shift, so the cost is the sections and the edit, not the items. The
+    /// sections are the ones a fresh build of `grid` makes.
     init(grid: CatalogMediaGridState, following previous: MediaGridStructure) {
-        guard let removed = grid.content.positionsRemoved(from: previous.content) else {
+        guard let edit = grid.content.edit(from: previous.content),
+              let sections = Self.sections(of: previous, editedBy: edit, into: grid.content)
+        else {
             self.init(content: grid.content)
             return
         }
-        // Removing items never gives a section a key another section already has unless
-        // two runs of one day meet, and those were two sections of one key already.
-        self.init(
-            content: grid.content,
-            sections: Self.sections(of: previous, removing: removed, leaving: grid.content),
-            keysAreUnique: previous.keysAreUnique ? true : nil
-        )
+        self.init(content: grid.content, sections: sections)
     }
 
-    /// Whether no two of `sections` share a key. Days in date order are told apart from
-    /// their neighbours alone, with the one unknown-date run allowed anywhere; anything
-    /// else is counted.
-    private static func keysAreUnique(_ sections: [Section]) -> Bool {
-        var unknown = 0
-        var ungrouped = 0
-        var last: Date?
-        var descending = true
-        var ascending = true
-        for section in sections {
-            switch section.key {
-            case .ungrouped:
-                ungrouped += 1
-            case .day(nil):
-                unknown += 1
-            case let .day(date?):
-                if let last {
-                    descending = descending && last > date
-                    ascending = ascending && last < date
-                }
-                last = date
-            }
-        }
-        guard unknown <= 1, ungrouped <= 1 else {
-            return false
-        }
-        if descending || ascending {
-            return true
-        }
-        let days = sections.compactMap { section -> Date? in
-            if case let .day(date?) = section.key {
-                return date
-            }
-            return nil
-        }
-        return Set(days).count == days.count
-    }
-
-    /// The positions of `previous`'s order this structure's order was made from it by
-    /// dropping, ascending; nil unless it was made from that very order.
-    func positionsRemoved(since previous: MediaGridStructure) -> [Int]? {
-        content.positionsRemoved(from: previous.content)
-    }
-
-    /// `previous`'s sections without `removed`: what `init(content:)` makes of `content`,
-    /// whose order and buckets are `previous`'s without those positions. A section left
-    /// empty is dropped and its neighbours, if they name the same day, become one run, as
-    /// a walk of the buckets would make them.
+    /// `previous`'s sections edited by `edit` into `content`: what `init(content:)` makes
+    /// of `content`. A section left empty is dropped, an inserted item joins the run of its
+    /// day or starts one, and runs that meet and name the same day become one, as a walk of
+    /// the buckets would make them. Nil when `previous` has no days to carry over but
+    /// `content` does.
     private static func sections(
         of previous: MediaGridStructure,
-        removing removed: [Int],
-        leaving content: CatalogGridContent
-    ) -> [Section] {
+        editedBy edit: CatalogGridContent.Edit,
+        into content: CatalogGridContent
+    ) -> [Section]? {
         let count = content.orderedAssetIDs.count
         guard content.dayBuckets.count == count, count > 0 else {
             return [Section(key: .ungrouped, items: 0 ..< count)]
         }
+        guard previous.content.dayBuckets.count == previous.orderedIDs.count else {
+            return nil
+        }
+        let removed = edit.removed
+        let inserted = edit.inserted
+        let buckets = content.dayBuckets
         var sections: [Section] = []
-        sections.reserveCapacity(previous.sections.count)
-        var next = 0
-        var shift = 0
-        for section in previous.sections {
-            var removedHere = 0
-            while next < removed.count, removed[next] < section.items.upperBound {
-                removedHere += 1
-                next += 1
+        sections.reserveCapacity(previous.sections.count + inserted.count)
+        var position = 0
+        var nextRemoved = 0
+        var nextInserted = 0
+        func emit(_ key: SectionKey, _ items: Int) {
+            guard items > 0 else {
+                return
             }
-            let start = section.items.lowerBound - shift
-            let end = section.items.upperBound - shift - removedHere
-            shift += removedHere
-            guard start < end else {
-                continue
-            }
-            if let last = sections.last, last.key == section.key {
-                sections[sections.count - 1] = Section(key: last.key, items: last.items.lowerBound ..< end)
+            if let last = sections.last, last.key == key {
+                sections[sections.count - 1] = Section(key: key, items: last.items.lowerBound ..< position + items)
             } else {
-                sections.append(Section(key: section.key, items: start ..< end))
+                sections.append(Section(key: key, items: position ..< position + items))
+            }
+            position += items
+        }
+        func emitInsertedHere() {
+            while nextInserted < inserted.count, inserted[nextInserted] == position {
+                emit(.day(buckets[position]), 1)
+                nextInserted += 1
             }
         }
+        for section in previous.sections {
+            var removedHere = 0
+            while nextRemoved < removed.count, removed[nextRemoved] < section.items.upperBound {
+                removedHere += 1
+                nextRemoved += 1
+            }
+            var kept = section.items.count - removedHere
+            emitInsertedHere()
+            while kept > 0 {
+                let nextInsertion = nextInserted < inserted.count ? inserted[nextInserted] : Int.max
+                let run = min(kept, nextInsertion - position)
+                emit(section.key, run)
+                kept -= run
+                emitInsertedHere()
+            }
+        }
+        emitInsertedHere()
         return sections
+    }
+
+    /// The edit that made this structure's order from `previous`'s, if it was made by one.
+    func edit(since previous: MediaGridStructure) -> CatalogGridContent.Edit? {
+        content.edit(from: previous.content)
     }
 
     /// An order and its day buckets outside a publication, as a test or a fixture holds them.
@@ -250,8 +407,9 @@ nonisolated struct MediaGridStructure: Sendable {
         sections.count
     }
 
-    func numberOfItems(inSection section: Int) -> Int {
-        sections.indices.contains(section) ? sections[section].items.count : 0
+    /// The items of every section: AppKit's one section's count.
+    var numberOfItems: Int {
+        orderedIDs.count
     }
 
     /// The day `section` names; `nil` for an ungrouped section or one that does not exist.
@@ -268,25 +426,31 @@ nonisolated struct MediaGridStructure: Sendable {
         content.position(of: id)
     }
 
+    /// The identity at AppKit's `indexPath`: the item at that position of the order.
     func id(at indexPath: IndexPath) -> MediaAssetID? {
-        guard indexPath.count == 2, sections.indices.contains(indexPath.section) else {
+        guard indexPath.count == 2, indexPath.section == 0,
+              indexPath.item >= 0, indexPath.item < orderedIDs.count
+        else {
             return nil
         }
-        let items = sections[indexPath.section].items
-        let position = items.lowerBound + indexPath.item
-        guard indexPath.item >= 0, items.contains(position) else {
-            return nil
-        }
-        return orderedIDs[position]
+        return orderedIDs[indexPath.item]
     }
 
     func indexPath(of id: MediaAssetID) -> IndexPath? {
-        content.position(of: id).map(indexPath(atPosition:))
+        content.position(of: id).map(Self.indexPath(atPosition:))
     }
 
-    /// The index path of the item at `position` in `orderedIDs`: the section holding it, by
-    /// binary search over the sections' contiguous ranges.
-    func indexPath(atPosition position: Int) -> IndexPath {
+    /// AppKit's index path of the item at `position` in `orderedIDs`.
+    static func indexPath(atPosition position: Int) -> IndexPath {
+        IndexPath(item: position, section: 0)
+    }
+
+    /// The section holding the item at `position`, by binary search over the sections'
+    /// contiguous ranges; nil past the end.
+    func section(containing position: Int) -> Int? {
+        guard position >= 0, position < orderedIDs.count, !sections.isEmpty else {
+            return nil
+        }
         var low = 0
         var high = sections.count - 1
         while low < high {
@@ -297,7 +461,27 @@ nonisolated struct MediaGridStructure: Sendable {
                 high = middle - 1
             }
         }
-        return IndexPath(item: position - sections[low].items.lowerBound, section: low)
+        return low
+    }
+
+    /// AppKit's index path of `section`'s day header; nil for the ungrouped section, which
+    /// has none.
+    func headerIndexPath(ofSection section: Int) -> IndexPath? {
+        guard day(inSection: section) != nil else {
+            return nil
+        }
+        return IndexPath(item: headers.item(ofSection: section), section: 0)
+    }
+
+    /// The day section whose header AppKit holds at `indexPath`.
+    func section(ofHeaderAt indexPath: IndexPath) -> Int? {
+        guard indexPath.count == 2, indexPath.section == 0,
+              let section = headers.section(ofItem: indexPath.item),
+              day(inSection: section) != nil
+        else {
+            return nil
+        }
+        return section
     }
 }
 
@@ -305,12 +489,15 @@ nonisolated struct MediaGridStructure: Sendable {
 /// identity comparison the apply policy's summary and the batch both read
 /// (`MediaGridStructuralApplyPolicy.summarize`, `MediaGridBatchUpdates.between`).
 ///
-/// Sections pair by key. A paired section's items are compared from both ends, in order,
-/// for the run they share at the front and at the back; only what lies between those runs,
-/// and every item of a section with no pair, is looked up by identity. A day the change did
-/// not touch is one shared run, so a few photos moving between days in a grid of 158,000
-/// looks up a few hundred identities instead of every one, and an order the change did not
-/// touch looks up none (`docs/research/2026-11-15-grid-reorder-follows-the-change.md`).
+/// An order made from the one on screen by an edit (`CatalogGridContent.Edit`: a Move to
+/// Trash, a stack expanding or collapsing) is read from the edit: nothing is compared or
+/// looked up. Any other pair of orders is compared: sections pair by key, a paired
+/// section's items are compared from both ends, in order, for the run they share at the
+/// front and at the back, and only what lies between those runs, and every item of a
+/// section with no pair, is looked up by identity. A day the change did not touch is one
+/// shared run, so a few photos moving between days in a grid of 158,000 looks up a few
+/// hundred identities instead of every one, and an order the change did not touch looks
+/// up none (`docs/research/2026-11-15-grid-reorder-follows-the-change.md`).
 ///
 /// Identities are unique within an order, so an item of a shared run is at the same place
 /// in its section on both sides and every item that moved lies in a looked-up stretch.
@@ -324,46 +511,48 @@ nonisolated struct MediaGridStructureChange: Sendable {
         let sharedBack: Int
     }
 
+    enum Kind: Sendable {
+        /// The new order is the old one edited: survivors keep their relative order.
+        case edit(CatalogGridContent.Edit)
+        /// The orders were compared. `pairs` is each new section's pairing, `nil` for a
+        /// section the old structure has no key for; `newIndexOfOldSection` the new index
+        /// of each old section, or -1 when its key is gone. Every pairing is `nil`, and
+        /// `newIndexOfOldSection` is `nil`, when a key repeats on either side, which no
+        /// batch describes.
+        case compared(pairs: [PairedSection?], newIndexOfOldSection: [Int]?)
+    }
+
     let old: MediaGridStructure
     let new: MediaGridStructure
-    /// Each new section's pairing, `nil` for a section the old structure has no key for.
-    /// Every entry is `nil` when a key repeats on either side, which no batch describes.
-    let pairs: [PairedSection?]
-    /// The new index of each old section, or -1 when its key is gone; `nil` when a key
-    /// repeats on either side.
-    let newIndexOfOldSection: [Int]?
+    let kind: Kind
     /// How many of the new structure's items the old one holds.
     let retainedCount: Int
     /// Whether the two orders are the same sequence: every item at the place it had.
     let orderIsUnchanged: Bool
 
     init(from old: MediaGridStructure, to new: MediaGridStructure) {
-        if let removed = new.positionsRemoved(since: old), old.keysAreUnique,
-           let pairing = Self.pairing(old, new, removing: removed)
-        {
-            // An order made from the old one by removing positions shares, in each day, the
-            // runs before its first and after its last removed position, and holds every
-            // other item it had: nothing is compared, looked up or hashed.
-            self.init(old: old, new: new, pairs: pairing.pairs, newIndexOfOldSection: pairing.newIndexOfOldSection)
+        if let edit = new.edit(since: old) {
+            self.init(old: old, new: new, edit: edit)
         } else {
             self.init(comparing: old, with: new)
         }
     }
 
-    /// A removal's change: every new item is an old one, and none after the first removed
-    /// position is where it was.
-    private init(
-        old: MediaGridStructure,
-        new: MediaGridStructure,
-        pairs: [PairedSection?],
-        newIndexOfOldSection: [Int]
-    ) {
+    /// An edit's change: every new item but the inserted ones is an old one.
+    private init(old: MediaGridStructure, new: MediaGridStructure, edit: CatalogGridContent.Edit) {
         self.old = old
         self.new = new
-        self.pairs = pairs
-        self.newIndexOfOldSection = newIndexOfOldSection
-        retainedCount = new.orderedIDs.count
-        orderIsUnchanged = false
+        kind = .edit(edit)
+        retainedCount = new.orderedIDs.count - edit.inserted.count
+        orderIsUnchanged = edit.isEmpty
+    }
+
+    /// Each new section's pairing; empty for an edit, which pairs nothing.
+    var pairs: [PairedSection?] {
+        if case let .compared(pairs, _) = kind {
+            return pairs
+        }
+        return []
     }
 
     private init(comparing old: MediaGridStructure, with new: MediaGridStructure) {
@@ -372,7 +561,7 @@ nonisolated struct MediaGridStructureChange: Sendable {
         let oldIndexByKey = Self.sectionIndexByKey(old)
         let newIndexByKey = Self.sectionIndexByKey(new)
         let keysPair = oldIndexByKey != nil && newIndexByKey != nil
-        newIndexOfOldSection = keysPair
+        let newIndexOfOldSection = keysPair
             ? old.sections.map { newIndexByKey?[$0.key] ?? -1 }
             : nil
         let oldIDs = old.orderedIDs
@@ -411,48 +600,9 @@ nonisolated struct MediaGridStructureChange: Sendable {
             orderIsUnchanged = orderIsUnchanged && !frontMoved && !backMoved
             lookUp(newItems.lowerBound + front ..< newItems.upperBound - back)
         }
-        self.pairs = pairs
+        kind = .compared(pairs: pairs, newIndexOfOldSection: newIndexOfOldSection)
         retainedCount = retained
         self.orderIsUnchanged = orderIsUnchanged
-    }
-
-    /// The pairing a removal makes, walking the old sections with the removed positions:
-    /// each old section that keeps an item is the next new one, sharing the runs before its
-    /// first and after its last removed position. Old keys are unique, so no two kept
-    /// sections meet as one, and the new keys are unique too. Nil when the new structure
-    /// is not that one-to-one shape (every item removed: one empty ungrouped section).
-    private static func pairing(
-        _ old: MediaGridStructure,
-        _ new: MediaGridStructure,
-        removing removed: [Int]
-    ) -> (pairs: [PairedSection?], newIndexOfOldSection: [Int])? {
-        var pairs: [PairedSection?] = []
-        pairs.reserveCapacity(new.sections.count)
-        var newIndexOfOldSection = [Int](repeating: -1, count: old.sections.count)
-        var next = 0
-        for (oldSection, section) in old.sections.enumerated() {
-            let items = section.items
-            var first: Int?
-            var last = 0
-            var removedHere = 0
-            while next < removed.count, removed[next] < items.upperBound {
-                first = first ?? removed[next]
-                last = removed[next]
-                removedHere += 1
-                next += 1
-            }
-            let kept = items.count - removedHere
-            guard kept > 0 else {
-                continue
-            }
-            newIndexOfOldSection[oldSection] = pairs.count
-            pairs.append(PairedSection(
-                oldSection: oldSection,
-                sharedFront: first.map { $0 - items.lowerBound } ?? kept,
-                sharedBack: first == nil ? 0 : items.upperBound - 1 - last
-            ))
-        }
-        return pairs.count == new.sections.count ? (pairs, newIndexOfOldSection) : nil
     }
 
     /// The old positions between `pair`'s shared runs: where every item of its old section
@@ -460,11 +610,6 @@ nonisolated struct MediaGridStructureChange: Sendable {
     func ownStretch(of pair: PairedSection) -> Range<Int> {
         let oldItems = old.sections[pair.oldSection].items
         return oldItems.lowerBound + pair.sharedFront ..< oldItems.upperBound - pair.sharedBack
-    }
-
-    /// Whether old section `section` has a key the new structure keeps.
-    func survives(oldSection section: Int) -> Bool {
-        (newIndexOfOldSection?[section] ?? -1) >= 0
     }
 
     /// The new positions of new section `section` that lie outside the runs it shares
@@ -519,18 +664,19 @@ nonisolated struct MediaGridStructureChange: Sendable {
 }
 
 /// The collection-view batch that turns one structure into the next, in the terms
-/// `NSCollectionView.performBatchUpdates` takes: deletions and move sources at the old
-/// index paths, insertions and move destinations at the new ones.
+/// `NSCollectionView.performBatchUpdates` takes for the grid's one AppKit section:
+/// deletions and move sources at old positions, insertions and move destinations at new
+/// ones, and the day headers that go and come at their supplementary index paths.
 ///
-/// Sections match by key. A section only in the old structure is deleted, which takes its
-/// items with it; one only in the new is inserted, with its items. AppKit cannot move an
-/// item out of a deleted section or into an inserted one, so an asset crossing either edge
-/// is a delete at its old place (when that section survives) and an insert at its new one
-/// (when that section survives). An item that changed between surviving sections is an
-/// explicit move. Within a surviving section, the longest run of its own items already in
-/// old order stays put and AppKit infers their new places; every other item is an explicit
-/// move. That is the fewest moves that describe the change, so a few photos moving between
-/// days in a large grid stay a few moves.
+/// An edit (`MediaGridStructureChange.Kind.edit`) is its removed and inserted positions,
+/// and the headers of the days it emptied or started: no survivor changes its relative
+/// order, so nothing moves. A compared change matches sections by key: a section only in
+/// the old structure loses its header, one only in the new gains one. An item that left
+/// its section for another is an explicit move, wherever it went. Within a surviving
+/// section, the longest run of its own items already in old order stays put and AppKit
+/// infers their new places; every other item is an explicit move. That is the fewest moves
+/// that describe the change, so a few photos moving between days in a large grid stay a
+/// few moves.
 ///
 /// It is read from `MediaGridStructureChange`, so it costs what changed: the runs a
 /// section shares at its ends stay put without being looked at again.
@@ -540,11 +686,10 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
         let to: IndexPath
     }
 
-    var deletedSections = IndexSet()
-    var insertedSections = IndexSet()
     var deletedItems = Set<IndexPath>()
     var insertedItems = Set<IndexPath>()
     var movedItems: [Move] = []
+    var headers = MediaGridHeaderUpdates()
 
     /// `nil` when no batch can describe the change: a section key repeats within one
     /// structure, or two surviving sections changed their relative order. Neither happens
@@ -557,36 +702,84 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
     }
 
     static func between(_ change: MediaGridStructureChange) -> MediaGridBatchUpdates? {
-        guard let newIndexOfOldSection = change.newIndexOfOldSection,
-              var updates = sectionEdits(change, newIndexOfOldSection: newIndexOfOldSection)
-        else {
+        guard change.old.keysAreUnique, change.new.keysAreUnique else {
             return nil
         }
-        // Old positions some new item was found at: the rest of a looked-up old stretch
-        // left the structure.
-        var found = Set<Int>()
-        for (newSection, pair) in change.pairs.enumerated() {
-            if let pair {
-                updates.addPairedSection(newSection, pair: pair, change: change, found: &found)
-            } else {
-                updates.addInsertedSection(newSection, change: change, found: &found)
+        switch change.kind {
+        case let .edit(edit):
+            return edited(edit, change: change)
+        case let .compared(pairs, newIndexOfOldSection):
+            guard let newIndexOfOldSection,
+                  let edits = sectionEdits(change, newIndexOfOldSection: newIndexOfOldSection)
+            else {
+                return nil
+            }
+            var updates = edits.updates
+            // Old positions some new item was found at: the rest of a looked-up old
+            // stretch, and of a section that is gone, left the structure.
+            var found = Set<Int>()
+            for (newSection, pair) in pairs.enumerated() {
+                if let pair {
+                    updates.addPairedSection(newSection, pair: pair, change: change, found: &found)
+                } else {
+                    updates.addInsertedSection(newSection, change: change, found: &found)
+                }
+            }
+            // Only once every new section is walked: an item may have left for a later one.
+            updates.addLeavers(change, deletedSections: edits.deletedSections, found: found)
+            return updates
+        }
+    }
+
+    /// An edit's batch: its positions, and the headers of the days it emptied or started,
+    /// each told by its key in the other structure.
+    private static func edited(
+        _ edit: CatalogGridContent.Edit,
+        change: MediaGridStructureChange
+    ) -> MediaGridBatchUpdates {
+        let old = change.old
+        let new = change.new
+        var updates = MediaGridBatchUpdates()
+        updates.deletedItems = Set(edit.removed.map(MediaGridStructure.indexPath(atPosition:)))
+        updates.insertedItems = Set(edit.inserted.map(MediaGridStructure.indexPath(atPosition:)))
+        var lastSection: Int?
+        for position in edit.removed {
+            guard let section = old.section(containing: position), section != lastSection else {
+                continue
+            }
+            lastSection = section
+            if let header = old.headerIndexPath(ofSection: section), new.section(ofHeaderAt: header) == nil {
+                updates.headers.deleted.insert(header)
             }
         }
-        // Only once every new section is walked: an item may have left for a later one.
-        updates.addLeavers(change, found: found)
+        lastSection = nil
+        for position in edit.inserted {
+            guard let section = new.section(containing: position), section != lastSection else {
+                continue
+            }
+            lastSection = section
+            if let header = new.headerIndexPath(ofSection: section), old.section(ofHeaderAt: header) == nil {
+                updates.headers.inserted.insert(header)
+            }
+        }
         return updates
     }
 
-    /// The sections deleted and inserted; `nil` when two surviving sections swapped order.
+    /// The headers of the sections deleted and inserted, and the old sections deleted;
+    /// `nil` when two surviving sections swapped order.
     private static func sectionEdits(
         _ change: MediaGridStructureChange,
         newIndexOfOldSection: [Int]
-    ) -> MediaGridBatchUpdates? {
+    ) -> (updates: MediaGridBatchUpdates, deletedSections: [Int])? {
         var updates = MediaGridBatchUpdates()
+        var deletedSections: [Int] = []
         var lastSurvivingNewIndex = -1
         for (index, newIndex) in newIndexOfOldSection.enumerated() {
             guard newIndex >= 0 else {
-                updates.deletedSections.insert(index)
+                deletedSections.append(index)
+                if let header = change.old.headerIndexPath(ofSection: index) {
+                    updates.headers.deleted.insert(header)
+                }
                 continue
             }
             guard newIndex > lastSurvivingNewIndex else {
@@ -595,13 +788,15 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
             lastSurvivingNewIndex = newIndex
         }
         for (index, pair) in change.pairs.enumerated() where pair == nil {
-            updates.insertedSections.insert(index)
+            if let header = change.new.headerIndexPath(ofSection: index) {
+                updates.headers.inserted.insert(header)
+            }
         }
-        return updates
+        return (updates, deletedSections)
     }
 
-    /// An inserted section brings its items: one that left a surviving section is a delete
-    /// there.
+    /// An inserted section's items: each one the old structure holds moves in, the rest
+    /// are inserted.
     private mutating func addInsertedSection(
         _ newSection: Int,
         change: MediaGridStructureChange,
@@ -610,20 +805,19 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
         let old = change.old
         let new = change.new
         for position in new.sections[newSection].items {
+            let to = MediaGridStructure.indexPath(atPosition: position)
             guard let oldPosition = old.position(of: new.orderedIDs[position]) else {
+                insertedItems.insert(to)
                 continue
             }
             found.insert(oldPosition)
-            let from = old.indexPath(atPosition: oldPosition)
-            if change.survives(oldSection: from.section) {
-                deletedItems.insert(from)
-            }
+            movedItems.append(Move(from: MediaGridStructure.indexPath(atPosition: oldPosition), to: to))
         }
     }
 
     /// A surviving section's looked-up stretch: its own items keep their longest in-order
-    /// run and the rest move; an item from another surviving section moves in; one from a
-    /// deleted section, or a new one, is inserted.
+    /// run and the rest move; an item from another section moves in; a new one is
+    /// inserted.
     private mutating func addPairedSection(
         _ newSection: Int,
         pair: MediaGridStructureChange.PairedSection,
@@ -632,7 +826,6 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
     ) {
         let old = change.old
         let new = change.new
-        let newItems = new.sections[newSection].items
         let items = change.stretch(ofNewSection: newSection).map { position in
             (newPosition: position, oldPosition: old.position(of: new.orderedIDs[position]))
         }
@@ -651,42 +844,43 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
         }
         var staying = Self.longestIncreasingRun(ownOldPositions).makeIterator()
         for item in items {
-            let to = IndexPath(item: item.newPosition - newItems.lowerBound, section: newSection)
+            let to = MediaGridStructure.indexPath(atPosition: item.newPosition)
             guard let oldPosition = item.oldPosition else {
                 insertedItems.insert(to)
                 continue
             }
-            if ownStretch.contains(oldPosition) {
-                if staying.next() == false {
-                    movedItems.append(Move(from: old.indexPath(atPosition: oldPosition), to: to))
-                }
+            if ownStretch.contains(oldPosition), staying.next() == true {
                 continue
             }
-            let from = old.indexPath(atPosition: oldPosition)
-            if change.survives(oldSection: from.section) {
-                movedItems.append(Move(from: from, to: to))
-            } else {
-                insertedItems.insert(to)
-            }
+            movedItems.append(Move(from: MediaGridStructure.indexPath(atPosition: oldPosition), to: to))
         }
     }
 
-    /// Items of a surviving section's looked-up old stretch that no new section holds.
-    private mutating func addLeavers(_ change: MediaGridStructureChange, found: Set<Int>) {
+    /// Items no new section holds: in a surviving section's looked-up old stretch, and in
+    /// a section that is gone.
+    private mutating func addLeavers(
+        _ change: MediaGridStructureChange,
+        deletedSections: [Int],
+        found: Set<Int>
+    ) {
         for pair in change.pairs {
             guard let pair else {
                 continue
             }
-            let oldItems = change.old.sections[pair.oldSection].items
             for position in change.ownStretch(of: pair) where !found.contains(position) {
-                deletedItems.insert(IndexPath(item: position - oldItems.lowerBound, section: pair.oldSection))
+                deletedItems.insert(MediaGridStructure.indexPath(atPosition: position))
+            }
+        }
+        for oldSection in deletedSections {
+            for position in change.old.sections[oldSection].items where !found.contains(position) {
+                deletedItems.insert(MediaGridStructure.indexPath(atPosition: position))
             }
         }
     }
 
     var isEmpty: Bool {
-        deletedSections.isEmpty && insertedSections.isEmpty && deletedItems.isEmpty
-            && insertedItems.isEmpty && movedItems.isEmpty
+        deletedItems.isEmpty && insertedItems.isEmpty && movedItems.isEmpty
+            && headers.deleted.isEmpty && headers.inserted.isEmpty
     }
 
     /// Which indices into `values` belong to one longest strictly increasing subsequence

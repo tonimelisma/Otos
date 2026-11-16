@@ -80,15 +80,17 @@ extension MediaGridViewController {
                     ? lhs.frame.minX < rhs.frame.minX
                     : lhs.frame.minY < rhs.frame.minY
             }
-        guard let section = topmostItem?.indexPath?.section,
+        guard let position = topmostItem?.indexPath?.item,
+              let section = structure.section(containing: position),
               let day = structure.day(inSection: section)
         else {
             return nil
         }
+        let header = structure.headerIndexPath(ofSection: section)
         let headerMinY = attributes.first {
             $0.representedElementCategory == .supplementaryView
                 && $0.representedElementKind == MediaGridDayHeaderView.elementKind
-                && $0.indexPath?.section == section
+                && $0.indexPath == header
         }?.frame.minY
         return MediaGridDayBarPolicy.TopEdge(
             day: day,

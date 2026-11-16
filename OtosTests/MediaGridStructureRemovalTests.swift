@@ -2,10 +2,11 @@ import AppKit
 @testable import OtosKit
 import Testing
 
-/// A grid made from the one on screen by removing items (`CatalogMediaGridState.hiding`,
-/// Move to Trash's visible half) is taken in by its removed positions: its structure, the
-/// change and the batch are what a fresh build and a full comparison of the two orders
-/// make.
+/// A grid made from the one on screen by an edit — removing items
+/// (`CatalogMediaGridState.hiding`, Move to Trash's visible half), or removing and inserting
+/// them (a stack collapsing or expanding, `CatalogGridContent.edited`) — is taken in by the
+/// edit's positions: its structure, the change and the batch are what a fresh build and a
+/// full comparison of the two orders make.
 struct MediaGridStructureRemovalTests {
     private static func id(_ index: Int) -> MediaAssetID {
         MediaGridStructureTests.id("h\(index)")
@@ -43,15 +44,13 @@ struct MediaGridStructureRemovalTests {
         let old = MediaGridStructure(grid: shown)
         let followed = MediaGridStructure(grid: hidden, following: old)
         let rebuilt = MediaGridStructure(grid: fresh(hidden), following: old)
-        #expect(followed.positionsRemoved(since: old) != nil, sourceLocation: sourceLocation)
-        #expect(rebuilt.positionsRemoved(since: old) == nil, sourceLocation: sourceLocation)
+        #expect(followed.edit(since: old) != nil, sourceLocation: sourceLocation)
+        #expect(rebuilt.edit(since: old) == nil, sourceLocation: sourceLocation)
         #expect(followed.sections == rebuilt.sections, sourceLocation: sourceLocation)
-        #expect(followed.layoutSections == rebuilt.layoutSections, sourceLocation: sourceLocation)
+        #expect(followed.layoutInput == rebuilt.layoutInput, sourceLocation: sourceLocation)
 
         let byRemoval = MediaGridStructureChange(from: old, to: followed)
         let byComparison = MediaGridStructureChange(from: old, to: rebuilt)
-        #expect(byRemoval.pairs == byComparison.pairs, sourceLocation: sourceLocation)
-        #expect(byRemoval.newIndexOfOldSection == byComparison.newIndexOfOldSection, sourceLocation: sourceLocation)
         #expect(byRemoval.retainedCount == byComparison.retainedCount, sourceLocation: sourceLocation)
         #expect(byRemoval.orderIsUnchanged == byComparison.orderIsUnchanged, sourceLocation: sourceLocation)
         let updates = MediaGridBatchUpdates.between(byRemoval)
@@ -112,7 +111,7 @@ struct MediaGridStructureRemovalTests {
         let first = shown.hiding([Self.id(1)])
         let second = first.hiding([Self.id(4)])
         let structure = MediaGridStructure(grid: second, following: MediaGridStructure(grid: shown))
-        #expect(structure.positionsRemoved(since: MediaGridStructure(grid: shown)) == nil)
+        #expect(structure.edit(since: MediaGridStructure(grid: shown)) == nil)
         #expect(structure.sections == MediaGridStructure(grid: Self.fresh(second)).sections)
     }
 
@@ -134,5 +133,54 @@ struct MediaGridStructureRemovalTests {
         }
         // Most draws hide something: the comparison ran, not a skipped loop.
         #expect(followed > 150)
+    }
+
+    /// `shown` edited: `removed` dropped and new photos inserted at `inserted` (positions in
+    /// the result), each on the day of the photo it lands before, else after, else a new
+    /// day — as a stack's files join the day of the tile they expand from.
+    private static func edited(
+        _ shown: CatalogMediaGridState,
+        removing removed: [Int],
+        inserting inserted: [Int],
+        newDay: Date
+    ) -> CatalogMediaGridState {
+        let removedSet = Set(removed)
+        var ids = shown.orderedAssetIDs.indices.filter { !removedSet.contains($0) }.map { shown.orderedAssetIDs[$0] }
+        var buckets = shown.dayBuckets.indices.filter { !removedSet.contains($0) }.map { shown.dayBuckets[$0] }
+        for (offset, position) in inserted.enumerated() {
+            let day = position < buckets.count ? buckets[position] : buckets.last ?? newDay
+            ids.insert(MediaGridStructureTests.id("inserted\(offset)"), at: position)
+            buckets.insert(day, at: position)
+        }
+        let content = shown.content.edited(
+            by: CatalogGridContent.Edit(removed: removed, inserted: inserted),
+            to: ids,
+            dayBuckets: buckets,
+            stacks: .empty
+        )
+        return shown.replacingContent(content)
+    }
+
+    @Test func randomEditsFollowTheEdit() throws {
+        var generator = SplitMix(seed: 31)
+        for _ in 0 ..< 200 {
+            let counts = (0 ..< Int.random(in: 1 ... 8, using: &generator)).map { _ in
+                Int.random(in: 1 ... 6, using: &generator)
+            }
+            let shown = Self.grid(counts, unknownLast: Int.random(in: 0 ... 3, using: &generator))
+            let removed = shown.orderedAssetIDs.indices.filter { _ in Int.random(in: 0 ..< 5, using: &generator) == 0 }
+            let resultCount = shown.orderedAssetIDs.count - removed.count
+            let insertedCount = Int.random(in: 0 ... 4, using: &generator)
+            let inserted = Array((0 ..< resultCount + insertedCount).shuffled(using: &generator).prefix(insertedCount)).sorted()
+            let edit = Self.edited(
+                shown, removing: removed, inserting: inserted, newDay: Date(timeIntervalSince1970: 86400 * 1000)
+            )
+            try Self.expectFollowsTheRemoval(shown, edit)
+            let updates = try #require(MediaGridBatchUpdates.between(
+                MediaGridStructure(grid: shown),
+                MediaGridStructure(grid: edit, following: MediaGridStructure(grid: shown))
+            ))
+            #expect(updates.movedItems.isEmpty)
+        }
     }
 }
