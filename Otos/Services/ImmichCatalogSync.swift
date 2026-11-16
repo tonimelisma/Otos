@@ -103,6 +103,8 @@ actor ImmichCatalogSync {
     private let store: CatalogStore
     /// Reads a volume's free space for the floor its products keep (ADR 0027).
     private let volumeCapacity: VolumeCapacityReader
+    /// Runs the mirror pairing's write walk one heavy load at a time with the other owners'.
+    private let admission: LoadAdmission
     private let doorbell: AsyncStream<Void>
     private let ring: AsyncStream<Void>.Continuation
 
@@ -110,8 +112,10 @@ actor ImmichCatalogSync {
         rootPath: LibraryRootPath,
         source: any ImmichSyncSource,
         store: CatalogStore,
-        volumeCapacity: @escaping VolumeCapacityReader
+        volumeCapacity: @escaping VolumeCapacityReader,
+        admission: LoadAdmission = LoadAdmission(isOpen: true)
     ) {
+        self.admission = admission
         self.rootPath = rootPath
         self.source = source
         self.store = store
@@ -178,7 +182,12 @@ actor ImmichCatalogSync {
             await learnMirror(probe)
         }
         do {
-            _ = try await store.pairMirroredCopies(account: rootPath)
+            // A write walk over every mirrored library: one heavy load at a time.
+            _ = try await admission.run(.immichMirror) {
+                try await store.pairMirroredCopies(account: rootPath)
+            }
+        } catch is CancellationError {
+            return
         } catch {
             OtosLog.catalog.errorOperation("immich.mirror", phase: "pairFailed", fields: [
                 "rootPath": rootPath.rawValue, "error": String(describing: error),

@@ -92,16 +92,12 @@ extension CatalogWindowViewModel {
         ])
     }
 
-    func startImmichAccounts(store: CatalogStore) {
+    /// Hears the accounts' statuses and runs the sheet's intents from now; the accounts' own
+    /// sync starts with the other background owners, after the first grid
+    /// (`startBackgroundOwners`).
+    func startImmichAccounts() {
         guard let accounts = immichAccounts else { return }
-        immichStatusTask = Task { [weak self, accounts, store] in
-            do {
-                try await store.start()
-            } catch {
-                OtosLog.persistence.error("Immich accounts skipped because catalog start failed")
-                return
-            }
-            await accounts.start()
+        immichStatusTask = Task { [weak self, accounts] in
             for await statuses in accounts.statuses {
                 guard let self else { break }
                 immichAccountStatuses = statuses

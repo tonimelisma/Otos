@@ -104,6 +104,8 @@ actor PhotoSearchIndex {
     /// suspends the read to answer a query at that await.
     private let readTexts: ReadTexts
     private let bundle: Bundle
+    /// Runs the first load one heavy load at a time with the other owners' (`LoadAdmission`).
+    private let admission: LoadAdmission
     private var loaded = false
 
     private var loop: Task<Void, Never>?
@@ -131,8 +133,10 @@ actor PhotoSearchIndex {
         backoff: (first: Duration, last: Duration) = (.seconds(30), .seconds(900)),
         queries: SearchQueryReader? = nil,
         textReader: SearchTextReader = SearchTextReader(),
-        readTexts: ReadTexts? = nil
+        readTexts: ReadTexts? = nil,
+        admission: LoadAdmission = LoadAdmission(isOpen: true)
     ) {
+        self.admission = admission
         self.store = store
         self.textReader = textReader
         self.readTexts = readTexts ?? { [store] ids in try await store.currentSearchTexts(for: ids) }
@@ -342,6 +346,9 @@ actor PhotoSearchIndex {
             try await reconcileTexts()
             settled = try await drainTexts() && embedding.settled
             covered = answering
+        } catch is CancellationError {
+            // Teardown: the task, or the load admission it waited in, ended.
+            return
         } catch {
             OtosLog.thumbnails.errorOperation("search.index", phase: "failed", fields: [
                 "error": String(describing: error),
@@ -387,7 +394,11 @@ actor PhotoSearchIndex {
     /// its embeddings until it is back or forgotten.
     private func reconcile() async throws {
         if !loaded {
-            try await load()
+            // The matrix is hundreds of megabytes: one heavy load at a time with the other
+            // owners, none before the window's first grid.
+            try await admission.run(.searchIndex) {
+                try await load()
+            }
             return
         }
         let current = try await store.currentSearchEmbeddingIDs()

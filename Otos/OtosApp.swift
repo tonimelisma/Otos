@@ -50,7 +50,6 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
             catalogStore: CatalogStore(
                 location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
             ),
-            catalogProjection: CatalogProjection(backgroundOwners: owners),
             backgroundOwners: owners,
             paneOriginalDownloads: .configured(),
             preferencesDomain: .standard,

@@ -69,9 +69,13 @@ actor DuplicatesProjection {
         requested == covered && runningPasses == 0
     }
 
-    init(store: CatalogStore, builder: Builder?) {
+    /// Runs each build one heavy load at a time with the other owners' (`LoadAdmission`).
+    private let admission: LoadAdmission
+
+    init(store: CatalogStore, builder: Builder?, admission: LoadAdmission = LoadAdmission(isOpen: true)) {
         self.store = store
         self.builder = builder
+        self.admission = admission
         (builds, buildsContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
         (bell, doorbell) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
@@ -119,14 +123,16 @@ actor DuplicatesProjection {
             guard let libraries = await store.loadedLibraries() else {
                 return
             }
-            if let builder {
-                built = try await builder(store, libraries)
-            } else {
+            // One heavy load at a time with the other owners, none before the first grid.
+            built = try await admission.run(.duplicates) {
+                if let builder {
+                    return try await builder(store, libraries)
+                }
                 let result = try await Self.build(store: store, libraries: libraries, memory: memory)
                 try Task.checkCancellation()
                 // The only writer of `memory` is this loop's pass, one at a time.
                 memory = result.memory
-                built = result.state
+                return result.state
             }
             try Task.checkCancellation()
         } catch is CancellationError {

@@ -482,6 +482,10 @@ final class CatalogWindowViewModel {
     /// Which background owners `start` starts: every one, except in a tour that leaves some
     /// out (`BackgroundOwners.configured`).
     @ObservationIgnored let backgroundOwners: BackgroundOwners
+    /// Runs the owners' heavy loads one at a time (plan 0116 bet 6). Closed until this
+    /// window's first grid (`op=launch.firstGrid`), told what each query's view needs, and
+    /// shut at teardown, all synchronously from here.
+    @ObservationIgnored let loadAdmission: LoadAdmission
     /// The newest scope paint (`op=ui.sidebarSelectionToPaint phase=finish`), the fact a
     /// tour's sidebar step waits on.
     private(set) var lastSidebarPaint: SidebarPaintReport?
@@ -636,7 +640,9 @@ final class CatalogWindowViewModel {
     /// its indicator shows. Cleared by every scope intent.
     private(set) var waitingFramePresentedScope: SidebarSelection?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
-    @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
+    /// Starts the background owners, in `BackgroundOwner.launchOrder`, once the first grid has
+    /// been applied.
+    @ObservationIgnored private var ownerStartTask: Task<Void, Never>?
     @ObservationIgnored var deviceStagingSweepTask: Task<Void, Never>?
     @ObservationIgnored var gridTelemetryTask: Task<Void, Never>?
     /// One owned pane-preview request (or downloading retry) per slot. Superseded
@@ -733,7 +739,8 @@ final class CatalogWindowViewModel {
 
     init(
         catalogStore: CatalogStore,
-        catalogProjection: CatalogProjection = CatalogProjection(),
+        catalogProjection: CatalogProjection? = nil,
+        loadAdmission: LoadAdmission = LoadAdmission(),
         enrichmentCoordinator: EnrichmentCoordinator? = nil,
         metadataRefresher: MetadataRefresher? = nil,
         immichAccounts: ImmichAccounts? = nil,
@@ -827,13 +834,19 @@ final class CatalogWindowViewModel {
         importPreferences = ImportPreferencesStore.load(defaults: preferences)
         exportSettings = ExportSettingsStore.load(defaults: preferences)
         self.catalogStore = catalogStore
+        self.loadAdmission = loadAdmission
+        // A projection a test makes keeps its own admission; the window's shares this one, so
+        // its duplicates builds and People passes take turns with the owners started here.
         self.catalogProjection = catalogProjection
+            ?? CatalogProjection(backgroundOwners: backgroundOwners, admission: loadAdmission)
         let mediaChoiceOverlay = MediaChoiceOverlay()
         self.mediaChoiceOverlay = mediaChoiceOverlay
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore, choices: mediaChoiceOverlay)
         let deviceStagingRegistry = DeviceStagingRegistry()
         self.deviceStagingRegistry = deviceStagingRegistry
-        let immichAccounts = immichAccounts ?? (startsEnrichment ? ImmichAccounts(store: catalogStore, volumeCapacity: volumeCapacity) : nil)
+        let immichAccounts = immichAccounts ?? (startsEnrichment
+            ? ImmichAccounts(store: catalogStore, volumeCapacity: volumeCapacity, admission: loadAdmission)
+            : nil)
         self.immichAccounts = immichAccounts
         let materializationCoordinator = MaterializationCoordinator(
             store: catalogStore,
@@ -917,7 +930,8 @@ final class CatalogWindowViewModel {
             ? PhotoSearchIndex(
                 store: catalogStore,
                 thumbnailDirectory: catalogStore.thumbnailDirectory,
-                bundle: Bundle(for: CatalogWindowViewModel.self)
+                bundle: Bundle(for: CatalogWindowViewModel.self),
+                admission: loadAdmission
             )
             : nil
         photoDescriptionWriter = startsEnrichment && enrichmentCoordinator == nil
@@ -1058,7 +1072,9 @@ final class CatalogWindowViewModel {
         focusedKindTask?.cancel()
         currentTargetChoiceTask?.cancel()
         viewportForwardingTask?.cancel()
-        enrichmentStartTask?.cancel()
+        ownerStartTask?.cancel()
+        // Before the owners are told to stop: a heavy load still waiting never starts.
+        loadAdmission.shutdown()
         deviceStagingSweepTask?.cancel()
         importPresentationTask?.cancel()
         removableDestinationsTask?.cancel()
@@ -1193,12 +1209,13 @@ extension CatalogWindowViewModel {
             startDeviceStagingSweepThenCameraMonitoring()
         }
         startMediaOperationsIfNeeded()
-        if startsEnrichment {
-            if backgroundOwners.starts(.immich) {
-                startImmichAccounts(store: store)
-            }
-            startEnrichment()
+        if startsEnrichment, backgroundOwners.starts(.immich) {
+            startImmichAccounts()
         }
+        // The background owners start once the first grid is applied
+        // (`startBackgroundOwners`); the restored view's load runs first when the admission
+        // opens.
+        loadAdmission.want(BackgroundLoad.needed(by: queryDescriptor))
     }
 
     /// Not `private`: the sidebar/filter/sort intent wrappers live in
@@ -1222,6 +1239,8 @@ extension CatalogWindowViewModel {
         queryGeneration &+= 1
         queryDescriptor = descriptor
         sidebarSelection = descriptor.scope
+        // The heavy load this view needs runs next (People's pass, the search index's load).
+        loadAdmission.want(BackgroundLoad.needed(by: descriptor))
         let generation = queryGeneration
         let vm = diagnosticID
         OtosLog.ui.info(
@@ -1266,8 +1285,19 @@ extension CatalogWindowViewModel {
         viewportContinuation.yield(orderedAssetIDs)
     }
 
-    private func startEnrichment() {
-        guard let coordinator = enrichmentCoordinator else {
+    /// Starts the background owners, once, when the first grid has been applied: before it,
+    /// every owner's first walk and load read the catalog beside the window's first read and
+    /// took launch from 2.2 s with none running to 2.8 s with all (plan 0116 bet 6). The
+    /// heavy loads also wait for the admission this opens, so the duplicates builds and People
+    /// passes the projection asked for meanwhile start now too, one at a time.
+    ///
+    /// The order: enrichment first (the visible tiles' thumbnails), then the Immich accounts'
+    /// sync, the walks that read stored thumbnails, the search index, descriptions, and the
+    /// metadata re-read last. Every owner's tasks run below the window's priority
+    /// (`TaskPriority.backgroundOwner`), inherited from this one.
+    private func startBackgroundOwners() {
+        loadAdmission.open()
+        guard startsEnrichment, ownerStartTask == nil, let coordinator = enrichmentCoordinator else {
             return
         }
         // updateViewport is delivered newest-value; the coordinator is the single owner of
@@ -1277,25 +1307,25 @@ extension CatalogWindowViewModel {
                 await coordinator.updateViewport(ids)
             }
         }
-        // Start the coordinator only after the shared initial load has completed, so its
-        // first candidate query sees persisted catalog rows rather than an empty pre-load
-        // database. A no-op launch rescan of an unchanged library fires no notification,
-        // so a coordinator started too early could stay idle until some unrelated change.
-        // `store.start()` is idempotent and shared, so this awaits the same load
-        // `startCatalog` runs.
-        enrichmentStartTask = Task { [
+        // The first grid follows the catalog's load, so each owner's first candidate query
+        // sees persisted rows. `store.start()` is idempotent and shared: it returns the load
+        // `startCatalog` ran, and a failed load starts no owner.
+        ownerStartTask = Task(priority: .backgroundOwner) { [
             coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, previewFaceReader, photoSearchIndex,
-            placeNameReader, photoDescriptionWriter, store = catalogStore, owners = backgroundOwners
+            placeNameReader, photoDescriptionWriter, immichAccounts, store = catalogStore, owners = backgroundOwners
         ] in
             do {
                 try await store.start()
             } catch {
-                OtosLog.persistence.error("Enrichment startup skipped because catalog start failed")
+                OtosLog.persistence.error("Background owners skipped because catalog start failed")
                 return
             }
             if owners.starts(.enrichment) {
                 await materializationCoordinator.start()
                 await coordinator.start()
+            }
+            if owners.starts(.immich) {
+                await immichAccounts?.start()
             }
             if owners.starts(.renderSignatures) {
                 await renderSignatureRefresher?.start()
@@ -1603,6 +1633,7 @@ extension CatalogWindowViewModel {
             return
         }
         firstGridLogged = true
+        startBackgroundOwners()
         OtosLog.ui.noticeOperation("launch.firstGrid", phase: "applied", fields: [
             "ms": "\(DiagnosticsTiming.milliseconds(since: launchStartedAt))",
             "catalogMs": catalogLoadedMs.map { "\($0)" } ?? "unknown",

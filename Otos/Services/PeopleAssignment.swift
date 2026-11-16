@@ -91,9 +91,13 @@ actor PeopleAssignment {
         requested == covered && tallyRequested == tallyCovered && runningPasses == 0
     }
 
-    init(store: CatalogStore, builder: Builder?) {
+    /// Runs each full pass one heavy load at a time with the other owners' (`LoadAdmission`).
+    private let admission: LoadAdmission
+
+    init(store: CatalogStore, builder: Builder?, admission: LoadAdmission = LoadAdmission(isOpen: true)) {
         self.store = store
         self.builder = builder
+        self.admission = admission
         (builds, buildsContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
         (bell, doorbell) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
@@ -180,12 +184,16 @@ actor PeopleAssignment {
             guard let libraries = await store.loadedLibraries() else {
                 return
             }
-            if let builder {
-                let built = try await builder(store, libraries)
-                try Task.checkCancellation()
-                publish(built, covers: startedFrom, tally: tallyStartedFrom)
-            } else {
-                try await galleryThenAssignment(libraries: libraries, startedFrom: startedFrom, tallyStartedFrom: tallyStartedFrom)
+            // The snapshot and the vectors are the largest load Otos holds: one at a time with
+            // the other heavy loads, none before the window's first grid.
+            try await admission.run(.people) {
+                if let builder {
+                    let built = try await builder(store, libraries)
+                    try Task.checkCancellation()
+                    publish(built, covers: startedFrom, tally: tallyStartedFrom)
+                } else {
+                    try await galleryThenAssignment(libraries: libraries, startedFrom: startedFrom, tallyStartedFrom: tallyStartedFrom)
+                }
             }
         } catch is CancellationError {
             return

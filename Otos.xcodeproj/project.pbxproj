@@ -175,6 +175,7 @@
 				Services/ImportSourceReadiness.swift,
 				Services/LibraryReorganizationRunner.swift,
 				Services/LiveEditRenderer.swift,
+				Services/LoadAdmission.swift,
 				Services/MaterializationAdmissionPolicy.swift,
 				Services/MaterializationCoordinator.swift,
 				Services/MediaEligibility.swift,

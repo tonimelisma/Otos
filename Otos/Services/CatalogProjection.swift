@@ -97,6 +97,9 @@ actor CatalogProjection {
     /// Which of the duplicates and People owners this projection starts: all of them, except
     /// in a tour that leaves some out (`BackgroundOwners`).
     let backgroundOwners: BackgroundOwners
+    /// Runs the duplicates builds and People passes one heavy load at a time with the other
+    /// owners' (`LoadAdmission`): the window's, which opens it at its first grid.
+    let admission: LoadAdmission
 
     private var queryRequest: CatalogQueryRequest = .initial
     /// Distinguishes one projection's diagnostics from another's in a shared log.
@@ -227,8 +230,10 @@ actor CatalogProjection {
         filterOptionsReader: FilterOptionsReader? = nil,
         duplicatesBuilder: DuplicatesProjection.Builder? = nil,
         peopleBuilder: PeopleAssignment.Builder? = nil,
-        backgroundOwners: BackgroundOwners = .all
+        backgroundOwners: BackgroundOwners = .all,
+        admission: LoadAdmission = LoadAdmission(isOpen: true)
     ) {
+        self.admission = admission
         self.cadence = cadence
         self.stateBuilder = stateBuilder
         self.filterOptionsReader = filterOptionsReader
@@ -734,15 +739,17 @@ private extension CatalogProjection {
         // them.
         // A tour can leave either owner unstarted (`BackgroundOwners`): it is then never made.
         let duplicatesProjection = backgroundOwners.starts(.duplicates)
-            ? DuplicatesProjection(store: store, builder: duplicatesBuilder) : nil
+            ? DuplicatesProjection(store: store, builder: duplicatesBuilder, admission: admission) : nil
         self.duplicatesProjection = duplicatesProjection
         let peopleAssignment = backgroundOwners.starts(.people)
-            ? PeopleAssignment(store: store, builder: peopleBuilder) : nil
+            ? PeopleAssignment(store: store, builder: peopleBuilder, admission: admission) : nil
         self.peopleAssignment = peopleAssignment
         duplicatesRequested &+= 1
         peopleRequested &+= 1
+        // Below the priority of the window, whose subscription runs this: the owners' loops
+        // inherit it.
         if let duplicatesProjection {
-            duplicatesTask = Task { [weak self, duplicatesProjection] in
+            duplicatesTask = Task(priority: .backgroundOwner) { [weak self, duplicatesProjection] in
                 await duplicatesProjection.start()
                 for await built in duplicatesProjection.builds {
                     guard let self else {
@@ -753,7 +760,7 @@ private extension CatalogProjection {
             }
         }
         if let peopleAssignment {
-            peopleTask = Task { [weak self, peopleAssignment] in
+            peopleTask = Task(priority: .backgroundOwner) { [weak self, peopleAssignment] in
                 await peopleAssignment.start()
                 for await built in peopleAssignment.builds {
                     guard let self else {

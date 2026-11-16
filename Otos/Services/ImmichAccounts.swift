@@ -93,6 +93,8 @@ actor ImmichAccounts {
     private let urlSession: URLSession
     /// Reads a volume's free space for the floor every account's sync keeps (ADR 0027).
     private let volumeCapacity: VolumeCapacityReader
+    /// Each account's mirror pairing runs one heavy load at a time with the other owners'.
+    private let admission: LoadAdmission
     private let schedule: Schedule
     private let clock = ContinuousClock()
     private var accounts: [LibraryRootPath: Account] = [:]
@@ -103,8 +105,10 @@ actor ImmichAccounts {
         sessions: any ImmichSessionStoring = ImmichKeychainSessionStore(),
         urlSession: URLSession = .shared,
         schedule: Schedule = .production,
-        volumeCapacity: @escaping VolumeCapacityReader
+        volumeCapacity: @escaping VolumeCapacityReader,
+        admission: LoadAdmission = LoadAdmission(isOpen: true)
     ) {
+        self.admission = admission
         self.volumeCapacity = volumeCapacity
         self.store = store
         self.sessions = sessions
@@ -396,7 +400,8 @@ actor ImmichAccounts {
             rootPath: root.path,
             source: ImmichSessionSyncSource(client: client, token: token),
             store: store,
-            volumeCapacity: volumeCapacity
+            volumeCapacity: volumeCapacity,
+            admission: admission
         )
         let path = root.path
         // The loop holds the sync, never this owner: a weak reference per pass report.
