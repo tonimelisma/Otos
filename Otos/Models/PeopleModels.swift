@@ -31,6 +31,20 @@ nonisolated struct FaceTile: Hashable, Sendable, Identifiable {
     var captureLocalTime: CaptureLocalTime? {
         captureSeconds.map(CaptureLocalTime.init(seconds:))
     }
+
+    /// Capture order, newest first; faces with no date last, then by photo and place.
+    static func newestFirst(_ lhs: FaceTile, _ rhs: FaceTile) -> Bool {
+        switch (lhs.captureSeconds, rhs.captureSeconds) {
+        case let (left?, right?) where left != right:
+            left > right
+        case (.some, nil):
+            true
+        case (nil, .some):
+            false
+        default:
+            FaceAssignmentPolicy.pathOrder(lhs.id, rhs.id)
+        }
+    }
 }
 
 /// A stored image a face is cut from and the edit it shows (`.neutral` for the unedited
@@ -51,8 +65,9 @@ nonisolated struct FacePreview: Hashable, Sendable {
     }
 }
 
-/// Everything People reads from the catalog, in one transaction: who the faces are and how
-/// their tiles show, never their vectors, which `FaceVectors` holds, read apart.
+/// Everything assignment reads from the catalog, in one transaction: who the faces are, never
+/// their tiles, which the surfaces read by key, nor their vectors, which `FaceVectors` holds,
+/// read apart. The snapshot is assignment's alone: nothing a surface paints waits for it.
 nonisolated struct PeopleSnapshot: Sendable, Equatable {
     nonisolated struct Person: Sendable, Equatable {
         let id: PersonID
@@ -62,8 +77,8 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         var isFavorite = false
     }
 
-    /// One stored face as assignment and the gallery read it: where it is, when its photo was
-    /// taken, the number of its vector's row (`FaceEmbeddingSQL`), and what the user decided.
+    /// One stored face as assignment reads it: where it is, when its photo was taken, the
+    /// number of its vector's row (`FaceEmbeddingSQL`), and what the user decided.
     nonisolated struct Face: Sendable, Equatable {
         let id: FaceID
         /// The photo's local capture time (`CaptureLocalTime.seconds`); nil without a date.
@@ -72,6 +87,8 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         let assignment: FaceAssignment
         /// People the user said this face is not (Remove Name).
         let rejected: Set<PersonID>
+        /// The face was read in a frame of a video.
+        var isInVideo = false
 
         /// The face as assignment compares it, with its vector; nil when the vector is not
         /// held or holds no embedding.
@@ -88,21 +105,21 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// The largest vector number in the catalog when the snapshot was read: every vector at or
     /// below it that no face here names is gone; one above it is a newer reading.
     var vectorHorizon: Int64 = 0
-    /// Each face's tile; none in a snapshot kept after its gallery was built (`withoutTiles`).
-    private(set) var tiles: [FaceID: FaceTile]
     /// In creation order.
     let people: [Person]
     /// Each face's stored likeness.
     var likeness: [FaceID: Float] = [:]
     /// Each person's key photo, where the user chose one.
     var keyPhotos: [PersonID: FaceID] = [:]
+    /// The gallery facts the catalog stores for each person (`PersonGalleryFacts`), read in
+    /// the same transaction, so a pass writes only the people whose facts it changes.
+    var galleryFacts: [PersonID: PersonGalleryFacts] = [:]
     /// Each file that is one of several of a photo mapped to the file that stands for it
     /// (`photos(stackKeys:copies:)`), so a person's photo count counts the photo once. A file
     /// absent from it stands for itself.
     var photoOf: [MediaAssetID: MediaAssetID] = [:]
     /// The present identical copies (ADR 0054) of each photo one of whose files holds a face,
-    /// each group in the order copies are shown in (`ranked`): what a photo's faces are
-    /// resolved through, so every copy shows the photo's people (`CatalogPeopleState.faces(of:)`).
+    /// each group in the order copies are shown in (`ranked`).
     var copies: [[MediaAssetID]] = []
 
     /// One present identical copy of a photo with a face, with what ranks it among its copies.
@@ -142,11 +159,6 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         return photoOf
     }
 
-    /// What in the available libraries and Immich accounts is not yet read for faces: stills
-    /// whose faces are not read from their current stored preview, or whose preview is still
-    /// to come, and a library's videos whose frames are not yet read.
-    let unchecked: MediaCount
-
     /// Whether the user has said nothing about `person`: no name, birthday, favourite,
     /// hidden mark or key photo. A person Otos found and the user never touched is forgotten
     /// with their last face, and their seeds lapse when their group no longer stands.
@@ -178,12 +190,56 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         return kept
     }
 
-    /// This snapshot without its tiles: what is kept once the gallery is built from it.
-    var withoutTiles: PeopleSnapshot {
-        var kept = self
-        kept.tiles = [:]
-        return kept
+    /// Each person's gallery facts, computed from scratch from this snapshot: every face with
+    /// them, whoever gave it; the photos and videos those faces are in, a photo's copies and a
+    /// stack's files counted once (`photoOf`); and the newest of the faces, the cover where
+    /// the user chose no key photo. A person with no face has no photos and no newest face. What `PeopleAssignment`
+    /// writes (`CatalogStore.writePeopleGalleryFacts`), and what the stored facts are tested
+    /// against.
+    var computedGalleryFacts: [PersonID: PersonGalleryFacts] {
+        var items: [PersonID: [MediaAssetID: Bool]] = [:]
+        var newest: [PersonID: Face] = [:]
+        for face in faces {
+            guard let person = face.assignment.person else { continue }
+            items[person, default: [:]][photoOf[face.id.asset] ?? face.id.asset] = face.isInVideo
+            if newest[person].map({ Self.isNewer(face, than: $0) }) ?? true {
+                newest[person] = face
+            }
+        }
+        var facts: [PersonID: PersonGalleryFacts] = [:]
+        for person in people {
+            facts[person.id] = PersonGalleryFacts(
+                media: MediaCount(items: (items[person.id] ?? [:]).map { ($0.key, $0.value) }),
+                newestFace: newest[person.id]?.id
+            )
+        }
+        return facts
     }
+
+    /// Capture order, newest first; faces with no date last, then by photo and place.
+    static func isNewer(_ lhs: Face, than rhs: Face) -> Bool {
+        switch (lhs.captureSeconds, rhs.captureSeconds) {
+        case let (left?, right?) where left != right:
+            left > right
+        case (.some, nil):
+            true
+        case (nil, .some):
+            false
+        default:
+            FaceAssignmentPolicy.pathOrder(lhs.id, rhs.id)
+        }
+    }
+}
+
+/// What the catalog stores of one person for the People gallery (`person_summary`, v73): the
+/// photos and videos holding a face of theirs, each photo once, and their newest face, which is
+/// the cover unless the user chose a key photo. `PeopleAssignment` computes them from its read
+/// and writes the ones that changed, so the gallery paints from a read of the people alone
+/// (ADR 0047, "What the People UI reads").
+nonisolated struct PersonGalleryFacts: Hashable, Sendable {
+    let media: MediaCount
+    /// Nil while the face it named is gone (its row was deleted) until the next pass.
+    let newestFace: FaceID?
 }
 
 /// What assignment reads of a People snapshot, hashed (ADR 0047): equal inputs give an equal
@@ -361,6 +417,15 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
     }
 }
 
+/// One face the user gave a person, as the hard rules read it: the photo it is in, whether
+/// that is a video, and when it was taken.
+nonisolated struct PersonAnchor: Hashable, Sendable {
+    let photo: MediaAssetID
+    let isInVideo: Bool
+    /// The photo's local capture time; nil when it has no date.
+    let captureSeconds: Double?
+}
+
 /// A person in the People gallery.
 nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     let id: PersonID
@@ -374,15 +439,13 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     let cover: FaceTile?
     /// The faces the user gave this person, newest first: the facts the hard rules hold
     /// them to.
-    let userFaces: [FaceTile]
+    let userFaces: [PersonAnchor]
     /// The photos and videos of the faces that define this person (the user's and the
     /// seeds), each with whether it is a video, which two people merged may not share.
     var anchorMedia: [MediaAssetID: Bool] = [:]
-    /// Up to `newestFaceCount` of the person's faces, whoever gave them, newest first and one
-    /// per photo (a photo's copies and a stack's files are one photo): the row the Person
-    /// sheet shows.
-    var newestFaces: [FaceTile] = []
 
+    /// How many of a person's faces the Person sheet shows, newest first and one per photo
+    /// (`CatalogStore.newestFaces(of:limit:)`).
     static let newestFaceCount = 8
 
     /// The capture time of the oldest face the user gave this person; nil when none has a
@@ -463,11 +526,49 @@ nonisolated enum FaceActTitle {
     }
 }
 
-/// What `PeopleAssignment` publishes: the People gallery and the tally of photos and videos
-/// not yet checked. What the gallery, the Person sheet and every menu read from the people
-/// is derived once, where the state is built (`PeopleStateBuilder`, off the main actor):
-/// everyone visible and the hidden people in gallery order, the names the sheet suggests,
-/// and each person's place by ID, so no surface walks the people to find one.
+/// What the People gallery's read gives (`CatalogStore.peopleGallery`, ADR 0047, "What the
+/// People UI reads"): every person row with the gallery facts People stored for them and the
+/// tile of their cover, the faces that define each person, the unchecked tally, and whether
+/// any face is stored. A read of the people and their anchors, never of every face.
+nonisolated struct PeopleGalleryRead: Equatable, Sendable {
+    nonisolated struct Person: Equatable, Sendable {
+        let id: PersonID
+        let name: String?
+        let birthday: PersonBirthday?
+        var isHidden = false
+        var isFavorite = false
+        /// Nil until People has written this person's facts.
+        var facts: PersonGalleryFacts?
+        /// The key photo the user chose, while its face still counts (out of the Trash, still
+        /// a face).
+        var keyPhoto: FaceTile?
+        /// The tile of `facts.newestFace`.
+        var newest: FaceTile?
+
+        /// Whether the user has said nothing about this person (`PeopleSnapshot.isBare`).
+        var isBare: Bool {
+            name == nil && birthday == nil && !isHidden && !isFavorite && keyPhoto == nil
+        }
+    }
+
+    /// One face that defines a person: the user's word, or a seed.
+    nonisolated struct Anchor: Equatable, Sendable {
+        let person: PersonID
+        let face: PersonAnchor
+        let isUsers: Bool
+    }
+
+    var people: [Person]
+    var anchors: [Anchor] = []
+    var unchecked = MediaCount()
+    var hasFaces = false
+}
+
+/// What the People gallery shows and every surface reads of the people (ADR 0047): the
+/// people in gallery order with everything their surfaces look up already derived — everyone
+/// visible and the hidden people in gallery order, the names the sheet suggests, and each
+/// person's place by ID, so no surface walks the people to find one — and the tally of photos
+/// and videos not yet checked. Built off the main actor from one `PeopleGalleryRead`.
 nonisolated struct CatalogPeopleState: Equatable, Sendable {
     /// The gallery's order: favourites first, then most photos, then the name in the locale's
     /// order; the hidden people after everyone else, in the same order.
@@ -480,141 +581,110 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     let visibleNames: [String]
     /// Each person's index in `people`.
     private let positions: [PersonID: Int]
-    /// Each file's own faces of visible people and unidentified faces, in reading order, as
-    /// built: what the photo menus and the Info pane show, at once, read through
-    /// `faces(of:)` so the acts the window holds (`faceOverrides`) are laid over them.
-    private let photoFaces: [MediaAssetID: [PhotoFace]]
-    /// Each file that is one of a photo's present identical copies (ADR 0054), mapped to its
-    /// other copies in the order copies are shown in: a named face on any of them is the
-    /// photo's (`faces(of:)`).
-    private let copies: [MediaAssetID: [MediaAssetID]]
-    /// What the window's held People acts do to single faces until People is built with them
-    /// (`overlaying`): small, so a held act never copies `photoFaces`.
-    private let faceOverrides: [FaceID: PhotoFaceOverride]
-    /// Read with every pass, and alone when rows were only added (`PeopleAssignment`).
     var unchecked: MediaCount
-    /// Faces found that are still faces (not marked `This Is Not a Face`).
-    let faceCount: Int
-    /// The `PeopleAssignment` request the build covers: a People act the window holds is
-    /// shown by every build that covers the request its write asked for (ADR 0032 rule 2).
+    /// Whether any face is stored that is still a face, out of the Trash.
+    let hasFaces: Bool
+    /// The People request the read covers: a People act the window holds is shown by every
+    /// state that covers the request its write asked for (ADR 0032 rule 2).
     var covers: UInt64
 
-    init(
-        people: [PersonSummary],
-        photoFaces: [MediaAssetID: [PhotoFace]] = [:],
-        copies: [MediaAssetID: [MediaAssetID]] = [:],
-        unchecked: MediaCount,
-        faceCount: Int,
-        covers: UInt64 = 0
-    ) {
-        self.init(
-            people: people, photoFaces: photoFaces, copies: copies, faceOverrides: [:],
-            unchecked: unchecked, faceCount: faceCount, covers: covers
-        )
-    }
-
-    private init(
-        people: [PersonSummary],
-        photoFaces: [MediaAssetID: [PhotoFace]],
-        copies: [MediaAssetID: [MediaAssetID]],
-        faceOverrides: [FaceID: PhotoFaceOverride],
-        unchecked: MediaCount,
-        faceCount: Int,
-        covers: UInt64
-    ) {
+    init(people: [PersonSummary], unchecked: MediaCount, hasFaces: Bool, covers: UInt64 = 0) {
         self.people = people
         visiblePeople = people.filter { !$0.isHidden }
         hiddenPeople = people.filter(\.isHidden)
         visibleNames = visiblePeople.compactMap(\.name)
         positions = Dictionary(uniqueKeysWithValues: people.enumerated().map { ($1.id, $0) })
-        self.photoFaces = photoFaces
-        self.copies = copies
-        self.faceOverrides = faceOverrides
         self.unchecked = unchecked
-        self.faceCount = faceCount
+        self.hasFaces = hasFaces
         self.covers = covers
+    }
+
+    /// The gallery `read` gives: a person People has not yet written facts for is not known
+    /// yet and is left out, and so is a person with no face the user said nothing about (a
+    /// person Otos found is gone with their last face). The cover is the key photo, else the
+    /// newest face.
+    init(gallery read: PeopleGalleryRead, covers: UInt64 = 0) {
+        var userFaces: [PersonID: [PersonAnchor]] = [:]
+        var anchorMedia: [PersonID: [MediaAssetID: Bool]] = [:]
+        for anchor in read.anchors {
+            anchorMedia[anchor.person, default: [:]][anchor.face.photo] = anchor.face.isInVideo
+            if anchor.isUsers {
+                userFaces[anchor.person, default: []].append(anchor.face)
+            }
+        }
+        let people = read.people.compactMap { person -> PersonSummary? in
+            guard let facts = person.facts, facts.media.total > 0 || !person.isBare else { return nil }
+            return PersonSummary(
+                id: person.id,
+                name: person.name,
+                birthday: person.birthday,
+                isHidden: person.isHidden,
+                isFavorite: person.isFavorite,
+                media: facts.media,
+                cover: person.keyPhoto ?? person.newest,
+                userFaces: (userFaces[person.id] ?? []).sorted(by: Self.newestFirst),
+                anchorMedia: anchorMedia[person.id] ?? [:]
+            )
+        }.sorted(by: Self.galleryOrder)
+        self.init(people: people, unchecked: read.unchecked, hasFaces: read.hasFaces, covers: covers)
     }
 
     /// The derived lists are functions of `people`, so they are not compared again.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.faceCount == rhs.faceCount && lhs.unchecked == rhs.unchecked && lhs.people == rhs.people
-            && lhs.covers == rhs.covers && lhs.faceOverrides == rhs.faceOverrides && lhs.photoFaces == rhs.photoFaces
-            && lhs.copies == rhs.copies
+        lhs.hasFaces == rhs.hasFaces && lhs.unchecked == rhs.unchecked && lhs.people == rhs.people
+            && lhs.covers == rhs.covers
     }
 
-    static let empty = CatalogPeopleState(people: [], unchecked: MediaCount(), faceCount: 0)
+    static let empty = CatalogPeopleState(people: [], unchecked: MediaCount(), hasFaces: false)
 
-    /// The faces `photo` shows, with what held acts do to them: its own, in reading order,
-    /// then — a named face on any copy being the photo's (ADR 0054; owner, 2026-11-15) — the
-    /// face of each person a present copy holds and this file does not, from the first copy
-    /// in shown order that holds one. A face stays on the copy it was read from: its box is
-    /// of that copy's pixels, so it is outlined only where that copy shows, and an act on it
-    /// acts on that copy's face. Another copy's unidentified faces are not shown: they are
-    /// this file's own detections, read from another preview.
-    func faces(of photo: MediaAssetID) -> [PhotoFace] {
-        let own = ownFaces(of: photo)
-        guard let others = copies[photo] else {
-            return own
+    static func galleryOrder(_ lhs: PersonSummary, _ rhs: PersonSummary) -> Bool {
+        if lhs.isHidden != rhs.isHidden {
+            return !lhs.isHidden
         }
-        var named = Set(own.compactMap(\.person))
-        var borrowed: [PhotoFace] = []
-        for copy in others {
-            for face in ownFaces(of: copy) {
-                guard let person = face.person, named.insert(person).inserted else { continue }
-                borrowed.append(face)
-            }
+        if lhs.isFavorite != rhs.isFavorite {
+            return lhs.isFavorite
         }
-        return own + borrowed
+        if lhs.media.total != rhs.media.total {
+            return lhs.media.total > rhs.media.total
+        }
+        // A named person before an unnamed one of the same count, then by name.
+        if (lhs.name == nil) != (rhs.name == nil) {
+            return lhs.name != nil
+        }
+        let order = lhs.displayName.localizedStandardCompare(rhs.displayName)
+        if order != .orderedSame {
+            return order == .orderedAscending
+        }
+        return lhs.id < rhs.id
     }
 
-    /// The faces read from `file` itself, in reading order, with what held acts do to them.
-    func ownFaces(of file: MediaAssetID) -> [PhotoFace] {
-        let built = photoFaces[file] ?? []
-        guard !faceOverrides.isEmpty else {
-            return built
-        }
-        return built.compactMap { face in
-            switch faceOverrides[face.id] {
-            case nil: face
-            case .removed: nil
-            case let .person(person): PhotoFace(tile: face.tile, person: person)
-            }
+    /// Capture order, newest first; the undated last, then by photo.
+    static func newestFirst(_ lhs: PersonAnchor, _ rhs: PersonAnchor) -> Bool {
+        switch (lhs.captureSeconds, rhs.captureSeconds) {
+        case let (left?, right?) where left != right:
+            left > right
+        case (.some, nil):
+            true
+        case (nil, .some):
+            false
+        default:
+            (lhs.photo.libraryRootPath.rawValue, lhs.photo.relativePath.rawValue)
+                < (rhs.photo.libraryRootPath.rawValue, rhs.photo.relativePath.rawValue)
         }
     }
 
-    /// The other present copies of `file`, in the order copies are shown in; none for a file
-    /// that is no copy of a photo with a face.
-    func copies(of file: MediaAssetID) -> [MediaAssetID] {
-        copies[file] ?? []
-    }
-
-    /// The faces of `photos`, in their order, each once: two copies of one photo among them
-    /// show the same named face of the copy that holds it.
-    func selectionFaces(for photos: [MediaAssetID]) -> SelectionFaces {
-        var seen: Set<FaceID> = []
-        return SelectionFaces(photos: photos, faces: photos.flatMap(faces(of:)).filter { seen.insert($0.id).inserted })
-    }
-
-    /// This state with `effect` laid over it: the window's People acts the store has answered
-    /// or will answer, shown before a build has them (`PendingPeopleActs`). The people it edits
-    /// are re-sorted by the builder's own gallery order (`PeopleStateBuilder.galleryOrder`);
-    /// a person's photo count, which a face leaving them may change, keeps its build's value
-    /// until the next build. Costs the people and the faces it changes, never the photos.
+    /// This state with the people edits of `effect` laid over it: the window's People acts
+    /// the store has answered or will answer, shown before a read has them
+    /// (`PendingPeopleActs`). The people it edits are re-sorted by the gallery order; a
+    /// person's photo count, which a face leaving them may change, keeps its read's value
+    /// until People writes the new one. Costs the people it edits.
     func overlaying(_ effect: PeopleOverlayEffect) -> CatalogPeopleState {
-        guard !effect.isEmpty else {
+        guard !effect.people.isEmpty else {
             return self
         }
-        var faceOverrides = faceOverrides
-        faceOverrides.merge(effect.faces) { _, new in new }
-        var people = people
-        if !effect.people.isEmpty {
-            people = people.map { summary in effect.people[summary.id].map { summary.editing($0, faces: self) } ?? summary }
-                .sorted(by: PeopleStateBuilder.galleryOrder)
-        }
-        return CatalogPeopleState(
-            people: people, photoFaces: photoFaces, copies: copies, faceOverrides: faceOverrides,
-            unchecked: unchecked, faceCount: faceCount, covers: covers
-        )
+        let people = people.map { summary in effect.people[summary.id].map(summary.editing) ?? summary }
+            .sorted(by: Self.galleryOrder)
+        return CatalogPeopleState(people: people, unchecked: unchecked, hasFaces: hasFaces, covers: covers)
     }
 
     func person(_ id: PersonID) -> PersonSummary? {
@@ -630,6 +700,102 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     /// gallery names.
     func visibleName(_ id: PersonID) -> String? {
         person(id).flatMap { $0.isHidden ? nil : $0.displayName }
+    }
+}
+
+/// The faces of some photos as the photo menus and the Info pane show them, read by key
+/// (`CatalogStore.photoFaces(of:)`, ADR 0047): each file's own faces of visible people and
+/// unidentified faces, in reading order, and each file's other present copies (ADR 0054), with
+/// what the window's held People acts do to single faces laid over them (`overlaying`).
+nonisolated struct PhotoFaces: Equatable, Sendable {
+    /// The files the read was asked for.
+    let photos: [MediaAssetID]
+    /// Each file's own faces: the files asked for and their copies.
+    private let own: [MediaAssetID: [PhotoFace]]
+    /// Each file asked for that is one of a photo's present copies, mapped to its other copies
+    /// in the order copies are shown in.
+    private let copies: [MediaAssetID: [MediaAssetID]]
+    /// What the window's held People acts do to single faces until a read has them.
+    private var overrides: [FaceID: PhotoFaceOverride] = [:]
+    /// The newest People write the window had answered when the read started
+    /// (`PendingPeopleActs.answered`): every write up to it is in the read.
+    var landedThrough: UInt64
+
+    init(
+        photos: [MediaAssetID],
+        own: [MediaAssetID: [PhotoFace]],
+        copies: [MediaAssetID: [MediaAssetID]] = [:],
+        landedThrough: UInt64 = 0
+    ) {
+        self.photos = photos
+        self.own = own
+        self.copies = copies
+        self.landedThrough = landedThrough
+    }
+
+    static let none = PhotoFaces(photos: [], own: [:])
+
+    /// The faces `photo` shows, with what held acts do to them: its own, in reading order,
+    /// then — a named face on any copy being the photo's (ADR 0054; owner, 2026-11-15) — the
+    /// face of each person a present copy holds and this file does not, from the first copy
+    /// in shown order that holds one. A face stays on the copy it was read from: its box is
+    /// of that copy's pixels, so it is outlined only where that copy shows, and an act on it
+    /// acts on that copy's face. Another copy's unidentified faces are not shown: they are
+    /// this file's own detections, read from another preview.
+    func faces(of photo: MediaAssetID) -> [PhotoFace] {
+        let mine = ownFaces(of: photo)
+        guard let others = copies[photo] else {
+            return mine
+        }
+        var named = Set(mine.compactMap(\.person))
+        var borrowed: [PhotoFace] = []
+        for copy in others {
+            for face in ownFaces(of: copy) {
+                guard let person = face.person, named.insert(person).inserted else { continue }
+                borrowed.append(face)
+            }
+        }
+        return mine + borrowed
+    }
+
+    /// The faces read from `file` itself, in reading order, with what held acts do to them.
+    func ownFaces(of file: MediaAssetID) -> [PhotoFace] {
+        let read = own[file] ?? []
+        guard !overrides.isEmpty else {
+            return read
+        }
+        return read.compactMap { face in
+            switch overrides[face.id] {
+            case nil: face
+            case .removed: nil
+            case let .person(person): PhotoFace(tile: face.tile, person: person)
+            }
+        }
+    }
+
+    /// The other present copies of `file`, in the order copies are shown in.
+    func copies(of file: MediaAssetID) -> [MediaAssetID] {
+        copies[file] ?? []
+    }
+
+    /// The faces of `photos`, in their order, each once: two copies of one photo among them
+    /// show the same named face of the copy that holds it.
+    func selectionFaces(for photos: [MediaAssetID]) -> SelectionFaces {
+        var seen: Set<FaceID> = []
+        return SelectionFaces(photos: photos, faces: photos.flatMap(faces(of:)).filter { seen.insert($0.id).inserted })
+    }
+
+    /// A face of the read, on the file it was read from.
+    func face(_ id: FaceID) -> PhotoFace? {
+        ownFaces(of: id.asset).first { $0.id == id }
+    }
+
+    /// This read with `faces` laid over it, in place of what was laid before.
+    func overlaying(_ faces: [FaceID: PhotoFaceOverride]) -> PhotoFaces {
+        guard faces != overrides else { return self }
+        var laid = self
+        laid.overrides = faces
+        return laid
     }
 }
 

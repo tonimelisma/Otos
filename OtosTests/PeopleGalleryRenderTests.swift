@@ -6,8 +6,8 @@ import SwiftUI
 import Testing
 
 /// Generated People states at the owner's scale (738 people, about 100,000 faces) and
-/// beyond, for the gallery's render cost. No catalog: the states are built as
-/// `PeopleStateBuilder` would publish them, off the main actor (`states`), since a test that
+/// beyond, for the gallery's render cost. No catalog: the states are built as the gallery's
+/// read would give them, off the main actor (`states`), since a test that
 /// held the main actor for the seconds this takes would starve every other test waiting on it.
 nonisolated enum PeopleGalleryFixture {
     static let root = LibraryRootPath(rawValue: "/Pictures")
@@ -28,7 +28,7 @@ nonisolated enum PeopleGalleryFixture {
     /// gives the person at that gallery position one more photo, as a face read does.
     static func state(people: Int, facesPerPerson: Int, bump: Int? = nil) -> CatalogPeopleState {
         let photoCount = max(1, people * facesPerPerson * 2 / 3)
-        var photoFaces: [MediaAssetID: [PhotoFace]] = [:]
+        var photoFaces: [MediaAssetID: Int] = [:]
         var summaries: [PersonSummary] = []
         var faceIndex = 0
         for person in 0 ..< people {
@@ -39,15 +39,15 @@ nonisolated enum PeopleGalleryFixture {
                 let photo = asset(faceIndex % photoCount)
                 faceIndex += 1
                 let tile = FaceTile(
-                    id: FaceID(asset: photo, index: photoFaces[photo]?.count ?? 0),
+                    id: FaceID(asset: photo, index: photoFaces[photo] ?? 0),
                     box: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2),
                     preview: nil,
                     captureSeconds: Double(1_700_000_000 - face * 86400)
                 )
                 tiles.append(tile)
-                photoFaces[photo, default: []].append(PhotoFace(tile: tile, person: id))
+                photoFaces[photo, default: 0] += 1
             }
-            let user = Array(tiles.prefix(4))
+            let user = tiles.prefix(4).map { PersonAnchor(photo: $0.id.asset, isInVideo: false, captureSeconds: $0.captureSeconds) }
             summaries.append(PersonSummary(
                 id: id,
                 name: person % 8 == 0 ? "Person \(person)" : nil,
@@ -57,14 +57,13 @@ nonisolated enum PeopleGalleryFixture {
                 media: MediaCount(tiles: tiles),
                 cover: tiles.first,
                 userFaces: user,
-                anchorMedia: Dictionary(user.map { ($0.id.asset, false) }, uniquingKeysWith: { first, _ in first })
+                anchorMedia: Dictionary(user.map { ($0.photo, false) }, uniquingKeysWith: { first, _ in first })
             ))
         }
         return CatalogPeopleState(
-            people: summaries.sorted(by: PeopleStateBuilder.galleryOrder),
-            photoFaces: photoFaces,
+            people: summaries.sorted(by: CatalogPeopleState.galleryOrder),
             unchecked: MediaCount(photos: 1200),
-            faceCount: faceIndex
+            hasFaces: faceIndex > 0
         )
     }
 
@@ -242,7 +241,7 @@ extension AppKitWindowTests {
                 await unrelated.append(rendering { PeopleGalleryFixture.show(shown, in: model, title: "People \(index)") })
             }
             PeopleGalleryFixture.record(
-                "op=people.galleryRender people=\(count) faces=\(first.faceCount) openCPUms=\(open.milliseconds) "
+                "op=people.galleryRender people=\(count) openCPUms=\(open.milliseconds) "
                     + "openMenus=\(openMenus) updateCPUms=\(updates.map(\.cpu.milliseconds)) "
                     + "updateApplyCPUms=\(updates.map(\.apply.milliseconds)) "
                     + "updateMenus=\(updates.map(\.menus)) selectCPUms=\(selections.map(\.cpu.milliseconds)) "

@@ -244,14 +244,18 @@ struct BenchmarkTests {
         // builds the gallery and finds assignment's inputs unchanged.
         try await Self.addFaces(to: store, faces: 10000, people: 20, confirmedEach: 50)
         try await Benchmark.measure("people.snapshot.10k", iterations: 3) {
-            let snapshot = try await store.peopleSnapshot(availableLibraryPaths: paths)
+            let snapshot = try await store.peopleSnapshot()
             #expect(snapshot.faces.count == 10000)
         }
-        let people = PeopleAssignment(store: store, builder: nil)
-        _ = try await people.settle(libraries: libraries)
+        let people = PeopleAssignment(store: store)
+        try await people.settle()
         try await Benchmark.measure("people.pass.10k", iterations: 3) {
-            let built = try await people.settle(libraries: libraries)
-            #expect(built.people.count >= 20)
+            try await people.settle()
+        }
+        // The window's read of the gallery, which People's first paint waits for.
+        try await Benchmark.measure("people.gallery.10k", iterations: 3) {
+            let gallery = try await store.peopleGallery(availableLibraryPaths: paths)
+            #expect((gallery?.people.count ?? 0) >= 20)
         }
 
         // What a faces write costs the window and the derived owners once it settles: the
@@ -706,7 +710,7 @@ struct BenchmarkTests {
                 isFavorite: false, media: MediaCount(items: [(ids[index], false)]), cover: nil, userFaces: []
             )
         }
-        let state = CatalogPeopleState(people: people, unchecked: MediaCount(), faceCount: 2000)
+        let state = CatalogPeopleState(people: people, unchecked: MediaCount(), hasFaces: true)
         var favourite = PeopleOverlayEffect()
         favourite.people[PersonID(rawValue: 1999)] = PersonEdit(isFavorite: true)
         try await Benchmark.measure("people.overlayFavourite.people2000") {

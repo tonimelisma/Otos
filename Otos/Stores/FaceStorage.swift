@@ -337,12 +337,11 @@ nonisolated struct PreviewFacePage: Equatable, Sendable {
 }
 
 /// The People snapshot's face columns, in `SELECT` order (`selectList`), so the snapshot
-/// reads each by position and the list and the reads cannot disagree.
+/// reads each by position and the list and the reads cannot disagree. What assignment reads,
+/// never a tile: the surfaces read tiles by key (`FaceTileColumn`).
 nonisolated enum PeopleFaceColumn: Int, CaseIterable {
     case rootID, path, faceIndex, vector, personID, assignment, likeness, isKeyPhoto
-    case boxX, boxY, boxWidth, boxHeight
-    case captureLocal, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown
-    case faceFramesPath, frameIndex, isVideo
+    case captureLocal, isVideo
     /// The face's file's digest while it has a present copy, else NULL: the photos whose copies
     /// People reads (`PhotoFaceSQL.presentCopiesOfDigest`), from the row this read joins anyway.
     /// NULL for a file with no copy, so the read copies no digest it does not use.
@@ -360,23 +359,100 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
         case .assignment: "f.assignment"
         case .likeness: "f.likeness"
         case .isKeyPhoto: "f.is_key_photo"
-        case .boxX: "f.box_x"
-        case .boxY: "f.box_y"
-        case .boxWidth: "f.box_width"
-        case .boxHeight: "f.box_height"
         case .captureLocal: "m.best_capture_local"
-        case .previewPath: "m.preview_path"
-        case .renderedRevision: "m.rendered_revision"
-        case .editRecipeJSON: "m.edit_recipe_json"
-        case .previewEditIsKnown: PreviewFaceSQL.previewEditIsKnown
-        case .faceFramesPath: "m.face_frames_path"
-        case .frameIndex: "f.frame_index"
         case .isVideo: "m.best_kind = 'video'"
         case .copiedDigest: "CASE WHEN m.has_copies = 1 THEN m.content_sha1 END"
         }
     }
 
     static let selectList = allCases.map(\.sql).joined(separator: ", ")
+}
+
+/// The People gallery's read (`CatalogStore.peopleGallery`, ADR 0047): the people, each with
+/// their stored gallery facts and the tiles of their key photo and newest face, sought by key;
+/// the faces that define them, from `idx_face_anchor`; and whether any face is stored. None
+/// walks every face. `PeopleStoreTests` pins their plans.
+nonisolated enum PeopleGallerySQL {
+    /// Where the key photo's tile columns start in `people`; the newest face's follow them.
+    static let keyPhotoTileAt = 9
+
+    /// Columns 0–4 the person, 5 whether People stored their facts, 6–7 the counts, 8 whether
+    /// the key photo still counts (a face, out of the Trash, no Live Photo's movie), then the
+    /// two tiles (`FaceTileColumn`).
+    static let people = """
+    SELECT p.id, p.name, p.birthday, p.is_hidden, p.is_favorite,
+           s.person_id IS NOT NULL, s.photos, s.videos,
+           k.is_not_face = 0 AND km.trash_path IS NULL AND NOT \(LivePhotoSQL.isPairedMotion("km")),
+           \(FaceTileColumn.selectList(face: "k", asset: "km")),
+           \(FaceTileColumn.selectList(face: "c", asset: "cm"))
+    FROM person p
+    LEFT JOIN person_summary s ON s.person_id = p.id
+    LEFT JOIN face k INDEXED BY idx_face_key_photo ON k.person_id = p.id AND k.is_key_photo = 1
+    LEFT JOIN media_asset km ON km.library_root_id = k.library_root_id AND km.relative_path = k.relative_path
+    LEFT JOIN face c ON c.library_root_id = s.cover_library_root_id
+        AND c.relative_path = s.cover_relative_path AND c.face_index = s.cover_face_index
+    LEFT JOIN media_asset cm ON cm.library_root_id = c.library_root_id AND cm.relative_path = c.relative_path
+    ORDER BY p.id
+    """
+
+    /// The partial index of the faces that define a person (v73), and the condition it holds:
+    /// the user's word (3) or a seed (2), still a face, with a person.
+    static let anchorIndexName = "idx_face_anchor"
+    static let anchorPredicate = "assignment IN (2, 3) AND is_not_face = 0 AND person_id IS NOT NULL"
+
+    /// Each face on the user's word or a seed, of a photo out of the Trash: its person, photo,
+    /// whose word, the photo's capture time and whether it is a video.
+    static let anchors = """
+    SELECT f.person_id, f.library_root_id, f.relative_path, f.assignment,
+           m.best_capture_local, m.best_kind = 'video'
+    FROM face f INDEXED BY \(anchorIndexName)
+    JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+    WHERE f.assignment IN (2, 3) AND f.is_not_face = 0 AND f.person_id IS NOT NULL
+      AND m.trash_path IS NULL AND NOT \(LivePhotoSQL.isPairedMotion("m"))
+    """
+
+    /// Whether any stored face is still a face, of a photo out of the Trash.
+    static let hasFaces = """
+    SELECT EXISTS (
+        SELECT 1 FROM face f
+        JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+        WHERE f.is_not_face = 0 AND m.trash_path IS NULL
+    )
+    """
+}
+
+/// The columns a face tile is read from, in `SELECT` order, over a face and its photo's row
+/// under the aliases the read names (`selectList(face:asset:)`): where the face is, the image
+/// it is cut from and the edit that image shows, and when the photo was taken. Every read of a
+/// tile — the gallery's covers, a photo's faces, the Person sheet's row — reads these.
+nonisolated enum FaceTileColumn: Int, CaseIterable {
+    case rootID, path, faceIndex
+    case boxX, boxY, boxWidth, boxHeight, frameIndex
+    case captureLocal, isVideo, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown, faceFramesPath
+
+    func sql(face f: String, asset m: String) -> String {
+        switch self {
+        case .rootID: "\(f).library_root_id"
+        case .path: "\(f).relative_path"
+        case .faceIndex: "\(f).face_index"
+        case .boxX: "\(f).box_x"
+        case .boxY: "\(f).box_y"
+        case .boxWidth: "\(f).box_width"
+        case .boxHeight: "\(f).box_height"
+        case .frameIndex: "\(f).frame_index"
+        case .captureLocal: "\(m).best_capture_local"
+        case .isVideo: "\(m).best_kind = 'video'"
+        case .previewPath: "\(m).preview_path"
+        case .renderedRevision: "\(m).rendered_revision"
+        case .editRecipeJSON: "\(m).edit_recipe_json"
+        case .previewEditIsKnown: "(\(m).rendered_revision = 0 OR \(m).rendered_revision = \(m).edit_revision)"
+        case .faceFramesPath: "\(m).face_frames_path"
+        }
+    }
+
+    static func selectList(face: String, asset: String) -> String {
+        allCases.map { $0.sql(face: face, asset: asset) }.joined(separator: ", ")
+    }
 }
 
 /// Which stored preview a still has and what its faces are owed, as SQL over `media_asset`

@@ -44,13 +44,14 @@ import OSLog
 /// the user stayed and waited for the cadence to bring it up to date. A scope with nothing
 /// held is read.
 ///
-/// The duplicate groups and People have their own owners, `DuplicatesProjection` and
-/// `PeopleAssignment`, each with its own loop. A pass publishes the window with what they
-/// last built and, when it took up a catalog change of a kind an owner's answer is built from
-/// (`DuplicatesProjection.inputs`, `PeopleAssignment.inputs`), asks that owner for a build
-/// (`duplicatesRequested`, `peopleRequested`), or People for its unchecked tally alone when
-/// rows were only added (`tallyRequested`); it never waits for one. Builds come back on `duplicatesTask` and
-/// `peopleTask` and go out by republishing the last state with them. So detection and
+/// The duplicate groups, People's assignment and People's gallery have their own owners,
+/// `DuplicatesProjection`, `PeopleAssignment` and `PeopleGallery`, each with its own loop. A
+/// pass publishes the window with the groups and the People state last built and, when it took
+/// up a catalog change of a kind an owner reads (`DuplicatesProjection.inputs`,
+/// `PeopleAssignment.inputs`, `PeopleGallery.inputs`; rows only added change the gallery's
+/// unchecked tally), asks that owner for a build (`duplicatesRequested`, `peopleRequested`,
+/// `galleryRequested`); it never waits for one. Builds come back on `duplicatesTask` and
+/// `galleryTask` and go out by republishing the last state with them. So detection and
 /// grouping never hold back the sidebar or the grid, and a change of scope, filter or sort
 /// never rebuilds them, since neither depends on it.
 ///
@@ -92,8 +93,8 @@ actor CatalogProjection {
     let filterOptionsReader: FilterOptionsReader?
     /// Tests replace the duplicates build to hold it at its suspension; production builds them.
     let duplicatesBuilder: DuplicatesProjection.Builder?
-    /// Tests replace the People build to hold it at its suspension; production builds it.
-    let peopleBuilder: PeopleAssignment.Builder?
+    /// Tests replace the People gallery's read to hold it at its suspension; production reads it.
+    let peopleBuilder: PeopleGallery.Builder?
     /// Which of the duplicates and People owners this projection starts: all of them, except
     /// in a tour that leaves some out (`BackgroundOwners`).
     let backgroundOwners: BackgroundOwners
@@ -134,10 +135,11 @@ actor CatalogProjection {
     /// The duplicate groups the last successful duplicates build produced; nil until one has.
     private var duplicates: CatalogDuplicatesState?
     private var duplicatesProjection: DuplicatesProjection?
-    /// What the last successful People build produced; nil until one has.
+    /// What the last People gallery read gave; nil until one has.
     private var people: CatalogPeopleState?
     private var peopleAssignment: PeopleAssignment?
-    private var peopleTask: Task<Void, Never>?
+    private var peopleGallery: PeopleGallery?
+    private var galleryTask: Task<Void, Never>?
     /// Answers a descriptor's search (ADR 0048); nil where nothing indexes (tests that do
     /// not search), and a search then publishes nothing.
     private(set) var searchIndex: PhotoSearchIndex?
@@ -154,11 +156,12 @@ actor CatalogProjection {
     private var peopleRequested: UInt64 = 0
     /// The `peopleRequested` value last passed on to `peopleAssignment`.
     private var peopleForwarded: UInt64 = 0
-    /// Bumped by rows only added: they carry nothing the groups or the assignment are built
-    /// from, but each new still is one People's tally counts as not yet checked.
-    private var tallyRequested: UInt64 = 0
-    /// The `tallyRequested` value last passed on to `peopleAssignment`.
-    private var tallyForwarded: UInt64 = 0
+    /// Bumped by a new subscription, by every catalog change of a kind the People gallery
+    /// reads (`PeopleGallery.inputs`) and by rows only added, each new still being one the
+    /// gallery's tally counts as not yet checked.
+    private var galleryRequested: UInt64 = 0
+    /// The `galleryRequested` value last passed on to `peopleGallery`.
+    private var galleryForwarded: UInt64 = 0
     /// The last publication was the pre-load `.loadingCatalog` state. The next store
     /// change is the load itself (or something after it), so it publishes immediately
     /// rather than leaving the window blank for a cadence tick (APP-044).
@@ -220,7 +223,9 @@ actor CatalogProjection {
     /// Whether the People owner has built every request it was given.
     var peopleAreQuiescent: Bool {
         get async {
-            await peopleAssignment?.isQuiescent ?? true
+            let assigned = await peopleAssignment?.isQuiescent ?? true
+            let read = await peopleGallery?.isQuiescent ?? true
+            return assigned && read
         }
     }
 
@@ -234,7 +239,7 @@ actor CatalogProjection {
         stateBuilder: WindowStateBuilder? = nil,
         filterOptionsReader: FilterOptionsReader? = nil,
         duplicatesBuilder: DuplicatesProjection.Builder? = nil,
-        peopleBuilder: PeopleAssignment.Builder? = nil,
+        peopleBuilder: PeopleGallery.Builder? = nil,
         backgroundOwners: BackgroundOwners = .all,
         admission: LoadAdmission = LoadAdmission(isOpen: true)
     ) {
@@ -689,14 +694,15 @@ extension CatalogProjection {
         return await peopleAssignment.candidates(for: photos)
     }
 
-    /// Asks People for a build after a People write the window made has landed, and returns
-    /// the request a build must cover to have read it (`CatalogPeopleState.covers`); 0 before
-    /// People has an owner, which any state covers.
+    /// Asks the People gallery for a read after a People write the window made has landed,
+    /// and returns the request a state must cover to have read it (`CatalogPeopleState.covers`);
+    /// 0 before the gallery has an owner, which any state covers. Assignment is asked by the
+    /// write's own change, like any other.
     func requestPeopleBuild() async -> UInt64 {
-        guard let peopleAssignment else {
+        guard let peopleGallery else {
             return 0
         }
-        return await peopleAssignment.request()
+        return await peopleGallery.request()
     }
 }
 
@@ -746,9 +752,15 @@ private extension CatalogProjection {
         let duplicatesProjection = backgroundOwners.starts(.duplicates)
             ? DuplicatesProjection(store: store, builder: duplicatesBuilder, admission: admission) : nil
         self.duplicatesProjection = duplicatesProjection
-        let peopleAssignment = backgroundOwners.starts(.people)
-            ? PeopleAssignment(store: store, builder: peopleBuilder, admission: admission) : nil
+        // A test that injects the gallery's read assigns nothing: its states are the test's.
+        let peopleAssignment = backgroundOwners.starts(.people) && peopleBuilder == nil
+            ? PeopleAssignment(store: store, admission: admission) : nil
         self.peopleAssignment = peopleAssignment
+        // The gallery is the window's own read, not a background owner: it runs whatever the
+        // tour leaves out, at the window's priority.
+        let peopleGallery = PeopleGallery(store: store, builder: peopleBuilder)
+        self.peopleGallery = peopleGallery
+        galleryRequested &+= 1
         duplicatesRequested &+= 1
         peopleRequested &+= 1
         // Below the priority of the window, whose subscription runs this: the owners' loops
@@ -765,26 +777,30 @@ private extension CatalogProjection {
             }
         }
         if let peopleAssignment {
-            peopleTask = Task(priority: .backgroundOwner) { [weak self, peopleAssignment] in
+            Task(priority: .backgroundOwner) { [peopleAssignment] in
                 await peopleAssignment.start()
-                for await built in peopleAssignment.builds {
-                    guard let self else {
-                        return
-                    }
-                    await publishPeople(built)
+            }
+        }
+        galleryTask = Task { [weak self, peopleGallery] in
+            await peopleGallery.start()
+            for await built in peopleGallery.builds {
+                guard let self else {
+                    return
                 }
+                await publishPeople(built)
             }
         }
 
         // The cadence task is the one that notices the owner is gone, so it also ends the
         // doorbell and the derived owners on every exit: `loopTask`, `duplicatesTask` and
-        // `peopleTask` wait indefinitely, and a wait nothing can end keeps `store` alive
+        // `galleryTask` wait indefinitely, and a wait nothing can end keeps `store` alive
         // through its closure.
-        cadenceTask = Task { [weak self, continuation, duplicatesProjection, peopleAssignment] in
+        cadenceTask = Task { [weak self, continuation, duplicatesProjection, peopleAssignment, peopleGallery] in
             defer {
                 continuation.finish()
                 duplicatesProjection?.stop()
                 peopleAssignment?.stop()
+                peopleGallery.stop()
             }
             while !Task.isCancelled {
                 do {
@@ -841,16 +857,19 @@ private extension CatalogProjection {
         factRevisions.record(change.facts)
         changeLog.record(change)
         // Rows that were only added carry nothing the groups or the assignment are built
-        // from; they change People's unchecked tally alone. Any other change asks each owner
-        // whose answer is built from a kind of fact it touched.
+        // from; they change the People gallery's unchecked tally alone. Any other change asks
+        // each owner whose answer is built from a kind of fact it touched.
         if change == .assetsAdded {
-            tallyRequested &+= 1
+            galleryRequested &+= 1
         } else {
             if !change.facts.isDisjoint(with: DuplicatesProjection.inputs) {
                 duplicatesRequested &+= 1
             }
             if !change.facts.isDisjoint(with: PeopleAssignment.inputs) {
                 peopleRequested &+= 1
+            }
+            if !change.facts.isDisjoint(with: PeopleGallery.inputs) {
+                galleryRequested &+= 1
             }
         }
         requestPublication(ringNow: publishedBeforeCatalogLoad)
@@ -938,7 +957,7 @@ private extension CatalogProjection {
         let startedFrom = requested
         let duplicatesStartedFrom = duplicatesRequested
         let peopleStartedFrom = peopleRequested
-        let tallyStartedFrom = tallyRequested
+        let galleryStartedFrom = galleryRequested
         let startedReads = reads
         let startedRevisions = factRevisions
         let startedChanges = changeLog
@@ -1070,29 +1089,26 @@ private extension CatalogProjection {
         retireHolds(coveredFrom: startedFrom)
         ringIfBehind()
         // An injected test builder derives nothing. Otherwise a pass that took up a change
-        // an owner's answer is built from asks that owner for a build, and one that took up
-        // added rows asks People for its tally; it waits for neither.
+        // an owner reads asks that owner for a build, and one that took up added rows asks the
+        // People gallery for a read; it waits for none.
         // An owner a tour left unstarted (`BackgroundOwners`) is nil and is asked nothing.
         guard stateBuilder == nil else {
             return
         }
         let asksDuplicates = duplicatesStartedFrom != duplicatesForwarded
         let asksPeople = peopleStartedFrom != peopleForwarded
-        let asksTally = tallyStartedFrom != tallyForwarded
+        let asksGallery = galleryStartedFrom != galleryForwarded
         duplicatesForwarded = duplicatesStartedFrom
         peopleForwarded = peopleStartedFrom
-        tallyForwarded = tallyStartedFrom
+        galleryForwarded = galleryStartedFrom
         if asksDuplicates, let duplicatesProjection {
             await duplicatesProjection.request()
         }
-        guard let peopleAssignment else {
-            return
-        }
-        if asksPeople {
-            // A full People pass reads the tally too.
+        if asksPeople, let peopleAssignment {
             await peopleAssignment.request()
-        } else if asksTally {
-            await peopleAssignment.requestTally()
+        }
+        if asksGallery, let peopleGallery {
+            await peopleGallery.request()
         }
     }
 
@@ -1367,14 +1383,16 @@ private extension CatalogProjection {
         duplicatesTask = nil
         peopleAssignment?.stop()
         peopleAssignment = nil
-        peopleTask?.cancel()
-        peopleTask = nil
+        peopleGallery?.stop()
+        peopleGallery = nil
+        galleryTask?.cancel()
+        galleryTask = nil
         duplicatesRequested = 0
         duplicatesForwarded = 0
         peopleRequested = 0
         peopleForwarded = 0
-        tallyRequested = 0
-        tallyForwarded = 0
+        galleryRequested = 0
+        galleryForwarded = 0
         changeTask?.cancel()
         changeTask = nil
         loopTask?.cancel()

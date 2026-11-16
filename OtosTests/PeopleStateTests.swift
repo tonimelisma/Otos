@@ -20,26 +20,39 @@ struct PeopleStateTests {
         _ faces: [FaceFact],
         people: [PeopleSnapshot.Person]? = nil,
         keyPhotos: [PersonID: FaceID] = [:],
-        likeness: [FaceID: Float] = [:],
-        unchecked: Int = 0
+        likeness: [FaceID: Float] = [:]
     ) -> PeopleSnapshot {
         PeopleSnapshot(
             facts: faces,
-            tiles: Dictionary(uniqueKeysWithValues: faces.map {
-                ($0.id, FaceTile(
-                    id: $0.id, box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2),
-                    preview: FacePreview(name: "p", recipe: .neutral), captureSeconds: $0.captureSeconds,
-                    isInVideo: $0.id.asset.relativePath.rawValue.hasSuffix(".mov")
-                ))
-            }),
             people: people ?? [
                 .init(id: sam, name: "Sam", birthday: nil),
                 .init(id: ian, name: "Ian", birthday: nil),
             ],
             likeness: likeness,
-            keyPhotos: keyPhotos,
-            unchecked: MediaCount(photos: unchecked)
+            keyPhotos: keyPhotos
         )
+    }
+
+    /// Each face's tile, as a catalog holding `snapshot`'s faces stores it.
+    static func tiles(_ snapshot: PeopleSnapshot) -> [FaceID: FaceTile] {
+        Dictionary(uniqueKeysWithValues: snapshot.faces.map {
+            ($0.id, FaceTile(
+                id: $0.id, box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2),
+                preview: FacePreview(name: "p", recipe: .neutral), captureSeconds: $0.captureSeconds,
+                isInVideo: $0.isInVideo
+            ))
+        })
+    }
+
+    /// What the window reads of a catalog holding `snapshot`'s faces once People has written
+    /// its gallery facts.
+    static func state(_ snapshot: PeopleSnapshot) -> CatalogPeopleState {
+        CatalogPeopleState(snapshot: snapshot, tiles: tiles(snapshot))
+    }
+
+    /// The faces of `files` as the photo menus read them from that catalog.
+    static func photoFaces(_ snapshot: PeopleSnapshot, files: [MediaAssetID]) -> PhotoFaces {
+        PhotoFaces(snapshot: snapshot, tiles: tiles(snapshot), files: files)
     }
 
     /// The gallery: favourites first, then most photos, a named person before an unnamed one
@@ -62,19 +75,17 @@ struct PeopleStateTests {
             .init(id: owen, name: "Owen", birthday: nil, isFavorite: true),
         ]
 
-        let state = PeopleStateBuilder.state(from: Self.snapshot(faces, people: people, keyPhotos: [Self.sam: faces[0].id]))
+        let state = Self.state(Self.snapshot(faces, people: people, keyPhotos: [Self.sam: faces[0].id]))
 
         #expect(state.people.map(\.id) == [owen, Self.sam, tyler, Self.ian])
         #expect(state.visiblePeople.map(\.id) == [owen, Self.sam, tyler])
         #expect(state.hiddenPeople.map(\.id) == [Self.ian])
         #expect(state.visibleNames == ["Owen", "Sam"])
         #expect(state.inGalleryOrder([Self.ian, tyler, owen, PersonID(rawValue: 99)]).map(\.id) == [owen, tyler, Self.ian])
-        // The Person sheet's row: every face of hers, whoever gave it, newest first.
-        #expect(state.person(Self.sam)?.newestFaces.map(\.id) == [faces[2].id, faces[1].id, faces[0].id])
         #expect(state.person(Self.sam)?.media == MediaCount(photos: 3))
         #expect(state.person(Self.sam)?.cover?.id == faces[0].id)
         #expect(state.person(tyler)?.cover?.id == faces[4].id)
-        #expect(state.person(Self.sam)?.userFaces.map(\.id) == [faces[0].id])
+        #expect(state.person(Self.sam)?.userFaces.map(\.photo) == [faces[0].id.asset])
         #expect(state.person(Self.ian)?.anchorMedia.keys.map(\.self) == [faces[3].id.asset])
     }
 
@@ -104,13 +115,13 @@ struct PeopleStateTests {
             .init(id: Self.ian, name: "Ian", birthday: nil, isHidden: true),
         ]
 
-        let state = PeopleStateBuilder.state(from: Self.snapshot(faces, people: people))
-        let selection = state.selectionFaces(for: [faces[0].id.asset])
+        let snapshot = Self.snapshot(faces, people: people)
+        let selection = Self.photoFaces(snapshot, files: [faces[0].id.asset]).selectionFaces(for: [faces[0].id.asset])
 
         #expect(selection.faces.map(\.id) == [faces[0].id, faces[2].id])
         #expect(selection.people == [Self.sam])
         #expect(selection.unidentified.map(\.id) == [faces[2].id])
-        #expect(state.faceCount == 3)
+        #expect(Self.state(snapshot).hasFaces)
     }
 
     /// What one assignment writes is only what changed: a new guess, a guess taken away, a
@@ -188,8 +199,8 @@ struct PeopleStateTests {
         let one = Fixture.face("one.jpg", index: 0, toward: [0: 1], at: 0)
         let two = Fixture.face("two.jpg", index: 0, toward: [0: 1], at: 0)
         let twoOther = Fixture.face("two.jpg", index: 1, toward: [1: 1], at: 0)
-        let state = PeopleStateBuilder.state(from: Self.snapshot([one, two, twoOther]))
-        var selection = state.selectionFaces(for: [one.id.asset, two.id.asset])
+        let files = [one.id.asset, two.id.asset]
+        var selection = Self.photoFaces(Self.snapshot([one, two, twoOther]), files: files).selectionFaces(for: files)
         selection.candidates = [
             one.id: [.init(person: Self.ian, similarity: 0.7), .init(person: Self.sam, similarity: 0.5)],
             two.id: [.init(person: Self.ian, similarity: 0.6), .init(person: Self.sam, similarity: 0.4)],
@@ -224,7 +235,7 @@ struct PeopleStateTests {
             .init(id: Self.sam, name: "Sam", birthday: nil),
             .init(id: Self.ian, name: "Ian", birthday: PersonBirthday("2021-01-01")),
         ]
-        let index = PeopleStateBuilder.state(from: Self.snapshot([samsFace, iansFace], people: people))
+        let index = Self.state(Self.snapshot([samsFace, iansFace], people: people))
         let other = PhotoFace(tile: Self.tile("a.jpg", index: 1, at: Fixture.epoch), person: nil)
         let early = PhotoFace(tile: Self.tile("c.jpg", at: birthday - Self.day), person: nil)
         let pair = [Self.tile("d.jpg", at: Fixture.epoch), Self.tile("d.jpg", index: 1, at: Fixture.epoch)].map {
@@ -235,15 +246,15 @@ struct PeopleStateTests {
         #expect(index.moveRefusal([early], to: Self.ian) == "1 photo is from before Ian’s birthday")
         #expect(index.moveRefusal(pair, to: Self.sam) == "2 of these faces are in the same photo")
         #expect(index.moveRefusal([early], to: Self.sam) == nil)
-        #expect(index.sheetRefusal(.person(Self.sam), name: "  ", birthday: nil) == "Enter a name")
-        #expect(index.sheetRefusal(.person(Self.sam), name: "Sam", birthday: "20") == "Enter a year, or a full date")
-        #expect(index.sheetRefusal(.person(Self.ian), name: "Ian", birthday: "2030") == "1 photo of Ian is from before this date")
+        #expect(index.sheetRefusal(.person(Self.sam), name: "  ", birthday: nil, faces: .none) == "Enter a name")
+        #expect(index.sheetRefusal(.person(Self.sam), name: "Sam", birthday: "20", faces: .none) == "Enter a year, or a full date")
+        #expect(index.sheetRefusal(.person(Self.ian), name: "Ian", birthday: "2030", faces: .none) == "1 photo of Ian is from before this date")
         // A name another person has asks to merge, so Save is refused as that merge is.
-        #expect(index.sheetRefusal(.person(Self.sam), name: "Ian", birthday: nil) == index.mergeRefusal(Self.sam, into: Self.ian))
-        #expect(index.sheetRefusal(.person(Self.sam), name: "Ian", birthday: nil) == "2 photos are from before the birthday")
+        #expect(index.sheetRefusal(.person(Self.sam), name: "Ian", birthday: nil, faces: .none) == index.mergeRefusal(Self.sam, into: Self.ian))
+        #expect(index.sheetRefusal(.person(Self.sam), name: "Ian", birthday: nil, faces: .none) == "2 photos are from before the birthday")
         // The birthday typed is the one the merge is judged with: cleared, nothing predates it.
         #expect(index.mergeRefusal(Self.ian, into: Self.sam) != nil)
-        #expect(index.sheetRefusal(.person(Self.ian), name: "Sam", birthday: nil) == nil)
+        #expect(index.sheetRefusal(.person(Self.ian), name: "Sam", birthday: nil, faces: .none) == nil)
         #expect(index.person(named: "Ian", excluding: Self.sam) == Self.ian)
     }
 
@@ -261,14 +272,14 @@ struct PeopleStateTests {
                 [Fixture.face(path, index: 0, toward: [0: 1], at: 0, assignment: .user(Self.sam))]
                     + (ianToo ? [Fixture.face(path, index: 1, toward: [1: 1], at: 0, assignment: .user(Self.ian))] : [])
             }
-            return PeopleStateBuilder.state(from: Self.snapshot(faces, people: people))
+            return Self.state(Self.snapshot(faces, people: people))
         }
         for (paths, said) in [(["a.jpg", "b.jpg"], "2 photos"), (["a.mov", "b.mov"], "2 videos"), (["a.jpg", "b.mov"], "2 photos and videos")] {
-            #expect(index(paths).sheetRefusal(.person(Self.sam), name: "Sam", birthday: "2030") == "\(said) of Sam are from before this date")
+            #expect(index(paths).sheetRefusal(.person(Self.sam), name: "Sam", birthday: "2030", faces: .none) == "\(said) of Sam are from before this date")
             #expect(index(paths, ianToo: true).mergeRefusal(Self.sam, into: Self.ian) == "Sam and Ian are both in \(said)")
         }
         // Two faces of one video are in the same video; a video Ian was given holds him.
-        let video = PeopleStateBuilder.state(from: Self.snapshot(
+        let video = Self.state(Self.snapshot(
             [Fixture.face("v.mov", index: 0, toward: [1: 1], at: before, assignment: .user(Self.ian))],
             people: [.init(id: Self.sam, name: "Sam", birthday: nil), .init(id: Self.ian, name: "Ian", birthday: PersonBirthday("2021-01-01"))]
         ))
@@ -287,7 +298,7 @@ struct PeopleStateTests {
             Fixture.face("g.jpg", index: 0, toward: [0: 1], at: 0, assignment: .user(Self.sam)),
             Fixture.face("g.jpg", index: 1, toward: [1: 1], at: 0, assignment: .seed(Self.ian)),
         ]
-        let index = PeopleStateBuilder.state(from: Self.snapshot(faces))
+        let index = Self.state(Self.snapshot(faces))
 
         #expect(index.mergeRefusal(Self.sam, into: Self.ian) == "Sam and Ian are both in 1 photo")
         #expect(index.mergeRefusal(Self.sam, into: Self.sam) == "Choose another person")

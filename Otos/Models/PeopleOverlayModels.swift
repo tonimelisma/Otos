@@ -2,8 +2,9 @@ import Foundation
 
 // File guide: what the window's People acts show before People is built with them (ADR 0047,
 // DES-120). `PendingPeopleActs` holds each act's effect; folded in submission order they are
-// one `PeopleOverlayEffect`, which `CatalogPeopleState.overlaying` lays over the published
-// state. Values only.
+// one `PeopleOverlayEffect`: its people edits are laid over the People state
+// (`CatalogPeopleState.overlaying`) and its face changes over the targets' faces
+// (`PhotoFaces.overlaying`). Values only.
 
 /// What a held People act does to one face until People is built with it.
 nonisolated enum PhotoFaceOverride: Hashable, Sendable {
@@ -22,7 +23,7 @@ nonisolated struct PersonEdit: Hashable, Sendable {
     var isFavorite: Bool?
     var isHidden: Bool?
     /// The key photo chosen: the face whose tile becomes the cover.
-    var keyFace: FaceID?
+    var keyFace: FaceTile?
 
     /// `later` applied after this edit: each field it sets wins.
     func then(_ later: PersonEdit) -> PersonEdit {
@@ -60,21 +61,18 @@ nonisolated struct PeopleOverlayEffect: Hashable, Sendable {
 }
 
 nonisolated extension PersonSummary {
-    /// This person with `edit` applied; a key face's tile is taken from the faces `state`
-    /// shows, else from the person's own newest faces.
-    func editing(_ edit: PersonEdit, faces state: CatalogPeopleState) -> PersonSummary {
-        let chosen = edit.keyFace.flatMap { face in state.face(face)?.tile ?? newestFaces.first { $0.id == face } }
-        return PersonSummary(
+    /// This person with `edit` applied.
+    func editing(_ edit: PersonEdit) -> PersonSummary {
+        PersonSummary(
             id: id,
             name: edit.name ?? name,
             birthday: edit.birthday ?? birthday,
             isHidden: edit.isHidden ?? isHidden,
             isFavorite: edit.isFavorite ?? isFavorite,
             media: media,
-            cover: chosen ?? cover,
+            cover: edit.keyFace ?? cover,
             userFaces: userFaces,
-            anchorMedia: anchorMedia,
-            newestFaces: newestFaces
+            anchorMedia: anchorMedia
         )
     }
 }

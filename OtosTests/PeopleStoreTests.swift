@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreServices
 import Foundation
 import GRDB
 @testable import OtosKit
@@ -40,7 +41,11 @@ struct PeopleStoreTests {
         #expect(facts.people.map(\.isFavorite) == [true, false])
         #expect(facts.people.map(\.isHidden) == [false, true])
         #expect(facts.people.last?.birthday?.seconds == PersonBirthday("2022-11-03")?.seconds)
-        #expect(facts.tiles[a1]?.box == Self.face(x: 0.6).box)
+        let photoFaces = try await library.store.photoFaces(of: [library.id("a.jpg")], landedThrough: 0)
+        // Ian is hidden: the photo's faces show the faces of people not hidden, and the
+        // unidentified one.
+        #expect(photoFaces.ownFaces(of: library.id("a.jpg")).map(\.id) == [a0, a1])
+        #expect(photoFaces.face(a1)?.tile.box == Self.face(x: 0.6).box)
         #expect(try await library.store.namedPeople().map(\.id) == [sam])
         await library.store.shutdown()
     }
@@ -202,7 +207,7 @@ struct PeopleStoreTests {
             try db.execute(sql: "UPDATE face_embedding SET embedding = x'00' WHERE relative_path = 'b.jpg'")
         }
         let state = try await PeopleAssignment.settle(store: library.store, libraries: #require(await library.store.loadedLibraries()))
-        #expect(state.faceCount == 3, "the gallery shows what is stored")
+        #expect(state.hasFaces, "the gallery shows what is stored")
         #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("b.jpg")])
         await library.store.shutdown()
     }
@@ -308,10 +313,7 @@ struct PeopleStoreTests {
 
         func state() async throws -> PeopleSnapshot {
             let snapshot = try await library.store.peopleSnapshot()
-            return PeopleSnapshot(
-                faces: snapshot.faces, tiles: [:], people: snapshot.people, keyPhotos: snapshot.keyPhotos,
-                unchecked: MediaCount()
-            )
+            return PeopleSnapshot(faces: snapshot.faces, people: snapshot.people, keyPhotos: snapshot.keyPhotos)
         }
         let before = try await state()
         for act: PeopleAct in [
@@ -537,9 +539,9 @@ struct PeopleStoreTests {
             try await waitUntil { vectorReads() >= count }
             return vectorReads()
         }
-        let people = PeopleAssignment(store: store, builder: nil)
-        let relaunched = try await people.settle(libraries: libraries)
-        #expect(relaunched.person(sam)?.media.total == 4)
+        let people = PeopleAssignment(store: store)
+        try await people.settle()
+        #expect(try await store.gallery(libraries: libraries).person(sam)?.media.total == 4)
 
         let candidates = await people.candidates(for: [library.id("0.jpg")])
         #expect(candidates?.count == 1)
@@ -551,8 +553,8 @@ struct PeopleStoreTests {
             store: store, root: library.root, rootPath: library.rootPath, emit: library.emit, databaseURL: databaseURL
         )
         try await reopened.readFaces([reopened.result(for: "new.jpg", faces: [Self.lookalike(4)])])
-        let grown = try await people.settle(libraries: libraries)
-        #expect(grown.person(sam)?.media.total == 5)
+        try await people.settle()
+        #expect(try await store.gallery(libraries: libraries).person(sam)?.media.total == 5)
         #expect(try await vectorReads(reaching: afterRanking + 1) == afterRanking + 1, "one page above the vectors held")
         await store.shutdown()
     }
@@ -613,8 +615,8 @@ struct PeopleStoreTests {
         }
         let paths = CatalogWindowPolicy.availablePaths(from: libraries)
         // The parts of one pass, each alone, kept alive as a pass keeps them.
-        let snapshot = try await phase("snapshot") { try await store.peopleSnapshot(availableLibraryPaths: paths) }
-        let gallery = await phase("gallery") { PeopleStateBuilder.state(from: snapshot) }
+        let snapshot = try await phase("snapshot") { try await store.peopleSnapshot() }
+        let galleryFacts = await phase("galleryFacts") { snapshot.computedGalleryFacts }
         var vectors = FaceVectors()
         try await phase("vectors") {
             while true {
@@ -627,10 +629,12 @@ struct PeopleStoreTests {
         }
         let facts = await phase("facts") { snapshot.facts(with: vectors) }
         let plan = await phase("kernel") { FaceAssignmentPlan.assignment(of: snapshot, facts: facts) }
-        fields.append("faces=\(snapshot.faces.count) people=\(gallery.people.count) guesses=\(plan.guesses.count)")
+        fields.append("faces=\(snapshot.faces.count) people=\(galleryFacts.count) guesses=\(plan.guesses.count)")
         // The three passes the owner meets, each on a fresh owner.
         _ = try await phase("firstAssignment") { try await PeopleAssignment.settle(store: store, libraries: libraries) }
         _ = try await phase("settledLaunch") { try await PeopleAssignment.settle(store: store, libraries: libraries) }
+        // The gallery's own read, as the window makes it on a visit.
+        _ = try await phase("galleryRead") { try await store.peopleGallery(availableLibraryPaths: paths) }
         // One face read again: a new vector row for it, as a new reading writes.
         let writer = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         func readAgain() async throws {
@@ -643,10 +647,10 @@ struct PeopleStoreTests {
             }
         }
         try await readAgain()
-        let owner = PeopleAssignment(store: store, builder: nil)
-        _ = try await owner.settle(libraries: libraries)
+        let owner = PeopleAssignment(store: store)
+        try await owner.settle()
         try await readAgain()
-        _ = try await phase("oneNewFace") { try await owner.settle(libraries: libraries) }
+        try await phase("oneNewFace") { try await owner.settle() }
         let line = "op=peopleCost " + fields.joined(separator: " ")
         let url = SourceTree.root.appending(path: "build/people-cost/owner.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -728,6 +732,125 @@ struct PeopleStoreTests {
 
     /// `count` photos each holding one face like the others, the first on the user's word
     /// Sam's, the rest not yet assigned, in a catalog file.
+    /// The People gallery paints from facts the catalog stores (`person_summary`): after any
+    /// run of acts, readings, assignments and a deleted photo, once People has run, every
+    /// person's stored photo count and newest face are what a computation from scratch over
+    /// every stored face gives (`PeopleSnapshot.computedGalleryFacts`), and the gallery's read
+    /// shows them with the key photo as the cover where one counts.
+    // swiftlint:disable:next cyclomatic_complexity
+    @Test func theGallerysStoredFactsEqualAComputationFromScratch() async throws {
+        let names = (0 ..< 8).map { "\($0).jpg" }
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: names)
+        var random = SplitMix64(seed: 116)
+        func pick<T>(_ values: [T]) -> T? {
+            values.isEmpty ? nil : values[Int(random.next() % UInt64(values.count))]
+        }
+        func read(_ name: String) async throws {
+            let count = 1 + Int(random.next() % 3)
+            let faces = (0 ..< count).map { Self.lookalike(Int(random.next() % 3) * 50 + $0) }.enumerated().map { index, face in
+                DetectedFace(
+                    box: CGRect(x: 0.05 + 0.3 * Double(index), y: 0.3, width: 0.2, height: 0.25),
+                    landmarks: face.landmarks, quality: face.quality, embedding: face.embedding
+                )
+            }
+            let day = Date(timeIntervalSince1970: 1_600_000_000 + Double(random.next() % 40) * 86400)
+            try await library.readFaces([library.result(
+                for: name, faces: faces, sizeOffset: Int64(random.next() % 1000), captured: day
+            )])
+        }
+        for name in names {
+            try await read(name)
+        }
+        let owner = PeopleAssignment(store: library.store)
+        let libraries = try #require(await library.store.loadedLibraries())
+        var present = names
+        for step in 0 ..< 40 {
+            let snapshot = try await library.store.peopleSnapshot()
+            let faces = snapshot.faces.map(\.id)
+            let people = snapshot.people.map(\.id)
+            switch random.next() % 9 {
+            case 0: if let face = pick(faces), let person = pick(people) {
+                    _ = try? await library.store.perform(.move([face], to: person))
+                }
+            case 1: if let face = pick(faces) {
+                    _ = try? await library.store.perform(.moveToNewPerson([face], name: "P\(step)"))
+                }
+            case 2: if let face = pick(faces) {
+                    _ = try? await library.store.perform(.removeName([face]))
+                }
+            case 3: if let face = pick(faces) {
+                    _ = try? await library.store.perform(.notAFace([face]))
+                }
+            case 4:
+                if let face = pick(snapshot.faces.filter { $0.assignment.person != nil }), let person = face.assignment.person {
+                    _ = try? await library.store.perform(.makeKeyPhoto(face.id, of: person))
+                }
+            case 5: if let person = pick(people) {
+                    _ = try? await library.store.perform(.setHidden(person, random.next() % 2 == 0))
+                }
+            case 6: if let from = pick(people), let into = pick(people) {
+                    _ = try? await library.store.perform(.merge(from, into: into))
+                }
+            case 7: if let name = pick(present) {
+                    try await read(name)
+                }
+            default:
+                guard present.count > 4, let name = pick(present) else { break }
+                let file = library.root.appending(path: name)
+                try FileManager.default.removeItem(at: file)
+                library.emit(FilesystemEvent(path: file.path, flags: UInt32(kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemIsFile)))
+                present.removeAll { $0 == name }
+                let left = Set(present)
+                _ = try await waitForCatalogStoreState(library.store) { !$0.isScanning && Set($0.testAssets.map(\.relativePath.rawValue)) == left }
+            }
+            try await owner.settle()
+            let truth = try await library.store.peopleSnapshot()
+            let gallery = try #require(try await library.store.peopleGallery(availableLibraryPaths: [library.rootPath]))
+            let computed = truth.computedGalleryFacts
+            #expect(gallery.people.allSatisfy { $0.facts != nil }, "step \(step)")
+            #expect(Dictionary(uniqueKeysWithValues: gallery.people.compactMap { person in person.facts.map { (person.id, $0) } }) == computed, "step \(step)")
+            #expect(truth.galleryFacts == computed, "step \(step)")
+            let state = try await library.store.gallery(libraries: libraries)
+            for person in state.people {
+                let cover = truth.keyPhotos[person.id] ?? computed[person.id]?.newestFace
+                #expect(person.cover?.id == cover, "step \(step): \(person.id)")
+            }
+        }
+        await library.store.shutdown()
+    }
+
+    /// The gallery's read seeks every face and photo row it reads by key: the people are the
+    /// one table it walks, and the faces that define them come from their partial index, so
+    /// its cost is the people's, never the faces' (7.5–7.9 s cold on the owner's catalog when
+    /// every face was joined to its photo).
+    @Test func theGallerysReadSeeksEveryFaceAndPhotoByKey() async throws {
+        let directory = try makeTestDirectory()
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(
+            in: directory, files: ["a.jpg"], database: directory.appending(path: "db/catalog.sqlite")
+        )
+        try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
+        _ = try await library.store.perform(.moveToNewPerson([FaceID(asset: library.id("a.jpg"), index: 0)], name: "Sam"))
+        let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
+        let plans = try await database.read { db in
+            try [PeopleGallerySQL.people, PeopleGallerySQL.anchors].map { sql in
+                try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(sql)").map { $0["detail"] as String }
+            }
+        }
+        let (people, anchors) = (plans[0], plans[1])
+        #expect(people.contains { $0.hasPrefix("SCAN p") }, "\(people)")
+        for alias in ["s", "k", "km", "c", "cm"] {
+            #expect(people.contains { $0.hasPrefix("SEARCH \(alias) USING") }, "\(alias): \(people)")
+        }
+        #expect(people.contains { $0.contains("idx_face_key_photo") }, "\(people)")
+        #expect(anchors.first?.contains("COVERING INDEX idx_face_anchor") == true, "\(anchors)")
+        #expect(anchors.contains { $0.hasPrefix("SEARCH m USING") }, "\(anchors)")
+        for plan in [people, anchors] {
+            #expect(!plan.contains { $0.hasPrefix("SCAN") && !$0.hasPrefix("SCAN p") && !$0.contains("idx_face_anchor") && !$0.contains("member") }, "\(plan)")
+        }
+        try await database.close()
+        await library.store.shutdown()
+    }
+
     private static func lookalikes(
         _ count: Int,
         in directory: URL,

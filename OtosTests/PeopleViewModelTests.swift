@@ -67,6 +67,8 @@ struct PeopleViewModelTests {
             if consumesIntents {
                 model.startPeopleIntentConsumer()
             }
+            // The photo menus' faces are read by key for the targets (`PhotoFaces`).
+            model.startFacesReadRefresh()
             return Fixture(
                 library: library, model: model, sam: sam, hers: hers,
                 like: FaceID(asset: library.id("b.jpg"), index: 0),
@@ -97,6 +99,31 @@ struct PeopleViewModelTests {
             state.people = people
             state.queryGeneration = model.queryGeneration
             model.applyState(state)
+        }
+
+        /// Targets `photos` and waits for the read of their faces the targeting rings.
+        /// The window's grid is made to hold them first, as a photo menu's photos always are.
+        func select(_ photos: [MediaAssetID]) async throws {
+            let grid = model.state.mediaGrid.orderedAssetIDs
+            if !photos.allSatisfy(grid.contains) {
+                var state = model.state
+                state.mediaGrid = CatalogMediaGridState(
+                    descriptor: model.queryDescriptor, orderedAssetIDs: grid + photos.filter { !grid.contains($0) }
+                )
+                model.applyState(state)
+            }
+            model.selectAssets(photos)
+            try #require(model.targetIDs(.current) == photos, "the targets are the photos selected")
+            try await waitForFaces()
+        }
+
+        /// Waits until the faces the window holds are a read of exactly its targets asked after
+        /// every People write it has answered.
+        func waitForFaces() async throws {
+            try await waitUntil {
+                model.targetPhotoFaces.photos == model.targetIDs(.current)
+                    && model.targetPhotoFaces.landedThrough == model.pendingPeopleActs.answered
+            }
         }
 
         func assignment(of face: FaceID) async throws -> FaceAssignment? {
@@ -189,7 +216,7 @@ struct PeopleViewModelTests {
         #expect(try await fixture.assignment(of: fixture.like) == .model(fixture.sam))
         let photo = fixture.like.asset
         fixture.show(people, scope: .allMedia, grid: [photo])
-        fixture.model.selectAssets([photo])
+        try await fixture.select([photo])
 
         let menu = try #require(fixture.model.targetFaceMenu)
         #expect(menu.groups.map(\.title) == ["Sam", "Unidentified Face"])
@@ -208,11 +235,11 @@ struct PeopleViewModelTests {
         // In Sam's photos two faces are still two submenus, in the photo's order.
         fixture.model.openPerson(fixture.sam)
         fixture.show(people, scope: .person(fixture.sam), grid: [photo, fixture.hers.asset])
-        fixture.model.selectAssets([photo])
+        try await fixture.select([photo])
         #expect(fixture.model.targetFaceMenu?.isFlat == false)
         #expect(fixture.model.targetFaceMenu?.groups.map(\.title) == ["Sam", "Unidentified Face"])
         // a.jpg holds only her face: its acts sit at the top level.
-        fixture.model.selectAssets([fixture.hers.asset])
+        try await fixture.select([fixture.hers.asset])
         #expect(fixture.model.targetFaceMenu?.isFlat == true)
         await fixture.store.shutdown()
     }
@@ -227,7 +254,7 @@ struct PeopleViewModelTests {
         let photo = fixture.stranger.asset
         let people = try await fixture.people()
         fixture.show(people, scope: .allMedia, grid: [photo])
-        fixture.model.selectAssets([photo])
+        try await fixture.select([photo])
 
         let group = try #require(fixture.model.targetFaceMenu?.groups.first { $0.person == unnamed })
         #expect(group.title == "Unnamed Person · 1 Photo")
@@ -246,7 +273,7 @@ struct PeopleViewModelTests {
 
         fixture.model.openPerson(unnamed)
         fixture.show(people, scope: .person(unnamed), grid: [photo])
-        fixture.model.selectAssets([photo])
+        try await fixture.select([photo])
         let own = try #require(fixture.model.targetFaceMenu)
         let theirs = try #require(own.groups.first { $0.person == unnamed })
         #expect(theirs.corrections.map(\.title) == ["Not the Same Person", "This Is Not a Face"])
@@ -261,7 +288,7 @@ struct PeopleViewModelTests {
         let first = fixture.hers.asset
         let second = fixture.like.asset
         try await fixture.show(fixture.people(), scope: .allMedia, grid: [first, second])
-        fixture.model.selectAssets([first, second])
+        try await fixture.select([first, second])
 
         let menu = try #require(fixture.model.targetFaceMenu)
         #expect(menu.groups.map(\.title) == ["Sam · 2 Photos", "Unidentified Face · 1 Photo"])
@@ -275,9 +302,9 @@ struct PeopleViewModelTests {
         try await fixture.show(fixture.people(), scope: .allMedia, grid: [first, second])
         #expect(try await fixture.assignment(of: fixture.like) == .held)
         #expect(try await fixture.assignment(of: fixture.stranger) == .held)
-        fixture.model.selectAssets([first, second])
+        try await fixture.select([first, second])
         #expect(fixture.model.targetFaceMenu?.groups.map(\.title) == ["Sam · 1 Photo"])
-        fixture.model.selectAssets([second])
+        try await fixture.select([second])
         let one = try #require(fixture.model.targetFaceMenu)
         #expect(one.groups.map(\.title) == ["Unidentified Face", "Unidentified Face"])
         #expect(one.groups.map(\.faces) == [[fixture.like], [fixture.stranger]])
@@ -291,12 +318,16 @@ struct PeopleViewModelTests {
         let unnamed = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
         try await fixture.show(fixture.people(), scope: .allMedia)
 
+        // The sheet's row of faces is read as it opens.
+        fixture.model.beginEditingPerson(unnamed)
+        try await waitUntil { fixture.model.personSheetFaces?.person == unnamed }
         let person = fixture.model.personSheetContext(PersonSheetRequest(subject: .person(unnamed)))
         #expect(person.title == "Name This Person")
         #expect(person.media == MediaCount(photos: 1))
         #expect(person.faces.map(\.id) == [fixture.stranger])
         #expect(person.names == ["Sam"])
 
+        try await fixture.select([fixture.like.asset])
         let faces = fixture.model.personSheetContext(PersonSheetRequest(subject: .faces([fixture.like])))
         #expect(faces.title == "Name This Face")
         #expect(faces.media == MediaCount(photos: 1))
@@ -315,7 +346,8 @@ struct PeopleViewModelTests {
         let people = try await fixture.people()
         let photo = fixture.like.asset
         fixture.show(people, scope: .allMedia, grid: [photo])
-        let box = try #require(people.faces(of: photo).first { $0.id == fixture.like }?.tile.box)
+        try await fixture.select([photo])
+        let box = try #require(fixture.model.shownTargetFaces.face(fixture.like)?.tile.box)
 
         fixture.model.outlineFaces([fixture.like])
         #expect(fixture.model.outlinedFaceBoxes == [photo: [box]])
@@ -339,6 +371,7 @@ struct PeopleViewModelTests {
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(fixture.sam) }
 
         try await fixture.show(fixture.people(), scope: .people)
+        try await fixture.select([fixture.like.asset])
         fixture.model.performMediaItemCommand(.someoneElse([fixture.like]))
         #expect(fixture.model.peopleSession.sheet?.subject == .faces([fixture.like]))
         // b.jpg already holds Sam's face: Save is disabled with the reason (DES-038), and
@@ -409,6 +442,7 @@ struct PeopleViewModelTests {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         try await fixture.show(fixture.people(), scope: .allMedia)
 
+        try await fixture.select([fixture.stranger.asset])
         fixture.model.beginNamingFaces([fixture.stranger])
         fixture.model.savePersonSheet(.faces([fixture.stranger]), name: "Kai", birthday: "1990")
         try await Self.waitForStore(fixture.store) {
@@ -457,17 +491,19 @@ struct PeopleViewModelTests {
         }
         await held.waitForArrivals(1)
 
+        model.selectAssets([fixture.stranger.asset])
+        try await waitUntil { model.targetPhotoFaces.photos == [fixture.stranger.asset] }
         model.nameFaces([fixture.stranger], as: fixture.sam)
-        #expect(model.peopleState.faces(of: fixture.stranger.asset).first { $0.id == fixture.stranger }?.person == fixture.sam)
+        #expect(model.shownTargetFaces.face(fixture.stranger)?.person == fixture.sam)
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(fixture.sam) }
         try await waitUntil { admission.snapshot.waiting.contains { $0.load == .people } }
         #expect(admission.snapshot.running?.load == .searchIndex)
-        #expect(model.peopleState.faces(of: fixture.stranger.asset).first { $0.id == fixture.stranger }?.person == fixture.sam)
+        #expect(model.shownTargetFaces.face(fixture.stranger)?.person == fixture.sam)
 
         await held.open()
         try await load.value
         try await waitUntil {
-            model.peopleState.faces(of: fixture.stranger.asset).first { $0.id == fixture.stranger }?.person == fixture.sam
+            model.shownTargetFaces.face(fixture.stranger)?.person == fixture.sam
                 && admission.snapshot.running == nil && admission.snapshot.waiting.isEmpty
         }
         await fixture.store.shutdown()
@@ -480,6 +516,7 @@ struct PeopleViewModelTests {
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
         try await fixture.show(fixture.people(), scope: .allMedia)
 
+        try await fixture.select([fixture.stranger.asset])
         fixture.model.nameFaces([fixture.stranger], as: ian)
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(ian) }
         try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
@@ -669,6 +706,7 @@ struct PeopleViewModelTests {
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
         try await fixture.show(fixture.people(), scope: .allMedia)
 
+        try await fixture.select([fixture.stranger.asset])
         fixture.model.nameFaces([fixture.stranger], as: ian)
         try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
         fixture.model.setFavorite(fixture.sam, true)
@@ -701,6 +739,7 @@ struct PeopleViewModelTests {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         try await fixture.show(fixture.people(), scope: .allMedia)
 
+        try await fixture.select([fixture.stranger.asset])
         fixture.model.savePersonSheet(.faces([fixture.stranger]), name: "Kai", birthday: nil)
         try await Self.waitForStore(fixture.store) {
             try await fixture.store.peopleSnapshot().people.contains { $0.name == "Kai" }
@@ -740,14 +779,14 @@ struct PeopleViewModelTests {
         fixture.model.startFacesReadRefresh()
         fixture.model.toggleInspector(.info)
 
-        fixture.model.selectAssets([read])
+        try await fixture.select([read])
         try await Self.waitForFacesLine(fixture.model, "No Faces")
-        fixture.model.selectAssets([unread])
+        try await fixture.select([unread])
         try await Self.waitForFacesLine(fixture.model, "Not Checked Yet")
-        fixture.model.selectAssets([read, unread])
+        try await fixture.select([read, unread])
         #expect(fixture.model.targetFacesLine == PhotoInfo.notApplicable)
 
-        fixture.model.selectAssets([unread])
+        try await fixture.select([unread])
         try await Self.waitForFacesLine(fixture.model, "Not Checked Yet")
         try await fixture.library.readFaces([fixture.library.result(for: "d.jpg", faces: [])])
         try await fixture.show(fixture.people(), scope: .allMedia, grid: [fixture.hers.asset, read, unread])
@@ -761,10 +800,10 @@ struct PeopleViewModelTests {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         try await fixture.show(fixture.people(), scope: .allMedia, grid: [fixture.hers.asset, fixture.like.asset])
         fixture.model.toggleInspector(.info)
-        fixture.model.selectAssets([fixture.like.asset])
+        try await fixture.select([fixture.like.asset])
 
         fixture.model.outlineFaces([fixture.like])
-        fixture.model.selectAssets([fixture.hers.asset])
+        try await fixture.select([fixture.hers.asset])
         #expect(fixture.model.outlinedFaces.isEmpty)
 
         fixture.model.outlineFaces([fixture.hers])
@@ -780,7 +819,7 @@ struct PeopleViewModelTests {
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
         let photo = fixture.stranger.asset
         try await fixture.show(fixture.people(), scope: .allMedia, grid: [photo])
-        fixture.model.selectAssets([photo])
+        try await fixture.select([photo])
 
         let unranked = try #require(fixture.model.targetFaceMenu?.groups.first { $0.kind == .unidentified })
         #expect(unranked.suggestions == nil)
@@ -864,6 +903,7 @@ struct PeopleViewModelTests {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         try await fixture.show(fixture.people(), scope: .allMedia)
         #expect(try await fixture.assignment(of: fixture.like) == .model(fixture.sam))
+        try await fixture.select([fixture.like.asset])
 
         fixture.model.performMediaItemCommand(.notPerson([fixture.like]))
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.like) == .held }
@@ -884,12 +924,12 @@ struct PeopleViewModelTests {
         let video = fixture.inVideo.asset
         fixture.show(people, scope: .allMedia, grid: [fixture.hers.asset, video])
 
-        fixture.model.selectAssets([video])
+        try await fixture.select([video])
         let menu = try #require(fixture.model.targetFaceMenu)
         #expect(menu.groups.map(\.title) == ["Sam"])
         #expect(menu.groups[0].corrections.map(\.title) == ["This Is Not Sam", "This Is Not a Face"])
 
-        fixture.model.selectAssets([fixture.hers.asset, video])
+        try await fixture.select([fixture.hers.asset, video])
         #expect(fixture.model.targetFaceMenu?.groups.first?.title == "Sam · 2 Photos & Videos")
 
         fixture.model.outlineFaces([fixture.hers, fixture.inVideo])

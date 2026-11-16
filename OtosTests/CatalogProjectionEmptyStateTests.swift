@@ -170,7 +170,7 @@ struct CatalogProjectionEmptyStateTests {
     }
 
     /// Each derived owner is rebuilt only when a kind of fact its answer is built from moved
-    /// (`DuplicatesProjection.inputs`, `PeopleAssignment.inputs`): a new person is a faces
+    /// (`DuplicatesProjection.inputs`, `PeopleGallery.inputs`): a new person is a faces
     /// fact, which People reads and the groups do not; copies kept together are a copies
     /// fact, which the groups read and People does not.
     @Test func eachDerivedOwnerIsRebuiltOnlyWhenAFactItIsBuiltFromMoved() async throws {

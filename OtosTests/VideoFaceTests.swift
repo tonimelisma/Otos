@@ -256,7 +256,7 @@ struct VideoFaceTests {
     /// yet checked; removing the library deletes the frames.
     @Test func aVideosFacesAreStoredWithTheirFramesAndPurgedWithIt() async throws {
         let fixture = try await VideoLibrary.make(in: makeTestDirectory())
-        #expect(try await fixture.store.peopleSnapshot(availableLibraryPaths: [fixture.rootPath]).unchecked == MediaCount(videos: 1))
+        #expect(try await fixture.store.peopleGallery(availableLibraryPaths: [fixture.rootPath])?.unchecked == MediaCount(videos: 1))
 
         let frames = try ThumbnailStore.stageFaceFrames(
             [Self.image(), Self.image()], finalRelativeName: ThumbnailStore.faceFramesRelativeName(for: fixture.id), in: fixture.thumbnailDirectory
@@ -268,9 +268,9 @@ struct VideoFaceTests {
         ))
         #expect(outcome == .applied(count: 1))
 
-        let snapshot = try await fixture.store.peopleSnapshot(availableLibraryPaths: [fixture.rootPath])
-        #expect(snapshot.unchecked == MediaCount())
-        let second = try #require(snapshot.tiles[FaceID(asset: fixture.id, index: 1)])
+        #expect(try await fixture.store.peopleGallery(availableLibraryPaths: [fixture.rootPath])?.unchecked == MediaCount())
+        let faces = try await fixture.store.photoFaces(of: [fixture.id], landedThrough: 0)
+        let second = try #require(faces.face(FaceID(asset: fixture.id, index: 1))?.tile)
         #expect(second.isInVideo)
         #expect(second.preview == FacePreview(name: frames.finalRelativePath, recipe: .neutral, image: 1))
         let file = ThumbnailStore.url(for: frames.finalRelativePath, in: fixture.thumbnailDirectory)
@@ -564,7 +564,7 @@ extension VideoFaceTests {
         #expect(asset.videoFacesStale)
         let stamped = try #require(try await fixture.store.mediaAssets(for: [fixture.id])[fixture.id])
         #expect(!stamped.videoFacesStale)
-        #expect(try await fixture.store.peopleSnapshot(availableLibraryPaths: [fixture.rootPath]).unchecked == MediaCount())
+        #expect(try await fixture.store.peopleGallery(availableLibraryPaths: [fixture.rootPath])?.unchecked == MediaCount())
         await fixture.store.shutdown()
     }
 

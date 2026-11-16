@@ -193,9 +193,10 @@ struct LoadAdmissionTests {
         #expect(ran.withLock { $0 } == false)
     }
 
-    /// The projection's two owners share the window's admission: a duplicates build and a
-    /// People pass never run at once, and neither runs before the admission opens.
-    @Test func duplicatesAndPeopleTakeTurns() async throws {
+    /// A duplicates build is a heavy load and waits for the window's admission; the People
+    /// gallery's read is the window's own and does not: it runs while the build waits, so
+    /// People's first paint never queues behind a heavy load (ADR 0047, ADR 0055).
+    @Test func theGalleryReadsWhileAHeavyLoadWaits() async throws {
         let temp = try makeTestDirectory()
         let store = makeTestStore(location: .databaseFile(temp.appending(path: "catalog.sqlite")), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -220,17 +221,13 @@ struct LoadAdmissionTests {
         }
         defer { consumer.cancel() }
 
-        try await waitUntil { admission.snapshot.waiting.count == 2 }
-        #expect(await duplicates.arrivalCount == 0)
-        #expect(await people.arrivalCount == 0)
-
-        admission.open()
-        // People is first in launch order; the build waits until its pass ends.
         await people.waitForArrivals(1)
         try await waitUntil { admission.snapshot.waiting.count == 1 }
         #expect(await duplicates.arrivalCount == 0)
+        #expect(admission.snapshot.waiting.first?.load == .duplicates)
 
         await people.open()
+        admission.open()
         await duplicates.waitForArrivals(1)
         #expect(admission.snapshot.running?.load == .duplicates)
         await duplicates.open()

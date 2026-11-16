@@ -183,6 +183,12 @@ final class CatalogWindowViewModel {
     /// Whether the Info pane's photo was read for faces and how many it holds, as the catalog
     /// last said (`startFacesReadRefresh`).
     var photoFacesRead: PhotoFacesRead?
+    /// The targets' faces as the catalog last gave them, read by key for exactly the targets
+    /// (`startFacesReadRefresh`); `.none` before the first read and for no targets.
+    @ObservationIgnored var targetPhotoFaces = PhotoFaces.none
+    /// The Person sheet's row of the person it names, read by key as it opens
+    /// (`CatalogStore.newestFaces(of:limit:)`); nil before it lands.
+    var personSheetFaces: (person: PersonID, faces: [FaceTile])?
     /// The targets and pane `targetFaceMenu` was last built for: a change lets go of an Info
     /// row's outline.
     @ObservationIgnored var targetFacesKey: TargetFacesKey?
@@ -376,6 +382,9 @@ final class CatalogWindowViewModel {
     var photoInfo: PhotoInfo?
     @ObservationIgnored var photoInfoTask: Task<Void, Never>?
     @ObservationIgnored var faceCandidatesTask: Task<Void, Never>?
+    /// Reads the Person sheet's row of faces as the sheet opens; a sheet for another person
+    /// cancels it.
+    @ObservationIgnored var personSheetFacesTask: Task<Void, Never>?
     /// The Info pane's place-name lookup for its located item; a new target cancels it.
     @ObservationIgnored var placeNameTask: Task<Void, Never>?
     @ObservationIgnored var placeNameLookup: PlaceNameLookup = .mapKit
@@ -1078,6 +1087,7 @@ final class CatalogWindowViewModel {
         facesReadTask?.cancel()
         facesReadDoorbell?.finish()
         faceCandidatesTask?.cancel()
+        personSheetFacesTask?.cancel()
         placeNameTask?.cancel()
         focusedKindTask?.cancel()
         currentTargetChoiceTask?.cancel()

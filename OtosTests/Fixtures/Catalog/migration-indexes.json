@@ -459,5 +459,12 @@
   {
     "migration": "v72_derived_folder",
     "indexes": {}
+  },
+  {
+    "indexes": {
+      "idx_face_anchor": "CREATE INDEX idx_face_anchor\nON face(person_id, library_root_id, relative_path, assignment, is_not_face)\nWHERE assignment IN (2, 3) AND is_not_face = 0 AND person_id IS NOT NULL",
+      "idx_person_summary_cover": "CREATE INDEX idx_person_summary_cover\nON person_summary(cover_library_root_id, cover_relative_path, cover_face_index)"
+    },
+    "migration": "v73_people_gallery"
   }
 ]

@@ -102,13 +102,16 @@ nonisolated struct PeopleActRefusal: Equatable, Sendable {
 /// has not been built with yet, each under the number its submission took (ADR 0032 rule 2: a
 /// request is a counter, and the store's answer names the request it is for). The one overlay
 /// of People (DES-120):
-/// - **What an act shows.** An act whose result is known without a build — a name, a birthday,
+/// - **What an act shows.** An act whose result is known without a read — a name, a birthday,
 ///   a favourite, hidden or not, a key photo, a face given to a person, to no one, or found not
-///   to be a face — is shown from its submission (`effect`, laid over the published state by
-///   `CatalogPeopleState.overlaying`). It stays shown until a People state built after its write
-///   landed arrives: the store's answer carries the request People must cover
+///   to be a face — is shown from its submission (`effect`: its people edits laid over the
+///   People state by `CatalogPeopleState.overlaying`, its faces over the targets' faces by
+///   `PhotoFaces.overlaying`). It stays shown until both reads have it: a People state read after
+///   its write landed — the store's answer carries the request the gallery must cover
 ///   (`CatalogProjection.requestPeopleBuild`), and a state whose `covers` reaches it has the act
-///   in it. A write the store refused or failed is withdrawn at its answer.
+///   in it — and, for an act on faces, a read of the targets' faces asked after the answer
+///   (`PhotoFaces.landedThrough`). A write the store refused or failed is withdrawn at its
+///   answer.
 /// - **A merge in flight.** A merge, and the redo of one, takes a person away; while it is
 ///   outstanding that person is the merge's to answer for: the store commits the write and
 ///   rings the projection before its answer reaches the window, so a People state that no
@@ -127,9 +130,18 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
         let effect: PeopleOverlayEffect
         /// The People request a build must cover to show the write; nil until it landed.
         var covers: UInt64?
+        /// Whether a People state covering the write has arrived.
+        var isInPeople = false
+        /// Whether a read of the targets' faces asked after the write landed has arrived, or
+        /// the write changes no face.
+        var isInFaces: Bool
     }
 
     private(set) var submitted: UInt64 = 0
+    /// The newest write the store has answered. The one consumer answers writes in the order
+    /// they were submitted, so every write up to it has landed or been withdrawn: a read asked
+    /// now has each of them (`PhotoFaces.landedThrough`).
+    private(set) var answered: UInt64 = 0
     /// Each outstanding merge, by its request.
     private var merges: [UInt64: Merge] = [:]
     /// Each write's effect, by its request, until People is built with it.
@@ -141,7 +153,7 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
         submitted &+= 1
         merges[submitted] = merge
         if !effect.isEmpty {
-            shown[submitted] = Shown(effect: effect)
+            shown[submitted] = Shown(effect: effect, isInFaces: effect.faces.isEmpty)
         }
         return submitted
     }
@@ -150,6 +162,7 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
     /// did not (`covers` nil), and what it shows is withdrawn. Returns the merge it was making,
     /// if it was one still outstanding.
     mutating func answer(_ request: UInt64, covers: UInt64?) -> Merge? {
+        answered = max(answered, request)
         if let covers {
             shown[request]?.covers = covers
         } else {
@@ -158,11 +171,27 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
         return merges.removeValue(forKey: request)
     }
 
-    /// A People state covering `covers` arrived: every write it has stops being shown over it.
-    /// True when one did.
+    /// A People state covering `covers` arrived: every write it has stops being shown over it
+    /// once the targets' faces have it too. True when one did.
     mutating func retire(coveredBy covers: UInt64) -> Bool {
+        for (request, entry) in shown where (entry.covers ?? .max) <= covers {
+            shown[request]?.isInPeople = true
+        }
+        return dropRetired()
+    }
+
+    /// A read of the targets' faces asked when every write up to `landed` had been answered
+    /// arrived: those writes are in it. True when one stopped being shown.
+    mutating func retireFaces(through landed: UInt64) -> Bool {
+        for (request, entry) in shown where request <= landed && entry.covers != nil {
+            shown[request]?.isInFaces = true
+        }
+        return dropRetired()
+    }
+
+    private mutating func dropRetired() -> Bool {
         let before = shown.count
-        shown = shown.filter { ($0.value.covers ?? .max) > covers }
+        shown = shown.filter { !($0.value.isInPeople && $0.value.isInFaces) }
         return shown.count != before
     }
 
@@ -178,10 +207,13 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
 }
 
 nonisolated extension PeopleAct {
-    /// What the act shows before People is built with it, and what its undo shows: the act's
-    /// own result and the state it replaces, both read from `people`, the state the window
-    /// shows. An act whose result needs a build — a new person, a merge — shows nothing ahead.
-    func overlay(in people: CatalogPeopleState) -> (after: PeopleOverlayEffect, before: PeopleOverlayEffect) {
+    /// What the act shows before People is read with it, and what its undo shows: the act's
+    /// own result and the state it replaces, both read from `people` and `photos`, the People
+    /// and the targets' faces the window shows. An act whose result needs a read — a new
+    /// person, a merge — shows nothing ahead.
+    func overlay(
+        in people: CatalogPeopleState, faces photos: PhotoFaces
+    ) -> (after: PeopleOverlayEffect, before: PeopleOverlayEffect) {
         var after = PeopleOverlayEffect()
         var before = PeopleOverlayEffect()
         func person(_ id: PersonID, _ change: (inout PersonEdit, PersonSummary) -> PersonEdit) {
@@ -192,7 +224,7 @@ nonisolated extension PeopleAct {
         }
         func faces(_ ids: [FaceID], _ override: PhotoFaceOverride) {
             for id in ids {
-                guard let face = people.face(id) else { continue }
+                guard let face = photos.face(id) else { continue }
                 after.faces[id] = override
                 before.faces[id] = .person(face.person)
             }
@@ -216,8 +248,8 @@ nonisolated extension PeopleAct {
             }
         case let .makeKeyPhoto(face, id):
             person(id) { edit, summary in
-                edit.keyFace = face
-                return PersonEdit(keyFace: summary.cover?.id)
+                edit.keyFace = photos.face(face)?.tile
+                return PersonEdit(keyFace: summary.cover)
             }
         case let .notAFace(ids):
             faces(ids, .removed)
@@ -307,7 +339,7 @@ nonisolated extension CatalogPeopleState {
             return "\(photos.count - Set(photos).count + 1) of these faces are in the same \(MediaCount(tiles: shared.flatMap(\.self)).noun)"
         }
         guard let target = self.person(person) else { return "Choose another person" }
-        let anchored = Set(target.userFaces.map(\.id.asset))
+        let anchored = Set(target.userFaces.map(\.photo))
         let taken = faces.filter { anchored.contains($0.id.asset) && $0.person != person }
         if !taken.isEmpty {
             let media = MediaCount(faces: taken)
@@ -361,7 +393,7 @@ nonisolated extension CatalogPeopleState {
         if let birthday = (target.birthday ?? sourceBirthday)?.seconds,
            [source.oldestUserCapture, target.oldestUserCapture].contains(where: { ($0 ?? .infinity) < birthday })
         {
-            let before = MediaCount(tiles: (source.userFaces + target.userFaces).filter { ($0.captureSeconds ?? .infinity) < birthday })
+            let before = MediaCount(anchors: (source.userFaces + target.userFaces).filter { ($0.captureSeconds ?? .infinity) < birthday })
             if before.total > 0 {
                 return PeopleText.beforeTheBirthday(before)
             }
@@ -389,7 +421,9 @@ nonisolated extension CatalogPeopleState {
     /// to that person, refused as that move is, and a birthday there would be another
     /// person's, so it must be cleared. A hidden person's name is refused, as no surface but
     /// the gallery offers them.
-    func sheetRefusal(_ subject: PersonSheetRequest.Subject, name text: String, birthday: String?) -> String? {
+    func sheetRefusal(
+        _ subject: PersonSheetRequest.Subject, name text: String, birthday: String?, faces photos: PhotoFaces
+    ) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             return "Enter a name"
@@ -402,7 +436,7 @@ nonisolated extension CatalogPeopleState {
         switch subject {
         case let .person(person):
             if let seconds = parsed?.seconds {
-                let before = MediaCount(tiles: self.person(person)?.userFaces.filter { ($0.captureSeconds ?? .infinity) < seconds } ?? [])
+                let before = MediaCount(anchors: self.person(person)?.userFaces.filter { ($0.captureSeconds ?? .infinity) < seconds } ?? [])
                 if before.total > 0 {
                     return "\(before.text) of \(name(person)) \(before.isOrAre) from before this date"
                 }
@@ -414,7 +448,7 @@ nonisolated extension CatalogPeopleState {
                 return mergeRefusal(person, into: holder, sourceBirthday: parsed)
             }
         case let .faces(ids):
-            let faces = ids.compactMap(face(_:))
+            let faces = ids.compactMap(photos.face(_:))
             if isHiddenName(trimmed, excluding: nil) {
                 return "\(trimmed) is a hidden person"
             }
@@ -444,10 +478,12 @@ nonisolated extension CatalogPeopleState {
     private func isHiddenName(_ name: String, excluding: PersonID?) -> Bool {
         hiddenPeople.contains { $0.name == name && $0.id != excluding }
     }
+}
 
-    /// A face of the published People state, on the file it was read from.
-    func face(_ id: FaceID) -> PhotoFace? {
-        ownFaces(of: id.asset).first { $0.id == id }
+nonisolated extension MediaCount {
+    /// The photos and videos `anchors` are in, each counted once.
+    init(anchors: some Sequence<PersonAnchor>) {
+        self.init(items: anchors.map { ($0.photo, $0.isInVideo) })
     }
 }
 
@@ -513,7 +549,7 @@ extension CatalogWindowViewModel {
 
     /// A new People state: selections, the sheet and the filter forget people who are gone
     /// or hidden, the toolbar menu of a person's photos is built again, and the targets'
-    /// faces are ranked again.
+    /// faces are read and ranked again.
     func applyPeopleState(previous: CatalogWindowState, next: CatalogWindowState) {
         guard let published = next.people, published != previous.people else { return }
         _ = pendingPeopleActs.retire(coveredBy: published.covers)
@@ -535,10 +571,10 @@ extension CatalogWindowViewModel {
         OtosLog.ui.noticeOperation("people.state", phase: "applied", fields: [
             "people": "\(people.people.count)",
             "hidden": "\(people.hiddenPeople.count)",
-            "faces": "\(people.faceCount)",
+            "hasFaces": "\(people.hasFaces)",
             "unchecked": "\(people.unchecked.total)",
         ])
-        ResourceCheckpoint.record("peopleBuilt", fields: ["faces": "\(people.faceCount)"], storeUse: storeUse)
+        ResourceCheckpoint.record("peopleBuilt", fields: ["people": "\(people.people.count)"], storeUse: storeUse)
     }
 
     /// The one answer to which person the window shows and which people it filters by, given
@@ -640,16 +676,39 @@ extension CatalogWindowViewModel {
 
     // MARK: - Gallery acts
 
-    /// Add Name…, Rename… and Set Birthday….
+    /// Add Name…, Rename… and Set Birthday…. The sheet's row of the person's faces is read by
+    /// key as it opens and shown when it lands (`personSheetFaces`).
     func beginEditingPerson(_ person: PersonID) {
         guard peopleState.person(person) != nil else { return }
         peopleSession.sheet = PersonSheetRequest(subject: .person(person))
+        readPersonSheetFaces(person)
+    }
+
+    /// Reads the row of faces the Person sheet shows for `person` and keeps it while the sheet
+    /// still names them. A failed read is logged and leaves the row empty (ADR 0032 rule 4).
+    private func readPersonSheetFaces(_ person: PersonID) {
+        personSheetFaces = nil
+        personSheetFacesTask?.cancel()
+        let store = catalogStore
+        personSheetFacesTask = Task { [weak self] in
+            let faces: [FaceTile]
+            do {
+                faces = try await store.newestFaces(of: person, limit: PersonSummary.newestFaceCount)
+            } catch {
+                OtosLog.ui.errorOperation("people.sheetFaces", phase: "readFailed", fields: [
+                    "person": "\(person.rawValue)", "error": String(describing: error),
+                ])
+                return
+            }
+            guard !Task.isCancelled, let self, peopleSession.sheet?.person == person else { return }
+            personSheetFaces = (person, faces)
+        }
     }
 
     /// What the Person sheet shows for `request`: who is being named and how many photos
     /// Save changes, a row of their faces, and the names it suggests (DES-113).
-    /// Read from the state's own index and the person's newest faces, so the sheet, which
-    /// the window builds again with every People update, costs the same for any library.
+    /// Read from the state's own index and the row read when the sheet opened, so the sheet,
+    /// which the window builds again with every People update, costs the same for any library.
     func personSheetContext(_ request: PersonSheetRequest) -> PersonSheetContext {
         let people = peopleState
         switch request.subject {
@@ -659,7 +718,7 @@ extension CatalogWindowViewModel {
                 person: summary,
                 title: summary?.name ?? FaceActTitle.nameThisPerson,
                 media: summary?.media ?? MediaCount(),
-                faces: summary?.newestFaces ?? [],
+                faces: personSheetFaces.flatMap { $0.person == person ? $0.faces : nil } ?? [],
                 names: people.visibleNames.filter { $0 != summary?.name }
             )
         case let .faces(ids):
@@ -679,7 +738,7 @@ extension CatalogWindowViewModel {
     }
 
     func personSheetRefusal(_ subject: PersonSheetRequest.Subject, name: String, birthday: String?) -> String? {
-        peopleState.sheetRefusal(subject, name: name, birthday: birthday)
+        peopleState.sheetRefusal(subject, name: name, birthday: birthday, faces: shownTargetFaces)
     }
 
     /// The sheet's Save, enabled only while `personSheetRefusal` is nil. A name another
@@ -937,10 +996,18 @@ extension CatalogWindowViewModel {
 
     // MARK: - Faces of the targeted photos
 
+    /// The targets' faces as every surface shows them: the last read of them with the
+    /// window's held People acts laid over it; nothing while the read is of other photos.
+    var shownTargetFaces: PhotoFaces {
+        let photos = targetIDs(.current)
+        guard targetPhotoFaces.photos == photos else { return .none }
+        return targetPhotoFaces.overlaying(pendingPeopleActs.effect.faces)
+    }
+
     /// The faces of the targeted photos, with the people each could be once ranked.
     private var targetFaces: SelectionFaces {
         let photos = targetIDs(.current)
-        var faces = peopleState.selectionFaces(for: photos)
+        var faces = shownTargetFaces.selectionFaces(for: photos)
         if faceCandidates.photos == photos {
             faces.candidates = faceCandidates.candidates
         }
@@ -948,14 +1015,14 @@ extension CatalogWindowViewModel {
     }
 
     /// Rebuilds what the photo menus and the Info pane offer for the targets' faces
-    /// (`targetFaceMenu`), asks `PeopleAssignment` to rank them again, and rings the Info
-    /// pane's read of whether they were checked. Called by every writer of the target
-    /// (through `refreshPhotoInfo`, which the pane's showing and hiding also call) and by
-    /// every new People state, so the menu value is built once per change of what it is
-    /// built from, never in a view's `body`. A ranking for photos no longer targeted is
-    /// dropped. An outline the Info pane's rows held belongs to the targets and the pane it
-    /// was pointed at in: either changing lets go of it, since the row the pointer rested on
-    /// is gone and reports no exit.
+    /// (`targetFaceMenu`), rings the read of the targets' faces and of whether the Info pane's
+    /// photo was checked, and asks `PeopleAssignment` to rank them again. Called by every
+    /// writer of the target (through `refreshPhotoInfo`, which the pane's showing and hiding
+    /// also call), by every new People state and by every read of the targets' faces, so the
+    /// menu value is built once per change of what it is built from, never in a view's `body`.
+    /// A ranking for photos no longer targeted is dropped. An outline the Info pane's rows
+    /// held belongs to the targets and the pane it was pointed at in: either changing lets go
+    /// of it, since the row the pointer rested on is gone and reports no exit.
     func refreshTargetFaces() {
         let photos = targetIDs(.current)
         let key = TargetFacesKey(photos: photos, showsInfo: showsInfo)
@@ -965,8 +1032,14 @@ extension CatalogWindowViewModel {
         }
         rebuildTargetFaceMenu()
         facesReadDoorbell?.yield()
+        rankTargetFaces()
+    }
+
+    /// Asks `PeopleAssignment` to rank the faces the targets show, when they show one.
+    private func rankTargetFaces() {
+        let photos = targetIDs(.current)
         faceCandidatesTask?.cancel()
-        guard !photos.isEmpty, !peopleState.selectionFaces(for: photos).faces.isEmpty else {
+        guard !photos.isEmpty, !shownTargetFaces.selectionFaces(for: photos).faces.isEmpty else {
             faceCandidates = .none
             faceCandidatesTask = nil
             return
@@ -1002,10 +1075,11 @@ extension CatalogWindowViewModel {
         return photos.count == 1 ? photos.first : nil
     }
 
-    /// Keeps `photoFacesRead` the catalog's word on the Info pane's photo: each ring reads
-    /// whether its faces were read and how many it holds, and applies the read if that photo
-    /// is still the one shown. `refreshTargetFaces` rings it for every new target and People
-    /// state, so a photo read while it is shown says so without being reselected (the
+    /// Keeps the targets' faces (`targetPhotoFaces`) and `photoFacesRead` the catalog's word:
+    /// each ring reads the faces of exactly the targets, by key, and whether the Info pane's
+    /// one photo was read for faces and how many it holds, and applies each read if its photos
+    /// are still the ones targeted. `refreshTargetFaces` rings it for every new target and
+    /// People state, so a photo read while it is shown says so without being reselected (the
     /// reader's write is what publishes the next People state). One loop on a newest-wins
     /// doorbell; a ring during a read is kept, so the last change is always followed by a
     /// fresh read. It holds the view model weakly across each wait and ends with it. A failed
@@ -1017,6 +1091,22 @@ extension CatalogWindowViewModel {
         let store = catalogStore
         facesReadTask = Task { [weak self] in
             for await _ in rings {
+                guard let (photos, landed) = self?.targetFacesAsk else {
+                    break
+                }
+                do {
+                    let faces = photos.isEmpty
+                        ? PhotoFaces(photos: [], own: [:], landedThrough: landed)
+                        : try await store.photoFaces(of: photos, landedThrough: landed)
+                    guard !Task.isCancelled, let self else { break }
+                    if targetIDs(.current) == photos {
+                        applyTargetPhotoFaces(faces)
+                    }
+                } catch {
+                    OtosLog.ui.errorOperation("people.targetFaces", phase: "readFailed", fields: [
+                        "photos": "\(photos.count)", "error": String(describing: error),
+                    ])
+                }
                 guard let target = self?.facesReadTarget else {
                     if self == nil {
                         break
@@ -1046,6 +1136,33 @@ extension CatalogWindowViewModel {
                 ])
             }
         }
+    }
+
+    /// What a read of the targets' faces asks for now: the targets, and the newest People write
+    /// answered, which the read then has.
+    private var targetFacesAsk: (photos: [MediaAssetID], landed: UInt64) {
+        (targetIDs(.current), pendingPeopleActs.answered)
+    }
+
+    /// A read of the targets' faces landed for the photos still targeted: the writes it has
+    /// stop being shown over it, and the menus are built from it.
+    private func applyTargetPhotoFaces(_ faces: PhotoFaces) {
+        let retired = pendingPeopleActs.retireFaces(through: faces.landedThrough)
+        guard faces != targetPhotoFaces || retired else { return }
+        // A read of other photos than the last is ranked here; the same photos' were asked to
+        // be ranked with the change that rang this read (`refreshTargetFaces`).
+        let newPhotos = faces.photos != targetPhotoFaces.photos
+        targetPhotoFaces = faces
+        if retired {
+            showPendingPeopleActs()
+        }
+        rebuildTargetFaceMenu()
+        if newPhotos {
+            rankTargetFaces()
+        }
+        OtosLog.ui.debugOperation("people.targetFaces", phase: "applied", fields: [
+            "photos": "\(faces.photos.count)", "faces": "\(faces.selectionFaces(for: faces.photos).faces.count)",
+        ])
     }
 
     /// How many people a face list offers before `Someone Else…` or `New Name…` (HIG: about
@@ -1117,7 +1234,7 @@ extension CatalogWindowViewModel {
     /// what it changes is laid over People until a build has it (DES-120), and its undo is
     /// on the stack before the store answers.
     private func submitPeopleAct(_ act: PeopleAct) {
-        let shown = act.overlay(in: peopleState)
+        let shown = act.overlay(in: peopleState, faces: shownTargetFaces)
         let record = PeopleUndoRecord(title: undoTitle(for: act), shown: shown)
         let request = pendingPeopleActs.submit(merging: act.merge, showing: shown.after)
         OtosLog.ui.noticeOperation("people.act", phase: "submit", fields: [
@@ -1137,7 +1254,7 @@ extension CatalogWindowViewModel {
         case let .move(faces, _), let .moveToNewPerson(faces, _, _):
             return FaceActTitle.name(MediaCount(tiles: faces.compactMap(tile(of:))))
         case let .removeName(faces):
-            let person = faces.first.flatMap { face in peopleState.face(face)?.person }
+            let person = faces.first.flatMap { face in shownTargetFaces.face(face)?.person }
             return person.flatMap(peopleState.givenName).map(FaceActTitle.notPerson) ?? FaceActTitle.notTheSamePerson
         case .notAFace:
             return FaceActTitle.notAFace
@@ -1324,7 +1441,7 @@ extension CatalogWindowViewModel {
 
     /// A face's tile, while its photo's faces are shown.
     func tile(of face: FaceID) -> FaceTile? {
-        peopleState.face(face)?.tile
+        shownTargetFaces.face(face)?.tile
     }
 
     // MARK: - The People filter

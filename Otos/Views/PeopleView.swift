@@ -23,7 +23,7 @@ nonisolated enum PeoplePresentation {
     /// The gallery's sentence when it holds nobody; nil when it holds someone.
     static func emptySentence(_ state: CatalogPeopleState) -> String? {
         guard state.people.isEmpty else { return nil }
-        if state.faceCount > 0 {
+        if state.hasFaces {
             return "People appear here once Otos finds the same face on different days."
         }
         if state.unchecked.total > 0 {

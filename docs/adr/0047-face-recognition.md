@@ -323,10 +323,10 @@ grouping had put with the right child.
   sync fetches (ADR 0046 §7).
 - **Threads:** the preview is decoded off the reader, and Vision and the model run on
   `FaceAnalyzer`'s own queue, never on the main actor.
-- **Assignment:** `PeopleAssignment`'s loop, asked after a catalog change of a kind People reads.
-  A pass reads every stored face's row, tile and whose word its person is, never its vector,
-  in one transaction, and publishes the gallery built from it at once: People paints from the
-  stored assignment and never waits for one. It then hashes what assignment reads (each face's
+- **Assignment:** `PeopleAssignment`'s loop, asked after a catalog change of a kind assignment
+  reads. A pass reads every stored face's row and whose word its person is, never its vector
+  nor its tile, in one transaction (the snapshot, assignment's alone), and writes each
+  person's gallery facts that moved (below). It then hashes what assignment reads (each face's
   identity, vector number, capture time, rejections and anchor; each person's birthday and
   whether the user said anything about them; which file stands for which photo; the policy's
   constants and revision). The catalog keeps the hash of the inputs whose assignment it holds
@@ -349,10 +349,34 @@ grouping had put with the right child.
   exists only there), the People filter, whose several people are photos of them together,
   the face acts in
   the photo menus and the Info pane (`docs/design/people.md`).
+- **The gallery paints from its own read** (`PeopleGallery`, the window's, not a heavy load):
+  the people, each with the gallery facts the catalog stores for them (`person_summary`, v73:
+  their photo and video counts, a photo's copies and a stack's files counted once, and their
+  newest face) and the tiles of their key photo and newest face, each sought by key; the faces
+  on the user's word or a seed, the hard rules' facts, from a partial index of them
+  (`idx_face_anchor`); and the unchecked tally. It never walks every face, and it runs as soon
+  as the window's first grid is published, so People's first paint never waits for the
+  snapshot or for its turn among the heavy loads. Measured on the owner's catalog before it:
+  the gallery was published only after the whole snapshot, 6.5 s after the click, of which
+  the face-to-photo join was 7.5–7.9 s of reader time cold. `PeopleAssignment` computes the
+  facts from scratch from its snapshot after every pass (`PeopleSnapshot.computedGalleryFacts`)
+  and writes those that differ, announcing `.peopleGallery`, which assignment does not read;
+  so an act, a reading, a deleted or hidden photo reaches the counts with the pass its change
+  rings, and a test holds the stored facts equal to a computation from scratch after random
+  acts, readings and deletions. A person People has not yet written facts for is not shown
+  until it has, and while no person has facts (the first launch after v73) the gallery is not
+  known and claims nothing. The newest face follows its face's moves and is cleared when the
+  face is deleted, until the next pass names another. Rejected: maintaining the counts in
+  every write that changes them (triggers or each writer's own SQL), which would make every
+  writer of trash, copies, stacks and kinds a second owner of People's count rule; and the
+  join of every face per visit, 31k pages on the narrow `media_asset` of v71.
+- **A photo's faces are read by key** (`CatalogStore.photoFaces(of:)`): the photo menus and the
+  Info pane read the faces of exactly the targets and of their present copies when the
+  targets change and after each People state, and the Person sheet reads its row of a
+  person's newest faces as it opens (`newestFaces(of:limit:)`). No surface holds every face.
 - **What the People UI reads:** `CatalogPeopleState` is built off the main actor with
   everything its surfaces look up already derived: the visible and the hidden people in
-  gallery order, the names the Person sheet suggests, each person's index, and each person's
-  newest faces for the sheet. The hard rules (`mergeRefusal`, `moveRefusal`, `sheetRefusal`)
+  gallery order, the names the Person sheet suggests, and each person's index. The hard rules (`mergeRefusal`, `moveRefusal`, `sheetRefusal`)
   are functions over that state, so the window holds no second index to keep in step with
   it. A gallery cell renders from its own person and selection alone and is equal to the
   cell it replaces while they are, so a People update, published every few seconds while
@@ -387,7 +411,7 @@ A face on any identical copy of a photo is the photo's (ADR 0054; owner, 2026-11
 are still read from each copy's own preview and stay on that copy, and the user names a face on
 the copy in front of them. A person's photos, People and the People filter find a photo by a
 face on any of its present copies (`PhotoFaceSQL`), and a person's photo count counts the photo
-once (`PeopleSnapshot.photos`), so a photo mirrored by an Immich account is not two photos of
+once (`PeopleSnapshot.computedGalleryFacts`), so a photo mirrored by an Immich account is not two photos of
 that person.
 
 **Each copy is read for its own faces** (2026-11-15). Identical bytes are not identical
@@ -408,7 +432,7 @@ face, seeking each file with one, cost 188 M instructions of the snapshot at 10,
 with the faces, the column costs 24 M and the 257 photos with copies 47 M (2026-11-16):
 - **A photo's faces** (Info's People section, the photo menus, `SelectionFaces`) are the shown
   file's own faces, then, for each visible person a present copy holds and this file does not,
-  that copy's face, from the first copy in shown order (`CatalogPeopleState.faces(of:)`). Another
+  that copy's face, from the first copy in shown order (`PhotoFaces.faces(of:)`). Another
   copy's unidentified faces are not listed: they are this file's own detections, read again
   from other pixels. Several selected copies list a face once.
 - **A face's box belongs to its own copy's pixels**, so it is outlined only where that copy
@@ -418,7 +442,7 @@ with the faces, the column costs 24 M and the 257 photos with copies 47 M (2026-
   takes that copy's name, and the person leaves this copy's list unless its own face holds
   them; naming this copy's own face is the way to give it the person.
 - **Nothing is counted twice:** a person's photo count and the Person sheet's row count and
-  show each photo once (`PeopleSnapshot.photoOf`, `PeopleStateBuilder.onePerPhoto`); a face's
+  show each photo once (`PeopleSnapshot.photoOf`, `CatalogStore.newestFaces(of:limit:)`); a face's
   likeness is to the person's faces in other photos only, never to its own photo's other copy
   or stack file (`FaceAssignmentPolicy.assign(photoOf:)`); and the unchecked tally counts a
   photo once while any present copy of it is unread (`PreviewFaceSQL.uncheckedSQL`). A

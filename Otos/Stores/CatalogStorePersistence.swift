@@ -591,6 +591,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.peopleGalleryMigrationIdentifier) { db in
+            for statement in CatalogSchema.peopleGalleryStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

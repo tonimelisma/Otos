@@ -120,7 +120,7 @@ struct PhotoCopiesTests {
     /// copy, with that copy's face: its box is of that copy's pixels, so it is outlined only
     /// where that copy shows, and an act on it acts on that copy. Another copy's unidentified
     /// faces are not listed, a held act on the other copy's face shows on this one, two copies
-    /// selected list the face once, and the Person sheet's row shows the photo once.
+    /// selected list the face once, and the person's photo is counted once.
     @Test func aPhotoShowsThePeopleNamedOnItsCopiesWithTheirOwnFaces() {
         typealias Fixture = FaceAssignmentPolicyTests
         let shown = Fixture.face("IMG_1.JPG", toward: [0: 1], at: 0)
@@ -132,22 +132,25 @@ struct PhotoCopiesTests {
         let (library, account) = (shown.id.asset, named.id.asset)
         snapshot.copies = [[library, account]]
         snapshot.photoOf = [account: library]
-        let state = PeopleStateBuilder.state(from: snapshot)
+        let state = PeopleStateTests.state(snapshot)
+        let faces = PhotoFaces(
+            snapshot: snapshot, tiles: PeopleStateTests.tiles(snapshot), files: [library, account],
+            copies: [library: [account], account: [library]]
+        )
 
         // Ian is on both: the library's own face. Sam is named only on the account's.
-        #expect(state.faces(of: library).map(\.id) == [shown.id, ian.id, named.id])
-        #expect(state.faces(of: library).last?.person == Fixture.sam)
-        #expect(state.faces(of: account).map(\.id) == [named.id, unidentified.id, ianOnCopy.id])
-        #expect(state.selectionFaces(for: [library, account]).faces.map(\.id)
+        #expect(faces.faces(of: library).map(\.id) == [shown.id, ian.id, named.id])
+        #expect(faces.faces(of: library).last?.person == Fixture.sam)
+        #expect(faces.faces(of: account).map(\.id) == [named.id, unidentified.id, ianOnCopy.id])
+        #expect(faces.selectionFaces(for: [library, account]).faces.map(\.id)
             == [shown.id, ian.id, named.id, unidentified.id, ianOnCopy.id])
-        #expect(state.face(named.id)?.id.asset == account, "the face is the account copy's")
+        #expect(faces.face(named.id)?.id.asset == account, "the face is the account copy's")
         #expect(state.person(Fixture.sam)?.media.total == 1)
         #expect(state.person(Fixture.ian)?.media.total == 1)
-        #expect(state.person(Fixture.ian)?.newestFaces.count == 1, "one face per photo")
 
         // `This Is Not Sam` held on the account's face: the library no longer lists her, and
         // the face, unidentified now, is the account's own.
-        let held = state.overlaying(PeopleOverlayEffect(faces: [named.id: .person(nil)]))
+        let held = faces.overlaying([named.id: .person(nil)])
         #expect(held.faces(of: library).map(\.id) == [shown.id, ian.id])
         #expect(held.faces(of: account).first?.person == nil)
     }
@@ -200,21 +203,22 @@ struct PhotoCopiesTests {
         try await digest([b])
         let named = FaceID(asset: b, index: 0)
         let sam = try #require(try await store.perform(.moveToNewPerson([named], name: "Sam")).person)
-        var state = try await PeopleStateBuilder.state(from: store.peopleSnapshot(availableLibraryPaths: paths))
-        #expect(state.faces(of: a).map(\.id) == [named], "a, not yet read, shows the name on b")
-        #expect(state.unchecked == MediaCount(photos: 2))
+        var faces = try await store.photoFaces(of: [a], landedThrough: 0)
+        #expect(faces.faces(of: a).map(\.id) == [named], "a, not yet read, shows the name on b")
+        #expect(try await store.uncheckedForFaces(availableLibraryPaths: paths) == MediaCount(photos: 2))
 
         try await library.readFaces([library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.3)])])
         try await digest([a])
         let own = FaceID(asset: a, index: 0)
-        let snapshot = try await store.peopleSnapshot(availableLibraryPaths: paths)
+        let snapshot = try await store.peopleSnapshot()
         #expect(snapshot.faces.first { $0.id == named }?.assignment == .user(sam), "the user's word survives")
-        state = PeopleStateBuilder.state(from: snapshot)
-        #expect(state.faces(of: a).map(\.id) == [own, named])
+        faces = try await store.photoFaces(of: [a], landedThrough: 0)
+        #expect(faces.faces(of: a).map(\.id) == [own, named])
 
-        state = try await PeopleAssignment.settle(store: store, libraries: libraries)
-        #expect(state.faces(of: a).map(\.id) == [own])
-        #expect(state.faces(of: a).first?.person == sam)
+        let state = try await PeopleAssignment.settle(store: store, libraries: libraries)
+        faces = try await store.photoFaces(of: [a], landedThrough: 0)
+        #expect(faces.faces(of: a).map(\.id) == [own])
+        #expect(faces.faces(of: a).first?.person == sam)
         #expect(state.person(sam)?.media.total == 1)
         #expect(state.unchecked == MediaCount(photos: 1))
         await store.shutdown()

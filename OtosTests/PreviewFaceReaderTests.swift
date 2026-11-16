@@ -97,7 +97,7 @@ struct PreviewFaceReaderTests {
         let still = library.id("a.jpg")
         #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
         // The video is not the preview reader's; enrichment owes its faces (ENR-031).
-        #expect(try await library.store.peopleSnapshot(availableLibraryPaths: [library.rootPath]).unchecked == MediaCount(photos: 1, videos: 1))
+        #expect(try await library.store.peopleGallery(availableLibraryPaths: [library.rootPath])?.unchecked == MediaCount(photos: 1, videos: 1))
 
         try await Self.render(still, in: library, editRevision: 0)
         let first = try await library.store.previewFaceCandidates(limit: 10).candidates
@@ -105,7 +105,7 @@ struct PreviewFaceReaderTests {
         #expect(first.first?.recipe == .neutral)
         #expect(try await library.store.applyPreviewFaces(first.map { PreviewFaceResult(candidate: $0, faces: .noneFound) }) == 1)
         #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
-        #expect(try await library.store.peopleSnapshot(availableLibraryPaths: [library.rootPath]).unchecked == MediaCount(videos: 1))
+        #expect(try await library.store.peopleGallery(availableLibraryPaths: [library.rootPath])?.unchecked == MediaCount(videos: 1))
 
         let saved = try #require(try await library.store.setEditRecipe(Self.leftHalf, for: still).saved)
         try await Self.render(still, in: library, editRevision: saved.revision)
@@ -144,15 +144,18 @@ struct PreviewFaceReaderTests {
         let face = FaceID(asset: still, index: 0)
         #expect(try await library.readFaces([library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.6)])]) == 1)
         let unedited = FacePreview(name: "preview-a.jpg.heic", recipe: .neutral)
-        #expect(try await library.store.peopleSnapshot().tiles[face]?.preview == unedited)
+        func tile() async throws -> FaceTile? {
+            try await library.store.photoFaces(of: [still], landedThrough: 0).face(face)?.tile
+        }
+        #expect(try await tile()?.preview == unedited)
 
         let saved = try #require(try await library.store.setEditRecipe(Self.leftHalf, for: still).saved)
-        #expect(try await library.store.peopleSnapshot().tiles[face]?.preview == unedited)
+        #expect(try await tile()?.preview == unedited)
         try await Self.render(still, in: library, editRevision: saved.revision, preview: unedited.name)
-        #expect(try await library.store.peopleSnapshot().tiles[face]?.preview == FacePreview(name: unedited.name, recipe: Self.leftHalf))
+        #expect(try await tile()?.preview == FacePreview(name: unedited.name, recipe: Self.leftHalf))
 
         _ = try await library.store.setEditRecipe(EditRecipe(quarterTurns: 1), for: still)
-        let owed = try #require(try await library.store.peopleSnapshot().tiles[face])
+        let owed = try #require(try await tile())
         #expect(owed.preview == nil)
         await library.store.shutdown()
     }

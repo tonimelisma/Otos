@@ -257,7 +257,8 @@ enum StallReproduction {
         try await replay("samePhotoEvidence", limit: involved.count) { try await store.samePhotoEvidence(for: involved).count }
         try await replay("samePhotoCopies", limit: involved.count) { try await store.samePhotoCopies(for: involved).count }
         try await replay("duplicateCopies") { try await store.duplicateCopies(availableLibraryPaths: available).copies.count }
-        try await replay("peopleSnapshot") { try await store.peopleSnapshot(availableLibraryPaths: available).faces.count }
+        try await replay("peopleSnapshot") { try await store.peopleSnapshot().faces.count }
+        try await replay("peopleGallery") { try await store.peopleGallery(availableLibraryPaths: available)?.people.count ?? 0 }
         try await replay("mirrorProbes") { try await store.mirrorProbes(account: catalog.account).reduce(0) { $0 + $1.candidates.count } }
 
         // The window's reads for each scope change.

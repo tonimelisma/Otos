@@ -187,22 +187,26 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     /// those kinds only when a written row holds a face, so a new photo's date, a render of a
     /// photo nobody is in, never wakes People (`PeopleAssignment.inputs`).
     static let faceTiles = CatalogChangedFacts(rawValue: 1 << 16)
+    /// The People gallery's stored facts (`person_summary`, ADR 0047): each person's photo
+    /// count and newest face, which People writes after a pass and only the gallery's read
+    /// reads, so People's own write never wakes People.
+    static let peopleGallery = CatalogChangedFacts(rawValue: 1 << 17)
 
     static let all: CatalogChangedFacts = [
         .membership, .captureDate, .kindAndFormat, .grouping, .location, .placeNames, .faces, .copies,
         .searchReadings, .detail, .choices, .images, .mediaRecord, .stacks, .duplicateFacts, .searchContent,
-        .faceTiles,
+        .faceTiles, .peopleGallery,
     ]
 
     /// How many kinds there are: the bits `all` sets.
-    static let bitCount = 17
+    static let bitCount = 18
 
     static let names: [(CatalogChangedFacts, String)] = [
         (.membership, "membership"), (.captureDate, "captureDate"), (.kindAndFormat, "kindAndFormat"),
         (.grouping, "grouping"), (.location, "location"), (.placeNames, "placeNames"), (.faces, "faces"),
         (.copies, "copies"), (.searchReadings, "searchReadings"), (.detail, "detail"), (.choices, "choices"),
         (.images, "images"), (.mediaRecord, "mediaRecord"), (.stacks, "stacks"), (.duplicateFacts, "duplicateFacts"),
-        (.searchContent, "searchContent"), (.faceTiles, "faceTiles"),
+        (.searchContent, "searchContent"), (.faceTiles, "faceTiles"), (.peopleGallery, "peopleGallery"),
     ]
 
     /// What each kind's writes change, as the database events they make (plan 0116 stage 2).
@@ -316,6 +320,12 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
             ]),
             .insert(tableName: "search_text"), .delete(tableName: "search_text"),
             .update(tableName: "search_text", columnNames: ["library_root_id", "relative_path", "source", "lines"]),
+        ]),
+        (.peopleGallery, [
+            .insert(tableName: "person_summary"), .delete(tableName: "person_summary"),
+            .update(tableName: "person_summary", columnNames: [
+                "person_id", "photos", "videos", "cover_library_root_id", "cover_relative_path", "cover_face_index",
+            ]),
         ]),
     ]
 
@@ -1553,17 +1563,16 @@ extension CatalogStore {
         }
     }
 
-    /// Everything People reads, in one transaction: each face with its photo's capture
-    /// instant, its tile, its vector's number, whose word its person is and the user's acts on
-    /// it, the people, and the stills in `availableLibraryPaths` whose faces are not yet read.
-    /// Never a vector: the face rows are narrow (v66), and `faceEmbeddings(after:limit:)` reads
-    /// vectors apart. Faces of libraries no longer cataloged are left out. A photo with a face
-    /// row no reading writes (no vector row, an assignment no case holds) is left out whole and
-    /// owes its faces again (`oweFacesAgain`).
-    func peopleSnapshot(availableLibraryPaths: Set<LibraryRootPath> = []) async throws -> PeopleSnapshot {
+    /// Everything assignment reads, in one transaction: each face with its photo's capture
+    /// instant, its vector's number, whose word its person is and the user's acts on it, the
+    /// people and the gallery facts stored for them. Never a vector — the face rows are narrow
+    /// (v66), and `faceEmbeddings(after:limit:)` reads vectors apart — and never a tile, which
+    /// the surfaces read by key. Faces of libraries no longer cataloged are left out. A photo
+    /// with a face row no reading writes (no vector row, an assignment no case holds) is left
+    /// out whole and owes its faces again (`oweFacesAgain`).
+    func peopleSnapshot() async throws -> PeopleSnapshot {
         let pathsByRowID = roots.pathsByRowID
         let rowIDs = roots.rowIDSnapshot()
-        let faceRootIDs = faceRootIDs(availableLibraryPaths)
         // Stacks of every root read for faces, mounted or not: a stack does not change when its
         // volume is unmounted, so availability never moves which file stands for a photo.
         let allFaceRootIDs = Set(roots.values.filter(\.root.kind.readsFaces).map(\.rowID))
@@ -1576,7 +1585,6 @@ extension CatalogStore {
                 rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
             }
             var faces: [PeopleSnapshot.Face] = []
-            var tiles: [FaceID: FaceTile] = [:]
             var likeness: [FaceID: Float] = [:]
             var keyPhotos: [PersonID: FaceID] = [:]
             // The digests of the files with a face and a present copy, whose copies follow.
@@ -1598,17 +1606,21 @@ extension CatalogStore {
                 ORDER BY f.library_root_id, f.relative_path, f.face_index
                 """
             )
+            // One path value per photo: a photo's faces come together in this order.
+            var lastAsset: MediaAssetID?
             while let row = try faceRows.next() {
-                let key = FaceRowKey(
-                    rootID: row[PeopleFaceColumn.rootID.rawValue],
-                    path: MediaRelativePath(rawValue: row[PeopleFaceColumn.path.rawValue]),
-                    index: row[PeopleFaceColumn.faceIndex.rawValue]
-                )
+                let rootID: Int64 = row[PeopleFaceColumn.rootID.rawValue]
+                let pathText: String = row[PeopleFaceColumn.path.rawValue]
                 if let digest = row[PeopleFaceColumn.copiedDigest.rawValue] as Data? {
                     copiedDigests.insert(digest)
                 }
+                let path = lastAsset.flatMap { $0.relativePath.rawValue == pathText ? $0.relativePath : nil }
+                    ?? MediaRelativePath(rawValue: pathText)
+                let key = FaceRowKey(rootID: rootID, path: path, index: row[PeopleFaceColumn.faceIndex.rawValue])
                 guard let rootPath = pathsByRowID[key.rootID], !malformed.contains(key.photo) else { continue }
-                let asset = MediaAssetID(libraryRootPath: rootPath, relativePath: key.path)
+                let asset = lastAsset.flatMap { $0.libraryRootPath == rootPath && $0.relativePath == path ? $0 : nil }
+                    ?? MediaAssetID(libraryRootPath: rootPath, relativePath: path)
+                lastAsset = asset
                 let vector: Int64? = row[PeopleFaceColumn.vector.rawValue]
                 let person: Int64? = row[PeopleFaceColumn.personID.rawValue]
                 guard let vector,
@@ -1620,13 +1632,13 @@ extension CatalogStore {
                     continue
                 }
                 let id = FaceID(asset: asset, index: key.index)
-                let capture: Double? = row[PeopleFaceColumn.captureLocal.rawValue]
                 faces.append(PeopleSnapshot.Face(
                     id: id,
-                    captureSeconds: capture,
+                    captureSeconds: row[PeopleFaceColumn.captureLocal.rawValue],
                     vector: vector,
                     assignment: assignment,
-                    rejected: rejections[key] ?? []
+                    rejected: rejections[key] ?? [],
+                    isInVideo: (row[PeopleFaceColumn.isVideo.rawValue] as Int) != 0
                 ))
                 if let stored = row[PeopleFaceColumn.likeness.rawValue] as Double? {
                     likeness[id] = Float(stored)
@@ -1634,18 +1646,6 @@ extension CatalogStore {
                 if let person, (row[PeopleFaceColumn.isKeyPhoto.rawValue] as Int) != 0 {
                     keyPhotos[PersonID(rawValue: person)] = id
                 }
-                tiles[id] = FaceTile(
-                    id: id,
-                    box: CGRect(
-                        x: row[PeopleFaceColumn.boxX.rawValue] as Double,
-                        y: row[PeopleFaceColumn.boxY.rawValue] as Double,
-                        width: row[PeopleFaceColumn.boxWidth.rawValue] as Double,
-                        height: row[PeopleFaceColumn.boxHeight.rawValue] as Double
-                    ),
-                    preview: Self.facePreview(row, asset: asset),
-                    captureSeconds: capture,
-                    isInVideo: (row[PeopleFaceColumn.isVideo.rawValue] as Int) != 0
-                )
             }
             // The present copies of each photo with a face, by the digest they share (ADR 0054).
             var copies: [[PeopleSnapshot.Copy]] = []
@@ -1668,6 +1668,7 @@ extension CatalogStore {
                 db,
                 sql: "SELECT id, name, birthday, is_hidden, is_favorite FROM person ORDER BY id"
             ).map(Self.person)
+            let galleryFacts = try Self.storedGalleryFacts(db: db, pathsByRowID: pathsByRowID)
             let stackRoots = pathsByRowID.filter { allFaceRootIDs.contains($0.key) }
             let stacks = try PhotoStackSQL.build(rootPaths: stackRoots, db: db).stacks
             let photoOf = PeopleSnapshot.photos(stackKeys: stacks.keyOfMember, copies: copies)
@@ -1676,15 +1677,14 @@ extension CatalogStore {
             let left = { (id: FaceID) in
                 rowIDs[id.asset.libraryRootPath].map { !malformed.contains(FaceRowKey.Photo(rootID: $0, path: id.asset.relativePath)) } ?? true
             }
-            var snapshot = try PeopleSnapshot(
-                faces: faces.filter { left($0.id) },
-                tiles: tiles.filter { left($0.key) },
+            var snapshot = PeopleSnapshot(
+                faces: malformed.isEmpty ? faces : faces.filter { left($0.id) },
                 people: people,
-                likeness: likeness.filter { left($0.key) },
+                likeness: malformed.isEmpty ? likeness : likeness.filter { left($0.key) },
                 keyPhotos: keyPhotos.filter { left($0.value) },
+                galleryFacts: galleryFacts,
                 photoOf: photoOf,
-                copies: PeopleSnapshot.ranked(copies),
-                unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db)
+                copies: PeopleSnapshot.ranked(copies)
             )
             // In the same transaction as the faces: what this snapshot could have named.
             snapshot.vectorHorizon = try Int64.fetchOne(db, sql: "SELECT max(id) FROM face_embedding") ?? 0
@@ -1697,6 +1697,124 @@ extension CatalogStore {
             try await oweFacesAgain(Set(photos))
         }
         return snapshot
+    }
+
+    /// Every person's gallery facts as stored (`person_summary`, v73).
+    private static func storedGalleryFacts(
+        db: Database, pathsByRowID: [Int64: LibraryRootPath]
+    ) throws -> [PersonID: PersonGalleryFacts] {
+        var facts: [PersonID: PersonGalleryFacts] = [:]
+        for row in try Row.fetchAll(db, sql: """
+        SELECT person_id, photos, videos, cover_library_root_id, cover_relative_path, cover_face_index
+        FROM person_summary
+        """) {
+            facts[PersonID(rawValue: row[0])] = PersonGalleryFacts(
+                media: MediaCount(photos: row[1], videos: row[2]),
+                newestFace: Self.faceID(rootID: row[3], path: row[4], index: row[5], pathsByRowID: pathsByRowID)
+            )
+        }
+        return facts
+    }
+
+    private static func faceID(rootID: Int64?, path: String?, index: Int?, pathsByRowID: [Int64: LibraryRootPath]) -> FaceID? {
+        guard let rootID, let path, let index, let root = pathsByRowID[rootID] else { return nil }
+        return FaceID(asset: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path)), index: index)
+    }
+
+    /// Writes each person's gallery facts that differ from what `stored` holds (ADR 0047,
+    /// "What the People UI reads"): `computed` is every person's, from the same read. A
+    /// background write in pages (`writeInPages`), announcing `.peopleGallery`, which only the
+    /// gallery's read takes up, so the write never starts another assignment. A person deleted
+    /// since the read is left alone, and a newest face deleted since is written as none, until
+    /// the pass that deletion rings names another. Returns the people written.
+    @discardableResult
+    func writePeopleGalleryFacts(
+        _ computed: [PersonID: PersonGalleryFacts],
+        stored: [PersonID: PersonGalleryFacts]
+    ) async throws -> Int {
+        let rowIDs = roots.rowIDSnapshot()
+        let writes = computed.compactMap { person, facts in
+            stored[person] == facts ? nil : (person, facts)
+        }.sorted { $0.0 < $1.0 }
+        guard !writes.isEmpty else { return 0 }
+        let (rows, _) = try await writeInPages(writes, state: 0, announcing: .peopleGallery) { write, _, db in
+            let (person, facts) = write
+            let cover = facts.newestFace.flatMap { face in
+                rowIDs[face.asset.libraryRootPath].map { (rootID: $0, path: face.asset.relativePath.rawValue, index: face.index) }
+            }
+            try db.execute(
+                sql: """
+                INSERT INTO person_summary
+                    (person_id, photos, videos, cover_library_root_id, cover_relative_path, cover_face_index)
+                SELECT p.id, ?, ?, f.library_root_id, f.relative_path, f.face_index
+                FROM person p
+                LEFT JOIN face f ON f.library_root_id = ? AND f.relative_path = ? AND f.face_index = ?
+                WHERE p.id = ?
+                ON CONFLICT(person_id) DO UPDATE SET
+                    photos = excluded.photos, videos = excluded.videos,
+                    cover_library_root_id = excluded.cover_library_root_id,
+                    cover_relative_path = excluded.cover_relative_path,
+                    cover_face_index = excluded.cover_face_index
+                """,
+                arguments: [
+                    facts.media.photos, facts.media.videos, cover?.rootID, cover?.path, cover?.index, person.rawValue,
+                ]
+            )
+            return db.changesCount
+        }
+        return rows
+    }
+
+    /// What the People gallery paints from (ADR 0047, "What the People UI reads"), in one
+    /// transaction: every person with the gallery facts People stored for them and the tiles of
+    /// their key photo and newest face, each read by key; the faces that define each person
+    /// (`idx_face_anchor`); the unchecked tally of `availableLibraryPaths`; and whether any face
+    /// is stored. Never a walk of every face. Nil while people exist and People has stored no
+    /// facts for any of them: the gallery is not known yet.
+    func peopleGallery(availableLibraryPaths: Set<LibraryRootPath>) async throws -> PeopleGalleryRead? {
+        let pathsByRowID = roots.pathsByRowID
+        let faceRootIDs = faceRootIDs(availableLibraryPaths)
+        return try await database().readFreeingConnection { db -> PeopleGalleryRead? in
+            let rows = try Row.fetchAll(db, sql: PeopleGallerySQL.people)
+            guard rows.isEmpty || rows.contains(where: { ($0[5] as Int) != 0 }) else { return nil }
+            let keyAt = PeopleGallerySQL.keyPhotoTileAt
+            let coverAt = keyAt + FaceTileColumn.allCases.count
+            let people = try rows.map { row -> PeopleGalleryRead.Person in
+                let person = try Self.person(row)
+                let isKnown = (row[5] as Int) != 0
+                // A key photo counts while its face is still a face out of the Trash.
+                let keyCounts = (row[8] as Int?).map { $0 != 0 } ?? false
+                return PeopleGalleryRead.Person(
+                    id: person.id, name: person.name, birthday: person.birthday,
+                    isHidden: person.isHidden, isFavorite: person.isFavorite,
+                    facts: isKnown ? PersonGalleryFacts(
+                        media: MediaCount(photos: row[6], videos: row[7]),
+                        newestFace: Self.faceTile(row, at: coverAt, pathsByRowID: pathsByRowID)?.id
+                    ) : nil,
+                    keyPhoto: keyCounts ? Self.faceTile(row, at: keyAt, pathsByRowID: pathsByRowID) : nil,
+                    newest: Self.faceTile(row, at: coverAt, pathsByRowID: pathsByRowID)
+                )
+            }
+            let anchors = try Row.fetchAll(db, sql: PeopleGallerySQL.anchors).compactMap { row -> PeopleGalleryRead.Anchor? in
+                guard let root = pathsByRowID[row[1]] else { return nil }
+                return PeopleGalleryRead.Anchor(
+                    person: PersonID(rawValue: row[0]),
+                    face: PersonAnchor(
+                        photo: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[2])),
+                        isInVideo: (row[5] as Int) != 0,
+                        captureSeconds: row[4]
+                    ),
+                    isUsers: (row[3] as Int) == FaceAssignmentColumn.user.rawValue
+                )
+            }
+            let hasFaces = try Bool.fetchOne(db, sql: PeopleGallerySQL.hasFaces) ?? false
+            return try PeopleGalleryRead(
+                people: people,
+                anchors: anchors,
+                unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db),
+                hasFaces: hasFaces
+            )
+        }
     }
 
     /// Clears the faces stamp of each photo holding a face row no reading writes — found by the
@@ -1813,27 +1931,169 @@ extension CatalogStore {
         return (rows, state)
     }
 
+    /// The faces of `files` and of their other present copies (ADR 0054) as the photo menus and
+    /// the Info pane show them, read by key: each file's faces of visible people and its
+    /// unidentified faces, in reading order, with their tiles; none marked not a face, none of
+    /// a photo in the Trash or of a Live Photo's movie. `landedThrough` is stamped on the read
+    /// as the caller's count of the People writes it had answered when it asked.
+    func photoFaces(of files: [MediaAssetID], landedThrough: UInt64) async throws -> PhotoFaces {
+        let pathsByRowID = roots.pathsByRowID
+        let rowIDs = roots.rowIDSnapshot()
+        let accountRowIDs = Set(roots.values.filter { $0.root.kind == .immichAccount }.map(\.rowID))
+        let keys = Array(Set(files)).compactMap { file in
+            rowIDs[file.libraryRootPath].map { (file, $0) }
+        }
+        guard !keys.isEmpty else {
+            return PhotoFaces(photos: files, own: [:], landedThrough: landedThrough)
+        }
+        return try await database().readFreeingConnection { db in
+            let facesOf = try db.cachedStatement(sql: """
+            SELECT \(FaceTileColumn.selectList(face: "f", asset: "m")), f.person_id
+            FROM face f
+            JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+            LEFT JOIN person p ON p.id = f.person_id
+            WHERE f.library_root_id = ? AND f.relative_path = ?
+              AND f.is_not_face = 0 AND m.trash_path IS NULL AND NOT \(LivePhotoSQL.isPairedMotion("m"))
+              AND (p.id IS NULL OR p.is_hidden = 0)
+            ORDER BY f.face_index
+            """)
+            let digestOf = try db.cachedStatement(sql: """
+            SELECT CASE WHEN has_copies = 1 THEN content_sha1 END FROM media_asset
+            WHERE library_root_id = ? AND relative_path = ?
+            """)
+            let copiesOfDigest = try db.cachedStatement(sql: PhotoFaceSQL.presentCopiesOfDigest)
+            var own: [MediaAssetID: [PhotoFace]] = [:]
+            func read(_ file: MediaAssetID, rootID: Int64) throws {
+                guard own[file] == nil else { return }
+                own[file] = try Row.fetchAll(facesOf, arguments: [rootID, file.relativePath.rawValue]).compactMap { row in
+                    Self.faceTile(row, at: 0, pathsByRowID: pathsByRowID).map {
+                        PhotoFace(tile: $0, person: (row[FaceTileColumn.allCases.count] as Int64?).map(PersonID.init(rawValue:)))
+                    }
+                }
+            }
+            var copies: [MediaAssetID: [MediaAssetID]] = [:]
+            for (file, rootID) in keys {
+                try read(file, rootID: rootID)
+                guard let digest = try Data.fetchOne(digestOf, arguments: [rootID, file.relativePath.rawValue]) else { continue }
+                let group = try Row.fetchAll(copiesOfDigest, arguments: [digest]).compactMap { row -> PeopleSnapshot.Copy? in
+                    let copyRoot: Int64 = row[0]
+                    guard let path = pathsByRowID[copyRoot] else { return nil }
+                    return PeopleSnapshot.Copy(
+                        asset: MediaAssetID(libraryRootPath: path, relativePath: MediaRelativePath(rawValue: row[1])),
+                        rootID: copyRoot,
+                        isAccount: accountRowIDs.contains(copyRoot)
+                    )
+                }
+                guard group.count > 1 else { continue }
+                let others = PeopleSnapshot.ranked([group])[0].filter { $0 != file }
+                for (copy, copyRoot) in zip(group.map(\.asset), group.map(\.rootID)) where copy != file {
+                    try read(copy, rootID: copyRoot)
+                }
+                copies[file] = others
+            }
+            return PhotoFaces(photos: files, own: own, copies: copies, landedThrough: landedThrough)
+        }
+    }
+
+    /// Up to `limit` of `person`'s faces, newest first, one per photo — a photo's copies (ADR
+    /// 0054) and a stack's files (ADR 0052) are one photo — out of the Trash and still faces:
+    /// the row the Person sheet shows, read by key when it opens.
+    func newestFaces(of person: PersonID, limit: Int) async throws -> [FaceTile] {
+        let pathsByRowID = roots.pathsByRowID
+        let faceRootPaths = pathsByRowID.filter { rowID, _ in
+            roots.values.contains { $0.rowID == rowID && $0.root.kind.readsFaces }
+        }
+        return try await database().readFreeingConnection { db in
+            let rows = try Row.fetchAll(db, sql: """
+            SELECT \(FaceTileColumn.selectList(face: "f", asset: "m")),
+                   CASE WHEN m.has_copies = 1 THEN m.content_sha1 END,
+                   CASE WHEN m.best_kind IN ('raw', 'image') THEN m.burst_identifier END
+            FROM face f INDEXED BY idx_face_person_photo
+            JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+            WHERE f.person_id = ? AND f.is_not_face = 0
+              AND m.trash_path IS NULL AND NOT \(LivePhotoSQL.isPairedMotion("m"))
+            """, arguments: [person.rawValue])
+            // One face of the person with what says which photo it is one of.
+            struct Candidate {
+                let tile: FaceTile
+                let digest: Data?
+                let rootID: Int64
+                let burst: String?
+            }
+            let extra = FaceTileColumn.allCases.count
+            var faces = rows.compactMap { row -> Candidate? in
+                Self.faceTile(row, at: 0, pathsByRowID: pathsByRowID).map {
+                    Candidate(tile: $0, digest: row[extra], rootID: row[FaceTileColumn.rootID.rawValue], burst: row[extra + 1])
+                }
+            }
+            faces.sort { FaceTile.newestFirst($0.tile, $1.tile) }
+            // Copies share their digest; the files of a stack its key, from the stacks of the
+            // newest files only, the ones the row can show.
+            var seen: Set<Data> = []
+            var byDigest = faces.filter { $0.digest.map { seen.insert($0).inserted } ?? true }
+            byDigest = Array(byDigest.prefix(limit * 4))
+            let stackRows = byDigest.map { face in
+                CatalogQueryGateway.OrderedAssetIDRow(
+                    libraryRootID: face.rootID, relativePath: face.tile.id.asset.relativePath,
+                    captureLocalTime: face.tile.captureLocalTime, coordinate: nil, burstIdentifier: face.burst
+                )
+            }
+            let stacks = try PhotoStackSQL.build(rootPaths: faceRootPaths, holding: stackRows, db: db).stacks.keyOfMember
+            var photos: Set<MediaAssetID> = []
+            return Array(byDigest.map(\.tile).filter { photos.insert(stacks[$0.id.asset] ?? $0.id.asset).inserted }.prefix(limit))
+        }
+    }
+
+    /// The tile read from `row`'s `FaceTileColumn`s starting at `offset`; nil where the face is
+    /// absent (an outer join that matched none) or its library is no longer cataloged.
+    private static func faceTile(_ row: Row, at offset: Int, pathsByRowID: [Int64: LibraryRootPath]) -> FaceTile? {
+        func column(_ column: FaceTileColumn) -> Int {
+            offset + column.rawValue
+        }
+        guard let rootID = row[column(.rootID)] as Int64?, let root = pathsByRowID[rootID],
+              let path = row[column(.path)] as String?, let index = row[column(.faceIndex)] as Int?
+        else {
+            return nil
+        }
+        let asset = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
+        return FaceTile(
+            id: FaceID(asset: asset, index: index),
+            box: CGRect(
+                x: row[column(.boxX)] as Double,
+                y: row[column(.boxY)] as Double,
+                width: row[column(.boxWidth)] as Double,
+                height: row[column(.boxHeight)] as Double
+            ),
+            preview: facePreview(row, at: offset, asset: asset),
+            captureSeconds: row[column(.captureLocal)],
+            isInVideo: (row[column(.isVideo)] as Int? ?? 0) != 0
+        )
+    }
+
     /// The stored image a face tile is cut from. A video's face: the image of its stored face
     /// frames it was read in, none for a face kept from an earlier reading. A still's: its
     /// stored preview, with the edit it shows, none before one is made, while a rendering of a
     /// newer edit is owed, or when the edit cannot be read (logged). The tile then shows its
     /// placeholder.
-    private static func facePreview(_ row: Row, asset: MediaAssetID) -> FacePreview? {
-        if let frameIndex = row[PeopleFaceColumn.frameIndex.rawValue] as Int? {
-            return (row[PeopleFaceColumn.faceFramesPath.rawValue] as String?).map {
+    private static func facePreview(_ row: Row, at offset: Int, asset: MediaAssetID) -> FacePreview? {
+        func column(_ column: FaceTileColumn) -> Int {
+            offset + column.rawValue
+        }
+        if let frameIndex = row[column(.frameIndex)] as Int? {
+            return (row[column(.faceFramesPath)] as String?).map {
                 FacePreview(name: $0, recipe: .neutral, image: frameIndex)
             }
         }
-        guard let name: String = row[PeopleFaceColumn.previewPath.rawValue],
-              (row[PeopleFaceColumn.previewEditIsKnown.rawValue] as Int) != 0
+        guard let name: String = row[column(.previewPath)],
+              (row[column(.previewEditIsKnown)] as Int? ?? 0) != 0
         else {
             return nil
         }
-        let renderedRevision: Int64 = row[PeopleFaceColumn.renderedRevision.rawValue]
+        let renderedRevision: Int64 = row[column(.renderedRevision)]
         do {
             let recipe = renderedRevision == 0
                 ? .neutral
-                : try editRecipe(json: row[PeopleFaceColumn.editRecipeJSON.rawValue]) ?? .neutral
+                : try editRecipe(json: row[column(.editRecipeJSON)]) ?? .neutral
             return FacePreview(name: name, recipe: recipe)
         } catch {
             OtosLog.catalog.errorOperation("people.faceTile", phase: "recipeUnreadable", fields: [

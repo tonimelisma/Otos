@@ -2562,6 +2562,47 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// v73: what the People gallery paints from (ADR 0047, "What the People UI reads"), so its
+    /// read is of the people and the faces that define them, never of every face joined to its
+    /// photo (7.5–7.9 s of the 10.6 s gallery read on the owner's catalog, cold).
+    /// - `person_summary`: each person's photo and video counts and newest face, which
+    ///   `PeopleAssignment` computes from its read and writes when they change. The newest
+    ///   face follows its face's moves and is cleared when the face is deleted, until the next
+    ///   pass names another; the row goes with its person.
+    /// - `idx_person_summary_cover`: the face side of that foreign key, so deleting or moving a
+    ///   face seeks the summary naming it.
+    /// - `idx_face_anchor`: the faces on the user's word or a seed (`FaceAssignmentColumn`
+    ///   3 and 2), the hard rules' facts, about 5,700 of the owner's 103,135 faces, covering
+    ///   what the gallery reads of them, so only their photos' rows are sought.
+    ///
+    /// Frozen as literals: what this migration did never changes with later code.
+    static let peopleGalleryMigrationIdentifier = "v73_people_gallery"
+
+    static let peopleGalleryStatements: [String] = [
+        """
+        CREATE TABLE person_summary (
+            person_id INTEGER PRIMARY KEY REFERENCES person(id) ON DELETE CASCADE,
+            photos INTEGER NOT NULL,
+            videos INTEGER NOT NULL,
+            cover_library_root_id INTEGER,
+            cover_relative_path TEXT,
+            cover_face_index INTEGER,
+            FOREIGN KEY (cover_library_root_id, cover_relative_path, cover_face_index)
+                REFERENCES face(library_root_id, relative_path, face_index)
+                ON UPDATE CASCADE ON DELETE SET NULL
+        )
+        """,
+        """
+        CREATE INDEX idx_person_summary_cover
+        ON person_summary(cover_library_root_id, cover_relative_path, cover_face_index)
+        """,
+        """
+        CREATE INDEX idx_face_anchor
+        ON face(person_id, library_root_id, relative_path, assignment, is_not_face)
+        WHERE assignment IN (2, 3) AND is_not_face = 0 AND person_id IS NOT NULL
+        """,
+    ]
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

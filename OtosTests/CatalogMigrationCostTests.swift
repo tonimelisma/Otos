@@ -17,13 +17,13 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v72's derived folder tables dropped and its record removed.
-    static let newest = CatalogSchema.derivedFolderMigrationIdentifier
+    /// schema before it: v73's gallery table and anchor index dropped and its record removed.
+    static let newest = CatalogSchema.peopleGalleryMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
         [
-            "DROP TABLE derived_folder",
-            "DROP TABLE derived_rename",
+            "DROP INDEX idx_face_anchor",
+            "DROP TABLE person_summary",
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }

@@ -72,12 +72,13 @@ struct PeopleShownFirstTests {
     @Test func aFaceLeavesItsPersonAtOnceAndAnUndoFirstPutsItBack() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
         try await fixture.show(fixture.people(), scope: .allMedia)
+        try await fixture.select([fixture.hers.asset])
         var intents = fixture.model.peopleIntentStream.makeAsyncIterator()
 
         fixture.model.removeNames([fixture.hers])
-        #expect(fixture.model.peopleState.face(fixture.hers)?.person == nil)
+        #expect(fixture.model.shownTargetFaces.face(fixture.hers)?.person == nil)
         fixture.model.undoLastChange()
-        #expect(fixture.model.peopleState.face(fixture.hers)?.person == fixture.sam)
+        #expect(fixture.model.shownTargetFaces.face(fixture.hers)?.person == fixture.sam)
 
         let act = try #require(await intents.next())
         await fixture.model.applyPeopleIntentEvent(

@@ -3,82 +3,65 @@ import OSLog
 
 /// People Assignment guide
 ///
-/// This actor owns who every face is (ADR 0047, `docs/design/people.md`): it publishes the
-/// People gallery and the tally of photos not yet checked from what the catalog stores, gives
-/// each face its most likely person, and writes Otos's guesses back. They are a fact about the
-/// whole catalog, not about what the window shows, so like the duplicate groups they have
-/// their own owner and their own loop: the window's publication never waits for People, and a
-/// change of scope, filter or sort never starts a pass.
+/// This actor owns who every face is (ADR 0047, `docs/design/people.md`): it gives each face
+/// its most likely person, writes Otos's guesses back, and writes each person's gallery facts
+/// (`PersonGalleryFacts`: their photo count and newest face), from which the People gallery
+/// paints. It publishes nothing to the window: the gallery is the window's own read of the
+/// people (`PeopleGallery`), so People's first paint never waits for this owner's read or for
+/// its turn among the heavy loads. Who the faces are is a fact about the whole catalog, not
+/// about what the window shows, so like the duplicate groups it has its own owner and its own
+/// loop, and a change of scope, filter or sort never starts a pass.
 ///
 /// `CatalogProjection` asks for a pass with `request()` after a publication that took up a
-/// catalog change of a kind People reads (`inputs`); every act on faces or people is one
-/// (`CatalogStore.perform(_:)`). A request only adds to `requested`; a pass records the value
-/// it started from and covers exactly that when it succeeds, so a request made while a pass
-/// runs is never lost and runs next (ADR 0032). One loop task runs every pass off a
-/// `bufferingNewest(1)` doorbell, so passes never overlap.
+/// catalog change of a kind assignment reads (`inputs`). A request only adds to `requested`;
+/// a pass records the value it started from and covers exactly that when it succeeds, so a
+/// request made while a pass runs is never lost and runs next (ADR 0032). One loop task runs
+/// every pass off a `bufferingNewest(1)` doorbell, so passes never overlap.
 ///
-/// A pass has two steps, the second only when owed:
-/// 1. **The gallery, from what is stored.** One read of every face's row, its tile and whose
-///    word its person is — never its vector — with the people, copies, stacks and tally
-///    (`CatalogStore.peopleSnapshot`). The gallery built from it is published at once, so
-///    People paints from the stored assignment and never waits for one.
-/// 2. **Assignment, only when its inputs moved.** What assignment reads of the snapshot is
+/// A pass:
+/// 1. **Reads what assignment reads** (`CatalogStore.peopleSnapshot`): every face's row and
+///    whose word its person is — never its vector nor its tile — with the people, the gallery
+///    facts stored for them, copies and stacks.
+/// 2. **Writes the gallery facts that moved** (`CatalogStore.writePeopleGalleryFacts`), computed
+///    from scratch from the read (`PeopleSnapshot.computedGalleryFacts`). The write announces
+///    `.peopleGallery`, which assignment does not read, so it never starts another pass.
+/// 3. **Assigns, only when its inputs moved.** What assignment reads of the snapshot is
 ///    hashed (`AssignmentInputs`). The catalog keeps the hash of the last inputs whose
 ///    assignment it holds (`CatalogStore.settledPeopleAssignment`): while the two are equal,
 ///    the stored guesses are assignment's output on these inputs, and nothing runs.
 ///    Otherwise the vectors owed are read (`FaceVectors`, held across passes), assignment runs
 ///    off this actor, what it changes is written in short transactions, and the hash is
 ///    recorded. A guess is not an input, so the pass after a write that only moved guesses
-///    finds the hash equal; a write that seeded a new person, released a seed or deleted an
-///    emptied person moved an input, and the next pass assigns once more and writes nothing.
+///    finds the hash equal and only writes the gallery facts the guesses moved; a write that
+///    seeded a new person, released a seed or deleted an emptied person moved an input, and
+///    the next pass assigns once more and writes nothing.
 ///
-/// What a pass read is kept, without its tiles (`lastRead`), to answer which people the faces
-/// of the selected photos could be (`candidates(for:)`); the ranker is built from it and the
-/// vectors on the first such question, and again after either changes.
+/// What a pass read is kept (`lastRead`) to answer which people the faces of the selected
+/// photos could be (`candidates(for:)`); the ranker is built from it and the vectors on the
+/// first such question, and again after either changes.
 ///
-/// Rows only added (`CatalogStoreChange.assetsAdded`) change who no face is: they carry no
-/// face yet. They change the tally alone, so `CatalogProjection` asks for that with
-/// `requestTally()`: a tally pass reads the count by itself and republishes the last state
-/// with it, and a full pass covers it too.
-///
-/// A failed pass leaves its request outstanding for the next request to retry; what it
-/// published before failing stays published, since it is what the catalog holds. `stop()` is
-/// teardown: it ends both streams, so the loop and the consumer end with them.
+/// A failed pass leaves its request outstanding for the next request to retry. `stop()` is
+/// teardown: it ends the doorbell, so the loop ends with it.
 actor PeopleAssignment {
-    typealias Builder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws -> CatalogPeopleState
-
     /// What the People snapshot reads (`CatalogStore.peopleSnapshot`), so `CatalogProjection`
-    /// asks for a pass only when one of these moved: the faces, who they are and which photos
-    /// are checked for them; which rows are shown and which movies a Live Photo hides; the
-    /// stacks a face's photo stands for and the copies it is one of (ADR 0052, 0054); and, of a
-    /// photo that holds a face, its capture date, kind, grouping and the images its tiles are
-    /// cut from (`.faceTiles`), so a date or a render of a photo nobody is in wakes nothing. A
-    /// pass that only rebuilds the gallery costs one read: assignment runs only when what it
-    /// reads moved.
+    /// asks for a pass only when one of these moved: the faces, who they are and the people;
+    /// which rows are shown and which movies a Live Photo hides; the stacks a face's photo
+    /// stands for and the copies it is one of (ADR 0052, 0054); and, of a photo that holds a
+    /// face, its capture date, kind and grouping (`.faceTiles`), so a date of a photo nobody is
+    /// in wakes nothing. Not `.peopleGallery`, which this owner writes.
     static let inputs: CatalogChangedFacts = [
         .faces, .membership, .faceTiles, .choices, .copies, .stacks,
     ]
 
-    /// Built states, each differing from the one before; only the newest matters. One
-    /// consumer: `CatalogProjection`.
-    nonisolated let builds: AsyncStream<CatalogPeopleState>
-    private nonisolated let buildsContinuation: AsyncStream<CatalogPeopleState>.Continuation
     private nonisolated let bell: AsyncStream<Void>
     private nonisolated let doorbell: AsyncStream<Void>.Continuation
     private let store: CatalogStore
-    /// Tests replace the pass to hold it at its suspension; production assigns.
-    private let builder: Builder?
     /// Bumped by every request. Nothing decrements or clears it.
     private var requested: UInt64 = 0
     /// The `requested` value the last successful pass started from.
     private var covered: UInt64 = 0
-    /// Bumped by every request for the unchecked tally alone; a full pass covers it too.
-    private var tallyRequested: UInt64 = 0
-    /// The `tallyRequested` value the last successful pass of either kind started from.
-    private var tallyCovered: UInt64 = 0
     private var runningPasses = 0
-    private var published: CatalogPeopleState?
-    /// What the last pass read, without its tiles, for `candidates(for:)`.
+    /// What the last pass read, for `candidates(for:)`.
     private var lastRead: PeopleSnapshot?
     /// Every face's vector read so far; read on the first assignment or ranking that needs it.
     private var vectors = FaceVectors()
@@ -90,17 +73,15 @@ actor PeopleAssignment {
 
     /// True when every request has been covered by a successful pass and none is running.
     var isQuiescent: Bool {
-        requested == covered && tallyRequested == tallyCovered && runningPasses == 0
+        requested == covered && runningPasses == 0
     }
 
-    /// Runs each full pass one heavy load at a time with the other owners' (`LoadAdmission`).
+    /// Runs each pass one heavy load at a time with the other owners' (`LoadAdmission`).
     private let admission: LoadAdmission
 
-    init(store: CatalogStore, builder: Builder?, admission: LoadAdmission = LoadAdmission(isOpen: true)) {
+    init(store: CatalogStore, admission: LoadAdmission = LoadAdmission(isOpen: true)) {
         self.store = store
-        self.builder = builder
         self.admission = admission
-        (builds, buildsContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
         (bell, doorbell) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
@@ -120,25 +101,15 @@ actor PeopleAssignment {
         }
     }
 
-    /// The catalog may have changed: People is owed a pass. Returns the request, which every
-    /// state built by a pass that started after it carries as `covers`.
-    @discardableResult
-    func request() -> UInt64 {
+    /// The catalog may have changed: People is owed a pass.
+    func request() {
         requested &+= 1
         doorbell.yield()
-        return requested
     }
 
-    /// Rows were only added: the unchecked tally is owed a read, and nothing else.
-    func requestTally() {
-        tallyRequested &+= 1
-        doorbell.yield()
-    }
-
-    /// Teardown, callable from anywhere: ends the loop and the stream of builds.
+    /// Teardown, callable from anywhere: ends the loop.
     nonisolated func stop() {
         doorbell.finish()
-        buildsContinuation.finish()
     }
 
     /// The people each face of `photos` could be, from the last pass's read: a hidden
@@ -157,46 +128,31 @@ actor PeopleAssignment {
             ])
             return nil
         }
-        // The read and the state may have moved while the vectors were read: rank what is
-        // held now, from values taken in this synchronous step.
-        guard let current = lastRead, let state = published else {
+        // The read may have moved while the vectors were read: rank what is held now, from
+        // values taken in this synchronous step.
+        guard let current = lastRead else {
             return [:]
         }
-        let ranker = ranker ?? Self.ranker(read: current, vectors: vectors, state: state)
+        let ranker = ranker ?? Self.ranker(read: current, vectors: vectors)
         self.ranker = ranker
-        return await Self.candidates(for: photos, read: current, vectors: vectors, state: state, ranker: ranker)
+        return await Self.candidates(for: photos, read: current, vectors: vectors, ranker: ranker)
     }
 
-    /// A full pass when one is owed, which reads the tally too; else a tally pass.
     private func pass() async {
-        if requested != covered {
-            await fullPass()
-        } else if tallyRequested != tallyCovered {
-            await tallyPass()
-        }
-    }
-
-    private func fullPass() async {
+        guard requested != covered else { return }
         runningPasses += 1
         defer { runningPasses -= 1 }
         let startedFrom = requested
-        let tallyStartedFrom = tallyRequested
         do {
             // Before the catalog's first load there is nothing to read; the load is a catalog
             // change, so a request follows it.
-            guard let libraries = await store.loadedLibraries() else {
+            guard await store.loadedLibraries() != nil else {
                 return
             }
             // The snapshot and the vectors are the largest load Otos holds: one at a time with
             // the other heavy loads, none before the window's first grid.
             try await admission.run(.people) {
-                if let builder {
-                    let built = try await builder(store, libraries)
-                    try Task.checkCancellation()
-                    publish(built, covers: startedFrom, tally: tallyStartedFrom)
-                } else {
-                    try await galleryThenAssignment(libraries: libraries, startedFrom: startedFrom, tallyStartedFrom: tallyStartedFrom)
-                }
+                try await readThenAssign()
             }
         } catch is CancellationError {
             return
@@ -207,35 +163,33 @@ actor PeopleAssignment {
             return
         }
         covered = startedFrom
-        ringIfOwed()
+        if requested != covered {
+            doorbell.yield()
+        }
     }
 
-    /// Step 1, then step 2 when owed (see the guide). Returns whether assignment ran.
+    /// Steps 1 to 3 (see the guide). Returns whether assignment ran.
     @discardableResult
-    private func galleryThenAssignment(
-        libraries: [CatalogLibraryState],
-        startedFrom: UInt64,
-        tallyStartedFrom: UInt64
-    ) async throws -> Bool {
+    private func readThenAssign() async throws -> Bool {
         let signpost = OtosSignpost.performance.beginInterval("PeopleAssignment")
         defer { OtosSignpost.performance.endInterval("PeopleAssignment", signpost) }
         let start = ContinuousClock.now
-        let read = try await store.peopleSnapshot(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
+        let read = try await store.peopleSnapshot()
         let readMs = DiagnosticsTiming.milliseconds(since: start)
-        let built = await Self.gallery(read)
         try Task.checkCancellation()
-        // Synchronous from here to the publication: the read kept is the one published.
-        lastRead = read.withoutTiles
+        // Synchronous from here to the next await: the read kept is the one ranked against.
+        lastRead = read
         ranker = nil
-        publish(built, covers: startedFrom, tally: tallyStartedFrom)
-        let inputs = await Self.inputs(of: read)
+        let (inputs, galleryFacts) = await Self.derive(read)
+        let galleryRows = try await store.writePeopleGalleryFacts(galleryFacts, stored: read.galleryFacts)
         if settled == nil {
             let stored = try await store.settledPeopleAssignment()
             settled = settled ?? stored.map(AssignmentInputs.init(digest:))
         }
         guard inputs != settled else {
-            OtosLog.catalog.debugOperation("people.pass", phase: "published", fields: [
-                "faces": "\(read.faces.count)", "people": "\(read.people.count)", "readMs": "\(readMs)", "assigned": "false",
+            OtosLog.catalog.debugOperation("people.pass", phase: "read", fields: [
+                "faces": "\(read.faces.count)", "people": "\(read.people.count)", "readMs": "\(readMs)",
+                "galleryRows": "\(galleryRows)", "assigned": "false",
             ])
             return false
         }
@@ -262,26 +216,13 @@ actor PeopleAssignment {
             "guesses": "\(plan.guesses.count)",
             "newPeople": "\(plan.newPeople.count)",
             "rows": "\(written)",
+            "galleryRows": "\(galleryRows)",
             "readMs": "\(readMs)",
             "vectorsMs": "\(vectorsMs)",
             "assignMs": "\(assignMs)",
             "assigned": "true",
         ])
         return true
-    }
-
-    /// Publishes `built` with the request and tally it covers, when it differs from the last.
-    private func publish(_ built: CatalogPeopleState, covers: UInt64, tally: UInt64) {
-        var built = built
-        built.covers = covers
-        tallyCovered = tally
-        if built != published {
-            published = built
-            OtosLog.catalog.debugOperation("people.build", phase: "published", fields: [
-                "faces": "\(built.faceCount)", "people": "\(built.people.count)", "covers": "\(covers)",
-            ])
-            buildsContinuation.yield(built)
-        }
     }
 
     /// Reads the vectors `read` names that are not held, a page at a time, and forgets the
@@ -307,85 +248,29 @@ actor PeopleAssignment {
         let bad = Set(malformed)
         try await store.oweFacesAgain(Set(read.faces.filter { bad.contains($0.vector) }.map(\.id.asset)))
     }
-
-    /// Reads the unchecked tally alone and republishes the last state with it. Before any
-    /// state is published there is nothing to fold it into: the first full pass reads it.
-    private func tallyPass() async {
-        runningPasses += 1
-        defer { runningPasses -= 1 }
-        let startedFrom = tallyRequested
-        // A test builder stands in for every pass, this one too.
-        let built: CatalogPeopleState?
-        let unchecked: MediaCount?
-        do {
-            guard let libraries = await store.loadedLibraries() else {
-                return
-            }
-            if let builder {
-                (built, unchecked) = try await (builder(store, libraries), nil)
-            } else {
-                (built, unchecked) = try await (nil, store.uncheckedForFaces(
-                    availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries)
-                ))
-            }
-            try Task.checkCancellation()
-        } catch is CancellationError {
-            return
-        } catch {
-            OtosLog.catalog.errorOperation("people.tally", phase: "failed", fields: [
-                "error": String(describing: error),
-            ])
-            return
-        }
-        // Synchronous from here: the state the tally goes into is the one published now.
-        tallyCovered = startedFrom
-        var state = built ?? published
-        if let unchecked {
-            state?.unchecked = unchecked
-        }
-        if let state, state != published {
-            published = state
-            buildsContinuation.yield(state)
-        }
-        ringIfOwed()
-    }
-
-    private func ringIfOwed() {
-        if requested != covered || tallyRequested != tallyCovered {
-            doorbell.yield()
-        }
-    }
 }
 
 extension PeopleAssignment {
-    /// Runs passes as the loop would after each write's change, until one assigns nothing,
-    /// and returns the gallery it published. Internal for the tests and benchmarks that run
-    /// passes without the loop.
-    func settle(libraries: [CatalogLibraryState]) async throws -> CatalogPeopleState {
+    /// Runs passes as the loop would after each write's change, until one assigns nothing.
+    /// Internal for the tests and benchmarks that run passes without the loop.
+    func settle() async throws {
         while true {
             requested &+= 1
             let startedFrom = requested
-            let tally = tallyRequested
             let assigned = try await admission.run(.people) {
-                try await galleryThenAssignment(libraries: libraries, startedFrom: startedFrom, tallyStartedFrom: tally)
+                try await readThenAssign()
             }
             covered = startedFrom
-            if !assigned, let published {
-                return published
+            if !assigned {
+                return
             }
         }
     }
 
-    /// The gallery, off the actor.
+    /// What assignment reads of `read`, hashed, and every person's gallery facts, off the actor.
     @concurrent
-    private static func gallery(_ read: PeopleSnapshot) async -> CatalogPeopleState {
-        PeopleStateBuilder.state(from: read)
-    }
-
-    /// What assignment reads of `read`, hashed off the actor.
-    @concurrent
-    private static func inputs(of read: PeopleSnapshot) async -> AssignmentInputs {
-        AssignmentInputs(read)
+    private static func derive(_ read: PeopleSnapshot) async -> (AssignmentInputs, [PersonID: PersonGalleryFacts]) {
+        (AssignmentInputs(read), read.computedGalleryFacts)
     }
 
     /// Assignment, off the actor, with how many faces had no vector held.
@@ -397,9 +282,9 @@ extension PeopleAssignment {
         return (FaceAssignmentPlan.assignment(of: read, facts: facts), missing)
     }
 
-    /// The ranker over the faces of the people the gallery offers.
-    private static func ranker(read: PeopleSnapshot, vectors: FaceVectors, state: CatalogPeopleState) -> FaceRanker {
-        FaceRanker(faces: read.facts(with: vectors), people: read.personFacts, offered: Set(state.visiblePeople.map(\.id)))
+    /// The ranker over the faces of the people not hidden.
+    private static func ranker(read: PeopleSnapshot, vectors: FaceVectors) -> FaceRanker {
+        FaceRanker(faces: read.facts(with: vectors), people: read.personFacts, offered: Set(read.people.filter { !$0.isHidden }.map(\.id)))
     }
 
     /// The faces of the selected photos most likely to need ranking: at most this many faces
@@ -412,13 +297,13 @@ extension PeopleAssignment {
         for photos: [MediaAssetID],
         read: PeopleSnapshot,
         vectors: FaceVectors,
-        state: CatalogPeopleState,
         ranker: FaceRanker
     ) async -> [FaceID: [FaceCandidate]] {
-        // A photo shows the named faces of its copies (`CatalogPeopleState.faces(of:)`), so
-        // those are ranked too; each is ranked against the people of its own file.
-        let wanted = Set(photos + photos.flatMap(state.copies(of:)))
-        let hidden = Set(state.hiddenPeople.map(\.id))
+        // A photo shows the named faces of its copies (`PhotoFaces.faces(of:)`), so those are
+        // ranked too; each is ranked against the people of its own file.
+        let asked = Set(photos)
+        let wanted = asked.union(read.copies.filter { !asked.isDisjoint(with: $0) }.joined())
+        let hidden = Set(read.people.filter(\.isHidden).map(\.id))
         let faces = read.faces.filter { face in
             wanted.contains(face.id.asset) && !(face.assignment.person.map(hidden.contains) ?? false)
         }
@@ -433,113 +318,132 @@ extension PeopleAssignment {
     }
 }
 
-/// People state builder guide
+/// People Gallery guide
 ///
-/// Turns a `PeopleSnapshot` into the People gallery. Pure: the same snapshot always gives the
-/// same state, so it is tested without a catalog.
-/// - **A person:** every face with them, whoever gave it; the count is their photos; the
-///   cover is the key photo the user chose, else the newest face.
-/// - **Order:** favourites first, then most photos, then the name in the locale's order;
-///   hidden people after everyone else, in the same order. A person with no face at all is
-///   shown only when the user said something about them (a name, a birthday, a favourite,
-///   hidden): a person Otos found and the user never touched is gone with their last face.
-nonisolated enum PeopleStateBuilder {
-    static func state(from snapshot: PeopleSnapshot) -> CatalogPeopleState {
-        var faces: [PersonID: [FaceTile]] = [:]
-        var userFaces: [PersonID: [FaceTile]] = [:]
-        var anchorMedia: [PersonID: [MediaAssetID: Bool]] = [:]
-        for face in snapshot.faces {
-            guard let person = face.assignment.person, let tile = snapshot.tiles[face.id] else { continue }
-            faces[person, default: []].append(tile)
-            if case .user = face.assignment {
-                userFaces[person, default: []].append(tile)
-            }
-            if face.assignment.isAnchor {
-                anchorMedia[person, default: [:]][face.id.asset] = tile.isInVideo
-            }
-        }
-        let hidden = Set(snapshot.people.filter(\.isHidden).map(\.id))
-        var photoFaces: [MediaAssetID: [PhotoFace]] = [:]
-        for face in snapshot.faces {
-            guard let tile = snapshot.tiles[face.id] else { continue }
-            if let person = face.assignment.person, hidden.contains(person) {
-                continue
-            }
-            photoFaces[face.id.asset, default: []].append(PhotoFace(tile: tile, person: face.assignment.person))
-        }
-        var copies: [MediaAssetID: [MediaAssetID]] = [:]
-        for group in snapshot.copies where group.count > 1 {
-            for file in group {
-                copies[file] = group.filter { $0 != file }
-            }
-        }
-        let photo = { (face: FaceTile) in snapshot.photoOf[face.id.asset] ?? face.id.asset }
-        let people = snapshot.people.compactMap { person -> PersonSummary? in
-            let own = (faces[person.id] ?? []).sorted(by: newestFirst)
-            guard !own.isEmpty || !snapshot.isBare(person) else { return nil }
-            let keyPhoto = snapshot.keyPhotos[person.id].flatMap { id in own.first { $0.id == id } }
-            return PersonSummary(
-                id: person.id,
-                name: person.name,
-                birthday: person.birthday,
-                isHidden: person.isHidden,
-                isFavorite: person.isFavorite,
-                media: MediaCount(items: own.map { face in (photo(face), face.isInVideo) }),
-                cover: keyPhoto ?? own.first,
-                userFaces: (userFaces[person.id] ?? []).sorted(by: newestFirst),
-                anchorMedia: anchorMedia[person.id] ?? [:],
-                newestFaces: Array(onePerPhoto(own, photo: photo).prefix(PersonSummary.newestFaceCount))
-            )
-        }.sorted(by: galleryOrder)
-        return CatalogPeopleState(
-            people: people,
-            photoFaces: photoFaces,
-            copies: copies,
-            unchecked: snapshot.unchecked,
-            faceCount: snapshot.faces.count
-        )
+/// The window's read of the people (ADR 0047, "What the People UI reads"): what the People
+/// gallery and every surface that names people show — the people, their names, photo counts,
+/// covers, order and the facts the hard rules hold them to — and the unchecked tally, from one
+/// read of the people and the faces that define them (`CatalogStore.peopleGallery`). It reads
+/// none of what `PeopleAssignment` holds and waits for none of its work: it is not a heavy
+/// load (`LoadAdmission`), so it runs at the window's priority as soon as the catalog is
+/// loaded, and People paints from the facts the catalog stores while assignment reads.
+///
+/// `CatalogProjection` asks for a read with `request()` after a publication that took up a
+/// catalog change of a kind the read reads (`inputs`), and after every People write the
+/// window made (`requestPeopleBuild`). A request only adds to `requested`; a read records the
+/// value it started from and publishes a state that covers it (`CatalogPeopleState.covers`),
+/// so a People act the window shows ahead is retired by the first state read after its write.
+/// One loop runs every read off a `bufferingNewest(1)` doorbell. A failed read publishes
+/// nothing and leaves its request outstanding for the next one (ADR 0032 rule 4).
+actor PeopleGallery {
+    typealias Builder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws -> CatalogPeopleState?
+
+    /// What the gallery's read reads: the people and their faces (`.faces`), which rows are
+    /// shown (`.membership`), the images a cover is cut from (`.faceTiles`), and the facts
+    /// People stores for each person (`.peopleGallery`).
+    static let inputs: CatalogChangedFacts = [.faces, .membership, .faceTiles, .peopleGallery]
+
+    /// Built states, each differing from the one before; only the newest matters. One
+    /// consumer: `CatalogProjection`.
+    nonisolated let builds: AsyncStream<CatalogPeopleState>
+    private nonisolated let buildsContinuation: AsyncStream<CatalogPeopleState>.Continuation
+    private nonisolated let bell: AsyncStream<Void>
+    private nonisolated let doorbell: AsyncStream<Void>.Continuation
+    private let store: CatalogStore
+    /// Tests replace the read to hold it at its suspension; production reads the catalog.
+    private let builder: Builder?
+    private var requested: UInt64 = 0
+    private var covered: UInt64 = 0
+    private var running = 0
+    private var published: CatalogPeopleState?
+    private var loopTask: Task<Void, Never>?
+
+    var isQuiescent: Bool {
+        requested == covered && running == 0
     }
 
-    /// `faces` with only the first face of each photo they are in: a photo's copies, and the
-    /// files of a stack, are one photo (`PeopleSnapshot.photoOf`), each read for its faces.
-    static func onePerPhoto(_ faces: [FaceTile], photo: (FaceTile) -> MediaAssetID) -> [FaceTile] {
-        var seen: Set<MediaAssetID> = []
-        return faces.filter { seen.insert(photo($0)).inserted }
+    init(store: CatalogStore, builder: Builder?) {
+        self.store = store
+        self.builder = builder
+        (builds, buildsContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+        (bell, doorbell) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
-    static func galleryOrder(_ lhs: PersonSummary, _ rhs: PersonSummary) -> Bool {
-        if lhs.isHidden != rhs.isHidden {
-            return !lhs.isHidden
+    /// Starts the loop. It holds this owner weakly and ends when the doorbell finishes.
+    func start() {
+        guard loopTask == nil else { return }
+        let bell = bell
+        loopTask = Task { [weak self] in
+            for await _ in bell {
+                guard let self else { return }
+                await read()
+            }
         }
-        if lhs.isFavorite != rhs.isFavorite {
-            return lhs.isFavorite
-        }
-        if lhs.media.total != rhs.media.total {
-            return lhs.media.total > rhs.media.total
-        }
-        // A named person before an unnamed one of the same count, then by name.
-        if (lhs.name == nil) != (rhs.name == nil) {
-            return lhs.name != nil
-        }
-        let order = lhs.displayName.localizedStandardCompare(rhs.displayName)
-        if order != .orderedSame {
-            return order == .orderedAscending
-        }
-        return lhs.id < rhs.id
     }
 
-    /// Capture order, newest first; faces with no date last, then by photo and place.
-    static func newestFirst(_ lhs: FaceTile, _ rhs: FaceTile) -> Bool {
-        switch (lhs.captureSeconds, rhs.captureSeconds) {
-        case let (left?, right?) where left != right:
-            left > right
-        case (.some, nil):
-            true
-        case (nil, .some):
-            false
-        default:
-            FaceAssignmentPolicy.pathOrder(lhs.id, rhs.id)
+    /// The people may have changed: a read is owed. Returns the request, which every state
+    /// read after it carries as `covers`.
+    @discardableResult
+    func request() -> UInt64 {
+        requested &+= 1
+        doorbell.yield()
+        return requested
+    }
+
+    /// Teardown, callable from anywhere: ends the loop and the stream of builds.
+    nonisolated func stop() {
+        doorbell.finish()
+        buildsContinuation.finish()
+    }
+
+    private func read() async {
+        guard requested != covered else { return }
+        running += 1
+        defer { running -= 1 }
+        let startedFrom = requested
+        let built: CatalogPeopleState?
+        do {
+            // Before the catalog's first load there is nothing to read; the load is a catalog
+            // change, so a request follows it.
+            guard let libraries = await store.loadedLibraries() else { return }
+            let start = ContinuousClock.now
+            if let builder {
+                built = try await builder(store, libraries)
+            } else {
+                built = try await Self.read(store: store, libraries: libraries)
+            }
+            try Task.checkCancellation()
+            OtosLog.catalog.debugOperation("people.gallery", phase: "read", fields: [
+                "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+                "people": built.map { "\($0.people.count)" } ?? "unknown",
+            ])
+        } catch is CancellationError {
+            return
+        } catch {
+            OtosLog.catalog.errorOperation("people.gallery", phase: "failed", fields: [
+                "error": String(describing: error),
+            ])
+            return
         }
+        covered = startedFrom
+        // A gallery not known yet (`peopleGallery` nil) is not published: the pane keeps
+        // claiming nothing until People has written what it paints from.
+        if var built {
+            built.covers = startedFrom
+            if built != published {
+                published = built
+                buildsContinuation.yield(built)
+            }
+        }
+        if requested != covered {
+            doorbell.yield()
+        }
+    }
+
+    @concurrent
+    private static func read(store: CatalogStore, libraries: [CatalogLibraryState]) async throws -> CatalogPeopleState? {
+        try await store.peopleGallery(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
+            .map { CatalogPeopleState(gallery: $0) }
     }
 }
 
