@@ -16,16 +16,14 @@ struct CatalogWALBoundTests {
     /// write, nor a window read, nor a user's write. A checkpoint that waits for readers would
     /// keep every one of them waiting until the read ended.
     @Test func aLongReadHoldsUpNoWindowReadOrUserWriteWhenTheWALPassesItsBudget() async throws {
-        let catalog = try await Catalog.make(budget: 0)
-        let read = try await catalog.holdRead()
-
-        try await catalog.list(count: 500, prefix: "a")
-        _ = try await catalog.store.orderedAssetIDs(for: .allMedia, availableLibraryPaths: [catalog.rootPath])
-        let person = try await catalog.store.perform(.moveToNewPerson([], name: "Ian")).person
-        #expect(person != nil)
-
-        try await read.release()
-        await catalog.finish()
+        try await Catalog.with(budget: 0) { catalog in
+            try await catalog.whileReadIsHeld {
+                try await catalog.list(count: 500, prefix: "a")
+                _ = try await catalog.store.orderedAssetIDs(for: .allMedia, availableLibraryPaths: [catalog.rootPath])
+                let person = try await catalog.store.perform(.moveToNewPerson([], name: "Ian")).person
+                #expect(person != nil)
+            }
+        }
     }
 
     /// Writes during a long read grow the file past its limit, since the frames that read's
@@ -35,21 +33,20 @@ struct CatalogWALBoundTests {
     /// about 120 KB for one listed item, against about 6 MB written during the read).
     @Test func theWALReturnsToItsLimitAfterTheLongReadEnds() async throws {
         let budget: Int64 = 1024 * 1024
-        let catalog = try await Catalog.make(budget: budget)
-        let read = try await catalog.holdRead()
-        for batch in 0 ..< 3 {
-            try await catalog.list(count: 500, prefix: "held\(batch)")
+        try await Catalog.with(budget: budget) { catalog in
+            var sizes = try await catalog.whileReadIsHeld {
+                for batch in 0 ..< 3 {
+                    try await catalog.list(count: 500, prefix: "held\(batch)")
+                }
+                return try [catalog.walBytes()]
+            }
+            #expect(sizes[0] > budget)
+            for batch in 0 ..< 2 {
+                try await catalog.list(count: 1, prefix: "after\(batch)")
+                try sizes.append(catalog.walBytes())
+            }
+            #expect(sizes[2] <= budget, "WAL bytes after each step: \(sizes)")
         }
-        var sizes = try [catalog.walBytes()]
-        #expect(sizes[0] > budget)
-
-        try await read.release()
-        for batch in 0 ..< 2 {
-            try await catalog.list(count: 1, prefix: "after\(batch)")
-            try sizes.append(catalog.walBytes())
-        }
-        #expect(sizes[2] <= budget, "WAL bytes after each step: \(sizes)")
-        await catalog.finish()
     }
 
     /// A file-backed catalog with one Immich account being listed: its listing batches are the
@@ -95,8 +92,39 @@ struct CatalogWALBoundTests {
             try await store.applySourceListingChanges(SourceListingChanges(listed: items), scan: scan)
         }
 
+        /// A catalog for `body`, finished whether `body` returns or throws: a store left
+        /// running keeps the test's folder and its writer open past the test.
+        static func with(budget: Int64, _ body: (Catalog) async throws -> Void) async throws {
+            let catalog = try await make(budget: budget)
+            let outcome: Result<Void, any Error>
+            do {
+                try await body(catalog)
+                outcome = .success(())
+            } catch {
+                outcome = .failure(error)
+            }
+            await catalog.finish()
+            try outcome.get()
+        }
+
+        /// Runs `body` while a background read holds its snapshot, and releases the read
+        /// whether `body` returns or throws. A read never released parks its reader's thread
+        /// for good, and the store's shutdown then waits on it: a failure would become a hang.
+        func whileReadIsHeld<Value>(_ body: () async throws -> Value) async throws -> Value {
+            let read = try await holdRead()
+            let outcome: Result<Value, any Error>
+            do {
+                let value = try await body()
+                outcome = .success(value)
+            } catch {
+                outcome = .failure(error)
+            }
+            try await read.release()
+            return try outcome.get()
+        }
+
         /// Starts a background read and returns once it holds its snapshot.
-        func holdRead() async throws -> HeldRead {
+        private func holdRead() async throws -> HeldRead {
             let held = HeldRead()
             let entered = AsyncStream<Void>.makeStream()
             held.task = Task { [store] in
