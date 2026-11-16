@@ -55,7 +55,7 @@ struct MediaGridZoomTests {
             grid: newGrid,
             change: .unchanged,
             applyStart: .now,
-            commit: .init(start: .now),
+            commitMs: 0,
             diffPolicyMs: 0,
             structureBuildMs: 0,
             batchUpdatesMs: 0,
@@ -68,7 +68,7 @@ struct MediaGridZoomTests {
             usesReloadDataFallback: false,
             appliedBy: .batchUpdates,
             sectionCount: 1,
-            heldDuringScroll: false,
+            heldDuringScroll: false, motionsInFlightAtCommit: 0,
             signpost: .beginState(id: .exclusive)
         )
         controller.completeStructuralApply(context, operation: nil, stallMonitor: nil)

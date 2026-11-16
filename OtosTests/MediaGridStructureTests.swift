@@ -443,6 +443,84 @@ extension AppKitWindowTests {
             }
         }
 
+        /// Five Move to Trash hides and a Put Back, each delivered while every earlier apply's
+        /// tiles are still moving: each is on screen as its own commit returns, and none waits
+        /// for another's motion (DES-119). The motion is lengthened so it is provably still
+        /// running at each delivery, whatever the machine's load; the count of motions
+        /// AppKit has not yet reported finished is the grid's own fact for it.
+        @Test func aStateArrivingDuringAMotionIsShownAtOnce() async throws {
+            let (controller, window, onScreen) = try await movingGrid(reducesMotion: false)
+            defer { window.close() }
+            let ids = onScreen.orderedAssetIDs
+            // Each hide is made from the grid on screen, as Projection's is.
+            var shown = onScreen
+            var hidden: [MediaAssetID] = []
+            for (index, id) in ids.prefix(5).enumerated() {
+                #expect(controller.motionsInFlight == index)
+                hidden.append(id)
+                shown = shown.hiding([id])
+                // A hide is an edit of the order on screen: it is committed in the call
+                // that delivers it, with no turn spent waiting for an off-main build.
+                controller.receive(shown)
+                #expect(controller.mutationGate.showsDisplayedOrder(shown))
+                #expect(controller.mutationGate.inFlight == .none)
+                #expect(controller.motionsInFlight == index + 1)
+                #expect(Set(controller.visibleAssetIDs()) == Set(ids.filter { !hidden.contains($0) }))
+                #expect(controller.collectionView.numberOfItems(inSection: 0) == ids.count - hidden.count)
+            }
+            // Put Back of the first hidden photo while all five removals still move.
+            let restoredOrder = ids.filter { !hidden.dropFirst().contains($0) }
+            let putBack = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: restoredOrder)
+            try await commit(putBack, to: controller)
+            #expect(controller.motionsInFlight == 6)
+            #expect(Set(controller.visibleAssetIDs()) == Set(restoredOrder))
+            let path = try #require(controller.structure.indexPath(of: ids[0]))
+            #expect(controller.collectionView.item(at: path) != nil)
+        }
+
+        /// Under Reduce Motion the apply runs with no motion at all (DES-075) and shows its
+        /// result as its commit returns, as it does with motion.
+        @Test func underReduceMotionAnApplyHasNoMotionAndShowsAtOnce() async throws {
+            let (controller, window, onScreen) = try await movingGrid(reducesMotion: true)
+            defer { window.close() }
+            let ids = onScreen.orderedAssetIDs
+            let first = onScreen.hiding([ids[0]])
+            try await commit(first, to: controller)
+            #expect(Set(controller.visibleAssetIDs()) == Set(ids.dropFirst()))
+            let second = first.hiding([ids[1]])
+            try await commit(second, to: controller)
+            #expect(Set(controller.visibleAssetIDs()) == Set(ids.dropFirst(2)))
+            // A zero-duration batch reports its end on the next main-queue turn.
+            try await waitUntil { controller.motionsInFlight == 0 }
+        }
+
+        /// A controller in a window showing twelve photos, every motion from its first load
+        /// ended, whose later applies move for a minute unless Reduce Motion is on.
+        private func movingGrid(
+            reducesMotion: Bool
+        ) async throws -> (MediaGridViewController, NSWindow, CatalogMediaGridState) {
+            let controller = MediaGridViewController()
+            _ = controller.view
+            let window = orderedInTestWindow(width: 1200, height: 800, contentView: controller.view)
+            controller.view.layoutSubtreeIfNeeded()
+            controller.reducesMotion = { reducesMotion }
+            let ids = (0 ..< 12).map { MediaGridStructureTests.id("m\($0)") }
+            let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
+            controller.receive(grid)
+            try await awaitGridShows(controller, grid)
+            try await waitUntil { controller.motionsInFlight == 0 }
+            controller.applyMotionDuration = 60
+            return (controller, window, grid)
+        }
+
+        /// Delivers `grid` and returns as soon as the grid has committed it, without letting
+        /// the main queue run on, so the motion in flight at delivery is the one asserted on.
+        private func commit(_ grid: CatalogMediaGridState, to controller: MediaGridViewController) async throws {
+            controller.receive(grid)
+            let gate = controller.mutationGate
+            try await waitUntil { gate.showsDisplayedOrder(grid) && gate.inFlight == .none }
+        }
+
         /// Applies each step in turn and returns the last grid applied.
         private func applyEach(
             _ steps: [[(String, Date?)]], to controller: MediaGridViewController

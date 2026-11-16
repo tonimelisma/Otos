@@ -61,7 +61,7 @@ SESSION = [
               "filterOptionsMs=0 resolvedSidebarSelection=allMedia totalMs=3100"),
     line(4.1, "op=ui.state.apply phase=finish applyMs=2 delta=4860 intentScope=allMedia items=4900 scope=allMedia"),
     line(4.3, "op=ui.sidebarSelectionToPaint phase=finish ms=2300 scope=allMedia surface=grid"),
-    line(4.3, "op=ui.mediaGrid.structuralApply phase=finish animationMs=0 commitMs=12 items=4900 scope=allMedia totalMs=40"),
+    line(4.3, "op=ui.mediaGrid.structuralApply phase=finish commitMs=12 items=4900 scope=allMedia totalMs=40"),
     line(5.0, "op=catalog.store.query.filterOptions phase=finish row=allMedia waitMs=10 execMs=700 queryMs=710"),
     line(5.5, "op=search.index phase=loaded count=900 from=file mappedMB=241 openMs=273 ms=280 slots=910 stateMs=1"),
     line(6.0, "op=ui.sidebarSelectionToPaint phase=start scope=places"),

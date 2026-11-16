@@ -548,6 +548,43 @@ struct CatalogProjectionTests {
             #expect(settled.mediaGrid.sharesContent(with: hiddenGrid), "no read after the hide moved the grid")
         }
     }
+
+    /// Each Move to Trash publishes an order made from the order last published by an edit,
+    /// so the grid builds and commits it in the turn that delivers it (ADR 0006): the first
+    /// after a read whose publication shared the order before it, and each of several in a
+    /// row, held together, from the one before it.
+    @Test func eachHideIsAnEditOfTheOrderLastPublished() async throws {
+        try await withCatalogedLibrary(fileCount: 4, fileNamePrefix: "edit") { fixture in
+            let projection = CatalogProjection(cadence: .milliseconds(10))
+            let recorder = StateRecorder()
+            let stream = await projection.states(
+                store: fixture.store,
+                initialDescriptor: CatalogQueryDescriptor(scope: .library(fixture.rootPath))
+            )
+            let recordingTask = Task {
+                for await state in stream {
+                    await recorder.append(state)
+                }
+            }
+            defer {
+                recordingTask.cancel()
+            }
+            let first = await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs.count == 4 }
+            let order0 = try #require(first.last?.mediaGrid.orderedAssetIDs.first)
+            // A read that changes no order: its publication hands the shown order on.
+            _ = try await fixture.store.setMediaChoices([order0: .liked])
+            var shown = try #require(try await waitForProjectionQuiescence(projection, recordedBy: recorder).last)
+            let order = shown.mediaGrid.orderedAssetIDs
+            for (index, id) in order.prefix(3).enumerated() {
+                await projection.hide([id], batch: MediaTrashBatchID(unixMilliseconds: Int64(index + 1)))
+                let next = try #require(await recorder.waitForCount(1) {
+                    $0.last?.mediaGrid.orderedAssetIDs == Array(order.dropFirst(index + 1))
+                }.last)
+                #expect(next.mediaGrid.content.edit(from: shown.mediaGrid.content) != nil)
+                shown = next
+            }
+        }
+    }
 }
 
 extension CatalogProjectionTests {

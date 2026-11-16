@@ -164,6 +164,17 @@ final class MediaGridViewController: NSViewController {
     /// The off-main structure build of the structural apply in flight
     /// (`applyStructure`). At most one, by the mutation gate's exclusivity.
     var structureBuildTask: Task<Void, Never>?
+    /// The structural applies whose motion AppKit has not yet reported finished. A count,
+    /// not a slot: an apply completes when it commits, so a later one is issued while an
+    /// earlier one still moves, and AppKit carries each moving tile on from where it is
+    /// drawn (`applyBatch`). Diagnostics and tests read it; nothing waits on it.
+    var motionsInFlight = 0
+    /// How long an animated apply's tiles travel (`MediaGridAnimation.applyDuration`). A
+    /// test lengthens it so a motion is still running, whatever the machine's load, when
+    /// it delivers the next state.
+    var applyMotionDuration: TimeInterval = MediaGridAnimation.applyDuration
+    /// The system's Reduce Motion setting, read at each apply; a test sets either answer.
+    var reducesMotion: () -> Bool = { MediaGridAnimation.prefersReducedMotion }
     private var detailQueryGeneration = 0
     /// In-flight decode keys `"id|imageKey"` owned by the controller, not the tile.
     private var inFlightDecodes = Set<String>()

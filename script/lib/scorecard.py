@@ -212,7 +212,7 @@ def clicks(events, launch_scope):
         grid = first(events, "ui.mediaGrid.structuralApply", "finish", after=start.time,
                      where=lambda e: e.fields.get("scope") == scope and (until is None or e.time <= until))
         if grid:
-            click["gridApply"] = {k: grid.num(k) for k in ("commitMs", "animationMs", "totalMs")}
+            click["gridApply"] = {k: grid.num(k) for k in ("commitMs", "totalMs")}
         result.append(click)
     return result
 

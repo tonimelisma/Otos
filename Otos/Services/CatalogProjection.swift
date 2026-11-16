@@ -128,7 +128,17 @@ actor CatalogProjection {
     private(set) var lastPublishedState: CatalogWindowState?
     /// The last state as built, before the hides take anything off it: what every
     /// republication starts from, a hide's and its withdrawal's included.
-    private var lastBuiltState: CatalogWindowState?
+    private var lastBuiltState: CatalogWindowState? {
+        didSet { builtRevision &+= 1 }
+    }
+
+    /// Counts the changes to `lastBuiltState`, so a publication can say which build it was
+    /// made from (`publishedFrom`).
+    private var builtRevision = 0
+    /// The build the last publication was made from and the items it took off it. While the
+    /// build is the same, a hold that takes more off is taken off the last publication
+    /// itself (`republish`), so its order is an edit of the order the window shows.
+    private var publishedFrom: (builtRevision: Int, hidden: Set<MediaAssetID>)?
     /// What each Move to Trash and each choice keeps off the window until a read of the
     /// Store's write (`hold(_:_:)`), by act.
     private var holds: [WindowHoldKey: WindowHold] = [:]
@@ -1314,8 +1324,9 @@ private extension CatalogProjection {
         // publication's own, so the window learns what changed by identity, never by walking
         // them — and a read that answers what a hide already showed applies nothing.
         lastBuiltState = publication.state
-        let state = publication.state.hidingItems(hiddenItems(for: publication.state.queryDescriptor))
-            .sharingUnchanged(with: lastPublishedState)
+        let hidden = hiddenItems(for: publication.state.queryDescriptor)
+        let state = publication.state.hidingItems(hidden).sharingUnchanged(with: lastPublishedState)
+        publishedFrom = (builtRevision, hidden)
         let changeSummary = CatalogProjectionChangeSummary.compare(
             previous: lastPublishedState,
             current: state
@@ -1360,6 +1371,7 @@ private extension CatalogProjection {
         loading.resolvedSidebarSelection = request.descriptor.scope
         loading.queryGeneration = request.generation
         lastBuiltState = loading
+        publishedFrom = (builtRevision, [])
         OtosLog.catalog.notice("op=projection.publish phase=loadingCatalog")
         if loading != lastPublishedState {
             yield(loading)
@@ -1368,13 +1380,34 @@ private extension CatalogProjection {
 
     /// Republishes the last built state changed by `change`, with what the hides take off it,
     /// when the result differs from the last publication. Synchronous.
-    private func republish(_ change: (inout CatalogWindowState) -> Void = { _ in }) {
+    ///
+    /// When nothing was built since the last publication and the holds only take more off
+    /// (a Move to Trash, or five in a row), the rest is taken off that publication rather
+    /// than off the build: the same window by value, but its order an edit of the order the
+    /// window shows (`CatalogGridContent.edit(from:)`), which the grid builds and commits in
+    /// the turn that delivers it (ADR 0006). Taking items off composes: the build without A,
+    /// then without B, is the build without both.
+    private func republish(_ change: ((inout CatalogWindowState) -> Void)? = nil) {
         guard var built = lastBuiltState else {
             return
         }
-        change(&built)
-        lastBuiltState = built
-        let state = built.hidingItems(hiddenItems(for: built.queryDescriptor)).sharingUnchanged(with: lastPublishedState)
+        if let change {
+            change(&built)
+            lastBuiltState = built
+        }
+        let hidden = hiddenItems(for: built.queryDescriptor)
+        let state: CatalogWindowState
+        if let last = lastPublishedState,
+           let from = publishedFrom,
+           from.builtRevision == builtRevision,
+           from.hidden.isSubset(of: hidden)
+        {
+            state = last.hidingItems(hidden.subtracting(from.hidden))
+            state.mediaGrid.content.prepareIndex()
+        } else {
+            state = built.hidingItems(hidden).sharingUnchanged(with: lastPublishedState)
+        }
+        publishedFrom = (builtRevision, hidden)
         if state != lastPublishedState {
             yield(state)
         }

@@ -76,6 +76,18 @@ reloadData teardown, not how often applies run.
 4. Custom AppKit tiler: maximum control, but needlessly rebuilds scrolling,
    reuse, layout, and accessibility.
 
+For a grid state that arrives while an earlier apply's tiles still move (an act's result,
+which must show within 100 ms):
+
+6. Hold it as pending until AppKit reports the motion finished. Used until 2026-11-16: a
+   Put Back waited 191 ms for the Trash removal's motion, and five Deletes in a row each
+   waited for the one before.
+7. End the running motion at its final frames (`removeAllAnimations`), then apply. AppKit
+   allows it, but every moving tile jumps to its end before moving again, and it is not
+   needed: AppKit already starts a new batch's motion from where each tile is drawn.
+8. Shorter or no motion. A shorter motion only shortens the wait, and the 0.35 s motion is
+   DES-070's duration for content changing place.
+
 ## Decision
 
 Use a narrow `NSViewControllerRepresentable` containing `NSCollectionView`,
@@ -99,8 +111,11 @@ toolbar −/+ buttons, or a pinch gesture. That path and the structural-apply
 path are arbitrated by a single owner, `MediaGridMutationGate`, which holds
 column-count truth (`installedColumnCount`/`requestedColumnCount`) and guarantees a
 zoom swap and a structural apply never run concurrently in either direction: a zoom
-requested during an apply, or a grid state arriving during a zoom swap, parks and
-drains once the in-flight mutation completes. Zoom uses discrete animated layout
+requested during an apply's build and commit, or a grid state arriving during a zoom
+swap, parks and drains once the in-flight mutation completes. A structural apply is in
+flight only until its commit returns (below, "Applies do not wait for motion"); a zoom
+swap is in flight until its motion ends, because its anchor scroll is animated and its
+visible-detail pass reads the viewport that scroll ends at. Zoom uses discrete animated layout
 swaps (`NSAnimationContext` plus `NSCollectionView.animator().collectionViewLayout`),
 and a same-mode SwiftUI presentation update never installs the new grid density
 first: `receiveColumnCount(_:)` is the sole layout-swap path for grid zoom. Zoom is
@@ -266,11 +281,32 @@ pending grid state. A structural apply has two halves inside that one exclusive 
 The pure half — the next `MediaGridStructure`, the diff summary against the structure on
 screen, and, for an animated apply, the `MediaGridBatchUpdates` between the two — is
 built off the main actor (`@concurrent`) from `Sendable` values copied when the gate
-admits the apply. The AppKit half — scroll anchor capture, handing AppKit the structure
+admits the apply. The exception is an order made from the one on screen by an edit (a
+Move to Trash's hide, a stack expanding or collapsing: `CatalogGridContent.edit(from:)`):
+its structure is the old sections edited, its batch the edit's deletes and inserts, a cost
+of the sections and the edit rather than the items, so it is built in the main-actor turn
+that delivered it and committed in the same turn. Sending it off the main actor bought
+nothing and cost the act's result a second main-thread turn, which the sandbox tour
+measured at 106 ms (`docs/research/2026-11-16-grid-applies-during-motion.md`). The AppKit half — scroll anchor capture, handing AppKit the structure
 (`reloadData`, or `performBatchUpdates` with the structure switched inside the update
 block), the anchor restore — then runs synchronously on the main actor. Nothing on screen
 can change between the halves: the gate is in flight, so no other apply or zoom swap runs
-and a grid arriving meanwhile parks. The build reads every item once to cut the day
+and a grid arriving meanwhile parks.
+
+**Applies do not wait for motion.** An apply is complete when its commit returns: from
+that moment AppKit's data, layout and item views hold the new structure, and only the
+drawn positions are still travelling to their frames. So the apply's completion — tile
+pruning, the visible-detail pass, the selection render, the gate's drain — runs as the
+commit returns, and the gate is free at once. A grid that arrives while tiles still move
+is committed in its own turn: AppKit accepts a batch issued during another's motion, and
+starts each moving tile's new motion from where it is drawn, so a tile changes course
+toward its newest place rather than jumping; every batch's completion still arrives,
+finished, possibly out of order
+(`docs/research/2026-11-16-grid-applies-during-motion.md`). That completion only reports
+how long the motion ran (`op=ui.mediaGrid.motion`); the grid counts the motions still
+running (`motionsInFlight`, logged as `motionsInFlightAtCommit` on each apply) and waits
+for none. A Move to Trash, a Put Back, or five Deletes pressed in a row each show their
+result in the turn their state arrives (DES-119). The build reads every item once to cut the day
 sections and once to compare the days a reorder left alone, and looks up and diffs only
 what changed: 0.54 G instructions (Debug) to move 200 photos between days in a grid of
 158,000 items over 5,000 days, where looking up every identity took 4.5 G

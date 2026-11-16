@@ -3,16 +3,17 @@ import Foundation
 import OSLog
 
 extension MediaGridViewController {
+    /// What a structural apply's completion reports, gathered once its commit has returned.
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let change: MediaGridMutationGate.QueryChange
         /// When the gate admitted the apply, so `totalMs` includes the off-main build.
         let applyStart: ContinuousClock.Instant
-        /// The main thread's synchronous share of the apply (`commitMs`): from taking the
-        /// built structure to handing AppKit the reload or the batch, layout included. What
-        /// follows until AppKit's completion is the batch's motion (`animationMs`), and the
-        /// completion is timed apart (`completionMs`).
-        let commit: CommitDuration
+        /// The main thread's synchronous share of the apply: from taking the built
+        /// structure to AppKit's return from the reload or the batch, layout included. A
+        /// batch's motion runs after it and is reported on a line of its own
+        /// (`op=ui.mediaGrid.motion`), since nothing waits for it.
+        let commitMs: Int
         let diffPolicyMs: Int
         let structureBuildMs: Int
         let batchUpdatesMs: Int
@@ -26,33 +27,10 @@ extension MediaGridViewController {
         let appliedBy: AppliedBy
         let sectionCount: Int
         let heldDuringScroll: Bool
+        /// Earlier applies still moving when this one committed: AppKit carried their tiles
+        /// on from where they were drawn rather than this apply waiting for them.
+        let motionsInFlightAtCommit: Int
         let signpost: OSSignpostIntervalState
-    }
-
-    /// The commit's end, taken when it returns or when its completion starts, whichever
-    /// comes first: a reload calls the completion itself, and AppKit may run a batch's
-    /// completion before `performBatchUpdates` returns, so either can be first.
-    final class CommitDuration {
-        private let start: ContinuousClock.Instant
-        private var endedAt: ContinuousClock.Instant?
-
-        init(start: ContinuousClock.Instant) {
-            self.start = start
-        }
-
-        /// The commit's duration in milliseconds, fixed by the first call.
-        @discardableResult
-        func end() -> Int {
-            let ended = endedAt ?? .now
-            endedAt = ended
-            return DiagnosticsTiming.milliseconds(start.duration(to: ended))
-        }
-
-        /// From the commit's end to `instant`, in milliseconds: an animated batch's motion,
-        /// which runs after the main thread has returned to the run loop.
-        func millisecondsAfterEnd(until instant: ContinuousClock.Instant) -> Int {
-            DiagnosticsTiming.milliseconds((endedAt ?? instant).duration(to: instant))
-        }
     }
 
     /// How the collection view took a new structure (diagnostics).
@@ -85,10 +63,17 @@ extension MediaGridViewController {
     /// flight, so until `completeStructuralApply` drains it no other exclusive mutation runs
     /// and `structure` does not change: the structure handed to the build is still the one
     /// on screen when its result is committed, and a grid arriving meanwhile parks as the
-    /// gate's pending grid, applied after this one.
+    /// gate's pending grid, applied after this one. The slot is held from admission to the
+    /// commit's return, never for the motion the commit starts (`commitStructure`).
     ///
-    /// The build reads every item to cut the day sections and to compare the days a change
-    /// left alone, and looks up only what changed
+    /// A grid whose order was made from the one on screen by an edit (a Move to Trash's
+    /// hide, a stack expanding or collapsing: `CatalogGridContent.edit(from:)`) is built from
+    /// the old sections and the edit alone, a cost of the sections and the edit rather than
+    /// the items, so it is built and committed here, in the turn that delivered it: an act's
+    /// result never waits for a second main-thread turn to come back from a build.
+    ///
+    /// Any other build reads every item to cut the day sections and to compare the days a
+    /// change left alone, and looks up only what changed
     /// (`docs/research/2026-11-15-grid-reorder-follows-the-change.md`); at a library's size
     /// that is still tens of milliseconds, so it runs off the main actor
     /// (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). One build at
@@ -101,6 +86,11 @@ extension MediaGridViewController {
         let applyStart = ContinuousClock.now
         let previous = structure
         let descriptorChanged = change != .unchanged
+        if previous.isEdited(into: grid.content) {
+            let built = Self.build(for: grid, descriptorChanged: descriptorChanged, previous: previous)
+            commitStructure(built, grid: grid, change: change, applyStart: applyStart)
+            return
+        }
         structureBuildTask = Task { [weak self, grid, change, previous] in
             let built = await Self.buildStructure(
                 for: grid,
@@ -122,6 +112,16 @@ extension MediaGridViewController {
         descriptorChanged: Bool,
         previous: MediaGridStructure
     ) async -> BuiltStructure {
+        build(for: grid, descriptorChanged: descriptorChanged, previous: previous)
+    }
+
+    /// The pure half of a structural apply, on whichever thread calls it: off the main actor
+    /// through `buildStructure`, or on it for an edit of the structure on screen.
+    nonisolated static func build(
+        for grid: CatalogMediaGridState,
+        descriptorChanged: Bool,
+        previous: MediaGridStructure
+    ) -> BuiltStructure {
         // Identity order and day buckets are the complete structural contract. Tile
         // details are read for visible identities after the structural apply, so thumbnail
         // or video-badge changes never come through here. Selection truth lives in the
@@ -154,6 +154,16 @@ extension MediaGridViewController {
 
     /// The AppKit half of a structural apply, on the main actor and synchronous from here
     /// to the apply call, so the scroll anchor is read from the layout the apply replaces.
+    ///
+    /// The apply is complete when this returns. AppKit's data, layout and item views hold
+    /// the new structure from the moment `performBatchUpdates` returns: only the item
+    /// views' drawn positions are still travelling to their frames. So the completion —
+    /// tile pruning, the visible-detail pass, the selection render, the gate's drain — runs
+    /// here, and the gate is free for the next grid at once. A grid that arrives while this
+    /// apply's tiles still move is committed in its own turn, and AppKit carries each moving
+    /// tile on from where it is drawn to its newest frame (ADR 0006, "Applies do not wait
+    /// for motion"): a Move to Trash, a Put Back, or five Deletes in a row each show their
+    /// result in the turn they arrive, and no change waits for another's motion (DES-119).
     private func commitStructure(
         _ built: BuiltStructure,
         grid: CatalogMediaGridState,
@@ -161,25 +171,43 @@ extension MediaGridViewController {
         applyStart: ContinuousClock.Instant
     ) {
         let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
-        let commitDuration = CommitDuration(start: .now)
-        // On return the collection view holds `grid`: a Move to Trash it no longer shows, or a
-        // Put Back it shows again, has its result on screen, whether this apply reloads or
-        // animates.
-        defer { stallMonitor?.completeMembershipToResult(committed: grid) }
+        let commitStart = ContinuousClock.now
         let summary = built.summary
         let scrollAnchor = captureScrollAnchor(change: change, nextOrderedIDs: grid.orderedAssetIDs)
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
         logStartedStructuralApply(grid, change: change, anchor: scrollAnchor, summary: summary)
-        let stallMonitor = stallMonitor
         let animationSuppressed = summary.animatingDifferences
             && suppressesApplyAnimation(anchor: scrollAnchor, nextOrderedIDs: grid.orderedAssetIDs)
         // A collection view outside a window has nothing on screen to move, so it reloads.
         let batchUpdates = collectionView.window == nil ? nil : built.batchUpdates
+        let motionsInFlightAtCommit = motionsInFlight
+        if batchUpdates?.isEmpty == true {
+            // The new structure is the one on screen: nothing to reload, move or lay out.
+            structure = built.structure
+        } else if let batchUpdates {
+            applyBatch(
+                batchUpdates,
+                structure: built.structure,
+                animationSuppressed: animationSuppressed,
+                scrollAnchor: scrollAnchor
+            )
+            // The batch has already placed every surviving header at its new section (the
+            // layout is current on return; see `restoreScrollAnchor`).
+            renderVisibleDayHeaders()
+        } else {
+            structure = built.structure
+            collectionView.reloadData()
+            restoreScrollAnchor(scrollAnchor)
+            renderVisibleDayHeaders()
+        }
+        // The collection view now holds `grid`: a Move to Trash it no longer shows, or a Put
+        // Back it shows again, has its result on screen, whether this apply reloaded or moves.
+        stallMonitor?.completeMembershipToResult(committed: grid)
         let context = StructuralApplyCompletionContext(
             grid: grid,
             change: change,
             applyStart: applyStart,
-            commit: commitDuration,
+            commitMs: DiagnosticsTiming.milliseconds(since: commitStart),
             diffPolicyMs: built.diffPolicyMs,
             structureBuildMs: built.structureBuildMs,
             batchUpdatesMs: built.batchUpdatesMs,
@@ -193,55 +221,17 @@ extension MediaGridViewController {
             appliedBy: batchUpdates.map { $0.isEmpty ? .nothing : .batchUpdates } ?? .reloadData,
             sectionCount: built.structure.numberOfSections,
             heldDuringScroll: mutationGate.lastDrainedHeldDuringScroll,
+            motionsInFlightAtCommit: motionsInFlightAtCommit,
             signpost: signpost
         )
-        let completion = { [weak self, operation, stallMonitor, context] in
-            guard let self else {
-                if let operation {
-                    stallMonitor?.endOperation(operation)
-                }
-                return
-            }
-            completeStructuralApply(
-                context,
-                operation: operation,
-                stallMonitor: stallMonitor
-            )
-        }
-        if batchUpdates?.isEmpty == true {
-            // The new structure is the one on screen: nothing to reload, move or lay out.
-            structure = built.structure
-            completion()
-            return
-        }
-        guard let batchUpdates else {
-            structure = built.structure
-            collectionView.reloadData()
-            restoreScrollAnchor(scrollAnchor)
-            renderVisibleDayHeaders()
-            completion()
-            return
-        }
-        applyBatch(
-            batchUpdates,
-            structure: built.structure,
-            animationSuppressed: animationSuppressed,
-            scrollAnchor: scrollAnchor,
-            completion: completion
-        )
-        // Here rather than in the completion: the batch has already placed every surviving
-        // header at its new section (the layout is current on return; see
-        // `restoreScrollAnchor`), and an animated batch's completion lands only after the
-        // motion, so a header would show its old day for the length of it.
-        renderVisibleDayHeaders()
-        commitDuration.end()
+        completeStructuralApply(context, operation: operation, stallMonitor: stallMonitor)
     }
 
     /// An animated apply keeps its true-diff path but runs with a zero duration when the
     /// motion would be unwanted (Reduce Motion), invisible (live scrolling), or false (a
     /// strip restore that scrolls by exactly the distance the survivors would travel).
     private func suppressesApplyAnimation(anchor: ScrollAnchor?, nextOrderedIDs: [MediaAssetID]) -> Bool {
-        if MediaGridAnimation.prefersReducedMotion
+        if reducesMotion()
             || MediaGridAnimation.suppressesApplyAnimation(
                 lastScrollTickAge: lastScrollTickAt.map { $0.duration(to: .now) }
             )
@@ -469,12 +459,18 @@ extension MediaGridViewController {
     /// to switch: it holds the old counts until the block runs and reads the new ones after.
     /// The layout is current when `performBatchUpdates` returns (only the item views animate
     /// to their frames), so the anchor restore right after it reads the new geometry.
+    ///
+    /// A batch may be issued while an earlier one still moves. AppKit accepts it, holds the
+    /// new counts and visible items when it returns, and starts each moving view's new
+    /// motion from the position it is drawn at, so a tile changes course rather than
+    /// jumping; every batch's completion still arrives, finished, possibly out of order
+    /// (`docs/research/2026-11-16-grid-applies-during-motion.md`). Nothing waits for that
+    /// completion: it only reports how long the motion ran.
     private func applyBatch(
         _ updates: MediaGridBatchUpdates,
         structure next: MediaGridStructure,
         animationSuppressed: Bool,
-        scrollAnchor: ScrollAnchor?,
-        completion: @escaping () -> Void
+        scrollAnchor: ScrollAnchor?
     ) {
         // A batch is relative to the counts the collection view holds. One that has not yet
         // asked for them would ask after the block, read the new structure as the old one,
@@ -484,10 +480,11 @@ extension MediaGridViewController {
         // The headers that go and come are the layout's to name to AppKit, which asks while
         // it prepares the batch, inside `performBatchUpdates`.
         (collectionView.collectionViewLayout as? MediaGridLayout)?.receiveHeaderUpdates(updates.headers)
+        let duration = animationSuppressed ? 0 : applyMotionDuration
+        motionsInFlight += 1
+        let motionStart = ContinuousClock.now
         NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = animationSuppressed
-            ? 0
-            : MediaGridAnimation.applyDuration
+        NSAnimationContext.current.duration = duration
         NSAnimationContext.current.timingFunction = MediaGridAnimation.applyTimingFunction
         collectionView.animator().performBatchUpdates({ [weak self] in
             guard let self else {
@@ -499,28 +496,38 @@ extension MediaGridViewController {
             for move in updates.movedItems {
                 collectionView.moveItem(at: move.from, to: move.to)
             }
-        }, completionHandler: { _ in
+        }, completionHandler: { [weak self] finished in
             // AppKit runs a batch's completion on the main thread without annotating its
-            // isolation; asserting that, rather than hopping through a task, completes this
-            // apply before any other mutation can begin.
+            // isolation; asserting that, rather than hopping through a task, keeps the count
+            // in step with the batches issued.
             MainActor.assumeIsolated {
-                completion()
+                self?.endMotion(started: motionStart, durationMs: Int(duration * 1000), finished: finished)
             }
         })
         restoreScrollAnchor(scrollAnchor)
         NSAnimationContext.endGrouping()
     }
 
+    /// A batch's motion ended: its tiles stand at their frames, or a later batch carried
+    /// them on. Reported, never waited on.
+    private func endMotion(started: ContinuousClock.Instant, durationMs: Int, finished: Bool) {
+        motionsInFlight -= 1
+        OtosLog.ui.debugOperation("ui.mediaGrid.motion", phase: "finish", fields: [
+            "ms": "\(DiagnosticsTiming.milliseconds(since: started))",
+            "durationMs": "\(durationMs)",
+            "finished": "\(finished)",
+            "motionsInFlight": "\(motionsInFlight)",
+        ])
+    }
+
+    /// The apply's completion, run as its commit returns: the collection view already holds
+    /// the new structure, whether or not its tiles are still moving to it.
     func completeStructuralApply(
         _ context: StructuralApplyCompletionContext,
         operation: MainRunLoopOperationToken?,
         stallMonitor: MainRunLoopStallMonitor?
     ) {
-        // The commit's end first: a reload, or a batch AppKit completes before returning,
-        // reaches here inside the commit, which ends now and so animated for 0 ms.
-        let commitMs = context.commit.end()
         let completionStart = ContinuousClock.now
-        let animationMs = context.commit.millisecondsAfterEnd(until: completionStart)
         OtosSignpost.ui.endInterval("MediaGridStructuralApply", context.signpost)
         stallMonitor?.completeIntentToPaint(appliedScope: context.grid.scope)
 
@@ -546,8 +553,6 @@ extension MediaGridViewController {
         logFinishedStructuralApply(
             context,
             totalMs: totalMs,
-            commitMs: commitMs,
-            animationMs: animationMs,
             completionMs: completionMs,
             visibleDetailRequestCount: visibleDetailRequestCount,
             preheatCount: preheatCount
@@ -555,8 +560,6 @@ extension MediaGridViewController {
         recordStructuralApplyDiagnostics(
             context,
             totalMs: totalMs,
-            commitMs: commitMs,
-            animationMs: animationMs,
             completionMs: completionMs,
             visibleDetailRequestCount: visibleDetailRequestCount,
             preheatCount: preheatCount
@@ -564,11 +567,13 @@ extension MediaGridViewController {
         if let operation {
             stallMonitor?.endOperation(operation)
         }
-        // Adopt this apply's identities/descriptor and drain any work parked while it ran:
-        // a newer grid state (applied next, content-first) and/or a zoom requested during
-        // the apply (a `.zoomSwap` the gate emits once the count actually differs). The
-        // gate guarantees a layout swap never runs concurrently with a structural apply in
-        // either direction (ARC-023).
+        // Adopt this apply's identities/descriptor and drain any work parked while it was
+        // built: a newer grid state (applied next, content-first) and/or a zoom requested
+        // during the build (a `.zoomSwap` the gate emits once the count actually differs).
+        // The gate guarantees a layout swap never runs concurrently with a structural
+        // apply's build and commit, in either direction (ARC-023); a swap that starts now
+        // carries tiles still moving from this commit on to the new layout, as a later
+        // batch does.
         perform(mutationGate.completeStructuralApply(applied: context.grid))
     }
 
@@ -614,8 +619,6 @@ extension MediaGridViewController {
     private func logFinishedStructuralApply(
         _ context: StructuralApplyCompletionContext,
         totalMs: Int,
-        commitMs: Int,
-        animationMs: Int,
         completionMs: Int,
         visibleDetailRequestCount: Int,
         preheatCount: Int
@@ -638,8 +641,8 @@ extension MediaGridViewController {
             batchUpdatesMs=\(context.batchUpdatesMs, privacy: .public) \
             appliedBy=\(context.appliedBy.rawValue, privacy: .public) \
             sections=\(context.sectionCount, privacy: .public) \
-            commitMs=\(commitMs, privacy: .public) \
-            animationMs=\(animationMs, privacy: .public) \
+            commitMs=\(context.commitMs, privacy: .public) \
+            motionsInFlightAtCommit=\(context.motionsInFlightAtCommit, privacy: .public) \
             completionMs=\(completionMs, privacy: .public) \
             totalMs=\(totalMs, privacy: .public)
             """
@@ -649,8 +652,6 @@ extension MediaGridViewController {
     private func recordStructuralApplyDiagnostics(
         _ context: StructuralApplyCompletionContext,
         totalMs: Int,
-        commitMs: Int,
-        animationMs: Int,
         completionMs: Int,
         visibleDetailRequestCount: Int,
         preheatCount: Int
@@ -677,8 +678,8 @@ extension MediaGridViewController {
                 "batchUpdatesMs": "\(context.batchUpdatesMs)",
                 "appliedBy": context.appliedBy.rawValue,
                 "sections": "\(context.sectionCount)",
-                "commitMs": "\(commitMs)",
-                "animationMs": "\(animationMs)",
+                "commitMs": "\(context.commitMs)",
+                "motionsInFlightAtCommit": "\(context.motionsInFlightAtCommit)",
                 "completionMs": "\(completionMs)",
                 "totalMs": "\(totalMs)",
             ]

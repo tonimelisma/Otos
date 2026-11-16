@@ -166,7 +166,7 @@ extension AppKitWindowTests {
                 grid: grid,
                 change: .scope,
                 applyStart: .now,
-                commit: .init(start: .now),
+                commitMs: 0,
                 diffPolicyMs: 0,
                 structureBuildMs: 0,
                 batchUpdatesMs: 0,
@@ -179,7 +179,7 @@ extension AppKitWindowTests {
                 usesReloadDataFallback: false,
                 appliedBy: .batchUpdates,
                 sectionCount: 1,
-                heldDuringScroll: false,
+                heldDuringScroll: false, motionsInFlightAtCommit: 0,
                 signpost: .beginState(id: .exclusive)
             )
 

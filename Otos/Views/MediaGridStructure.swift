@@ -365,6 +365,12 @@ nonisolated struct MediaGridStructure: Sendable {
         content.edit(from: previous.content)
     }
 
+    /// Whether `next` was made from this structure's order by an edit, so the structure
+    /// that shows it costs the sections and the edit to build, not the items.
+    func isEdited(into next: CatalogGridContent) -> Bool {
+        next.edit(from: content) != nil
+    }
+
     /// An order and its day buckets outside a publication, as a test or a fixture holds them.
     init(orderedIDs: [MediaAssetID], dayBuckets: [Date?] = []) {
         self.init(content: CatalogGridContent(orderedAssetIDs: orderedIDs, dayBuckets: dayBuckets, stacks: .empty))
