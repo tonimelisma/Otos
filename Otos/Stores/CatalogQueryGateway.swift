@@ -154,7 +154,11 @@ nonisolated enum CatalogQueryGateway {
         let filter = filterPredicate(for: descriptor.filter)
         arguments.append(contentsOf: filter.arguments)
         arguments.append(contentsOf: order.arguments)
-        let filterSQL = filter.sql.map { "\n  AND \($0)" } ?? ""
+        let chosen = scopeClause.seek == nil && ChosenRowsSQL.seeks(descriptor.filter)
+        let filterSQL = (filter.sql.map { "\n  AND \($0)" } ?? "") + (chosen ? "\n  AND \(ChosenRowsSQL.predicate)" : "")
+        let from = chosen
+            ? "media_asset INDEXED BY \(ChosenRowsSQL.indexName)\(scopeClause.join)"
+            : scopeClause.seekFrom ?? "media_asset INDEXED BY \(order.indexName)\(scopeClause.join)"
         let locationColumns = scope.requiresLocation
             ? ", asset_metadata.primary_latitude, asset_metadata.primary_longitude"
             : ""
@@ -166,11 +170,12 @@ nonisolated enum CatalogQueryGateway {
             : ""
         // A wide scope walks the order's index, which hands its rows over in order. A narrow
         // scope seeks its own rows and sorts the few it finds: walking the order index for them
-        // reads every row of the catalog (`ScopeClause.Seek`).
+        // reads every row of the catalog (`ScopeClause.Seek`). So does a wide scope filtered to
+        // chosen rows (`ChosenRowsSQL`).
         return SQLQuery(
             sql: """
             SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_local\(locationColumns)\(likedColumn)\(burstColumn)
-            FROM \(scopeClause.seekFrom ?? "media_asset INDEXED BY \(order.indexName)\(scopeClause.join)")
+            FROM \(from)
             WHERE \(scopeClause.sql)\(filterSQL)
             ORDER BY \(order.orderBy)
             """,
@@ -352,11 +357,13 @@ nonisolated enum CatalogQueryGateway {
             return nil
         }
         let filterPredicate = filterPredicate(for: filter)
-        let filterSQL = filterPredicate.sql.map { "\n  AND \($0)" } ?? ""
+        let chosen = scopeClause.seek == nil && ChosenRowsSQL.seeks(filter)
+        let filterSQL = (filterPredicate.sql.map { "\n  AND \($0)" } ?? "") + (chosen ? "\n  AND \(ChosenRowsSQL.predicate)" : "")
+        let from = chosen ? "media_asset INDEXED BY \(ChosenRowsSQL.indexName)\(scopeClause.join)" : scopeClause.from
         return SQLQuery(
             sql: """
             SELECT COUNT(*)
-            FROM \(scopeClause.from)
+            FROM \(from)
             WHERE \(scopeClause.sql)\(filterSQL)
             """,
             arguments: StatementArguments(scopeClause.arguments + filterPredicate.arguments)
@@ -1007,7 +1014,7 @@ nonisolated enum PhotoStackSQL {
 
     /// The columns `candidateQuery` selects, in order: each row is read by position.
     private enum Column: Int {
-        case libraryRootID, relativePath, bestKind, nameKey, sortKey, keyChosenAt
+        case libraryRootID, relativePath, bestKind, nameKey, keyChosenAt
         case burstIdentifier, captureLocal, choice, burstKeyChosenAt
     }
 
@@ -1037,7 +1044,6 @@ nonisolated enum PhotoStackSQL {
                 relativePath: MediaRelativePath(rawValue: row[Column.relativePath.rawValue]),
                 kind: kind,
                 nameKey: FilesystemNameKey(rawValue: row[Column.nameKey.rawValue]),
-                sortKey: row[Column.sortKey.rawValue],
                 burstIdentifier: row[Column.burstIdentifier.rawValue],
                 captureLocal: row[Column.captureLocal.rawValue],
                 // The column's CHECK admits only the three choices.
@@ -1052,7 +1058,7 @@ nonisolated enum PhotoStackSQL {
     /// The columns every candidate read selects from `still`, in `Column`'s order.
     private static let candidateColumns = """
     still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
-               still.sort_key, still.stack_key_chosen_at_unix_ms, still.burst_identifier,
+               still.stack_key_chosen_at_unix_ms, still.burst_identifier,
                still.best_capture_local, still.media_choice, still.burst_key_chosen_at_unix_ms
     """
 
@@ -1203,6 +1209,25 @@ nonisolated enum PhotoStackSQL {
             """,
             arguments: [folders, bursts]
         )
+    }
+}
+
+/// The rows the user chose, Liked or Disliked (v71): a few dozen of a library's hundred
+/// thousand — 21 Liked and 3 Disliked on the owner's catalog — so a wide scope filtered to
+/// chosen rows seeks `indexName`, which holds exactly them with every column the order and
+/// the window's tests read, and sorts the few it finds. Walking the order instead read every
+/// row of the table: 25,897 pages for 1,647 Liked rows of an owner-shaped catalog. A filter
+/// that takes Not Rated rows, most of the library, walks the order.
+nonisolated enum ChosenRowsSQL {
+    static let indexName = "idx_media_asset_chosen"
+
+    /// The index's condition. A read through it states it literally: the filter binds its
+    /// choices, and SQLite uses a partial index only for a condition it can prove at prepare.
+    static let predicate = "media_choice <> 'notRated'"
+
+    /// Whether a filter selects only chosen rows.
+    static func seeks(_ filter: MediaFilter) -> Bool {
+        !filter.choices.isEmpty && !filter.choices.contains(.notRated)
     }
 }
 

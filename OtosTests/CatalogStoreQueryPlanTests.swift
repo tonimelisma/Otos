@@ -930,13 +930,13 @@ struct CatalogStoreQueryPlanTests {
             try db.execute(
                 sql: """
                 INSERT INTO media_asset (
-                    library_root_id, relative_path, sort_key, name_sort_key, name,
+                    library_root_id, relative_path, name_sort_key, name,
                     content_type_identifier, byte_size, content_modified_at_unix,
                     metadata_source_size, metadata_source_mtime
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                arguments: [rootID, "a.jpg", "a.jpg", "a.jpg", "a.jpg", "public.jpeg", 1, 1000, 1, 1000]
+                arguments: [rootID, "a.jpg", "a.jpg", "a.jpg", "public.jpeg", 1, 1000, 1, 1000]
             )
             return rootID
         }
@@ -1032,7 +1032,6 @@ private func insertDescriptorFixtureRow(_ fixture: DescriptorFixture, rootID: In
         INSERT INTO media_asset (
             library_root_id,
             relative_path,
-            sort_key,
             name_sort_key,
             name,
             content_type_identifier,
@@ -1044,11 +1043,10 @@ private func insertDescriptorFixtureRow(_ fixture: DescriptorFixture, rootID: In
             enriched_kind,
             enriched_format
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         arguments: [
             rootID,
-            fixture.relativePath,
             fixture.relativePath,
             fixture.nameSortKey,
             fixture.relativePath,
@@ -1091,16 +1089,15 @@ private func insertPlanFixture(_ dbQueue: DatabaseQueue) async throws -> (Int64,
                 INSERT INTO media_asset (
                     library_root_id,
                     relative_path,
-                    sort_key,
                     name_sort_key,
                     name,
                     content_type_identifier,
                     byte_size,
                     content_modified_at_unix
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                arguments: [rootID, relativePath, sortKey, sortKey, relativePath, "public.jpeg", 1, 1000]
+                arguments: [rootID, relativePath, sortKey, relativePath, "public.jpeg", 1, 1000]
             )
         }
         return (rootID1, rootID2)
@@ -1123,7 +1120,6 @@ private func insertEnrichmentClaimFixture(
                 INSERT INTO media_asset (
                     library_root_id,
                     relative_path,
-                    sort_key,
                     name_sort_key,
                     name,
                     content_type_identifier,
@@ -1131,11 +1127,10 @@ private func insertEnrichmentClaimFixture(
                     content_modified_at_unix,
                     enrichment_claimed
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 arguments: [
                     rootID,
-                    relativePath,
                     relativePath,
                     relativePath,
                     relativePath,
@@ -1284,9 +1279,9 @@ extension CatalogStoreQueryPlanTests {
                 }
             }
             for (name, sql) in [("renderSignatures", RenderSignatureSQL.candidatesSQL), ("metadataRefresh", CatalogStore.metadataRefreshCandidatesSQL)] {
-                let index = name == "renderSignatures" ? RenderSignatureSQL.owedIndexName : "sqlite_autoindex_media_asset_1"
+                let tree = "INDEX " + (name == "renderSignatures" ? RenderSignatureSQL.owedIndexName : "sqlite_autoindex_media_asset_1")
                 let plan = try explainPlan(db, sql: sql, arguments: [1, "x", 16])
-                #expect(plan.contains("INDEX \(index) (library_root_id=? AND relative_path>?)"), "\(name): \(plan)")
+                #expect(plan.contains("\(tree) (library_root_id=? AND relative_path>?)"), "\(name): \(plan)")
                 #expect(!usesTemporarySort(plan), "\(name): \(plan)")
                 #expect(!plan.contains("library_root USING") && !plan.contains("SCAN library_root"), "\(name): \(plan)")
             }
@@ -1315,6 +1310,47 @@ extension CatalogStoreQueryPlanTests {
         }
         #expect(plan.contains("USING INDEX \(SourceProductsSQL.owedIndexName) (library_root_id=? AND relative_path>?)"), "\(plan)")
         #expect(!usesTemporarySort(plan), "\(plan)")
+    }
+
+    /// v71: a wide scope filtered to Liked or Disliked rows seeks the chosen rows' index and
+    /// sorts the few it finds, for its order and its count, in every order, and returns them in
+    /// the order the walk would; a filter that takes Not Rated rows walks the order.
+    @Test func aChoicesFilterSeeksTheChosenRows() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        try await dbQueue.write { db in
+            try db.execute(sql: "UPDATE media_asset SET media_choice = 'liked' WHERE relative_path IN ('a.jpg', 'c.jpg')")
+            try db.execute(sql: "UPDATE media_asset SET media_choice = 'disliked' WHERE relative_path = 'b.jpg'")
+        }
+        let scope = CatalogScopePredicate(rootIDs: [rootID1, rootID2])
+        let sorts = [
+            MediaSortOrder(field: .bestDate, direction: .descending),
+            MediaSortOrder(field: .name, direction: .ascending),
+            MediaSortOrder(field: .size, direction: .descending),
+        ]
+        try await dbQueue.read { db in
+            for sort in sorts {
+                let filters: [([MediaChoice], Bool)] = [
+                    ([.liked], true), ([.disliked], true), ([.liked, .disliked], true), ([.notRated], false),
+                ]
+                for (choices, seeks) in filters {
+                    let descriptor = CatalogQueryDescriptor(scope: .allMedia, filter: MediaFilter(choices: Set(choices)), sort: sort)
+                    let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(descriptor: descriptor, scope: scope, db: db))
+                    let plan = try explainPlan(db, query: query)
+                    #expect(plan.contains(ChosenRowsSQL.indexName) == seeks, "\(choices) \(sort): \(plan)")
+                    let count = try #require(try CatalogQueryGateway.countQuery(scope: scope, filter: descriptor.filter, db: db))
+                    #expect(try explainPlan(db, query: count).contains(ChosenRowsSQL.indexName) == seeks, "\(choices)")
+                    let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments).map { $0[1] as String }
+                    let walked = try CatalogQueryGateway.orderedAssetIDQuery(
+                        descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort), scope: scope, db: db
+                    ).map { try Row.fetchAll(db, sql: $0.sql, arguments: $0.arguments) } ?? []
+                    let named = choices.map { "'\($0.rawValue)'" }.joined(separator: ", ")
+                    let chosen = try Set(String.fetchAll(db, sql: "SELECT relative_path FROM media_asset WHERE media_choice IN (\(named))"))
+                    #expect(rows == walked.map { $0[1] as String }.filter(chosen.contains), "\(choices) \(sort)")
+                }
+            }
+        }
     }
 
     /// v65: no read takes the `sort_key` order, so its two indexes are gone, and the claim

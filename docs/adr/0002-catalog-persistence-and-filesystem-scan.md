@@ -237,14 +237,32 @@ none, and the log said nothing about the wait
   and 8.8 s cold per migration on the owner-shaped catalog — to find violations a migration
   that writes no key cannot cause. No registered migration rebuilds a table, deletes a row
   another table refers to or changes a referenced key, so with enforcement on no foreign-key
-  action fires and the outcome is the default's. A future migration that must rebuild a table
-  (SQLite's twelve-step `ALTER TABLE`) registers `.deferred` and says so.
+  action fires and the outcome is the default's. A migration that must rebuild a table
+  (SQLite's twelve-step `ALTER TABLE`: v66's `face`, v71's `media_asset`) registers
+  `.deferred` and says so: with enforcement on, dropping the old table would delete every row
+  that refers to it by cascade. It runs on a migrator whose own whole-file check is disabled
+  and checks what it rewrote — `foreign_key_check` of the tables it made, and, for
+  `media_asset`, that the new table holds as many keys as the old one, all copied from it,
+  so no row that refers to an asset lost it. A whole-file check would also refuse a catalog
+  for a violation the migration did not make.
 - **A migration costs only what its outcome needs.** It rebuilds only an index whose
   definition changes (each rebuild is a full scan and sort of its table, one per index), and
   writes rows while the indexes it changes are dropped, so each is built once over the written
   rows rather than maintained for every write. An applied migration's body changes only when
   its outcome — schema text, row contents, object order — stays identical: GRDB knows a
   migration by its name, and a catalog that applied it never runs it again.
+- **The open compacts a file a quarter free.** SQLite reuses a dropped table's pages but
+  never returns them, and `VACUUM` cannot run inside a migration's transaction, so after the
+  migrations the open rewrites the file (`CatalogStore.compactIfOwed`) when at least a quarter
+  of its pages and 256 MB are free — v71 frees about 1.2 GB of the owner's 2.8 GB — and says so
+  (`Optimizing catalog…`, DES-121). It needs twice the used pages free above the free-space
+  floor (a temporary copy, then the log, ADR 0027); without that room it is skipped, logged
+  (`op=catalog.compaction phase=skipped reason=freeSpaceFloor`), and the next open asks again.
+  The file's own free-page count decides it, so no flag records that it ran. Rejected: a
+  `VACUUM` inside the migration (SQLite refuses it in a transaction); `auto_vacuum`
+  (incremental vacuum moves pages on every commit and needs a rebuild to turn on); `VACUUM
+  INTO` a new file and a rename (two copies of the catalog on disk and a file swap under
+  open connections).
 - **A migration's PR states its cost** — milliseconds and WAL bytes — measured on a generated
   catalog of the owner's shape (about 167,000 assets, 2 GB: the research note's recipe), and
   what in its outcome needs that time when it is more than a second.

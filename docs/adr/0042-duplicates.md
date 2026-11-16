@@ -287,10 +287,17 @@ Other rules:
 
 `RenderSignatureRefresher` is the one producer of signatures:
 - It reads stored thumbnails only, so it never opens an original or downloads one.
-- It records the thumbnail each signature came from (`render_signature_source`: path,
-  rendered revision, enrichment stamps, and a source-drawn thumbnail's source-products
-  stamp). A re-rendered thumbnail makes the signature stale with no write site having to
-  know, and so do a changed file's new source images, which land at the same path.
+- A signature is stored only while it is its thumbnail's (v71): the hash on the row
+  (`render_dhash`, with `render_signature_read` 1 once the thumbnail has been read, which a
+  thumbnail that does not decode also gets), and the 1 KB gray in `render_signature`, one
+  row per signed still, which only the evidence read of a proposed pair reads. The write
+  that changes what the thumbnail is — its path, rendered revision or enrichment stamps,
+  or a source-drawn thumbnail's source-products stamp — clears all three in the same
+  statement (`media_asset_render_signature_stale`), so a re-rendered thumbnail or a changed
+  file's new source images make the signature owed with no write site having to know. The
+  refresher writes a signature only while the row's thumbnail is still the one it read
+  (`StoredThumbnailSQL.identity`), and the candidates' evidence stamp is that identity,
+  read from the candidate index.
 - It is one loop woken by the Store's change notifications (ADR 0032).
 
 MediaMetadata 0.9's new fields are backfilled the way new library fields always are

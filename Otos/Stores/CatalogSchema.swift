@@ -1885,6 +1885,15 @@ nonisolated enum CatalogSchema {
     ///   no read takes, go.
     static let owedWorkIndexesMigrationIdentifier = "v65_owed_work_indexes"
 
+    /// v65's owed render signature condition, over the string signature stamp v71 removed.
+    static let v65RenderSignatureOwedPredicate = """
+    thumbnail_path IS NOT NULL
+      AND kind IN ('image', 'raw')
+      AND pending_trash_batch_unix_ms IS NULL
+      AND trash_path IS NULL
+      AND render_signature_source IS NOT \(StoredThumbnailSQL.unqualifiedIdentity)
+    """
+
     static var owedWorkIndexesStatements: [String] {
         let claims: [(name: String, global: Bool, claim: EnrichmentClaim)] = [
             (EnrichmentClaimGateway.broadGlobalIndexName, true, .products),
@@ -1904,7 +1913,7 @@ nonisolated enum CatalogSchema {
             """,
             """
             CREATE INDEX \(RenderSignatureSQL.owedIndexName) ON media_asset(library_root_id, relative_path)
-            WHERE \(RenderSignatureSQL.owedPredicate)
+            WHERE \(v65RenderSignatureOwedPredicate)
             """,
             """
             CREATE INDEX \(SourceProductsSQL.owedIndexName) ON media_asset(library_root_id, relative_path)
@@ -2020,10 +2029,28 @@ nonisolated enum CatalogSchema {
     /// assets the rule now leaves out; 15,737 remain.
     static let samePhotoIndexesMigrationIdentifier = "v67_same_photo_indexes"
 
+    /// v67's candidate condition and columns, over the string signature stamp v71 removed.
+    static let v67SamePhotoCandidatePredicate = """
+    kind IN ('image', 'raw')
+      AND pending_trash_batch_unix_ms IS NULL
+      AND trash_path IS NULL
+      AND hidden_by_source = 0
+      AND source_path_sha1 IS NULL
+      AND render_dhash IS NOT NULL
+      AND render_signature_source = \(StoredThumbnailSQL.unqualifiedIdentity)
+    """
+
+    static let v67SamePhotoCandidateIndexColumns = """
+    library_root_id, relative_path, kind, capture_instant_unix, render_dhash, render_signature_source, \
+    thumbnail_path, rendered_revision, rendered_source_size, rendered_source_mtime, source_products_size, \
+    source_products_mtime, metadata_source_size, metadata_source_mtime, pending_trash_batch_unix_ms, trash_path, \
+    hidden_by_source, source_path_sha1
+    """
+
     static let samePhotoIndexesStatements: [String] = [
         """
-        CREATE INDEX \(SamePhotoSQL.candidateIndexName) ON media_asset(\(SamePhotoSQL.candidateIndexColumns))
-        WHERE \(SamePhotoSQL.candidatePredicate)
+        CREATE INDEX \(SamePhotoSQL.candidateIndexName) ON media_asset(\(v67SamePhotoCandidateIndexColumns))
+        WHERE \(v67SamePhotoCandidatePredicate)
         """,
         "CREATE INDEX \(SamePhotoSQL.metadataIndexName) ON asset_metadata(\(SamePhotoSQL.metadataIndexColumns))",
     ]
@@ -2089,6 +2116,298 @@ nonisolated enum CatalogSchema {
         )
         """,
     ]
+
+    /// v71: `media_asset` is rebuilt as a narrow table (plan 0116 bet 8,
+    /// `docs/research/2026-11-16-media-asset-split-study.md`). On the owner's catalog the row was
+    /// about 2 KB and the table 545 MB, so every read that tests rows outside a covering index
+    /// (the choices filter, the filter options, People's photos, the stacks) read about 140k
+    /// pages. Three columns made most of it:
+    /// - `render_gray`, a still's 1 KB grayscale render, which only Duplicates reads to confirm
+    ///   a pair, moves to `render_signature`, one row per signed still.
+    /// - `render_signature_source`, the thumbnail identity a signature was read from as text,
+    ///   becomes `render_signature_read`: 1 while the stored signature (`render_dhash` and its
+    ///   gray) is the current thumbnail's. `media_asset_render_signature_stale` clears both in
+    ///   the write that changes the thumbnail's identity, so no write site has to know, as the
+    ///   string made it before.
+    /// - `sort_key`, the path's natural order, which only the stacks read: they order a stack's
+    ///   members by the path's own natural key (`MediaSortKey.naturalKey`).
+    /// The table keeps its row id. Without one, SQLite's planner, which reads no statistics in
+    /// this catalog, prices a lookup by key from an index that does not cover a read above a
+    /// walk of the key's range, and three reads left their partial indexes to walk a whole root
+    /// (the filter's types, the faces owed and a mirror's pairing): every pinned plan stays as
+    /// it was.
+    ///
+    /// SQLite rebuilds a table in twelve steps: the rows are copied into a new table in key
+    /// order, the old table dropped and the new one renamed, then the indexes made over the
+    /// rows and the triggers made again. Dropping a table other tables reference needs foreign
+    /// keys off: with them on, the drop would delete every face, record, embedding, reading
+    /// and description by cascade. So the migration is registered `.deferred`, and checks what
+    /// it rewrote: the new table holds as many unique keys as the old one, all copied from it,
+    /// so every child row keeps its parent; and `foreign_key_check` of the two tables it made.
+    /// The indexes are made again from their own definitions, read from the schema, but for
+    /// the two that named the string stamp, and one is new: the chosen rows' (`ChosenRowsSQL`),
+    /// so a Liked or Disliked view reads its few rows and not the table.
+    static let hotAssetTableMigrationIdentifier = "v71_media_asset_hot_table"
+
+    /// The tables v71 made, whose foreign keys its check reads. v71's SQL is literal, never
+    /// built from the constants today's reads use, so a later change to those cannot change
+    /// what v71 does.
+    static let hotAssetTableCheckedTables = ["media_asset", "render_signature"]
+
+    /// The indexes v71 replaces rather than makes again as they were.
+    static let hotAssetTableReplacedIndexes: Set<String> = [
+        "idx_media_asset_render_signature_owed", "idx_media_asset_same_photo_candidate", "idx_media_asset_capture_day",
+    ]
+
+    /// The columns v71 copies as they are: every stored column but the three it removes.
+    static let hotAssetCopiedColumns = """
+    library_root_id, relative_path, relative_path_key, name_sort_key, name, content_type_identifier, kind, format, \
+    byte_size, created_at_unix, content_modified_at_unix, file_identifier, enriched_kind, enriched_format, \
+    metadata_source_size, metadata_source_mtime, thumbnail_path, preview_path, face_frames_path, duration_seconds, \
+    enrichment_claimed, undecodable_by, import_batch_unix_ms, import_source_root_path, import_source_relative_path, \
+    import_source_byte_size, import_source_modified_at_epoch, import_destination_byte_size, \
+    import_destination_modified_at_epoch, capture_wall_compact, capture_wall_precision, capture_instant_unix, \
+    assumed_utc_offset_seconds, content_sha1, content_hash_source_size, content_hash_source_mtime, shown_copy_root_id, \
+    has_copies, media_choice, media_choice_sequence, stack_key_chosen_at_unix_ms, burst_key_chosen_at_unix_ms, \
+    pending_trash_batch_unix_ms, trash_path, awaiting_presence, hidden_by_source, edit_recipe_json, edit_revision, \
+    rendered_revision, rendered_source_size, rendered_source_mtime, source_products_size, source_products_mtime, \
+    source_products_absent, faces_source_size, faces_source_mtime, faces_read_source_size, faces_read_source_mtime, \
+    content_identifier, burst_identifier, source_item_id, source_path_sha1
+    """
+
+    /// `media_asset` as v71 makes it, before its rename.
+    static let hotAssetTable = """
+    CREATE TABLE media_asset_hot (
+        library_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
+        relative_path TEXT NOT NULL,
+        relative_path_key TEXT NOT NULL DEFAULT '',
+        name_sort_key TEXT NOT NULL,
+        name TEXT,
+        content_type_identifier TEXT,
+        kind TEXT,
+        format TEXT,
+        byte_size INTEGER,
+        created_at_unix DOUBLE,
+        content_modified_at_unix DOUBLE,
+        file_identifier INTEGER,
+        enriched_kind TEXT,
+        enriched_format TEXT,
+        best_kind TEXT GENERATED ALWAYS AS (COALESCE(enriched_kind, kind)) STORED,
+        best_format TEXT GENERATED ALWAYS AS (COALESCE(enriched_format, format)) STORED,
+        parent_path TEXT GENERATED ALWAYS AS (rtrim(relative_path, replace(relative_path, '/', ''))) VIRTUAL,
+        metadata_source_size INTEGER,
+        metadata_source_mtime INTEGER,
+        thumbnail_path TEXT,
+        preview_path TEXT,
+        face_frames_path TEXT,
+        duration_seconds DOUBLE,
+        enrichment_claimed DOUBLE,
+        undecodable_by TEXT,
+        import_batch_unix_ms INTEGER,
+        import_source_root_path TEXT,
+        import_source_relative_path TEXT,
+        import_source_byte_size INTEGER,
+        import_source_modified_at_epoch DOUBLE,
+        import_destination_byte_size INTEGER,
+        import_destination_modified_at_epoch DOUBLE,
+        capture_wall_compact INTEGER,
+        capture_wall_precision TEXT,
+        capture_instant_unix DOUBLE,
+        assumed_utc_offset_seconds INTEGER,
+        best_capture_local DOUBLE GENERATED ALWAYS AS (
+            COALESCE(
+                unixepoch(printf('%04d-%02d-%02d %02d:%02d:%02d',
+                    capture_wall_compact / 10000000000, (capture_wall_compact / 100000000) % 100,
+                    (capture_wall_compact / 1000000) % 100, (capture_wall_compact / 10000) % 100,
+                    (capture_wall_compact / 100) % 100, capture_wall_compact % 100)),
+                (CAST(COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix) AS INTEGER)
+                    - (COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix)
+                       < CAST(COALESCE(capture_instant_unix, created_at_unix, content_modified_at_unix) AS INTEGER)))
+                    + assumed_utc_offset_seconds
+            )
+        ) VIRTUAL,
+        capture_day INTEGER GENERATED ALWAYS AS (CAST(strftime('%d', best_capture_local, 'unixepoch') AS INTEGER)) VIRTUAL,
+        capture_month INTEGER GENERATED ALWAYS AS (CAST(strftime('%m', best_capture_local, 'unixepoch') AS INTEGER)) VIRTUAL,
+        content_sha1 BLOB,
+        content_hash_source_size INTEGER,
+        content_hash_source_mtime INTEGER,
+        shown_copy_root_id INTEGER,
+        has_copies INTEGER NOT NULL DEFAULT 0,
+        media_choice TEXT NOT NULL DEFAULT 'notRated'
+            CHECK (media_choice IN ('liked', 'notRated', 'disliked')),
+        media_choice_sequence INTEGER,
+        stack_key_chosen_at_unix_ms INTEGER,
+        burst_key_chosen_at_unix_ms INTEGER,
+        pending_trash_batch_unix_ms INTEGER,
+        trash_path TEXT,
+        awaiting_presence INTEGER NOT NULL DEFAULT 0,
+        hidden_by_source INTEGER NOT NULL DEFAULT 0,
+        edit_recipe_json TEXT,
+        edit_revision INTEGER NOT NULL DEFAULT 0,
+        rendered_revision INTEGER NOT NULL DEFAULT 0,
+        rendered_source_size INTEGER,
+        rendered_source_mtime INTEGER,
+        source_products_size INTEGER,
+        source_products_mtime INTEGER,
+        source_products_absent INTEGER NOT NULL DEFAULT 0,
+        faces_source_size INTEGER,
+        faces_source_mtime INTEGER,
+        faces_read_source_size INTEGER,
+        faces_read_source_mtime INTEGER,
+        content_identifier TEXT,
+        burst_identifier TEXT,
+        source_item_id TEXT,
+        source_path_sha1 BLOB,
+        render_dhash INTEGER,
+        render_signature_read INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (library_root_id, relative_path)
+    )
+    """
+
+    /// Whether an old row's string stamp names its current thumbnail: the signature it holds
+    /// is current.
+    private static let v71SignatureIsCurrent = """
+    (render_signature_source IS NOT NULL AND render_signature_source = (thumbnail_path || '|' || rendered_revision || '|'
+        || IFNULL(rendered_source_size, '') || '|' || IFNULL(rendered_source_mtime, '')
+        || CASE WHEN (rendered_source_size IS NULL AND source_products_size IS NOT NULL)
+            THEN '|source|' || source_products_size || '|' || IFNULL(source_products_mtime, '')
+            ELSE '' END))
+    """
+
+    /// Clears a still's signature in the write that changes what its thumbnail is (ADR 0042):
+    /// its hash and its gray were read from the old thumbnail. The identity compared is
+    /// `StoredThumbnailSQL.identity`'s.
+    static let renderSignatureStaleTrigger = """
+    CREATE TRIGGER media_asset_render_signature_stale
+    AFTER UPDATE OF thumbnail_path, rendered_revision, rendered_source_size, rendered_source_mtime,
+        source_products_size, source_products_mtime ON media_asset
+    WHEN NEW.render_signature_read <> 0
+      AND (OLD.thumbnail_path || '|' || OLD.rendered_revision || '|'
+        || IFNULL(OLD.rendered_source_size, '') || '|' || IFNULL(OLD.rendered_source_mtime, '')
+        || CASE WHEN (OLD.rendered_source_size IS NULL AND OLD.source_products_size IS NOT NULL)
+            THEN '|source|' || OLD.source_products_size || '|' || IFNULL(OLD.source_products_mtime, '')
+            ELSE '' END)
+      IS NOT (NEW.thumbnail_path || '|' || NEW.rendered_revision || '|'
+        || IFNULL(NEW.rendered_source_size, '') || '|' || IFNULL(NEW.rendered_source_mtime, '')
+        || CASE WHEN (NEW.rendered_source_size IS NULL AND NEW.source_products_size IS NOT NULL)
+            THEN '|source|' || NEW.source_products_size || '|' || IFNULL(NEW.source_products_mtime, '')
+            ELSE '' END)
+    BEGIN
+    UPDATE media_asset SET render_dhash = NULL, render_signature_read = 0 WHERE rowid = NEW.rowid;
+    DELETE FROM render_signature
+    WHERE library_root_id = NEW.library_root_id AND relative_path = NEW.relative_path;
+    END
+    """
+
+    /// The indexes v71 makes: the two that named the string stamp, made over its flag
+    /// (`RenderSignatureSQL.owedPredicate`, `SamePhotoSQL.candidatePredicate`); On This Day's
+    /// without the tested columns it carried since v62, since a day's few hundred rows read
+    /// from the narrow table cost the pages their entries did (587 against 590 on the
+    /// owner-shaped catalog) and the index shrinks by most of its 13 MB; and the chosen rows'
+    /// (`ChosenRowsSQL`).
+    static let hotAssetTableNewIndexes = [
+        """
+        CREATE INDEX idx_media_asset_render_signature_owed ON media_asset(library_root_id, relative_path)
+        WHERE thumbnail_path IS NOT NULL
+          AND kind IN ('image', 'raw')
+          AND pending_trash_batch_unix_ms IS NULL
+          AND trash_path IS NULL
+          AND render_signature_read = 0
+        """,
+        """
+        CREATE INDEX idx_media_asset_same_photo_candidate ON media_asset(library_root_id, relative_path, kind,
+            capture_instant_unix, render_dhash, thumbnail_path, rendered_revision, rendered_source_size,
+            rendered_source_mtime, source_products_size, source_products_mtime, metadata_source_size,
+            metadata_source_mtime, pending_trash_batch_unix_ms, trash_path, hidden_by_source, source_path_sha1)
+        WHERE kind IN ('image', 'raw')
+          AND pending_trash_batch_unix_ms IS NULL
+          AND trash_path IS NULL
+          AND hidden_by_source = 0
+          AND source_path_sha1 IS NULL
+          AND render_dhash IS NOT NULL
+        """,
+        """
+        CREATE INDEX idx_media_asset_capture_day
+        ON media_asset(capture_day, capture_month, best_capture_local DESC, library_root_id, relative_path)
+        """,
+        """
+        CREATE INDEX idx_media_asset_chosen ON media_asset(media_choice, library_root_id, best_capture_local,
+            name_sort_key, byte_size, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source,
+            best_kind, content_identifier, shown_copy_root_id, has_copies)
+        WHERE media_choice <> 'notRated'
+        """,
+    ]
+
+    static func migrateToHotAssetTable(_ db: Database) throws {
+        let indexes = try Row.fetchAll(db, sql: """
+        SELECT name, sql FROM sqlite_master
+        WHERE type = 'index' AND tbl_name = 'media_asset' AND sql IS NOT NULL
+        ORDER BY name
+        """).filter { !hotAssetTableReplacedIndexes.contains($0["name"] as String) }
+        // The old table's triggers as they stand, made again on the new one.
+        let triggers = try String.fetchAll(db, sql: """
+        SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'media_asset' ORDER BY name
+        """)
+        try db.execute(sql: hotAssetTable)
+        try db.execute(sql: """
+        INSERT INTO media_asset_hot (\(hotAssetCopiedColumns), render_dhash, render_signature_read)
+        SELECT \(hotAssetCopiedColumns),
+               CASE WHEN \(v71SignatureIsCurrent) THEN render_dhash END, \(v71SignatureIsCurrent)
+        FROM media_asset ORDER BY library_root_id, relative_path
+        """)
+        try db.execute(sql: """
+        CREATE TABLE render_signature (
+            library_root_id INTEGER NOT NULL,
+            relative_path TEXT NOT NULL,
+            gray BLOB NOT NULL,
+            PRIMARY KEY (library_root_id, relative_path),
+            FOREIGN KEY (library_root_id, relative_path)
+                REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        )
+        """)
+        try db.execute(sql: """
+        INSERT INTO render_signature (library_root_id, relative_path, gray)
+        SELECT library_root_id, relative_path, render_gray FROM media_asset
+        WHERE \(v71SignatureIsCurrent) AND render_dhash IS NOT NULL AND render_gray IS NOT NULL
+        ORDER BY library_root_id, relative_path
+        """)
+        let before = try Int.fetchOne(db, sql: "SELECT count(*) FROM media_asset") ?? 0
+        let after = try Int.fetchOne(db, sql: "SELECT count(*) FROM media_asset_hot") ?? 0
+        // Every key copied, or nothing: a throw rolls back the migration's one transaction, so
+        // the catalog stays as v70 left it.
+        guard before == after else {
+            OtosLog.persistence.errorOperation("catalog.migration.hotAssetTable", phase: "rowsLost", fields: [
+                "before": "\(before)", "after": "\(after)",
+            ])
+            throw DatabaseError(resultCode: .SQLITE_CONSTRAINT, message: "v71 copied \(after) of \(before) asset rows")
+        }
+        try db.execute(sql: "DROP TABLE media_asset")
+        try db.execute(sql: "ALTER TABLE media_asset_hot RENAME TO media_asset")
+        for index in indexes {
+            try db.execute(sql: index["sql"] as String)
+        }
+        for statement in hotAssetTableNewIndexes + triggers + [renderSignatureStaleTrigger] {
+            try db.execute(sql: statement)
+        }
+        // A violation fails the migration with its table and count, and rolls it back whole.
+        for table in hotAssetTableCheckedTables {
+            let violations = try Int.fetchOne(db, sql: "SELECT count(*) FROM pragma_foreign_key_check('\(table)')") ?? 0
+            guard violations == 0 else {
+                OtosLog.persistence.errorOperation("catalog.migration.hotAssetTable", phase: "foreignKeyViolations", fields: [
+                    "table": table, "rows": "\(violations)",
+                ])
+                throw DatabaseError(
+                    resultCode: .SQLITE_CONSTRAINT_FOREIGNKEY,
+                    message: "v71 left \(violations) rows of \(table) without their parent"
+                )
+            }
+        }
+        OtosLog.persistence.noticeOperation("catalog.migration.hotAssetTable", phase: "finish", fields: [
+            "rows": "\(after)", "indexes": "\(indexes.count + hotAssetTableNewIndexes.count)",
+            "triggers": "\(triggers.count + 1)",
+        ])
+    }
 
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """

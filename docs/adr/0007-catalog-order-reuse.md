@@ -7,8 +7,8 @@
 
 This ADR records the pre-ADR-0010 ordering decision and the evidence that removed
 the projection order cache. ADR 0010 now owns current order execution and value
-materialization: `CatalogStore` persists `sort_key` and returns ordered IDs from
-SQLite, while Projection and the UI no longer receive a full asset value map.
+materialization: `CatalogStore` returns ordered IDs from SQLite (v71 removed the
+persisted `sort_key`, which no order read), while Projection and the UI no longer receive a full asset value map.
 
 This ADR originally decided to cache the globally ordered `[MediaAssetID]` in the
 projection and reuse it whenever direct identity validation proved membership was

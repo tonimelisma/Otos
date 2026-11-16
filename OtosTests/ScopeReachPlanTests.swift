@@ -198,10 +198,10 @@ struct ScopeReachPlanTests {
             try db.execute(sql: """
             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
             INSERT INTO media_asset (
-                library_root_id, relative_path, sort_key, name_sort_key, name, content_type_identifier,
+                library_root_id, relative_path, name_sort_key, name, content_type_identifier,
                 byte_size, content_modified_at_unix, capture_wall_compact, enriched_kind
             )
-            SELECT 1, printf('IMG_%04d.JPG', i), printf('img_%04d', i), printf('img_%04d', i), printf('IMG_%04d.JPG', i),
+            SELECT 1, printf('IMG_%04d.JPG', i), printf('img_%04d', i), printf('IMG_%04d.JPG', i),
                    'public.jpeg', i, 1000, 20190303120000 + i % 60, 'image'
             FROM n
             """, arguments: [rows])

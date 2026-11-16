@@ -109,11 +109,11 @@ struct MetadataRefresherTests {
             ] {
                 try db.execute(
                     sql: """
-                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, name_sort_key,
                         kind, byte_size, content_modified_at_unix, metadata_source_size, metadata_source_mtime)
-                    VALUES (?, ?, ?, ?, ?, 'image', 10, 100, 10, ?)
+                    VALUES (?, ?, ?, ?, 'image', 10, 100, 10, ?)
                     """,
-                    arguments: [row.root, row.path, row.path, row.path, row.path, row.enrichedMTime]
+                    arguments: [row.root, row.path, row.path, row.path, row.enrichedMTime]
                 )
                 try db.execute(
                     sql: "INSERT INTO asset_metadata (library_root_id, relative_path, family, extraction_revision) VALUES (?, ?, ?, ?)",

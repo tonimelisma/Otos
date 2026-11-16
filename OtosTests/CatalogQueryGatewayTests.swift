@@ -137,11 +137,11 @@ private func insertScopeAsset(
     try db.execute(
         sql: """
         INSERT INTO media_asset (
-            library_root_id, relative_path, sort_key, name_sort_key, name,
+            library_root_id, relative_path, name_sort_key, name,
             kind, format, media_choice, import_batch_unix_ms
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        arguments: [rootID, path, path, path, path, kind, format, choice, batchMs]
+        arguments: [rootID, path, path, path, kind, format, choice, batchMs]
     )
 }

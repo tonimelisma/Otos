@@ -579,7 +579,96 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        // A table rebuild, as v66's: foreign keys off while it runs, so dropping the old table
+        // cascades nothing, then checked in the tables it made.
+        let hotAssetTable = CatalogSchema.hotAssetTableMigrationIdentifier
+        migrator.registerMigration(hotAssetTable, foreignKeyChecks: .deferred) { db in
+            steps?.began(hotAssetTable)
+            try CatalogSchema.migrateToHotAssetTable(db)
+        }
         return migrator
+    }
+
+    /// What one open's compaction did (`compactIfOwed`), for its `op=catalog.compaction` line.
+    enum CompactionOutcome: Equatable {
+        /// Too little of the file is free to be worth rewriting it.
+        case notOwed(freePages: Int64, pages: Int64)
+        /// Owed, but the volume cannot hold the copy and the log it writes above the free-space
+        /// floor; a later open tries again.
+        case skippedForSpace(neededBytes: Int64, availableBytes: Int64)
+        case compacted(milliseconds: Int, bytesBefore: Int64, bytesAfter: Int64)
+
+        func log() {
+            switch self {
+            case let .notOwed(free, pages):
+                OtosLog.persistence.noticeOperation("catalog.compaction", phase: "notOwed", fields: [
+                    "freePages": "\(free)", "pages": "\(pages)",
+                ])
+            case let .skippedForSpace(needed, available):
+                OtosLog.persistence.noticeOperation("catalog.compaction", phase: "skipped", fields: [
+                    "reason": "freeSpaceFloor", "neededBytes": "\(needed)", "availableBytes": "\(available)",
+                    "floorBytes": "\(FreeSpaceFloor.bytes)",
+                ])
+            case let .compacted(milliseconds, before, after):
+                OtosLog.persistence.noticeOperation("catalog.compaction", phase: "finish", fields: [
+                    "ms": "\(milliseconds)", "fileBytesBefore": "\(before)", "fileBytesAfter": "\(after)",
+                ])
+            }
+        }
+    }
+
+    /// The file is compacted when at least this share of its pages is free…
+    static let compactionFreeShare = 0.25
+    /// …and the free pages hold at least this much: rewriting the file costs about as long per
+    /// byte as reading it, so a few free megabytes are not worth a launch's wait.
+    static let compactionMinimumFreeBytes: Int64 = 256 * 1024 * 1024
+
+    /// Rewrites the catalog without its free pages (`VACUUM`) when a quarter of it or more is
+    /// free, after the migrations and before anything else reads it. A table rebuild (v71's
+    /// `media_asset`) or a removed library leaves its old pages free in the file, where SQLite
+    /// reuses them but never gives them back; on the owner's catalog v71 freed about 1.2 GB of
+    /// 2.8 GB, and the reads of what remains are spread over a file twice their size. VACUUM
+    /// cannot run inside a migration's transaction, so it is this step of the open, which the
+    /// window reports (`CatalogOpening.Phase.compacting`, DES-121), and it is decided by the
+    /// file's own free-page count, so it is owed again only when that much is free again.
+    /// SQLite writes the compacted copy to a temporary file and then into the log, so it needs
+    /// twice the used pages free above the floor (ADR 0027); without that room it is skipped
+    /// and logged, and the next open asks again. A failed VACUUM changes nothing.
+    static func compactIfOwed(
+        _ dbWriter: any DatabaseWriter,
+        fileURL: URL,
+        minimumFreeBytes: Int64 = compactionMinimumFreeBytes,
+        availableBytes: (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
+        willCompact: () -> Void
+    ) throws -> CompactionOutcome {
+        let counts = try dbWriter.read { db in
+            try ["page_count", "freelist_count", "page_size"].map { pragma in
+                try Int64.fetchOne(db, sql: "PRAGMA \(pragma)") ?? 0
+            }
+        }
+        let pages = counts[0], free = counts[1], pageSize = counts[2]
+        guard pages > 0, Double(free) >= compactionFreeShare * Double(pages),
+              free * pageSize >= minimumFreeBytes
+        else {
+            return .notOwed(freePages: free, pages: pages)
+        }
+        let needed = 2 * (pages - free) * pageSize
+        let available = availableBytes(fileURL)
+        guard FreeSpaceFloor.admits(needed, available: available) else {
+            return .skippedForSpace(neededBytes: needed, availableBytes: available ?? 0)
+        }
+        willCompact()
+        let start = ContinuousClock.now
+        try dbWriter.writeWithoutTransaction { db in
+            try db.execute(sql: "VACUUM")
+            try db.checkpoint(.truncate)
+        }
+        let after = try dbWriter.read { db in try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0 }
+        return .compacted(
+            milliseconds: DiagnosticsTiming.milliseconds(since: start),
+            bytesBefore: pages * pageSize,
+            bytesAfter: after * pageSize
+        )
     }
 
     /// Compatibility check run before any migrator write. A schema whose history this
@@ -797,11 +886,10 @@ extension CatalogStore {
             try db.execute(
                 sql: """
                 UPDATE media_asset
-                SET sort_key = ?, thumbnail_path = ?, preview_path = ?, face_frames_path = ?
+                SET thumbnail_path = ?, preview_path = ?, face_frames_path = ?
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [
-                    MediaSortKey.make(libraryRootPath: path, relativePath: relativePathValue),
                     renamed[0],
                     renamed[1],
                     renamed[2],
@@ -2128,7 +2216,6 @@ extension CatalogStore {
             library_root_id,
             relative_path,
             relative_path_key,
-            sort_key,
             name_sort_key,
             name,
             content_type_identifier,
@@ -2140,7 +2227,7 @@ extension CatalogStore {
             file_identifier,
             assumed_utc_offset_seconds
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
             assumed_utc_offset_seconds = CASE
                 WHEN CAST(COALESCE(media_asset.capture_instant_unix, media_asset.created_at_unix,
@@ -2150,7 +2237,6 @@ extension CatalogStore {
                 THEN media_asset.assumed_utc_offset_seconds
                 ELSE excluded.assumed_utc_offset_seconds
             END,
-            sort_key = excluded.sort_key,
             name_sort_key = excluded.name_sort_key,
             name = excluded.name,
             content_type_identifier = excluded.content_type_identifier,
@@ -2164,7 +2250,6 @@ extension CatalogStore {
             awaiting_presence = 0
         WHERE media_asset.awaiting_presence <> 0
            OR media_asset.relative_path_key IS NOT excluded.relative_path_key
-           OR media_asset.sort_key IS NOT excluded.sort_key
            OR media_asset.file_identifier IS NOT excluded.file_identifier
            OR media_asset.name_sort_key IS NOT excluded.name_sort_key
            OR media_asset.name IS NOT excluded.name
@@ -2280,7 +2365,6 @@ private nonisolated func scannedFileUpsertArguments(
         libraryRootID,
         file.relativePath.rawValue,
         pathKey,
-        MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: file.relativePath),
         MediaSortKey.naturalKey(file.name ?? file.relativePath.fileName),
         file.name,
         file.contentTypeIdentifier,

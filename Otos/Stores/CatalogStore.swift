@@ -217,7 +217,7 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
         (.membership, [
             .insert(tableName: "media_asset"), .delete(tableName: "media_asset"),
             .update(tableName: "media_asset", columnNames: [
-                "library_root_id", "relative_path", "relative_path_key", "sort_key", "name_sort_key", "name",
+                "library_root_id", "relative_path", "relative_path_key", "name_sort_key", "name",
                 "content_type_identifier", "byte_size", "created_at_unix", "content_modified_at_unix",
                 "file_identifier", "pending_trash_batch_unix_ms", "trash_path", "awaiting_presence",
                 "hidden_by_source", "source_item_id", "import_batch_unix_ms", "import_source_root_path",
@@ -304,7 +304,9 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
             ]),
         ]),
         (.duplicateFacts, [
-            .update(tableName: "media_asset", columnNames: ["render_dhash", "render_gray", "render_signature_source"]),
+            .update(tableName: "media_asset", columnNames: ["render_dhash", "render_signature_read"]),
+            .insert(tableName: "render_signature"), .delete(tableName: "render_signature"),
+            .update(tableName: "render_signature", columnNames: ["library_root_id", "relative_path", "gray"]),
             .insert(tableName: "duplicate_kept_pair"), .delete(tableName: "duplicate_kept_pair"),
         ]),
         (.searchContent, [
@@ -6763,6 +6765,13 @@ private extension CatalogStore {
         }
         migrationRun = migrations
         timer.lap("migrationsMs")
+        if let fileURL = openResult.openedFileURL {
+            let compaction = try Self.compactIfOwed(dbWriter, fileURL: fileURL) {
+                continuation.yield(CatalogOpening(phase: .compacting, memberRootCount: roots))
+            }
+            compaction.log()
+        }
+        timer.lap("compactionMs")
         performThumbnailStoreStartupMaintenance()
         timer.lap("thumbnailsMs")
         self.dbWriter = dbWriter
@@ -9523,20 +9532,34 @@ extension CatalogStore {
                 try db.execute(
                     sql: """
                     UPDATE media_asset
-                    SET render_dhash = ?, render_gray = ?, render_signature_source = ?
+                    SET render_dhash = ?, render_signature_read = 1
                     WHERE library_root_id = ? AND relative_path = ?
                       AND \(StoredThumbnailSQL.identity("media_asset")) = ?
                     """,
                     arguments: [
                         result.signature.map { Int64(bitPattern: $0.differenceHash) },
-                        result.signature.map { Data($0.gray) },
-                        result.source,
                         rootID,
                         result.id.relativePath.rawValue,
                         result.source,
                     ]
                 )
-                written += db.changesCount
+                guard db.changesCount > 0 else { continue }
+                written += 1
+                if let signature = result.signature {
+                    try db.execute(
+                        sql: """
+                        INSERT INTO \(RenderSignatureSQL.grayTable) (library_root_id, relative_path, gray)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT (library_root_id, relative_path) DO UPDATE SET gray = excluded.gray
+                        """,
+                        arguments: [rootID, result.id.relativePath.rawValue, Data(signature.gray)]
+                    )
+                } else {
+                    try db.execute(
+                        sql: "DELETE FROM \(RenderSignatureSQL.grayTable) WHERE library_root_id = ? AND relative_path = ?",
+                        arguments: [rootID, result.id.relativePath.rawValue]
+                    )
+                }
             }
             return written
         }

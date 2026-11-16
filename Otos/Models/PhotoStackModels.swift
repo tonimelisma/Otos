@@ -26,19 +26,25 @@ nonisolated struct PhotoStackID: Hashable, Sendable {
 }
 
 /// One still that may belong to a stack, as the Store reads it: its path and kind, its
-/// stored name key and natural-order sort key (ARC-056, which every path write keeps
-/// current), its burst identifier and capture time, the user's choice for it (Liked, Not
-/// Rated, Disliked), and when the user made it its pair's or its burst's key (nil when never).
+/// stored name key (ARC-056, which every path write keeps current), its burst identifier and
+/// capture time, the user's choice for it (Liked, Not Rated, Disliked), and when the user
+/// made it its pair's or its burst's key (nil when never).
 nonisolated struct PhotoStackCandidate: Equatable, Sendable {
     let relativePath: MediaRelativePath
     let kind: MediaKind
     let nameKey: FilesystemNameKey
-    let sortKey: String
     var burstIdentifier: String?
     var captureLocal: Double?
     var choice: MediaChoice = .notRated
     var keyChosenAtUnixMs: Int64?
     var burstKeyChosenAtUnixMs: Int64?
+
+    /// The path's natural order (`MediaSortKey`), what a stack orders its files by. A stack's
+    /// files share a root, so the path's own key orders them as the catalog's whole key would;
+    /// it is made only for the files a stack holds, when they are ordered.
+    var sortKey: String {
+        MediaSortKey.naturalKey(relativePath.rawValue)
+    }
 }
 
 /// One stack: its member files, its key — the file it shows when collapsed — the user's

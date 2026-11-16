@@ -112,8 +112,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == ["1/8", "2/8", "3/8", "4/8", "5/8", "6/8", "7/8", "8/8"])
-        #expect(run.applied == 8)
+        #expect(steps.recorded == ["1/9", "2/9", "3/9", "4/9", "5/9", "6/9", "7/9", "8/9", "9/9"])
+        #expect(run.applied == 9)
         let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
         #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
 
@@ -147,8 +147,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == ["1/8", "2/8", "3/8", "4/8", "5/8", "6/8", "7/8", "8/8"])
-        #expect(run.applied == 8)
+        #expect(steps.recorded == ["1/9", "2/9", "3/9", "4/9", "5/9", "6/9", "7/9", "8/9", "9/9"])
+        #expect(run.applied == 9)
     }
 
     private final class StepLog: Sendable {
@@ -323,6 +323,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.settledPeopleAssignmentMigrationIdentifier,
             CatalogSchema.sortOrderTestedColumnsMigrationIdentifier,
             CatalogSchema.searchVectorFileMigrationIdentifier,
+            CatalogSchema.hotAssetTableMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -912,11 +913,11 @@ struct CatalogStoreSchemaMigrationTests {
             for (path, kind, stamp) in rows {
                 try db.execute(
                     sql: """
-                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key,
                         name_sort_key, kind, faces_source_size, faces_source_mtime)
-                    VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (1, ?, ?, ?, ?, ?, ?)
                     """,
-                    arguments: [path, path, path, path, kind, stamp, stamp]
+                    arguments: [path, path, path, kind, stamp, stamp]
                 )
             }
             try db.execute(sql: """
@@ -961,11 +962,11 @@ struct CatalogStoreSchemaMigrationTests {
             for (path, stamp) in rows {
                 try db.execute(
                     sql: """
-                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key,
                         name_sort_key, kind, faces_source_size, faces_source_mtime)
-                    VALUES (1, ?, ?, ?, ?, 'image', ?, ?)
+                    VALUES (1, ?, ?, ?, 'image', ?, ?)
                     """,
-                    arguments: [path, path, path, path, stamp, stamp]
+                    arguments: [path, path, path, stamp, stamp]
                 )
             }
             for (path, revision) in [("earlier.jpg", 1), ("current.jpg", 2)] {
@@ -1191,11 +1192,11 @@ struct CatalogStoreSchemaMigrationTests {
             for path in ["faceless.jpg", "withFace.jpg"] {
                 try db.execute(
                     sql: """
-                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key,
                         name_sort_key, kind, faces_source_size, faces_source_mtime)
-                    VALUES (1, ?, ?, ?, ?, 'image', 10, 10)
+                    VALUES (1, ?, ?, ?, 'image', 10, 10)
                     """,
-                    arguments: [path, path, path, path]
+                    arguments: [path, path, path]
                 )
             }
             try db.execute(sql: """
@@ -1591,8 +1592,8 @@ private extension CatalogStoreSchemaMigrationTests {
             try db.execute(
                 sql: """
                 INSERT INTO media_asset (
-                    library_root_id, relative_path, sort_key, name_sort_key, name
-                ) VALUES (?, 'kept.jpg', 'k', 'kept.jpg', 'kept.jpg')
+                    library_root_id, relative_path, name_sort_key, name
+                ) VALUES (?, 'kept.jpg', 'kept.jpg', 'kept.jpg')
                 """,
                 arguments: [db.lastInsertedRowID]
             )
@@ -1806,8 +1807,8 @@ extension CatalogStoreSchemaMigrationTests {
             try db.execute(sql: "UPDATE media_asset SET relative_path = 'c.jpg' WHERE relative_path = 'a.jpg'")
             try db.execute(sql: "DELETE FROM media_asset WHERE relative_path = 'b.jpg'")
             try db.execute(sql: """
-            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key)
-            VALUES (1, 'b.jpg', 'b.jpg', 'b.jpg', 'b.jpg')
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, name_sort_key)
+            VALUES (1, 'b.jpg', 'b.jpg', 'b.jpg')
             """)
             try db.execute(sql: """
             INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,

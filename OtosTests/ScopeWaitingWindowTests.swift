@@ -100,7 +100,14 @@ extension AppKitWindowTests {
         }
 
         /// DES-053 for the open's status: one height whether it is opening, updating with a
-        /// step, or failed.
+        /// step, optimizing, or failed.
+        /// The open's compaction is its own act, named as Lightroom names it, with no step.
+        @Test func theOpenSaysWhenItOptimizesTheCatalog() {
+            let presentation = CatalogOpeningPresentation(opening: CatalogOpening(phase: .compacting), failed: false)
+            #expect(presentation.title == "Optimizing catalog\u{2026}")
+            #expect(presentation.detail.isEmpty)
+        }
+
         @Test func theOpeningStatusHoldsOneHeight() {
             func height(_ presentation: CatalogOpeningPresentation) -> CGFloat {
                 let host = NSHostingView(rootView: CatalogOpeningStatusView(opening: presentation).frame(width: 400))
@@ -112,6 +119,7 @@ extension AppKitWindowTests {
                 CatalogOpeningPresentation(opening: CatalogOpening(), failed: false),
                 CatalogOpeningPresentation(opening: CatalogOpening(phase: .updating(step: 2, of: 3)), failed: false),
                 CatalogOpeningPresentation(opening: CatalogOpening(phase: .updating(step: 1, of: 1)), failed: false),
+                CatalogOpeningPresentation(opening: CatalogOpening(phase: .compacting), failed: false),
                 CatalogOpeningPresentation(opening: CatalogOpening(), failed: true),
             ].map(height)
             #expect(Set(heights).count == 1, "heights \(heights)")

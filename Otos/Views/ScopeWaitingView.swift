@@ -40,6 +40,9 @@ struct CatalogOpeningPresentation: Equatable {
         case let .updating(step, total):
             title = "Updating catalog\u{2026}"
             detail = total > 1 ? "Step \(step) of \(total)" : ""
+        case .compacting:
+            title = "Optimizing catalog\u{2026}"
+            detail = ""
         }
     }
 

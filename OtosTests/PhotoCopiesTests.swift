@@ -294,21 +294,21 @@ struct PhotoCopiesTests {
             try db.execute(sql: """
             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
             INSERT INTO media_asset (
-                library_root_id, relative_path, sort_key, name_sort_key, name, content_type_identifier,
+                library_root_id, relative_path, name_sort_key, name, content_type_identifier,
                 byte_size, content_modified_at_unix, capture_wall_compact, enriched_kind,
                 content_sha1, content_hash_source_size, content_hash_source_mtime
             )
-            SELECT 1, printf('IMG_%04d.JPG', i), printf('img_%04d', i), printf('img_%04d', i), printf('IMG_%04d.JPG', i),
+            SELECT 1, printf('IMG_%04d.JPG', i), printf('img_%04d', i), printf('IMG_%04d.JPG', i),
                    'public.jpeg', 100, 1000, 20190303120000 + i % 60, 'image', unhex(printf('%040d', i)), 100, 1000
             FROM n
             """, arguments: [rows])
             try db.execute(sql: """
             INSERT INTO media_asset (
-                library_root_id, relative_path, sort_key, name_sort_key, name, content_type_identifier,
+                library_root_id, relative_path, name_sort_key, name, content_type_identifier,
                 byte_size, content_modified_at_unix, capture_wall_compact, enriched_kind,
                 content_sha1, content_hash_source_size, content_hash_source_mtime
             )
-            SELECT 2, 'a/' || relative_path, sort_key, name_sort_key, name, content_type_identifier,
+            SELECT 2, 'a/' || relative_path, name_sort_key, name, content_type_identifier,
                    byte_size, content_modified_at_unix, capture_wall_compact, enriched_kind,
                    content_sha1, content_hash_source_size, content_hash_source_mtime
             FROM media_asset WHERE library_root_id = 1 AND rowid <= ?

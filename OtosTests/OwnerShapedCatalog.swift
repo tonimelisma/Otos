@@ -65,18 +65,16 @@ struct OwnerShapedCatalog {
         var pairedRaws = 0
         let videos: Int
         let hashedPermille: Int
-        /// His `sort_key` lengths: a library's path is short, an account's staging path long.
-        let sortKeyLength: Int
     }
 
     private static let roots: [RootSpec] = [
-        RootSpec(id: 5, kind: .deviceMTP, images: 35, raws: 0, videos: 37, hashedPermille: 0, sortKeyLength: 154),
-        RootSpec(id: 6, kind: .library, images: 714, raws: 0, videos: 74, hashedPermille: 1000, sortKeyLength: 154),
-        RootSpec(id: 7, kind: .library, images: 8954, raws: 6074, pairedRaws: 5384, videos: 1886, hashedPermille: 231, sortKeyLength: 154),
-        RootSpec(id: 10, kind: .removableVolume, images: 71, raws: 0, videos: 2, hashedPermille: 0, sortKeyLength: 154),
-        RootSpec(id: 13, kind: .deviceMTP, images: 464, raws: 464, pairedRaws: 464, videos: 63, hashedPermille: 0, sortKeyLength: 154),
-        RootSpec(id: 14, kind: .deviceMTP, images: 903, raws: 0, videos: 185, hashedPermille: 0, sortKeyLength: 154),
-        RootSpec(id: 15, kind: .immichAccount, images: 117_810, raws: 10906, videos: 18348, hashedPermille: 0, sortKeyLength: 544),
+        RootSpec(id: 5, kind: .deviceMTP, images: 35, raws: 0, videos: 37, hashedPermille: 0),
+        RootSpec(id: 6, kind: .library, images: 714, raws: 0, videos: 74, hashedPermille: 1000),
+        RootSpec(id: 7, kind: .library, images: 8954, raws: 6074, pairedRaws: 5384, videos: 1886, hashedPermille: 231),
+        RootSpec(id: 10, kind: .removableVolume, images: 71, raws: 0, videos: 2, hashedPermille: 0),
+        RootSpec(id: 13, kind: .deviceMTP, images: 464, raws: 464, pairedRaws: 464, videos: 63, hashedPermille: 0),
+        RootSpec(id: 14, kind: .deviceMTP, images: 903, raws: 0, videos: 185, hashedPermille: 0),
+        RootSpec(id: 15, kind: .immichAccount, images: 117_810, raws: 10906, videos: 18348, hashedPermille: 0),
     ]
 
     /// His counts of the derived tables and the backlog, before `scale`.
@@ -109,6 +107,9 @@ struct OwnerShapedCatalog {
     }
 
     static let baseCaptureUnix: Int64 = 1_262_304_000
+
+    /// His `name_sort_key` width: 11.1 MB over 167,215 rows.
+    private static let nameSortKeyLength = 66
 
     /// Writes the catalog under `directory`: the file in `db/`, the libraries' empty folders
     /// in `Libraries/`. `scale` 1 is the owner's catalog; every count is rounded, and an owed
@@ -171,7 +172,7 @@ struct OwnerShapedCatalog {
                     let pairing = kind == "raw" && root.pairedRaws > 0
                         ? Pairing(imagesOffset: imagesOffset, count: min(scaled(root.pairedRaws, scale), rows, images)) : nil
                     try insertAssets(
-                        db, root: root, rootPath: paths[root.id]?.rawValue ?? "", kind: kind, count: rows, offset: offset,
+                        db, root: root, kind: kind, count: rows, offset: offset,
                         pairing: pairing
                     )
                     offset += rows
@@ -246,7 +247,7 @@ struct OwnerShapedCatalog {
     /// rendering of Otos's own) and are never hashed; a library's are hashed at its share. A
     /// paired RAW (`pairing`) is named as the image it pairs with, in that image's folder.
     private static func insertAssets(
-        _ db: Database, root: RootSpec, rootPath: String, kind: String, count: Int, offset: Int, pairing: Pairing?
+        _ db: Database, root: RootSpec, kind: String, count: Int, offset: Int, pairing: Pairing?
     ) throws {
         let isStill = kind != "video"
         let (type, format, ext) = switch kind {
@@ -277,7 +278,7 @@ struct OwnerShapedCatalog {
                 FROM numbered
             )
             INSERT INTO media_asset (
-                library_root_id, relative_path, sort_key, name_sort_key, name, content_type_identifier,
+                library_root_id, relative_path, name_sort_key, name, content_type_identifier,
                 kind, format, byte_size, created_at_unix, content_modified_at_unix, enriched_kind, enriched_format,
                 metadata_source_size, metadata_source_mtime, thumbnail_path, preview_path, duration_seconds,
                 capture_wall_compact, capture_instant_unix, content_sha1, content_hash_source_size,
@@ -285,13 +286,12 @@ struct OwnerShapedCatalog {
                 source_products_size, source_products_mtime, faces_source_size, faces_source_mtime, source_item_id
             )
             SELECT ?, path,
-                   substr(lower(?) || char(1) || lower(path) || ?, 1, ?),
-                   lower(substr(path, length(rtrim(path, replace(path, '/', ''))) + 1)),
+                   substr(lower(substr(path, length(rtrim(path, replace(path, '/', ''))) + 1)) || ?, 1, ?),
                    substr(path, length(rtrim(path, replace(path, '/', ''))) + 1),
                    ?, ?, ?, size, created, created + 60, ?, ?,
                    size, created + 60,
-                   printf('Thumbnails/%d/%d.jpg', ?, i),
-                   CASE WHEN ? THEN printf('Previews/%d/%d.jpg', ?, i) END,
+                   printf('%056x%08x.jpg', ?, i),
+                   CASE WHEN ? THEN printf('%056x%08x.heic', ?, i) END,
                    CASE WHEN ? THEN 4.0 + i % 90 END,
                    CAST(strftime('%Y%m%d%H%M%S', created, 'unixepoch') AS INTEGER), created,
                    CASE WHEN i % 1000 < ? THEN randomblob(20) END,
@@ -306,7 +306,7 @@ struct OwnerShapedCatalog {
             """,
             arguments: [
                 count, offset, baseCaptureUnix,
-                root.id, rootPath, String(repeating: "0", count: root.sortKeyLength), root.sortKeyLength,
+                root.id, String(repeating: "0", count: nameSortKeyLength), nameSortKeyLength,
                 type, kind, format, kind, format,
                 root.id, isStill, root.id, !isStill,
                 root.hashedPermille, root.hashedPermille, root.hashedPermille,
@@ -373,10 +373,13 @@ struct OwnerShapedCatalog {
         )
         // Render signatures: every still of the libraries and the account, a 1 KB gray render each.
         try db.execute(sql: """
-        UPDATE media_asset SET render_dhash = (rowid * 2654435761) % 9007199254740991,
-            render_gray = randomblob(1024), render_signature_source = \(StoredThumbnailSQL.identity("media_asset"))
+        UPDATE media_asset SET render_dhash = (rowid * 2654435761) % 9007199254740991, render_signature_read = 1
         WHERE library_root_id IN (6, 7, 15) AND kind IN ('image', 'raw') AND thumbnail_path IS NOT NULL
           AND rowid NOT IN (SELECT row FROM owed WHERE product = 'render')
+        """)
+        try db.execute(sql: """
+        INSERT INTO \(RenderSignatureSQL.grayTable) (library_root_id, relative_path, gray)
+        SELECT library_root_id, relative_path, randomblob(1024) FROM media_asset WHERE render_dhash IS NOT NULL
         """)
         // Search embeddings: 3,072-byte vectors for every thumbnail of every root but the
         // cards (his roots 6, 7, 14 and 15).

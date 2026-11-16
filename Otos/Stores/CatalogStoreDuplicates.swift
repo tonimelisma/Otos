@@ -266,17 +266,26 @@ nonisolated enum StoredThumbnailSQL {
 /// current signature, in path order after a path (`CandidateWalk.keyPage`; binds the root, the
 /// path, the limit), from the partial index that holds exactly those stills, so a settled
 /// library reads no row.
+///
+/// A still's signature is `media_asset.render_dhash`, read for the current thumbnail while
+/// `render_signature_read` is 1, and its gray render, a row of `grayTable`. A thumbnail that
+/// does not decode is read too, with no hash and no gray, so it is not offered again until its
+/// thumbnail changes. The write that changes what the thumbnail is clears all three
+/// (`CatalogSchema.renderSignatureStaleTrigger`, v71).
 nonisolated enum RenderSignatureSQL {
     static let owedIndexName = "idx_media_asset_render_signature_owed"
 
-    /// A visible still whose stored signature does not name its thumbnail: the condition of
-    /// `owedIndexName` (v65), as SQL over `media_asset`'s own columns.
+    /// The gray renders, one row per signed still (v71).
+    static let grayTable = "render_signature"
+
+    /// A visible still whose thumbnail has not been read for a signature: the condition of
+    /// `owedIndexName` (v71), as SQL over `media_asset`'s own columns.
     static let owedPredicate = """
     thumbnail_path IS NOT NULL
       AND kind IN ('image', 'raw')
       AND pending_trash_batch_unix_ms IS NULL
       AND trash_path IS NULL
-      AND render_signature_source IS NOT \(StoredThumbnailSQL.unqualifiedIdentity)
+      AND render_signature_read = 0
     """
 
     static let candidatesSQL = """
@@ -321,7 +330,8 @@ nonisolated enum SamePhotoSQL {
     static let metadataIndexName = "idx_asset_metadata_same_photo"
 
     /// A still the rule compares, over `media_asset`'s own columns, unqualified: the condition
-    /// of `candidateIndexName`, which must survive the table being renamed.
+    /// of `candidateIndexName`, which must survive the table being renamed. A hash is stored
+    /// only while it is the current thumbnail's (`RenderSignatureSQL`).
     static let candidatePredicate = """
     kind IN ('image', 'raw')
       AND pending_trash_batch_unix_ms IS NULL
@@ -329,13 +339,13 @@ nonisolated enum SamePhotoSQL {
       AND hidden_by_source = 0
       AND source_path_sha1 IS NULL
       AND render_dhash IS NOT NULL
-      AND render_signature_source = \(StoredThumbnailSQL.unqualifiedIdentity)
     """
 
-    /// Every `media_asset` column the candidate read names, in its condition or its result:
-    /// an index that lacks one is not covering, and SQLite reads the row.
+    /// Every `media_asset` column the candidate read names, in its condition or its result —
+    /// the thumbnail's identity is the signature's evidence stamp: an index that lacks one is
+    /// not covering, and SQLite reads the row.
     static let candidateIndexColumns = """
-    library_root_id, relative_path, kind, capture_instant_unix, render_dhash, render_signature_source, \
+    library_root_id, relative_path, kind, capture_instant_unix, render_dhash, \
     thumbnail_path, rendered_revision, rendered_source_size, rendered_source_mtime, source_products_size, \
     source_products_mtime, metadata_source_size, metadata_source_mtime, pending_trash_batch_unix_ms, trash_path, \
     hidden_by_source, source_path_sha1
@@ -356,7 +366,7 @@ nonisolated enum SamePhotoSQL {
         SELECT media_asset.library_root_id, media_asset.relative_path, kind, capture_instant_unix, render_dhash,
                m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number,
                (rendered_source_size IS NULL AND source_products_size IS NOT NULL),
-               render_signature_source, metadata_source_size, metadata_source_mtime, m.extraction_revision
+               \(StoredThumbnailSQL.identity("media_asset")), metadata_source_size, metadata_source_mtime, m.extraction_revision
         FROM media_asset INDEXED BY \(candidateIndexName)
         LEFT JOIN asset_metadata AS m INDEXED BY \(metadataIndexName)
           ON m.library_root_id = media_asset.library_root_id AND m.relative_path = media_asset.relative_path
@@ -367,8 +377,10 @@ nonisolated enum SamePhotoSQL {
 
     /// One still's evidence: its signature and its stored record. Binds the root and the path.
     static let evidenceSQL = """
-    SELECT a.render_dhash, a.render_gray, m.metadata_extra_json
+    SELECT a.render_dhash, g.gray, m.metadata_extra_json
     FROM media_asset a
+    LEFT JOIN \(RenderSignatureSQL.grayTable) g
+      ON g.library_root_id = a.library_root_id AND g.relative_path = a.relative_path
     LEFT JOIN asset_metadata m
       ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
     WHERE a.library_root_id = ? AND a.relative_path = ?

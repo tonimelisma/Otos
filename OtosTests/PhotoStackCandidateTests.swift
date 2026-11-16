@@ -17,7 +17,7 @@ struct PhotoStackCandidateTests {
         let roots = rootIDs.map(String.init).joined(separator: ",")
         let columns = """
         still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
-        still.sort_key, still.stack_key_chosen_at_unix_ms, still.burst_identifier,
+        still.stack_key_chosen_at_unix_ms, still.burst_identifier,
         still.best_capture_local, still.media_choice, still.burst_key_chosen_at_unix_ms
         """
         return SQLQuery(

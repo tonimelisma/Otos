@@ -46,9 +46,9 @@ struct CatalogStoreEditRecipeTests {
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             try db.execute(sql: """
-            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, name_sort_key,
                 kind, edit_recipe_json, edit_revision, rendered_revision)
-            VALUES (1, 'a.jpg', 'a.jpg', 'a.jpg', 'a.jpg', 'image', NULL, 2, 1)
+            VALUES (1, 'a.jpg', 'a.jpg', 'a.jpg', 'image', NULL, 2, 1)
             """)
         }
         let store = makeTestStore(location: .databaseFile(databaseURL))

@@ -17,7 +17,6 @@ struct PhotoStackTests {
             relativePath: relativePath,
             kind: kind,
             nameKey: FilesystemNamespaceSemantics.nameKey(relativePath: relativePath, capabilities: .caseInsensitive),
-            sortKey: MediaSortKey.make(libraryRootPath: root, relativePath: relativePath),
             keyChosenAtUnixMs: chosenAt
         )
     }

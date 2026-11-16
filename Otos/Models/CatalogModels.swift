@@ -1832,6 +1832,8 @@ nonisolated struct CatalogOpening: Equatable, Sendable {
         case opening
         /// Schema update `step` of the `of` this open applies is running.
         case updating(step: Int, of: Int)
+        /// The file is being rewritten without its free pages (`CatalogCompaction`).
+        case compacting
     }
 
     var phase: Phase = .opening
@@ -1843,6 +1845,8 @@ nonisolated struct CatalogOpening: Equatable, Sendable {
             return "opening,roots:\(roots)"
         case let .updating(step, total):
             return "updating:\(step)/\(total),roots:\(roots)"
+        case .compacting:
+            return "compacting,roots:\(roots)"
         }
     }
 

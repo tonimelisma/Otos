@@ -169,18 +169,16 @@ private func insertSavedAsset(
         INSERT INTO media_asset (
             library_root_id,
             relative_path,
-            sort_key,
             name_sort_key,
             name,
             content_type_identifier,
             thumbnail_path
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         arguments: [
             rootID,
             relativePath.rawValue,
-            MediaSortKey.make(libraryRootPath: rootPath, relativePath: relativePath),
             MediaSortKey.naturalKey(relativePath.rawValue),
             relativePath.rawValue,
             "public.jpeg",

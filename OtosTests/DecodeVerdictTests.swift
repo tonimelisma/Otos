@@ -196,10 +196,10 @@ struct DecodeVerdictTests {
         }
         try db.execute(
             sql: """
-            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key,
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, name_sort_key,
                 kind, preview_path, rendered_source_size, rendered_source_mtime
                 \(verdictColumn))
-            VALUES (1, ?, ?, ?, ?, ?, ?, 10, 20\(verdictValue))
+            VALUES (1, ?, ?, ?, ?, ?, 10, 20\(verdictValue))
             """,
             arguments: StatementArguments(arguments)
         )

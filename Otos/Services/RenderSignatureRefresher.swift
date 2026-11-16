@@ -9,9 +9,11 @@ import OSLog
 /// render, read from its **stored thumbnail** in Application Support. It never opens an
 /// original, so it never downloads one.
 ///
-/// A signature records the thumbnail it was read from (`render_signature_source`). When
-/// enrichment renders a new thumbnail — a changed file, an edit — the source no longer
-/// matches and the row is offered again; no write site needs to know signatures exist.
+/// A signature is stored only while it is the current thumbnail's (`RenderSignatureSQL`).
+/// When enrichment renders a new thumbnail — a changed file, an edit — the write that names
+/// it clears the signature (`CatalogSchema.renderSignatureStaleTrigger`) and the row is offered
+/// again; no write site needs to know signatures exist. A signature is written only where the
+/// row's thumbnail identity is still the one read.
 ///
 /// One loop, woken by a doorbell (ADR 0032 rule 3): a Store change of a kind its walk reads
 /// rings it (`inputs`; its own signature writes do not), and each wake drains every stale row

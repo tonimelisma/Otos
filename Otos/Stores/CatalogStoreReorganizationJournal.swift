@@ -202,7 +202,6 @@ extension CatalogStore {
             let privatePath = MediaRelativePath(rawValue: "\(privatePrefix)/\(index)")
             try remapMediaAssetPath(
                 rootRowID: rootRowID,
-                libraryRootPath: libraryRootPath,
                 from: remap.oldID.relativePath,
                 to: privatePath,
                 capabilities: capabilities,
@@ -214,7 +213,6 @@ extension CatalogStore {
             let privatePath = MediaRelativePath(rawValue: "\(privatePrefix)/\(index)")
             try remapMediaAssetPath(
                 rootRowID: rootRowID,
-                libraryRootPath: libraryRootPath,
                 from: privatePath,
                 to: remap.newID.relativePath,
                 capabilities: capabilities,
@@ -405,7 +403,6 @@ extension CatalogStore {
 
     private static func remapMediaAssetPath(
         rootRowID: Int64,
-        libraryRootPath: LibraryRootPath,
         from: MediaRelativePath,
         to: MediaRelativePath,
         capabilities: VolumeNamespaceCapabilities,
@@ -420,7 +417,6 @@ extension CatalogStore {
                 UPDATE media_asset
                 SET relative_path = ?,
                     relative_path_key = ?,
-                    sort_key = ?,
                     name_sort_key = ?,
                     name = ?
                 WHERE library_root_id = ? AND relative_path = ?
@@ -428,7 +424,6 @@ extension CatalogStore {
                 arguments: [
                     to.rawValue,
                     key,
-                    MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: to),
                     MediaSortKey.naturalKey(name),
                     name,
                     rootRowID,
