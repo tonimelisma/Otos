@@ -343,6 +343,10 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
     case boxX, boxY, boxWidth, boxHeight
     case captureLocal, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown
     case faceFramesPath, frameIndex, isVideo
+    /// The face's file's digest while it has a present copy, else NULL: the photos whose copies
+    /// People reads (`PhotoFaceSQL.presentCopiesOfDigest`), from the row this read joins anyway.
+    /// NULL for a file with no copy, so the read copies no digest it does not use.
+    case copiedDigest
 
     /// The expression each column is read from, over `face f` joined to `media_asset m` and
     /// to its vector's row `e` (`FaceEmbeddingSQL.join`).
@@ -368,6 +372,7 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
         case .faceFramesPath: "m.face_frames_path"
         case .frameIndex: "f.frame_index"
         case .isVideo: "m.best_kind = 'video'"
+        case .copiedDigest: "CASE WHEN m.has_copies = 1 THEN m.content_sha1 END"
         }
     }
 

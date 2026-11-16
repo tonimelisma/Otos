@@ -1687,8 +1687,14 @@ nonisolated enum CatalogSchema {
     /// Whether `copy` is a copy of the copy `row` (itself included), whatever its presence:
     /// the rows a choice is written on.
     static func isCopy(_ copy: String, of row: String) -> String {
+        isCopy(copy, ofDigest: "\(row).content_sha1")
+    }
+
+    /// Whether `copy` is a copy of the photo whose copies share `digest` (a SQL value),
+    /// whatever its presence.
+    static func isCopy(_ copy: String, ofDigest digest: String) -> String {
         """
-        \(copy).content_sha1 = \(row).content_sha1
+        \(copy).content_sha1 = \(digest)
           AND \(ContentDigestSQL.isCurrent(copy))
           AND \(copy).library_root_id IN (SELECT id FROM library_root WHERE kind IN (\(copyRootKinds)))
         """

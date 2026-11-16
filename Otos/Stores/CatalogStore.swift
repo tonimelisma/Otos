@@ -1473,6 +1473,8 @@ extension CatalogStore {
             var tiles: [FaceID: FaceTile] = [:]
             var likeness: [FaceID: Float] = [:]
             var keyPhotos: [PersonID: FaceID] = [:]
+            // The digests of the files with a face and a present copy, whose copies follow.
+            var copiedDigests: Set<Data> = []
             // A Live Photo's movie is one item with its still (ADR 0041), whose faces are its.
             // Read by position (`PeopleFaceColumn`): a name lookup scans the row's columns,
             // and at 18 columns over every face it was most of the read (bench
@@ -1494,6 +1496,9 @@ extension CatalogStore {
                     path: MediaRelativePath(rawValue: row[PeopleFaceColumn.path.rawValue]),
                     index: row[PeopleFaceColumn.faceIndex.rawValue]
                 )
+                if let digest = row[PeopleFaceColumn.copiedDigest.rawValue] as Data? {
+                    copiedDigests.insert(digest)
+                }
                 guard let rootPath = pathsByRowID[key.rootID], !malformed.contains(key.photo) else { continue }
                 let asset = MediaAssetID(libraryRootPath: rootPath, relativePath: key.path)
                 let data: Data? = row[PeopleFaceColumn.embedding.rawValue]
@@ -1535,17 +1540,22 @@ extension CatalogStore {
                 )
             }
             // The present copies of each photo with a face, by the digest they share (ADR 0054).
-            var copiesByDigest: [Data: [PeopleSnapshot.Copy]] = [:]
-            for row in try Row.fetchAll(db, sql: PhotoFaceSQL.copiesOfPhotosWithFaces) {
-                let rootID: Int64 = row[1]
-                guard let rootPath = pathsByRowID[rootID] else { continue }
-                copiesByDigest[row[0] as Data, default: []].append(PeopleSnapshot.Copy(
-                    asset: MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: row[2])),
-                    rootID: rootID,
-                    isAccount: accountRowIDs.contains(rootID)
-                ))
+            var copies: [[PeopleSnapshot.Copy]] = []
+            let copiesOfDigest = try db.cachedStatement(sql: PhotoFaceSQL.presentCopiesOfDigest)
+            for digest in copiedDigests {
+                let photo = try Row.fetchAll(copiesOfDigest, arguments: [digest]).compactMap { row -> PeopleSnapshot.Copy? in
+                    let rootID: Int64 = row[0]
+                    guard let rootPath = pathsByRowID[rootID] else { return nil }
+                    return PeopleSnapshot.Copy(
+                        asset: MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: row[1])),
+                        rootID: rootID,
+                        isAccount: accountRowIDs.contains(rootID)
+                    )
+                }
+                if photo.count > 1 {
+                    copies.append(photo)
+                }
             }
-            let copies = copiesByDigest.values.filter { $0.count > 1 }
             let people = try Row.fetchAll(
                 db,
                 sql: "SELECT id, name, birthday, is_hidden, is_favorite FROM person ORDER BY id"
@@ -5660,30 +5670,21 @@ extension CatalogStore {
             if upsert != .inserted {
                 rows.recordUpdated(db.changesCount)
             }
-            // The source's name for the row: not shown, so not a change the window hears.
+            // The source's own facts of the row, none of them shown, so none a change the
+            // window hears: its name for the item; where it holds the item on its server, what
+            // a mirrored library file finds it by (ADR 0054); and whether it has its own images
+            // of it, what the product pass asks for. One statement, one seek of the row: each
+            // statement a listed item runs is one more seek for every item of every batch.
             try db.cachedStatement(sql: """
-            UPDATE media_asset SET source_item_id = ?
-            WHERE library_root_id = ? AND relative_path = ? AND source_item_id IS NOT ?
-            """).execute(
-                arguments: [item.sourceItemID, rootRowID, file.relativePath.rawValue, item.sourceItemID]
-            )
-            // Where the source holds the item on its server: what a mirrored library file
-            // finds it by (ADR 0054), not shown.
-            try db.cachedStatement(sql: """
-            UPDATE media_asset SET source_path_sha1 = ?
-            WHERE library_root_id = ? AND relative_path = ? AND source_path_sha1 IS NOT ?
+            UPDATE media_asset SET source_item_id = ?, source_path_sha1 = ?, source_products_absent = ?
+            WHERE library_root_id = ? AND relative_path = ?
+              AND (source_item_id IS NOT ? OR source_path_sha1 IS NOT ? OR source_products_absent IS NOT ?)
             """).execute(
                 arguments: [
-                    item.sourcePathChecksum?.data, rootRowID, file.relativePath.rawValue, item.sourcePathChecksum?.data,
+                    item.sourceItemID, item.sourcePathChecksum?.data, !item.sourceHasProducts,
+                    rootRowID, file.relativePath.rawValue,
+                    item.sourceItemID, item.sourcePathChecksum?.data, !item.sourceHasProducts,
                 ]
-            )
-            // Whether the source has its own images of the row: what the product pass
-            // asks for, not shown, so not a change the window hears either.
-            try db.cachedStatement(sql: """
-            UPDATE media_asset SET source_products_absent = ?
-            WHERE library_root_id = ? AND relative_path = ? AND source_products_absent IS NOT ?
-            """).execute(
-                arguments: [!item.sourceHasProducts, rootRowID, file.relativePath.rawValue, !item.sourceHasProducts]
             )
             // The source's digest of the item's bytes is the row's (ADR 0054), stamped with
             // the facts this listing wrote: the source lists the item again when its bytes

@@ -372,7 +372,11 @@ between copies, and no copy's reading replaces another's, so no user act moves o
 copy comes or goes.
 
 **Every surface resolves a photo's faces through one relation**, the copies `PhotoFaceSQL`
-finds a photo by (`PhotoFaceSQL.copiesOfPhotosWithFaces`, read into `PeopleSnapshot.copies`):
+finds a photo by (`PhotoFaceSQL.presentCopiesOfDigest`, read into `PeopleSnapshot.copies`). The
+faces' own read carries each file's digest while it has a present copy (`PeopleFaceColumn.copiedDigest`),
+so only such a photo is asked for its copies, through the digest index. A separate walk of every
+face, seeking each file with one, cost 188 M instructions of the snapshot at 10,000 faces; read
+with the faces, the column costs 24 M and the 257 photos with copies 47 M (2026-11-16):
 - **A photo's faces** (Info's People section, the photo menus, `SelectionFaces`) are the shown
   file's own faces, then, for each visible person a present copy holds and this file does not,
   that copy's face, from the first copy in shown order (`CatalogPeopleState.faces(of:)`). Another

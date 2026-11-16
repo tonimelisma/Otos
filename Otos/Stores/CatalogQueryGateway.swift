@@ -742,21 +742,18 @@ nonisolated enum PhotoFaceSQL {
         """
     }
 
-    /// Every present copy of each photo one of whose files holds a face, with the digest the
-    /// copies share: the copies People resolves a photo's faces through (`PeopleSnapshot.copies`).
-    /// The same relation as `holds` — a row with `has_copies`, its copies through the digest
-    /// index — so the faces People shows on a photo are the faces its scopes find it by. Each
-    /// file with a face is sought once, by its key; only one with a present copy reads the
-    /// digest index.
-    static let copiesOfPhotosWithFaces = """
-    SELECT DISTINCT face_copy.content_sha1, face_copy.library_root_id, face_copy.relative_path
-    FROM (SELECT DISTINCT library_root_id, relative_path FROM face WHERE is_not_face = 0) AS faced
-    JOIN media_asset AS face_photo INDEXED BY \(mediaAssetKeyIndexName)
-      ON face_photo.library_root_id = faced.library_root_id AND face_photo.relative_path = faced.relative_path
-    JOIN media_asset AS face_copy INDEXED BY \(ContentDigestSQL.indexName)
-      ON \(CatalogSchema.isCopy("face_copy", of: "face_photo"))
+    /// Every present copy of the photo whose files share the bound digest: the copies People
+    /// resolves a photo's faces through (`PeopleSnapshot.copies`), asked for each digest of a
+    /// file with a face and `has_copies`, read with the file's faces
+    /// (`PeopleFaceColumn.copiedDigest`). The same relation as `holds` — a row with
+    /// `has_copies`, its copies through the digest index — so the faces People shows on a photo
+    /// are the faces its scopes find it by. A file with no copy costs nothing here: the faces'
+    /// own read has already sought it by its key.
+    static let presentCopiesOfDigest = """
+    SELECT face_copy.library_root_id, face_copy.relative_path
+    FROM media_asset AS face_copy INDEXED BY \(ContentDigestSQL.indexName)
+    WHERE \(CatalogSchema.isCopy("face_copy", ofDigest: "?"))
       AND \(CatalogVisibilitySQL.isPresent("face_copy"))
-    WHERE face_photo.has_copies = 1
     """
 }
 

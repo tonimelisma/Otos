@@ -2941,16 +2941,17 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             state.withLock { $0.operation = operation }
         }
 
+        /// Runs for every statement every connection steps, the hundreds of one write
+        /// included, so a statement's text is looked at only until its transaction has one.
         fileprivate func statementStarted(sql: UnsafePointer<CChar>?, inTransaction: Bool) {
             let now = ContinuousClock.now
-            let names = sql.map(Self.namesTheTransaction) ?? false
             state.withLock { state in
                 if !inTransaction {
                     state.transactionStart = now
                     state.statement = nil
                     state.operation = nil
                 }
-                if state.statement == nil, names, let sql {
+                if state.statement == nil, let sql, Self.namesTheTransaction(sql) {
                     state.statement = Self.prefix(sql)
                 }
             }
@@ -2982,9 +2983,14 @@ final nonisolated class CatalogConnectionActivity: Sendable {
         /// `BEGIN`, `COMMIT` or savepoints, not the pragmas GRDB runs as a read starts, and not
         /// the comment SQLite reports as a trigger starts.
         private static func namesTheTransaction(_ sql: UnsafePointer<CChar>) -> Bool {
-            let skipped = ["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE", "PRAGMA", "--"]
-            return !skipped.contains { strncasecmp(sql, $0, strlen($0)) == 0 }
+            !skippedPrefixes.contains { prefix in
+                prefix.withUnsafeBufferPointer { strncasecmp(sql, $0.baseAddress, $0.count) == 0 }
+            }
         }
+
+        /// The prefixes `namesTheTransaction` skips, as C bytes made once.
+        private static let skippedPrefixes: [[CChar]] = ["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE", "PRAGMA", "--"]
+            .map { Array($0.utf8CString.dropLast()) }
 
         /// The statement's first characters, each run of whitespace made one space.
         private static func prefix(_ sql: UnsafePointer<CChar>) -> String {
