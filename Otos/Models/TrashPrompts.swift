@@ -44,6 +44,13 @@ nonisolated struct TrashDecisionPrompt: Equatable, Sendable {
     static let deleteTitle = "Delete"
 }
 
+/// The large-download question's reading of one command (APP-045): its files, exactly as the
+/// command moves them, and what of them was cloud-only to download when they were read.
+nonisolated struct TrashQuestionReading: Equatable, Sendable {
+    let files: [MediaAssetID]
+    let bytes: PartialByteCount
+}
+
 /// The question a Move to Trash asks when it must download more than
 /// `thresholdBytes` of cloud-only items first (Plan 0104). Downloading is what keeps
 /// them restorable from the Trash. Only bytes that need downloading count: the cost the

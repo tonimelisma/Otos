@@ -1,5 +1,6 @@
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// Move to Trash acts without asking (Plan 0104 D1) and is undoable from Edit ▸ Undo
@@ -70,6 +71,106 @@ struct CatalogWindowViewModelTrashTests {
             let path = fixture.path(fixture.ids[0])
             try await waitUntil { !FileManager.default.fileExists(atPath: path) }
             #expect(model.largeTrashDownloadPrompt == nil)
+        }
+    }
+
+    // MARK: - The large-download question, read when the targets change (APP-045)
+
+    @Test func aCommandWhoseTargetsWereReadHidesInTheStepThatAppliesIt() async throws {
+        try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
+            let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.selectAssets([fixture.ids[0]])
+            try await waitUntil { model.trashQuestionReading?.files == [fixture.ids[0]] }
+
+            model.moveTargetedMediaToTrash()
+
+            // No suspension since the command: it read nothing and waited for nothing.
+            #expect(model.trashSizingTask == nil)
+            #expect(model.largeTrashDownloadPrompt == nil)
+            #expect(model.gridSelection.selection == [fixture.ids[1]])
+            #expect(model.undoMenuState.canUndo)
+        }
+    }
+
+    @Test func aCommandBeforeItsTargetsAreReadWaitsForItsOwnReadBeforeHidingAnything() async throws {
+        try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
+            let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.selectAssets([fixture.ids[0]])
+            try await waitUntil { model.trashQuestionReading?.files == [fixture.ids[0]] }
+
+            // The targets change and the command follows in the same main-actor step, before
+            // the lane's pass for the new targets can run: the reading is of other files.
+            model.selectAssets([fixture.ids[1]])
+            model.moveTargetedMediaToTrash()
+
+            #expect(model.trashQuestionReading?.files == [fixture.ids[0]])
+            #expect(model.trashSizingTask != nil)
+            #expect(model.gridSelection.selection == [fixture.ids[1]])
+            #expect(!model.undoMenuState.canUndo)
+            try await waitUntil { model.gridSelection.selection == [fixture.ids[2]] }
+            #expect(model.largeTrashDownloadPrompt == nil)
+        }
+    }
+
+    @Test func cloudOnlyTargetsOverTheThresholdAreAskedAboutBeforeAnythingIsHidden() async throws {
+        try await withSizedLibrary { fixture in
+            let files = CloudOnlyFiles(["big.jpg"])
+            let model = makeTrashModel(store: fixture.store, trash: nil, fileStatus: files.status)
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.selectAssets([fixture.ids[0]])
+            try await waitUntil { model.trashQuestionReading?.files == [fixture.ids[0]] }
+
+            model.moveTargetedMediaToTrash()
+
+            #expect(model.trashSizingTask == nil)
+            #expect(model.largeTrashDownloadPrompt?.ids == [fixture.ids[0]])
+            #expect(model.largeTrashDownloadPrompt?.bytes == PartialByteCount(knownBytes: 150_000_000, unknownCount: 0))
+            #expect(model.gridSelection.selection == [fixture.ids[0]])
+            #expect(!model.undoMenuState.canUndo)
+        }
+    }
+
+    /// The owner's trade-off (`docs/research/2026-11-15-trash-question-at-selection.md`): the
+    /// question is answered from the targets' files as read when the targets last changed. A
+    /// file macOS evicted since is moved without the question; the queue downloads it under
+    /// the free-space floor, and a failed download stops and asks.
+    @Test func aFileEvictedSinceItsTargetsWereReadIsMovedWithoutTheQuestion() async throws {
+        try await withSizedLibrary { fixture in
+            let files = CloudOnlyFiles([])
+            let model = makeTrashModel(store: fixture.store, trash: nil, fileStatus: files.status)
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.selectAssets([fixture.ids[0]])
+            try await waitUntil { model.trashQuestionReading?.files == [fixture.ids[0]] }
+            #expect(model.trashQuestionReading?.bytes == .zero)
+
+            files.evict("big.jpg")
+            model.moveTargetedMediaToTrash()
+
+            #expect(model.largeTrashDownloadPrompt == nil)
+            #expect(model.gridSelection.selection == [fixture.ids[1]])
+            #expect(model.undoMenuState.canUndo)
+        }
+    }
+
+    /// The same trade-off the other way: a file downloaded since its targets were read is
+    /// still asked about, and the answer moves it.
+    @Test func aFileDownloadedSinceItsTargetsWereReadIsStillAskedAbout() async throws {
+        try await withSizedLibrary { fixture in
+            let files = CloudOnlyFiles(["big.jpg"])
+            let model = makeTrashModel(store: fixture.store, trash: nil, fileStatus: files.status)
+            model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+            model.selectAssets([fixture.ids[0]])
+            try await waitUntil { model.trashQuestionReading?.files == [fixture.ids[0]] }
+
+            files.download("big.jpg")
+            model.moveTargetedMediaToTrash()
+
+            #expect(model.largeTrashDownloadPrompt?.ids == [fixture.ids[0]])
+            model.confirmLargeTrashDownload()
+            #expect(model.gridSelection.selection == [fixture.ids[1]])
+            #expect(model.undoMenuState.canUndo)
         }
     }
 
@@ -274,7 +375,8 @@ private func startShowing(_ model: CatalogWindowViewModel, _ fixture: CatalogedL
 private func makeTrashModel(
     store: CatalogStore,
     trash: URL?,
-    markHook: (@Sendable () async throws -> Void)? = nil
+    markHook: (@Sendable () async throws -> Void)? = nil,
+    fileStatus: @escaping MediaTrashCoordinator.StatusReader = { FileMaterialization.status(of: $0) }
 ) -> CatalogWindowViewModel {
     CatalogWindowViewModel(
         catalogStore: store,
@@ -284,8 +386,57 @@ private func makeTrashModel(
         preferencesDomain: .suite(UUID().uuidString),
         volumeCapacity: ampleVolumeCapacity,
         trashFiles: trash.map { .folder($0) } ?? .refusing,
+        trashFileStatus: fileStatus,
         trashMarkHook: markHook
     )
+}
+
+/// Which files a test's provider holds only in the cloud, flipped between a reading and a
+/// command the way macOS evicts or downloads a file.
+private final class CloudOnlyFiles: Sendable {
+    private let names: Mutex<Set<String>>
+
+    init(_ names: Set<String>) {
+        self.names = Mutex(names)
+    }
+
+    func status(_ url: URL) -> FileMaterializationStatus {
+        names.withLock { $0.contains(url.lastPathComponent) } ? .dataless : .materialized
+    }
+
+    func evict(_ name: String) {
+        _ = names.withLock { $0.insert(name) }
+    }
+
+    func download(_ name: String) {
+        _ = names.withLock { $0.remove(name) }
+    }
+}
+
+/// A library of `big.jpg`, which the catalog sizes at 150 MB (a sparse file: no bytes on
+/// disk), and `small.jpg`, cataloged.
+@MainActor
+private func withSizedLibrary(_ body: (CatalogedLibrary) async throws -> Void) async throws {
+    let root = try makeTestDirectory()
+    try Data([0]).write(to: root.appending(path: "small.jpg"))
+    try Data([0]).write(to: root.appending(path: "big.jpg"))
+    let handle = try FileHandle(forWritingTo: root.appending(path: "big.jpg"))
+    try handle.truncate(atOffset: 150_000_000)
+    try handle.close()
+    let rootPath = try CatalogPath.normalizedExistingDirectoryPath(for: root)
+    let ids = ["big.jpg", "small.jpg"].map {
+        MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: $0))
+    }
+    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(5))
+    do {
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        try await body(CatalogedLibrary(store: store, root: root, rootPath: rootPath, ids: ids))
+    } catch {
+        await store.shutdown()
+        throw error
+    }
+    await store.shutdown()
 }
 
 /// The lone library's scope, the one the window selects for it at launch, so the state

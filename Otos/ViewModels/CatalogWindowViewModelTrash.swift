@@ -14,8 +14,12 @@ import OSLog
 /// Every surface — Photo menu, ⌘⌫, context menu, toolbar Action menu — calls
 /// `moveTargetedMediaToTrash()`, which acts at once: the act is undoable, so it asks
 /// nothing first (HIG: no alerts for common, undoable actions; Plan 0104 D1). The one
-/// question, the large download (APP-045), is asked before anything is hidden, and only a
-/// command that holds a cloud-only file waits for its sizing read.
+/// question, the large download (APP-045), is asked before anything is hidden. Its answer
+/// is read when the targets change, not when the command arrives: the targets' question
+/// lane (ADR 0032: a revision pair, one doorbell loop) sizes the command the current targets
+/// would make off the main actor (`MediaTrashCoordinator.downloadBytes`), so a command whose
+/// targets were read asks or hides in the step that applies it. Only a command that arrives
+/// before its targets' reading has finished waits, for a read of its own.
 ///
 /// Undo (APP-039). Undo and redo register their opposite entry synchronously at fire time,
 /// as curation's do, then hand the work to the queue on the same stream as the mark, so an
@@ -82,17 +86,22 @@ extension CatalogWindowViewModel {
         guard canMoveTargetedMediaToTrash else {
             return
         }
+        let command = trashCommand()
+        moveMediaToTrash(command.ids, carrying: command.carries)
+    }
+
+    /// What a Move to Trash of the current targets moves, by file, with the work a duplicates
+    /// move carries onto kept copies: the one resolution the command and its question's
+    /// reading share. On the duplicates list, the selected groups' extra copies, never a kept
+    /// one (ADR 0042); elsewhere a collapsed stack is one photo of several files, and Move to
+    /// Trash moves them all, while a member of an expanded stack is a photo of its own (ADR 0052).
+    func trashCommand() -> (ids: [MediaAssetID], carries: [DuplicateCarry]) {
         if showsDuplicatesList {
-            let targets = selectedDuplicatesToMove()
-            moveMediaToTrash(targets.ids, carrying: targets.carries)
-        } else {
-            // A collapsed stack is one photo of several files, and Move to Trash moves them
-            // all; a member of an expanded stack is a photo of its own (ADR 0052).
-            let stacks = state.mediaGrid.stacks
-            var seen = Set<MediaAssetID>()
-            let files = targetIDs(.current).flatMap(stacks.files(reachedThrough:)).filter { seen.insert($0).inserted }
-            moveMediaToTrash(files)
+            return selectedDuplicatesToMove()
         }
+        let stacks = state.mediaGrid.stacks
+        var seen = Set<MediaAssetID>()
+        return (targetIDs(.current).flatMap(stacks.files(reachedThrough:)).filter { seen.insert($0).inserted }, [])
     }
 
     /// The one Move to Trash path for a known set of items: the current targets, or the
@@ -106,12 +115,19 @@ extension CatalogWindowViewModel {
             performMoveToTrash(ids, carrying: carries)
             return
         }
-        // The window holds no locality fact — whether a file is cloud-only is a point-in-time
-        // filesystem fact Otos never stores (ADR 0008) — so the question's answer is read off
-        // the main actor before anything is hidden. `MediaTrashCoordinator` reads the catalog
-        // only for a command holding a cloud-only file; a local one is sized from the files'
-        // own flags. `trashSizingTask` keeps a second command from starting until this one has
-        // either asked or moved.
+        // Read when the targets last changed (`trashQuestionReading`): the command asks or
+        // hides in this step. The reading is of exactly these files or it is not this
+        // command's.
+        if let reading = trashQuestionReading, reading.files == ids {
+            answerTrashQuestion(ids, carrying: carries, bytes: reading.bytes, readAt: "targetsChanged")
+            return
+        }
+        // Not read yet — the command came before its targets' reading finished, or it is not
+        // the current targets' (Duplicates' Move All) — so it waits for a read of its own
+        // before anything is hidden. The window holds no locality fact of its own: whether a
+        // file is cloud-only is a point-in-time filesystem fact Otos never stores (ADR 0008).
+        // `trashSizingTask` keeps a second command from starting until this one has either
+        // asked or moved.
         let coordinator = mediaTrashCoordinator
         // Single in flight by construction (`trashSizingTask` gates every start), so there is
         // nothing to order: a read-only sizing question, answered once.
@@ -119,24 +135,102 @@ extension CatalogWindowViewModel {
             let bytes = await coordinator.downloadBytes(for: ids)
             guard let self else { return }
             trashSizingTask = nil
-            guard let bytes else {
-                // The catalog could not size the download, so there is no number to put in
-                // a prompt. The move goes ahead on its own safeguards: the free-space floor
-                // and a failed download both stop and ask the user.
-                OtosLog.ui.notice("op=mediaTrash.prompt phase=sizeUnknown count=\(ids.count, privacy: .public)")
-                performMoveToTrash(ids, carrying: carries)
+            answerTrashQuestion(ids, carrying: carries, bytes: bytes, readAt: "command")
+        }
+    }
+
+    /// The question's answer for a command, from its download as read (`readAt`): asked when
+    /// it applies, else the items are hidden now.
+    private func answerTrashQuestion(
+        _ ids: [MediaAssetID],
+        carrying carries: [DuplicateCarry],
+        bytes: PartialByteCount?,
+        readAt: String
+    ) {
+        guard let bytes else {
+            // The catalog could not size the download, so there is no number to put in a
+            // prompt. The move goes ahead on its own safeguards: the free-space floor and a
+            // failed download both stop and ask the user.
+            OtosLog.ui.notice("op=mediaTrash.prompt phase=sizeUnknown count=\(ids.count, privacy: .public)")
+            performMoveToTrash(ids, carrying: carries)
+            return
+        }
+        if LargeTrashDownloadPrompt.asks(bytes: bytes, preference: asksBeforeLargeTrashDownload) {
+            largeTrashDownloadPrompt = LargeTrashDownloadPrompt(ids: ids, bytes: bytes, carries: carries)
+            OtosLog.ui.noticeOperation("mediaTrash.prompt", phase: "shown", fields: [
+                "count": "\(ids.count)",
+                "knownBytes": "\(bytes.knownBytes)",
+                "unknownSizeCount": "\(bytes.unknownCount)",
+                "readAt": readAt,
+            ])
+        } else {
+            OtosLog.ui.noticeOperation("mediaTrash.prompt", phase: "notAsked", fields: [
+                "count": "\(ids.count)",
+                "readAt": readAt,
+            ])
+            performMoveToTrash(ids, carrying: carries)
+        }
+    }
+
+    // MARK: - The targets' question lane
+
+    /// The current targets may have changed: their command is read again. Called from every
+    /// target writer (`refreshOpenWithMenu`) and when the preference turns on. A count and a
+    /// doorbell; the lane starts on its first request.
+    func requestTrashQuestionReading() {
+        trashQuestionRequested &+= 1
+        if trashQuestionTask == nil {
+            let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+            trashQuestionContinuation = continuation
+            trashQuestionTask = Task { [weak self] in
+                for await _ in stream {
+                    guard let self else {
+                        return
+                    }
+                    await runTrashQuestionReadings()
+                }
+            }
+        }
+        trashQuestionContinuation?.yield()
+    }
+
+    /// Runs readings until the newest request is covered. Each pass resolves the command on
+    /// the main actor, leaves it for the read, and keeps the result as the reading of exactly
+    /// the files it read; a command compares its own files with them, so a reading the
+    /// targets have since moved past is never used. A failed read keeps nothing and leaves
+    /// the request outstanding for the next change, and a command then reads for itself.
+    private func runTrashQuestionReadings() async {
+        while trashQuestionRequested != trashQuestionCovered {
+            let startedFrom = trashQuestionRequested
+            let files = asksBeforeLargeTrashDownload ? trashCommand().ids : []
+            guard !files.isEmpty else {
+                trashQuestionCovered = startedFrom
+                trashQuestionReading = nil
+                continue
+            }
+            if trashQuestionReading?.files == files {
+                trashQuestionCovered = startedFrom
+                continue
+            }
+            let started = ContinuousClock.now
+            let bytes = await mediaTrashCoordinator.downloadBytes(for: files)
+            guard !Task.isCancelled else {
                 return
             }
-            if LargeTrashDownloadPrompt.asks(bytes: bytes, preference: asksBeforeLargeTrashDownload) {
-                largeTrashDownloadPrompt = LargeTrashDownloadPrompt(ids: ids, bytes: bytes, carries: carries)
-                OtosLog.ui.noticeOperation("mediaTrash.prompt", phase: "shown", fields: [
-                    "count": "\(ids.count)",
-                    "knownBytes": "\(bytes.knownBytes)",
-                    "unknownSizeCount": "\(bytes.unknownCount)",
+            guard let bytes else {
+                OtosLog.ui.noticeOperation("mediaTrash.question", phase: "readFailed", fields: [
+                    "count": "\(files.count)",
                 ])
-            } else {
-                performMoveToTrash(ids, carrying: carries)
+                return
             }
+            trashQuestionCovered = startedFrom
+            trashQuestionReading = TrashQuestionReading(files: files, bytes: bytes)
+            OtosLog.ui.noticeOperation("mediaTrash.question", phase: "read", fields: [
+                "count": "\(files.count)",
+                "knownBytes": "\(bytes.knownBytes)",
+                "unknownSizeCount": "\(bytes.unknownCount)",
+                "ms": "\(DiagnosticsTiming.milliseconds(since: started))",
+            ])
         }
     }
 
@@ -160,6 +254,7 @@ extension CatalogWindowViewModel {
         guard asksBeforeLargeTrashDownload != asks else { return }
         asksBeforeLargeTrashDownload = asks
         preferences.set(asks, forKey: Self.asksBeforeLargeTrashDownloadDefaultsKey)
+        requestTrashQuestionReading()
         OtosLog.ui.notice("op=mediaTrash.prompt phase=\(asks ? "enabled" : "suppressed", privacy: .public)")
     }
 

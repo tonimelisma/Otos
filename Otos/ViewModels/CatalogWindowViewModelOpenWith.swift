@@ -41,6 +41,7 @@ extension CatalogWindowViewModel {
         // is left alone there.
         refreshEditTarget()
         refreshPhotoInfo()
+        requestTrashQuestionReading()
         guard !targets.isEmpty else {
             openWithMenuTask?.cancel()
             openWithMenu = .empty

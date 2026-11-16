@@ -592,9 +592,18 @@ final class CatalogWindowViewModel {
     /// accepted, refused or failed. Equal means every choice's outcome has been applied.
     @ObservationIgnored var submittedMediaChoiceCount = 0
     @ObservationIgnored var handledMediaChoiceCount = 0
-    /// The large-download question's sizing read (APP-045), the one Move to Trash step that can
-    /// wait: a second command waits for it rather than racing it.
+    /// The large-download question's read for a command its targets' reading does not cover
+    /// (APP-045), the one Move to Trash step that can wait: a second command waits for it
+    /// rather than racing it.
     @ObservationIgnored var trashSizingTask: Task<Void, Never>?
+    /// The large-download question's answer for the current targets, read when they change
+    /// (APP-045, `CatalogWindowViewModelTrash.swift`): a revision pair and one doorbell loop
+    /// (ADR 0032). `trashQuestionReading` is the newest finished pass's, of exactly its files.
+    @ObservationIgnored var trashQuestionRequested: UInt64 = 0
+    @ObservationIgnored var trashQuestionCovered: UInt64 = 0
+    @ObservationIgnored var trashQuestionContinuation: AsyncStream<Void>.Continuation?
+    @ObservationIgnored var trashQuestionTask: Task<Void, Never>?
+    @ObservationIgnored var trashQuestionReading: TrashQuestionReading?
     /// One undo target per Move to Trash command, so a command whose mark failed or hid
     /// nothing takes exactly its own entry off the undo stack. `UndoManager` does not retain
     /// targets, so they are kept here for the window's life: one small object per command.
@@ -719,6 +728,7 @@ final class CatalogWindowViewModel {
         tileContentStore: TileContentStore = TileContentStore(),
         volumeCapacity: @escaping VolumeCapacityReader,
         trashFiles: MediaTrashCoordinator.FileOperations,
+        trashFileStatus: @escaping MediaTrashCoordinator.StatusReader = { FileMaterialization.status(of: $0) },
         trashMarkHook: (@Sendable () async throws -> Void)? = nil
     ) {
         self.trashMarkHook = trashMarkHook
@@ -839,6 +849,7 @@ final class CatalogWindowViewModel {
             store: catalogStore,
             materializationRequester: materializationCoordinator,
             files: trashFiles,
+            status: trashFileStatus,
             volumeCapacity: volumeCapacity
         )
         // One analyzer reads every face, a still's preview and a video's frames, so the
@@ -987,6 +998,8 @@ final class CatalogWindowViewModel {
         immichIntentTask?.cancel()
         immichStatusTask?.cancel()
         trashSizingTask?.cancel()
+        trashQuestionTask?.cancel()
+        trashQuestionContinuation?.finish()
         mediaTrashEventTask?.cancel()
         mediaTrashIntentTask?.cancel()
         duplicatesIntentTask?.cancel()

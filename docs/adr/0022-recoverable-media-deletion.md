@@ -66,6 +66,19 @@ preceding success; a primary failure does not claim that the item fully moved. T
 the crash-recovery path and remains the source of truth; no speculative Trash
 journal or rollback is added.
 
+The one question asked before anything is hidden, a download of more than 100 MB of
+cloud-only members (APP-045, DES-090), is a property of the targets and is read when they
+change, not when the command arrives. The window holds no locality fact of its own, and
+nothing is stored: whenever a target writer changes the targets, a ViewModel lane (ADR 0032)
+sizes the command they would make with `MediaTrashCoordinator.downloadBytes` off the main
+actor and keeps that reading, of exactly those files, in memory. A command of the same files
+asks or hides in the step that applies it; any other command reads for itself before
+anything is hidden. The reading can be seconds or minutes old: a file evicted since moves
+without the question, and the queue still downloads it under the free-space floor and asks
+when a download fails; a file downloaded since is still asked about. The queue checks every
+member again under the lease before it moves it, as above
+(`docs/research/2026-11-15-trash-question-at-selection.md`).
+
 The namespace lease has typed owners for import publication, reorganization,
 and Media Trash. Only one owner may hold a root at a time. Filesystem events
 mark the root dirty and reconcile after release. Import publication acquires
@@ -87,6 +100,8 @@ against a root currently being trashed or reorganized.
 | Durable deletion journal | A complete next scan already reconciles the exact path truth; add durable state only after fault-injection proves it insufficient. |
 | Purge the row once the file is in the Trash, snapshotting overlay for undo | Loses the overlay for good after a relaunch, though the file is recoverable; the item is not proven deleted. |
 | A separate trashed-items table re-matched on Put Back | A second record of the same asset; the kept row already is that record, and Put Back returns the file to the row's own path. |
+| Size the large-download question when the command arrives | Waits one actor hop and an `lstat` per target before anything is hidden, a wait with no bound on a starved cooperative pool. |
+| Hide the targets known local and ask about the rest | Splits one command into two: what is hidden, what Undo covers and what the question names stop being the command the user gave. |
 | Persist the undo stack across launches | Not a macOS idiom; Finder's Put Back is the system's way back, and the kept row makes it complete. |
 
 ## Consequences
