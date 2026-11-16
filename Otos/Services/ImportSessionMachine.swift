@@ -192,6 +192,21 @@ nonisolated struct ImportSessionMachine {
 
     /// A proven naming count for one attachment. Named rather than a tuple so "done of
     /// total" cannot be read in the wrong order at a call site.
+    /// What an attachment last proved (`SourceSession.lastProven`).
+    nonisolated enum ProvenAnswer {
+        /// A plan. Dropped when it stops being true of the card: a run settling, stopping
+        /// or failing, a destination change, and entering `.waitingForMetadata`.
+        case plan(ReadyContext)
+        /// A completed run's outcome, shown through the re-plan that follows it until a
+        /// plan lands. Dropped when the destination changes, since it was measured
+        /// against the previous library.
+        case settled(SettledOutcome)
+        /// The naming count of a metadata wait. Held rather than recomputed because a
+        /// rebuild has no count of its own to offer; it is about the card, so a
+        /// destination change keeps it.
+        case namingCount(NamingProgress)
+    }
+
     nonisolated struct NamingProgress: Equatable, Sendable {
         let done: Int
         let total: Int
@@ -219,24 +234,16 @@ nonisolated struct ImportSessionMachine {
         var nextBuildGeneration: BuildGeneration
         var attachStartedAt: ContinuousClock.Instant
         var attachToReadyMs: Int?
-        /// The most recent naming progress this attachment reported. Held rather than
-        /// recomputed because a rebuild has no count of its own to offer; showing the last
-        /// proven one asserts nothing new. Scoped to the attachment, so a new card starts
-        /// from nothing.
-        var lastNamingProgress: NamingProgress?
-        /// The most recent completed run's outcome, presented through the re-plan that
-        /// follows it until a plan lands. Cleared when the card enters
-        /// `.waitingForMetadata`, whose pending rows the run never saw, and when the
-        /// destination changes, since it was measured against the previous library.
-        var settledOutcome: SettledOutcome?
-        /// The most recent plan this attachment actually proved, kept across the rebuilds
-        /// that follow it. A re-plan overwrites `phase` with `.building`, so without this
-        /// the plan the user is looking at is destroyed the moment a newer one is
-        /// scheduled and the bar falls back to state A (ARC-047). State A means *no plan
-        /// has ever existed for this attachment*; a refresh is not a first check.
-        /// Cleared whenever the plan stops being true of the card: a run settling,
-        /// stopping or failing, a destination change, and entering `.waitingForMetadata`.
-        var lastReadyContext: ReadyContext?
+        /// The last thing this attachment proved, kept across the rebuilds that follow it
+        /// and shown between proofs (ARC-047). A re-plan overwrites `phase` with
+        /// `.building`, so without it the answer the user is looking at is destroyed the
+        /// moment a newer one is scheduled and the bar falls back to state A, which means
+        /// *nothing has been proven for this attachment*; a refresh is not a first check.
+        /// One field, so each proof replaces the one before it: a naming count from
+        /// before a plan is never shown after that plan, even while the plan itself
+        /// cannot be offered (the card is being read again). Scoped to the attachment, so
+        /// a new card starts from nothing.
+        var lastProven: ProvenAnswer?
         var lastCompletion: AttachmentCompletion?
         /// The last run's failure, if the most recent attempt failed. Cleared when the
         /// next attempt starts and when the user asks to plan again — never by a rebuild.
@@ -247,6 +254,22 @@ nonisolated struct ImportSessionMachine {
 
         var needsPlan: Bool {
             planRequested != planCovered
+        }
+
+        /// The plan this attachment last proved, while it is the last thing it proved.
+        var provenPlan: ReadyContext? {
+            if case let .plan(context)? = lastProven {
+                return context
+            }
+            return nil
+        }
+
+        /// The naming count this attachment last proved, while it is the last thing it proved.
+        var provenNamingCount: NamingProgress? {
+            if case let .namingCount(progress)? = lastProven {
+                return progress
+            }
+            return nil
         }
 
         /// Correlates this session's plan, execution and presentation diagnostics. Minted
@@ -591,7 +614,6 @@ nonisolated struct ImportSessionMachine {
             nextBuildGeneration: BuildGeneration(rawValue: 1),
             attachStartedAt: ContinuousClock().now,
             attachToReadyMs: nil,
-            settledOutcome: nil,
             lastCompletion: nil,
             lastFailure: nil,
             unreadableRetry: nil
@@ -708,8 +730,9 @@ nonisolated struct ImportSessionMachine {
         session.isDestinationExplicit = explicit
         if previous != destination {
             session.requestPlan()
-            session.lastReadyContext = nil
-            session.settledOutcome = nil
+            if session.provenNamingCount == nil {
+                session.lastProven = nil
+            }
         }
         sessions[source] = session
         takeUpBuild(source, into: &effects)
@@ -1122,14 +1145,13 @@ nonisolated struct ImportSessionMachine {
             + "catalogChangedDuringBuild=\(changedDuringBuild)"
         OtosLog.catalog.notice("\(message, privacy: .public)")
         sessions[source]?.phase = .waitingForMetadata(done: pending.settled, total: max(pending.total, 1))
-        sessions[source]?.lastNamingProgress = NamingProgress(done: pending.settled, total: max(pending.total, 1))
-        // The held plan was proven over a set that did not contain these pending rows, so
-        // it no longer describes the card. Holding it across the rebuilds that follow drew
-        // it as Ready — and the sidebar row as its eject button — between every pair of
-        // Preparing frames, once a second for the whole metadata wait. A settled run is
-        // dropped for the same reason. What the run copied stays in `lastCompletion`.
-        sessions[source]?.lastReadyContext = nil
-        sessions[source]?.settledOutcome = nil
+        // The count replaces a held plan: it was proven over a set that did not contain
+        // these pending rows, so it no longer describes the card. Holding it across the
+        // rebuilds that follow drew it as Ready — and the sidebar row as its eject button —
+        // between every pair of Preparing frames, once a second for the whole metadata
+        // wait. A settled run is replaced for the same reason. What the run copied stays in
+        // `lastCompletion`.
+        sessions[source]?.lastProven = .namingCount(NamingProgress(done: pending.settled, total: max(pending.total, 1)))
         if changedDuringBuild {
             // `finishBuild` takes this request up once the build is applied.
             sessions[source]?.requestPlan()
@@ -1204,7 +1226,7 @@ nonisolated struct ImportSessionMachine {
             builtFromSettledSource: owned.context.sourceSettledAtTakeUp
         )
         sessions[source]?.phase = .ready(readyCtx)
-        sessions[source]?.lastReadyContext = readyCtx
+        sessions[source]?.lastProven = .plan(readyCtx)
         if sessions[source]?.unreadableRetry != nil {
             effects.append(.cancelUnreadableRetry(source: source))
         }
@@ -1416,11 +1438,11 @@ nonisolated struct ImportSessionMachine {
         )
         let plan = readyContext.plan
         let prefs = session.preferences
-        // Minted here, not read off `plan.mode` (a throwaway id re-minted on every re-plan
-        // — trap #6) and not left to the executor to mint deep inside `execute()`: the
-        // machine is the one place that must know it before execution starts, carried on
-        // the phase while executing and on the recorded outcome afterward
-        // (`import-bar.md` "Where the user is standing").
+        // Minted here, when the run starts — a plan carries no batch — and not left to the
+        // executor to mint deep inside `execute()`: the machine is the one place that must
+        // know it before execution starts, carried on the phase while executing and on the
+        // recorded outcome afterward (`import-bar.md` "Where the user is standing"). Two
+        // cards starting in one millisecond get two batches (`UnixMillisecondIdentity`).
         let batch = ImportBatchID()
         session.phase = .executing(ExecutionContext(
             plan: plan,
@@ -1541,8 +1563,7 @@ nonisolated struct ImportSessionMachine {
         guard var session = sessions[source] else { return }
         let totals = context.plan.totals
         session.phase = .inventory
-        session.lastReadyContext = nil
-        session.settledOutcome = nil
+        session.lastProven = nil
         switch result {
         case let .completed(tally, incompleteItems, erase):
             let eraseFailed = (erase?.failedCount ?? 0) > 0
@@ -1560,13 +1581,13 @@ nonisolated struct ImportSessionMachine {
                 plannedCount: totals.copyCount,
                 destination: context.destination
             )
-            session.settledOutcome = SettledOutcome(
+            session.lastProven = .settled(SettledOutcome(
                 summary: totals,
                 skippedForeignCount: tally.skippedForeignCount,
                 failedCount: tally.failedCount,
                 incompleteItems: incompleteItems,
                 eraseOutcome: erase
-            )
+            ))
             if context.prefs.autoEjectAfterImport, !tally.hasBlockedEntries, !tally.hasEntryFailures,
                totals.blockedCount == 0, !eraseFailed
             {

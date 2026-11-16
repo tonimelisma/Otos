@@ -101,8 +101,7 @@ actor ControlledImportPlanBuilder {
             generation: entry.snapshot.generation,
             mode: .import(
                 source: entry.snapshot.sourceRoot,
-                destination: entry.snapshot.destinationRoot,
-                batch: ImportBatchID()
+                destination: entry.snapshot.destinationRoot
             ),
             sourceNamespaceRevision: entry.snapshot.sourceNamespaceRevision,
             sourceNamingRevision: 0,

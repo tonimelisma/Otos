@@ -106,7 +106,9 @@ actor CatalogProjection {
     private var changeTask: Task<Void, Never>?
     private var loopTask: Task<Void, Never>?
     private var cadenceTask: Task<Void, Never>?
-    private var lastPublishedState: CatalogWindowState?
+    /// What every subscriber was last handed. Read with `isQuiescent`, it says what a
+    /// subscriber holds once its stream has delivered everything published.
+    private(set) var lastPublishedState: CatalogWindowState?
     /// The last state as built, before the hides take anything off it: what every
     /// republication starts from, a hide's and its withdrawal's included.
     private var lastBuiltState: CatalogWindowState?

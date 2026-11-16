@@ -6,6 +6,15 @@ struct MediaOperationModelsTests {
     private static let source = LibraryRootPath(rawValue: "/tmp/card")
     private static let destination = LibraryRootPath(rawValue: "/tmp/library")
 
+    /// Two cards' imports can start in one millisecond. The batch was the start time in
+    /// milliseconds, so the two runs shared one: the coordinator keys its runs and the
+    /// catalog keys each run's assets on it, and the Imports sidebar would show one row.
+    @Test func twoImportsStartedInOneMillisecondHaveTwoBatches() {
+        let first = ImportBatchID()
+        let second = ImportBatchID()
+        #expect(first < second)
+    }
+
     private static func facts(name: String) -> PlanningFileFacts {
         let relative = MediaRelativePath(rawValue: name)
         return PlanningFileFacts(
@@ -33,7 +42,7 @@ struct MediaOperationModelsTests {
     private static func plan(entries: [MediaOperationPlanEntry]) -> MediaOperationPlan {
         MediaOperationPlan(
             generation: 1,
-            mode: .import(source: source, destination: destination, batch: ImportBatchID()),
+            mode: .import(source: source, destination: destination),
             sourceNamespaceRevision: 1,
             sourceNamingRevision: 0,
             destinationNamespaceRevision: 1,

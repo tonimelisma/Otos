@@ -104,6 +104,19 @@ func waitForProjectionQuiescence(_ projection: CatalogProjection) async throws {
     try await waitUntil { await projection.isQuiescent }
 }
 
+/// Waits until the projection is quiescent and `recorder` holds what it last published, and
+/// returns what `recorder` holds. The recorder takes each state from its stream on a task of
+/// its own, so a quiescent projection can have published a state the recorder has not yet
+/// appended; its last value is read only once it is that publication.
+func waitForProjectionQuiescence(
+    _ projection: CatalogProjection,
+    recordedBy recorder: AsyncValueRecorder<CatalogWindowState>
+) async throws -> [CatalogWindowState] {
+    try await waitForProjectionQuiescence(projection)
+    let published = await projection.lastPublishedState
+    return await recorder.waitForValues { $0.last == published }
+}
+
 /// Holds work at a suspension point a test chose until the test opens the gate, so the
 /// test can deliver a competing event at exactly that point instead of hoping a
 /// scheduler interleaves it there.

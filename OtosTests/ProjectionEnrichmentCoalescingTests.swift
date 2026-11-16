@@ -65,7 +65,7 @@ struct ProjectionEnrichmentCoalescingTests {
             let generation = await recorder.snapshot().last?.mediaGrid.detailRefreshGeneration ?? 0
             try await write()
             _ = await recorder.waitForValues { ($0.last?.mediaGrid.detailRefreshGeneration ?? 0) > generation }
-            try await waitForProjectionQuiescence(projection)
+            _ = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
         }
     }
 
@@ -93,8 +93,8 @@ struct ProjectionEnrichmentCoalescingTests {
             $0.last?.resolvedSidebarSelection == .library(rootPath)
                 && $0.last?.mediaGrid.orderedAssetIDs.count == Self.assetCount
         }
-        try await waitForProjectionQuiescence(projection)
-        let ids = try #require(await recorder.snapshot().last?.mediaGrid.orderedAssetIDs)
+        let settled = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
+        let ids = try #require(settled.last?.mediaGrid.orderedAssetIDs)
         let assets = try await store.mediaAssets(for: ids)
         return Window(store: store, projection: projection, recorder: recorder, recording: recording, ids: ids, assets: assets)
     }
@@ -259,10 +259,10 @@ struct ProjectionEnrichmentCoalescingTests {
         }
         defer { recording.cancel() }
         _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
-        try await waitForProjectionQuiescence(projection)
+        let settled = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
 
         let beforeFaces = await projection.orderQueryCount
-        let refreshed = await recorder.snapshot().last?.mediaGrid.detailRefreshGeneration ?? 0
+        let refreshed = settled.last?.mediaGrid.detailRefreshGeneration ?? 0
         try await library.readFaces([library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.1)])])
         _ = await recorder.waitForValues { ($0.last?.mediaGrid.detailRefreshGeneration ?? 0) > refreshed }
         try await waitForProjectionQuiescence(projection)
@@ -312,16 +312,15 @@ struct ProjectionEnrichmentCoalescingTests {
         try await waitForProjectionQuiescence(projection)
         await projection.updateSidebarSelection(.allMedia)
         _ = await recorder.waitForValues { $0.last?.resolvedSidebarSelection == .allMedia }
-        try await waitForProjectionQuiescence(projection)
-        let ids = try #require(await recorder.snapshot().last?.mediaGrid.orderedAssetIDs)
+        let allMedia = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
+        let ids = try #require(allMedia.last?.mediaGrid.orderedAssetIDs)
         try #require(ids.count == 2 * Self.assetCount, "All Media shows \(ids.count)")
         let assets = try await store.mediaAssets(for: ids)
         let libraryPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let library = SidebarSelection.library(libraryPath)
         await projection.updateSidebarSelection(library)
         _ = await recorder.waitForValues { $0.last?.resolvedSidebarSelection == library }
-        try await waitForProjectionQuiescence(projection)
-        let shown = await recorder.snapshot().last?.mediaGrid.orderedAssetIDs.count
+        let shown = try await waitForProjectionQuiescence(projection, recordedBy: recorder).last?.mediaGrid.orderedAssetIDs.count
         try #require(shown == Self.assetCount, "the library shows \(String(describing: shown))")
         let window = Window(store: store, projection: projection, recorder: recorder, recording: recording, ids: ids, assets: assets)
         return (window, libraryPath)
@@ -337,11 +336,14 @@ struct ProjectionEnrichmentCoalescingTests {
 
         await window.projection.updateSidebarSelection(.allMedia)
         _ = await window.recorder.waitForValues { $0.last?.resolvedSidebarSelection == .allMedia }
-        try await waitForProjectionQuiescence(window.projection)
+        let recorded = try await waitForProjectionQuiescence(window.projection, recordedBy: window.recorder)
 
         // Every publication of the return shows the held order; only the filter's options,
-        // held for one row and read after the window publishes, are read again.
-        let returns = await window.recorder.snapshot().dropFirst(published)
+        // held for one row and read after the window publishes, are read again. The return
+        // starts at its first All Media publication: the Duplicates and People owners can
+        // publish the library's window again after it was counted.
+        let returns = recorded.dropFirst(published)
+            .drop { $0.resolvedSidebarSelection != .allMedia }
         #expect(!returns.isEmpty && returns.allSatisfy { $0.mediaGrid.orderedAssetIDs == window.ids })
         let after = await window.reads
         #expect(after.order == before.order, "before=\(before) after=\(after)")
@@ -367,11 +369,11 @@ struct ProjectionEnrichmentCoalescingTests {
 
         await window.projection.updateSidebarSelection(.allMedia)
         _ = await window.recorder.waitForValues { $0.last?.resolvedSidebarSelection == .allMedia }
-        try await waitForProjectionQuiescence(window.projection)
-        // A library publication of the enrichment can reach the recorder after it was
-        // counted (the recorder consumes the stream on its own task), so the return starts
-        // at its first All Media publication.
-        let returns = await window.recorder.snapshot().dropFirst(published)
+        let recorded = try await waitForProjectionQuiescence(window.projection, recordedBy: window.recorder)
+        // The Duplicates and People owners publish on their own schedule, so the library's
+        // window can be published again after it was counted: the return starts at its first
+        // All Media publication.
+        let returns = recorded.dropFirst(published)
             .drop { $0.resolvedSidebarSelection != .allMedia }
 
         #expect(returns.first?.resolvedSidebarSelection == .allMedia)

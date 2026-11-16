@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 
 /// Recoverable deletion value boundary.
 ///
@@ -26,25 +25,15 @@ nonisolated struct MediaTrashMember: Equatable, Sendable {
 nonisolated struct MediaTrashBatchID: Hashable, Sendable, Comparable {
     let unixMilliseconds: Int64
 
-    /// The last identity this process issued. Two commands can be issued within one
-    /// millisecond — a second Move to Trash right after the first, a redo right after its
-    /// undo — and the projection's hold, the undo entry and the catalog's pending rows all
-    /// key on the identity, so a second command issued in the same millisecond as the
-    /// first takes the next one instead of sharing it.
-    private static let lastIssued = Mutex<Int64>(0)
-
     init(unixMilliseconds: Int64) {
         self.unixMilliseconds = unixMilliseconds
     }
 
-    /// A new command's identity: the time it was issued, or one past the last identity
-    /// issued when the clock has not moved past it.
+    /// A new command's identity: when it was issued, unique within this process
+    /// (`UnixMillisecondIdentity`). The projection's hold, the undo entry and the catalog's
+    /// pending rows all key on it, and a redo can follow its undo within one millisecond.
     init() {
-        let now = Int64((Date().timeIntervalSince1970 * 1000.0).rounded(.down))
-        unixMilliseconds = Self.lastIssued.withLock { last in
-            last = max(now, last + 1)
-            return last
-        }
+        unixMilliseconds = UnixMillisecondIdentity.mint()
     }
 
     static func < (lhs: MediaTrashBatchID, rhs: MediaTrashBatchID) -> Bool {

@@ -69,8 +69,7 @@ nonisolated enum MediaTransferPlanner {
             generation: snapshot.generation,
             mode: .import(
                 source: snapshot.sourceRoot,
-                destination: snapshot.destinationRoot,
-                batch: ImportBatchID()
+                destination: snapshot.destinationRoot
             ),
             sourceNamespaceRevision: snapshot.sourceNamespaceRevision,
             sourceNamingRevision: snapshot.sourceNamingRevision,

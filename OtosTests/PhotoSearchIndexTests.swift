@@ -435,7 +435,7 @@ struct PhotoSearchIndexTests {
         }
         let red = catalog.red
         _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [red] }
-        try await waitForProjectionQuiescence(projection)
+        _ = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
         return ShownSearch(catalog: catalog, index: index, projection: projection, recorder: recorder, recording: recording)
     }
 

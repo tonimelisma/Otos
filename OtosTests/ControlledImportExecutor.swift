@@ -154,7 +154,7 @@ actor ControlledImportExecutor: ImportExecuting {
         runID: String,
         onProgress: @Sendable @escaping (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult {
-        guard case let .import(source, _, _) = plan.mode else {
+        guard case let .import(source, _) = plan.mode else {
             return .failed(.unexpected(detail: "notAnImportPlan"), publishedCount: 0)
         }
         await control.recordExecuted(for: source)

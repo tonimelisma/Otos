@@ -47,8 +47,8 @@ struct CatalogProjectionShownFirstTests {
             // The Dislike lands and is read: the photo stays out, and the hold retires.
             _ = try await fixture.store.setMediaChoices([order[0]: .disliked])
             await projection.apply(.choicesLanded(request: 2))
-            try await waitForProjectionQuiescence(projection)
-            #expect(try #require(await recorder.snapshot().last).mediaGrid.orderedAssetIDs == [order[1], order[2]])
+            let settled = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
+            #expect(try #require(settled.last).mediaGrid.orderedAssetIDs == [order[1], order[2]])
             #expect(await projection.holdsNothing)
         }
     }
@@ -82,17 +82,27 @@ struct CatalogProjectionShownFirstTests {
         let collapsed = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
         try await waitForProjectionQuiescence(projection)
         let pair = try #require(collapsed.last?.mediaGrid.stacks.collapsed(shownBy: jpeg1))
-        let published = await projection.publicationCount
         let queries = await projection.orderQueryCount
 
         var expanded = try CatalogQueryRequest(descriptor: #require(collapsed.last?.queryDescriptor), generation: 0)
         expanded.expandedStacks = [pair.id]
-        await projection.apply(.query(expanded))
-        #expect(await projection.publicationCount == published + 1, "published before any pass ran")
+        // Counted on Projection itself, around the intent: a read in a later hop would also
+        // count what the Duplicates and People owners publish on their own schedule.
+        #expect(await projection.publications(applying: .query(expanded)) == 1, "published before any pass ran")
         let shown = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 3 }
         #expect(shown.last?.mediaGrid.stacks.expanded(shownBy: raw1) == pair)
         try await waitForProjectionQuiescence(projection)
         #expect(await projection.orderQueryCount == queries)
         await store.shutdown()
+    }
+}
+
+extension CatalogProjection {
+    /// Applies `intent` and returns how many window states it published itself: one actor
+    /// step, so no pass and no derived owner can publish in between.
+    func publications(applying intent: CatalogProjectionIntent) -> UInt64 {
+        let before = publicationCount
+        apply(intent)
+        return publicationCount - before
     }
 }

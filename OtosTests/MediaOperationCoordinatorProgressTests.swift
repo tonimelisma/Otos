@@ -81,9 +81,11 @@ struct MediaOperationCoordinatorProgressTests {
         )
         await queueTask.value
         try await waitForCoordinatorQuiescence(coordinator)
+        // The recorder takes each presentation from its stream on a task of its own, so the
+        // states are read once it holds what the quiescent coordinator presents now.
+        let presented = await coordinator.currentPresentations().first { $0.sourcePath == cardPath }?.state
+        let states = await recorder.waitForValues { $0.last == presented }
         recording.cancel()
-
-        let states = await recorder.snapshot()
         let firstSettled = try #require(states.firstIndex { state in
             if case .completed = state {
                 true

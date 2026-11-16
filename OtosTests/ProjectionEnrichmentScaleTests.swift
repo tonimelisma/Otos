@@ -82,10 +82,10 @@ struct ProjectionEnrichmentScaleTests {
             !$0.isScanning && $0.testAssets.count == Self.assetCount
         }
         _ = await recorder.waitForValues { $0.last?.resolvedSidebarSelection == .library(rootPath) }
-        try await waitForProjectionQuiescence(projection)
+        let settled = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
 
         let baselineOrderQueries = await projection.orderQueryCount
-        let ids = try #require(await recorder.snapshot().last?.mediaGrid.orderedAssetIDs)
+        let ids = try #require(settled.last?.mediaGrid.orderedAssetIDs)
         let assetsByID = try await store.mediaAssets(for: ids)
 
         // A storm of small detail-only batches — effective ordering/scope facts

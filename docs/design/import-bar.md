@@ -508,11 +508,8 @@ Consequences that shape the journeys:
 - **The batch row cannot pre-exist the import.** The coordinator mints the real
   `ImportBatchID()` when execution starts and carries it through the executor
   (`MediaOperationCoordinator.swift`); the row appears in the sidebar only once
-  assets are journaled against it, and fills as items land.
-- **Do not read the batch ID off the plan.** `MediaTransferPlanner.swift:77` mints a
-  second, throwaway `ImportBatchID()` into `plan.mode` on *every* plan build. It is
-  not the batch the assets land in, it changes on every re-plan, and using it would
-  select a row that never exists.
+  assets are journaled against it, and fills as items land. A plan carries no batch:
+  re-plans happen many times before a run, and the batch names the run.
 
 **Selection behavior: an import follows its batch, once.** Pressing Import leaves the
 user on the card's row, where the bar shows the run's progress and its Cancel, until

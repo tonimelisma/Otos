@@ -7,12 +7,12 @@ import UniformTypeIdentifiers
 // coordinator (ARC-047) owns lifecycle. No I/O, no actor hops, no logging.
 
 nonisolated enum MediaOperationMode: Equatable, Sendable {
-    case `import`(source: LibraryRootPath, destination: LibraryRootPath, batch: ImportBatchID)
+    case `import`(source: LibraryRootPath, destination: LibraryRootPath)
     case reorganize(library: LibraryRootPath)
 
     /// The library an import plan copies into; `nil` for a reorganization.
     var importDestination: LibraryRootPath? {
-        if case let .import(_, destination, _) = self {
+        if case let .import(_, destination) = self {
             return destination
         }
         return nil

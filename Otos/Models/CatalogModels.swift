@@ -1828,6 +1828,24 @@ nonisolated enum CatalogSchemaCompatibility: Equatable, Sendable {
     }
 }
 
+/// The Unix-millisecond identities this process mints for its acts: an import's batch
+/// and a Move to Trash command. Each is the time it was minted, or one past the last
+/// identity minted when the clock has not moved past it, so two acts begun in one
+/// millisecond — two cards whose imports start together, a second Move to Trash right
+/// after the first — never share an identity that a dictionary, a hold, an undo entry or
+/// the catalog's rows key on.
+nonisolated enum UnixMillisecondIdentity {
+    private static let lastMinted = Mutex<Int64>(0)
+
+    static func mint() -> Int64 {
+        let now = Int64((Date().timeIntervalSince1970 * 1000.0).rounded(.down))
+        return lastMinted.withLock { last in
+            last = max(now, last + 1)
+            return last
+        }
+    }
+}
+
 /// Typed UTC epoch milliseconds shared by every asset newly published in one import.
 /// Rendered in the user's locale/time zone only in the sidebar.
 nonisolated struct ImportBatchID: Hashable, Sendable, Comparable {
@@ -1837,8 +1855,10 @@ nonisolated struct ImportBatchID: Hashable, Sendable, Comparable {
         self.unixMilliseconds = unixMilliseconds
     }
 
-    init(date: Date = Date()) {
-        unixMilliseconds = Int64((date.timeIntervalSince1970 * 1000.0).rounded(.down))
+    /// A new import's batch: when it started, unique within this process
+    /// (`UnixMillisecondIdentity`).
+    init() {
+        unixMilliseconds = UnixMillisecondIdentity.mint()
     }
 
     var date: Date {

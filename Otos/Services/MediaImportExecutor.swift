@@ -273,7 +273,7 @@ actor MediaImportExecutor {
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult {
         cancelFlag.reset()
-        guard case let .import(_, destination, _) = plan.mode else {
+        guard case let .import(_, destination) = plan.mode else {
             return .failed(.unexpected(detail: "notAnImportPlan"), publishedCount: 0)
         }
         let copyEntries = plan.entries.filter {
@@ -702,7 +702,7 @@ actor MediaImportExecutor {
         context: EntryExecutionContext,
         erasableSourcePaths: Set<MediaRelativePath>
     ) async -> EraseOutcome {
-        guard case let .import(sourceRoot, _, _) = context.plan.mode else {
+        guard case let .import(sourceRoot, _) = context.plan.mode else {
             return EraseOutcome(deletedCount: 0, skippedCount: 0, failedCount: 0)
         }
         // Content matches are confirmed against the catalog now; a failed read confirms none,
@@ -882,7 +882,7 @@ actor MediaImportExecutor {
         _ entry: MediaOperationPlanEntry,
         context: EntryExecutionContext
     ) async -> SourceEraseOutcome? {
-        guard case let .import(sourceRoot, _, _) = context.plan.mode else { return nil }
+        guard case let .import(sourceRoot, _) = context.plan.mode else { return nil }
         let acquisition = await store.acquireNamespaceMutationLease(for: sourceRoot, owner: .sourceErase)
         guard case let .acquired(lease) = acquisition else {
             OtosLog.mediaIO.noticeOperation("import.erase", phase: "landedDeferred", fields: [
@@ -1303,7 +1303,7 @@ actor MediaImportExecutor {
         workerID: Int,
         onByteProgress: @escaping @Sendable (Int64) -> Void
     ) async -> EntryOutcome {
-        guard case let .import(sourceRoot, destinationRoot, _) = context.plan.mode,
+        guard case let .import(sourceRoot, destinationRoot) = context.plan.mode,
               case let .copy(destinationRelative) = entry.disposition
         else {
             return .failed(.other)

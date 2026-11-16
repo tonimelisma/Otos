@@ -196,7 +196,7 @@ struct ImportSessionMachineTests {
         let effects = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))
 
         #expect(Self.builds(in: effects).count == 1)
-        #expect(machine.sessions[Self.card]?.lastReadyContext != nil)
+        #expect(machine.sessions[Self.card]?.provenPlan != nil)
     }
 
     @Test func aPreferenceChangeDuringABuildRequestsAnotherPlan() {
@@ -223,7 +223,7 @@ struct ImportSessionMachineTests {
         let next = Self.builds(in: effects)
         #expect(next.count == 1)
         #expect(next.first?.destination == Self.libraryB)
-        #expect(machine.sessions[Self.card]?.lastReadyContext == nil)
+        #expect(machine.sessions[Self.card]?.provenPlan == nil)
     }
 
     /// ARC-047: a default destination that follows a reorder is a destination change like
@@ -233,14 +233,14 @@ struct ImportSessionMachineTests {
             libraries: [Self.library(Self.libraryA), Self.library(Self.libraryB), Self.cardState()]
         )
         _ = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))
-        #expect(machine.sessions[Self.card]?.lastReadyContext?.destination == Self.libraryA)
+        #expect(machine.sessions[Self.card]?.provenPlan?.destination == Self.libraryA)
 
         let effects = machine.handle(.librariesRefreshed(Self.snapshot(
             [Self.library(Self.libraryB), Self.library(Self.libraryA), Self.cardState()]
         )))
 
         #expect(machine.destination(of: Self.card) == Self.libraryB)
-        #expect(machine.sessions[Self.card]?.lastReadyContext == nil)
+        #expect(machine.sessions[Self.card]?.provenPlan == nil)
         #expect(Self.builds(in: effects).first?.destination == Self.libraryB)
     }
 
@@ -304,7 +304,7 @@ struct ImportSessionMachineTests {
 
         // The real build is still the session's, and still applies.
         let effects = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))
-        #expect(machine.sessions[Self.card]?.lastReadyContext != nil)
+        #expect(machine.sessions[Self.card]?.provenPlan != nil)
         #expect(effects.contains {
             if case .publish = $0 {
                 true

@@ -463,6 +463,102 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// A plan proven after a metadata wait replaces the wait's count. While the card is
+    /// read again, the held plan cannot be offered, and a rebuild then showed the count
+    /// from before the plan — "0 of 1 items" about a card whose every row had been read —
+    /// because the count was kept beside the plan instead of being replaced by it.
+    @Test func aRebuildWhileTheCardIsReadAgainShowsNoCountFromBeforeItsPlan() async throws {
+        let temp = try makeTestDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(cardRoot.appending(path: "first.jpg"), contents: "jpeg-bytes")
+
+        // Holds the card's next read once the test arms it, so the card stays mid-read.
+        let held = ArrivalGate()
+        let hold = ScanHold(gate: held)
+        let scanner = CatalogScanner(
+            scanRoot: { root, cadence, batch in
+                await hold.pass()
+                return try await CatalogScanner.live.scanRoot(root, cadence, batch)
+            },
+            scanSubtree: { root, subtree, cadence, batch in
+                await hold.pass()
+                return try await CatalogScanner.live.scanSubtree(root, subtree, cadence, batch)
+            },
+            observeFile: { url, root in
+                await hold.pass()
+                return try await CatalogScanner.live.observeFile(url, root)
+            }
+        )
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: scanner,
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: .volume(uuid: "count-before-plan"),
+            displayName: "Card",
+            isEjectable: true,
+            capabilities: .unknown
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.contains {
+                $0.path == cardPath && $0.availability == .available && !$0.isScanning
+            }
+        }
+
+        let builder = ControlledImportPlanBuilder()
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            planBuilder: builder,
+            volumeCapacity: ampleVolumeCapacity
+        )
+        await coordinator.start()
+        // The first plan, into the default destination, waits for the card's one row.
+        try await waitUntil {
+            await coordinator.currentPresentations().first { $0.sourcePath == cardPath }?.state
+                == .waitingForMetadata(done: 0, total: 1)
+        }
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
+        _ = try await settledReadyGeneration(coordinator, source: cardPath)
+
+        // The card gains a file and is read again; the read is held.
+        await hold.arm()
+        let second = cardRoot.appending(path: "second.jpg")
+        try writeCatalogStoreFile(second, contents: "more-jpeg-bytes")
+        emit(FilesystemEvent(path: second.path(percentEncoded: false), flags: 0))
+        await held.waitForArrivals(1)
+        // A destination change rebuilds the plan while the card is mid-read.
+        await builder.suspendNextBuild(for: cardPath)
+        _ = await store.bumpNamespaceRevision(for: fixedPath)
+        try await waitForPendingBuilder(builder, source: cardPath)
+        let shown: MediaOperationSourceState = try await waitForValue {
+            guard let state = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath })?.state else {
+                return nil
+            }
+            if case .ready = state {
+                return nil
+            }
+            return state
+        }
+        #expect(shown == .planning, "the bar showed \(shown) for a card whose rows were all read")
+
+        await held.open()
+        await builder.resumePendingBuild(for: cardPath)
+        await coordinator.shutdown()
+    }
+
     /// A destination change is the rebuild whose inputs changed: the held plan's
     /// counts were measured against the previous library, so holding it across
     /// the rebuild (`aRebuildKeepsShowingThePlanItIsReplacing`) would draw those
@@ -1062,5 +1158,26 @@ struct ImportBatchSidebarPolicyTests {
 
         #expect(bytesBehind.isStale(comparedTo: base))
         #expect(countBehind.isStale(comparedTo: base))
+    }
+}
+
+/// Lets the Store's reads of a root through until armed, then holds each one at `gate`.
+private actor ScanHold {
+    private let gate: ArrivalGate
+    private var armed = false
+
+    init(gate: ArrivalGate) {
+        self.gate = gate
+    }
+
+    func arm() {
+        armed = true
+    }
+
+    func pass() async {
+        guard armed else {
+            return
+        }
+        await gate.arrive()
     }
 }

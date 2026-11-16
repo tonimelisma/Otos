@@ -652,7 +652,7 @@ actor MediaOperationCoordinator {
     /// never used while naming facts are pending: a held plan cannot describe rows
     /// enrichment has not read yet.
     private func heldPlanState(for session: SourceSession) -> MediaOperationSourceState? {
-        guard let held = session.lastReadyContext else {
+        guard let held = session.provenPlan else {
             return nil
         }
         let state = readyState(for: session, ctx: held)
@@ -719,15 +719,23 @@ actor MediaOperationCoordinator {
     }
 
     /// What a session between proofs shows while a newer plan is coming: the last
-    /// thing this attachment proved — a plan, then a settled run, then a naming count.
-    /// Shared by `.inventory` and `.building` so a stale build and a rebuild draw the
-    /// same answer. Entering `.waitingForMetadata` drops the plan and the settlement,
-    /// so during a metadata wait the count is the only answer left, and every frame
-    /// between two counts is a count too.
+    /// thing this attachment proved — a plan, a settled run or a naming count. Shared by
+    /// `.inventory` and `.building` so a stale build and a rebuild draw the same answer.
+    /// Entering `.waitingForMetadata` replaces the plan and the settlement with the
+    /// count, so every frame between two counts is a count too. A held plan the card
+    /// cannot be offered from now (it is being read again) shows nothing in its place:
+    /// the count it replaced is older than it, and no longer true of the card.
     private func interimState(for session: SourceSession) -> MediaOperationSourceState? {
-        heldPlanState(for: session)
-            ?? settlementState(for: session)
-            ?? session.lastNamingProgress.map { .waitingForMetadata(done: $0.done, total: $0.total) }
+        switch session.lastProven {
+        case .plan:
+            heldPlanState(for: session)
+        case let .settled(outcome):
+            settlementState(outcome)
+        case let .namingCount(progress):
+            .waitingForMetadata(done: progress.done, total: progress.total)
+        case nil:
+            nil
+        }
     }
 
     /// Between a run settling and its re-plan landing there is no proven plan
@@ -735,11 +743,8 @@ actor MediaOperationCoordinator {
     /// outcome — and Done is what the user is looking at. Presenting it across
     /// the window keeps the bar on Done instead of flashing the stale pre-run
     /// Ready (observed 2026-09-13) or falling back to Preparing.
-    private func settlementState(for session: SourceSession) -> MediaOperationSourceState? {
-        guard session.lastReadyContext == nil, let outcome = session.settledOutcome else {
-            return nil
-        }
-        return .completed(
+    private func settlementState(_ outcome: Machine.SettledOutcome) -> MediaOperationSourceState {
+        .completed(
             summary: outcome.summary,
             skippedForeignCount: outcome.skippedForeignCount,
             failedCount: outcome.failedCount,

@@ -205,8 +205,8 @@ struct CatalogProjectionTests {
 
         await probe.releaseBuilds()
         try await waitUntil { await probe.cancelledBuildCount() == 1 }
-        try await waitUntil { await projection.isQuiescent }
-        #expect(await !recorder.snapshot().contains { $0.title == "Call 1" })
+        let recorded = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
+        #expect(!recorded.contains { $0.title == "Call 1" })
     }
 
     @Test func publicationLoopRunsOneProjectionAtATimeAndRerunsWhenDirtyDuringRun() async throws {
@@ -533,17 +533,16 @@ struct CatalogProjectionTests {
             let hiddenGrid = try #require(hidden.last).mediaGrid
             _ = try await fixture.store.setMediaChoices([order[0]: .liked])
             try await waitUntil { await projection.orderQueryCount > reads }
-            try await waitForProjectionQuiescence(projection)
+            let recorded = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
             #expect(await projection.orderQueryCount > reads)
-            for state in await recorder.snapshot().dropFirst(hidden.count) {
+            for state in recorded.dropFirst(hidden.count) {
                 #expect(!state.mediaGrid.orderedAssetIDs.contains(order[1]))
             }
 
             // The mark lands and is read: the published grid is the hidden one's own content.
             _ = try await fixture.store.markPendingTrash([order[1]], batch: batch)
             await projection.hideLanded(batch)
-            try await waitForProjectionQuiescence(projection)
-            let settled = try #require(await recorder.snapshot().last)
+            let settled = try #require(try await waitForProjectionQuiescence(projection, recordedBy: recorder).last)
             #expect(settled.mediaGrid.orderedAssetIDs == [order[0], order[2]])
             #expect(await projection.holdsNothing, "the read of the mark retired the hide")
             #expect(settled.mediaGrid.sharesContent(with: hiddenGrid), "no read after the hide moved the grid")
