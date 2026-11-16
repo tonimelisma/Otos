@@ -152,11 +152,13 @@ extension CatalogProjection {
             orderQueryCount &+= 1
             let orderStart = ContinuousClock.now
             let heldStacks = previous.stacks(at: revisions)
+            // An order read again that came back as held keeps the held arrays, which the
+            // reused collapse and the published window share (`holdingArrays(of:)`).
             ordered = try await store.windowReads.orderedAssetIDs(
                 for: resolvedDescriptor,
                 availableLibraryPaths: availableLibraryPaths,
                 heldStacks: heldStacks
-            )
+            ).holdingArrays(of: previous.heldOrder(for: resolvedDescriptor, availableLibraryPaths: availableLibraryPaths)?.answer)
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
             reads.orders[CatalogProjectionReads.Slot(resolvedDescriptor.scope)] = CatalogProjectionReads.Order(
                 descriptor: resolvedDescriptor,
@@ -312,7 +314,7 @@ extension CatalogProjection {
         ) else {
             return nil
         }
-        return (patched, DiagnosticsTiming.milliseconds(since: start))
+        return (patched.holdingArrays(of: held.answer), DiagnosticsTiming.milliseconds(since: start))
     }
 
     /// How an options read reads (`plan(forOptions:)`): the row's whole scope, room made for

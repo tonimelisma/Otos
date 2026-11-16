@@ -569,6 +569,28 @@ nonisolated struct CatalogOrderedAssets: Equatable, Sendable {
         self.keys = keys
     }
 
+    /// This answer with `held`'s arrays in place of each of its own that equals one. A read
+    /// makes its own copy of every row's ID and path; when the order it read is the one the
+    /// reader already holds, the collapse and the published window made from `held` are
+    /// reused as they are, so keeping this read's arrays beside them would hold the whole
+    /// order twice (at owner scale about 165,000 paths and IDs, some 25 MB). Held, they are
+    /// one copy, and the next comparison of the two is of one buffer
+    /// (`docs/research/2026-11-16-shared-path-strings.md`).
+    func holdingArrays(of held: Self?) -> Self {
+        guard let held else {
+            return self
+        }
+        return Self(
+            ids: ids == held.ids ? held.ids : ids,
+            dayBuckets: dayBuckets == held.dayBuckets ? held.dayBuckets : dayBuckets,
+            coordinates: coordinates == held.coordinates ? held.coordinates : coordinates,
+            pendingIdentityRemaps: pendingIdentityRemaps,
+            stacks: stacks,
+            builtStacks: builtStacks,
+            keys: keys == held.keys ? held.keys : keys
+        )
+    }
+
     /// The answer, not how it was made: the held stacks' read timings are not compared.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.ids == rhs.ids && lhs.dayBuckets == rhs.dayBuckets && lhs.coordinates == rhs.coordinates

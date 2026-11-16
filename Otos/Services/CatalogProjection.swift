@@ -116,9 +116,9 @@ actor CatalogProjection {
     /// How many times each kind of catalog fact changed, by the Store's own account.
     private var factRevisions = CatalogFactRevisions()
     /// The Store's recent changes with the rows each named, for keyed re-reads.
-    private var changeLog = CatalogChangeLog()
+    private(set) var changeLog = CatalogChangeLog()
     /// The last published pass's reads, which the next pass answers from while they hold.
-    private var reads = CatalogProjectionReads.none
+    private(set) var reads = CatalogProjectionReads.none
     /// Passes between their first and last line. Not request state: a count rather than
     /// a flag so a cancelled pass finishing after a re-subscribe cannot mask a live one.
     private var runningPasses = 0

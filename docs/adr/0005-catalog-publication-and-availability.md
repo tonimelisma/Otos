@@ -195,6 +195,19 @@ format, the key and what tests visibility (the date order index holds no format)
 each located row's coordinate by its key in the location index. On the owner's library a sync
 re-read All Media's options whole 92 times while 152 metadata changes arrived.
 
+**One copy of an order.** A read makes its own string for every row's path and its own
+arrays, so two reads of one order are two copies. When an order read again, whole or by key,
+comes back equal to the order the slot holds, the projection keeps the held arrays — IDs,
+day buckets, coordinates and sort keys, each where it is equal
+(`CatalogOrderedAssets.holdingArrays(of:)`) — so the collapse it reuses, the published window
+and the order slot hold one copy. Before this, a re-read that changed nothing left the reused
+collapse and the window on the first read's copy and the slot on the new one: All Media held
+twice, 340,808 path strings for 164,766 paths, about 25 MB on the owner's shape. Rejected: a
+table of the paths every read hands out, one string each. It held one string per path and
+raised the footprint by about 90 MB, because strings that never die, scattered among a
+read's freed temporaries, keep those pages in the footprint
+(`docs/research/2026-11-16-shared-path-strings.md`).
+
 Before the Store's initial load has applied, its roots are unknown, not absent.
 `CatalogStore.loadedLibraries()` returns nil until then, and Projection publishes a
 loading state for it — no title, no items, and the `.loadingCatalog` empty state,
