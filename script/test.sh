@@ -68,10 +68,12 @@ monitored_test_pids() {
 monitor_test_host_footprint() {
   local xcodebuild_pid="$1"
   local monitor_file="$2"
+  local pids_file="$3"
 
   while kill -0 "$xcodebuild_pid" >/dev/null 2>&1; do
     local pid footprint_mb last_test host_pid
     for pid in $(monitored_test_pids "$xcodebuild_pid" | sort -u); do
+      echo "$pid" >> "$pids_file"
       footprint_mb="$(physical_footprint_mb "$pid")"
       if [[ -n "$footprint_mb" && "$footprint_mb" -gt "$TEST_HOST_FOOTPRINT_LIMIT_MB" ]]; then
         last_test="$(grep -E 'started\.|Test Case.*started|◇ Test.*started' "$LOG_FILE" | tail -n 1 || true)"
@@ -94,9 +96,37 @@ monitor_test_host_footprint() {
   return 0
 }
 
+# Every test case's folder is `OtosTests-<pid>-<uuid>` in the per-user temporary folder, and
+# the test process removes its own, at each test's end and again at exit (OtosTests/
+# TestScope.swift). A folder of this run's test processes that is still there once they
+# have ended is a leak: it fails the run, and is reported by count and size.
+fail_on_leaked_test_folders() {
+  local pids_file="$1"
+  local temp leaked=0 kilobytes=0 entry name pid size
+  temp="$(/usr/bin/getconf DARWIN_USER_TEMP_DIR)"
+  for entry in "$temp"OtosTests-*; do
+    [[ -d "$entry" ]] || continue
+    name="${entry##*/}"
+    pid="${name#OtosTests-}"
+    pid="${pid%%-*}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    grep -qx "$pid" "$pids_file" || continue
+    kill -0 "$pid" >/dev/null 2>&1 && continue
+    size="$(/usr/bin/du -sk "$entry" | cut -f1)"
+    leaked=$((leaked + 1))
+    kilobytes=$((kilobytes + size))
+  done
+  if (( leaked > 0 )); then
+    echo "op=test.tempLeak phase=failed folders=$leaked kilobytes=$kilobytes — a test process left its OtosTests-<pid>-* folders behind (TestTemporaryFolders removes them at exit; a host that was killed never reaches it)" >&2
+    return 1
+  fi
+  echo "op=test.tempLeak phase=clean processes=$(sort -u "$pids_file" | wc -l | tr -d ' ')"
+}
+
 run_tests_with_footprint_guard() {
-  local monitor_file
+  local monitor_file pids_file
   monitor_file="$(mktemp)"
+  pids_file="$(mktemp)"
 
   local args=(
     -project "$ROOT_DIR/Otos.xcodeproj"
@@ -117,7 +147,7 @@ run_tests_with_footprint_guard() {
   fi
   /usr/bin/xcodebuild "${args[@]}" > "$LOG_FILE" 2>&1 &
   local xcodebuild_pid="$!"
-  monitor_test_host_footprint "$xcodebuild_pid" "$monitor_file" &
+  monitor_test_host_footprint "$xcodebuild_pid" "$monitor_file" "$pids_file" &
   local monitor_pid="$!"
   local test_status=0
   wait "$xcodebuild_pid" || test_status=$?
@@ -143,7 +173,8 @@ run_tests_with_footprint_guard() {
     cat "$monitor_file" >&2
     test_status=1
   fi
-  rm -f "$monitor_file"
+  fail_on_leaked_test_folders "$pids_file" || test_status=1
+  rm -f "$monitor_file" "$pids_file"
   return "$test_status"
 }
 

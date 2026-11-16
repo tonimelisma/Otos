@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 @testable import OtosKit
 import Synchronization
@@ -20,6 +21,12 @@ import Testing
 ///   of the run. A test may still shut a store down itself, mid-test, when that is what it
 ///   tests; shutting down again is a no-op.
 ///
+/// The process owns the roots too (`TestTemporaryFolders`). Each root's name carries the
+/// process id (`OtosTests-<pid>-<uuid>`), so whose it is can be read from the name. A root
+/// written again after its test removed it is removed when the process exits, and a process
+/// that starts removes the roots of processes that no longer run, which a host killed mid-run
+/// leaves. `script/test.sh` fails a run that leaves one (`op=test.tempLeak`).
+///
 /// Both are published only inside the scope. `makeTestDirectory()` called from a suite that
 /// forgot the trait throws, and `makeTestStore(...)` records an issue, rather than quietly
 /// handing out something nothing would clean up. Constructing a `CatalogStore` directly in
@@ -38,8 +45,7 @@ struct TestScopeTrait: SuiteTrait, TestTrait, TestScoping {
         testCase _: Test.Case?,
         performing function: @concurrent @Sendable () async throws -> Void
     ) async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appending(path: "OtosTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let root = TestTemporaryFolders.makeRoot()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer {
             do {
@@ -159,4 +165,92 @@ func makeTestStore(
         Issue.record(TestScope.OutsideScope(made: "makeTestStore(...)"), sourceLocation: sourceLocation)
     }
     return store
+}
+
+/// The test process's own temporary folders: every root it named, removed again at exit,
+/// and the roots of processes that no longer run, removed when it starts.
+nonisolated enum TestTemporaryFolders {
+    /// The prefix every root's name starts with; `script/test.sh` reads the same.
+    static let prefix = "OtosTests-"
+
+    private static let registry = Mutex<[URL]>([])
+
+    /// Installed once, on the first root: the stale sweep and the exit sweep.
+    private static let installed: Void = {
+        sweepRootsOfProcessesThatEnded()
+        atexit {
+            TestTemporaryFolders.removeRootsAtExit()
+        }
+    }()
+
+    /// A new root's URL, named for this process and registered for the exit sweep.
+    static func makeRoot() -> URL {
+        _ = installed
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "\(prefix)\(getpid())-\(UUID().uuidString)", directoryHint: .isDirectory)
+        registry.withLock { $0.append(root) }
+        return root
+    }
+
+    /// The process id a root's name carries, or nil for a name not of this form.
+    static func processID(ofRootNamed name: String) -> pid_t? {
+        guard name.hasPrefix(prefix) else {
+            return nil
+        }
+        let rest = name.dropFirst(prefix.count)
+        guard let dash = rest.firstIndex(of: "-") else {
+            return nil
+        }
+        return pid_t(rest[rest.startIndex ..< dash])
+    }
+
+    /// Whether a process with this id runs now: `kill(pid, 0)` reports `ESRCH` for one that
+    /// does not.
+    static func isRunning(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno != ESRCH
+    }
+
+    /// Removes every root, under the temporary folder, whose process no longer runs.
+    static func sweepRootsOfProcessesThatEnded() {
+        let folder = FileManager.default.temporaryDirectory
+        let names: [String]
+        do {
+            names = try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false))
+        } catch {
+            report("sweepEnded", phase: "unreadable", error: error)
+            return
+        }
+        let roots = names.compactMap { name -> URL? in
+            guard let pid = processID(ofRootNamed: name), pid != getpid(), !isRunning(pid) else {
+                return nil
+            }
+            return folder.appending(path: name, directoryHint: .isDirectory)
+        }
+        remove(roots, phase: "sweptEnded")
+    }
+
+    /// Removes this process's roots that exist again at exit.
+    private static func removeRootsAtExit() {
+        let roots = registry.withLock { $0 }.filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+        remove(roots, phase: "sweptAtExit")
+    }
+
+    private static func remove(_ roots: [URL], phase: String) {
+        var removed = 0
+        for root in roots {
+            do {
+                try FileManager.default.removeItem(at: root)
+                removed += 1
+            } catch {
+                report(root.lastPathComponent, phase: "removeFailed", error: error)
+            }
+        }
+        if removed > 0 {
+            FileHandle.standardError.write(Data("op=test.tempFolders phase=\(phase) removed=\(removed)\n".utf8))
+        }
+    }
+
+    private static func report(_ subject: String, phase: String, error: any Error) {
+        FileHandle.standardError.write(Data("op=test.tempFolders phase=\(phase) subject=\(subject) error=\(error)\n".utf8))
+    }
 }

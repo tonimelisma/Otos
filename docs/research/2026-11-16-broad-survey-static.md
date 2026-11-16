@@ -94,6 +94,15 @@ folder. 312 of them were older than an hour (0.49 GB, since Nov 15 12:34); two l
 4.4 GB each at the time. They are test leaks, not the app's, but they share the 20 GB of
 headroom.
 
+The leftovers read later the same day held a catalog folder (`Catalog/catalog.sqlite` and its
+`-shm`, no `-wal`, about 2.3 MB) under a root its test had already removed: something wrote
+the catalog anew after the test ended. The test process now owns its folders
+(`TestTemporaryFolders`, `OtosTests/TestScope.swift`):
+- Each folder is named for the process that made it.
+- The process removes each folder at its test's end and again at its own exit.
+- A process removes the folders of processes that no longer run when it starts.
+- `script/test.sh` fails a run whose test processes left any (`op=test.tempLeak`).
+
 ## 3. Downloads Otos holds: none found
 
 Both folder libraries live in a cloud-provider folder. An `lstat` (flags only, which never
