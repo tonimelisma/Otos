@@ -195,6 +195,25 @@ struct BenchmarkTests {
             }
         }
 
+        // Places' first paint: every located still's coordinate with its order, which the map
+        // clusters (ADR 0040, `docs/research/2026-11-15-places-first-paint.md`).
+        let places = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: .places), generation: 0)
+        try await Benchmark.measure("projection.windowState.places") {
+            guard case let .built(state, _, _, _) = try await projection.buildWindowState(
+                store: store,
+                libraries: libraries,
+                request: places,
+                reads: .none,
+                revisions: CatalogFactRevisions()
+            ) else {
+                Issue.record("nothing is searched, so nothing waits on a reading")
+                return
+            }
+            let located = state.map?.located.count ?? 0
+            #expect(located > BenchmarkLibrary.stillCount / 2)
+            #expect(located == state.mediaGrid.orderedAssetIDs.count)
+        }
+
         // A whole duplicates build, as `DuplicatesProjection` runs it after a catalog change.
         try await Benchmark.measure("duplicates.build") {
             let built = try await DuplicatesProjection.build(store: store, libraries: libraries)

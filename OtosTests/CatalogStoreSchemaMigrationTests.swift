@@ -225,6 +225,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.copiesMigrationIdentifier,
             CatalogSchema.mirrorsMigrationIdentifier,
             CatalogSchema.captureDayMigrationIdentifier,
+            CatalogSchema.locationIndexMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

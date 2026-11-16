@@ -1597,6 +1597,22 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// v63: the Places scope reads every located row's coordinate with its order (ADR 0040).
+    /// Joined by key, each coordinate was read from its `asset_metadata` row, which also holds
+    /// the metadata record, so the order read nearly the whole table: 59,151 pages for 50,000
+    /// located rows of an owner-shaped catalog of 166,000. `idx_asset_metadata_location` holds
+    /// the key and the coordinate of exactly the located rows, so the join is answered from
+    /// the index: 2,778 pages (`docs/research/2026-11-15-places-first-paint.md`).
+    static let locationIndexMigrationIdentifier = "v63_asset_metadata_location_index"
+
+    static let locationIndexStatements: [String] = [
+        """
+        CREATE INDEX \(LocationIndexSQL.indexName)
+        ON asset_metadata(library_root_id, relative_path, primary_latitude, primary_longitude)
+        WHERE primary_latitude IS NOT NULL AND primary_longitude IS NOT NULL
+        """,
+    ]
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

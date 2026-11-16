@@ -739,6 +739,22 @@ nonisolated enum PlaceCellSQL {
     }
 }
 
+/// The located rows' coordinates by key (schema v63): what the Places scope's reads join
+/// `asset_metadata` through, so a row's coordinate is read from the index and never from its
+/// table row, which also holds the metadata record. Partial, so it holds exactly the rows
+/// Places requires; a read through it tests a row with the index's own condition, which
+/// SQLite requires before it uses a partial index.
+nonisolated enum LocationIndexSQL {
+    static let indexName = "idx_asset_metadata_location"
+
+    /// A row has a primary location: the index's condition (`CatalogSchema` writes it
+    /// unqualified, as an index's expression must be to survive a table rename) and Places'
+    /// test.
+    static func locatedSQL(row: String) -> String {
+        "\(row).primary_latitude IS NOT NULL AND \(row).primary_longitude IS NOT NULL"
+    }
+}
+
 /// Whether a row's SHA-1 names its current bytes (ADR 0018): the one definition every
 /// reader of the digest uses, the copy triggers included (ADR 0054). It reads the stored
 /// columns, never a generated one, so `idx_media_asset_content_sha1`, which holds them with
@@ -1638,11 +1654,13 @@ private nonisolated func scopeClause(
     case .any:
         break
     case .located:
-        join = locationJoin
-        predicate += "\n  AND asset_metadata.primary_latitude IS NOT NULL"
-        predicate += "\n  AND asset_metadata.primary_longitude IS NOT NULL"
+        join = locatedJoin
+        predicate += "\n  AND \(LocationIndexSQL.locatedSQL(row: "asset_metadata"))"
     case let .within(area):
-        join = locationJoin
+        // Located first, in the index's own words: an area's walk joins through the same
+        // index, which rejects a row outside the box's latitudes before its table row is read.
+        join = locatedJoin
+        predicate += "\n  AND \(LocationIndexSQL.locatedSQL(row: "asset_metadata"))"
         arguments.append(area.south)
         arguments.append(area.north)
         arguments.append(area.west)
@@ -1680,9 +1698,14 @@ private nonisolated func scopeClause(
     return ScopeClause(join: join, sql: predicate, arguments: arguments, seek: seek, size: size)
 }
 
-private nonisolated let locationJoin = """
+/// The join of a scope that requires a location: each row's coordinate from
+/// `LocationIndexSQL`'s index. Places reads nothing else of `asset_metadata`, so its join never
+/// reads the table; an area also tests its rows' place cells, virtual columns SQLite computes
+/// from the table row, which it reads only for a row the index finds inside the box's
+/// latitudes.
+private nonisolated let locatedJoin = """
 
-JOIN asset_metadata
+JOIN asset_metadata INDEXED BY \(LocationIndexSQL.indexName)
   ON asset_metadata.library_root_id = media_asset.library_root_id
   AND asset_metadata.relative_path = media_asset.relative_path
 """

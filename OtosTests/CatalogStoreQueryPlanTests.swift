@@ -251,11 +251,12 @@ struct CatalogStoreQueryPlanTests {
     }
 
     /// The Places scopes join `asset_metadata` for the coordinate (ADR 0040). The order
-    /// must still come from the capture index — a walk, never a temporary sort — and the
-    /// join must be a primary-key lookup per row, which is what makes the deferred
-    /// partial index on `primary_latitude` unnecessary (measured 2026-10-31,
-    /// `docs/research/2026-10-31-map-views-in-photo-managers.md`).
-    @Test func locatedOrderQueryKeepsTheCaptureIndexAndLooksUpMetadataByKey() async throws {
+    /// must still come from the capture index — a walk, never a temporary sort. Places reads
+    /// each row's coordinate from `idx_asset_metadata_location`, never from the table row that
+    /// also holds the metadata record (`docs/research/2026-11-15-places-first-paint.md`); an
+    /// area that walks joins through the same index and reads the table row of a row inside
+    /// its latitudes, for the virtual place cells it tests.
+    @Test func locatedOrderQueryKeepsTheCaptureIndexAndReadsCoordinatesFromTheLocationIndex() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
@@ -306,14 +307,14 @@ struct CatalogStoreQueryPlanTests {
 
         for plan in [rootPlan, globalPlan] {
             #expect(plan.contains("idx_media_asset_best_capture_"))
-            #expect(plan.contains("SEARCH asset_metadata USING INDEX sqlite_autoindex_asset_metadata_1"))
+            #expect(plan.contains("SEARCH asset_metadata USING COVERING INDEX \(LocationIndexSQL.indexName)"), "\(plan)")
             #expect(!usesTemporarySort(plan))
         }
         // A map area whose located rows are a third of the catalog walks the capture index
         // like Places, testing each row's coordinate by key (`SeekSize`); a small area's seek
         // is pinned by `ScopeReachPlanTests` and `narrowScopesSeekTheirOwnRows`.
         #expect(placePlan.contains("idx_media_asset_best_capture_global_desc"), "\(placePlan)")
-        #expect(placePlan.contains("SEARCH asset_metadata USING INDEX sqlite_autoindex_asset_metadata_1"), "\(placePlan)")
+        #expect(placePlan.contains("SEARCH asset_metadata USING INDEX \(LocationIndexSQL.indexName)"), "\(placePlan)")
         #expect(!usesTemporarySort(placePlan), "\(placePlan)")
         #expect(rootPlan.contains("idx_media_asset_best_capture_root_desc"))
         #expect(globalPlan.contains("idx_media_asset_best_capture_global_desc"))

@@ -80,7 +80,9 @@ Map view mode.
   about what Places holds — the same guarantee ADR 0010 gave the import-batch
   dimension. A scope that requires a location joins `asset_metadata` and the ordered-ID
   query reads each row's coordinate alongside its order; there is no second query for
-  the map's content.
+  the map's content. Places and its areas join through `idx_asset_metadata_location` (schema
+  v63), the key and coordinate of exactly the located rows, so Places reads its coordinates
+  from the index and never from the rows that hold each file's metadata record.
 - **Filter applies; sort applies.** The descriptor is scope plus filter plus sort, and
   both other parts keep their meaning: the filter narrows what is on the map, and the
   sort decides which photo fronts a stack (the representative is the first member in
@@ -203,13 +205,27 @@ Cons: AppKit only (`MKMapView`), while the macOS 27 SDK's SwiftUI `Map` has
 hundred lines and unit-tested; AppKit remains the fallback if measurement shows
 SwiftUI annotations cannot keep up.
 
-### A partial index on `primary_latitude`
+### Joining `asset_metadata` by its key alone
 
-Rejected after measuring (Pike). On the real catalog (16,254 fixed-library rows, 12,834
-located) the joined order query runs in about 30 ms warm against 11 ms for All Media:
-the order still walks the capture index and the join is a primary-key lookup per row,
-with no temporary sort (`docs/research/2026-10-31-map-views-in-photo-managers.md`;
-plan pinned by `CatalogStoreQueryPlanTests`).
+The first build joined each located row's `asset_metadata` row by key and rejected an index,
+measured on a 16,254-row catalog in 30 ms warm. At the owner's size it is most of Places'
+first paint: the row that holds the coordinate also holds the metadata record, so the join
+read nearly the whole table — 59,151 pages for 50,000 located rows of an owner-shaped
+catalog of 166,000, against 2,778 with `idx_asset_metadata_location`, which holds the key and
+the coordinate of the located rows (`docs/research/2026-11-15-places-first-paint.md`). An
+area joins through the same index and reads a table row, for the virtual place cells it tests,
+only for a row the index finds inside its latitudes.
+
+### Each viewport's stacks read as an aggregate of the visible cells
+
+Pros: a read the size of the stacks drawn rather than of the located rows.
+
+Cons: the first paint is the entry fit, which by construction shows every located item, so
+an aggregate there tests every located row as the order does and read 64,718 pages against
+the order's 59,151; it would read again on every pan and zoom, which cluster from memory
+today; and SQL cannot reproduce a stack's identity — its front photo under any sort, the
+stack and Live Photo rules, a search's ranking — without the rows' order
+(`docs/research/2026-11-15-places-first-paint.md`).
 
 ## Consequences
 

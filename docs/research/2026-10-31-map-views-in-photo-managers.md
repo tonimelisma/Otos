@@ -63,7 +63,7 @@ So a Places publication costs about 75 ms of SQLite on this library, all off the
 actor, versus about 25 ms for All Media. The join is a primary-key lookup per row and
 the order still comes from the capture index, so the partial index on
 `primary_latitude` that ADR 0040 deferred is not needed at this size.
-`OtosTests/CatalogStoreQueryPlanTests.swift#locatedOrderQueryKeepsTheCaptureIndexAndLooksUpMetadataByKey`
+`OtosTests/CatalogStoreQueryPlanTests.swift#locatedOrderQueryKeepsTheCaptureIndexAndReadsCoordinatesFromTheLocationIndex`
 pins the plan.
 
 ## Run on the real library (2026-10-31, dev build, `smoke-run.sh --verify places`)
