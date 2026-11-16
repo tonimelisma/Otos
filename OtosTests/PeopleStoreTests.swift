@@ -587,39 +587,105 @@ struct PeopleStoreTests {
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let libraries = try #require(await store.loadedLibraries())
-        let before = ProcessResourceSample.current().footprintBytes
-        let peak = Mutex<UInt64>(before)
+        let mb = { (bytes: UInt64) in bytes / 1_048_576 }
+        let peak = Mutex<UInt64>(0)
         let sampler = Task.detached {
             while !Task.isCancelled {
                 let footprint = ProcessResourceSample.current().footprintBytes
                 peak.withLock { $0 = max($0, footprint) }
                 // time: measurement — samples the footprint while the passes run; nothing waits on it.
-                try? await Task.sleep(for: .milliseconds(20))
+                try? await Task.sleep(for: .milliseconds(10))
             }
         }
-        let clock = ContinuousClock()
-        let readStart = clock.now
-        let snapshot = try await store.peopleSnapshot(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
-        let galleryMs = DiagnosticsTiming.milliseconds(readStart.duration(to: clock.now))
-        let people = PeopleAssignment(store: store, builder: nil)
-        let assignStart = clock.now
-        _ = try await people.settle(libraries: libraries)
-        let assignedMs = DiagnosticsTiming.milliseconds(assignStart.duration(to: clock.now))
-        let settledStart = clock.now
-        _ = try await people.settle(libraries: libraries)
-        let settledMs = DiagnosticsTiming.milliseconds(settledStart.duration(to: clock.now))
-        sampler.cancel()
-        let after = ProcessResourceSample.current().footprintBytes
-        let mb = { (bytes: UInt64) in bytes / 1_048_576 }
-        let line = """
-        op=peopleCost faces=\(snapshot.faces.count) people=\(snapshot.people.count) snapshotMs=\(galleryMs) \
-        firstSettleMs=\(assignedMs) settledPassMs=\(settledMs) footprintBeforeMB=\(mb(before)) \
-        footprintPeakMB=\(mb(peak.withLock { $0 })) footprintAfterMB=\(mb(after))
-        """
+        defer { sampler.cancel() }
+        var fields: [String] = []
+        /// Runs `body`, recording the footprint before and after it and the highest between.
+        func phase<T>(_ name: String, _ body: () async throws -> T) async rethrows -> T {
+            let before = ProcessResourceSample.current().footprintBytes
+            peak.withLock { $0 = before }
+            let start = ContinuousClock.now
+            let value = try await body()
+            let after = ProcessResourceSample.current().footprintBytes
+            fields.append(
+                "\(name)Ms=\(DiagnosticsTiming.milliseconds(since: start)) \(name)BeforeMB=\(mb(before)) "
+                    + "\(name)PeakMB=\(mb(peak.withLock { max($0, after) })) \(name)AfterMB=\(mb(after))"
+            )
+            return value
+        }
+        let paths = CatalogWindowPolicy.availablePaths(from: libraries)
+        // The parts of one pass, each alone, kept alive as a pass keeps them.
+        let snapshot = try await phase("snapshot") { try await store.peopleSnapshot(availableLibraryPaths: paths) }
+        let gallery = await phase("gallery") { PeopleStateBuilder.state(from: snapshot) }
+        var vectors = FaceVectors()
+        try await phase("vectors") {
+            while true {
+                let page = try await store.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
+                vectors.add(page)
+                if page.count < FaceVectors.pageSize {
+                    break
+                }
+            }
+        }
+        let facts = await phase("facts") { snapshot.facts(with: vectors) }
+        let plan = await phase("kernel") { FaceAssignmentPlan.assignment(of: snapshot, facts: facts) }
+        fields.append("faces=\(snapshot.faces.count) people=\(gallery.people.count) guesses=\(plan.guesses.count)")
+        // The three passes the owner meets, each on a fresh owner.
+        _ = try await phase("firstAssignment") { try await PeopleAssignment.settle(store: store, libraries: libraries) }
+        _ = try await phase("settledLaunch") { try await PeopleAssignment.settle(store: store, libraries: libraries) }
+        // One face read again: a new vector row for it, as a new reading writes.
+        let writer = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        func readAgain() async throws {
+            try await writer.write { db in
+                let row = try #require(try Row.fetchOne(db, sql: "SELECT * FROM face_embedding ORDER BY id DESC LIMIT 1"))
+                try db.execute(sql: "DELETE FROM face_embedding WHERE id = ?", arguments: [row["id"] as Int64])
+                try db.execute(sql: FaceEmbeddingSQL.insertSQL, arguments: [
+                    row["library_root_id"] as Int64, row["relative_path"] as String, row["face_index"] as Int, row["embedding"] as Data,
+                ])
+            }
+        }
+        try await readAgain()
+        let owner = PeopleAssignment(store: store, builder: nil)
+        _ = try await owner.settle(libraries: libraries)
+        try await readAgain()
+        _ = try await phase("oneNewFace") { try await owner.settle(libraries: libraries) }
+        let line = "op=peopleCost " + fields.joined(separator: " ")
         let url = SourceTree.root.appending(path: "build/people-cost/owner.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(line.utf8).write(to: url)
+        try writer.close()
         await store.shutdown()
+    }
+
+    /// What a metadata write wakes: a date or render of a photo that holds no face wakes no
+    /// People pass, however many arrive; one of a photo that holds a face wakes one. The guard
+    /// over People's wake (`PeopleAssignment.inputs`, `.faceTiles`).
+    @Test func onlyAFacedPhotosDateOrImageWakesPeople() async throws {
+        let names = (0 ..< 6).map { "\($0).jpg" }
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: names)
+        try await library.readFaces([library.result(for: "0.jpg", faces: [Self.face(x: 0.1)])])
+        var changes = await library.store.changeNotifications().makeAsyncIterator()
+        func date(_ name: String, _ seconds: Double) async throws {
+            let asset = try #require(try await library.store.mediaAssets(for: [library.id(name)])[library.id(name)])
+            _ = await library.store.applyEnrichmentBatch([EnrichmentResult(
+                id: library.id(name),
+                metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: seconds))]),
+                thumbnailPath: "thumb-again-\(name).jpg",
+                sourceSize: asset.byteSize,
+                sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                contentHash: .empty,
+                previewPath: "preview-again-\(name).heic"
+            )])
+        }
+        for (index, name) in names.dropFirst().enumerated() {
+            try await date(name, 1_500_000_000 + Double(index) * 86400)
+            let change = try #require(await changes.next())
+            #expect(change.facts.contains(.captureDate), "\(name): \(change.facts.diagnosticDescription)")
+            #expect(!change.touches(PeopleAssignment.inputs), "\(name) holds no face: \(change.facts.diagnosticDescription)")
+        }
+        try await date("0.jpg", 1_400_000_000)
+        let faced = try #require(await changes.next())
+        #expect(faced.touches(PeopleAssignment.inputs), "\(faced.facts.diagnosticDescription)")
+        await library.store.shutdown()
     }
 
     /// `count` photos each holding one face like the others, the first on the user's word

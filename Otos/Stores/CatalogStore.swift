@@ -101,7 +101,7 @@ nonisolated struct CatalogOwnerInputs: Sendable {
 /// that changes facts of many kinds at once — a scan, a root added or removed, a Trash
 /// move — names `.all`.
 nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
-    let rawValue: UInt16
+    let rawValue: UInt32
 
     /// Which rows exist and are shown: rows added, removed, renamed or resized, moved to or
     /// from the Trash, seen or unseen by a source's attachment, hidden by a source; the
@@ -155,21 +155,27 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     /// What search read of a row: its embedding, scene labels and text reading (ADR 0048).
     /// What a description waits for and is told (ADR 0053); the search index writes it.
     static let searchContent = CatalogChangedFacts(rawValue: 1 << 15)
+    /// What a face's tile and its assignment read of a photo that holds a face (ADR 0047):
+    /// its capture date, kind, grouping, or the stored images a tile is cut from. Named beside
+    /// those kinds only when a written row holds a face, so a new photo's date, a render of a
+    /// photo nobody is in, never wakes People (`PeopleAssignment.inputs`).
+    static let faceTiles = CatalogChangedFacts(rawValue: 1 << 16)
 
     static let all: CatalogChangedFacts = [
         .membership, .captureDate, .kindAndFormat, .grouping, .location, .placeNames, .faces, .copies,
         .searchReadings, .detail, .choices, .images, .mediaRecord, .stacks, .duplicateFacts, .searchContent,
+        .faceTiles,
     ]
 
     /// How many kinds there are: the bits `all` sets.
-    static let bitCount = 16
+    static let bitCount = 17
 
     static let names: [(CatalogChangedFacts, String)] = [
         (.membership, "membership"), (.captureDate, "captureDate"), (.kindAndFormat, "kindAndFormat"),
         (.grouping, "grouping"), (.location, "location"), (.placeNames, "placeNames"), (.faces, "faces"),
         (.copies, "copies"), (.searchReadings, "searchReadings"), (.detail, "detail"), (.choices, "choices"),
         (.images, "images"), (.mediaRecord, "mediaRecord"), (.stacks, "stacks"), (.duplicateFacts, "duplicateFacts"),
-        (.searchContent, "searchContent"),
+        (.searchContent, "searchContent"), (.faceTiles, "faceTiles"),
     ]
 
     /// What each kind's writes change, as the database events they make (plan 0116 stage 2).
@@ -526,6 +532,14 @@ actor CatalogStore {
                 supersededImagePaths.insert(oldPath)
             }
         }
+    }
+
+    /// Whether the row holds a face: one probe of the face table's key.
+    private static func holdsFace(libraryRootID: Int64, relativePath: MediaRelativePath, db: Database) throws -> Bool {
+        try Bool.fetchOne(
+            db.cachedStatement(sql: "SELECT EXISTS (SELECT 1 FROM face WHERE library_root_id = ? AND relative_path = ?)"),
+            arguments: [libraryRootID, relativePath.rawValue]
+        ) ?? false
     }
 
     /// The columns a reader's answer depends on, read before and after an enrichment
@@ -3505,7 +3519,7 @@ extension CatalogStore {
             ), held)
         }
         if result.saved != nil {
-            notifyCatalogChanged(.changed(held ? [.images, .detail, .duplicateFacts] : [.images, .detail], rows: .named([id])))
+            notifyCatalogChanged(.changed(held ? [.images, .faceTiles, .detail, .duplicateFacts] : [.images, .faceTiles, .detail], rows: .named([id])))
         }
         OtosLog.catalog.noticeOperation("catalog.editRecipe", phase: "finish", fields: [
             "rootPath": id.libraryRootPath.rawValue,
@@ -3579,7 +3593,8 @@ extension CatalogStore {
         }
         if outcome.applied {
             deleteSupersededImages(outcome.superseded)
-            notifyCatalogChanged(.changed(outcome.held ? [.images, .detail, .duplicateFacts] : [.images, .detail], rows: .named([products.id])))
+            let facts: CatalogChangedFacts = outcome.held ? [.images, .faceTiles, .detail, .duplicateFacts] : [.images, .faceTiles, .detail]
+            notifyCatalogChanged(.changed(facts, rows: .named([products.id])))
         } else {
             discardStagedImages(staged)
         }
@@ -4533,6 +4548,12 @@ extension CatalogStore {
         if result.rendering != nil || result.provisionalThumbnail != nil || result.videoFaces?.frames != nil {
             rowFacts.insert(.images)
             outcome.facts.insert(.images)
+        }
+        // People reads a photo's date, kind, grouping and images only through its faces.
+        if !outcome.facts.contains(.faceTiles), !rowFacts.isDisjoint(with: [.captureDate, .kindAndFormat, .grouping, .images]),
+           try Self.holdsFace(libraryRootID: rootID, relativePath: result.id.relativePath, db: db)
+        {
+            outcome.facts.insert(.faceTiles)
         }
         if try DuplicatesHoldSQL.changesDuplicates(
             rowFacts, heldBefore: heldBefore, libraryRootID: rootID, relativePath: result.id.relativePath.rawValue, db: db

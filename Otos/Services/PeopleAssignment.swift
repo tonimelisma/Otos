@@ -50,11 +50,13 @@ actor PeopleAssignment {
     /// What the People snapshot reads (`CatalogStore.peopleSnapshot`), so `CatalogProjection`
     /// asks for a pass only when one of these moved: the faces, who they are and which photos
     /// are checked for them; which rows are shown and which movies a Live Photo hides; the
-    /// stacks a face's photo stands for and the copies it is one of (ADR 0052, 0054); a face's
-    /// capture date; and the image its tile is cut from. A pass that only rebuilds the gallery
-    /// costs one read: assignment runs only when what it reads moved.
+    /// stacks a face's photo stands for and the copies it is one of (ADR 0052, 0054); and, of a
+    /// photo that holds a face, its capture date, kind, grouping and the images its tiles are
+    /// cut from (`.faceTiles`), so a date or a render of a photo nobody is in wakes nothing. A
+    /// pass that only rebuilds the gallery costs one read: assignment runs only when what it
+    /// reads moved.
     static let inputs: CatalogChangedFacts = [
-        .faces, .membership, .grouping, .kindAndFormat, .captureDate, .choices, .images, .copies, .stacks,
+        .faces, .membership, .faceTiles, .choices, .copies, .stacks,
     ]
 
     /// Built states, each differing from the one before; only the newest matters. One
