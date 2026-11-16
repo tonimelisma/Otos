@@ -33,7 +33,9 @@ import OSLog
 ///   straighten is the camera's gravity reading when the file has one (known as the photo
 ///   opens), else GeoCalib's roll when it is confident; Auto crop is FocalNet's crop of the
 ///   frame as saved. A reading is published only for the photo and frame it was read from;
-///   a failed read publishes nothing and the buttons stay unavailable.
+///   a failed read publishes nothing and the buttons stay unavailable. Ending the lane
+///   (the window closes) cancels its reading: one still waiting for the analyzer never runs
+///   its model, and nothing it returns is published.
 ///
 /// Undo and redo enqueue the same command through the same lane, so they order after any
 /// save still in flight, and file their own inverse synchronously at fire time
@@ -509,6 +511,8 @@ extension CatalogWindowViewModel {
             for await request in editAnalysisStream {
                 guard !Task.isCancelled else { break }
                 let analysis = await pipeline.analyze(request)
+                // A lane ended mid-reading publishes nothing: its reading may be cut short.
+                guard !Task.isCancelled else { break }
                 self?.publishEditAnalysis(request, analysis)
             }
         }
@@ -929,12 +933,20 @@ nonisolated struct EditPipeline: Sendable {
                 "modelMs": "\(DiagnosticsTiming.milliseconds(since: modelStart))",
                 "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: cropStart))",
             ])
+        } catch is CancellationError {
+            Self.logAnalysisCancelled(path, reading: "crop")
+            return EditAnalysis(crop: nil, level: nil)
         } catch {
             OtosLog.rendering.errorOperation("edit.autoCrop", phase: "failed", fields: [
                 "id": path, "error": String(describing: error),
             ])
         }
         guard request.needsLevel else { return EditAnalysis(crop: crop, level: nil) }
+        // The lane was ended while the crop was read: the level would be read for no one.
+        guard !Task.isCancelled else {
+            Self.logAnalysisCancelled(path, reading: "level")
+            return EditAnalysis(crop: crop, level: nil)
+        }
         var level: AutoLevelReading.Level?
         let levelStart = ContinuousClock.now
         do {
@@ -958,12 +970,22 @@ nonisolated struct EditPipeline: Sendable {
                 "modelMs": "\(DiagnosticsTiming.milliseconds(since: modelStart))",
                 "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: levelStart))",
             ])
+        } catch is CancellationError {
+            Self.logAnalysisCancelled(path, reading: "level")
         } catch {
             OtosLog.rendering.errorOperation("edit.autoLevel", phase: "failed", fields: [
                 "id": path, "error": String(describing: error),
             ])
         }
         return EditAnalysis(crop: crop, level: level)
+    }
+
+    /// The analysis lane was ended (its window closed) before this reading's turn on the
+    /// analyzer came, so the model never ran for it.
+    private static func logAnalysisCancelled(_ path: String, reading: String) {
+        OtosLog.rendering.noticeOperation("edit.analysis", phase: "cancelled", fields: [
+            "id": path, "reading": reading,
+        ])
     }
 
     /// The photo was left before its read: nothing is developed, and the reading it would have
@@ -989,8 +1011,13 @@ nonisolated struct EditPipeline: Sendable {
 /// owned here, one per window. Loading reads 79 MB of weights and every prediction blocks, so the
 /// actor runs on its own serial queue rather than the shared pool (ADR 0032 rule 6), and the
 /// models never leave it.
+///
+/// Readings run one at a time, so a reading waits its turn behind the ones asked for before it.
+/// A prediction cannot be interrupted once it starts, but a reading whose caller was cancelled
+/// while it waited is never started: it throws `CancellationError` when its turn comes, and the
+/// queue moves on to work someone still wants.
 actor EditAnalyzer {
-    private let queue = DispatchSerialQueue(label: "net.melisma.Otos.edit.analysis", qos: .userInitiated)
+    private let queue: DispatchSerialQueue
     private var crop: AutoCropModel?
     private var level: AutoLevelModel?
 
@@ -998,14 +1025,21 @@ actor EditAnalyzer {
         queue.asUnownedSerialExecutor()
     }
 
+    /// `queue` is the one the models run on; a test passes its own to hold readings back.
+    init(queue: DispatchSerialQueue = DispatchSerialQueue(label: "net.melisma.Otos.edit.analysis", qos: .userInitiated)) {
+        self.queue = queue
+    }
+
     /// FocalNet's suggested crop of `image`, or nil when it would keep it whole.
     func crop(of image: CGImage) throws -> EditCrop? {
-        try cropModel().crop(of: image)
+        try Task.checkCancellation()
+        return try cropModel().crop(of: image)
     }
 
     /// GeoCalib's roll of `image` and its uncertainty, radians.
     func roll(of image: CGImage) throws -> (roll: Double, uncertainty: Double)? {
-        try levelModel().roll(of: image)
+        try Task.checkCancellation()
+        return try levelModel().roll(of: image)
     }
 
     private func cropModel() throws -> AutoCropModel {

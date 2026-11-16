@@ -47,7 +47,11 @@ exists only for iPhone back-camera photos.
   already left develops nothing, because reopening a RAW costs about a second and pushes out the
   photo being edited.
 - **Engine:** both models run through Core ML on the CPU, owned by one `EditAnalyzer` per window
-  that loads them on first use.
+  that loads them on first use. Its readings run one at a time on its own queue. A prediction
+  cannot be interrupted once it starts, so a reading whose caller was cancelled while it waited
+  (the lane ended with its window) is never started: it throws `CancellationError` when its turn
+  comes, and the lane publishes nothing after it is cancelled. Otherwise every closed window's
+  readings would still run, each 0.2–2 s, ahead of the readings someone is waiting for.
 - **Debug speed:** the installed app is a Debug build (ADR 0030), so the per-pixel Swift around
   the models is written for an unoptimized compiler. That means scalar loops over unsafe buffers,
   a summed-area table for crop retention, and model outputs read from memory. On four photos this

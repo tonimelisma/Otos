@@ -23,9 +23,11 @@ struct EditableLibrary {
 }
 
 /// The edit view models a test makes over one store, ended before the store shuts down. A
-/// cancelled lane still finishes the step it is awaiting — a save, a render, an analysis —
-/// and holds the store while it does, so `finish` waits for each lane to end: a write that
-/// lands after the test's directory removal began leaves a file behind.
+/// cancelled lane still finishes the step it is awaiting — a save, a render, a prediction
+/// already running — and holds the store while it does, so `finish` waits for each lane to
+/// end: a write that lands after the test's directory removal began leaves a file behind. A
+/// reading still waiting its turn on the shared analyzer is skipped when its turn comes, so an
+/// ended test adds no model run to the queue every other test's readings wait in.
 @MainActor
 final class EditModels {
     private var started: [CatalogWindowViewModel] = []
