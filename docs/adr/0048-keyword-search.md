@@ -167,12 +167,29 @@ against 77.3, 85 in English for both), and every asset has one.
 
 `PhotoSearchIndex` (an actor):
 - **Embedding loop:** woken by the Store's change notifications, it reconciles memory with
-  the catalog's current embeddings, then embeds what is owed, newest capture first, 16 at a
-  time, on `SearchImageEmbedder`'s queue. Both are read from indexes alone (v65): which
-  embeddings are current walks the product stamps index (every asset's thumbnail identity)
-  and seeks each asset's embedding source in `idx_search_embedding_source`, never the 680 MB
-  table (12k pages against 251k on the owner-shaped catalog, 0.39 s against 14 s); what is owed
-  is one newest-first walk of the same two indexes per pass.
+  the catalog's current embeddings, then embeds what is owed, 16 at a time, on
+  `SearchImageEmbedder`'s queue.
+  - **A change that names its rows** (`CatalogStoreChange.changed(_, rows:)`,
+    `CatalogChangedRows`) is reconciled by key. Each named row's current embedding and text
+    reading are read by key: one that is no longer current leaves memory, and one memory lacks
+    joins it. The named rows that are owed an embedding or a reading are made, along with their
+    Live Photo partners, whose pairing a change to one moves. The cost is that of the rows named,
+    never of the library. An enrichment batch, a metadata re-read, an edit, a provisional
+    thumbnail, a scan's or listing's batch and a scan's deletions name their rows. A root's own
+    state (order, a scan or listing starting or ending) names none.
+  - **The whole library** is reconciled only by the first pass and after a change that cannot
+    name its rows (a root that went or came back, a size reported by source item, a bulk
+    rewrite). Which embeddings are current is read from indexes alone (v65): the walk goes over
+    the product stamps index (every asset's thumbnail identity) and seeks each asset's
+    embedding source in `idx_search_embedding_source`, never the 680 MB table. That is 12k pages
+    against 251k on the owner-shaped catalog, 0.39 s against 14 s, and 3 to 5 s cold on the
+    owner's: an enrichment sync on bc159591 ran it 11 times for 40 s of reader time before
+    changes named their rows.
+  - **The backlog** is walked newest capture first through the same two indexes, and the walk
+    keeps its place across passes. A pass for a change takes the change's rows first, then goes
+    on where the walk stopped. A change during the walk stops it at its next page. Only a
+    whole-library reconcile starts the walk again from the newest. An asset a pass paged past
+    is asked by key at the backoff's retry.
 - **Memory is a mapped file** (`SearchVectorFile`), not the heap. Measured on the owner's library,
   a heap matrix added about 640 MB to the footprint (973 MB with search the only owner, 336 MB
   with none), against a whole-app target of 700 MB, and its first load read 650 MB of rows for

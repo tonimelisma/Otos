@@ -15,8 +15,9 @@ nonisolated enum CatalogStoreChange: Equatable, Sendable {
     /// of derived facts (duplicates, people, search, places, faces, render signatures)
     /// hears them when enrichment writes what it derives from them.
     case assetsAdded
-    /// Facts of rows or roots that existed changed; `CatalogChangedFacts` says which kinds.
-    case changed(CatalogChangedFacts)
+    /// Facts of rows or roots that existed changed; `CatalogChangedFacts` says which kinds, and
+    /// `rows` which assets' rows, when the write can name them.
+    case changed(CatalogChangedFacts, rows: CatalogChangedRows = .unnamed)
     case libraryRemoved(LibraryRootPath)
 
     /// The kinds of fact the change touched: added rows are a membership change, and a
@@ -24,8 +25,17 @@ nonisolated enum CatalogStoreChange: Equatable, Sendable {
     var facts: CatalogChangedFacts {
         switch self {
         case .assetsAdded: .membership
-        case let .changed(facts): facts
+        case let .changed(facts, _): facts
         case .libraryRemoved: .all
+        }
+    }
+
+    /// The assets whose rows the change touched, when it names them; a removed library's are
+    /// not named.
+    var rows: CatalogChangedRows {
+        switch self {
+        case .assetsAdded, .libraryRemoved: .unnamed
+        case let .changed(_, rows): rows
         }
     }
 
@@ -35,10 +45,21 @@ nonisolated enum CatalogStoreChange: Equatable, Sendable {
     func touches(_ inputs: CatalogChangedFacts) -> Bool {
         switch self {
         case .assetsAdded: false
-        case let .changed(facts): !facts.isDisjoint(with: inputs)
+        case let .changed(facts, _): !facts.isDisjoint(with: inputs)
         case .libraryRemoved: true
         }
     }
+}
+
+/// Which assets' rows one write changed or removed (plan 0116 bet 2b): what an owner that keeps
+/// a memory per asset reconciles by key instead of reading the whole library again. A write
+/// names the rows it wrote; a fact derived from rows it did not write (a Live Photo's pair, a
+/// copy) is the owner's to resolve from them.
+nonisolated enum CatalogChangedRows: Equatable, Sendable {
+    /// The write does not name its rows (a root that went or came back, a migration, a bulk
+    /// rewrite): any row may have changed.
+    case unnamed
+    case named(Set<MediaAssetID>)
 }
 
 /// What a background owner of a derived product wakes on (plan 0116 stage 2): the kinds of
@@ -466,7 +487,12 @@ actor CatalogStore {
     }
 
     private struct EnrichmentBatchWriteOutcome {
-        var appliedCount = 0
+        /// The rows the batch wrote: what its change names (`CatalogChangedRows`).
+        var applied: Set<MediaAssetID> = []
+        var appliedCount: Int {
+            applied.count
+        }
+
         /// The kinds of fact the applied results changed, from what SQLite stored before
         /// and after each write (`EnrichmentOverlayBeforeWrite.changedFacts(to:)`): a batch
         /// that moved no capture date, kind, format, grouping identifier or location is
@@ -3479,7 +3505,7 @@ extension CatalogStore {
             ), held)
         }
         if result.saved != nil {
-            notifyCatalogChanged(.changed(held ? [.images, .detail, .duplicateFacts] : [.images, .detail]))
+            notifyCatalogChanged(.changed(held ? [.images, .detail, .duplicateFacts] : [.images, .detail], rows: .named([id])))
         }
         OtosLog.catalog.noticeOperation("catalog.editRecipe", phase: "finish", fields: [
             "rootPath": id.libraryRootPath.rawValue,
@@ -3553,7 +3579,7 @@ extension CatalogStore {
         }
         if outcome.applied {
             deleteSupersededImages(outcome.superseded)
-            notifyCatalogChanged(.changed(outcome.held ? [.images, .detail, .duplicateFacts] : [.images, .detail]))
+            notifyCatalogChanged(.changed(outcome.held ? [.images, .detail, .duplicateFacts] : [.images, .detail], rows: .named([products.id])))
         } else {
             discardStagedImages(staged)
         }
@@ -4367,7 +4393,7 @@ extension CatalogStore {
             // The change names what the batch changed, so a reader repeats only the reads
             // that depend on it: a batch that moved no capture date, kind, format, grouping
             // identifier or location leaves the window's order and options standing.
-            notifyCatalogChanged(.changed(writeOutcome.facts))
+            notifyCatalogChanged(.changed(writeOutcome.facts, rows: .named(writeOutcome.applied)))
         }
         if writeOutcome.promotionFailed {
             return .writeFailed
@@ -4535,7 +4561,7 @@ extension CatalogStore {
         if let videoFaces = result.videoFaces {
             outcome.replaceImage(oldPath: oldRow?.faceFramesPath, newPath: videoFaces.frames?.finalRelativePath)
         }
-        outcome.appliedCount += 1
+        outcome.applied.insert(result.id)
     }
 
     // MARK: - Metadata refresh (ADR 0039)
@@ -4717,7 +4743,7 @@ extension CatalogStore {
                 if oldRow?.captureWallCompact != newRow?.captureWallCompact {
                     outcome.namingChangedRoots.insert(refresh.id.libraryRootPath)
                 }
-                outcome.appliedCount += 1
+                outcome.applied.insert(refresh.id)
             }
             return outcome
         }
@@ -4732,7 +4758,7 @@ extension CatalogStore {
             for rootPath in outcome.namingChangedRoots {
                 recordNamingChange(for: rootPath, reason: "metadataRefresh")
             }
-            notifyCatalogChanged(.changed(outcome.facts))
+            notifyCatalogChanged(.changed(outcome.facts, rows: .named(outcome.applied)))
         }
         return outcome.appliedCount
     }
@@ -4971,7 +4997,9 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.library.reorder phase=finish count=\(orderedPaths.count, privacy: .public)"
         )
-        notifyCatalogChanged(.changed(.membership))
+        // The root's own state moved (its order, a scan or listing starting or ending);
+        // no row did, and the rows a scan changed or deleted were announced with them.
+        notifyCatalogChanged(.changed(.membership, rows: .named([])))
     }
 
     private func rootForDeviceIdentity(_ identity: DeviceIdentity) -> LibraryRoot? {
@@ -5674,7 +5702,9 @@ extension CatalogStore {
             state.activity = .enumerating
             upsert(state)
         }
-        notifyCatalogChanged(.changed(.membership))
+        // The root's own state moved (its order, a scan or listing starting or ending);
+        // no row did, and the rows a scan changed or deleted were announced with them.
+        notifyCatalogChanged(.changed(.membership, rows: .named([])))
         return scan
     }
 
@@ -5697,7 +5727,7 @@ extension CatalogStore {
                     libraryRootID: scan.rootRowID,
                     capabilities: scanCapabilities,
                     db: db
-                ))
+                ), of: MediaAssetID(libraryRootPath: scan.rootPath, relativePath: file.relativePath))
             }
             return rows
         }
@@ -5842,7 +5872,8 @@ extension CatalogStore {
             let upsert = try upsertScannedFile(
                 file, libraryRootPath: rootPath, libraryRootID: rootRowID, capabilities: capabilities, db: db
             )
-            rows.record(upsert)
+            let id = MediaAssetID(libraryRootPath: rootPath, relativePath: file.relativePath)
+            rows.record(upsert, of: id)
             try db.cachedStatement(sql: """
             UPDATE media_asset SET hidden_by_source = ?
             WHERE library_root_id = ? AND relative_path = ? AND hidden_by_source IS NOT ?
@@ -5851,7 +5882,7 @@ extension CatalogStore {
             )
             // A new row's hide is part of the new row; an existing one's is a change to it.
             if upsert != .inserted {
-                rows.recordUpdated(db.changesCount)
+                rows.recordUpdated(db.changesCount, of: id)
             }
             // The source's own facts of the row, none of them shown, so none a change the
             // window hears: its name for the item; where it holds the item on its server, what
@@ -5883,7 +5914,7 @@ extension CatalogStore {
                     arguments: [digest.data, rootRowID, file.relativePath.rawValue, digest.data]
                 )
                 if upsert != .inserted {
-                    rows.recordUpdated(db.changesCount)
+                    rows.recordUpdated(db.changesCount, of: id)
                 }
             }
         }
@@ -5894,7 +5925,7 @@ extension CatalogStore {
             """).execute(
                 arguments: [size, rootRowID, item, size]
             )
-            rows.recordUpdated(db.changesCount)
+            rows.recordUnnamedUpdates(db.changesCount)
             // A digest the source stated before it reported the size was stamped with no
             // size (-1); the size it reports now is of the same bytes.
             try db.cachedStatement(sql: """
@@ -5928,7 +5959,10 @@ extension CatalogStore {
         var purgedPaths: Set<MediaRelativePath> = []
         for row in purged where purgedPaths.insert(row.relativePath).inserted {
             purgedImages += row.derivedImagePaths
-            try rows.recordUpdated(deleteAssetRow(rootRowID: rootRowID, relativePath: row.relativePath, db: db) ? 1 : 0)
+            try rows.recordUpdated(
+                deleteAssetRow(rootRowID: rootRowID, relativePath: row.relativePath, db: db) ? 1 : 0,
+                of: MediaAssetID(libraryRootPath: rootPath, relativePath: row.relativePath)
+            )
         }
         return (rows, purgedImages)
     }
@@ -6183,7 +6217,9 @@ extension CatalogStore {
         if var state = roots[scan.rootPath], state.root.kind.rowsComeFromSourceListing {
             state.activity = .idle
             upsert(state)
-            notifyCatalogChanged(.changed(.membership))
+            // The root's own state moved (its order, a scan or listing starting or ending);
+            // no row did, and the rows a scan changed or deleted were announced with them.
+            notifyCatalogChanged(.changed(.membership, rows: .named([])))
         }
         // A completed enumeration has already deleted what it never saw; one that ended
         // without completing leaves its unseen rows to be shown as last held.
@@ -6216,7 +6252,7 @@ extension CatalogStore {
             return count
         }
         if changed.value > 0 {
-            notifyCatalogChanged(.changed([.images, .detail]))
+            notifyCatalogChanged(.changed([.images, .detail], rows: .named(Set(thumbnailsByID.keys))))
         }
     }
 
@@ -6895,7 +6931,9 @@ private extension CatalogStore {
             scanLeases.beginFilesystemScan(scan, lane: lane)
             filesystemWatchingArmed.insert(nextPath)
             filesystemWatcher.addRoot(nextPath)
-            notifyCatalogChanged(.changed(.membership))
+            // The root's own state moved (its order, a scan or listing starting or ending);
+            // no row did, and the rows a scan changed or deleted were announced with them.
+            notifyCatalogChanged(.changed(.membership, rows: .named([])))
             OtosLog.catalog.info("Catalog scan started path=\(nextPath.rawValue, privacy: .public)")
             recordDiagnostic(
                 operation: "catalog.scan",
@@ -6935,7 +6973,7 @@ private extension CatalogStore {
                     libraryRootID: scan.rootRowID,
                     capabilities: scanCapabilities,
                     db: db
-                ))
+                ), of: MediaAssetID(libraryRootPath: scan.rootPath, relativePath: file.relativePath))
             }
             return rows
         }
@@ -7187,6 +7225,11 @@ private extension CatalogStore {
                 ThumbnailStore.delete(name, in: thumbnailDirectory)
             }
         }
+        // The deletion names its rows, so an owner that keeps a memory per asset lets go of
+        // these alone; the scan's end announces only that the root is idle again.
+        notifyCatalogChanged(.changed(.membership, rows: .named(Set(missingRows.map {
+            MediaAssetID(libraryRootPath: scan.rootPath, relativePath: $0.relativePath)
+        }))))
         return missingRows.count
     }
 
@@ -7276,7 +7319,9 @@ private extension CatalogStore {
             enqueueScans([rootPath])
         }
 
-        notifyCatalogChanged(.changed(.membership))
+        // The root's own state moved (its order, a scan or listing starting or ending);
+        // no row did, and the rows a scan changed or deleted were announced with them.
+        notifyCatalogChanged(.changed(.membership, rows: .named([])))
         // Drain every dirty root before starting the next queued full-root scan:
         // subtree/root dirt waits while any scan holds the global lease, so starting B
         // first would leave A's retained dirt waiting behind B.
@@ -7810,7 +7855,9 @@ private extension CatalogStore {
         scanLeases.beginFilesystemScan(scan, lane: lane)
         filesystemWatchingArmed.insert(root)
         filesystemWatcher.addRoot(root)
-        notifyCatalogChanged(.changed(.membership))
+        // The root's own state moved (its order, a scan or listing starting or ending);
+        // no row did, and the rows a scan changed or deleted were announced with them.
+        notifyCatalogChanged(.changed(.membership, rows: .named([])))
         OtosLog.catalog.info(
             "Catalog scoped reconcile started path=\(root.rawValue, privacy: .public) subtrees=\(dirt.subtreeCount, privacy: .public)"
         )
@@ -9268,6 +9315,82 @@ extension CatalogStore {
             }
             return CandidatePage(candidates: candidates, next: next)
         }
+    }
+
+    /// The assets of `ids`, and the other members of their Live Photo groups, that are owed a
+    /// search embedding, newest capture first: what the index embeds for a change that names
+    /// its rows (`CatalogChangedRows`). Each is one seek of its own row, never a walk, so the
+    /// read costs what the change named. Only available roots are read.
+    func searchEmbeddingCandidates(for ids: Set<MediaAssetID>) async throws -> [SearchEmbeddingCandidate] {
+        try await keyedCandidates(
+            ids, expandingGroups: true, operation: "searchEmbeddingCandidatesByKey",
+            sql: SearchEmbeddingStorage.keyedCandidateSQL
+        ) { id, row in
+            SearchEmbeddingCandidate(id: id, thumbnailPath: row["thumbnail_path"], source: row["source"])
+        }
+    }
+
+    /// The stills of `ids` owed a text reading, newest capture first: what the index reads for
+    /// a change that names its rows, one seek of each row.
+    func searchTextCandidates(for ids: Set<MediaAssetID>) async throws -> [SearchTextCandidate] {
+        try await keyedCandidates(
+            ids, expandingGroups: false, operation: "searchTextCandidatesByKey", sql: SearchTextStorage.keyedCandidateSQL
+        ) { id, row in
+            SearchTextCandidate(id: id, previewPath: row["preview_path"], source: row["source"])
+        }
+    }
+
+    /// The rows of `ids` (and, with `expandingGroups`, of the other members of their Live
+    /// Photo groups) that `sql` returns by key, `currentEmbeddingBatch` keys a transaction,
+    /// newest capture first.
+    private func keyedCandidates<Candidate: Sendable>(
+        _ ids: Set<MediaAssetID>,
+        expandingGroups: Bool,
+        operation: String,
+        sql: String,
+        candidate: @escaping @Sendable (MediaAssetID, Row) -> Candidate
+    ) async throws -> [Candidate] {
+        let available = Set(availableRootRowIDs())
+        let rowIDs = roots.rowIDSnapshot()
+        let pathsByRowID = roots.pathsByRowID
+        let keys = ids.compactMap { id in
+            rowIDs[id.libraryRootPath].flatMap { available.contains($0) ? SearchRowKey(rootID: $0, path: id.relativePath.rawValue) : nil }
+        }
+        let dbWriter = try database()
+        var found: [MediaAssetID: (capture: Double?, candidate: Candidate)] = [:]
+        var start = 0
+        while start < keys.count {
+            let batch = keys[start ..< min(start + Self.currentEmbeddingBatch, keys.count)]
+            start += batch.count
+            let read = try await dbWriter.readFreeingConnection(operation: operation) { db in
+                var asked = Set(batch)
+                if expandingGroups {
+                    let members = try db.cachedStatement(sql: SearchEmbeddingStorage.groupMembersSQL)
+                    for key in batch {
+                        for path in try String.fetchAll(members, arguments: [key.rootID, key.path]) {
+                            asked.insert(SearchRowKey(rootID: key.rootID, path: path))
+                        }
+                    }
+                }
+                let statement = try db.cachedStatement(sql: sql)
+                return try asked.compactMap { key -> (id: MediaAssetID, capture: Double?, candidate: Candidate)? in
+                    guard let root = pathsByRowID[key.rootID],
+                          let row = try Row.fetchOne(statement, arguments: [key.rootID, key.path])
+                    else { return nil }
+                    let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: key.path))
+                    return (id, row["best_capture_local"], candidate(id, row))
+                }
+            }
+            for row in read {
+                found[row.id] = (row.capture, row.candidate)
+            }
+        }
+        return found.values.sorted { ($0.capture ?? -.infinity) > ($1.capture ?? -.infinity) }.map(\.candidate)
+    }
+
+    private struct SearchRowKey: Hashable, Sendable {
+        let rootID: Int64
+        let path: String
     }
 
     /// How many assets are owed a search embedding: what the empty search result says

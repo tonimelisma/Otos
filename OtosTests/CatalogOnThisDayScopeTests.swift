@@ -309,7 +309,7 @@ struct CatalogOnThisDayScopeTests {
         // The thumbnail is rendered again: the screenshot row was read from the old one.
         var changes = await store.changeNotifications().makeAsyncIterator()
         try await render("rerendered.png", thumbnail: "rerendered.png-thumb-2.jpg", instant: captured[0].1)
-        guard case let .changed(facts) = await changes.next() else {
+        guard case let .changed(facts, _) = await changes.next() else {
             Issue.record("the new thumbnail is a catalog change")
             return
         }

@@ -41,13 +41,44 @@ nonisolated enum SearchEmbeddingStorage {
         LEFT JOIN search_embedding AS e INDEXED BY \(sourceIndexName)
             ON e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
-          AND a.thumbnail_path IS NOT NULL
-          AND a.pending_trash_batch_unix_ms IS NULL
-          AND a.trash_path IS NULL
-          AND NOT \(LivePhotoSQL.isPairedMotion("a"))
-          AND e.source IS NOT \(currentSource("a"))
+          AND \(owedPredicate)
         """
     }
+
+    /// What makes asset `a` owed an embedding, `e` its stored one: a stored thumbnail whose
+    /// current embedding is missing, not waiting for or in the Trash, and not a Live Photo's
+    /// movie.
+    static let owedPredicate = """
+    a.thumbnail_path IS NOT NULL
+      AND a.pending_trash_batch_unix_ms IS NULL
+      AND a.trash_path IS NULL
+      AND NOT \(LivePhotoSQL.isPairedMotion("a"))
+      AND e.source IS NOT \(currentSource("a"))
+    """
+
+    /// One asset, by its key (binds the root and the path), when it is owed an embedding: what
+    /// the index embeds for a change that names its rows, one seek of the asset's own row.
+    static let keyedCandidateSQL = """
+    SELECT a.best_capture_local, a.library_root_id, a.relative_path, a.thumbnail_path,
+           \(currentSource("a")) AS source
+    FROM media_asset AS a
+    LEFT JOIN search_embedding AS e
+        ON e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
+    WHERE a.library_root_id = ? AND a.relative_path = ?
+      AND \(owedPredicate)
+    """
+
+    /// The other members of one asset's Live Photo group (binds the root and the path), through
+    /// `idx_media_asset_content_identifier`: a change to a still or a movie moves whether its
+    /// partner is a paired movie, so the partner is asked whether it is owed too.
+    static let groupMembersSQL = """
+    SELECT m.relative_path
+    FROM media_asset AS k
+    JOIN media_asset AS m
+        ON m.library_root_id = k.library_root_id AND m.content_identifier = k.content_identifier
+        AND m.parent_path = k.parent_path AND m.relative_path != k.relative_path
+    WHERE k.library_root_id = ? AND k.relative_path = ? AND k.content_identifier IS NOT NULL
+    """
 
     /// A page of the embedding owner's newest-first walk (`CandidateWalk.capturePage`): every
     /// row is tested and stamped from the product stamps index, and its embedding's source from

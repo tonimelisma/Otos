@@ -846,7 +846,7 @@ struct ImmichCatalogSyncTests {
         defer { recording.cancel() }
         let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
         // The lease announces itself; each batch after it is one change of its own.
-        #expect(await changes.waitForValues { $0.count == 1 } == [.changed(.membership)])
+        #expect(await changes.waitForValues { $0.count == 1 } == [.changed(.membership, rows: .named([]))])
         func apply(_ batch: SourceListingChanges) async throws -> CatalogStoreChange? {
             let before = await changes.count()
             try await store.applySourceListingChanges(batch, scan: scan)
@@ -854,10 +854,15 @@ struct ImmichCatalogSyncTests {
         }
 
         #expect(try await apply(SourceListingChanges(listed: [item("a"), item("b", hidden: true)])) == .assetsAdded)
-        #expect(try await apply(SourceListingChanges(listed: [item("a", size: 20), item("c")])) == .changed(.all))
-        #expect(try await apply(SourceListingChanges(listed: [item("c", hidden: true)])) == .changed(.all))
+        /// A change names the held rows it changed, and only a size reported by source item
+        /// cannot (`CatalogChangedRows`).
+        func row(_ id: String) -> MediaAssetID {
+            MediaAssetID(libraryRootPath: fixture.rootPath, relativePath: MediaRelativePath(rawValue: "\(id)/IMG.JPG"))
+        }
+        #expect(try await apply(SourceListingChanges(listed: [item("a", size: 20), item("c")])) == .changed(.all, rows: .named([row("a")])))
+        #expect(try await apply(SourceListingChanges(listed: [item("c", hidden: true)])) == .changed(.all, rows: .named([row("c")])))
         #expect(try await apply(SourceListingChanges(sizesBySourceItem: ["b": 30])) == .changed(.all))
-        #expect(try await apply(SourceListingChanges(deletedSourceItems: ["a"])) == .changed(.all))
+        #expect(try await apply(SourceListingChanges(deletedSourceItems: ["a"])) == .changed(.all, rows: .named([row("a")])))
         await store.endSourceListing(scan: scan)
         await store.shutdown()
     }

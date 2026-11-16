@@ -23,26 +23,41 @@ nonisolated enum ScannedFileUpsert: Equatable, Sendable {
 /// only inserted rows changed nothing any derived owner reads, so it is announced as
 /// `.assetsAdded` and only what lists rows (the window, enrichment) takes it up; a change
 /// to an existing row's filesystem facts, presence or path can move any fact derived from
-/// it, so it is `.changed(.all)`.
+/// it, so it is `.changed(.all)`, naming the rows when every one of them is known
+/// (`CatalogChangedRows`).
 nonisolated struct CatalogRowChanges: Equatable, Sendable {
     private(set) var inserted = 0
-    private(set) var updated = 0
+    /// The existing rows changed, by asset.
+    private(set) var updatedRows: Set<MediaAssetID> = []
+    /// Existing rows changed that the write cannot name (a size reported by source item).
+    private(set) var unnamedUpdates = 0
 
-    mutating func record(_ upsert: ScannedFileUpsert) {
+    var updated: Int {
+        updatedRows.count + unnamedUpdates
+    }
+
+    mutating func record(_ upsert: ScannedFileUpsert, of id: MediaAssetID) {
         switch upsert {
         case .unchanged:
             break
         case .inserted:
             inserted += 1
         case .updated:
-            updated += 1
+            updatedRows.insert(id)
         }
     }
 
-    /// Existing rows changed in a way `ScannedFileUpsert` does not describe: a source's
-    /// hide, a reported size, a purge.
-    mutating func recordUpdated(_ count: Int) {
-        updated += count
+    /// `id`'s existing row changed in a way `ScannedFileUpsert` does not describe (a source's
+    /// hide or digest, a purge), when `count`, the statement's changes, says it did.
+    mutating func recordUpdated(_ count: Int, of id: MediaAssetID) {
+        if count > 0 {
+            updatedRows.insert(id)
+        }
+    }
+
+    /// Existing rows changed that the write does not name.
+    mutating func recordUnnamedUpdates(_ count: Int) {
+        unnamedUpdates += count
     }
 
     var isEmpty: Bool {
@@ -56,7 +71,7 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
         } else if updated == 0 {
             .assetsAdded
         } else {
-            .changed(.all)
+            .changed(.all, rows: unnamedUpdates == 0 ? .named(updatedRows) : .unnamed)
         }
     }
 }

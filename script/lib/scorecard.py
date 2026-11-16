@@ -411,7 +411,9 @@ def memory(start, events, tour_steps, click_list):
         "tileCacheMaxMB": max((s.num("tileCacheMB") for s in samples if s.num("tileCacheMB") is not None), default=None),
         "sqliteMaxMB": max((s.num("sqliteMB") for s in samples if s.num("sqliteMB") is not None), default=None),
         "searchIndexLoadedAtMs": ms_since(start.time, search) if search else None,
-        "searchMatrixMB": search.num("matrixMB") if search else None,
+        "searchMappedMB": search.num("mappedMB") if search else None,
+        "searchLoadedFrom": search.fields.get("from") if search else None,
+        "searchOpenMs": search.num("openMs") if search else None,
         "peopleAppliedAtMs": ms_since(start.time, people) if people else None,
     }
 
@@ -628,8 +630,9 @@ def print_report(report, rows, out):
     w("\nMEMORY\n")
     w(f"  peak footprint {fmt(mem['peakFootprintMB'])} MB, last {fmt(mem['lastFootprintMB'])} MB, system free min "
       f"{fmt(mem['minFreeMB'])} MB, swap used max {fmt(mem['maxSwapUsedMB'])} MB; search index loaded at "
-      f"{fmt(mem['searchIndexLoadedAtMs'])} ms ({fmt(mem['searchMatrixMB'])} MB); People applied at {fmt(mem['peopleAppliedAtMs'])} ms\n")
-    w(f"  known holders: search matrix {fmt(mem['searchMatrixMB'])} MB, grid tile images max {fmt(mem['tileCacheMaxMB'])} MB, "
+      f"{fmt(mem['searchIndexLoadedAtMs'])} ms (from {fmt(mem['searchLoadedFrom'])}, opened in {fmt(mem['searchOpenMs'])} ms, "
+      f"{fmt(mem['searchMappedMB'])} MB mapped); People applied at {fmt(mem['peopleAppliedAtMs'])} ms\n")
+    w(f"  known holders: search vectors {fmt(mem['searchMappedMB'])} MB mapped (clean, not footprint), grid tile images max {fmt(mem['tileCacheMaxMB'])} MB, "
       f"SQLite heap max {fmt(mem['sqliteMaxMB'])} MB\n")
     for name, value in mem["milestones"].items():
         w(f"    {name:20} at {value['atMs']:>7} ms  {fmt(value['footprintMB'])} MB\n")

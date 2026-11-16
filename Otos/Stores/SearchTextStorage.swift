@@ -29,12 +29,29 @@ nonisolated enum SearchTextStorage {
         LEFT JOIN search_text AS t INDEXED BY \(sourceIndexName)
             ON t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
-          AND a.preview_path IS NOT NULL
-          AND a.pending_trash_batch_unix_ms IS NULL
-          AND a.trash_path IS NULL
-          AND t.source IS NOT \(currentSource("a"))
+          AND \(owedPredicate)
         """
     }
+
+    /// What makes still `a` owed a text reading, `t` its stored one.
+    static let owedPredicate = """
+    a.preview_path IS NOT NULL
+      AND a.pending_trash_batch_unix_ms IS NULL
+      AND a.trash_path IS NULL
+      AND t.source IS NOT \(currentSource("a"))
+    """
+
+    /// One still, by its key (binds the root and the path), when it is owed a text reading:
+    /// what the index reads for a change that names its rows.
+    static let keyedCandidateSQL = """
+    SELECT a.best_capture_local, a.library_root_id, a.relative_path, a.preview_path,
+           \(currentSource("a")) AS source
+    FROM media_asset AS a
+    LEFT JOIN search_text AS t
+        ON t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path
+    WHERE a.library_root_id = ? AND a.relative_path = ?
+      AND \(owedPredicate)
+    """
 
     /// A page of the text reader's newest-first walk (`CandidateWalk.capturePage`) through the
     /// window's date order index; the preview's stamp is read from the row.

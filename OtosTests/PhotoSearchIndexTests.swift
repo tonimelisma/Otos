@@ -235,6 +235,60 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    /// Plan 0116 bet 2b: a change that names its rows costs reads of those rows, never of the
+    /// library. Once the index has settled, a new thumbnail for one photo is embedded again
+    /// through reads by key: no whole-library currency read, no backlog walk and no text
+    /// currency read runs for it, however large the library, and the new embedding supersedes
+    /// the old one's slot.
+    @Test func aChangeThatNamesItsRowsCostsReadsOfThoseRows() async throws {
+        let catalog = try await makeCatalog(onDisk: true)
+        let store = catalog.store
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+        )
+        await index.start()
+        try await waitUntil {
+            let embedded = await index.embeddedCount
+            let answered = await index.answeredEveryRequest
+            return embedded == 2 && answered
+        }
+        let settled = await index.passesFinished
+        func count(_ operation: String) -> Int {
+            store.use().connections.holds.filter { $0.operation == operation }.reduce(0) { $0 + $1.count }
+        }
+        let wholeReads = [
+            "currentSearchEmbeddingIDs()", "searchEmbeddingCandidates(after:limit:)", "currentSearchTextIDs()",
+            "searchTextCandidates(after:limit:)",
+        ]
+        var before: [String: Int] = [:]
+        for operation in wholeReads {
+            before[operation] = count(operation)
+        }
+        let keyedBefore = count("searchEmbeddingCandidatesByKey")
+        let slotsBefore = try #require(await index.vectorFileSlots?.slots)
+
+        try Self.writeJPEG(SearchModelTests.solid(red: 0.9, green: 0.1, blue: 0), to: catalog.thumbnails.appending(path: "red-thumb-2.jpg"))
+        let asset = try #require(catalog.assets.first { $0.id == catalog.red })
+        try await enrich(store, asset, thumbnail: "red-thumb-2.jpg")
+        try await waitUntil {
+            let passes = await index.passesFinished
+            let owed = try await store.searchEmbeddingPendingCount()
+            let answered = await index.answeredEveryRequest
+            return passes > settled && owed == 0 && answered
+        }
+
+        for operation in wholeReads {
+            #expect(count(operation) == before[operation], "\(operation) read the library for one named row")
+        }
+        #expect(count("searchEmbeddingCandidatesByKey") > keyedBefore)
+        #expect(await index.wholePasses == 1)
+        #expect(await index.embeddedCount == 2)
+        #expect(await index.vectorFileSlots?.slots == slotsBefore + 1)
+        #expect(try await store.currentSearchEmbeddings(for: [catalog.red]).count == 1)
+        await index.shutdown()
+    }
+
     /// A thumbnail that does not decode is no reading: nothing is recorded, it stays owed, and
     /// a pass pages past it, so the newest asset failing does not stop the rest being read.
     @Test func anUndecodableThumbnailStaysOwedAndDoesNotHoldUpTheRest() async throws {
