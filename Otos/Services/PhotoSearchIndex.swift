@@ -175,7 +175,7 @@ actor PhotoSearchIndex {
         cutoff: SearchCutoff = .calibrated,
         backoff: (first: Duration, last: Duration) = (.seconds(30), .seconds(900)),
         queries: SearchQueryReader? = nil,
-        textReader: SearchTextReader = SearchTextReader(),
+        textReader: SearchTextReader,
         readTexts: ReadTexts? = nil,
         nameVectorFile: NameVectorFile? = nil,
         compactionFloor: Int = PhotoSearchIndex.compactionFloor,

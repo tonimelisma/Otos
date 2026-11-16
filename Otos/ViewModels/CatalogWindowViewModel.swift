@@ -938,6 +938,7 @@ final class CatalogWindowViewModel {
                     thumbnailDirectory: catalogStore.thumbnailDirectory,
                     vectorDirectory: vectorDirectory,
                     bundle: Bundle(for: CatalogWindowViewModel.self),
+                    textReader: SearchTextReader(startSession: SearchTextChild.start),
                     admission: loadAdmission
                 )
             }

@@ -35,7 +35,7 @@ otos_log_file() {
 otos_running_pids() {
   local pid
   for pid in $(pgrep -x "${1:-Otos}" 2>/dev/null || true); do
-    /bin/ps -o args= -p "$pid" 2>/dev/null | grep -q -- ' --read-text$' || echo "$pid"
+    /bin/ps -o args= -p "$pid" 2>/dev/null | grep -qE -- ' --read-text( |$)' || echo "$pid"
   done
 }
 

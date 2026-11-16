@@ -408,7 +408,7 @@ finished, and every quit left a child holding Vision's model for minutes. The wi
 teardown ends the live child and waits for its exit (`SearchTextReader.shutdown`); a quit needs
 no step of its own. The still whose reading was cut short is stamped nothing, so it stays owed
 (`docs/research/2026-11-15-text-reading-child-outlived-otos.md`). One serial queue reads every
-preview, so Otos never starts two first readings at once. At 512 px the fast level read noise, so the full preview is read; an original
+preview, so Otos never starts two first readings at once. A child's first reading loads the system's text model, 0.2 s warm and minutes cold, so its wait is logged as a fact (`phase=firstReading waitMs=`): a survey tells a cold load from a stall by it. A test starts the child with `--answering <text>` after `--read-text`, and the child answers every picture that decodes with that line instead of asking Vision, so its pipe protocol, deadline and end are tested without a cold model load; Vision's own reading is a live test (`OTOS_TEXT_READING_LIVE=1`). At 512 px the fast level read noise, so the full preview is read; an original
 is not, since nearly every original in the owner's library is a cloud placeholder. Text is read
 after every embedding is made.
 

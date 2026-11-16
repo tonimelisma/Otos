@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Synchronization
 
@@ -38,6 +39,7 @@ final nonisolated class SearchTextChild: SearchTextSession {
     private let lifetime: SearchTextChildLifetime
     private let answers: FileHandle
     private var pending = Data()
+    private var hasAsked = false
     private let answerDeadline: Duration
 
     /// How long a reading may go unanswered before its child is ended.
@@ -95,7 +97,26 @@ final nonisolated class SearchTextChild: SearchTextSession {
         return { await lifetime.end() }
     }
 
+    /// A child's first reading loads the system's text model, which takes 0.2 s warm and many
+    /// minutes cold (a purged compiled-model cache, a loaded machine), while the window says it
+    /// is still reading. Its wait is logged as a fact (`op=search.text phase=firstReading
+    /// waitMs=`), whatever it came to, so a survey can tell a cold load from a stall.
     func read(_ url: URL) -> SearchTextPreviewReading {
+        let isFirst = !hasAsked
+        hasAsked = true
+        let asked = ContinuousClock.now
+        let reading = ask(url)
+        if isFirst {
+            OtosLog.thumbnails.noticeOperation("search.text", phase: "firstReading", fields: [
+                "pid": "\(process.processIdentifier)",
+                "waitMs": "\(DiagnosticsTiming.milliseconds(since: asked))",
+                "outcome": reading.outcomeName,
+            ])
+        }
+        return reading
+    }
+
+    private func ask(_ url: URL) -> SearchTextPreviewReading {
         do {
             var request = try JSONEncoder().encode(SearchTextReadingProcess.Request(path: url.path(percentEncoded: false)))
             request.append(0x0A)
@@ -261,9 +282,41 @@ final nonisolated class SearchTextChildLifetime: Sendable {
 public nonisolated enum SearchTextReadingProcess {
     /// The argument that starts Otos as a text-reading child.
     public static let argument = "--read-text"
+    /// Followed by a text, after `argument`: the child answers every picture that decodes with
+    /// that one line instead of asking Vision. Only a test starts a child this way, so the
+    /// child's pipe protocol, answer deadline and input's-end exit are tested as they run
+    /// without waiting on a cold system text model, which can take minutes.
+    static let answeringArgument = "--answering"
 
     struct Request: Codable {
         let path: String
+    }
+
+    /// How a child started with `arguments` (those after `argument`) recognises a picture's
+    /// text: Vision, or the fixed line `answeringArgument` names. `nil` for arguments it does
+    /// not know.
+    static func recognizer(for arguments: [String]) -> ((CGImage) throws -> [RecognizedTextLine])? {
+        switch arguments.count {
+        case 0:
+            return SearchTextReading.read
+        case 2 where arguments[0] == answeringArgument:
+            let line = RecognizedTextLine(text: arguments[1], confidence: SearchTextReading.certainConfidence)
+            return { _ in [line] }
+        default:
+            return nil
+        }
+    }
+
+    /// Serves as `main.swift` starts it: `arguments` are those after `argument`. Arguments it
+    /// does not know end the child at once (status 64), so its parent reads a closed output.
+    public static func serve(arguments: [String]) -> Never {
+        guard let recognize = recognizer(for: arguments) else {
+            OtosLog.thumbnails.errorOperation("search.text", phase: "childArgumentsUnknown", fields: [
+                "arguments": arguments.joined(separator: " "),
+            ])
+            exit(64)
+        }
+        serve(recognize: recognize)
     }
 
     /// Answers each request on standard input, one line each, until the input ends or
@@ -277,13 +330,13 @@ public nonisolated enum SearchTextReadingProcess {
     /// that never reads a picture, and at the input's end it exits the process at once
     /// (`_exit`), mid-reading or not. No one is left to read that reading's answer, and its
     /// picture stays owed in Otos's catalog, which only a written reading stamps.
-    public static func serve() -> Never {
+    private static func serve(recognize: @escaping (CGImage) throws -> [RecognizedTextLine]) -> Never {
         let readings = DispatchSerialQueue(label: "net.melisma.Otos.search.text.child", qos: .utility)
         let input = Thread {
             while let line = readLine(strippingNewline: true) {
                 // Otos asks for one picture at a time and waits for its answer, so at most
                 // one reading is queued here.
-                readings.async { answer(line) }
+                readings.async { answer(line, recognize: recognize) }
             }
             OtosLog.thumbnails.noticeOperation("search.text", phase: "childInputEnded", fields: [
                 "pid": "\(getpid())",
@@ -297,11 +350,11 @@ public nonisolated enum SearchTextReadingProcess {
 
     /// Reads one request's picture and writes its answer. The process exits after an answer
     /// that ends it, and when an answer cannot be written.
-    private static func answer(_ line: String) {
+    private static func answer(_ line: String, recognize: (CGImage) throws -> [RecognizedTextLine]) {
         let reading: SearchTextPreviewReading
         do {
             let request = try JSONDecoder().decode(Request.self, from: Data(line.utf8))
-            reading = SearchTextReading.readPreview(at: URL(filePath: request.path))
+            reading = SearchTextReading.readPreview(at: URL(filePath: request.path), recognize: recognize)
         } catch {
             reading = .failed("unreadable request: \(error)")
         }

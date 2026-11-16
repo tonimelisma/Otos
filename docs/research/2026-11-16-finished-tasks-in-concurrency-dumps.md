@@ -65,3 +65,21 @@ that line suspends.
   - **`onThread`:** a test case blocked synchronously is a running task with no async
     backtrace. It is reported by its thread.
   - **`threadStack`:** the `sample` stacks of those threads and of the main thread.
+
+## The stall the leftover stood beside
+
+A full check on tree 9b6cb162 froze after 1,888 cases with its CPU flat for four minutes and no
+failure. Read with the report above, its dump holds one test case in flight: a running task on
+a pool thread that is not the main thread, so a synchronous test blocked there. No AppKit window
+test was in flight. Of the cases left unfinished, the one synchronous test that blocks off the
+main thread is `SearchReadingTests/theReadingProcessReadsAPreviewAndEndsWhenItIsGone`, which
+waits in `poll` on Otos's reading process for up to 1,200 s while the child's first reading
+loads the system's text model. Cold, that load has taken 305 s with the host's CPU flat and
+649 s under load (`2026-11-14-vision-text-reading-breaks-for-its-process.md`), its work spent in
+a system service. No `sample` was taken of that run, so the child's own state is not shown.
+
+So the default check no longer waits on that model: the reading process is tested with a child
+that answers a fixed line (`--answering`), the index tests read with an in-process session that
+finds no text, and Vision's readings run only when asked (`OTOS_TEXT_READING_LIVE=1`), each
+reporting its first reading's wait. A live run's reading child is named in the hang report as
+waiting on the system's text model (`op=check.hang phase=textReadingChild`).

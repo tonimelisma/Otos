@@ -161,6 +161,17 @@ nonisolated enum SearchTextPreviewReading: Codable, Equatable, Sendable {
     /// reading and stays owed, and the rest of the page is read by a new session. Never sent
     /// by the process itself.
     case exited(String)
+
+    /// The case's name, for a log line.
+    var outcomeName: String {
+        switch self {
+        case .lines: "lines"
+        case .undecodable: "undecodable"
+        case .failed: "failed"
+        case .ended: "ended"
+        case .exited: "exited"
+        }
+    }
 }
 
 nonisolated extension SearchTextReading {
@@ -245,7 +256,7 @@ actor SearchTextReader {
         case shutDown
     }
 
-    init(startSession: @escaping StartSession = SearchTextChild.start) {
+    init(startSession: @escaping StartSession) {
         self.startSession = startSession
     }
 

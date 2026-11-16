@@ -165,7 +165,8 @@ struct CatalogOwnerInputsTests {
         let (store, library) = try await Self.store()
         let index = try PhotoSearchIndex(
             store: store, thumbnailDirectory: nil, vectorDirectory: makeTestDirectory().appending(path: "SearchIndex"),
-            bundle: Bundle(for: CatalogWindowViewModel.self)
+            bundle: Bundle(for: CatalogWindowViewModel.self),
+            textReader: .readingNoText()
         )
         await index.start()
         let probe = await ChangeProbe(store, heard: { await index.changesHeard }, wakes: { await Int(index.requested) })

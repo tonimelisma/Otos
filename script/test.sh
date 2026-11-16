@@ -145,6 +145,12 @@ run_tests_with_footprint_guard() {
     echo "OTOS_SCALE_TEST set: including the on-disk projection scale test."
     args+=("OTOS_SCALE_TEST=$OTOS_SCALE_TEST")
   fi
+  # OTOS_TEXT_READING_LIVE=1 includes the readings by the system's own text model
+  # (SearchTextLiveReadingTests), whose cold first load can take many minutes.
+  if [[ -n "${OTOS_TEXT_READING_LIVE:-}" ]]; then
+    echo "OTOS_TEXT_READING_LIVE set: including the live text readings."
+    args+=("OTOS_TEXT_READING_LIVE=$OTOS_TEXT_READING_LIVE")
+  fi
   /usr/bin/xcodebuild "${args[@]}" > "$LOG_FILE" 2>&1 &
   local xcodebuild_pid="$!"
   monitor_test_host_footprint "$xcodebuild_pid" "$monitor_file" "$pids_file" &

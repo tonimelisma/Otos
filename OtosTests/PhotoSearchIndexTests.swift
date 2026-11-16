@@ -250,7 +250,8 @@ struct PhotoSearchIndexTests {
         let store = catalog.store
         let index = PhotoSearchIndex(
             store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
-            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            textReader: .readingNoText()
         )
         await index.start()
         try await waitUntil {
@@ -300,7 +301,8 @@ struct PhotoSearchIndexTests {
         let catalog = try await makeCatalog()
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
-            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            textReader: .readingNoText()
         )
         await index.start()
         try await waitUntil {
@@ -382,6 +384,7 @@ struct PhotoSearchIndexTests {
             store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
             bundle: Bundle(for: CatalogWindowViewModel.self), pageSize: 1, cutoff: .none,
             backoff: (.seconds(86400), .seconds(86400)),
+            textReader: .readingNoText(),
             nameVectorFile: { state in
                 await namings.naming(state)
                 try await store.setSearchVectorFileState(state)
@@ -431,7 +434,8 @@ struct PhotoSearchIndexTests {
 
         let index = PhotoSearchIndex(
             store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: Bundle(for: CatalogWindowViewModel.self),
-            pageSize: 1, cutoff: .none, backoff: (.seconds(86400), .seconds(86400))
+            pageSize: 1, cutoff: .none, backoff: (.seconds(86400), .seconds(86400)),
+            textReader: .readingNoText()
         )
         await index.start()
         try await waitUntil { await index.retriesScheduled > 0 }
@@ -463,7 +467,8 @@ struct PhotoSearchIndexTests {
         let bundle = try #require(Bundle(url: folder))
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle, cutoff: .none,
-            backoff: (.zero, .zero)
+            backoff: (.zero, .zero),
+            textReader: .readingNoText()
         )
         let changes = await index.changes()
         await index.start()
@@ -497,7 +502,8 @@ struct PhotoSearchIndexTests {
         try await store.start()
         let index = PhotoSearchIndex(
             store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
-            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            textReader: .readingNoText()
         )
         await index.start()
         try await waitUntil { await index.passesFinished > 0 }
@@ -513,7 +519,8 @@ struct PhotoSearchIndexTests {
         let bundle = Bundle(for: CatalogWindowViewModel.self)
         let query = try await SearchQueryEncoder(bundle: bundle).englishEncoding(of: "a red picture")
         let first = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle, cutoff: .none
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle, cutoff: .none,
+            textReader: .readingNoText()
         )
         let changes = await first.changes()
         await first.start()
@@ -584,6 +591,7 @@ struct PhotoSearchIndexTests {
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
             bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none, backoff: (.seconds(86400), .seconds(86400)),
+            textReader: .readingNoText(),
             availableBytes: space.available
         )
         await index.start()
@@ -622,7 +630,8 @@ struct PhotoSearchIndexTests {
         let catalog = try await makeCatalog(onDisk: true)
         let first = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
-            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            textReader: .readingNoText()
         )
         let changes = await first.changes()
         await first.start()
@@ -644,6 +653,7 @@ struct PhotoSearchIndexTests {
         let index = PhotoSearchIndex(
             store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
             bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none, backoff: (.seconds(86400), .seconds(86400)),
+            textReader: .readingNoText(),
             availableBytes: space.available
         )
         await index.start()
@@ -672,7 +682,8 @@ struct PhotoSearchIndexTests {
         let catalog = try await makeCatalog(onDisk: true)
         let first = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
-            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            textReader: .readingNoText()
         )
         let changes = await first.changes()
         await first.start()
@@ -694,7 +705,8 @@ struct PhotoSearchIndexTests {
 
         let second = PhotoSearchIndex(
             store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
-            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none, backoff: (.seconds(86400), .seconds(86400))
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none, backoff: (.seconds(86400), .seconds(86400)),
+            textReader: .readingNoText()
         )
         await second.start()
         try await waitUntil { await second.retriesScheduled > 0 }
@@ -723,7 +735,8 @@ struct PhotoSearchIndexTests {
         let catalog = try await makeCatalog(onDisk: true)
         let first = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
-            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            textReader: .readingNoText()
         )
         let changes = await first.changes()
         await first.start()
@@ -752,7 +765,8 @@ struct PhotoSearchIndexTests {
             store: catalog.store,
             thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
             bundle: Bundle(for: CatalogWindowViewModel.self),
-            cutoff: .none
+            cutoff: .none,
+            textReader: .readingNoText()
         )
         let changes = await index.changes()
         await index.start()
@@ -777,7 +791,8 @@ struct PhotoSearchIndexTests {
         let catalog = try await makeCatalog()
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: Bundle(for: CatalogWindowViewModel.self),
-            cutoff: SearchCutoff(floor: -1, margin: 0.0001)
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001),
+            textReader: .readingNoText()
         )
         let changes = await index.changes()
         await index.start()
@@ -804,7 +819,8 @@ struct PhotoSearchIndexTests {
         // A margin this small keeps only the best photo.
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
-            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: SearchQueryReader(encode: english)
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: SearchQueryReader(encode: english),
+            textReader: .readingNoText()
         )
         let changes = await index.changes()
         await index.start()
@@ -835,7 +851,8 @@ struct PhotoSearchIndexTests {
         await index.shutdown()
         let nothing = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
-            cutoff: SearchCutoff(floor: 2, margin: 0), queries: SearchQueryReader(encode: english)
+            cutoff: SearchCutoff(floor: 2, margin: 0), queries: SearchQueryReader(encode: english),
+            textReader: .readingNoText()
         )
         let nothingChanges = await nothing.changes()
         await nothing.start()
@@ -878,7 +895,8 @@ struct PhotoSearchIndexTests {
         let english: SearchQueryReader.Encode = { try await encoder.englishEncoding(of: $0.text) }
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
-            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: SearchQueryReader(encode: english)
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: SearchQueryReader(encode: english),
+            textReader: .readingNoText()
         )
         let changes = await index.changes()
         await index.start()
@@ -994,7 +1012,8 @@ struct PhotoSearchIndexTests {
         }
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
-            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader,
+            textReader: .readingNoText()
         )
         let changes = await index.changes()
         await index.start()
@@ -1050,7 +1069,8 @@ struct PhotoSearchIndexTests {
         }
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
-            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader,
+            textReader: .readingNoText()
         )
         let changes = await index.changes()
         await index.start()
@@ -1132,7 +1152,8 @@ struct PhotoSearchIndexTests {
         }
         let index = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
-            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader,
+            textReader: .readingNoText()
         )
         let changes = await index.changes()
         await index.start()
@@ -1185,7 +1206,8 @@ struct PhotoSearchIndexTests {
         )])
         let index = PhotoSearchIndex(
             store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
-            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            textReader: .readingNoText()
         )
         let changes = await index.changes()
         await index.start()

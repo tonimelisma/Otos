@@ -24,7 +24,7 @@ struct SearchIndexLoadMemoryTests {
         let vectorDirectory = try #require(store.searchIndexDirectory)
         let bundle = Bundle(for: CatalogWindowViewModel.self)
 
-        let builder = PhotoSearchIndex(store: store, thumbnailDirectory: nil, vectorDirectory: vectorDirectory, bundle: bundle)
+        let builder = PhotoSearchIndex(store: store, thumbnailDirectory: nil, vectorDirectory: vectorDirectory, bundle: bundle, textReader: .readingNoText())
         let buildStart = ContinuousClock.now
         await builder.start()
         try await waitUntil { await builder.loadedFrom != nil }
@@ -34,7 +34,7 @@ struct SearchIndexLoadMemoryTests {
 
         let before = ProcessResourceSample.current()
         let start = ContinuousClock.now
-        let index = PhotoSearchIndex(store: store, thumbnailDirectory: nil, vectorDirectory: vectorDirectory, bundle: bundle)
+        let index = PhotoSearchIndex(store: store, thumbnailDirectory: nil, vectorDirectory: vectorDirectory, bundle: bundle, textReader: .readingNoText())
         await index.start()
         try await waitUntil { await index.loadedFrom != nil }
         let loadedIn = start.duration(to: .now)

@@ -21,6 +21,15 @@ final class RecognizingSession: SearchTextSession {
     }
 }
 
+extension SearchTextReader {
+    /// A reader whose sessions read in the test's own process and find no text in any
+    /// picture: an index test reads its pictures' text without starting Otos's reading process
+    /// or the system's text model, whose cold load can take many minutes.
+    static func readingNoText() -> SearchTextReader {
+        SearchTextReader { RecognizingSession { _ in [] } }
+    }
+}
+
 /// A session whose process ends, without answering, on the pictures `exitsOn` names.
 final class ExitingSession: SearchTextSession {
     private let exitsOn: Set<String>
@@ -74,28 +83,6 @@ struct SearchReadingTests {
         #expect(!SearchLabelGate.keeps(score: 0.10, best: 0.15, named: ["horse"]) { ["dog": Float(0.9)][$0] })
         #expect(SearchLabelGate.keeps(score: 0.10, best: 0.15, named: ["horse"]) { ["horse": Float(0.2)][$0] })
         #expect(SearchLabelGate.keeps(score: 0.14, best: 0.15, named: ["horse"]) { _ in nil })
-    }
-
-    /// Text drawn into a picture is read back, certain enough for the Info pane to show it.
-    ///
-    /// When macOS purges Vision's compiled model under disk pressure while this process holds
-    /// it, no reading in the process can succeed again
-    /// (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`). This test reads in
-    /// its own process, so it then has nothing to read, and records that one error as a known
-    /// issue: the product reads in a child process and starts a new one then
-    /// (`aSessionThatEndsEndsThePageAndANewSessionReadsTheNext`,
-    /// `theReadingProcessReadsAPreviewAndEndsWhenItIsGone`). Any other failure fails the test.
-    @Test func textInAPictureIsRead() throws {
-        try withKnownIssue("Vision's text reader was lost for this process to a cache purge", isIntermittent: true) {
-            let image = try #require(Self.picture(saying: "OTOS SEARCH 2026"))
-            let read = try Self.readRetryingFailures(image)
-            #expect(Self.matches("otos search", in: SearchTextReading.searchable(read)))
-            #expect(SearchTextReading.certain(read) == ["OTOS SEARCH 2026"])
-            let blank = SearchModelTests.solid(red: 0.4, green: 0.5, blue: 0.6, width: 1200, height: 800)
-            #expect(try Self.readRetryingFailures(blank).isEmpty)
-        } matching: { issue in
-            issue.error.map(SearchTextReading.losesTheProcess) ?? false
-        }
     }
 
     /// The shape of Vision's `TextRecognition.CRImageReaderError`, whose `e5rtError` case is
@@ -195,37 +182,20 @@ struct SearchReadingTests {
         #expect(attempts.withLock { $0 } == 4)
     }
 
-    /// Otos's own reading process reads a preview's text as the app read it in its own
-    /// process, and a child that is gone ends its session. A child whose reader a cache purge
-    /// lost is the case a new child exists for, so the reading is asked of a second one then.
+    /// Otos's own reading process answers a preview through its pipe, answers a picture that
+    /// does not decode as such, and a child that is gone ends its session. The child answers
+    /// with a fixed line instead of asking Vision (`SearchTextReadingProcess.answeringArgument`):
+    /// this tests the process, its protocol and its end, and the system's text model, cold,
+    /// can take many minutes to load. `SearchTextLiveReadingTests` reads with Vision.
     @Test func theReadingProcessReadsAPreviewAndEndsWhenItIsGone() throws {
         let directory = try makeTestDirectory()
         let sign = directory.appending(path: "sign.jpg")
         try PhotoSearchIndexTests.writeJPEG(#require(Self.picture(saying: "OTOS SEARCH 2026")), to: sign)
-        let executable = try SearchTextChild.executable()
-        var child = try SearchTextChild(executable: executable)
-        // A fresh child's first reading is a cold one, which a loaded machine can make Vision
-        // give up on (`readRetryingFailures`); the attempts are counted, not timed.
-        var reading = child.read(sign)
-        for _ in 1 ..< 3 {
-            switch reading {
-            case .lines, .undecodable:
-                break
-            case .failed:
-                reading = child.read(sign)
-                continue
-            case .ended, .exited:
-                child = try SearchTextChild(executable: executable)
-                reading = child.read(sign)
-                continue
-            }
-            break
-        }
-        guard case let .lines(lines) = reading else {
-            Issue.record("the reading process answered \(reading)")
-            return
-        }
-        #expect(SearchTextReading.certain(lines) == ["OTOS SEARCH 2026"])
+        let child = try SearchTextChild(
+            executable: SearchTextChild.executable(),
+            arguments: [SearchTextReadingProcess.argument, SearchTextReadingProcess.answeringArgument, "OTOS SEARCH 2026"]
+        )
+        #expect(child.read(sign) == .lines([RecognizedTextLine(text: "OTOS SEARCH 2026", confidence: 1)]))
         #expect(child.read(directory.appending(path: "missing.jpg")) == .undecodable)
 
         #expect(kill(child.processIdentifier, SIGKILL) == 0)
@@ -234,6 +204,25 @@ struct SearchReadingTests {
             break
         case let answer:
             Issue.record("a killed reading process still answered \(answer)")
+        }
+    }
+
+    /// A child started with arguments it does not know ends at once rather than reading with
+    /// a reader nobody asked for: the session ends with no reading, as a crashed child's does
+    /// (`.exited` when its output closes first, `.ended` when the request finds it gone).
+    @Test func aReadingProcessStartedWithUnknownArgumentsReadsNothing() throws {
+        let directory = try makeTestDirectory()
+        let sign = directory.appending(path: "sign.jpg")
+        try PhotoSearchIndexTests.writeJPEG(#require(Self.picture(saying: "OTOS")), to: sign)
+        let child = try SearchTextChild(
+            executable: SearchTextChild.executable(),
+            arguments: [SearchTextReadingProcess.argument, "--unknown"]
+        )
+        switch child.read(sign) {
+        case .ended, .exited:
+            break
+        case let answer:
+            Issue.record("a reading process with unknown arguments answered \(answer)")
         }
     }
 
@@ -394,5 +383,76 @@ struct SearchReadingTests {
         context.textPosition = CGPoint(x: 80, y: 360)
         CTLineDraw(line, context)
         return context.makeImage()
+    }
+}
+
+/// Readings by the system's own text model, in this process and in Otos's reading process.
+/// They run only when asked (`OTOS_TEXT_READING_LIVE=1 script/check.sh --only
+/// SearchTextLiveReadingTests`): the model's first load in a process is cold, 0.2 s with its
+/// compiled files cached and up to 649 s measured with them purged under a loaded machine
+/// (`docs/research/2026-11-14-vision-text-reading-breaks-for-its-process.md`), and a default
+/// check never waits on it. Each first reading's wait is in the unified log (`op=search.text
+/// phase=firstReading waitMs=` from the reading process's session, `op=test.live
+/// phase=firstReading waitMs=` from this process), so a slow run reads as a cold load, not a
+/// hang.
+@Suite(.testScope, .enabled(if: ProcessInfo.processInfo.environment["OTOS_TEXT_READING_LIVE"] == "1"))
+struct SearchTextLiveReadingTests {
+    /// Text drawn into a picture is read back, certain enough for the Info pane to show it.
+    ///
+    /// When macOS purges Vision's compiled model under disk pressure while this process holds
+    /// it, no reading in the process can succeed again
+    /// (`docs/research/2026-11-15-text-reading-lost-to-a-cache-purge.md`). This test reads in
+    /// its own process, so it then has nothing to read, and records that one error as a known
+    /// issue: the product reads in a child process and starts a new one then
+    /// (`theReadingProcessReadsWithTheSystemsTextModel`). Any other failure fails the test.
+    @Test func textInAPictureIsRead() throws {
+        try withKnownIssue("Vision's text reader was lost for this process to a cache purge", isIntermittent: true) {
+            let image = try #require(SearchReadingTests.picture(saying: "OTOS SEARCH 2026"))
+            let asked = ContinuousClock.now
+            let read = try SearchReadingTests.readRetryingFailures(image)
+            OtosLog.thumbnails.noticeOperation("test.live", phase: "firstReading", fields: [
+                "where": "testProcess", "waitMs": "\(DiagnosticsTiming.milliseconds(since: asked))",
+            ])
+            let searchable = SearchTextReading.folded(SearchTextReading.searchable(read))
+            #expect(SearchTextQuery("otos search").matches(folded: searchable))
+            #expect(SearchTextReading.certain(read) == ["OTOS SEARCH 2026"])
+            let blank = SearchModelTests.solid(red: 0.4, green: 0.5, blue: 0.6, width: 1200, height: 800)
+            #expect(try SearchReadingTests.readRetryingFailures(blank).isEmpty)
+        } matching: { issue in
+            issue.error.map(SearchTextReading.losesTheProcess) ?? false
+        }
+    }
+
+    /// Otos's own reading process reads a preview's text with Vision as the app reads it. A
+    /// fresh child's first reading is a cold one, which a loaded machine can make Vision give
+    /// up on, and a child whose reader a cache purge lost is the case a new child exists for,
+    /// so the reading is asked again, of a new child then; the attempts are counted, not timed.
+    @Test func theReadingProcessReadsWithTheSystemsTextModel() throws {
+        let directory = try makeTestDirectory()
+        let sign = directory.appending(path: "sign.jpg")
+        try PhotoSearchIndexTests.writeJPEG(#require(SearchReadingTests.picture(saying: "OTOS SEARCH 2026")), to: sign)
+        let executable = try SearchTextChild.executable()
+        var child = try SearchTextChild(executable: executable)
+        // Its wait is logged by the session (`op=search.text phase=firstReading waitMs=`).
+        var reading = child.read(sign)
+        for _ in 1 ..< 3 {
+            switch reading {
+            case .lines, .undecodable:
+                break
+            case .failed:
+                reading = child.read(sign)
+                continue
+            case .ended, .exited:
+                child = try SearchTextChild(executable: executable)
+                reading = child.read(sign)
+                continue
+            }
+            break
+        }
+        guard case let .lines(lines) = reading else {
+            Issue.record("the reading process answered \(reading)")
+            return
+        }
+        #expect(SearchTextReading.certain(lines) == ["OTOS SEARCH 2026"])
     }
 }

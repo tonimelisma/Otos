@@ -401,6 +401,17 @@ report_hang() {
   for thread in $threads; do
     print_sampled_thread "$sample_log" "$(( 16#$thread ))" test >&2
   done
+  # A text-reading child (`Otos --read-text`) under the host is a test waiting on the
+  # system's text model. Its first load in a process is cold, minutes on a loaded machine
+  # with its compiled files purged, and its CPU is spent in a system service this run's CPU
+  # does not count: the host then reads as stalled while it waits. Only the live readings
+  # (OTOS_TEXT_READING_LIVE=1) start one with Vision.
+  local child
+  for child in $(descendants "$pid"); do
+    if ps -o args= -p "$child" 2>/dev/null | grep -qE -- ' --read-text( |$)'; then
+      echo "op=check.hang phase=textReadingChild pid=$child cpu=$(ps -o time= -p "$child" | tr -d ' ') detail=\"waiting on the system's text model (cold)\"" >&2
+    fi
+  done
   # Threads by the queue they run, so a cooperative pool whose every thread is held
   # (`com.apple.root.<qos>-qos.cooperative` at its core count) shows as one line.
   grep -oE "DispatchQueue_[0-9]+: [^ ]+" "$sample_log" | sed -E 's/^DispatchQueue_[0-9]+: //' \
