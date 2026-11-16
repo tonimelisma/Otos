@@ -279,14 +279,14 @@ actor PeopleAssignment: QuiescentOwner {
             let page = try await store.backgroundReads.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
             let owed = vectors.owed
             let fresh = page.filter { $0.vector > owed }
-            vectors.add(fresh)
+            try vectors.add(fresh)
             malformed += fresh.filter { $0.embedding == nil }.map(\.vector)
             ranker = nil
             if page.count < FaceVectors.pageSize {
                 break
             }
         }
-        vectors.keep(read.vectors, through: read.vectorHorizon)
+        try vectors.keep(read.vectors, through: read.vectorHorizon)
         guard !malformed.isEmpty else { return }
         let bad = Set(malformed)
         try await store.oweFacesAgain(Set(read.faces.filter { bad.contains($0.vector) }.map(\.id.asset)))
@@ -532,21 +532,26 @@ actor PeopleGallery: QuiescentOwner {
 /// Face vectors guide
 ///
 /// The face vectors People holds (ADR 0047): every stored face's embedding at half precision
-/// (`FaceVector`), read from the catalog once and afterwards only as new readings write them
-/// (`FaceEmbeddingSQL`), kept in fixed-size chunks of contiguous rows so a vector handed out is
-/// a view into its chunk, never a copy: about 105 MB for the owner's 103k faces.
+/// (`FaceVector`), read from the catalog once a launch and afterwards only as new readings write
+/// them (`FaceEmbeddingSQL`). They live in a file of their own, never on the heap: a mapped
+/// file's clean pages are not counted in the process's footprint, and the system may drop and
+/// read them again (`FaceVectorFile`). About 105 MB for the owner's 103k faces, none of it in the
+/// footprint.
 ///
+/// - **Slots:** each vector is one slot of `FaceEmbeddingModel.dimensions` Float16 values,
+///   appended in vector-number order, so `numbers` is ascending and a vector is found by binary
+///   search. A vector handed out is a slice of the mapping (`FaceVector`), never a copy.
 /// - **Reading:** `owed` is the number above which the catalog may hold vectors this does not.
 ///   `CatalogStore.faceEmbeddings(after:limit:)` reads them `pageSize` at a time, each page its
-///   own short read, and `add(_:)` appends a page. A reading's vector is never rewritten in
-///   place: a new reading writes a new row with a higher number, so nothing at or below
-///   `owed` changes.
-/// - **Forgetting:** `keep(_:)` drops every vector no stored face names. A dropped row's place
-///   stays empty until a compaction, which runs when a quarter of the rows are empty and
-///   rebuilds the chunks from the vectors kept.
-/// - **Copies:** a chunk is an array, and an embedding handed out keeps its chunk alive.
-///   Appending to a chunk a pass still reads copies that chunk alone, at most `chunkRows`
-///   vectors; a compaction copies every vector once.
+///   own short read, and `add(_:)` writes a page's slots to the file and maps it again. A
+///   reading's vector is never rewritten in place: a new reading writes a new row with a higher
+///   number, so nothing at or below `owed` changes, and a slot once written never changes.
+/// - **Forgetting:** `keep(_:through:)` drops every vector no stored face names. A dropped slot
+///   stays in the file until a compaction, which runs when a quarter of the slots are dropped
+///   and writes the slots kept into a new file.
+/// - **Copies:** a copy of this value shares the file and its mapping. A copy a pass still reads
+///   keeps the mapping it was made with: an append writes past it, and a compaction writes
+///   another file.
 /// - **Malformed rows:** a vector whose bytes are no embedding is held as malformed, so its
 ///   face is left out of assignment and its photo owes its faces again (`malformed`).
 nonisolated struct FaceVectors: Sendable {
@@ -559,79 +564,211 @@ nonisolated struct FaceVectors: Sendable {
 
     /// Vectors per read: 4 MB of rows, one short read each.
     static let pageSize = 2048
-    static let chunkRows = 4096
-    private static let dimensions = FaceEmbeddingModel.dimensions
 
-    private var chunks: [[Float16]] = []
-    /// Each vector's chunk and row, and whether the model can tell anyone by it.
-    private var places: [Int64: Place] = [:]
-    private var emptyRows = 0
+    /// The file the slots are written to; nil until the first is written.
+    private var file: FaceVectorFile?
+    /// Every slot written, mapped read-only.
+    private var mapped = Data()
+    /// Each slot's vector number, ascending.
+    private var numbers: [Int64] = []
+    /// Each slot's state: `recognisableFlag`, `droppedFlag`.
+    private var states: [UInt8] = []
+    private var dropped = 0
     /// The vectors whose bytes hold no embedding.
     private(set) var malformed: Set<Int64> = []
     /// The largest vector number read; the catalog's rows above it are not held.
     private(set) var owed: Int64 = 0
 
-    private struct Place: Sendable {
-        let chunk: Int
-        let row: Int
-        let isRecognisable: Bool
-    }
+    private static let recognisableFlag: UInt8 = 1
+    private static let droppedFlag: UInt8 = 2
+
+    init() {}
 
     /// The vectors held.
     var count: Int {
-        places.count
+        numbers.count - dropped
     }
 
-    /// The face's vector, a view into its chunk; nil when the vector is not held.
+    /// The slots written, dropped ones included: what the file holds.
+    var slots: Int {
+        numbers.count
+    }
+
+    /// What this value holds on the heap: each slot's number and state, about 9 bytes a
+    /// vector. The vectors themselves are in the file, `slots * FaceVector.byteCount` bytes.
+    var heapBytes: Int {
+        numbers.capacity * MemoryLayout<Int64>.stride + states.capacity
+    }
+
+    /// The face's vector, a slice of the mapping; nil when the vector is not held.
     func vector(_ vector: Int64) -> FaceVector? {
-        guard let place = places[vector] else { return nil }
-        let start = place.row * Self.dimensions
-        return FaceVector(view: chunks[place.chunk][start ..< start + Self.dimensions], isRecognisable: place.isRecognisable)
+        guard let slot = slot(of: vector) else { return nil }
+        let start = slot * FaceVector.byteCount
+        return FaceVector(bytes: mapped[start ..< start + FaceVector.byteCount], isRecognisable: states[slot] & Self.recognisableFlag != 0)
     }
 
-    /// Appends the rows of a page read in number order above `owed`; rows at or below it are
-    /// already held and are passed over.
-    mutating func add(_ page: [Read]) {
+    private func slot(of vector: Int64) -> Int? {
+        var low = 0, high = numbers.count
+        while low < high {
+            let middle = (low + high) / 2
+            if numbers[middle] < vector {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        guard low < numbers.count, numbers[low] == vector, states[low] & Self.droppedFlag == 0 else { return nil }
+        return low
+    }
+
+    /// Writes the slots of a page read in number order above `owed`; rows at or below it are
+    /// already held and are passed over. A write that fails leaves this value as it was.
+    mutating func add(_ page: [Read]) throws {
+        var owed = owed
+        var malformed = malformed
+        var fresh: [(vector: Int64, embedding: FaceEmbedding)] = []
         for read in page where read.vector > owed {
             owed = read.vector
-            guard let embedding = read.embedding else {
+            if let embedding = read.embedding {
+                fresh.append((read.vector, embedding))
+            } else {
                 malformed.insert(read.vector)
-                continue
             }
-            append(read.vector, FaceVector(embedding))
         }
-    }
-
-    private mutating func append(_ vector: Int64, _ face: FaceVector) {
-        if chunks.isEmpty || chunks[chunks.count - 1].count == Self.chunkRows * Self.dimensions {
-            var chunk: [Float16] = []
-            chunk.reserveCapacity(Self.chunkRows * Self.dimensions)
-            chunks.append(chunk)
+        if !fresh.isEmpty {
+            // The page's slots, made once in a region of their own and unmapped as this returns.
+            let slots = ScratchBuffer<Float16>(count: fresh.count * FaceEmbeddingModel.dimensions)
+            for (index, read) in fresh.enumerated() {
+                FaceVector.halve(read.embedding.values, into: slots.base + index * FaceEmbeddingModel.dimensions)
+            }
+            let file = try file ?? FaceVectorFile()
+            let length = numbers.count * FaceVector.byteCount
+            let bytes = fresh.count * FaceVector.byteCount
+            try file.write(UnsafeRawBufferPointer(start: slots.base, count: bytes), at: length)
+            mapped = try file.map(length: length + bytes)
+            self.file = file
+            numbers += fresh.map(\.vector)
+            states += fresh.map { FaceRecognisability.isRecognisable($0.embedding) ? Self.recognisableFlag : 0 }
         }
-        let chunk = chunks.count - 1
-        places[vector] = Place(chunk: chunk, row: chunks[chunk].count / Self.dimensions, isRecognisable: face.isRecognisable)
-        chunks[chunk].append(contentsOf: face.values)
+        self.owed = owed
+        self.malformed = malformed
     }
 
     /// Keeps only `vectors`, the ones a snapshot's faces name, among the vectors numbered up to
     /// `horizon`, the largest number that snapshot could see: a vector written after it is
     /// some face's newer reading, which a later snapshot names, so it stays.
-    mutating func keep(_ vectors: Set<Int64>, through horizon: Int64) {
-        let gone = places.keys.filter { $0 <= horizon && !vectors.contains($0) }
-        for vector in gone {
-            places[vector] = nil
-        }
-        malformed = malformed.filter { $0 > horizon || vectors.contains($0) }
-        emptyRows += gone.count
-        guard emptyRows * 4 > places.count + emptyRows else { return }
-        var compacted = FaceVectors()
-        for vector in places.keys.sorted() {
-            if let face = self.vector(vector) {
-                compacted.append(vector, face)
+    mutating func keep(_ vectors: Set<Int64>, through horizon: Int64) throws {
+        var states = states
+        var dropped = dropped
+        for slot in numbers.indices where numbers[slot] <= horizon && states[slot] & Self.droppedFlag == 0 {
+            if !vectors.contains(numbers[slot]) {
+                states[slot] |= Self.droppedFlag
+                dropped += 1
             }
         }
-        compacted.malformed = malformed
+        let malformed = malformed.filter { $0 > horizon || vectors.contains($0) }
+        if dropped * 4 > numbers.count {
+            self = try Self.compacted(numbers: numbers, states: states, mapped: mapped, owed: owed, malformed: malformed)
+        } else {
+            self.states = states
+            self.dropped = dropped
+            self.malformed = malformed
+        }
+    }
+
+    /// The slots not dropped, in order, written into a new file.
+    private static func compacted(
+        numbers: [Int64], states: [UInt8], mapped: Data, owed: Int64, malformed: Set<Int64>
+    ) throws -> FaceVectors {
+        var compacted = FaceVectors()
         compacted.owed = owed
-        self = compacted
+        compacted.malformed = malformed
+        let kept = numbers.indices.filter { states[$0] & droppedFlag == 0 }
+        guard !kept.isEmpty else { return compacted }
+        let file = try FaceVectorFile()
+        var written = 0
+        var start = 0
+        // Each run of kept slots is one write, straight from the old mapping.
+        while start < kept.count {
+            var end = start + 1
+            while end < kept.count, kept[end] == kept[end - 1] + 1 {
+                end += 1
+            }
+            let from = kept[start] * FaceVector.byteCount
+            let bytes = (end - start) * FaceVector.byteCount
+            try mapped.withUnsafeBytes { (source: UnsafeRawBufferPointer) in
+                try file.write(UnsafeRawBufferPointer(rebasing: source[from ..< from + bytes]), at: written)
+            }
+            written += bytes
+            start = end
+        }
+        compacted.file = file
+        compacted.mapped = try file.map(length: written)
+        compacted.numbers = kept.map { numbers[$0] }
+        compacted.states = kept.map { states[$0] }
+        return compacted
+    }
+}
+
+/// Face vector file guide
+///
+/// The file `FaceVectors` writes its slots to: created in the user's temporary directory and
+/// unlinked at once, so it has no name, lives exactly as long as the process holds it, and
+/// leaves nothing on disk after a crash. It is made again from the catalog's `face_embedding`
+/// rows every launch, so it is never stale and never a second source of truth (ADR 0047), and it
+/// is never in a media folder. Slots are written with `pwrite(2)` and read through a read-only
+/// shared mapping, so its pages are clean and file-backed: the system writes them out and drops
+/// them under pressure, and `phys_footprint` never counts them.
+///
+/// A slot once written never changes, so a mapping made earlier stays valid while later slots
+/// are written past it. The descriptor is closed when the last value holding the file goes;
+/// each mapping is unmapped when the last `Data` slicing it goes.
+final nonisolated class FaceVectorFile: Sendable {
+    enum Failure: Error, Equatable {
+        case create(errno: Int32)
+        case write(errno: Int32)
+        case map(errno: Int32)
+    }
+
+    private let descriptor: Int32
+
+    init() throws(Failure) {
+        let path = FileManager.default.temporaryDirectory
+            .appending(path: "otos-face-vectors-\(UUID().uuidString)").path(percentEncoded: false)
+        let descriptor = Darwin.open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else {
+            throw .create(errno: errno)
+        }
+        unlink(path)
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        close(descriptor)
+    }
+
+    /// Writes every byte of `bytes` at `offset`.
+    func write(_ bytes: UnsafeRawBufferPointer, at offset: Int) throws(Failure) {
+        guard let base = bytes.baseAddress else { return }
+        var done = 0
+        while done < bytes.count {
+            let result = pwrite(descriptor, base + done, bytes.count - done, off_t(offset + done))
+            if result < 0 {
+                guard errno == EINTR else { throw .write(errno: errno) }
+                continue
+            }
+            done += result
+        }
+    }
+
+    /// The file's first `length` bytes, mapped read-only; the `Data` owns the mapping.
+    func map(length: Int) throws(Failure) -> Data {
+        guard length > 0 else { return Data() }
+        guard let region = mmap(nil, length, PROT_READ, MAP_SHARED | MAP_FILE, descriptor, 0), region != MAP_FAILED else {
+            throw .map(errno: errno)
+        }
+        return Data(bytesNoCopy: region, count: length, deallocator: .custom { base, count in
+            munmap(base, count)
+        })
     }
 }

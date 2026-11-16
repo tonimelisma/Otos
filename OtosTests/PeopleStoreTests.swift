@@ -626,12 +626,16 @@ struct PeopleStoreTests {
         try await phase("vectors") {
             while true {
                 let page = try await store.backgroundReads.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
-                vectors.add(page)
+                try vectors.add(page)
                 if page.count < FaceVectors.pageSize {
                     break
                 }
             }
         }
+        // The guard: every vector is held in the mapped file, so reading them all adds only
+        // their numbers to the footprint (ADR 0047). On the heap they added 113 MB.
+        let (vectorsBefore, vectorsAfter) = try #require(footprints["vectors"])
+        #expect(mb(vectorsAfter) <= mb(vectorsBefore) + Self.vectorsFootprintBoundMB, "vectors: \(mb(vectorsBefore)) MB → \(mb(vectorsAfter)) MB")
         let facts = await phase("facts") { snapshot.facts(with: vectors) }
         let plan = await phase("kernel") { FaceAssignmentPlan.assignment(of: snapshot, facts: facts) }
         // The two steps whose working sets were the largest the pass freed: every face's links
@@ -758,9 +762,40 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    /// A burst of changes costs one pass after the one in flight (ADR 0032 rule 2): a request
+    /// adds to a revision, and the pass that starts next covers every request made before it.
+    /// On the owner's library a run of content hashes, each finding a copy, rang People once a
+    /// second while each pass took six; the guard is that N changes delivered while a pass
+    /// runs cost at most two passes, whatever N is.
+    @Test func aBurstOfChangesDuringAPassCostsOneMorePass() async throws {
+        let names = (0 ..< 6).map { "\($0).jpg" }
+        let directory = try makeTestDirectory()
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: names, database: directory.appending(path: "db/catalog.sqlite"))
+        try await library.readFaces(names.enumerated().map { library.result(for: $1, faces: [Self.lookalike($0)]) })
+        // The pass is held at its admission, inside the pass, until the burst has been delivered.
+        let admission = LoadAdmission(isOpen: false)
+        let owner = PeopleAssignment(store: library.store, admission: admission)
+        await owner.start()
+        await owner.request()
+        try await waitUntil { admission.snapshot.waiting.contains { $0.load == .people } }
+        for name in names {
+            await owner.request(rows: .rows([library.id(name)]))
+        }
+        await owner.request()
+        admission.open()
+        let fact = try await owner.untilQuiescent()
+        #expect(fact.work.passes == 2, "\(fact.work.passes) passes for one pass and a burst of \(names.count + 1) changes")
+        owner.stop()
+        await library.store.shutdown()
+    }
+
     /// How far a People pass over held vectors may leave the footprint above where it found it,
     /// at the owner's scale: the allocator's own reuse slack, nothing a pass holds.
     static let strandedMarginMB: UInt64 = 48
+
+    /// What reading every one of 103k vectors may add to the footprint: their numbers and the
+    /// read's own pages, never the vectors, which are the mapped file's.
+    static let vectorsFootprintBoundMB: UInt64 = 16
 
     /// What grouping 103k faces may hold live on the heap at once: its links are in a mapped
     /// region (`ScratchBuffer`), so this is the groups' own sets. With the links on the heap,
@@ -784,7 +819,7 @@ struct PeopleStoreTests {
         var vectors = FaceVectors()
         try await vectors.add(library.store.backgroundReads.faceEmbeddings(after: 0, limit: FaceVectors.pageSize))
         #expect(vectors.count == 2)
-        vectors.keep(snapshot.vectors, through: snapshot.vectorHorizon)
+        try vectors.keep(snapshot.vectors, through: snapshot.vectorHorizon)
         #expect(vectors.count == 2, "the newer reading stays")
         let next = try await library.store.backgroundReads.peopleSnapshot()
         #expect(next.faces.allSatisfy { vectors.vector($0.vector) != nil })

@@ -100,61 +100,65 @@ nonisolated struct FaceFact: Sendable, Equatable {
 }
 
 /// A face's vector as People holds and compares it: the stored embedding rounded to half
-/// precision, a view into the chunk of `FaceVectors` that holds it, with whether the model
-/// can tell anyone by it decided from the stored single-precision values. Half precision halves
-/// what People keeps resident (103k faces: 105 MB rather than 211 MB); on the owner's 102,978
+/// precision, with whether the model can tell anyone by it decided from the stored
+/// single-precision values. Its bytes are a slice of the mapped file `FaceVectors` writes
+/// (`FaceVectorFile`), or bytes of its own for a vector made from an embedding. Half precision
+/// halves what People holds (103k faces: 105 MB rather than 211 MB); on the owner's 102,978
 /// stored vectors it changed no face's best person, threshold or margin decision in 3,029
 /// faces sampled, the largest similarity moving 9.6e-5
 /// (`docs/research/2026-11-16-people-memory-and-kernel.md`). Assignment widens a block of
 /// vectors to single precision for each matrix product (`copy(into:)`).
 nonisolated struct FaceVector: Sendable, Equatable {
-    let values: ArraySlice<Float16>
+    /// `FaceEmbeddingModel.dimensions` Float16 values, in the machine's byte order.
+    let bytes: Data
     let isRecognisable: Bool
 
-    init(view values: ArraySlice<Float16>, isRecognisable: Bool) {
-        self.values = values
+    /// The bytes of one vector.
+    static let byteCount = FaceEmbeddingModel.dimensions * MemoryLayout<Float16>.stride
+
+    init(bytes: Data, isRecognisable: Bool) {
+        self.bytes = bytes
         self.isRecognisable = isRecognisable
     }
 
-    /// `embedding` rounded to half precision, in an array of its own.
+    /// `embedding` rounded to half precision, in bytes of its own.
     init(_ embedding: FaceEmbedding) {
-        values = ArraySlice(Self.halves(embedding.values))
+        var bytes = Data(count: Self.byteCount)
+        bytes.withUnsafeMutableBytes { target in
+            Self.halve(embedding.values, into: target.baseAddress!.assumingMemoryBound(to: Float16.self))
+        }
+        self.bytes = bytes
         isRecognisable = FaceRecognisability.isRecognisable(embedding)
     }
 
     /// The values widened to single precision: what every comparison reads.
     var embedding: FaceEmbedding {
-        var widened = [Float](repeating: 0, count: values.count)
+        var widened = [Float](repeating: 0, count: FaceEmbeddingModel.dimensions)
         widened.withUnsafeMutableBufferPointer { copy(into: $0.baseAddress!) }
         return FaceEmbedding(view: ArraySlice(widened))
     }
 
     /// Writes the values, widened to single precision, at `target`.
     func copy(into target: UnsafeMutablePointer<Float>) {
-        values.withUnsafeBufferPointer { source in
+        bytes.withUnsafeBytes { source in
             guard let base = source.baseAddress else { return }
-            var from = vImage_Buffer(
-                data: UnsafeMutableRawPointer(mutating: base), height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 2
-            )
-            var to = vImage_Buffer(data: target, height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 4)
+            let count = FaceEmbeddingModel.dimensions
+            var from = vImage_Buffer(data: UnsafeMutableRawPointer(mutating: base), height: 1, width: vImagePixelCount(count), rowBytes: count * 2)
+            var to = vImage_Buffer(data: target, height: 1, width: vImagePixelCount(count), rowBytes: count * 4)
             vImageConvert_Planar16FtoPlanarF(&from, &to, 0)
         }
     }
 
-    /// `values` rounded to half precision.
-    static func halves(_ values: ArraySlice<Float>) -> [Float16] {
-        var halves = [Float16](repeating: 0, count: values.count)
+    /// Writes `values` rounded to half precision at `target`.
+    static func halve(_ values: ArraySlice<Float>, into target: UnsafeMutablePointer<Float16>) {
         values.withUnsafeBufferPointer { source in
-            halves.withUnsafeMutableBufferPointer { target in
-                guard let from = source.baseAddress, let to = target.baseAddress else { return }
-                var input = vImage_Buffer(
-                    data: UnsafeMutableRawPointer(mutating: from), height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 4
-                )
-                var output = vImage_Buffer(data: to, height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 2)
-                vImageConvert_PlanarFtoPlanar16F(&input, &output, 0)
-            }
+            guard let from = source.baseAddress else { return }
+            var input = vImage_Buffer(
+                data: UnsafeMutableRawPointer(mutating: from), height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 4
+            )
+            var output = vImage_Buffer(data: target, height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 2)
+            vImageConvert_PlanarFtoPlanar16F(&input, &output, 0)
         }
-        return halves
     }
 }
 

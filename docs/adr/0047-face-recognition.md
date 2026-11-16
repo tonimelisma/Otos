@@ -303,9 +303,22 @@ grouping had put with the right child.
   photos' IDs held once (`PeopleFaces`). People holds the
   vectors at half precision (105 MB for 103k faces): on the owner's 102,978 vectors it changed
   no best person, threshold or margin decision in 3,029 faces sampled
-  (`docs/research/2026-11-16-people-memory-and-kernel.md`). Rejected: the dense table of every
-  face's best per person (310 MB on the owner's catalog, rebuilt every run of chaining), and
-  single precision resident (211 MB, against People's share of a 700 MB app).
+  (`docs/research/2026-11-16-people-memory-and-kernel.md`). They are held in a file of their
+  own, never on the heap (`FaceVectors`, `FaceVectorFile`): created in the temporary directory
+  and unlinked at once, written with `pwrite`, read through a read-only shared mapping, so their
+  pages are clean and file-backed and the footprint never counts them. The file is made again
+  from `face_embedding` every launch, as the vectors were read before, so it is never stale and
+  never a second source of truth, and nothing is left on disk after a crash; dropped vectors
+  stay in it until a quarter of its slots are dropped, when the kept ones are written into a
+  new file. Measured on a generated catalog of the owner's shape, the first pass that assigns
+  added 175 MB to the footprint with the vectors on the heap and 79 MB with them in the file
+  (`docs/research/2026-11-16-people-passes-in-a-live-session.md`). Rejected: the dense table
+  of every face's best per person (310 MB on the owner's catalog, rebuilt every run of
+  chaining); single precision resident (211 MB, against People's share of a 700 MB app); the
+  vectors on the heap at half precision (105 MB of footprint, held for the session); and a file
+  kept across launches, which would save the launch's one read of every vector (under a second
+  of a background reader) at the cost of a commit point in the catalog, a check against a
+  restored catalog whose vector numbers run again, and a file to remove with its faces.
 - **Settles on its own output:** assignment reads only the anchors, so run on what it wrote it
   writes nothing; the hash of its inputs says when it need not run at all (Work and placement).
 - **A new reading** of the same source keeps the user's word: each act, and each seed, moves

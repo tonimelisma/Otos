@@ -67,9 +67,7 @@ nonisolated struct FaceEmbeddingModel {
 /// Every face rule (ADR 0047) is a cosine, and assignment computes cosines as plain dot
 /// products over a matrix of these, so unit length is part of the type rather than a promise
 /// each producer keeps: the only ways to make one are to scale values to unit length or to
-/// read back stored values that still are. Its values may be a view into a larger array:
-/// People holds every face's vector in a few contiguous chunks (`FaceVectors`), and a face's
-/// embedding is its rows there, not a copy.
+/// read back stored values that still are. Its values may be a view into a larger array.
 nonisolated struct FaceEmbedding: Sendable, Equatable {
     let values: ArraySlice<Float>
 

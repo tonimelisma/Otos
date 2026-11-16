@@ -21,9 +21,9 @@ extension CatalogStore {
 extension FaceVectors {
     /// The vectors of `faces`, numbered as `PeopleSnapshot(facts:)` numbers them: 1, 2, … in
     /// order.
-    init(facts faces: [FaceFact]) {
+    init(facts faces: [FaceFact]) throws {
         self.init()
-        add(faces.enumerated().map { Read(vector: Int64($0.offset + 1), embedding: $0.element.embedding) })
+        try add(faces.enumerated().map { Read(vector: Int64($0.offset + 1), embedding: $0.element.embedding) })
     }
 }
 
