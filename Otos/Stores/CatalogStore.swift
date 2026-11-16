@@ -5690,7 +5690,9 @@ extension CatalogStore {
 
     /// Rows of `rootPath` owed their source's own thumbnail and preview: visible, sized,
     /// showing the source's images (never edited, not yet rendered by Otos), and with no
-    /// source products or older ones than the file (ADR 0046 §7). In path order after `cursor`, so a caller pages through them.
+    /// source products or older ones than the file (ADR 0046 §7). In path order after `cursor`,
+    /// so a caller pages through them, from the partial index of exactly those rows
+    /// (`SourceProductsSQL`): an account whose images are current reads none.
     func sourceProductCandidates(
         rootPath: LibraryRootPath,
         after cursor: MediaRelativePath?,
@@ -5702,24 +5704,7 @@ extension CatalogStore {
         return try await database().readFreeingConnection { db in
             try Row.fetchAll(
                 db,
-                sql: """
-                SELECT relative_path, source_item_id, kind, byte_size,
-                       CAST(content_modified_at_unix AS INTEGER) AS mtime
-                FROM media_asset
-                WHERE library_root_id = ?
-                  AND relative_path > ?
-                  AND source_item_id IS NOT NULL
-                  AND hidden_by_source = 0
-                  AND byte_size IS NOT NULL
-                  AND \(Self.showsSourceProductsSQL)
-                  AND source_products_absent = 0
-                  AND (
-                      source_products_size IS NOT byte_size
-                      OR source_products_mtime IS NOT CAST(content_modified_at_unix AS INTEGER)
-                  )
-                ORDER BY relative_path
-                LIMIT ?
-                """,
+                sql: SourceProductsSQL.candidatesSQL,
                 arguments: [rootID, cursor?.rawValue ?? "", limit]
             ).map { row in
                 let kind: String? = row["kind"]
@@ -8894,15 +8879,30 @@ extension CatalogStore {
     /// The assets in available roots that have a current search embedding, without the
     /// vectors: what `PhotoSearchIndex` reconciles its memory against after a catalog change.
     func currentSearchEmbeddingIDs() async throws -> Set<MediaAssetID> {
-        try await readSearchEmbeddings(vectors: false).reduce(into: Set()) { $0.insert($1.id) }
+        let rootIDs = availableRootRowIDs()
+        guard !rootIDs.isEmpty else {
+            return []
+        }
+        let pathsByRowID = roots.pathsByRowID
+        return try await database().readFreeingConnection { db in
+            let rows = try Row.fetchCursor(
+                db, sql: SearchEmbeddingStorage.currentEmbeddingIDsSQL(rootCount: rootIDs.count), arguments: StatementArguments(rootIDs)
+            )
+            var ids: Set<MediaAssetID> = []
+            while let row = try rows.next() {
+                guard let root = pathsByRowID[row[0]] else { continue }
+                ids.insert(MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])))
+            }
+            return ids
+        }
     }
 
     /// Current search embeddings, all of them or those of `ids`.
     func currentSearchEmbeddings(for ids: Set<MediaAssetID>? = nil) async throws -> [StoredSearchEmbedding] {
-        try await readSearchEmbeddings(vectors: true, only: ids)
+        try await readSearchEmbeddings(only: ids)
     }
 
-    private func readSearchEmbeddings(vectors: Bool, only ids: Set<MediaAssetID>? = nil) async throws -> [StoredSearchEmbedding] {
+    private func readSearchEmbeddings(only ids: Set<MediaAssetID>? = nil) async throws -> [StoredSearchEmbedding] {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty, ids?.isEmpty != true else {
             return []
@@ -8911,7 +8911,7 @@ extension CatalogStore {
         return try await database().readFreeingConnection { db in
             let rows = try Row.fetchCursor(
                 db,
-                sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: rootIDs.count, vectors: vectors),
+                sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: rootIDs.count),
                 arguments: StatementArguments(rootIDs)
             )
             var out: [StoredSearchEmbedding] = []
@@ -8921,12 +8921,8 @@ extension CatalogStore {
                 if let ids, !ids.contains(id) {
                     continue
                 }
-                if vectors {
-                    guard let data: Data = row[2], let embedding = SearchEmbeddingStorage.embedding(from: data) else { continue }
-                    out.append(StoredSearchEmbedding(id: id, embedding: embedding, labels: SearchEmbeddingStorage.labels(from: row[3])))
-                } else {
-                    out.append(StoredSearchEmbedding(id: id, embedding: []))
-                }
+                guard let data: Data = row[2], let embedding = SearchEmbeddingStorage.embedding(from: data) else { continue }
+                out.append(StoredSearchEmbedding(id: id, embedding: embedding, labels: SearchEmbeddingStorage.labels(from: row[3])))
             }
             return out
         }

@@ -23,6 +23,10 @@ import GRDB
 /// identifiers that pass Vision's high-precision test, most confident first, comma separated:
 /// what the Info pane shows (`SearchSceneLabels`).
 nonisolated enum SearchEmbeddingStorage {
+    /// Each embedding's key with the source it names (v65): whether an asset's embedding is
+    /// current is read from it, never from the 3 KB row.
+    static let sourceIndexName = "idx_search_embedding_source"
+
     /// The source an asset's embedding must name to be current, for `row` (a table or alias).
     static func currentSource(_ row: String) -> String {
         "(\(StoredThumbnailSQL.identity(row)) || '|s\(SearchEmbedding.revision)')"
@@ -31,10 +35,10 @@ nonisolated enum SearchEmbeddingStorage {
     /// `FROM … WHERE …` over the assets owed an embedding in `rootCount` roots (bound in
     /// order): a stored thumbnail whose current embedding is missing, not waiting for or in
     /// the Trash, and not a Live Photo's movie, whose still stands for the item.
-    static func owedFrom(rootCount: Int, indexedBy index: String? = nil) -> String {
+    static func owedFrom(rootCount: Int) -> String {
         """
-        FROM media_asset AS a\(index.map { " INDEXED BY \($0)" } ?? "")
-        LEFT JOIN search_embedding AS e
+        FROM media_asset AS a INDEXED BY \(ProductStampSQL.indexName)
+        LEFT JOIN search_embedding AS e INDEXED BY \(sourceIndexName)
             ON e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
           AND a.thumbnail_path IS NOT NULL
@@ -45,26 +49,44 @@ nonisolated enum SearchEmbeddingStorage {
         """
     }
 
-    /// A page of the embedding owner's newest-first walk (`CandidateWalk.capturePage`) through
-    /// the window's date order index, which holds the order, the root and what makes a row
-    /// shown; the thumbnail's stamp is read from the row.
+    /// A page of the embedding owner's newest-first walk (`CandidateWalk.capturePage`): every
+    /// row is tested and stamped from the product stamps index, and its embedding's source from
+    /// the embedding source index, so the walk reads no table row.
     static func candidatesSQL(rootCount: Int, position: String, order: String) -> String {
         """
         SELECT a.best_capture_local, a.library_root_id, a.relative_path, a.thumbnail_path,
                \(currentSource("a")) AS source
-        \(owedFrom(rootCount: rootCount, indexedBy: CandidateWalk.captureIndex))
+        \(owedFrom(rootCount: rootCount))
           AND \(position)
         \(order)
         LIMIT ?
         """
     }
 
-    /// The current embeddings in `rootCount` roots (bound in order): the asset's key, then its
-    /// vector and loose labels when `vectors`. Each row is found by the embedding table's key and
-    /// its asset by the asset's (`CatalogStoreQueryPlanTests`).
-    static func currentEmbeddingsSQL(rootCount: Int, vectors: Bool) -> String {
+    /// The keys of the current embeddings in `rootCount` roots (bound in order): what the
+    /// search index reconciles its memory against. Each asset's stamp is read from the product
+    /// stamps index and its embedding's source from the embedding source index, the asset side
+    /// outer (`CROSS JOIN`), so the check reads neither table: 12k pages against 251k for the
+    /// owner-shaped catalog (`CatalogStoreQueryPlanTests`). Every stored embedding has its vector
+    /// (v51 removed the rows without one, and a write always carries one).
+    static func currentEmbeddingIDsSQL(rootCount: Int) -> String {
         """
-        SELECT e.library_root_id, e.relative_path\(vectors ? ", e.embedding, e.labels" : "")
+        SELECT a.library_root_id, a.relative_path
+        FROM media_asset AS a INDEXED BY \(ProductStampSQL.indexName)
+        CROSS JOIN search_embedding AS e INDEXED BY \(sourceIndexName)
+            ON e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
+            AND e.source = \(currentSource("a"))
+        WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
+          AND a.thumbnail_path IS NOT NULL
+        """
+    }
+
+    /// The current embeddings in `rootCount` roots (bound in order) with their vectors and loose
+    /// labels. Each row is found by the embedding table's key and its asset by the asset's
+    /// (`CatalogStoreQueryPlanTests`).
+    static func currentEmbeddingsSQL(rootCount: Int) -> String {
+        """
+        SELECT e.library_root_id, e.relative_path, e.embedding, e.labels
         FROM search_embedding AS e
         JOIN media_asset AS a
             ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path

@@ -28,6 +28,24 @@ nonisolated enum EnrichmentClaimGateway {
     static let accountGlobalIndexName = "idx_media_asset_needs_enrichment_global_account"
     static let accountRootIndexName = "idx_media_asset_needs_enrichment_root_account"
 
+    /// A row no source lists (`source_item_id`, an Immich asset's): the rows the products and
+    /// library claims can reach in the background, since only a card, a camera or a fixed
+    /// library is claimed under them. Their indexes hold only these rows (v65), so an
+    /// account's rows, which owe a digest they are never read for, are not entries written on
+    /// every enrichment flush. A claim by key (`claimEnrichmentAsset`) tests the staleness
+    /// alone: an account's row whose original became local is claimed for its products.
+    static let unlistedRows = "source_item_id IS NULL"
+
+    /// The term a background claim under `claim` adds to its staleness, so it reads from its
+    /// claim index (the index's own condition, v65); empty for a claim whose index holds every
+    /// root's rows.
+    static func backgroundScope(_ claim: EnrichmentClaim) -> String {
+        switch claim {
+        case .products, .library: "\n  AND \(unlistedRows)"
+        case .metadata, .account: ""
+        }
+    }
+
     static func globalIndexName(_ claim: EnrichmentClaim) -> String {
         switch claim {
         case .metadata: metadataOnlyGlobalIndexName
@@ -323,7 +341,7 @@ private nonisolated func rootEnrichmentClaimQuery(
         SELECT library_root_id, relative_path
         FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id = ?
-          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(claim)))
+          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(claim)))\(EnrichmentClaimGateway.backgroundScope(claim))
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
           AND awaiting_presence = 0
@@ -348,7 +366,7 @@ private nonisolated func globalEnrichmentClaimQuery(
         SELECT library_root_id, relative_path
         FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id IN (\(placeholders))
-          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(claim)))
+          AND (\(EnrichmentClaimGateway.stalenessSQLPredicate(claim)))\(EnrichmentClaimGateway.backgroundScope(claim))
           AND enrichment_claimed IS NULL
           AND trash_path IS NULL
           AND awaiting_presence = 0

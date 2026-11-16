@@ -587,8 +587,13 @@ owners now keep an **in-memory walk cursor** (`CandidateWalk`): one drain is one
 each row visited once, and a request made during a walk (ADR 0032 rule 2) restarts a
 newest-first walk from the top at its next page. The cursor is still not stored state:
 it lives only for one walk, the catalog stays the one truth, and a row made owed behind
-it is found by the walk the change that made it owed asks for. Enrichment claiming keeps
-its partial indexes and stays cursorless.
+it is found by the walk the change that made it owed asks for. Each walk reads an index
+that holds what it compares (v65): a derived table's `(key, source)`, the asset columns
+each product's stamp is built from in the newest-first order, or a partial index of exactly
+the owed rows where what is owed is one table's fact (render signatures, an account's source
+images). Enrichment claiming keeps its partial indexes and stays cursorless; the products and
+library claim indexes hold only rows no source lists, the only rows those claims take in the
+background.
 
 ## Consequences
 

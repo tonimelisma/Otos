@@ -261,6 +261,53 @@ nonisolated struct CatalogScopePredicate: Equatable {
 
 // MARK: - Candidate walks (plan 0116)
 
+/// The asset columns a derived product's "is it owed" test reads (v65): what makes a row
+/// visible and a Live Photo's movie (`LivePhotoSQL`), the stored thumbnail's and preview's
+/// identity (`StoredThumbnailSQL`, the text and description sources), and what a description
+/// waits for (`PreviewFaceSQL`). `indexName` holds them in the newest-first order, so the
+/// search embedding, text and description walks, and the search index's reconcile, test and
+/// stamp every row from the index and read no 2 KB asset row.
+nonisolated enum ProductStampSQL {
+    static let indexName = "idx_media_asset_product_stamps"
+
+    static let columns = """
+    pending_trash_batch_unix_ms, trash_path, kind, best_kind, content_identifier, parent_path, thumbnail_path, \
+    preview_path, rendered_revision, rendered_source_size, rendered_source_mtime, source_products_size, \
+    source_products_mtime, faces_source_size, faces_source_mtime, edit_revision
+    """
+}
+
+/// An Immich account's rows owed their source's own thumbnail and preview (ADR 0046 §7): the
+/// condition of `owedIndexName` (v65), which `CatalogStore.sourceProductCandidates` walks, so
+/// an account whose images are current reads no row.
+nonisolated enum SourceProductsSQL {
+    static let owedIndexName = "idx_media_asset_source_products_owed"
+
+    static let owedPredicate = """
+    source_item_id IS NOT NULL
+      AND hidden_by_source = 0
+      AND byte_size IS NOT NULL
+      AND \(CatalogStore.showsSourceProductsSQL)
+      AND source_products_absent = 0
+      AND (
+          source_products_size IS NOT byte_size
+          OR source_products_mtime IS NOT CAST(content_modified_at_unix AS INTEGER)
+      )
+    """
+
+    /// One root's owed rows in path order after a path; binds the root, the path, the limit.
+    static let candidatesSQL = """
+    SELECT relative_path, source_item_id, kind, byte_size,
+           CAST(content_modified_at_unix AS INTEGER) AS mtime
+    FROM media_asset INDEXED BY \(owedIndexName)
+    WHERE library_root_id = ?
+      AND relative_path > ?
+      AND \(owedPredicate)
+    ORDER BY relative_path
+    LIMIT ?
+    """
+}
+
 /// The last row a walk over the asset key read; the next page starts after it.
 nonisolated struct AssetKeyCursor: Equatable, Sendable {
     let rootID: Int64
@@ -299,8 +346,9 @@ extension CandidatePage: Equatable where Candidate: Equatable, Cursor: Equatable
 ///   key, then every older capture time, then the rows with none (SQLite orders NULL last when
 ///   descending). Each phase is a range of the index, so no page sorts.
 nonisolated enum CandidateWalk {
-    /// The index a capture walk reads: the window's newest-first date order over every root.
-    static let captureIndex = "idx_media_asset_best_capture_global_desc"
+    /// The index a capture walk reads: the newest-first order over every root, with every
+    /// column a walk tests and stamps a row by (`ProductStampSQL`).
+    static let captureIndex = ProductStampSQL.indexName
 
     /// Reads at most `limit` rows from `after` on, one root at a time, in `rootIDs`'s order.
     /// `sql` binds, in order: the root, the path its rows start after, then `arguments`, then

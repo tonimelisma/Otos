@@ -234,11 +234,19 @@ nonisolated struct DuplicateLibrary: Sendable {
 /// path. A product whose recorded identity no longer matches is stale.
 nonisolated enum StoredThumbnailSQL {
     static func identity(_ row: String) -> String {
+        identity(columnsOf: "\(row).")
+    }
+
+    /// The identity over `media_asset`'s own columns, unqualified: what a partial index's
+    /// condition names, which must survive the table being renamed.
+    static let unqualifiedIdentity = identity(columnsOf: "")
+
+    private static func identity(columnsOf prefix: String) -> String {
         """
-        (\(row).thumbnail_path || '|' || \(row).rendered_revision || '|'
-            || IFNULL(\(row).rendered_source_size, '') || '|' || IFNULL(\(row).rendered_source_mtime, '')
-            || CASE WHEN \(isSourceDrawn(row))
-                THEN '|source|' || \(row).source_products_size || '|' || IFNULL(\(row).source_products_mtime, '')
+        (\(prefix)thumbnail_path || '|' || \(prefix)rendered_revision || '|'
+            || IFNULL(\(prefix)rendered_source_size, '') || '|' || IFNULL(\(prefix)rendered_source_mtime, '')
+            || CASE WHEN \(isSourceDrawn(columnsOf: prefix))
+                THEN '|source|' || \(prefix)source_products_size || '|' || IFNULL(\(prefix)source_products_mtime, '')
                 ELSE '' END)
         """
     }
@@ -246,23 +254,36 @@ nonisolated enum StoredThumbnailSQL {
     /// Whether the shown thumbnail is a source's own (ADR 0046 §7): the source products
     /// are written and Otos has not rendered the original since.
     static func isSourceDrawn(_ row: String) -> String {
-        "(\(row).rendered_source_size IS NULL AND \(row).source_products_size IS NOT NULL)"
+        isSourceDrawn(columnsOf: "\(row).")
+    }
+
+    private static func isSourceDrawn(columnsOf prefix: String) -> String {
+        "(\(prefix)rendered_source_size IS NULL AND \(prefix)source_products_size IS NOT NULL)"
     }
 }
 
 /// The render signature refresher's walk (ADR 0042): one root's stills whose thumbnail has no
-/// current signature, in path order after a path, through the asset key
-/// (`CandidateWalk.keyPage`; binds the root, the path, the limit).
+/// current signature, in path order after a path (`CandidateWalk.keyPage`; binds the root, the
+/// path, the limit), from the partial index that holds exactly those stills, so a settled
+/// library reads no row.
 nonisolated enum RenderSignatureSQL {
-    static let candidatesSQL = """
-    SELECT library_root_id, relative_path, thumbnail_path, \(StoredThumbnailSQL.identity("media_asset")) AS source
-    FROM media_asset INDEXED BY sqlite_autoindex_media_asset_1
-    WHERE library_root_id = ? AND relative_path > ?
-      AND thumbnail_path IS NOT NULL
+    static let owedIndexName = "idx_media_asset_render_signature_owed"
+
+    /// A visible still whose stored signature does not name its thumbnail: the condition of
+    /// `owedIndexName` (v65), as SQL over `media_asset`'s own columns.
+    static let owedPredicate = """
+    thumbnail_path IS NOT NULL
       AND kind IN ('image', 'raw')
       AND pending_trash_batch_unix_ms IS NULL
       AND trash_path IS NULL
-      AND render_signature_source IS NOT \(StoredThumbnailSQL.identity("media_asset"))
+      AND render_signature_source IS NOT \(StoredThumbnailSQL.unqualifiedIdentity)
+    """
+
+    static let candidatesSQL = """
+    SELECT library_root_id, relative_path, thumbnail_path, \(StoredThumbnailSQL.identity("media_asset")) AS source
+    FROM media_asset INDEXED BY \(owedIndexName)
+    WHERE library_root_id = ? AND relative_path > ?
+      AND \(owedPredicate)
     ORDER BY relative_path
     LIMIT ?
     """

@@ -236,6 +236,13 @@ none, and the log said nothing about the wait
 - **A migration's PR states its cost** — milliseconds and WAL bytes — measured on a generated
   catalog of the owner's shape (about 167,000 assets, 2 GB: the research note's recipe), and
   what in its outcome needs that time when it is more than a second.
+  `CatalogMigrationCostTests` measures it (`OTOS_SCALE_TEST=1 script/check.sh --only
+  CatalogMigrationCostTests`): it generates that catalog (`OwnerShapedCatalog`), puts it back
+  to the schema before the newest migration (the statements that undo it, kept beside the
+  test), runs the Store's own pass over the newest, and writes its milliseconds, the WAL it left and the file's size before and after to
+  `build/migration-cost/owner.txt`. The owner's file is fragmented on disk (its asset table
+  1.2 % sequential), so a migration that reads a whole table there is slower than measured;
+  the PR says so.
 
 Rejected: building indexes after launch, off the open (a deferred-index mechanism). Otos's
 reads name their indexes (`INDEXED BY`), so a read before the build would fail, or need a

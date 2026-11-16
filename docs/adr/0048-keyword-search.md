@@ -168,7 +168,11 @@ against 77.3, 85 in English for both), and every asset has one.
 `PhotoSearchIndex` (an actor):
 - **Embedding loop:** woken by the Store's change notifications, it reconciles memory with
   the catalog's current embeddings, then embeds what is owed, newest capture first, 16 at a
-  time, on `SearchImageEmbedder`'s queue.
+  time, on `SearchImageEmbedder`'s queue. Both are read from indexes alone (v65): which
+  embeddings are current walks the product stamps index (every asset's thumbnail identity)
+  and seeks each asset's embedding source in `idx_search_embedding_source`, never the 680 MB
+  table (12k pages against 251k on the owner-shaped catalog, 0.39 s against 14 s); what is owed
+  is one newest-first walk of the same two indexes per pass.
 - **Memory:** every current embedding as one matrix. A query is one matrix–vector product
   (about 3 ms over 19,000 photos), with no SQLite read.
 - **Answers:** `CatalogProjection` hands it the query's encoding, its facts resolved for the

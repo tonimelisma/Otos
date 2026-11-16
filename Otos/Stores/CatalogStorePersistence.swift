@@ -535,6 +535,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.owedWorkIndexesMigrationIdentifier) { db in
+            for statement in CatalogSchema.owedWorkIndexesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

@@ -545,8 +545,10 @@ struct CatalogStoreQueryPlanTests {
         let roots: [DatabaseValue] = [rootID1.databaseValue, rootID2.databaseValue]
         let plans = try await dbQueue.read { db in
             try [
+                // The keys alone walk the product stamps index whole
+                // (`everyCandidateWalkIsARangeOfItsNamedIndex`); the vectors seek by key.
                 "currentEmbeddings": explainPlan(
-                    db, sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: 2, vectors: false),
+                    db, sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: 2),
                     arguments: StatementArguments(roots)
                 ),
                 "currentTexts": explainPlan(
@@ -1222,27 +1224,78 @@ extension CatalogStoreQueryPlanTests {
             ("a.best_capture_local < ?", newestFirst, [5.0]),
             ("a.best_capture_local IS NULL AND (a.library_root_id, a.relative_path) > (?, ?)", byKey, [1, "x"]),
         ]
-        let builders: [(String, @Sendable (String, String) -> String)] = [
-            ("embeddings", { SearchEmbeddingStorage.candidatesSQL(rootCount: 2, position: $0, order: $1) }),
-            ("texts", { SearchTextStorage.candidatesSQL(rootCount: 2, position: $0, order: $1) }),
-            ("descriptions", { PhotoDescriptionStorage.candidatesSQL(rootCount: 2, position: $0, order: $1) }),
+        // Each walk and the source indexes its derived rows are found in without a table read.
+        // SQLite names the walk's index plain `INDEX`, not `COVERING INDEX`, because the order
+        // column is a generated one; the row a walk tests is still read from the index alone
+        // (8.9k pages for the owner-shaped catalog's whole embedding walk, against 253k).
+        struct Walk {
+            let name: String
+            let sql: @Sendable (String, String) -> String
+            let sources: [String]
+        }
+        let builders = [
+            Walk(name: "embeddings", sql: { SearchEmbeddingStorage.candidatesSQL(rootCount: 2, position: $0, order: $1) },
+                 sources: [SearchEmbeddingStorage.sourceIndexName]),
+            Walk(name: "texts", sql: { SearchTextStorage.candidatesSQL(rootCount: 2, position: $0, order: $1) },
+                 sources: [SearchTextStorage.sourceIndexName]),
+            Walk(name: "descriptions", sql: { PhotoDescriptionStorage.candidatesSQL(rootCount: 2, position: $0, order: $1) },
+                 sources: [PhotoDescriptionStorage.sourceIndexName, SearchTextStorage.sourceIndexName, SearchEmbeddingStorage.sourceIndexName]),
         ]
         try await dbQueue.read { db in
-            for (name, sql) in builders {
+            for walk in builders {
                 for phase in phases {
-                    let plan = try explainPlan(db, sql: sql(phase.position, phase.order), arguments: [1, 2] + phase.arguments + [16])
-                    #expect(plan.contains("a USING INDEX \(CandidateWalk.captureIndex)"), "\(name): \(plan)")
+                    let plan = try explainPlan(db, sql: walk.sql(phase.position, phase.order), arguments: [1, 2] + phase.arguments + [16])
+                    #expect(plan.contains("a USING INDEX \(CandidateWalk.captureIndex)"), "\(walk.name): \(plan)")
+                    for source in walk.sources {
+                        #expect(plan.contains("USING COVERING INDEX \(source)"), "\(walk.name): \(plan)")
+                    }
                     // A description's faces are joined in face order per still; the walk
                     // itself never sorts.
-                    #expect(!plan.contains("TEMP B-TREE FOR ORDER BY"), "\(name): \(plan)")
+                    #expect(!plan.contains("TEMP B-TREE FOR ORDER BY"), "\(walk.name): \(plan)")
                 }
             }
             for (name, sql) in [("renderSignatures", RenderSignatureSQL.candidatesSQL), ("metadataRefresh", CatalogStore.metadataRefreshCandidatesSQL)] {
+                let index = name == "renderSignatures" ? RenderSignatureSQL.owedIndexName : "sqlite_autoindex_media_asset_1"
                 let plan = try explainPlan(db, sql: sql, arguments: [1, "x", 16])
-                #expect(plan.contains("USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path>?)"), "\(name): \(plan)")
+                #expect(plan.contains("INDEX \(index) (library_root_id=? AND relative_path>?)"), "\(name): \(plan)")
                 #expect(!usesTemporarySort(plan), "\(name): \(plan)")
                 #expect(!plan.contains("library_root USING") && !plan.contains("SCAN library_root"), "\(name): \(plan)")
             }
+            // The search index's reconcile: every asset's stamp from the product stamps index,
+            // its embedding's source from the source index, the asset side outer.
+            let reconcile = try explainPlan(db, sql: SearchEmbeddingStorage.currentEmbeddingIDsSQL(rootCount: 2), arguments: [1, 2])
+            let loops = reconcile.split(separator: "\n").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "|`- ")) }
+            #expect(loops.first?.contains("a USING COVERING INDEX \(ProductStampSQL.indexName)") == true, "\(reconcile)")
+            #expect(loops.last?.contains("e USING COVERING INDEX \(SearchEmbeddingStorage.sourceIndexName)") == true, "\(reconcile)")
+        }
+    }
+
+    /// v65: the rows an account owes its source's images are walked from the partial index of
+    /// exactly those rows, so an account whose images are current reads none (it read every row
+    /// of the owner's 147,064, 10.7–12.2 s cold).
+    @Test func sourceProductCandidatesWalkTheirPartialIndex() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        let plan = try await dbQueue.read { db in
+            try explainPlan(db, sql: SourceProductsSQL.candidatesSQL, arguments: [1, "", 16])
+        }
+        #expect(plan.contains("USING INDEX \(SourceProductsSQL.owedIndexName) (library_root_id=? AND relative_path>?)"), "\(plan)")
+        #expect(!usesTemporarySort(plan), "\(plan)")
+    }
+
+    /// v65: no read takes the `sort_key` order, so its two indexes are gone, and the claim
+    /// indexes of the products and the library hold no row a source lists.
+    @Test func theSortKeyOrderIndexesAreGoneAndTheClaimIndexesHoldUnlistedRows() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        let names = try await dbQueue.read { db in
+            try Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index'"))
+        }
+        #expect(!names.contains("idx_media_asset_order_global"))
+        #expect(!names.contains("idx_media_asset_order_root"))
+        for claim in [EnrichmentClaim.products, .library] {
+            let query = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(rootIDs: [1], limit: 4, claim: claim))
+            #expect(query.sql.contains(EnrichmentClaimGateway.unlistedRows))
         }
     }
 

@@ -1842,6 +1842,65 @@ nonisolated enum CatalogSchema {
         return statements
     }
 
+    /// v65: every background owner's "what is owed" read is answered from an index that holds
+    /// what it compares, never from the wide rows (plan 0116 stage 1b;
+    /// `docs/research/2026-11-16-plan-0116-due-diligence.md`):
+    /// - `search_embedding`, `search_text` and `photo_description` each carry their key with
+    ///   the source a current row must name (`idx_*_source`), so "is this asset's derived row
+    ///   current" reads a few index entries, not a 3 KB embedding row, a reading or a
+    ///   description.
+    /// - `idx_media_asset_product_stamps` is the newest-first order with every column the
+    ///   embedding, text and description walks test a row by and build its stamp from
+    ///   (`ProductStampSQL.columns`), so those walks and the search index's reconcile read no
+    ///   asset row; only a returned description reads its edit.
+    /// - `idx_media_asset_render_signature_owed` holds exactly the stills whose signature does not
+    ///   name their thumbnail (`RenderSignatureSQL.owedPredicate`), and
+    ///   `idx_media_asset_source_products_owed` exactly the rows owed their source's thumbnail
+    ///   and preview (`SourceProductsSQL.owedPredicate`): a settled library reads none.
+    /// - The products and library claim indexes hold only rows no source lists
+    ///   (`source_item_id IS NULL`): those claims never read an Immich account's rows, which
+    ///   were nine in ten of their entries, written on every enrichment flush.
+    /// - `idx_media_asset_order_global` and `idx_media_asset_order_root`, the `sort_key` order
+    ///   no read takes, go.
+    static let owedWorkIndexesMigrationIdentifier = "v65_owed_work_indexes"
+
+    static var owedWorkIndexesStatements: [String] {
+        let claims: [(name: String, global: Bool, claim: EnrichmentClaim)] = [
+            (EnrichmentClaimGateway.broadGlobalIndexName, true, .products),
+            (EnrichmentClaimGateway.broadRootIndexName, false, .products),
+            (EnrichmentClaimGateway.libraryGlobalIndexName, true, .library),
+            (EnrichmentClaimGateway.libraryRootIndexName, false, .library),
+        ]
+        return [
+            "DROP INDEX idx_media_asset_order_global",
+            "DROP INDEX idx_media_asset_order_root",
+            "CREATE INDEX \(SearchEmbeddingStorage.sourceIndexName) ON search_embedding(library_root_id, relative_path, source)",
+            "CREATE INDEX \(SearchTextStorage.sourceIndexName) ON search_text(library_root_id, relative_path, source)",
+            "CREATE INDEX \(PhotoDescriptionStorage.sourceIndexName) ON photo_description(library_root_id, relative_path, source)",
+            """
+            CREATE INDEX \(ProductStampSQL.indexName)
+            ON media_asset(best_capture_local DESC, library_root_id, relative_path, \(ProductStampSQL.columns))
+            """,
+            """
+            CREATE INDEX \(RenderSignatureSQL.owedIndexName) ON media_asset(library_root_id, relative_path)
+            WHERE \(RenderSignatureSQL.owedPredicate)
+            """,
+            """
+            CREATE INDEX \(SourceProductsSQL.owedIndexName) ON media_asset(library_root_id, relative_path)
+            WHERE \(SourceProductsSQL.owedPredicate)
+            """,
+        ] + claims.flatMap { index in
+            [
+                "DROP INDEX \(index.name)",
+                claimIndex(
+                    index.name, global: index.global,
+                    predicate: "(\(EnrichmentClaimGateway.stalenessSQLPredicate(index.claim))) AND \(EnrichmentClaimGateway.unlistedRows)",
+                    orderColumn: "best_capture_local"
+                ),
+            ]
+        }
+    }
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

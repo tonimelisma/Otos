@@ -130,8 +130,11 @@ enum StallReproduction {
         "searchEmbeddingCandidates", "searchEmbeddingCandidates.drain",
         "searchTextCandidates",
         "photoDescriptionCandidates",
-        "renderSignatureCandidates", "renderSignatureCandidates.drain",
         "unnamedPlaceCells", "currentSearchTextIDs", "duplicateCopies", "peopleSnapshot", "mirrorProbes",
+        // A record is stale by its family's revision, which a MediaMetadata release moves, so
+        // no index can hold the stale ones without a migration per release (ADR 0039): the
+        // refresher's cursor walks its libraries' rows once per pass.
+        "metadataRefreshCandidates",
     ]
     static let scopeCount = 5
     /// The visible tiles a scope change reads the details of.

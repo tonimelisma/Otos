@@ -25,6 +25,10 @@ import Foundation
 /// guardrails or a refusal), a verdict for those facts that is not asked again until they
 /// change. A failed request writes nothing, so the still stays owed.
 nonisolated enum PhotoDescriptionStorage {
+    /// Each description's key with the source it names (v65): whether a still's description
+    /// is current is read from it.
+    static let sourceIndexName = "idx_photo_description_source"
+
     /// The faces of `row`'s still as its description names them: each face of the photo (not
     /// a video frame, not marked not a face) with its person's id, name, birthday and hidden
     /// flag, in face order. Read from the face table's key.
@@ -74,23 +78,25 @@ nonisolated enum PhotoDescriptionStorage {
       AND a.pending_trash_batch_unix_ms IS NULL
       AND NOT (\(PreviewFaceSQL.owesFaces))
       AND \(PreviewFaceSQL.previewEditIsKnown)
-      AND EXISTS (SELECT 1 FROM search_text AS t
+      AND EXISTS (SELECT 1 FROM search_text AS t INDEXED BY \(SearchTextStorage.sourceIndexName)
           WHERE t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path
             AND t.source = \(SearchTextStorage.currentSource("a")))
-      AND EXISTS (SELECT 1 FROM search_embedding AS e
+      AND EXISTS (SELECT 1 FROM search_embedding AS e INDEXED BY \(SearchEmbeddingStorage.sourceIndexName)
           WHERE e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
             AND e.source = \(SearchEmbeddingStorage.currentSource("a")))
     """
 
     /// A page of the describable stills owed a description in `rootCount` roots (bound in
-    /// order), from the newest-first walk's `position` in `order` (`CandidateWalk.capturePage`)
-    /// through the window's date order index; then the limit.
+    /// order), from the newest-first walk's `position` in `order` (`CandidateWalk.capturePage`):
+    /// each still is tested from the product stamps index and its readings and description from
+    /// their source indexes; only a still that is describable reads its faces and place, and
+    /// only a returned one its edit. Then the limit.
     static func candidatesSQL(rootCount: Int, position: String, order: String) -> String {
         """
         SELECT a.best_capture_local, a.library_root_id, a.relative_path, a.preview_path, a.edit_recipe_json,
                a.rendered_revision, \(currentSource("a")) AS source
         FROM media_asset AS a INDEXED BY \(CandidateWalk.captureIndex)
-        LEFT JOIN photo_description AS d
+        LEFT JOIN photo_description AS d INDEXED BY \(sourceIndexName)
             ON d.library_root_id = a.library_root_id AND d.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
           AND \(position)

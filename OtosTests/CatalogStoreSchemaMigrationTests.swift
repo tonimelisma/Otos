@@ -112,8 +112,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == ["1/2", "2/2"])
-        #expect(run.applied == 2)
+        #expect(steps.recorded == ["1/3", "2/3", "3/3"])
+        #expect(run.applied == 3)
         let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
         #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
 
@@ -147,8 +147,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == ["1/2", "2/2"])
-        #expect(run.applied == 2)
+        #expect(steps.recorded == ["1/3", "2/3", "3/3"])
+        #expect(run.applied == 3)
     }
 
     private final class StepLog: Sendable {
@@ -317,6 +317,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.captureDayMigrationIdentifier,
             CatalogSchema.locationIndexMigrationIdentifier,
             CatalogSchema.photoCopiesMigrationIdentifier,
+            CatalogSchema.owedWorkIndexesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -1733,7 +1734,8 @@ extension CatalogStoreSchemaMigrationTests {
                 )
             }
         }
-        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.unreadTextPreviewsMigrationIdentifier)
+        // Through every later migration too: the owed read names indexes v65 made.
+        try CatalogStore.migrator.migrate(queue)
         let (readings, owed) = try await queue.read { db in
             try (
                 String.fetchAll(db, sql: "SELECT relative_path FROM search_text ORDER BY relative_path"),

@@ -14,16 +14,19 @@ import Foundation
 /// (`RecognizedTextLine`), so search can match every line and the Info pane show the certain
 /// ones.
 nonisolated enum SearchTextStorage {
+    /// Each reading's key with the source it names (v65).
+    static let sourceIndexName = "idx_search_text_source"
+
     /// The source a text row must name to be current, for `row` (a table or alias).
     static func currentSource(_ row: String) -> String {
         "(\(row).preview_path || '|' || \(StoredThumbnailSQL.identity(row)) || '|t\(SearchTextReading.revision)')"
     }
 
     /// `FROM … WHERE …` over the stills owed a text reading in `rootCount` roots.
-    static func owedFrom(rootCount: Int, indexedBy index: String? = nil) -> String {
+    static func owedFrom(rootCount: Int) -> String {
         """
-        FROM media_asset AS a\(index.map { " INDEXED BY \($0)" } ?? "")
-        LEFT JOIN search_text AS t
+        FROM media_asset AS a INDEXED BY \(ProductStampSQL.indexName)
+        LEFT JOIN search_text AS t INDEXED BY \(sourceIndexName)
             ON t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
           AND a.preview_path IS NOT NULL
@@ -39,7 +42,7 @@ nonisolated enum SearchTextStorage {
         """
         SELECT a.best_capture_local, a.library_root_id, a.relative_path, a.preview_path,
                \(currentSource("a")) AS source
-        \(owedFrom(rootCount: rootCount, indexedBy: CandidateWalk.captureIndex))
+        \(owedFrom(rootCount: rootCount))
           AND \(position)
         \(order)
         LIMIT ?
