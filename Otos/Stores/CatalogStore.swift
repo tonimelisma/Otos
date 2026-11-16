@@ -1526,6 +1526,9 @@ extension CatalogStore {
         let pathsByRowID = roots.pathsByRowID
         let rowIDs = roots.rowIDSnapshot()
         let faceRootIDs = faceRootIDs(availableLibraryPaths)
+        // Stacks of every root read for faces, mounted or not: a stack does not change when its
+        // volume is unmounted, so availability never moves which file stands for a photo.
+        let allFaceRootIDs = Set(roots.values.filter(\.root.kind.readsFaces).map(\.rowID))
         let accountRowIDs = Set(roots.values.filter { $0.root.kind == .immichAccount }.map(\.rowID))
         let dbWriter = try database()
         let (snapshot, malformed) = try await dbWriter.readFreeingConnection { db -> (PeopleSnapshot, Set<FaceRowKey.Photo>) in
@@ -1543,8 +1546,9 @@ extension CatalogStore {
             // A Live Photo's movie is one item with its still (ADR 0041), whose faces are its.
             // Read by position (`PeopleFaceColumn`): a name lookup scans the row's columns,
             // and at 18 columns over every face it was most of the read (bench
-            // people.snapshot.10k, 2026-11-13).
-            for row in try Row.fetchAll(
+            // people.snapshot.10k, 2026-11-13). Stepped as a cursor, so one row is alive at a
+            // time: every face's fetched row held at once was 84k arrays of values at the peak.
+            let faceRows = try Row.fetchCursor(
                 db,
                 sql: """
                 SELECT \(PeopleFaceColumn.selectList)
@@ -1555,7 +1559,8 @@ extension CatalogStore {
                   AND NOT \(LivePhotoSQL.isPairedMotion("m"))
                 ORDER BY f.library_root_id, f.relative_path, f.face_index
                 """
-            ) {
+            )
+            while let row = try faceRows.next() {
                 let key = FaceRowKey(
                     rootID: row[PeopleFaceColumn.rootID.rawValue],
                     path: MediaRelativePath(rawValue: row[PeopleFaceColumn.path.rawValue]),
@@ -1625,7 +1630,7 @@ extension CatalogStore {
                 db,
                 sql: "SELECT id, name, birthday, is_hidden, is_favorite FROM person ORDER BY id"
             ).map(Self.person)
-            let stackRoots = pathsByRowID.filter { faceRootIDs.contains($0.key) }
+            let stackRoots = pathsByRowID.filter { allFaceRootIDs.contains($0.key) }
             let stacks = try PhotoStackSQL.build(rootPaths: stackRoots, db: db).stacks
             let photoOf = PeopleSnapshot.photos(stackKeys: stacks.keyOfMember, copies: copies)
             // A malformed row's photo is left out whole: its other faces were read before the
@@ -1633,7 +1638,7 @@ extension CatalogStore {
             let left = { (id: FaceID) in
                 rowIDs[id.asset.libraryRootPath].map { !malformed.contains(FaceRowKey.Photo(rootID: $0, path: id.asset.relativePath)) } ?? true
             }
-            let snapshot = try PeopleSnapshot(
+            var snapshot = try PeopleSnapshot(
                 faces: faces.filter { left($0.id) },
                 tiles: tiles.filter { left($0.key) },
                 people: people,
@@ -1643,6 +1648,8 @@ extension CatalogStore {
                 copies: PeopleSnapshot.ranked(copies),
                 unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db)
             )
+            // In the same transaction as the faces: what this snapshot could have named.
+            snapshot.vectorHorizon = try Int64.fetchOne(db, sql: "SELECT max(id) FROM face_embedding") ?? 0
             return (snapshot, malformed)
         }
         if !malformed.isEmpty {
@@ -1664,7 +1671,7 @@ extension CatalogStore {
         let keys = photos.compactMap { photo in
             rowIDs[photo.libraryRootPath].map { FaceRowKey.Photo(rootID: $0, path: photo.relativePath) }
         }
-        let (cleared, _) = try await writeInPages(keys, state: 0) { photo, _, db in
+        let (cleared, _) = try await writeInPages(keys, state: 0, announcing: [.faces, .detail]) { photo, _, db in
             try db.execute(
                 sql: """
                 UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL
@@ -1681,10 +1688,8 @@ extension CatalogStore {
                 "owedAgain": "\(cleared > 0)",
             ])
         }
-        // A cleared stamp makes the photo one not yet checked for faces: People's tally.
-        if cleared > 0 {
-            notifyCatalogChanged(.changed([.faces, .detail]))
-        }
+        // A cleared stamp makes the photo one not yet checked for faces: People's tally, rung
+        // by the pages that cleared one.
     }
 
     /// The vectors numbered above `vector`, in number order, at most `limit` of them: one short
@@ -1733,10 +1738,13 @@ extension CatalogStore {
     /// background owner writes many rows: one transaction for all of them held the writer for
     /// seconds while a Like queued behind it. Each item's write must stand on its own,
     /// re-checking in SQL what it depends on, since another write can land between two pages.
-    /// Returns the rows the pages wrote and the state after the last.
+    /// When any page wrote a row, `announcing` is rung once, as the last page commits or as a
+    /// later page fails: the pages that committed are catalog changes either way. Returns the
+    /// rows the pages wrote and the state after the last.
     func writeInPages<Item: Sendable, State: Sendable>(
         _ items: [Item],
         state: State,
+        announcing facts: CatalogChangedFacts,
         operation: String = #function,
         _ write: @escaping @Sendable (Item, inout State, Database) throws -> Int
     ) async throws -> (rows: Int, state: State) {
@@ -1744,6 +1752,11 @@ extension CatalogStore {
         var rows = 0
         var state = state
         var start = 0
+        defer {
+            if rows > 0 {
+                notifyCatalogChanged(.changed(facts))
+            }
+        }
         while start < items.count {
             let page = Array(items[start ..< min(start + Self.backgroundWritePage, items.count)])
             let pageState = state
@@ -1913,19 +1926,16 @@ extension CatalogStore {
     /// One write of an assignment plan, in the order `applyAssignment` writes them.
     private enum AssignmentWrite: Sendable {
         case lapse(FaceRowKey, PersonID)
-        case createPerson(Int)
         case seed(Int, FaceRowKey)
-        case keepIfSeeded(Int)
         case guess(FaceRowKey, FaceAssignmentResult.Person?)
         case likeness(FaceRowKey, Float?)
         case emptied(PersonID)
     }
 
     /// What the pages of one plan carry from one to the next: each person the plan created,
-    /// by its place in `newPeople`, and how many of its seeds were written.
+    /// by its place in `newPeople`.
     private struct AssignmentPages: Sendable {
         var created: [Int: PersonID] = [:]
-        var seeded: [Int: Int] = [:]
     }
 
     /// Writes what one assignment changed (ADR 0047), a page at a time (`writeInPages`): the
@@ -1955,11 +1965,9 @@ extension CatalogStore {
             add(face) { .lapse($0, person) }
         }
         for (index, seeds) in plan.newPeople.enumerated() {
-            writes.append(.createPerson(index))
             for face in seeds {
                 add(face) { .seed(index, $0) }
             }
-            writes.append(.keepIfSeeded(index))
         }
         for guess in plan.guesses {
             add(guess.face) { .guess($0, guess.person) }
@@ -1970,11 +1978,8 @@ extension CatalogStore {
         writes += plan.emptied.map(AssignmentWrite.emptied)
         let pageCount = (writes.count + Self.backgroundWritePage - 1) / Self.backgroundWritePage
         let skippedFaces = skipped
-        let (written, _) = try await writeInPages(writes, state: AssignmentPages()) { write, pages, db in
+        let (written, _) = try await writeInPages(writes, state: AssignmentPages(), announcing: .faces) { write, pages, db in
             try Self.apply(write, pages: &pages, db: db)
-        }
-        if written > 0 {
-            notifyCatalogChanged(.changed(.faces))
         }
         OtosLog.catalog.debugOperation("people.applyAssignment", phase: "applied", fields: [
             "guesses": "\(plan.guesses.count)", "newPeople": "\(plan.newPeople.count)",
@@ -2003,11 +2008,11 @@ extension CatalogStore {
                 ]
             )
             return db.changesCount
-        case let .createPerson(index):
-            pages.created[index] = try insertPerson(name: nil, birthday: nil, db: db)
-            return 0
         case let .seed(index, key):
-            guard let person = pages.created[index] else { return 0 }
+            // A new person is made in the transaction of its first seed that lands, and
+            // unmade there if it does not, so no page ever leaves a person with no face.
+            let made = pages.created[index] == nil
+            let person = try pages.created[index] ?? insertPerson(name: nil, birthday: nil, db: db)
             try db.execute(
                 sql: """
                 UPDATE face SET person_id = ?, assignment = ?, is_key_photo = 0
@@ -2015,14 +2020,15 @@ extension CatalogStore {
                 """,
                 arguments: [person.rawValue, FaceAssignmentColumn.seed.rawValue, key.rootID, key.path.rawValue, key.index]
             )
-            pages.seeded[index, default: 0] += db.changesCount
-            return db.changesCount
-        case let .keepIfSeeded(index):
-            guard let person = pages.created[index] else { return 0 }
-            guard pages.seeded[index, default: 0] == 0 else { return 1 }
-            pages.created[index] = nil
-            try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [person.rawValue])
-            return 0
+            let seeded = db.changesCount
+            guard seeded > 0 else {
+                if made {
+                    try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [person.rawValue])
+                }
+                return 0
+            }
+            pages.created[index] = person
+            return seeded + (made ? 1 : 0)
         case let .guess(key, target):
             let person: PersonID?
             switch target {

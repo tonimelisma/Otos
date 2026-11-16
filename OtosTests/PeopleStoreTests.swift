@@ -540,10 +540,9 @@ struct PeopleStoreTests {
         let people = PeopleAssignment(store: store, builder: nil)
         let relaunched = try await people.settle(libraries: libraries)
         #expect(relaunched.person(sam)?.media.total == 4)
-        #expect(vectorReads() == 0, "a settled catalog reads no vector")
 
         let candidates = await people.candidates(for: [library.id("0.jpg")])
-        #expect(candidates.count == 1)
+        #expect(candidates?.count == 1)
         // The ranking's one page, and none before it: the settled pass read no vector.
         let afterRanking = try await vectorReads(reaching: 1)
         #expect(afterRanking == 1)
@@ -654,6 +653,45 @@ struct PeopleStoreTests {
         try Data(line.utf8).write(to: url)
         try writer.close()
         await store.shutdown()
+    }
+
+    /// A vector written after a snapshot was read is a newer reading of some face, which the next
+    /// snapshot names: forgetting the vectors a snapshot does not name keeps every vector above
+    /// what that snapshot could see, so the newer reading is never dropped and never re-read.
+    @Test func aVectorWrittenAfterTheSnapshotIsKept() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
+        let snapshot = try await library.store.peopleSnapshot()
+        #expect(snapshot.vectorHorizon == snapshot.faces.first?.vector)
+        // A reading lands between the snapshot's read and the vectors' read.
+        try await library.readFaces([library.result(for: "b.jpg", faces: [Self.face(x: 0.3)])])
+        var vectors = FaceVectors()
+        try await vectors.add(library.store.faceEmbeddings(after: 0, limit: FaceVectors.pageSize))
+        #expect(vectors.count == 2)
+        vectors.keep(snapshot.vectors, through: snapshot.vectorHorizon)
+        #expect(vectors.count == 2, "the newer reading stays")
+        let next = try await library.store.peopleSnapshot()
+        #expect(next.faces.allSatisfy { vectors.vector($0.vector) != nil })
+        await library.store.shutdown()
+    }
+
+    /// A new person is made only with a seed that lands: a plan whose seeds the user has
+    /// since taken leaves no person behind, in any page.
+    @Test func aNewPersonIsMadeOnlyWithASeed() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.readFaces([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
+        ])
+        let a = FaceID(asset: library.id("a.jpg"), index: 0)
+        let b = FaceID(asset: library.id("b.jpg"), index: 0)
+        _ = try await library.store.perform(.moveToNewPerson([a], name: "Sam"))
+        _ = try await library.store.perform(.moveToNewPerson([b], name: "Ian"))
+        var plan = FaceAssignmentPlan()
+        plan.newPeople = [[a, b]]
+        #expect(try await library.store.applyAssignment(plan) == 0)
+        #expect(try await library.store.peopleSnapshot().people.map(\.name) == ["Sam", "Ian"])
+        await library.store.shutdown()
     }
 
     /// What a metadata write wakes: a date or render of a photo that holds no face wakes no

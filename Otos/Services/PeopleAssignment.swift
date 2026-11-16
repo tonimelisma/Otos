@@ -143,8 +143,9 @@ actor PeopleAssignment {
 
     /// The people each face of `photos` could be, from the last pass's read: a hidden
     /// person's face is not ranked, and a hidden person is never a candidate. The vectors owed
-    /// are read first; a failed read ranks nothing, and is logged.
-    func candidates(for photos: [MediaAssetID]) async -> [FaceID: [FaceCandidate]] {
+    /// are read first; nil when they cannot be read (logged), which is no ranking, not an
+    /// empty one.
+    func candidates(for photos: [MediaAssetID]) async -> [FaceID: [FaceCandidate]]? {
         guard let read = lastRead else {
             return [:]
         }
@@ -154,7 +155,7 @@ actor PeopleAssignment {
             OtosLog.catalog.errorOperation("people.candidates", phase: "vectorsFailed", fields: [
                 "error": String(describing: error),
             ])
-            return [:]
+            return nil
         }
         // The read and the state may have moved while the vectors were read: rank what is
         // held now, from values taken in this synchronous step.
@@ -301,7 +302,7 @@ actor PeopleAssignment {
                 break
             }
         }
-        vectors.keep(read.vectors)
+        vectors.keep(read.vectors, through: read.vectorHorizon)
         guard !malformed.isEmpty else { return }
         let bad = Set(malformed)
         try await store.oweFacesAgain(Set(read.faces.filter { bad.contains($0.vector) }.map(\.id.asset)))
@@ -364,7 +365,10 @@ extension PeopleAssignment {
         while true {
             requested &+= 1
             let startedFrom = requested
-            let assigned = try await galleryThenAssignment(libraries: libraries, startedFrom: startedFrom, tallyStartedFrom: tallyRequested)
+            let tally = tallyRequested
+            let assigned = try await admission.run(.people) {
+                try await galleryThenAssignment(libraries: libraries, startedFrom: startedFrom, tallyStartedFrom: tally)
+            }
             covered = startedFrom
             if !assigned, let published {
                 return published
@@ -623,13 +627,15 @@ nonisolated struct FaceVectors: Sendable {
         chunks[chunk].append(contentsOf: face.values)
     }
 
-    /// Keeps only `vectors`, the ones stored faces name.
-    mutating func keep(_ vectors: Set<Int64>) {
-        let gone = places.keys.filter { !vectors.contains($0) }
+    /// Keeps only `vectors`, the ones a snapshot's faces name, among the vectors numbered up to
+    /// `horizon`, the largest number that snapshot could see: a vector written after it is
+    /// some face's newer reading, which a later snapshot names, so it stays.
+    mutating func keep(_ vectors: Set<Int64>, through horizon: Int64) {
+        let gone = places.keys.filter { $0 <= horizon && !vectors.contains($0) }
         for vector in gone {
             places[vector] = nil
         }
-        malformed.formIntersection(vectors)
+        malformed = malformed.filter { $0 > horizon || vectors.contains($0) }
         emptyRows += gone.count
         guard emptyRows * 4 > places.count + emptyRows else { return }
         var compacted = FaceVectors()

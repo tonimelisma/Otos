@@ -85,6 +85,9 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// Every face of a photo still in the catalog and out of the Trash, in reading order;
     /// none the user marked as not a face.
     private(set) var faces: [Face]
+    /// The largest vector number in the catalog when the snapshot was read: every vector at or
+    /// below it that no face here names is gone; one above it is a newer reading.
+    var vectorHorizon: Int64 = 0
     /// Each face's tile; none in a snapshot kept after its gallery was built (`withoutTiles`).
     private(set) var tiles: [FaceID: FaceTile]
     /// In creation order.

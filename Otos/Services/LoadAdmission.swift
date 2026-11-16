@@ -196,13 +196,27 @@ final nonisolated class LoadAdmission: Sendable {
         let request = try await admit(load)
         let started = ContinuousClock.now
         defer {
+            let relief = Self.returnFreedPages()
             perform(.release(request))
             OtosLog.performance.noticeOperation("load.admission", phase: "released", fields: [
                 "load": load.rawValue, "request": "\(request)",
                 "ms": "\(DiagnosticsTiming.milliseconds(since: started))",
+                "returnedMB": "\(relief.returned / 1_048_576)",
+                "footprintBeforeMB": "\(relief.before / 1_048_576)", "footprintAfterMB": "\(relief.after / 1_048_576)",
             ])
         }
         return try await body()
+    }
+
+    /// Returns the pages malloc holds freed to the system, as every admitted load ends: a load
+    /// frees hundreds of megabytes of rows, vectors and scratch at once, and malloc keeps freed
+    /// pages dirty in its zones for reuse, where they still count in the process's footprint
+    /// (measured on the owner's library: 0.4 to 1.2 GB of empty small-zone pages after People's
+    /// passes). Returns the bytes released and the footprint before and after.
+    static func returnFreedPages() -> (returned: Int, before: UInt64, after: UInt64) {
+        let before = ProcessResourceSample.current().footprintBytes
+        let returned = malloc_zone_pressure_relief(nil, 0)
+        return (returned, before, ProcessResourceSample.current().footprintBytes)
     }
 
     private func admit(_ load: BackgroundLoad) async throws -> LoadAdmissionMachine.Request {

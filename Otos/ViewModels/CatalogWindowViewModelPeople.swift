@@ -974,7 +974,8 @@ extension CatalogWindowViewModel {
         let projection = catalogProjection
         faceCandidatesTask = Task { [weak self] in
             let ranked = await projection.faceCandidates(for: photos)
-            guard !Task.isCancelled, let self, targetIDs(.current) == photos else { return }
+            // A ranking that failed is no ranking: nothing is shown in its place (ADR 0032).
+            guard !Task.isCancelled, let self, targetIDs(.current) == photos, let ranked else { return }
             faceCandidates = FaceCandidates(photos: photos, candidates: ranked)
             faceCandidatesTask = nil
         }

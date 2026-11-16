@@ -681,8 +681,8 @@ extension CatalogProjection {
 
 extension CatalogProjection {
     /// The people each face of `photos` could be, from the last People published
-    /// (ADR 0047); none before People is first published.
-    func faceCandidates(for photos: [MediaAssetID]) async -> [FaceID: [FaceCandidate]] {
+    /// (ADR 0047); none before People is first published; nil when they could not be ranked.
+    func faceCandidates(for photos: [MediaAssetID]) async -> [FaceID: [FaceCandidate]]? {
         guard let peopleAssignment else {
             return [:]
         }
