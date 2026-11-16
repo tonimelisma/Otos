@@ -54,6 +54,41 @@ struct SmokeTourTests {
         #expect(SmokeTour.Configuration(environment: [:]) == nil)
     }
 
+    /// A tour reads the user's preferences and writes none: its domain is session-only over
+    /// the user's own, and every other launch uses the user's own.
+    @Test func aTourSessionsPreferencesAreSessionOnly() {
+        #expect(PreferencesDomain.configured(environment: [SmokeTour.tourVariable: "1"]) == .sessionOnly(.standard))
+        #expect(PreferencesDomain.configured(environment: [:]) == .standard)
+        #expect(PreferencesDomain.configured(environment: [SmokeTour.tourVariable: "0"]) == .standard)
+    }
+
+    /// A session-only store reads through to its base until it writes or removes a key, and
+    /// never writes the base.
+    @Test func aSessionOnlyStoreReadsTheBaseAndWritesOnlyMemory() throws {
+        let base = PreferencesDomain.suite(UUID().uuidString)
+        let stored = try #require(base.makeDefaults() as? InMemorySuitePreferenceStore)
+        stored.set("owner", forKey: "kept")
+        stored.set(true, forKey: "removed")
+        stored.set(["en", "fi"], forKey: "languages")
+        let before = stored.serialized()
+        let session = PreferencesDomain.sessionOnly(base).makeDefaults()
+
+        #expect(session.string(forKey: "kept") == "owner")
+        #expect(session.object(forKey: "languages") as? [String] == ["en", "fi"])
+        session.set("tour", forKey: "kept")
+        session.removeObject(forKey: "removed")
+        session.set(["et"], forKey: "languages")
+        session.set(7, forKey: "new")
+
+        #expect(session.string(forKey: "kept") == "tour")
+        #expect(session.object(forKey: "removed") == nil)
+        #expect(!session.bool(forKey: "removed"))
+        #expect(session.object(forKey: "languages") as? [String] == ["et"])
+        #expect(session.integer(forKey: "new") == 7)
+        #expect(PreferencesDomain.sessionOnly(base).makeDefaults() === session, "one store per base for the process")
+        #expect(stored.serialized() == before)
+    }
+
     /// A plan visits the scopes the sidebar shows, returns to All Media, and leaves out the
     /// scopes of owners left off; a short tour stops after the sidebar.
     @Test func thePlanFollowsTheSidebarAndTheOwnersStarted() throws {

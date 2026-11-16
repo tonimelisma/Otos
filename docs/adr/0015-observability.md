@@ -97,7 +97,9 @@ real backlog. Three instruments see those:
   compare two, show Info, search, filter by a kind the scope's published options offer,
   sort and sit idle, each through the gesture's own intent and each waiting on the fact
   the app reports (a paint, the visible thumbnails, the loupe's image, a query's state),
-  then put the window back and quit. A scroll ends when every visible tile shows what the
+  then put the window back and quit. A tour writes no preference: its session's domain is
+  session-only (ADR 0020), so a tour ended at any point leaves the owner's saved place and
+  zoom as they were. A scroll ends when every visible tile shows what the
   catalog holds for it now (its detail read, and its thumbnail decoded or none rendered
   yet), on a report whose visible set holds the step's target; the report counts the
   tiles with no thumbnail yet (`withoutThumbnail`), so a render backlog is a number, not a
@@ -127,8 +129,12 @@ real backlog. Three instruments see those:
   process back in reads apart from a wait of Otos's own. The mark never changes a verdict.
   The tour's restore of its launch scope after the idle window is a `return after idle`
   (`click.returnAfterIdleMs`), reported apart so `click.returnMs` holds warm returns only.
+  The memory section says when the peak footprint was reached (between two samples) and
+  which tour step had just finished and which was running then.
   `--compare` reads a field an older saved scorecard lacks as unknown. `--tour` runs a tour and saves the scorecard
-  under `build/scorecards/`; `--optimized` with `--dev` first builds the dev app with the
+  under `build/scorecards/`. It passes the tour its idle length and step deadline, and
+  calls the tour stuck only after a silence longer than the longer of the two plus a
+  minute, so a long idle is never cut. `--optimized` with `--dev` first builds the dev app with the
   installed app's compiler settings (ADR 0030) into a DerivedData of its own, so a sandbox
   tour times the code the owner runs; `--ablation-matrix` tours with every owner off, each alone
   and none off, in one table. It is a report: it never fails a run and is not part of

@@ -393,6 +393,50 @@ class ScorecardTests(unittest.TestCase):
         self.assertIn("allMedia#1", lines[0])
         self.assertIn("2300", lines[1])
 
+    def test_a_long_idle_is_waited_out_and_the_limit_follows_the_configuration(self):
+        # A 420 s idle with a 600 s step deadline: the step's wait is the longest silence.
+        self.assertEqual(scorecard.tour_silence_limit(420, 600), 600 + scorecard.TOUR_SILENCE_MARGIN_SECONDS)
+        # A 420 s idle with the default deadline: the idle is, and it is never cut.
+        self.assertGreater(scorecard.tour_silence_limit(420, 120), 420)
+        self.assertGreater(scorecard.tour_silence_limit(0, 120), 120)
+        out = io.StringIO()
+        stdout, sys.stdout = sys.stdout, out
+        try:
+            scorecard.main(["--tour-silence-limit", "420", "600"])
+        finally:
+            sys.stdout = stdout
+        self.assertEqual(out.getvalue().strip(), str(600 + scorecard.TOUR_SILENCE_MARGIN_SECONDS))
+
+    def test_memory_says_when_the_peak_came_and_which_step_ran_then(self):
+        def memory_sample(second, peak, event="tourStep"):
+            return line(second, f"op=process.memory phase=sample event={event} footprintMB={peak - 10} peakFootprintMB={peak} freeMB=500")
+
+        tour = SESSION[:-1] + [
+            line(42.0, "op=tour phase=step index=2 kind=search label=searchMany outcome=reported ms=900 items=10 resultMs=900"),
+            memory_sample(42.1, 960),
+            line(44.0, "op=tour phase=step index=3 kind=sort label=name outcome=reported ms=1800 items=4900 resultMs=1800"),
+            memory_sample(44.1, 1200),
+            memory_sample(46.0, 1200, event="tourFinish"),
+            line(46.0, "op=tour phase=finish outcome=finished"),
+        ]
+        report, _, text = run(tour)
+        peak = report["memory"]["peak"]
+        self.assertEqual(peak, {
+            "footprintMB": 1200, "atMs": 44100, "afterMs": 42100, "sample": "tourStep",
+            "afterStep": "2:search/searchMany", "duringStep": "3:sort/name",
+        })
+        self.assertEqual(report["memory"]["peakFootprintMB"], 1200)
+        self.assertIn("peak 1200 MB reached by 44100 ms (sample tourStep), after 42100 ms; "
+                      "tour step finished before it 2:search/searchMany, running 3:sort/name", text)
+        # Saved and read back as JSON like any other field.
+        self.assertEqual(json.loads(json.dumps(report, default=str))["memory"]["peak"], peak)
+
+    def test_a_peak_before_the_tour_names_the_first_step_as_running(self):
+        report, _, _ = run(SESSION)
+        peak = report["memory"]["peak"]
+        self.assertEqual((peak["atMs"], peak["afterMs"], peak["sample"]), (8000, 1300, "memoryPressure"))
+        self.assertEqual((peak["afterStep"], peak["duringStep"]), (None, "1:scope/allMedia"))
+
 
 if __name__ == "__main__":
     result = unittest.main(exit=False, verbosity=0).result

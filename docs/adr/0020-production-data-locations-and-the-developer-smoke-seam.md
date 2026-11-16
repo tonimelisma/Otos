@@ -62,6 +62,22 @@ never a timer. It reads no screen and needs no permission, so a design pass (lig
 dark, grayscale) is agent-owned; a Metal-backed layer such as map tiles may be blank
 in it, which the run's log states. `#if DEBUG` as well.
 
+**A read-only tour reads the user's preferences and writes none.** The preference domain
+is the one owner of everything Otos persists in `UserDefaults` (the browser place it saves
+at quit, the grid's and strip's zoom, search languages, import and export settings), and a
+tour session (`SmokeTour`, `OTOS_TOUR=1`) runs on `PreferencesDomain.sessionOnly(.standard)`,
+chosen once at the entry point by `PreferencesDomain.configured`. A session-only store reads
+the user's values until the session writes or removes a key, and holds every write in the
+process's memory. So the tour's filter, sort, scope, search, Compare, inspector and zoom
+are the visible session's alone: a tour cut by its script, crashed, or quit before its own
+restore step leaves the stored place and settings byte for byte as they were. The tour's
+restore step still puts the window back, for the session and its timed return. Nothing a
+tour step does is persisted outside the domain: the inspector, search text and Compare
+are not stored, and a map position is stored only as a `mapArea` scope in the browser
+place. Two writers sit outside it and no tour step reaches them: AppKit's own window and
+split-view autosave, and the Info and Edit panes' folded sections (`@AppStorage`), which
+change only when the user folds a section.
+
 The environment variable was renamed from its previous spelling rather than reused,
 so an exported value left over in a shell cannot silently keep the old
 "register this path" meaning under the new read-only one.

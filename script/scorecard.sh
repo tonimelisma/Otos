@@ -161,9 +161,19 @@ run_one_tour() {
     echo "Quit it first; the tour never quits an app it did not launch." >&2
     exit 1
   fi
-  local env_args=(OTOS_TOUR=1 "OTOS_TOUR_ABLATE=$ablate" "OTOS_TOUR_STEPS=$steps")
-  [[ -n "$IDLE" ]] && env_args+=("OTOS_TOUR_IDLE_SECONDS=$IDLE")
-  [[ -n "$DEADLINE" ]] && env_args+=("OTOS_TOUR_STEP_DEADLINE_SECONDS=$DEADLINE")
+  # The idle length and step deadline are always passed, so the silence limit below follows
+  # from exactly what this tour was asked to do. Unset, they are the app's own defaults
+  # (`SmokeTour.Configuration`): a 60 s idle for the full tour, none for the scopes, and a
+  # 120 s deadline a step.
+  local idle="$IDLE" deadline="${DEADLINE:-120}"
+  if [[ -z "$idle" ]]; then
+    idle=0
+    [[ "$steps" == full ]] && idle=60
+  fi
+  local silence_limit
+  silence_limit="$(/usr/bin/python3 -I "$PARSER" --tour-silence-limit "$idle" "$deadline")"
+  local env_args=(OTOS_TOUR=1 "OTOS_TOUR_ABLATE=$ablate" "OTOS_TOUR_STEPS=$steps"
+    "OTOS_TOUR_IDLE_SECONDS=$idle" "OTOS_TOUR_STEP_DEADLINE_SECONDS=$deadline")
   [[ -n "$HOME_DIR" ]] && env_args+=("CFFIXED_USER_HOME=$HOME_DIR" "HOME=$HOME_DIR")
   # The dev build's saved window state is the account's, not the sandbox home's (AppKit keeps
   # it per bundle id through its restoration service), and every worktree's dev build shares
@@ -177,19 +187,20 @@ run_one_tour() {
   otos_log_stream_open "process == \"$APP_NAME\" AND subsystem == \"$SUBSYSTEM\" AND eventMessage BEGINSWITH \"op=tour \""
   env "${env_args[@]}" "$app/Contents/MacOS/$APP_NAME" ${app_args[@]+"${app_args[@]}"} >/dev/null 2>&1 3<&- &
   TOUR_PID="$!"
-  echo "op=scorecard.tour phase=launched pid=$TOUR_PID ablate=$ablate steps=$steps app=$app" >&2
+  echo "op=scorecard.tour phase=launched pid=$TOUR_PID ablate=$ablate steps=$steps idleSeconds=$idle deadlineSeconds=$deadline silenceLimitSeconds=$silence_limit app=$app" >&2
   local line="" quiet=0 ended=0
   # The tour reports each step and its finish, and the process's exit ends the wait too: the
   # stream is read in 10 s slices only so an exit is noticed between them. A stream quiet for
-  # longer than any step's deadline means the tour is stuck. time: deadline
+  # longer than the tour's longest silent stretch (its idle or a step's deadline, plus a
+  # margin: `tour_silence_limit` in scorecard.py) means the tour is stuck. time: deadline
   # Only this run's process: another Otos touring at the same time (another worktree's dev
   # build, or the installed app) logs the same lines under its own pid (`Otos[pid:tid]`).
   local own_tour_line="\\[${TOUR_PID}:[^]]*\\].*op=tour (phase=(finish|step|config|failed|plan|restored))"
   while kill -0 "$TOUR_PID" 2>/dev/null; do
     if ! line="$(otos_log_stream_await "$own_tour_line" 10)"; then
       quiet=$((quiet + 10))
-      if (( quiet >= 300 )); then
-        echo "op=scorecard.tour phase=silent pid=$TOUR_PID — no tour line for 300 s (if none came at all, the window never attached: the tour starts with it)" >&2
+      if (( quiet >= silence_limit )); then
+        echo "op=scorecard.tour phase=silent pid=$TOUR_PID silenceLimitSeconds=$silence_limit — no tour line for $quiet s (if none came at all, the window never attached: the tour starts with it)" >&2
         break
       fi
       continue

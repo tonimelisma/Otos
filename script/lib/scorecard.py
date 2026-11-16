@@ -476,6 +476,7 @@ def memory(start, events, tour_steps, click_list):
     return {
         "samples": len(samples),
         "peakFootprintMB": max((s.num("peakFootprintMB", 0) for s in samples), default=None),
+        "peak": peak_moment(start, samples, tour_steps),
         "lastFootprintMB": samples[-1].num("footprintMB") if samples else None,
         "minFreeMB": min((s.num("freeMB") for s in samples if s.num("freeMB") is not None), default=None),
         "maxSwapUsedMB": max((s.num("swapUsedMB") for s in samples if s.num("swapUsedMB") is not None), default=None),
@@ -490,6 +491,48 @@ def memory(start, events, tour_steps, click_list):
         "peopleAppliedAtMs": ms_since(start.time, people) if people else None,
     }
 
+
+def step_name(step):
+    return f"{step.get('index')}:{step.get('kind')}/{step.get('label')}"
+
+
+def peak_moment(start, samples, tour_steps):
+    """When the session's peak footprint was reached. Each sample carries the process's peak
+    so far, so the peak was reached after the sample before the first one that reports it
+    (`afterMs`) and by that one (`atMs`). A tour step's line is written when the step ends:
+    the last step line at or before `afterMs` is the step finished before the peak
+    (`afterStep`), and the first one after it is the step that was running when the peak was
+    reached (`duringStep`), or None when the peak came after the last step."""
+    peaks = [(s, s.num("peakFootprintMB")) for s in samples if s.num("peakFootprintMB") is not None]
+    if not peaks:
+        return None
+    top = max(value for _, value in peaks)
+    index = next(i for i, (_, value) in enumerate(peaks) if value == top)
+    sample = peaks[index][0]
+    previous = peaks[index - 1][0] if index > 0 else None
+    bound = (previous or sample).time.isoformat()
+    finished = [s for s in tour_steps if s["at"] <= bound][-1:]
+    running = [s for s in tour_steps if s["at"] > bound][:1]
+    return {
+        "footprintMB": top,
+        "atMs": ms_since(start.time, sample),
+        "afterMs": ms_since(start.time, previous) if previous else None,
+        "sample": sample.fields.get("event"),
+        "afterStep": step_name(finished[0]) if finished else None,
+        "duringStep": step_name(running[0]) if running else None,
+    }
+
+
+def tour_silence_limit(idle_seconds, deadline_seconds):
+    """How long a tour may go without a line before the script calls it stuck, in seconds.
+    The longest stretch a working tour is silent is its idle step (`idle_seconds`, one sleep)
+    or one step's wait for its fact (at most `deadline_seconds`, then the step reports
+    `outcome=deadline`), whichever is longer; the margin covers the untimed reads between a
+    step's waits and the launch before the first line. time: deadline"""
+    return max(int(idle_seconds), int(deadline_seconds)) + TOUR_SILENCE_MARGIN_SECONDS
+
+
+TOUR_SILENCE_MARGIN_SECONDS = 60
 
 USAGE_KEYS = ("cpuMs", "diskReadMB", "diskWrittenMB", "pageIns")
 
@@ -757,6 +800,10 @@ def print_report(report, rows, out):
       f"{fmt(mem['searchMappedMB'])} MB mapped); People applied at {fmt(mem['peopleAppliedAtMs'])} ms\n")
     w(f"  known holders: search vectors {fmt(mem['searchMappedMB'])} MB mapped (clean, not footprint), grid tile images max {fmt(mem['tileCacheMaxMB'])} MB, "
       f"SQLite heap max {fmt(mem['sqliteMaxMB'])} MB\n")
+    peak = mem.get("peak")
+    if peak:
+        w(f"    peak {fmt(peak['footprintMB'])} MB reached by {peak['atMs']} ms (sample {fmt(peak['sample'])}), after "
+          f"{fmt(peak['afterMs'])} ms; tour step finished before it {fmt(peak['afterStep'])}, running {fmt(peak['duringStep'])}\n")
     for name, value in mem["milestones"].items():
         w(f"    {name:20} at {value['atMs']:>7} ms  {fmt(value['footprintMB'])} MB\n")
     for event in mem["pressure"]:
@@ -850,7 +897,12 @@ def main(argv=None):
     parser.add_argument("--compare", help="a saved scorecard JSON to print deltas against")
     parser.add_argument("--matrix", nargs="+", help="saved tour scorecards to print as one ablation table")
     parser.add_argument("--labels", help="the matrix rows' names, |-separated")
+    parser.add_argument("--tour-silence-limit", nargs=2, type=int, metavar=("IDLE", "DEADLINE"),
+                        help="print the seconds without a tour line after which a tour with this idle and step deadline is stuck")
     args = parser.parse_args(argv)
+    if args.tour_silence_limit:
+        print(tour_silence_limit(*args.tour_silence_limit))
+        return 0
     if args.matrix:
         saved = []
         for path in args.matrix:

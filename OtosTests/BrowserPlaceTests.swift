@@ -473,6 +473,87 @@ struct BrowserPlaceTests {
 
         #expect(BrowserPlace.load(from: domain.makeDefaults(), today: Self.today) == place)
     }
+
+    // MARK: - Tour session
+
+    /// A tour session's preferences are session-only (ADR 0020): its filter, sort, search,
+    /// selection, Compare, inspector, zoom and scope are the session's alone, and what the
+    /// user has stored is byte for byte as it was — whether the tour puts the window back
+    /// before quitting or is ended before its restore step.
+    @Test(arguments: [true, false])
+    func aTourSessionLeavesTheStoredPreferencesByteIdentical(restoresFirst: Bool) throws {
+        let base = PreferencesDomain.suite(UUID().uuidString)
+        let stored = try #require(base.makeDefaults() as? InMemorySuitePreferenceStore)
+        let ownersPlace = BrowserPlace(
+            descriptor: CatalogQueryDescriptor(scope: .library(pictures)),
+            viewMode: .grid,
+            focus: nil,
+            selection: []
+        )
+        ownersPlace.save(to: stored)
+        stored.set(5, forKey: CatalogWindowViewModel.gridColumnCountDefaultsKey)
+        stored.set(126.5, forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey)
+        let before = stored.serialized()
+
+        let session = PreferencesDomain.sessionOnly(base)
+        let model = makeViewModel(session)
+        let ids = makeIDs(9)
+        model.applyState(loadedState(descriptor: ownersPlace.descriptor, ids: ids))
+        #expect(model.pendingPlaceRestore == nil, "the stored place was restored, so quit saves")
+        #expect(model.gridColumnCount == 5, "the session reads the user's settings")
+
+        tourIntents(on: model, ids: ids)
+        if restoresFirst {
+            model.setInspectorPane(nil)
+            model.setQueryDescriptor(ownersPlace.descriptor)
+            model.setSearchText("")
+        }
+        // Quit: the one moment the place is written.
+        model.persistBrowserPlace()
+
+        #expect(stored.serialized() == before)
+        // The session saw its own writes.
+        let sessionStore = session.makeDefaults()
+        #expect(sessionStore.integer(forKey: CatalogWindowViewModel.gridColumnCountDefaultsKey) == 9)
+        let saved = try #require(BrowserPlace.load(from: sessionStore, today: Self.today))
+        #expect(saved.descriptor == model.queryDescriptor)
+        if !restoresFirst {
+            #expect(saved.descriptor.filter.kinds == [.video])
+            #expect(saved.descriptor.sort == .filenameAscending)
+        }
+    }
+
+    /// The control: the same intents in an ordinary session write the stored place and zoom,
+    /// so the tour test above holds only because its domain is session-only.
+    @Test func anOrdinarySessionWritesWhatTheTourDoesNot() {
+        let domain = PreferencesDomain.suite(UUID().uuidString)
+        let stored = domain.makeDefaults()
+        let model = makeViewModel(domain)
+        let ids = makeIDs(9)
+        model.applyState(loadedState(descriptor: CatalogQueryDescriptor(scope: .library(pictures)), ids: ids))
+
+        tourIntents(on: model, ids: ids)
+        model.persistBrowserPlace()
+
+        #expect(stored.integer(forKey: CatalogWindowViewModel.gridColumnCountDefaultsKey) == 9)
+        #expect(BrowserPlace.load(from: stored, today: Self.today)?.descriptor.filter.kinds == [.video])
+    }
+
+    /// The state-changing intents a tour's steps call, through the same entry points.
+    private func tourIntents(on model: CatalogWindowViewModel, ids: [MediaAssetID]) {
+        model.selectAssets(Array(ids.prefix(2)))
+        model.enterCompare()
+        model.exitToGrid()
+        model.selectAssets([ids[0]])
+        model.setInspectorPane(.info)
+        model.searchFieldFocused()
+        model.setSearchText("sky")
+        model.setSearchText("")
+        model.setMediaKind(.video, included: true)
+        model.setSortOrder(.filenameAscending)
+        model.setGridColumnCount(9)
+        model.setStripTileEdge(150)
+    }
 }
 
 private let pictures = LibraryRootPath(rawValue: "/Users/example/Pictures")

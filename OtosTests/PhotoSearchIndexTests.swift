@@ -341,7 +341,9 @@ struct PhotoSearchIndexTests {
         #expect(await encoder.loads == 0, "nothing is readied before the first grid")
         admission.open()
         try await waitUntil { await index.preparationsMade == 1 }
-        #expect(await encoder.loads == 1)
+        // The index's preparation asks the reader to prepare and returns: the reader's own loop
+        // loads the encoder, so the load is waited on, never assumed done with the preparation.
+        try await waitUntil { await encoder.loads == 1 }
 
         let dog = SearchQueryRequest(text: "dog")
         _ = await index.queries.status(for: dog)
