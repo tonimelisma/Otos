@@ -128,7 +128,9 @@ final nonisolated class ImageRenderer: Sendable {
     /// A still's original, read whole in one timed read before anything decodes it. The
     /// decoders are handed the bytes rather than the file, so every byte a render needs is
     /// read here and the time a render spends waiting on its source is measured apart from
-    /// the time it spends developing (`render.still` `readMs` / `developMs`).
+    /// the time it spends developing (`render.still` `readMs` / `developMs`). The bytes are in
+    /// a mapped region (`FileBytes.whole`), unmapped when the render lets them go, so a 30 MB
+    /// RAW read leaves nothing in the footprint after its render.
     ///
     /// A source carries its file's type, named by its extension, because the bytes alone do
     /// not always name it: a Sony ARW begins as a TIFF, and Image I/O handed only its bytes
@@ -142,7 +144,7 @@ final nonisolated class ImageRenderer: Sendable {
 
         static func read(_ url: URL) throws -> StillSource {
             let start = ContinuousClock.now
-            let data = try Data(contentsOf: url)
+            let data = try FileBytes.whole(url)
             return StillSource(
                 url: url,
                 data: data,
