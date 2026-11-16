@@ -97,7 +97,11 @@ real backlog. Three instruments see those:
   compare two, show Info, search, filter by a kind the scope's published options offer,
   sort and sit idle, each through the gesture's own intent and each waiting on the fact
   the app reports (a paint, the visible thumbnails, the loupe's image, a query's state),
-  then put the window back and quit. A tour's loupe and Compare never download an original:
+  then put the window back and quit. A scroll ends when every visible tile shows what the
+  catalog holds for it now (its detail read, and its thumbnail decoded or none rendered
+  yet), on a report whose visible set holds the step's target; the report counts the
+  tiles with no thumbnail yet (`withoutThumbnail`), so a render backlog is a number, not a
+  deadline. A tour's loupe and Compare never download an original:
   their requester refuses every download for the session (`PaneOriginalDownloads.never`,
   `ReadOnlyOriginals`), so a cloud-only photo shows its stored preview and nothing more.
   The act steps (Like, Dislike, Not Rated, Move to Trash then Undo) run only in a sandbox
@@ -116,7 +120,8 @@ real backlog. Three instruments see those:
   session's lines and prints launch, every click to paint with its breakdown, stalls and
   their holders, background passes, memory, who held which resource, the tour's steps and
   the idle window, each number beside its target (`docs/scorecard-targets.json`); a number
-  no line carries is listed as not measured. `--tour` runs a tour and saves the scorecard
+  no line carries is listed as not measured, and a tour step that ended at its deadline
+  is a FAIL row of its own. `--tour` runs a tour and saves the scorecard
   under `build/scorecards/`; `--ablation-matrix` tours with every owner off, each alone
   and none off, in one table. It is a report: it never fails a run and is not part of
   `script/check.sh`; its parser is tested there against synthetic lines.

@@ -196,6 +196,52 @@ struct TileContentStoreTests {
         store.pinVisible([first.id])
         #expect(reports.map(\.revision) == [1, 2])
     }
+
+    /// A tile whose asset has no thumbnail yet settles once its detail is read, and the report
+    /// counts it; a stub bound before any read never settles a set.
+    @Test func aTileWithNoThumbnailYetSettlesOnceItsDetailIsRead() {
+        let store = TileContentStore()
+        var reports: [VisibleThumbnailsReport] = []
+        store.onVisibleThumbnailsComplete = { reports.append($0) }
+        let painted = makeDetail(path: "a.jpg", thumbnailPath: "a-t.jpg")
+        let unrendered = makeDetail(path: "b.mp4", thumbnailPath: nil, kind: .video)
+        _ = store.mergeDetail(painted)
+        store.holdUnreadDetail(for: unrendered.id)
+
+        store.pinVisible([painted.id, unrendered.id])
+        _ = store.applyDecoded(makeImage(), key: MediaAssetTilePresentation.imageContentKey(painted), for: painted.id)
+        #expect(reports.isEmpty)
+        #expect(store.settledVisible == nil)
+
+        _ = store.mergeDetail(unrendered)
+        #expect(reports.count == 1)
+        #expect(reports.first?.ids == [painted.id, unrendered.id])
+        #expect(reports.first?.withoutThumbnail == 1)
+        #expect(store.settledVisible == reports.first)
+
+        // The same set repinned keeps the report that settled it; a new set clears it.
+        store.pinVisible([painted.id, unrendered.id])
+        #expect(store.settledVisible == reports.first)
+        store.pinVisible([painted.id])
+        #expect(store.settledVisible?.ids == [painted.id])
+        #expect(reports.count == 2)
+    }
+
+    /// A thumbnail whose decode found no image settles its tile until a newer key arrives.
+    @Test func anUndecodableThumbnailSettlesItsTile() {
+        let store = TileContentStore()
+        var reports: [VisibleThumbnailsReport] = []
+        store.onVisibleThumbnailsComplete = { reports.append($0) }
+        let broken = makeDetail(path: "c.jpg", thumbnailPath: "c-t.jpg")
+        _ = store.mergeDetail(broken)
+        store.pinVisible([broken.id])
+        #expect(reports.isEmpty)
+
+        store.noteUndecodable(key: "an older key", for: broken.id)
+        #expect(reports.isEmpty)
+        store.noteUndecodable(key: MediaAssetTilePresentation.imageContentKey(broken), for: broken.id)
+        #expect(reports.map(\.withoutThumbnail) == [1])
+    }
 }
 
 @MainActor

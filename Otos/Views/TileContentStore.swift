@@ -37,12 +37,20 @@ nonisolated struct TileContent: Equatable {
     }
 }
 
-/// Every visible tile holds a thumbnail: `revision` counts these reports, `milliseconds` runs
-/// from the pass boundary that made this set visible.
+/// Every visible tile shows what the catalog holds for it now: its detail has been read, and it
+/// holds a thumbnail or its asset has none yet. `revision` counts these reports, `ids` is the
+/// visible set they settle, `withoutThumbnail` how many of its tiles have no thumbnail to show
+/// yet (not rendered, or its file would not decode), and `milliseconds` runs from the pass
+/// boundary that made this set visible.
 nonisolated struct VisibleThumbnailsReport: Equatable, Sendable {
     let revision: UInt64
-    let visible: Int
+    let ids: Set<MediaAssetID>
+    let withoutThumbnail: Int
     let milliseconds: Int
+
+    var visible: Int {
+        ids.count
+    }
 }
 
 /// Classification returned by store mutations so the tile can fade only a first async
@@ -63,12 +71,26 @@ final class TileContentStore {
         var accessStamp: UInt64
         /// Exact byte cost of `content.image` when non-nil; 0 when image is nil.
         var imageCost: Int
+        /// The detail came from a catalog read, not the stub a tile is bound with before one.
+        var detailRead: Bool
+        /// The image key whose decode found no image, so the tile has nothing newer to show.
+        var undecodableKey: String?
+
+        /// The tile shows what the catalog holds now: an image, or the fact that none is
+        /// there to show yet.
+        var isSettled: Bool {
+            guard detailRead else {
+                return false
+            }
+            return content.image != nil || content.detail.thumbnailPath == nil
+                || undecodableKey == content.imageKey
+        }
     }
 
-    /// The visible tiles still without a thumbnail since the visible set last changed.
+    /// The visible tiles not yet settled since the visible set last changed.
     private struct VisibleWait {
-        let visible: Int
-        var missing: Set<MediaAssetID>
+        let ids: Set<MediaAssetID>
+        var unsettled: Set<MediaAssetID>
         let since: ContinuousClock.Instant
     }
 
@@ -81,8 +103,10 @@ final class TileContentStore {
     private var trackedVisible: Set<MediaAssetID> = []
     private var visibleWait: VisibleWait?
     private var visibleReports: UInt64 = 0
-    /// Told each time every visible tile holds a thumbnail, once per visible set: the fact a
-    /// scroll waits for (`op=ui.mediaGrid.visibleThumbnails`).
+    /// The last report, while the visible set it settled is still the visible set.
+    private(set) var settledVisible: VisibleThumbnailsReport?
+    /// Told each time every visible tile is settled, once per visible set: the fact a scroll
+    /// waits for (`op=ui.mediaGrid.visibleThumbnails`).
     var onVisibleThumbnailsComplete: ((VisibleThumbnailsReport) -> Void)?
 
     init(imageByteBudget: Int = 256 * 1024 * 1024) {
@@ -109,46 +133,60 @@ final class TileContentStore {
         trackVisible(ids)
     }
 
-    /// A new visible set starts a wait for its tiles' thumbnails; the same set repinned at
-    /// another pass boundary keeps the wait it has. A tile whose asset has no thumbnail keeps
-    /// its set's wait open until the visible set changes.
+    /// A new visible set starts a wait for its tiles to settle; the same set repinned at
+    /// another pass boundary keeps the wait it has, or the report it already settled. A tile
+    /// waits only for what the catalog can answer now — its detail read, and the decode of a
+    /// thumbnail it names — never for a thumbnail not yet rendered, which the report counts.
     private func trackVisible(_ ids: Set<MediaAssetID>) {
         guard ids != trackedVisible else {
             return
         }
         trackedVisible = ids
+        settledVisible = nil
+        if let visibleWait, !visibleWait.unsettled.isEmpty {
+            OtosLog.ui.debugOperation("ui.mediaGrid.visibleThumbnails", phase: "superseded", fields: [
+                "visible": "\(visibleWait.ids.count)",
+                "unsettled": "\(visibleWait.unsettled.count)",
+                "ms": "\(DiagnosticsTiming.milliseconds(since: visibleWait.since))",
+            ])
+        }
         guard !ids.isEmpty else {
             visibleWait = nil
             return
         }
-        if let visibleWait, !visibleWait.missing.isEmpty {
-            OtosLog.ui.debugOperation("ui.mediaGrid.visibleThumbnails", phase: "superseded", fields: [
-                "visible": "\(visibleWait.visible)",
-                "missing": "\(visibleWait.missing.count)",
-                "ms": "\(DiagnosticsTiming.milliseconds(since: visibleWait.since))",
-            ])
-        }
         visibleWait = VisibleWait(
-            visible: ids.count,
-            missing: ids.filter { entries[$0]?.content.image == nil },
+            ids: ids,
+            unsettled: ids.filter { entries[$0]?.isSettled != true },
             since: .now
         )
-        completeVisibleWaitIfPainted()
+        completeVisibleWaitIfSettled()
     }
 
-    private func completeVisibleWaitIfPainted() {
-        guard let wait = visibleWait, wait.missing.isEmpty else {
+    /// Takes `id` off the visible wait when its tile has settled.
+    private func noteSettlement(of id: MediaAssetID) {
+        guard visibleWait?.unsettled.contains(id) == true, entries[id]?.isSettled == true else {
+            return
+        }
+        visibleWait?.unsettled.remove(id)
+        completeVisibleWaitIfSettled()
+    }
+
+    private func completeVisibleWaitIfSettled() {
+        guard let wait = visibleWait, wait.unsettled.isEmpty else {
             return
         }
         visibleWait = nil
         visibleReports &+= 1
         let report = VisibleThumbnailsReport(
             revision: visibleReports,
-            visible: wait.visible,
+            ids: wait.ids,
+            withoutThumbnail: wait.ids.count { entries[$0]?.content.image == nil },
             milliseconds: DiagnosticsTiming.milliseconds(since: wait.since)
         )
+        settledVisible = report
         OtosLog.ui.debugOperation("ui.mediaGrid.visibleThumbnails", phase: "complete", fields: [
             "visible": "\(report.visible)",
+            "withoutThumbnail": "\(report.withoutThumbnail)",
             "ms": "\(report.milliseconds)",
         ])
         onVisibleThumbnailsComplete?(report)
@@ -160,8 +198,24 @@ final class TileContentStore {
         pinnedIDs.insert(id)
     }
 
+    /// Merges a detail the catalog returned: the tile now knows what it should show.
     @discardableResult
     func mergeDetail(_ detail: MediaTileDetail) -> TileContentChange {
+        let change = merge(detail, read: true)
+        noteSettlement(of: detail.id)
+        return change
+    }
+
+    /// Holds the stub a tile is bound with before its detail is read. It never settles the
+    /// tile: only a catalog read says whether a thumbnail exists.
+    func holdUnreadDetail(for id: MediaAssetID) {
+        guard entries[id] == nil else {
+            return
+        }
+        _ = merge(MediaTileDetail(libraryRootPath: id.libraryRootPath, relativePath: id.relativePath), read: false)
+    }
+
+    private func merge(_ detail: MediaTileDetail, read: Bool) -> TileContentChange {
         let id = detail.id
         let key = MediaAssetTilePresentation.imageContentKey(detail)
         let stamp = nextAccessStamp()
@@ -175,7 +229,9 @@ final class TileContentStore {
                     formattedDuration: MediaAssetTilePresentation.videoBadgeText(detail)
                 ),
                 accessStamp: stamp,
-                imageCost: 0
+                imageCost: 0,
+                detailRead: read,
+                undecodableKey: nil
             )
             if detail.thumbnailPath != nil {
                 return .awaitingDecode(retainsImage: false)
@@ -191,6 +247,7 @@ final class TileContentStore {
             entry.content.formattedDuration = MediaAssetTilePresentation.videoBadgeText(detail)
         }
         entry.accessStamp = stamp
+        entry.detailRead = entry.detailRead || read
 
         if key == previous.imageKey {
             entries[id] = entry
@@ -264,10 +321,19 @@ final class TileContentStore {
         entry.accessStamp = nextAccessStamp()
         entries[id] = entry
         enforceImageBudget()
-        if visibleWait?.missing.remove(id) != nil {
-            completeVisibleWaitIfPainted()
-        }
+        noteSettlement(of: id)
         return hadImage ? .replacedImage : .firstImage
+    }
+
+    /// Records that the decode of `key` found no image for `id`: until a newer key arrives
+    /// the tile has nothing newer to show, so it no longer holds the visible wait open.
+    func noteUndecodable(key: String, for id: MediaAssetID) {
+        guard var entry = entries[id], entry.content.imageKey == key else {
+            return
+        }
+        entry.undecodableKey = key
+        entries[id] = entry
+        noteSettlement(of: id)
     }
 
     /// Drops entries whose IDs are neither live nor pinned. Subtracts image bytes for

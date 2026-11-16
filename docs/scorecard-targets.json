@@ -12,6 +12,7 @@
     {"metric": "stalls.per10Min", "max": 0, "source": "plan 0116: no op=catalog.store.stall line in a 10-minute session"},
     {"metric": "mainThreadStalls.count", "max": null, "source": "every main-thread stall from 100 ms; plan 0116 bounds their length (mainThreadStalls.worstMs)"},
     {"metric": "mainThreadStalls.worstMs", "maxMs": 250, "source": "plan 0116: no main-thread stall over 250 ms"},
-    {"metric": "memory.peakFootprintMB", "max": 700, "source": "plan 0116: peak app footprint 700 MB"}
+    {"metric": "memory.peakFootprintMB", "max": 700, "source": "plan 0116: peak app footprint 700 MB"},
+    {"metric": "scroll.withoutThumbnail", "max": null, "source": "a count, not a target: visible tiles a scroll settled with no thumbnail rendered yet (the enrichment backlog)"}
   ]
 }

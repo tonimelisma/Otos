@@ -570,13 +570,27 @@ extension PaneOriginalDownloads {
             guard let index = SmokeTour.index(of: position, count: order.count) else {
                 return .skipped("scopeTooSmall")
             }
+            let target = order[index]
             let before = viewModel.lastVisibleThumbnails?.revision ?? 0
-            viewModel.setFocus(order[index])
-            let painted = await until { ($0.lastVisibleThumbnails?.revision ?? 0) > before }
-            guard painted, let report = self.viewModel?.lastVisibleThumbnails else {
+            viewModel.setFocus(target)
+            // The step ends on a report that settles a visible set holding the target: a newer
+            // one, or — when the target was already on screen and nothing moved — the one that
+            // still settles the set shown now.
+            let settled = await until { model in
+                guard let report = model.lastVisibleThumbnails, report.ids.contains(target) else {
+                    return false
+                }
+                return report.revision > before || model.tileContentStore.settledVisible == report
+            }
+            guard settled, let report = self.viewModel?.lastVisibleThumbnails else {
                 return Outcome(result: "deadline", fields: ["position": "\(index)"])
             }
-            return .reported(["position": "\(index)", "visible": "\(report.visible)", "thumbnailsMs": "\(report.milliseconds)"])
+            return .reported([
+                "position": "\(index)",
+                "visible": "\(report.visible)",
+                "withoutThumbnail": "\(report.withoutThumbnail)",
+                "thumbnailsMs": "\(report.milliseconds)",
+            ])
         }
 
         /// Which of `ids` the loupe can show without a download: stills whose original is on

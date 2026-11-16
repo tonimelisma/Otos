@@ -363,6 +363,13 @@ QUERY_STEPS = ("search", "sort", "filter")
 PHOTO_STEPS = ("photo", "compare", "info")
 
 
+def int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def step_ms(step):
     """A step's own time: its `resultMs` (timed from the intent) when it carries one."""
     for key in ("resultMs", "ms"):
@@ -570,9 +577,17 @@ def verdicts(report, targets):
             metric = "click.smallScopeMs"
         add(metric, ("first " if click["first"] else "return ") + click["kind"], click["ms"])
     for step in report["tour"]["steps"]:
+        if step.get("outcome") == "deadline":
+            # A step whose fact never came is a failure of its own, whatever it measures.
+            rows.append({"metric": "tour.deadline", "label": f"step {step.get('index')} {step.get('kind')} {step.get('label')} deadline",
+                         "value": step_ms(step), "target": "fact", "verdict": "FAIL"})
+            continue
         if step.get("outcome") != "reported":
             continue
-        if step.get("kind") in QUERY_STEPS:
+        if step.get("kind") == "scroll":
+            add("scroll.withoutThumbnail", f"scroll {step.get('label')} {step.get('position')} tiles without thumbnail",
+                int_or_none(step.get("withoutThumbnail")))
+        elif step.get("kind") in QUERY_STEPS:
             add("query.resultMs", f"{step['kind']} {step.get('label')}", step_ms(step))
         elif step.get("kind") in PHOTO_STEPS:
             add("photo.stepMs", f"{step['kind']} {step.get('label')}", step_ms(step))
@@ -601,7 +616,11 @@ def print_report(report, rows, out):
     w(f"op=scorecard session={report.get('session')} build={report.get('build')} pid={report.get('pid')} "
       f"durationS={report.get('durationS')} clicks={len(report['clicks'])} stalls={report['stalls']['count']} "
       f"peakFootprintMB={fmt(report['memory']['peakFootprintMB'])} "
-      f"fails={sum(1 for r in rows if r['verdict'] == 'FAIL')}\n\n")
+      f"fails={sum(1 for r in rows if r['verdict'] == 'FAIL')}\n")
+    for row in rows:
+        if row["metric"] == "tour.deadline":
+            w(f"FAIL: tour {row['label']} after {fmt(row['value'])} ms: the fact it waits on never came\n")
+    w("\n")
     w("USER-FELT NUMBERS\n")
     w(f"  {'number':44} {'value':>9} {'target':>8}  verdict\n")
     for row in rows:

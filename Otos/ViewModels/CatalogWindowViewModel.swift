@@ -489,7 +489,8 @@ final class CatalogWindowViewModel {
     /// The newest scope paint (`op=ui.sidebarSelectionToPaint phase=finish`), the fact a
     /// tour's sidebar step waits on.
     private(set) var lastSidebarPaint: SidebarPaintReport?
-    /// The newest moment every visible tile held its thumbnail, the fact a scroll waits on.
+    /// The newest moment every visible tile showed what the catalog holds for it, the fact a
+    /// scroll waits on.
     private(set) var lastVisibleThumbnails: VisibleThumbnailsReport?
     /// The newest act whose result reached the grid (`op=ui.actToResult phase=finish`), the
     /// fact a sandboxed tour's act step waits on.

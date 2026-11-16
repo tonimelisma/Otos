@@ -158,6 +158,8 @@ final class MediaGridViewController: NSViewController {
     /// Hoisted to ViewModel ownership so grid, strip, and panes share one decoded-image owner.
     var tileContents: TileContentStore = .init()
     /// Last applied reorganization remap epoch from SwiftUI (ARC-051).
+    /// The visible detail read in flight, nil once the newest one has finished, so a scroll
+    /// that replaces it counts a real cancellation (`detailQueryCancelled`).
     private(set) var detailQueryTask: Task<Void, Never>?
     /// The off-main structure build of the structural apply in flight
     /// (`applyStructure`). At most one, by the mutation gate's exclusivity.
@@ -885,6 +887,7 @@ extension MediaGridViewController {
                 guard let self, detailQueryGeneration == generation else {
                     return
                 }
+                detailQueryTask = nil
                 lastDetailQueryIDs = []
                 return
             }
@@ -900,6 +903,7 @@ extension MediaGridViewController {
                 }
                 return
             }
+            detailQueryTask = nil
             mergeTileDetails(details, reason: reason)
             if let signpost {
                 OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
@@ -1177,11 +1181,7 @@ extension MediaGridViewController {
     /// dequeue binds use additive `tileContents.pin(_:)` for the single asset being bound.
     @discardableResult
     func ensureContentAndMaybeDecode(for id: MediaAssetID) -> TileContentChange {
-        if tileContents.content(for: id) == nil {
-            _ = tileContents.mergeDetail(
-                MediaTileDetail(libraryRootPath: id.libraryRootPath, relativePath: id.relativePath)
-            )
-        }
+        tileContents.holdUnreadDetail(for: id)
         guard let content = tileContents.content(for: id) else {
             return .unchanged
         }
@@ -1202,12 +1202,7 @@ extension MediaGridViewController {
 
     @discardableResult
     private func ensureStoreEntry(for id: MediaAssetID) -> TileContent? {
-        if let content = tileContents.content(for: id) {
-            return content
-        }
-        _ = tileContents.mergeDetail(
-            MediaTileDetail(libraryRootPath: id.libraryRootPath, relativePath: id.relativePath)
-        )
+        tileContents.holdUnreadDetail(for: id)
         return tileContents.content(for: id)
     }
 
@@ -1237,6 +1232,7 @@ extension MediaGridViewController {
                 }
                 self.inFlightDecodes.remove(flightKey)
                 guard let image = loaded.image else {
+                    self.tileContents.noteUndecodable(key: key, for: id)
                     return
                 }
                 let change = self.tileContents.applyDecoded(image, key: key, for: id)

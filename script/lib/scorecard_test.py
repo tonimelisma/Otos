@@ -200,6 +200,17 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual(by_label["filter video"], (800, "PASS"))
         self.assertNotIn("act liked", by_label)
 
+    def test_a_step_that_reached_its_deadline_fails_and_a_scroll_counts_tiles_without_thumbnails(self):
+        steps = SESSION[:-1] + [
+            line(40.5, "op=tour phase=step index=10 kind=scroll label=down outcome=deadline ms=120060 position=300"),
+            line(40.6, "op=tour phase=step index=11 kind=scroll label=down outcome=reported ms=225 position=600 visible=22 withoutThumbnail=4 thumbnailsMs=92"),
+            SESSION[-1],
+        ]
+        _, rows, _ = run(steps)
+        by_label = {r["label"]: (r["value"], r["verdict"]) for r in rows}
+        self.assertEqual(by_label["step 10 scroll down deadline"], (120060, "FAIL"))
+        self.assertEqual(by_label["scroll down 600 tiles without thumbnail"], (4, "NO-TARGET"))
+
     def test_an_act_is_timed_from_its_intent_to_the_grid(self):
         acted = SESSION[:-1] + [
             line(40.1, "op=ui.actToResult phase=start act=liked count=1"),
