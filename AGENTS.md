@@ -391,7 +391,7 @@ footprint in a hosted test. The scorecard is a report, not a benchmark, and not 
 Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
 Application Support data; `/Applications/Otos.app` is the installed
 `net.melisma.Otos`, built by `script/install.sh` (ADR 0030). The installed app is
-a Debug build: attach with `lldb -p` or `xcrun xctrace record --attach <pid>`, and
+a Debug build compiled with `-O`: attach with `lldb -p` or `xcrun xctrace record --attach <pid>`, and
 read its logs with `script/logs.sh` — `.info`/`.debug` persist for it.
 
 ### Supervising long checks

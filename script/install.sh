@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Debug app with the product identity and installs it at
+# Builds the Debug app, compiled with -O, with the product identity and installs it at
 # /Applications/Otos.app (ADR 0030). Debug, because the installed app must stay
 # debuggable: it keeps get-task-allow (lldb / xctrace can attach) and every
 # `#if DEBUG` diagnostic. A plain build, not `xcodebuild archive` — archiving is a
@@ -44,6 +44,9 @@ fi
 # OTOS_BUNDLE_ID_SUFFIX empty = the product identity (dev builds use .dev).
 # Xcode 27 enables code coverage for Debug by default; an instrumented binary
 # writes default.profraw into its working directory on every quit.
+# Compiled with -O: still the Debug configuration, so get-task-allow and `#if DEBUG`
+# stay, and every phase of All Media's order read ran about ten times faster than
+# unoptimized on a generated owner-shaped catalog (ADR 0030).
 /usr/bin/xcodebuild \
   -project "$ROOT_DIR/Otos.xcodeproj" \
   -scheme Otos \
@@ -53,6 +56,7 @@ fi
   OTOS_BUNDLE_ID_SUFFIX= \
   ENABLE_CODE_COVERAGE=NO \
   ENABLE_DEBUG_DYLIB=NO \
+  SWIFT_OPTIMIZATION_LEVEL=-O \
   CURRENT_PROJECT_VERSION="$(git -C "$ROOT_DIR" rev-list --count HEAD)" \
   build
 

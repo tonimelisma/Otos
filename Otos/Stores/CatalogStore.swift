@@ -2659,8 +2659,17 @@ extension CatalogStore {
         if scope.requiresLocation {
             coordinates.reserveCapacity(orderedRows.count)
         }
+        // A date order hands over a root's rows and a day's rows together, so a row of the root
+        // and the day before it costs two comparisons, not two dictionary lookups: those
+        // lookups were most of the 2.8–3.5 s this loop took for All Media's 164,766 rows of a
+        // generated owner-shaped catalog, unoptimized (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+        var lastRoot: (id: Int64, path: LibraryRootPath?)?
+        var lastDay: (number: Int, start: Date)?
         for row in orderedRows {
-            guard let rootPath = rootPathsByRowID[row.libraryRootID] else {
+            if lastRoot?.id != row.libraryRootID {
+                lastRoot = (row.libraryRootID, rootPathsByRowID[row.libraryRootID])
+            }
+            guard let rootPath = lastRoot?.path else {
                 continue
             }
             if scope.requiresLocation {
@@ -2681,11 +2690,12 @@ extension CatalogStore {
                 // once per day, not once per row.
                 dayBuckets.append(row.captureLocalTime.map { local in
                     let day = local.dayNumber
-                    if let start = dayStarts[day] {
-                        return start
+                    if let lastDay, lastDay.number == day {
+                        return lastDay.start
                     }
-                    let start = Calendar.current.startOfDay(for: CaptureLocalTime(dayNumber: day).presentationDate())
+                    let start = dayStarts[day] ?? Calendar.current.startOfDay(for: CaptureLocalTime(dayNumber: day).presentationDate())
                     dayStarts[day] = start
+                    lastDay = (day, start)
                     return start
                 })
             }

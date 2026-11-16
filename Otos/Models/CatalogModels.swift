@@ -56,18 +56,14 @@ nonisolated enum PathFingerprint {
         }
     }
 
-    /// Root path, then a NUL separator, then the relative path — process-independent.
-    static func mediaAsset(root: String, relative: String) -> UInt64 {
-        mediaAsset(rootFingerprint: fnv1a64(offsetBasis, root), relative: relative)
-    }
-
-    /// The same, from the root's own fingerprint (`LibraryRootPath.fingerprint`, which is the
-    /// root's part of this hash), so the root is not hashed again for every asset in it.
-    static func mediaAsset(rootFingerprint: UInt64, relative: String) -> UInt64 {
-        var hash = rootFingerprint
-        hash ^= 0
-        hash = hash &* prime
-        return fnv1a64(hash, relative)
+    /// A media asset's fingerprint from its two paths' own: mixed, so making an ID reads
+    /// neither path's bytes again (an order of 164,762 IDs hashed every path twice) —
+    /// process-independent, like both.
+    static func mediaAsset(root: UInt64, relative: UInt64) -> UInt64 {
+        var hash = (root &* 0x9E37_79B9_7F4A_7C15) ^ relative
+        hash = (hash ^ (hash >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        hash = (hash ^ (hash >> 27)) &* 0x94D0_49BB_1331_11EB
+        return hash ^ (hash >> 31)
     }
 }
 
@@ -206,7 +202,7 @@ nonisolated extension MediaRelativePath {
 nonisolated struct MediaAssetID: Hashable {
     let libraryRootPath: LibraryRootPath
     let relativePath: MediaRelativePath
-    /// Derived FNV-1a over both path strings' UTF-8. Cheap Hashable / ObjC
+    /// Derived from both paths' FNV-1a fingerprints (`PathFingerprint.mediaAsset`). Cheap Hashable / ObjC
     /// `hashValue` for diffable snapshots — never persisted or logged as identity.
     let fingerprint: UInt64
 
@@ -214,8 +210,8 @@ nonisolated struct MediaAssetID: Hashable {
         self.libraryRootPath = libraryRootPath
         self.relativePath = relativePath
         fingerprint = PathFingerprint.mediaAsset(
-            rootFingerprint: libraryRootPath.fingerprint,
-            relative: relativePath.rawValue
+            root: libraryRootPath.fingerprint,
+            relative: relativePath.fingerprint
         )
     }
 

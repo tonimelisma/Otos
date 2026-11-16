@@ -27,7 +27,15 @@ catalog would also give one database two `CatalogStore` owners.
   `com.apple.security.get-task-allow`, without which hardened runtime blocks lldb
   and `xctrace` attach. `xcodebuild archive` was measured to strip that entitlement
   even when an explicit entitlements file sets it, so an archive cannot produce a
-  debuggable app. The build disables code coverage (Xcode 27 enables it for Debug
+  debuggable app. It compiles with `SWIFT_OPTIMIZATION_LEVEL=-O`. That is still the Debug
+  configuration, so `get-task-allow` (checked by the install) and every `#if DEBUG` path
+  stay; only the code is optimized. Unoptimized, the window's own Swift work was most of
+  a click. On a generated owner-shaped catalog, All Media's order read took about
+  1.8 s unoptimized and 0.2 s at `-O`: the rows 0.65–0.76 s against 0.07 s, the stack rule
+  0.25–0.39 s against 0.02 s, the collapse 0.2–0.55 s against 0.04 s, the position index
+  0.23–0.33 s against 0.02 s (`docs/research/2026-11-16-window-reads-owner-catalog.md`). Dev builds and
+  the tests stay unoptimized: the Swift 6 compiler crashed compiling the test target at
+  `-O`. The build disables code coverage (Xcode 27 enables it for Debug
   by default; the instrumented binary writes `default.profraw` into its working
   directory) and the preview debug dylib. `CFBundleVersion` is the commit count of
   the installed commit; the install refuses a dirty tree, and refuses a build whose
@@ -55,7 +63,9 @@ catalog would also give one database two `CatalogStore` owners.
 ## Rejected alternatives
 
 - **Release build.** Optimized, but drops `get-task-allow` and `#if DEBUG`
-  diagnostics; the owner accepted Debug performance.
+  diagnostics. A Debug build compiled with `-O` is optimized and keeps both.
+- **An unoptimized Debug build.** Kept every diagnostic, but its Swift work was six to ten
+  times the optimized build's on the window's hottest path (above).
 - **`xcodebuild archive` + dSYM archive.** Cannot keep `get-task-allow` (measured).
 - **One shared identity.** Schema lock-out and two catalog owners, above.
 - **Developer ID signing and notarization.** Needed only for other Macs; a locally

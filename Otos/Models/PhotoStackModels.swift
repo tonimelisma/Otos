@@ -66,6 +66,8 @@ nonisolated struct CatalogStacks: Equatable, Sendable {
     let stacks: [PhotoStackID: PhotoStack]
     let pairOfMember: [MediaAssetID: PhotoStackID]
     let burstOfMember: [MediaAssetID: PhotoStackID]
+    /// Every file of every stack: what the collapse probes each file of the order by, once.
+    let stackedMembers: Set<MediaAssetID>
 
     static let empty = CatalogStacks([])
 
@@ -85,6 +87,7 @@ nonisolated struct CatalogStacks: Equatable, Sendable {
         self.stacks = byID
         pairOfMember = pairOf
         burstOfMember = burstOf
+        stackedMembers = Set(pairOf.keys).union(burstOf.keys)
     }
 
     /// The outermost stack `id` is a member of — its burst, else its pair — or nil when it
@@ -421,20 +424,28 @@ nonisolated enum PhotoStackCollapse {
                 hiddenPositions: [], stackedPositions: [:]
             )
         }
-        // Each pass touches every ID once; a pass with no stacks of its kind is skipped, and
-        // the tiles are built from the stacked IDs alone, a few percent of a library.
+        // One probe a file finds the files in a stack, a few percent of a library; both levels
+        // and the tiles then touch those files alone, and the order is copied once, without
+        // the files a level hides. A file in no stack is never hidden, so a level over the
+        // stacked files alone hides what it would over every file. On the owner's 164,762
+        // files the two levels each walked every file twice, about 0.5 s
+        // (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+        var stackedPositions: [Int] = []
+        for (position, id) in ids.enumerated() where stacks.stackedMembers.contains(id) {
+            stackedPositions.append(position)
+        }
         // A pair's files are one photo, so a pair counts once toward its burst: the burst
         // level counts frames present, never files.
         let pairs = level(
-            ids,
-            positions: Array(ids.indices),
+            stackedPositions.map { ids[$0] },
+            positions: stackedPositions,
             membership: stacks.pairOfMember,
             framing: [:],
             stacks: stacks,
             expanded: expanded
         )
         let bursts = level(
-            pairs.kept.count == ids.count ? ids : pairs.kept.map { ids[$0] },
+            pairs.kept.map { ids[$0] },
             positions: pairs.kept,
             membership: stacks.burstOfMember,
             framing: stacks.pairOfMember,
@@ -457,16 +468,18 @@ nonisolated enum PhotoStackCollapse {
             shownFor[hidden] = bursts.shownFor[shown] ?? shown
         }
 
-        let kept = bursts.kept
-        let keepsAll = kept.count == ids.count
+        let hidden = Self.merged(pairs.hidden, bursts.hidden)
         var stacked = pairs.stacked
         stacked.merge(bursts.stacked) { pair, _ in pair }
+        func keeping<Element>(_ elements: [Element]) -> [Element] {
+            hidden.isEmpty ? elements : elements.editing(removing: hidden, inserting: [])
+        }
         return Result(
-            ids: keepsAll ? ids : kept.map { ids[$0] },
-            dayBuckets: dayBuckets.count != ids.count ? [] : keepsAll ? dayBuckets : kept.map { dayBuckets[$0] },
-            coordinates: coordinates.count != ids.count ? [] : keepsAll ? coordinates : kept.map { coordinates[$0] },
+            ids: keeping(ids),
+            dayBuckets: dayBuckets.count != ids.count ? [] : keeping(dayBuckets),
+            coordinates: coordinates.count != ids.count ? [] : keeping(coordinates),
             grid: CatalogGridStacks(tiles: tiles, shownForHiddenMember: shownFor),
-            hiddenPositions: Self.merged(pairs.hidden, bursts.hidden),
+            hiddenPositions: hidden,
             stackedPositions: stacked
         )
     }

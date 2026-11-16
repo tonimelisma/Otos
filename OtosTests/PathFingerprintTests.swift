@@ -3,8 +3,8 @@ import Foundation
 import Testing
 
 /// A path's fingerprint is FNV-1a over its UTF-8, whichever way it is read: from the string's
-/// contiguous storage, as identities are made, or byte by byte. An asset's continues from its
-/// root's own fingerprint, so it is the same as hashing the root again.
+/// contiguous storage, as identities are made, or byte by byte. An asset's is its two paths'
+/// fingerprints mixed.
 struct PathFingerprintTests {
     private static let texts = [
         "", "/library/", "2019/12/IMG_0001.HEIC", "Kuvat/kesä 2024/järvi.jpg", "Cafe\u{301}/photo.jpg",
@@ -18,16 +18,19 @@ struct PathFingerprintTests {
         }
     }
 
-    @Test func anAssetHashesFromItsRootsFingerprintAsFromTheRoot() {
+    /// An asset's fingerprint is its two paths' fingerprints mixed, so making an ID reads
+    /// neither path again; swapping the root and the relative path makes another.
+    @Test func anAssetHashesFromItsPathsFingerprints() {
+        var seen = Set<UInt64>()
         for root in Self.texts {
             for relative in Self.texts {
-                var bytes = Array(root.utf8)
-                bytes.append(0)
-                bytes += Array(relative.utf8)
-                let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: root), relativePath: MediaRelativePath(rawValue: relative))
-                #expect(id.fingerprint == PathFingerprint.fnv1a64(bytes))
-                #expect(PathFingerprint.mediaAsset(root: root, relative: relative) == id.fingerprint)
+                let rootPath = LibraryRootPath(rawValue: root)
+                let relativePath = MediaRelativePath(rawValue: relative)
+                let id = MediaAssetID(libraryRootPath: rootPath, relativePath: relativePath)
+                #expect(id.fingerprint == PathFingerprint.mediaAsset(root: rootPath.fingerprint, relative: relativePath.fingerprint))
+                seen.insert(id.fingerprint)
             }
         }
+        #expect(seen.count == Self.texts.count * Self.texts.count)
     }
 }

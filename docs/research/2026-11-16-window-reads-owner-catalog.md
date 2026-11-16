@@ -67,3 +67,36 @@ pair's files and a burst's frames: about 96 MB over the 146,391 stills, against 
 stacks are held across passes while nothing they are built from moves (ADR 0005), so the read
 is paid at launch and after a stack fact moves, and 96 MB of index is page cache the window's
 other reads lose on a Mac that already pages.
+
+## 4. The order read's Swift work, unoptimized and at `-O` (E1)
+
+`OrderReadPhaseTests` at the owner's size (`OwnerShapedCatalog`, scale 1: 164,766 rows of All
+Media, 159,382 shown once stacks collapse), three rounds in one ordinary test process, the
+file warm after the first. Milliseconds, rounds 2 and 3:
+
+| Phase | Before, unoptimized | After, unoptimized | After, OtosKit at `-O` |
+| --- | --- | --- | --- |
+| SQL and its rows | 912–1,000 | 764 (2,263 under load) | 74 |
+| Stack read | 224–225 | 69–174 | 35 |
+| Stack rule | 542–548 | 253–279 | 20–21 |
+| Rows made IDs (`orderedAssets`) | 2,833–2,882 | 133–138 | 12–13 |
+| Collapse | 795–1,055 | 202–233 | 32–42 |
+| Position index | 362–408 | 233–319 | 16–19 |
+| Sum | about 5,800 | about 1,800 | about 200 |
+
+"Before" is main at 5386d36f. "After" changes three things:
+
+- A media asset's fingerprint is mixed from its two paths' own fingerprints. It was FNV over both paths' bytes again, and most of the rows-to-IDs phase, the stack rule and the position index was that hashing.
+- The rows-to-IDs loop compares each row's root and day with the row before it instead of looking each up.
+- The collapse probes each file once and runs its two levels over the stacked files alone.
+
+The `-O` column builds OtosKit, GRDB and MediaMetadata with `-O` and the test target unoptimized; the Swift 6 compiler crashed compiling the test target at `-O`. The command:
+
+    xcodebuild test -project Otos.xcodeproj -scheme Otos -configuration Debug \
+      -destination platform=macOS -derivedDataPath build/DerivedDataO \
+      'SWIFT_OPTIMIZATION_LEVEL=$(OTOS_OPT_$(TARGET_NAME))' OTOS_OPT_OtosKit=-O \
+      OTOS_OPT_GRDB=-O OTOS_OPT_MediaMetadata=-O OTOS_OPT_OtosTests=-Onone \
+      OTOS_SCALE_TEST=1 -only-testing:OtosTests/OrderReadPhaseTests
+
+The app target builds at `-O` with `get-task-allow` in its signature, so the installed build
+compiles with `-O` (ADR 0030).
