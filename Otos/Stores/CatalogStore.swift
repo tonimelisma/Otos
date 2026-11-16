@@ -54,7 +54,7 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     static let placeNames = CatalogChangedFacts(rawValue: 1 << 5)
     /// Faces, and who they are.
     static let faces = CatalogChangedFacts(rawValue: 1 << 6)
-    /// Which files are copies of which: digests and copies kept together.
+    /// Which files are identical copies of which: their digests.
     static let copies = CatalogChangedFacts(rawValue: 1 << 7)
     /// What search read of a row that decides where it shows: the labels On This Day
     /// leaves a photo out by.
@@ -81,21 +81,32 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     /// video — does not name it, so the stacks stand
     /// (`EnrichmentOverlayBeforeWrite.changesStacks`).
     static let stacks = CatalogChangedFacts(rawValue: 1 << 13)
+    /// What only Duplicates reads beyond which files are identical copies (ADR 0042): the reach
+    /// it compares within, the copies kept together, and the render signatures versions of
+    /// one photo are found by.
+    static let duplicateFacts = CatalogChangedFacts(rawValue: 1 << 14)
 
     static let all: CatalogChangedFacts = [
         .membership, .captureDate, .kindAndFormat, .grouping, .location, .placeNames, .faces, .copies,
-        .searchReadings, .detail, .choices, .images, .mediaRecord, .stacks,
+        .searchReadings, .detail, .choices, .images, .mediaRecord, .stacks, .duplicateFacts,
     ]
 
     /// How many kinds there are: the bits `all` sets.
-    static let bitCount = 14
+    static let bitCount = 15
 
     private static let names: [(CatalogChangedFacts, String)] = [
         (.membership, "membership"), (.captureDate, "captureDate"), (.kindAndFormat, "kindAndFormat"),
         (.grouping, "grouping"), (.location, "location"), (.placeNames, "placeNames"), (.faces, "faces"),
         (.copies, "copies"), (.searchReadings, "searchReadings"), (.detail, "detail"), (.choices, "choices"),
-        (.images, "images"), (.mediaRecord, "mediaRecord"), (.stacks, "stacks"),
+        (.images, "images"), (.mediaRecord, "mediaRecord"), (.stacks, "stacks"), (.duplicateFacts, "duplicateFacts"),
     ]
+
+    /// What a write of digests touched: which files are copies, and — when a copy that joined
+    /// a photo took the photo's choice in the same write (ADR 0054, `CatalogSchema.choiceJoins`)
+    /// — the choices.
+    static func digests(choicesJoined: Bool) -> CatalogChangedFacts {
+        choicesJoined ? [.copies, .choices] : .copies
+    }
 
     /// The kinds by name, comma-separated, `all` or `none`: one log field.
     var diagnosticDescription: String {
@@ -1195,9 +1206,13 @@ extension CatalogStore {
         let pathsByRowID = roots.pathsByRowID
         let rowIDs = roots.rowIDSnapshot()
         let faceRootIDs = faceRootIDs(availableLibraryPaths)
+        let accountRowIDs = Set(roots.values.filter { $0.root.kind == .immichAccount }.map(\.rowID))
         let dbWriter = try database()
         let (snapshot, malformed) = try await dbWriter.readFreeingConnection { db -> (PeopleSnapshot, Set<FaceRowKey.Photo>) in
             var malformed: Set<FaceRowKey.Photo> = []
+            // The files with faces that are copies of one photo, by the digest they share.
+            var copyDigests: [MediaAssetID: Data] = [:]
+            var copiesByDigest: [Data: [PeopleSnapshot.Copy]] = [:]
             var rejections: [FaceRowKey: Set<PersonID>] = [:]
             for row in try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, face_index, person_id FROM face_rejection") {
                 rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
@@ -1265,6 +1280,12 @@ extension CatalogStore {
                     captureSeconds: capture,
                     isInVideo: (row[PeopleFaceColumn.isVideo.rawValue] as Int) != 0
                 )
+                if let digest = row[PeopleFaceColumn.copyDigest.rawValue] as Data?, copyDigests[asset] == nil {
+                    copyDigests[asset] = digest
+                    copiesByDigest[digest, default: []].append(PeopleSnapshot.Copy(
+                        asset: asset, rootID: key.rootID, isAccount: accountRowIDs.contains(key.rootID)
+                    ))
+                }
             }
             let people = try Row.fetchAll(
                 db,
@@ -1275,7 +1296,10 @@ extension CatalogStore {
                 guard let rootPath = pathsByRowID[rowID] else { continue }
                 stacks += PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath)
             }
-            let photoOfStackMember = CatalogStacks(stacks).keyOfMember
+            let photoOf = PeopleSnapshot.photos(
+                stackKeys: CatalogStacks(stacks).keyOfMember,
+                copies: Array(copiesByDigest.values)
+            )
             // A malformed row's photo is left out whole: its other faces were read before the
             // bad row was reached.
             let left = { (id: FaceID) in
@@ -1287,7 +1311,7 @@ extension CatalogStore {
                 people: people,
                 likeness: likeness.filter { left($0.key) },
                 keyPhotos: keyPhotos.filter { left($0.value) },
-                photoOfStackMember: photoOfStackMember,
+                photoOf: photoOf,
                 unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db)
             )
             return (snapshot, malformed)
@@ -3726,7 +3750,8 @@ extension CatalogStore {
         }
         let relativePath = result.id.relativePath.rawValue
         do {
-            let written = try await database().write { db -> Int in
+            let (written, choicesJoined) = try await database().write { db -> (Int, Bool) in
+                let joinsBefore = try CatalogSchema.choiceJoins(db)
                 try db.execute(
                     sql: """
                     UPDATE media_asset SET
@@ -3759,14 +3784,14 @@ extension CatalogStore {
                         arguments: [rootRowID, relativePath]
                     )
                 }
-                return written
+                return try (written, CatalogSchema.choiceJoins(db) != joinsBefore)
             }
             OtosLog.metadata.noticeOperation("enrichment.contentHash", phase: written > 0 ? "applied" : "stale", fields: [
                 "rootPath": result.id.libraryRootPath.rawValue,
                 "relativePath": relativePath,
             ])
             if written > 0 {
-                notifyCatalogChanged(.changed(.copies))
+                notifyCatalogChanged(.changed(.digests(choicesJoined: choicesJoined)))
             }
             return .applied(count: written)
         } catch {
@@ -3879,6 +3904,7 @@ extension CatalogStore {
     ) async throws -> EnrichmentBatchWriteOutcome {
         let timedOutcome = try await timedWrite(dbWriter) { db in
             var outcome = EnrichmentBatchWriteOutcome()
+            let joinsBefore = try CatalogSchema.choiceJoins(db)
             for result in results {
                 try Self.applyEnrichmentResult(
                     result,
@@ -3895,6 +3921,10 @@ extension CatalogStore {
                 rootIDsByPath: rootIDsByPath,
                 db: db
             )
+            // A digest that joined a copy to a photo gave it the photo's choice (ADR 0054).
+            if try CatalogSchema.choiceJoins(db) != joinsBefore {
+                outcome.facts.insert(.choices)
+            }
             return outcome
         }
         var outcome = timedOutcome.value
@@ -8320,7 +8350,7 @@ extension CatalogStore {
 
 extension CatalogStore {
     /// Duplicates compares these copies from now on. A change is a change of which files
-    /// are copies of which, so the groups and the Duplicates scopes are read again.
+    /// are duplicates of which, so the groups and the Duplicates scopes are read again.
     func setDuplicatesReach(_ reach: DuplicatesReach) {
         guard duplicatesReach != reach else {
             return
@@ -8329,7 +8359,7 @@ extension CatalogStore {
         OtosLog.catalog.noticeOperation("duplicates.reach", phase: "set", fields: [
             "reach": "\(reach)",
         ])
-        notifyCatalogChanged(.changed(.copies))
+        notifyCatalogChanged(.changed(.duplicateFacts))
     }
 
     /// Every visible copy whose current digest another visible copy shares — in its own
@@ -8411,20 +8441,32 @@ extension CatalogStore {
                 (row["library_root_id"], row["server_prefix"])
             }
         }
+        struct Batch {
+            let last: String?
+            let count: Int
+            let paired: Int
+            let choicesJoined: Bool
+        }
         var paired = 0
         var files = 0
+        var choicesJoined = false
         for mirror in mirrors {
             var after: String?
             while true {
                 let batch = try await dbQueue.write { [after] db in
+                    let joinsBefore = try CatalogSchema.choiceJoins(db)
                     let batch = try MirrorGateway.digestedFiles(libraryRootID: mirror.libraryRootID, after: after, db: db)
                     let paired = try MirrorGateway.pair(
                         batch, accountRootID: accountRootID, serverPrefix: mirror.serverPrefix, db: db
                     )
-                    return (last: batch.last?.relativePath, count: batch.count, paired: paired)
+                    return try Batch(
+                        last: batch.last?.relativePath, count: batch.count, paired: paired,
+                        choicesJoined: CatalogSchema.choiceJoins(db) != joinsBefore
+                    )
                 }
                 paired += batch.paired
                 files += batch.count
+                choicesJoined = choicesJoined || batch.choicesJoined
                 guard let last = batch.last, batch.count == MirrorGateway.pairBatchSize else {
                     break
                 }
@@ -8439,7 +8481,7 @@ extension CatalogStore {
             "ms": "\(DiagnosticsTiming.milliseconds(from: started, to: ContinuousClock.now))",
         ])
         if paired > 0 {
-            notifyCatalogChanged(.changed(.copies))
+            notifyCatalogChanged(.changed(.digests(choicesJoined: choicesJoined)))
         }
         return paired
     }
@@ -8482,7 +8524,7 @@ extension CatalogStore {
             "groups": "\(groups.count)", "pairs": "\(added.count)",
         ])
         if !added.isEmpty {
-            notifyCatalogChanged(.changed(.copies))
+            notifyCatalogChanged(.changed(.duplicateFacts))
         }
         return added
     }
@@ -8507,7 +8549,7 @@ extension CatalogStore {
             }
         }
         OtosLog.catalog.noticeOperation("duplicates.keepAll", phase: "forgotten", fields: ["pairs": "\(pairs.count)"])
-        notifyCatalogChanged(.changed(.copies))
+        notifyCatalogChanged(.changed(.duplicateFacts))
     }
 }
 
@@ -8579,7 +8621,7 @@ extension CatalogStore {
             return written
         }
         if written > 0 {
-            notifyCatalogChanged(.changed(.copies))
+            notifyCatalogChanged(.changed(.duplicateFacts))
         }
         return written
     }

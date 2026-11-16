@@ -694,6 +694,54 @@ nonisolated enum CatalogVisibilitySQL {
     }
 }
 
+/// A face test of a photo, not of one of its copies (ADR 0054; owner, 2026-11-15: a face
+/// named on one copy names the photo). Faces are read from each copy's own preview and stay
+/// on it, so a test of a row asks its own faces, and then — only for a row with a present
+/// copy (`has_copies`, which the window's indexes carry) — its copies' faces, through the
+/// digest index. A row with no copy costs what it did. `condition` is over `face`, and its
+/// arguments are bound twice, in order.
+nonisolated enum PhotoFaceSQL {
+    /// Whether `row` or a present copy of it holds a face `condition` selects; `index` is the
+    /// face index a seek by photo reads, when the planner must be told.
+    static func holds(_ row: String, index: String? = nil, condition: String) -> String {
+        let face = index.map { "face INDEXED BY \($0)" } ?? "face"
+        return """
+        (EXISTS (
+            SELECT 1 FROM \(face)
+            WHERE face.library_root_id = \(row).library_root_id
+              AND face.relative_path = \(row).relative_path
+              AND \(condition)
+        ) OR (\(row).has_copies = 1 AND EXISTS (
+            SELECT 1 FROM media_asset AS face_copy INDEXED BY \(ContentDigestSQL.indexName)
+            CROSS JOIN \(face)
+              ON face.library_root_id = face_copy.library_root_id AND face.relative_path = face_copy.relative_path
+            WHERE \(CatalogSchema.isCopy("face_copy", of: row))
+              AND \(CatalogVisibilitySQL.isPresent("face_copy"))
+              AND face_copy.rowid <> \(row).rowid
+              AND \(condition)
+        )))
+        """
+    }
+
+    /// The keys of the rows that hold a face `condition` selects, and of every present copy of
+    /// such a row: the photos a person's narrow scope seeks. One select, not a compound one:
+    /// SQLite seeks a row's key in a compound `IN` list by its first column alone, which read
+    /// a whole root for a person of 24 photos.
+    static func photos(condition: String) -> String {
+        """
+        SELECT COALESCE(face_copy.library_root_id, face.library_root_id), COALESCE(face_copy.relative_path, face.relative_path)
+        FROM face
+        LEFT JOIN media_asset AS face_photo INDEXED BY \(mediaAssetKeyIndexName)
+          ON face_photo.library_root_id = face.library_root_id AND face_photo.relative_path = face.relative_path
+        LEFT JOIN media_asset AS face_copy INDEXED BY \(ContentDigestSQL.indexName)
+          ON face_photo.has_copies = 1
+          AND \(CatalogSchema.isCopy("face_copy", of: "face_photo"))
+          AND \(CatalogVisibilitySQL.isPresent("face_copy"))
+        WHERE \(condition)
+        """
+    }
+}
+
 /// The map cells a located photo falls in (ADR 0051): a fiftieth of a degree each way,
 /// `asset_metadata.place_cell_latitude` and `place_cell_longitude`, generated from the
 /// primary location (schema v43). The cells are what Maps names, and an area's rows are
@@ -765,12 +813,9 @@ nonisolated enum ContentDigestSQL {
     static let indexName = "idx_media_asset_content_sha1"
 
     /// The index's columns: the digest, the row's key, the stamps and file facts currency
-    /// reads, and what visibility, Duplicates and the Live Photo rule test a row by.
-    static let indexedColumns = """
-    content_sha1, library_root_id, relative_path, content_hash_source_size, content_hash_source_mtime, \
-    byte_size, content_modified_at_unix, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
-    trash_path, best_kind, content_identifier
-    """
+    /// reads, and what visibility, Duplicates and the Live Photo rule test a row by, an
+    /// external library's path checksum among them (v64).
+    static let indexedColumns = "\(CatalogSchema.copiesDigestIndexColumns), source_path_sha1"
 
     /// The SHA-1 of no bytes, as a SQL literal. Every empty file has it, and an empty file is
     /// a broken file, not a copy of another (ADR 0042), so no two rows are copies by it.
@@ -1523,15 +1568,38 @@ private nonisolated func scopeClause(
         predicate += "\n  AND media_asset.import_batch_unix_ms = ?"
         keyIndex = "idx_media_asset_import_batch"
     }
-    // A combined scope shows one copy of each set of identical copies (ADR 0054): a row
-    // whose shown copy is in a root of the scope stands aside for it. `shown_copy_root_id`
-    // is kept by the catalog's triggers, and the date indexes carry it (v60), so the test
-    // reads no table row.
+    // A combined scope shows one copy of each set of identical copies (ADR 0054): the best
+    // copy among the scope's roots. A row stands aside when its shown copy — the best present
+    // copy in any root — is in the scope. `shown_copy_root_id` is kept by the catalog's
+    // triggers and the date indexes carry it (v60), so that test reads no table row. Only a
+    // row whose best copy's root is out of the scope (a library not available) asks whether
+    // a copy ranked before it is in the scope, through the digest index: the next best
+    // reachable copy shows, and only it. The two are separate terms: SQLite tests a term with
+    // a subquery after the others, and a filter's term that reads the table (a choice) would
+    // then read it for every hidden copy too, which tripled the pages a Liked filter read on a
+    // generated owner-shaped catalog.
+    // A scope that holds every library and account root has every best copy in reach, and
+    // asks nothing more.
     if scope.showsOneCopy {
+        let roots = sqlPlaceholders(count: scope.rootIDs.count)
+        predicate += """
+
+          AND (media_asset.shown_copy_root_id IS NULL OR media_asset.shown_copy_root_id NOT IN (\(roots)))
+        """
+        arguments.append(contentsOf: scope.rootIDs)
+    }
+    if scope.showsOneCopy, !scope.holdsEveryCopyRoot {
+        let roots = sqlPlaceholders(count: scope.rootIDs.count)
         predicate += """
 
           AND (media_asset.shown_copy_root_id IS NULL
-               OR media_asset.shown_copy_root_id NOT IN (\(sqlPlaceholders(count: scope.rootIDs.count))))
+               OR NOT EXISTS (
+                   SELECT 1 FROM media_asset AS better INDEXED BY \(ContentDigestSQL.indexName)
+                   WHERE \(CatalogSchema.isCopy("better", of: "media_asset"))
+                     AND better.library_root_id IN (\(roots))
+                     AND \(CatalogVisibilitySQL.isPresent("better"))
+                     AND (\(CatalogSchema.copyRank("better"))) < (\(CatalogSchema.copyRank("media_asset")))
+               ))
         """
         arguments.append(contentsOf: scope.rootIDs)
     }
@@ -1581,30 +1649,20 @@ private nonisolated func scopeClause(
         try arguments.append(CatalogScopePredicate.MemberKey.json(keys))
         keyIndex = mediaAssetKeyIndexName
     case .withPerson:
-        predicate += """
-
-          AND EXISTS (
-              SELECT 1 FROM face
-              WHERE face.library_root_id = media_asset.library_root_id
-                AND face.relative_path = media_asset.relative_path
-                AND face.is_not_face = 0
-                AND face.person_id IS NOT NULL
-          )
-        """
+        predicate += "\n  AND \(PhotoFaceSQL.holds("media_asset", condition: "face.is_not_face = 0 AND face.person_id IS NOT NULL"))"
     case let .person(person):
-        // A person's photos are named by their faces (`idx_face_person_photo`). A person of a
+        // A person's photos are named by their faces (`idx_face_person_photo`), and so are the
+        // copies of those photos (ADR 0054): a face on any copy is the photo's. A person of a
         // few dozen to a few thousand photos seeks them there and finds each by its key:
         // testing every row of the catalog for one of their faces read 3,500–157,000 pages per
         // read on the owner's catalog (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
         // A person in a large share of the catalog is tested on each row the order walks, one
         // seek of that index a row (`SeekSize`).
+        let condition = "face.person_id = ? AND face.is_not_face = 0"
         if seeks {
             predicate += """
 
-              AND (media_asset.library_root_id, media_asset.relative_path) IN (
-                  SELECT face.library_root_id, face.relative_path FROM face
-                  WHERE face.person_id = ? AND face.is_not_face = 0
-              )
+              AND (media_asset.library_root_id, media_asset.relative_path) IN (\(PhotoFaceSQL.photos(condition: condition)))
             """
             keyIndex = mediaAssetKeyIndexName
             size = SeekSize(
@@ -1615,19 +1673,12 @@ private nonisolated func scopeClause(
                 arguments: [person],
                 walkRowsPerSoughtRow: SeekSize.personRatio
             )
+            arguments.append(person)
         } else {
-            predicate += """
-
-              AND EXISTS (
-                  SELECT 1 FROM face INDEXED BY idx_face_person_photo
-                  WHERE face.person_id = ?
-                    AND face.library_root_id = media_asset.library_root_id
-                    AND face.relative_path = media_asset.relative_path
-                    AND face.is_not_face = 0
-              )
-            """
+            predicate += "\n  AND \(PhotoFaceSQL.holds("media_asset", index: "idx_face_person_photo", condition: condition))"
+            arguments.append(person)
+            arguments.append(person)
         }
-        arguments.append(person)
     }
     if let anniversary {
         // The day's own index is sought only when no key narrows the scope further; otherwise
@@ -1739,20 +1790,15 @@ private nonisolated func filterPredicate(
         arguments.append(contentsOf: choices.map(\.rawValue))
     }
     // The People filter (ADR 0047): a photo holding a face of each person checked, and with
-    // `Unidentified Faces` a face with no person too.
-    var peopleClauses: [String] = []
-    let face = """
-    EXISTS (SELECT 1 FROM face WHERE face.library_root_id = media_asset.library_root_id
-        AND face.relative_path = media_asset.relative_path AND face.is_not_face = 0 AND
-    """
+    // `Unidentified Faces` a face with no person too, on any of its copies (ADR 0054).
     for person in filter.people.sorted() {
-        peopleClauses.append("\(face) face.person_id = ?)")
+        clauses.append(PhotoFaceSQL.holds("media_asset", condition: "face.is_not_face = 0 AND face.person_id = ?"))
+        arguments.append(person.rawValue)
         arguments.append(person.rawValue)
     }
     if filter.unassignedFaces {
-        peopleClauses.append("\(face) face.person_id IS NULL)")
+        clauses.append(PhotoFaceSQL.holds("media_asset", condition: "face.is_not_face = 0 AND face.person_id IS NULL"))
     }
-    clauses += peopleClauses
     // The Places filter (ADR 0051): a photo whose cell Maps named, in the filter's language,
     // as one of the countries or towns checked.
     if let places = filter.places {

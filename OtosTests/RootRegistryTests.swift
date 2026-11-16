@@ -57,7 +57,7 @@ struct RootRegistryTests {
             availableLibraryPaths: [libraryPath, otherPath, volumePath],
             duplicatesReach: .withinEachLibrary
         )
-        #expect(allMedia == CatalogScopePredicate(rootIDs: [1, 2], showsOneCopy: true))
+        #expect(allMedia == CatalogScopePredicate(rootIDs: [1, 2], showsOneCopy: true, holdsEveryCopyRoot: true))
 
         let libraryOnly = registry.scopePredicate(
             selection: .library(libraryPath),
@@ -88,7 +88,7 @@ struct RootRegistryTests {
             duplicatesReach: .withinEachLibrary
         )
 
-        #expect(batch == CatalogScopePredicate(rootIDs: [1, 2], importBatchUnixMs: 1_785_908_514_176))
+        #expect(batch == CatalogScopePredicate(rootIDs: [1, 2], importBatchUnixMs: 1_785_908_514_176, holdsEveryCopyRoot: true))
         #expect(batch.selectsNothing == false)
     }
 

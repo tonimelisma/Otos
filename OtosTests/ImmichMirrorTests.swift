@@ -60,17 +60,21 @@ struct ImmichMirrorTests {
         let file: PlanningFileFacts
     }
 
-    private func fixture(digested: Bool) async throws -> Fixture {
+    /// `secondCopy` also puts `2024/IMG_1 copy.JPG`, the same bytes, in the library.
+    private func fixture(digested: Bool, secondCopy: Bool = false) async throws -> Fixture {
         let temp = try makeTestDirectory()
         let folder = temp.appending(path: "Camera Roll", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder.appending(path: "2024"), withIntermediateDirectories: true)
         try writeCatalogStoreFile(folder.appending(path: "2024/IMG_1.JPG"), contents: "same")
+        if secondCopy {
+            try writeCatalogStoreFile(folder.appending(path: "2024/IMG_1 copy.JPG"), contents: "same")
+        }
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: folder)
         let library = try CatalogPath.normalizedDirectoryPath(for: folder)
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
-        let file = try #require(await store.planningMedia(for: library)?.first)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == (secondCopy ? 2 : 1) }
+        let file = try #require(await store.planningMedia(for: library)?.first { $0.id.relativePath.rawValue == "2024/IMG_1.JPG" })
         if digested {
             try await digest(file, store: store)
         }
@@ -162,6 +166,47 @@ struct ImmichMirrorTests {
         #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, fixture.store) == Self.contentDigest)
         #expect(try await ids(.allMedia, fixture.store) == [fixture.file.id])
         await fixture.store.shutdown()
+    }
+
+    /// A file and its mirror are one photo, never duplicates (owner, 2026-11-15): with
+    /// Duplicates across libraries and accounts, the pair is no group, before the pairing is
+    /// learned and after; a second copy of the file in its library makes a group of the two
+    /// files alone; and with the library not available the mirror is no copy of anything. So
+    /// no click, folder rule or default can keep the mirror and move the file it mirrors.
+    @Test(arguments: [false, true])
+    func aFileAndItsMirrorAreNeverDuplicates(secondCopy: Bool) async throws {
+        let fixture = try await fixture(digested: true, secondCopy: secondCopy)
+        let store = fixture.store
+        var files: Set<MediaAssetID> = []
+        if secondCopy {
+            let second = try #require(await store.planningMedia(for: fixture.library)?.first { $0.id != fixture.file.id })
+            try await digest(second, store: store)
+            files = [fixture.file.id, second.id]
+        }
+        await store.setDuplicatesReach(.acrossLibraries)
+        let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
+        let server = MirrorServer([listing.events + [Self.complete]], details: ["a": listing.detail])
+        let sync = ImmichCatalogSync(rootPath: fixture.account, source: server, store: store, volumeCapacity: ampleVolumeCapacity)
+        func duplicates(_ available: Set<LibraryRootPath>? = nil) async throws -> (copies: Set<MediaAssetID>, scope: Set<MediaAssetID>) {
+            let paths = if let available {
+                available
+            } else {
+                await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
+            }
+            let copies = try await store.duplicateCopies(availableLibraryPaths: paths).copies.map(\.copy.id)
+            let scope = try await store.orderedAssetIDs(for: CatalogQueryDescriptor(scope: .duplicates), availableLibraryPaths: paths).ids
+            return (Set(copies), Set(scope))
+        }
+
+        #expect(try await duplicates().copies == files)
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
+        #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, store) == Self.contentDigest)
+        #expect(try await duplicates().copies == files)
+        #expect(try await duplicates().scope == files)
+        #expect(try await store.visibleAssetCount(for: .duplicates, availableLibraryPaths: [fixture.library, fixture.account]) == files.count)
+        #expect(try await duplicates([fixture.account]).copies.isEmpty)
+        #expect(try await duplicates([fixture.account]).scope.isEmpty)
+        await store.shutdown()
     }
 
     /// An asset at the file's path but listed with another modification time holds other

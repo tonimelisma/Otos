@@ -19,8 +19,8 @@ struct OneCopyTests {
     }
 
     /// A library holding `IMG_1.JPG` ("same") and `IMG_2.JPG` ("other"), digested from their
-    /// bytes, and an Immich account.
-    private func fixture() async throws -> Fixture {
+    /// bytes unless `digested` is false, and an Immich account.
+    private func fixture(digested: Bool = true) async throws -> Fixture {
         let temp = try makeTestDirectory()
         let folder = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -31,17 +31,25 @@ struct OneCopyTests {
         try await store.addLibrary(url: folder)
         let library = try CatalogPath.normalizedDirectoryPath(for: folder)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
-        for facts in try #require(await store.planningMedia(for: library)) {
-            let bytes = try Data(contentsOf: URL(filePath: library.rawValue).appending(path: facts.id.relativePath.rawValue))
-            _ = try await store.applyContentHash(ContentHashResult(
+        let account = try await store.addImmichAccount(server: Self.server, userID: "user-1", displayName: "Family")
+        let fixture = Fixture(store: store, library: library, account: account)
+        if digested {
+            try await digestLibrary(fixture)
+        }
+        return fixture
+    }
+
+    /// Reads each library file's digest from its bytes.
+    private func digestLibrary(_ fixture: Fixture) async throws {
+        for facts in try #require(await fixture.store.planningMedia(for: fixture.library)) {
+            let bytes = try Data(contentsOf: URL(filePath: fixture.library.rawValue).appending(path: facts.id.relativePath.rawValue))
+            _ = try await fixture.store.applyContentHash(ContentHashResult(
                 id: facts.id,
                 contentHash: Self.digest(bytes),
                 sourceSize: facts.byteSize,
                 sourceMTimeSeconds: facts.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
             ))
         }
-        let account = try await store.addImmichAccount(server: Self.server, userID: "user-1", displayName: "Family")
-        return Fixture(store: store, library: library, account: account)
     }
 
     private static func digest(_ bytes: Data) -> ContentDigest {
@@ -76,14 +84,17 @@ struct OneCopyTests {
     private func ids(
         _ scope: SidebarSelection,
         _ store: CatalogStore,
-        available: Set<LibraryRootPath>? = nil
+        available: Set<LibraryRootPath>? = nil,
+        filter: MediaFilter = .all
     ) async throws -> Set<MediaAssetID> {
         let paths: Set<LibraryRootPath> = if let available {
             available
         } else {
             await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
         }
-        return try await Set(store.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: paths).ids)
+        return try await Set(store.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: scope, filter: filter), availableLibraryPaths: paths
+        ).ids)
     }
 
     private func id(_ path: String, in root: LibraryRootPath) -> MediaAssetID {
@@ -170,6 +181,88 @@ struct OneCopyTests {
         #expect(try await !ids(.allMedia, store).contains(accountCopy))
         #expect(try await store.photoInfoOverlay(for: accountCopy)?.otherCopyRoots == [fixture.library])
         await store.shutdown()
+    }
+
+    /// Three copies and the library's not available: the next best reachable copy, the
+    /// account's first by path, stands in alone; when the library is back, it shows again
+    /// (owner, 2026-11-15).
+    @Test func onlyTheNextBestReachableCopyStandsIn() async throws {
+        let fixture = try await fixture()
+        let store = fixture.store
+        try await apply(
+            SourceListingChanges(listed: [Self.item("a1", digest: Self.digest("same")), Self.item("a2", digest: Self.digest("same"))]),
+            to: fixture.account, store: store
+        )
+        let libraryCopy = id("IMG_1.JPG", in: fixture.library)
+        let first = id("a1/IMG_1.JPG", in: fixture.account)
+        let copies: Set = [libraryCopy, first, id("a2/IMG_1.JPG", in: fixture.account)]
+
+        #expect(try await ids(.allMedia, store).intersection(copies) == [libraryCopy])
+        let offline = try await ids(.allMedia, store, available: [fixture.account])
+        #expect(offline == [first])
+        #expect(try await store.visibleAssetCount(for: .allMedia, availableLibraryPaths: [fixture.account]) == 1)
+        #expect(try await ids(.allMedia, store).intersection(copies) == [libraryCopy])
+        await store.shutdown()
+    }
+
+    /// A choice made on any copy is the photo's: every copy holds it, so a Liked filter finds
+    /// the photo whichever copy shows, and undoing the act puts every copy back.
+    @Test func aChoiceOnAnyCopyIsThePhotos() async throws {
+        let fixture = try await fixture()
+        let store = fixture.store
+        try await apply(SourceListingChanges(listed: [Self.item("a1", digest: Self.digest("same"))]), to: fixture.account, store: store)
+        let libraryCopy = id("IMG_1.JPG", in: fixture.library)
+        let accountCopy = id("a1/IMG_1.JPG", in: fixture.account)
+        var liked = MediaFilter.all
+        liked.choices = [.liked]
+
+        let act = try await store.setMediaChoices([accountCopy: .liked])
+        #expect(try await choices(of: [libraryCopy, accountCopy], store) == [.liked, .liked])
+        #expect(try await ids(.allMedia, store, filter: liked) == [libraryCopy])
+        #expect(try await ids(.library(fixture.library), store, filter: liked) == [libraryCopy])
+
+        _ = try await store.setMediaChoices(act.previous)
+        #expect(try await choices(of: [libraryCopy, accountCopy], store) == [.notRated, .notRated])
+        #expect(try await ids(.allMedia, store, filter: liked).isEmpty)
+        await store.shutdown()
+    }
+
+    /// A copy found after choices were made on it and on the photo: every copy takes the
+    /// choice made last. Liking the account's copy before the library's digest is read
+    /// leaves the photo Liked once it is, and a copy disliked later and then found makes the
+    /// photo Disliked.
+    @Test func aCopyThatJoinsAPhotoTakesTheChoiceMadeLast() async throws {
+        let fixture = try await fixture(digested: false)
+        let store = fixture.store
+        try await apply(
+            SourceListingChanges(listed: [Self.item("a1", digest: Self.digest("same")), Self.item("a2", digest: nil)]),
+            to: fixture.account, store: store
+        )
+        let libraryCopy = id("IMG_1.JPG", in: fixture.library)
+        let first = id("a1/IMG_1.JPG", in: fixture.account)
+        let second = id("a2/IMG_1.JPG", in: fixture.account)
+        var liked = MediaFilter.all
+        liked.choices = [.liked]
+
+        _ = try await store.setMediaChoices([first: .liked])
+        #expect(try await choices(of: [libraryCopy], store) == [.notRated])
+        try await digestLibrary(fixture)
+        #expect(try await choices(of: [libraryCopy, first], store) == [.liked, .liked])
+        #expect(try await ids(.allMedia, store, filter: liked) == [libraryCopy])
+
+        _ = try await store.setMediaChoices([second: .disliked])
+        try await apply(SourceListingChanges(listed: [Self.item("a2", digest: Self.digest("same"))]), to: fixture.account, store: store)
+        #expect(try await choices(of: [libraryCopy, first, second], store) == [.disliked, .disliked, .disliked])
+
+        // Deleting a copy leaves the photo's choice on the others.
+        try await apply(SourceListingChanges(deletedSourceItems: ["a2"]), to: fixture.account, store: store)
+        #expect(try await choices(of: [libraryCopy, first], store) == [.disliked, .disliked])
+        await store.shutdown()
+    }
+
+    private func choices(of ids: [MediaAssetID], _ store: CatalogStore) async throws -> [MediaChoice?] {
+        let assets = try await store.mediaAssets(for: ids)
+        return ids.map { assets[$0]?.mediaChoice }
     }
 
     /// Info's Copies row lists where the item's other copies are, says none when it has

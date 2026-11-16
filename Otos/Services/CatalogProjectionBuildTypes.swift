@@ -99,7 +99,7 @@ nonisolated extension CatalogChangedFacts {
         case .onThisDay:
             [.captureDate, .grouping, .choices, .searchReadings]
         case .duplicates, .duplicateGroup:
-            .copies
+            [.copies, .duplicateFacts]
         case .people, .person:
             .faces
         }

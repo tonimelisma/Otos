@@ -43,7 +43,8 @@ Store holds the one current value and every reader uses it: the copies read, the
 scope (`ContentConstraint.duplicated(reach)`) and the build, which groups by the reach the
 copies read used. `DuplicatesReachSQL.shared` is the one definition of "another row shares
 this digest": within each library it groups by digest and root, the digest index's own
-order. A change of reach is a change of which files are copies (`.copies`), so the groups
+order. A change of reach is a change of which files are duplicates (`.duplicateFacts`, which
+Keep All Copies and render signatures also name and only Duplicates reads), so the groups
 and the Duplicates scopes are read again. A build the catalog's load lets run before the
 handoff is followed by another.
 
@@ -157,12 +158,27 @@ mode saved with it is not restored.
 bytes, so a copy counts only with content (`byte_size > 0`). An empty file is a broken
 file, not a copy of another.
 
+**A file and its Immich mirror are never duplicates** (owner, 2026-11-15: "Never offer
+them"). An external library's asset (`source_path_sha1` set) is the server's view of a file on
+a disk it reads — for a mirrored library, the very file Otos holds (ADR 0054). Offered as a
+copy to keep, its Keep This Copy, or a folder rule for the account, moved the library file to
+the Trash, and with it the photo's only bytes. So `DuplicatesGateway.countsAsCopy`, the one rule
+the copies read, the Duplicates scope and the sidebar's count share, never counts an external
+asset: a mirror pair adds one copy, the file, to any group, and a file with only its mirror is
+no group. No click, rule or default can name the mirror, before its pairing is learned, after
+it, or while the library is not available. A pending Move to Trash made before this rule is the
+ordinary act and finishes as one: the file goes to the system Trash, and Undo or Put Back
+returns it. Two copies of one photo hold one choice (ADR 0054), so identical copies never wait
+on two different choices; versions of one photo still can.
+
 ## Rejected alternatives
 
 | Alternative | Why rejected |
 | --- | --- |
 | Listing copies across libraries by default (2026-11-14 to 2026-11-15) | A mirror the user keeps on purpose filled the list with pairs nobody wants removed, and hid the copies within a library that are waste (owner, 2026-11-15). |
 | Leaving mirrors out by recognising them (a folder set whose every file has a twin) | A guess about intent; a backup library the user is consolidating looks the same. One stated preference decides it. |
+| Leaving out only an external asset whose path pairing is recorded | The pairing is not stored per asset, and an external asset whose digest came from a download may still be a file a library holds at another path; it holds no bytes of its own either way. |
+| Offering a mirror pair one way only (keep the file) | The pair is one photo, not waste; a group of one file and its mirror has nothing to clean up. |
 | Keeping the reach in the window's query request | The Duplicates scopes and the build would each need it threaded through; the Store already answers what a duplicate is for both. |
 | A duplicate-group table with IDs | A second identity for facts the digests already state; it would go stale with every scan. |
 | Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). A library goes only when the user picks it in its folder rule. |

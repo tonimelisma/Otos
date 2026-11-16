@@ -675,7 +675,7 @@ struct DuplicatesTests {
 
         let changes = await store.changeNotifications()
         await store.setDuplicatesReach(.acrossLibraries)
-        for await change in changes where change.facts.contains(.copies) {
+        for await change in changes where change.facts.contains(.duplicateFacts) {
             break
         }
         #expect(try await store.duplicateCopies(availableLibraryPaths: available).reach == .acrossLibraries)

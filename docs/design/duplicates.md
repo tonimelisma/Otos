@@ -53,7 +53,7 @@ first.
 
 | Section | Holds | Its sentence | Drawn as |
 | --- | --- | --- | --- |
-| `Only you can choose` | Groups whose copies hold work that cannot be combined: two edits, two with `.xmp` / `.srt` files, a like and a dislike | `Their edits, ratings or .xmp files conflict.` | Photos |
+| `Only you can choose` | Groups whose copies hold work that cannot be combined: two edits, two with `.xmp` / `.srt` files, a like and a dislike (only between files of one photo: identical copies share one choice) | `Their edits, ratings or .xmp files conflict.` | Photos |
 | `Different files of one photo` | Files of one capture whose pixels, format or bytes differ | `Otos keeps the best file of each.` | Photos |
 | `Exact copies` | The same bytes stored more than once | `The same file stored more than once.` | Folders, then names |
 
@@ -181,9 +181,11 @@ edits onto the kept copy that lacks them; `.xmp` / `.srt` files go with their co
 
 Before a click or a rule, every group keeps what the keeper rule picks (ADR 0042):
 
-- **Copies are compared within each library or account.** A mirror — the same photo in a
-  library and in the Immich server that indexes it — is no duplicate until Settings ▸
-  General ▸ `Find duplicates across libraries and accounts` is on.
+- **Copies are compared within each library or account.** A copy in another library or an
+  uploaded Immich copy is no duplicate until Settings ▸ General ▸ `Find duplicates across
+  libraries and accounts` is on. A file and its mirror — the asset an Immich external library
+  lists for that very file — are one photo and never a duplicate, with the setting on or off:
+  the list never shows the mirror, so nothing can keep it in the file's place.
 - **Each library keeps its own copy**, when copies across libraries are listed.
 - **The best copy is kept:** one with `.xmp` / `.srt` files; for files of one photo —
   whether or not they name their capture — the camera original, then the most pixels,

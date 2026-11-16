@@ -41,11 +41,12 @@ actor PeopleAssignment {
     /// What a pass reads (`CatalogStore.peopleSnapshot`), so `CatalogProjection` asks for one
     /// only when one of these moved: the faces, who they are and which photos are checked for
     /// them; which rows are shown and which movies a Live Photo hides; the stacks a face's
-    /// photo stands for (kind, burst, capture date, choices and stack keys); a face's capture
-    /// date; and the image its tile is cut from. Digests, render signatures, the record's
-    /// other facts, places, search readings and enrichment's own stamps are not among them.
+    /// photo stands for (kind, burst, capture date, choices and stack keys) and the copies it
+    /// is one of (ADR 0054); a face's capture date; and the image its tile is cut from. Render
+    /// signatures, the record's other facts, places, search readings and enrichment's own
+    /// stamps are not among them.
     static let inputs: CatalogChangedFacts = [
-        .faces, .membership, .grouping, .kindAndFormat, .captureDate, .choices, .images,
+        .faces, .membership, .grouping, .kindAndFormat, .captureDate, .choices, .images, .copies,
     ]
 
     /// Built states, each differing from the one before; only the newest matters. One
@@ -360,7 +361,7 @@ nonisolated enum PeopleStateBuilder {
                 isHidden: person.isHidden,
                 isFavorite: person.isFavorite,
                 media: MediaCount(items: own.map { face in
-                    (snapshot.photoOfStackMember[face.id.asset] ?? face.id.asset, snapshot.tiles[face.id]?.isInVideo ?? false)
+                    (snapshot.photoOf[face.id.asset] ?? face.id.asset, snapshot.tiles[face.id]?.isInVideo ?? false)
                 }),
                 cover: keyPhoto ?? own.first,
                 userFaces: (userFaces[person.id] ?? []).sorted(by: newestFirst),

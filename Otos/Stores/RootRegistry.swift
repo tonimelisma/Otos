@@ -104,6 +104,10 @@ nonisolated struct RootRegistry {
             duplicatesReach: duplicatesReach
         )
         predicate.showsOneCopy = selection.showsOneCopy
+        let scopeRoots = Set(predicate.rootIDs)
+        predicate.holdsEveryCopyRoot = statesByPath.values.allSatisfy { state in
+            !state.root.kind.isMemberOfAllMedia || scopeRoots.contains(state.rowID)
+        }
         return predicate
     }
 

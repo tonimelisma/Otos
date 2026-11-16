@@ -80,7 +80,8 @@ act.
   (`.headline`), the hidden people in the same order, dimmed to half.
 - **A cell:** the key photo's face tile (DES-110), else the newest face; under it the
   name (`.body`) or, for an unnamed person, a link-style `Add Name…`; a secondary
-  `heart.fill` before the name of a favourite; `312 photos` (`.subheadline` L3, tabular).
+  `heart.fill` before the name of a favourite; `312 photos` (`.subheadline` L3, tabular),
+  counting a photo once however many identical copies of it hold the face (ADR 0054).
 - **Who is listed:** everyone with a face, and everyone the user named, gave a birthday,
   favourited or hid. A person Otos found is listed once their faces span two days; a face
   matching nobody that is seen on one day only stays unidentified, so strangers do not

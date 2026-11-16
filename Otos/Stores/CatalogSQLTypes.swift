@@ -212,6 +212,10 @@ nonisolated struct CatalogScopePredicate: Equatable {
     /// The scope shows one copy of each set of identical copies
     /// (`SidebarSelection.showsOneCopy`, ADR 0054).
     var showsOneCopy: Bool
+    /// Every library and account root is in the scope, so a row's best copy is always in
+    /// reach and the read need not ask whether a better copy is (ADR 0054). False unless the
+    /// registry proved it: a scope that misses a root asks.
+    var holdsEveryCopyRoot: Bool
 
     /// On This Day's scope, which picks its photos (`OnThisDayPicks`).
     var isAnniversary: Bool {
@@ -227,7 +231,8 @@ nonisolated struct CatalogScopePredicate: Equatable {
         location: LocationConstraint = .any,
         content: ContentConstraint = .any,
         date: DateConstraint = .any,
-        showsOneCopy: Bool = false
+        showsOneCopy: Bool = false,
+        holdsEveryCopyRoot: Bool = false
     ) {
         self.rootIDs = rootIDs
         self.importBatchUnixMs = importBatchUnixMs
@@ -235,6 +240,7 @@ nonisolated struct CatalogScopePredicate: Equatable {
         self.content = content
         self.date = date
         self.showsOneCopy = showsOneCopy
+        self.holdsEveryCopyRoot = holdsEveryCopyRoot
     }
 
     /// Whether reads over this scope join `asset_metadata`, and so can carry each

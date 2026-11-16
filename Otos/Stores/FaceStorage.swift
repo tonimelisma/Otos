@@ -318,7 +318,7 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
     case rootID, path, faceIndex, embedding, personID, assignment, likeness, isKeyPhoto
     case boxX, boxY, boxWidth, boxHeight
     case captureLocal, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown
-    case faceFramesPath, frameIndex, isVideo
+    case faceFramesPath, frameIndex, isVideo, copyDigest
 
     /// The expression each column is read from, over `face f` joined to `media_asset m`.
     var sql: String {
@@ -343,6 +343,8 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
         case .faceFramesPath: "m.face_frames_path"
         case .frameIndex: "f.frame_index"
         case .isVideo: "m.best_kind = 'video'"
+        // The digest a photo's copies share (ADR 0054), for a file with a present copy.
+        case .copyDigest: "CASE WHEN m.has_copies = 1 THEN m.content_sha1 END"
         }
     }
 

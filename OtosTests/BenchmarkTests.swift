@@ -439,6 +439,21 @@ struct BenchmarkTests {
             let paired = try await store.pairMirroredCopies(account: account)
             #expect(paired == 0)
         }
+        // All Media over 16,000 photos of two copies each (ADR 0054): with both roots the
+        // stored best copy decides every row; with the library away each account copy asks
+        // the digest index whether a better copy is reachable.
+        try await Benchmark.measure("copies.order.allMedia.of16k") {
+            let ids = try await store.orderedAssetIDs(
+                for: CatalogQueryDescriptor(scope: .allMedia), availableLibraryPaths: [library, account]
+            ).ids
+            #expect(ids.count == count)
+        }
+        try await Benchmark.measure("copies.order.libraryAway.of16k") {
+            let ids = try await store.orderedAssetIDs(
+                for: CatalogQueryDescriptor(scope: .allMedia), availableLibraryPaths: [account]
+            ).ids
+            #expect(ids.count == count)
+        }
         await store.shutdown()
     }
 

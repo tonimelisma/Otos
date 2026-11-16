@@ -24,6 +24,14 @@ The owner decided, on 2026-11-14:
 - Duplicates still lists identical copies, so they can be cleaned up — within one library or
   account unless the user asks for copies across them (2026-11-15, ADR 0042).
 
+On 2026-11-15, from the review of #756, #762 and #768 (#775), the owner decided:
+
+- a library file and its own Immich mirror are never offered as duplicates ("Never offer
+  them");
+- a Like, Dislike or named face belongs to the photo, not the copy ("The photo");
+- with three or more copies and the preferred library offline, only the next best reachable
+  copy shows ("The next best copy only").
+
 ## Decision
 
 **A combined scope shows one copy of each set of identical copies.**
@@ -69,25 +77,60 @@ each original, would download every one of them).
 - On the owner's catalog, 16,683 Camera Roll files have an Immich asset with the same name and
   size. Every one of them also has the same whole-second modification time.
 
-**The shown copy is a library's before an account's, then the first by root and path.**
+**The shown copy is a library's before an account's, then the first by root and path,
+among the scope's reachable roots.**
 - A library's copy is the one Otos renders itself, can edit in full resolution without a
   download, and can move to the Trash.
 - The rule reads only facts that no curation changes. So liking, editing or un-liking a copy
   never swaps the tile under the pointer.
-- Curation, edits and faces stay on the copy they were made on. The copy not shown keeps its
-  overlay, visible in its own library's or account's scope.
+- With three or more copies and the best one's library not available, only the next best
+  reachable copy shows (owner, 2026-11-15). When the library is back, its copy shows again.
+  Identity is the path, so that is another item: the grid's no-blank rule holds for each
+  path, and the returning copy's tile paints its own thumbnail as any newly shown item does.
 
-**Which copy is shown is stored, and SQLite keeps it.**
-- `media_asset.shown_copy_root_id` is the root of the copy shown in a row's place, NULL for
-  the copy that is shown. It counts only present copies in a library or an account.
-- Three triggers recompute it for the digest group a write leaves and the one it joins: on an
-  insert, a delete, and an update of the digest, its stamps, the file's size or mtime, its
+**Which copy is best is stored, and SQLite keeps it.**
+- `media_asset.shown_copy_root_id` is the root of the best present copy ranked before a row,
+  in any root, NULL for the best copy itself. It counts only present copies in a library or an
+  account.
+- `media_asset.has_copies` (v64) is 1 when another present copy shares the row's digest.
+- Three triggers recompute both for the digest group a write leaves and the one it joins: on
+  an insert, a delete, and an update of the digest, its stamps, the file's size or mtime, its
   presence or its path. They run in the transaction of every write, so no write path can leave
-  it stale and no Swift owner duplicates the rule.
-- A scope hides a row only when its shown copy's root is in the scope. While a library is not
-  available, its copies are not in any scope, and the next copy stands in.
-- The window's date indexes and the stack candidates' carry the column (v60), so the test
-  reads no table row.
+  them stale and no Swift owner duplicates the rule.
+- A scope hides a row when its shown copy's root is in the scope. Only for a row whose shown
+  copy's root is not in the scope (its library not available) does the read ask, through the
+  digest index, whether a copy ranked before it is in the scope. That is a table read for those
+  rows alone, so mounting or unmounting a library writes nothing. A scope that holds every
+  library and account root (`holdsEveryCopyRoot`, from the root registry) has every best copy
+  in reach and does not ask: its read is the one it was before.
+- The window's date indexes, the stack candidates' and On This Day's carry both columns (v60,
+  v64), so the common test reads no table row.
+
+**A choice and a face belong to the photo, not the copy** (owner, 2026-11-15: "The photo").
+The copies are the same relation the shown copy uses: the same current SHA-1 in a library or
+an account, a mirror pair included.
+- **A choice is written on every copy.** A Like, Dislike or un-choice on any copy is written on
+  all its copies, whatever their presence, in the same transaction (trigger
+  `media_asset_choice_made`). So the order, the counts, the Liked filter, On This Day's
+  ranking and exclusion, the stacks, the tile badge and Info all read the shown copy's own
+  column, unchanged, and agree.
+- **The latest act wins when copies meet.** `media_choice_sequence` orders every choice act in
+  the catalog (`choice_sequence`), an act order rather than a clock. When a copy joins a photo —
+  its digest is read, its mirror pairs, its listing names it — every copy takes the choice of
+  the latest act among them. Choices made before v64 have no act: they rank before every act,
+  Liked before Disliked before Not Rated, and v64 gave each photo one choice by that rule.
+- **Undo** writes the previous choice back on the copy it named, which is an act, so every copy
+  takes it.
+- **Overlay keeps one lifecycle.** Each copy holds the photo's choice in its own row, so a
+  proven deletion of one copy purges that row alone and the photo's choice lives on the others.
+- **A face on any copy is the photo's.** Faces are read from each copy's own preview and stay
+  on the copy (`PhotoFaceSQL`). A person's photos, People and the People filter test a row's
+  own faces and, only for a row with `has_copies`, its present copies' faces through the digest
+  index. A person's narrow scope seeks its faces' photos and their copies. A person's photo
+  count counts each photo once (`PeopleSnapshot.photos`).
+- Edits stay on the copy they were made on.
+- Within one library, files with the same digest are one photo in the combined scopes (above)
+  and so share choices and faces; Duplicates still lists them within their library.
 
 **Info names where the other copies are.** The File section's `Copies` row lists the library
 or account of each other present copy, in the order copies are shown in. It reads `None` when
@@ -107,9 +150,15 @@ is never reported as none.
 | Matching a mirror by name, size and date alone | A guess across folders. The path checksum makes the path exact, and the size and date only say the bytes are the same version. |
 | Listing every asset's `originalPath` (`POST /api/search/metadata`) | It is about 150 requests per resync, and a second record of a path the stream's checksum already names. One path per library teaches the prefix. |
 | Showing the copy with the user's work (edited, liked) first | Liking or un-liking would swap which file the tile is, under the pointer. |
+| Keeping a choice on its copy and resolving the photo's choice in each read | Every read that tests a choice — the order under a Liked filter, counts, On This Day, the stacks, the tile badge, Info — would need a digest lookup per row; the order index cannot hold the digest, so it is the per-row table read that took 17–33 s. A conflict between copies would also be decided in each read. |
+| Propagating faces to every copy | Faces are read from each copy's own preview, by two pipelines that draw a photo differently (ADR 0042); there is no face-to-face correspondence to copy along, and a copy read later would need it again. |
+| Reading faces from one copy per photo | Changes face identity and its lifecycle, and the copy read would change with availability. Reported as double work instead. |
+| A wall-clock time for each choice | Which act came last is a fact the catalog can hold as an order; a clock can step back (ADR 0033). |
+| Storing the shown copy per scope's reachable roots | Every mount or unmount would rewrite every copied row of the library (16,000 on the owner's catalog). |
+| Electing the shown copy in every read | The 17–33 s per-row read above. The stored best copy answers every row whose best copy is reachable. |
 | Keeping XXH3 and adding SHA-1 beside it | Two digests answering one question. Immich speaks SHA-1, so one digest serves both. |
 | Collapsing copies in one library's or folder's view | The owner wants that view to show exactly what is on disk (2026-11-14). |
-| Taking identical copies out of Duplicates | Duplicates is where copies are cleaned up. A mirror's pairs across libraries are listed only when the user asks for them (ADR 0042), and an account's copy is never moved (ADR 0046 §8). |
+| Taking identical copies out of Duplicates | Duplicates is where copies are cleaned up; only an external library's asset, which holds no bytes of its own, is left out (ADR 0042). |
 
 ## Consequences
 
@@ -127,9 +176,15 @@ is never reported as none.
   holds its reads to index seeks.
 - A file renamed on one side but not yet on the other pairs again once both sides list it at
   the same path.
-- Duplicates lists a mirror's pairs only while the user has it compare across libraries
-  (ADR 0042). Then an account's copy is never tagged Trash (ADR 0046 §8), and by default
-  each library and account keeps its own, so nothing moves unless the user chooses it. On
-  the owner's catalog that is 16,001 groups, and a copies read of 4–6 s, off the main actor.
+- Duplicates never lists a file and its mirror (ADR 0042, owner 2026-11-15): an external
+  library's asset is never a copy there, so nothing can keep it and send the only bytes to the
+  Trash.
+- Migration v64 adds `has_copies`, `media_choice_sequence` and `choice_sequence`, rebuilds the
+  digest index and the six indexes that carry the tested columns, recomputes every row with a
+  digest, and gives each photo whose copies disagree one choice. Its cost on a generated
+  owner-shaped catalog is in `docs/research/2026-11-15-photo-level-copies.md`.
+- Faces are still read from every copy, so a mirrored photo's faces are read and assigned
+  twice; the photo counts once.
 - A digest write recomputes its group in the same transaction, about 0.7 ms on the owner's
-  catalog. It notifies `.copies`, which the combined scopes now depend on.
+  catalog. It notifies `.copies`, which the combined scopes and People depend on, and
+  `.choices` too when a copy that joined a photo took its choice (`choice_sequence.joins`).

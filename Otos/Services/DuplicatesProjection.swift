@@ -32,7 +32,7 @@ actor DuplicatesProjection {
     /// they show. Faces, places, search readings and enrichment's own stamps are not among
     /// them.
     static let inputs: CatalogChangedFacts = [
-        .membership, .grouping, .copies, .kindAndFormat, .captureDate, .mediaRecord, .choices, .images,
+        .membership, .grouping, .copies, .duplicateFacts, .kindAndFormat, .captureDate, .mediaRecord, .choices, .images,
     ]
 
     /// Built groups, each differing from the one before; only the newest matters. One

@@ -1430,8 +1430,17 @@ nonisolated enum CatalogSchema {
     ///   checksum.
     static let copiesMigrationIdentifier = "v60_sha1_digest_and_copies"
 
-    /// The columns a combined scope's reads test a row by: v55's, and whether another copy
-    /// is shown in its place.
+    /// The digest index's columns as v60 made it; v64 adds `source_path_sha1`
+    /// (`ContentDigestSQL.indexedColumns`).
+    static let copiesDigestIndexColumns = """
+    content_sha1, library_root_id, relative_path, content_hash_source_size, content_hash_source_mtime, \
+    byte_size, content_modified_at_unix, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+    trash_path, best_kind, content_identifier
+    """
+
+    /// The columns a combined scope's reads tested a row by from v60 to v62: v55's, and
+    /// whether another copy is shown in its place. v64 adds `has_copies`
+    /// (`photoTestedColumns`).
     static let copyTestedColumns = "\(windowReadTestedColumns), shown_copy_root_id"
 
     /// The kinds of root whose rows are copies of one another: the ones All Media holds
@@ -1447,7 +1456,8 @@ nonisolated enum CatalogSchema {
         """
     }
 
-    /// Sets `shown_copy_root_id` for every row of `media_asset` that `rows` selects.
+    /// Sets `shown_copy_root_id` for every row of `media_asset` that `rows` selects: v60's
+    /// triggers, which v64 replaces (`photoCopiesRecompute`).
     static func shownCopyRecompute(rows: String) -> String {
         """
         UPDATE media_asset SET shown_copy_root_id = CASE
@@ -1515,7 +1525,7 @@ nonisolated enum CatalogSchema {
             "ALTER TABLE media_asset ADD COLUMN shown_copy_root_id INTEGER",
             """
             CREATE INDEX \(ContentDigestSQL.indexName)
-            ON media_asset(\(ContentDigestSQL.indexedColumns))
+            ON media_asset(\(copiesDigestIndexColumns))
             WHERE content_sha1 IS NOT NULL
             """,
             """
@@ -1612,6 +1622,221 @@ nonisolated enum CatalogSchema {
         WHERE primary_latitude IS NOT NULL AND primary_longitude IS NOT NULL
         """,
     ]
+
+    /// v64: what the user says of a photo is said of all its copies, and a mirror is never a
+    /// duplicate (ADR 0054, ADR 0042; owner, 2026-11-15):
+    /// - `media_asset.has_copies` is 1 when another present copy shares the row's current
+    ///   digest, in a library or an account. A face on any copy is the photo's, and a read
+    ///   asks for a copy's faces only of a row that has one (`PhotoFaceSQL`). The window's
+    ///   date indexes, the stack candidates' and On This Day's carry it beside
+    ///   `shown_copy_root_id`, so the test reads no table row.
+    /// - `media_asset.media_choice_sequence` orders the act that set the row's choice among
+    ///   every choice act in the catalog (`choice_sequence`): an act order rather than a
+    ///   clock, because which act came last is a fact the catalog holds. A choice set before
+    ///   v64 has no act, so it is ordered before every act, Liked (-1) before Disliked (-2);
+    ///   NULL is Not Rated with no act. One order is one act, which wrote one choice.
+    /// - A choice act on a copy is written on every copy in the same transaction
+    ///   (`media_asset_choice_made`). When a copy joins a photo, every copy takes the choice of
+    ///   the latest act among them (`photoChoiceUnify`), and that write carries the act's
+    ///   order, so no trigger's own write is taken for an act.
+    /// - The digest index carries `source_path_sha1`, so Duplicates leaves out an external
+    ///   library's asset reading no table row (`DuplicatesGateway.countsAsCopy`).
+    /// - The three copy triggers are made again to keep `has_copies` and the photo's choice
+    ///   beside the shown copy.
+    /// Every row with a digest is recomputed once, and every photo whose copies disagree takes
+    /// one choice by the rule above.
+    static let photoCopiesMigrationIdentifier = "v64_photo_copies"
+
+    /// The columns a combined scope's reads test a row by: v60's, and whether the row has a
+    /// present copy.
+    static let photoTestedColumns = "\(copyTestedColumns), has_copies"
+
+    /// The indexes that carry the tested columns, by name and leading columns.
+    static let photoTestedIndexes: [(name: String, columns: String)] = [
+        ("idx_media_asset_best_capture_global_desc", "best_capture_local DESC, library_root_id, relative_path"),
+        ("idx_media_asset_best_capture_root_desc", "library_root_id, best_capture_local DESC, relative_path"),
+        ("idx_media_asset_best_capture_global_asc", "best_capture_local ASC, library_root_id, relative_path"),
+        ("idx_media_asset_best_capture_root_asc", "library_root_id, best_capture_local ASC, relative_path"),
+        ("idx_media_asset_stack_candidate", "library_root_id, best_kind, parent_path, best_format, relative_path"),
+        (AnniversaryMatch.indexName, "capture_day, capture_month, best_capture_local DESC, library_root_id, relative_path"),
+    ]
+
+    /// Whether `row` is a copy: a current digest of some bytes, in a library or an account.
+    static func isCopy(_ row: String) -> String {
+        """
+        (\(ContentDigestSQL.isCurrent(row)) AND \(row).content_sha1 <> \(ContentDigestSQL.empty)
+          AND \(row).library_root_id IN (SELECT id FROM library_root WHERE kind IN (\(copyRootKinds))))
+        """
+    }
+
+    /// Whether `copy` is a copy of the copy `row` (itself included), whatever its presence:
+    /// the rows a choice is written on.
+    static func isCopy(_ copy: String, of row: String) -> String {
+        """
+        \(copy).content_sha1 = \(row).content_sha1
+          AND \(ContentDigestSQL.isCurrent(copy))
+          AND \(copy).library_root_id IN (SELECT id FROM library_root WHERE kind IN (\(copyRootKinds)))
+        """
+    }
+
+    /// Sets `shown_copy_root_id` and `has_copies` for every row that `rows` selects.
+    static func photoCopiesRecompute(rows: String) -> String {
+        """
+        UPDATE media_asset SET
+            shown_copy_root_id = CASE
+                WHEN \(ContentDigestSQL.isCurrent("media_asset")) AND media_asset.content_sha1 <> \(ContentDigestSQL.empty)
+                THEN (
+                    SELECT copy.library_root_id FROM media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
+                    WHERE \(isCopy("copy", of: "media_asset"))
+                      AND \(CatalogVisibilitySQL.isPresent("copy"))
+                      AND (\(copyRank("copy"))) < (\(copyRank("media_asset")))
+                    ORDER BY \(copyRank("copy"))
+                    LIMIT 1
+                )
+            END,
+            has_copies = CASE
+                WHEN \(isCopy("media_asset"))
+                THEN EXISTS (
+                    SELECT 1 FROM media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
+                    WHERE \(isCopy("copy", of: "media_asset"))
+                      AND \(CatalogVisibilitySQL.isPresent("copy"))
+                      AND copy.rowid <> media_asset.rowid
+                )
+                ELSE 0
+            END
+        WHERE \(rows);
+        """
+    }
+
+    /// Gives every copy that `rows` selects the choice of the latest act among its copies,
+    /// with that act's order, where its copies disagree; a trigger then counts the copies
+    /// that took a choice (`countsJoinedChoices`).
+    static func photoChoiceUnify(rows: String) -> String {
+        """
+        UPDATE media_asset SET (media_choice, media_choice_sequence) = (
+            SELECT copy.media_choice, copy.media_choice_sequence
+            FROM media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
+            WHERE \(isCopy("copy", of: "media_asset"))
+            ORDER BY copy.media_choice_sequence DESC
+            LIMIT 1
+        )
+        WHERE \(rows) AND \(isCopy("media_asset"))
+          AND EXISTS (
+              SELECT 1 FROM media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
+              WHERE \(isCopy("copy", of: "media_asset"))
+                AND copy.media_choice_sequence IS NOT media_asset.media_choice_sequence
+          );
+        """
+    }
+
+    /// The rows of the digest groups a write leaves and joins.
+    static let touchedGroups = "content_sha1 IN (OLD.content_sha1, NEW.content_sha1)"
+
+    /// Takes the next act's order; a statement after it reads it from `choice_sequence`.
+    static let nextChoiceAct = "UPDATE choice_sequence SET value = value + 1"
+
+    /// Run right after `photoChoiceUnify` in a trigger: adds the copies it gave a choice to
+    /// `choice_sequence.joins`, so the write that joined them can say choices changed
+    /// (`choiceJoins`). A unify that writes any row changes at least one choice.
+    static let countsJoinedChoices = "UPDATE choice_sequence SET joins = joins + changes();"
+
+    /// How many copies have taken a photo's choice by joining it, ever: a write compares it
+    /// before and after to know whether it changed choices besides copies.
+    static func choiceJoins(_ db: Database) throws -> Int64 {
+        try Int64.fetchOne(db, sql: "SELECT joins FROM choice_sequence") ?? 0
+    }
+
+    static var photoCopiesStatements: [String] {
+        var statements = [
+            "DROP TRIGGER media_asset_copy_inserted",
+            "DROP TRIGGER media_asset_copy_deleted",
+            "DROP TRIGGER media_asset_copy_updated",
+            "ALTER TABLE media_asset ADD COLUMN has_copies INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE media_asset ADD COLUMN media_choice_sequence INTEGER",
+            "CREATE TABLE choice_sequence (value INTEGER NOT NULL, joins INTEGER NOT NULL)",
+            "INSERT INTO choice_sequence (value, joins) VALUES (0, 0)",
+            """
+            UPDATE media_asset SET media_choice_sequence = CASE media_choice WHEN 'liked' THEN -1 ELSE -2 END
+            WHERE media_choice <> 'notRated'
+            """,
+            "DROP INDEX \(ContentDigestSQL.indexName)",
+            """
+            CREATE INDEX \(ContentDigestSQL.indexName)
+            ON media_asset(\(ContentDigestSQL.indexedColumns))
+            WHERE content_sha1 IS NOT NULL
+            """,
+        ]
+        statements += photoTestedIndexes.map { "DROP INDEX \($0.name)" }
+        statements += photoTestedIndexes.map { index in
+            "CREATE INDEX \(index.name) ON media_asset(\(index.columns), \(photoTestedColumns))"
+        }
+        // Only the rows that change are written: the shown copy is v60's triggers' and stays,
+        // so only a copy is written, once, for `has_copies`.
+        statements += [
+            """
+            UPDATE media_asset SET has_copies = 1
+            WHERE content_sha1 IS NOT NULL AND \(isCopy("media_asset"))
+              AND EXISTS (
+                  SELECT 1 FROM media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
+                  WHERE \(isCopy("copy", of: "media_asset"))
+                    AND \(CatalogVisibilitySQL.isPresent("copy"))
+                    AND copy.rowid <> media_asset.rowid
+              )
+            """,
+            photoChoiceUnify(rows: "content_sha1 IS NOT NULL"),
+            """
+            CREATE TRIGGER media_asset_copy_inserted AFTER INSERT ON media_asset
+            WHEN NEW.content_sha1 IS NOT NULL
+            BEGIN
+            \(photoCopiesRecompute(rows: "content_sha1 = NEW.content_sha1"))
+            \(photoChoiceUnify(rows: "content_sha1 = NEW.content_sha1"))
+            \(countsJoinedChoices)
+            END
+            """,
+            """
+            CREATE TRIGGER media_asset_copy_deleted AFTER DELETE ON media_asset
+            WHEN OLD.content_sha1 IS NOT NULL
+            BEGIN
+            \(photoCopiesRecompute(rows: "content_sha1 = OLD.content_sha1"))
+            END
+            """,
+            // A write that moves a copy's digest and sets its choice at once — an import's
+            // landing, which brings the card's choice — is an act, ordered before the photo
+            // takes the latest act among its copies.
+            """
+            CREATE TRIGGER media_asset_copy_updated AFTER UPDATE OF \(copyInputColumns) ON media_asset
+            WHEN (OLD.content_sha1 IS NOT NULL OR NEW.content_sha1 IS NOT NULL) AND (\(copyInputChanged))
+            BEGIN
+            \(nextChoiceAct) WHERE NEW.media_choice IS NOT OLD.media_choice;
+            UPDATE media_asset SET media_choice_sequence = (SELECT value FROM choice_sequence)
+            WHERE rowid = NEW.rowid AND NEW.media_choice IS NOT OLD.media_choice;
+            \(photoCopiesRecompute(rows: touchedGroups))
+            \(photoChoiceUnify(rows: touchedGroups))
+            \(countsJoinedChoices)
+            UPDATE media_asset SET shown_copy_root_id = NULL, has_copies = 0
+            WHERE rowid = NEW.rowid AND NEW.content_sha1 IS NULL AND (shown_copy_root_id IS NOT NULL OR has_copies <> 0);
+            END
+            """,
+            // A choice written without an order is an act: it takes the next order, and every
+            // copy takes the choice with it. The triggers' own writes carry an order, so they
+            // start no act.
+            """
+            CREATE TRIGGER media_asset_choice_made AFTER UPDATE OF media_choice ON media_asset
+            WHEN NEW.media_choice IS NOT OLD.media_choice
+              AND NEW.media_choice_sequence IS OLD.media_choice_sequence
+              AND NOT (\(copyInputChanged))
+            BEGIN
+            \(nextChoiceAct);
+            UPDATE media_asset SET
+                media_choice = NEW.media_choice,
+                media_choice_sequence = (SELECT value FROM choice_sequence)
+            WHERE rowid = NEW.rowid
+               OR (\(isCopy("NEW")) AND \(isCopy("media_asset", of: "NEW")));
+            END
+            """,
+        ]
+        return statements
+    }
 
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """

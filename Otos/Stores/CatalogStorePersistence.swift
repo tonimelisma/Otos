@@ -389,6 +389,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        migrator.registerMigration(CatalogSchema.photoCopiesMigrationIdentifier) { db in
+            for statement in CatalogSchema.photoCopiesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

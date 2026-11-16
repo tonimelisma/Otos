@@ -63,7 +63,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0031](adr/0031-browser-place-restored-on-relaunch.md) | The browser place (query, view mode, selection, position) is saved once at quit and restored at launch, checked against the loaded catalog. |
 | [0044](adr/0044-verification-builds-share-compile-results.md) | Verification builds share one compilation cache across worktrees through prefix mapping; tests take the checkout from `OTOS_SOURCE_ROOT`; gates run in one pass; `check.sh --only` is iteration feedback, not evidence. |
 | [0046](adr/0046-immich-accounts-as-read-only-sources.md) | An Immich account is a read-only fixed-library source synced from its server stream, browsable offline from stored renderings, with root-kind capabilities and one original-locality owner. |
-| [0054](adr/0054-one-photo-many-copies.md) | Identical copies (same current SHA-1) are one photo in the scopes that combine libraries and accounts, a library's copy shown first; a trigger-kept `shown_copy_root_id` decides it. |
+| [0054](adr/0054-one-photo-many-copies.md) | Identical copies (same current SHA-1) are one photo in the scopes that combine libraries and accounts, a library's copy shown first, the next best reachable one while its library is away; a trigger-kept `shown_copy_root_id` decides it. A choice and a face are the photo's, on every copy (v64). |
 
 ## Research
 

@@ -70,9 +70,42 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     var likeness: [FaceID: Float] = [:]
     /// Each person's key photo, where the user chose one.
     var keyPhotos: [PersonID: FaceID] = [:]
-    /// Each file of a stack mapped to its stack's key (ADR 0052): a RAW and its JPEG are one
-    /// photo, so a person's photo count counts them once.
-    var photoOfStackMember: [MediaAssetID: MediaAssetID] = [:]
+    /// Each file that is one of several of a photo mapped to the file that stands for it
+    /// (`photos(stackKeys:copies:)`), so a person's photo count counts the photo once. A file
+    /// absent from it stands for itself.
+    var photoOf: [MediaAssetID: MediaAssetID] = [:]
+
+    /// One identical copy of a photo with faces, with what ranks it among its copies.
+    nonisolated struct Copy: Sendable {
+        let asset: MediaAssetID
+        let rootID: Int64
+        let isAccount: Bool
+    }
+
+    /// The file each file with faces stands for, where it is not itself:
+    /// - identical copies (ADR 0054) — each group of `copies` — are one photo, which the copy
+    ///   shown first among them stands for: a library's before an account's, then by root and
+    ///   path;
+    /// - the files of a stack (ADR 0052) — a RAW and its JPEG — are one photo, which the
+    ///   stack's key stands for, reached through the copy.
+    static func photos(stackKeys: [MediaAssetID: MediaAssetID], copies: [[Copy]]) -> [MediaAssetID: MediaAssetID] {
+        var photoOf = stackKeys
+        for group in copies where group.count > 1 {
+            let ranked = group.sorted { lhs, rhs in
+                if lhs.isAccount != rhs.isAccount {
+                    return !lhs.isAccount
+                }
+                return (lhs.rootID, lhs.asset.relativePath.rawValue) < (rhs.rootID, rhs.asset.relativePath.rawValue)
+            }
+            let shown = ranked[0].asset
+            let photo = stackKeys[shown] ?? shown
+            for copy in ranked.dropFirst() {
+                photoOf[copy.asset] = photo
+            }
+        }
+        return photoOf
+    }
+
     /// What in the available libraries and Immich accounts is not yet read for faces: stills
     /// whose faces are not read from their current stored preview, or whose preview is still
     /// to come, and a library's videos whose frames are not yet read.

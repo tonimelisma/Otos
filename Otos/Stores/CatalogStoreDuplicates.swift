@@ -78,14 +78,21 @@ nonisolated enum DuplicatesGateway {
         }
     }
 
-    /// A row counts when it is visible, has content, and its digest is current for its
-    /// file. An empty file holds nothing to duplicate: every one shares the digest of no
-    /// bytes, so matching them would group unrelated broken files. The one rule: the
-    /// Duplicates read and the Duplicates scope's rows (`CatalogQueryGateway`) both apply
-    /// it, so the scope holds exactly the copies the groups list.
+    /// A row counts when it is visible, has content, its digest is current for its file, and
+    /// it holds bytes of its own. The one rule: the Duplicates read and the Duplicates
+    /// scope's rows (`CatalogQueryGateway`) both apply it, so the scope, the sidebar's count
+    /// and the list hold exactly the same copies.
+    /// - An empty file holds nothing to duplicate: every one shares the digest of no bytes,
+    ///   so matching them would group unrelated broken files.
+    /// - An Immich external library's asset (`source_path_sha1` set) is the server's view of
+    ///   a file on a disk the server reads — for a mirrored library, the very file Otos holds
+    ///   there (ADR 0054). Immich holds no bytes of it, so it is never a copy to keep in place
+    ///   of another: a group never holds it, so no click, folder rule or default can keep it
+    ///   and send the file it mirrors to the Trash (owner, 2026-11-15).
     static func countsAsCopy(_ row: String) -> String {
         """
         \(row).byte_size > 0
+          AND \(row).source_path_sha1 IS NULL
           AND \(row).pending_trash_batch_unix_ms IS NULL
           AND \(row).trash_path IS NULL
           AND \(row).hidden_by_source = 0

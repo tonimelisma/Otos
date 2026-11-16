@@ -226,6 +226,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.mirrorsMigrationIdentifier,
             CatalogSchema.captureDayMigrationIdentifier,
             CatalogSchema.locationIndexMigrationIdentifier,
+            CatalogSchema.photoCopiesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -638,6 +639,66 @@ struct CatalogStoreSchemaMigrationTests {
                 }
         }
         #expect(shown == ["IMG_1.JPG=shown", "a1/IMG_1.JPG=1"])
+    }
+
+    /// v64 (ADR 0054): every photo whose copies disagree takes one choice — the choices made
+    /// before acts were ordered rank Liked, then Disliked, then Not Rated — and every copy
+    /// learns whether it has a present copy. A later act on one copy is every copy's.
+    @Test func thePhotoCopiesMigrationGivesEachPhotoOneChoice() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.captureDayMigrationIdentifier)
+        // Three photos of two copies each — Liked and Disliked, Disliked and Not Rated, Not
+        // Rated twice — and one file with no copy.
+        struct Copy {
+            let root: Int
+            let path: String
+            let digest: UInt8
+            let choice: String
+        }
+        let rows = [
+            Copy(root: 1, path: "liked.JPG", digest: 1, choice: "liked"),
+            Copy(root: 2, path: "a1/liked.JPG", digest: 1, choice: "disliked"),
+            Copy(root: 1, path: "disliked.JPG", digest: 2, choice: "notRated"),
+            Copy(root: 2, path: "a2/disliked.JPG", digest: 2, choice: "disliked"),
+            Copy(root: 1, path: "plain.JPG", digest: 3, choice: "notRated"),
+            Copy(root: 2, path: "a3/plain.JPG", digest: 3, choice: "notRated"),
+            Copy(root: 1, path: "alone.JPG", digest: 4, choice: "liked"),
+        ]
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/RemoteStaging/family', 'immichAccount')")
+            for row in rows {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key,
+                        name_sort_key, kind, byte_size, content_modified_at_unix, media_choice,
+                        content_sha1, content_hash_source_size, content_hash_source_mtime)
+                    VALUES (?, ?, ?, ?, ?, 'image', 4, 1700000000, ?, ?, 4, 1700000000)
+                    """,
+                    arguments: [row.root, row.path, row.path, row.path, row.path, row.choice, Data(repeating: row.digest, count: 20)]
+                )
+            }
+        }
+        try CatalogStore.migrator.migrate(queue)
+
+        func state() async throws -> [String] {
+            try await queue.read { db in
+                try Row.fetchAll(db, sql: "SELECT relative_path, media_choice, has_copies FROM media_asset ORDER BY relative_path")
+                    .map { row in "\(row["relative_path"] as String)=\(row["media_choice"] as String),\(row["has_copies"] as Int)" }
+            }
+        }
+        #expect(try await state() == [
+            "a1/liked.JPG=liked,1", "a2/disliked.JPG=disliked,1", "a3/plain.JPG=notRated,1",
+            "alone.JPG=liked,0", "disliked.JPG=disliked,1", "liked.JPG=liked,1", "plain.JPG=notRated,1",
+        ])
+
+        try await queue.write { db in
+            try db.execute(sql: "UPDATE media_asset SET media_choice = 'disliked' WHERE relative_path = 'a3/plain.JPG'")
+        }
+        #expect(try await state().filter { $0.contains("plain") } == ["a3/plain.JPG=disliked,1", "plain.JPG=disliked,1"])
     }
 
     @Test func theProductStampsMigrationStampsRenderingsExceptProvisionalOnes() async throws {

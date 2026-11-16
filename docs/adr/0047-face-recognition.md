@@ -342,6 +342,15 @@ grouping had put with the right child.
   the gallery whichever arrives first, and so does the undo of a New Person, whose person is
   gone.
 
+### A photo's copies
+
+A face on any identical copy of a photo is the photo's (ADR 0054; owner, 2026-11-15). Faces
+are still read from each copy's own preview and stay on that copy, and the user names a face on
+the copy in front of them. A person's photos, People and the People filter find a photo by a
+face on any of its present copies (`PhotoFaceSQL`), and a person's photo count counts the photo
+once (`PeopleSnapshot.photos`), so a photo mirrored by an Immich account is not two photos of
+that person. Each copy's faces are still read, embedded and assigned on their own.
+
 ### Licences and attribution
 
 - **Code:** CVLFace and AdaFace are MIT.
