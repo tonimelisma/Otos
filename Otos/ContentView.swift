@@ -391,6 +391,12 @@ struct ContentView: View {
         .onChange(of: viewModel.searchFocusRequest) {
             isSearchFocused = true
         }
+        // Focus however it came (a click, Tab, Edit ▸ Find) readies the first query.
+        .onChange(of: isSearchFocused) { _, focused in
+            if focused {
+                viewModel.searchFieldFocused()
+            }
+        }
         .alert(
             "Could Not Eject Disk",
             isPresented: Binding(

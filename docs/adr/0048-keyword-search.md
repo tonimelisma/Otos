@@ -301,6 +301,26 @@ against 77.3, 85 in English for both), and every asset has one.
   copied. Rejected: keying the kept scope on the file's identity and slot count as well, which
   guards that one cache but leaves an answer's revision unmoved by a change, so a projection
   holding the answer would not ask again.
+- **The first query** of a session paid a cold start that later ones did not. On the owner's
+  library, the first search took 2,851 ms and the second 194 ms. The encode took 1,863 ms
+  against 17 ms: the text model's Core ML load and first prediction, and the list of
+  Translation's languages. The match took 832 ms against 62 ms: the first pass over 241 MB of
+  mapped vectors read from the disk, and the scope's slots.
+  - When the user shows intent to search, by the search field taking focus however it came
+    (a click, Tab, Edit ▸ Find), the window asks the index to ready the shown scope
+    (`PhotoSearchIndex.prepareForSearch`). The index's own loop then does three things, and
+    publishes nothing:
+    - starts the encoder's load (`SearchQueryReader.prepare`, a request revision its reading
+      loop covers before the next query, so a query typed meanwhile waits for that load
+      rather than starting a second);
+    - asks the kernel to read the mapped vectors ahead (`MADV_WILLNEED`);
+    - reads the scope's slots, which the first query then reuses.
+  - A blur cancels nothing, and a query with no intent before it is answered as before.
+  - Rejected: loading the encoder at launch. Every model loaded eagerly cost 15 s and 525 MB,
+    and most sessions never search.
+  - Under memory pressure an idle encoder lets its model go, and the next reading loads it
+    again. `op=search.encoder phase=loaded|prepared` logs the load's footprint (it is CPU
+    only, like every model here).
 - **Text matching** runs the typed and the English words once when they are the same words.
 - **Answers:** `CatalogProjection` hands it the query's encoding, its facts resolved for the
   pass's now, and the scope's assets, and shows the matches. The index's `changes` stream

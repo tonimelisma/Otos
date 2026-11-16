@@ -576,6 +576,7 @@ def verdicts(report, targets):
         else:
             metric = "click.smallScopeMs"
         add(metric, ("first " if click["first"] else "return ") + click["kind"], click["ms"])
+    searches = 0
     for step in report["tour"]["steps"]:
         if step.get("outcome") == "deadline":
             # A step whose fact never came is a failure of its own, whatever it measures.
@@ -587,6 +588,11 @@ def verdicts(report, targets):
         if step.get("kind") == "scroll":
             add("scroll.withoutThumbnail", f"scroll {step.get('label')} {step.get('position')} tiles without thumbnail",
                 int_or_none(step.get("withoutThumbnail")))
+        elif step.get("kind") == "search":
+            # The session's first search pays the cold start (the encoder's load, the vectors'
+            # first read); every later one does not, so they are reported apart.
+            searches += 1
+            add("query.resultMs", f"search {'first' if searches == 1 else 'again'} {step.get('label')}", step_ms(step))
         elif step.get("kind") in QUERY_STEPS:
             add("query.resultMs", f"{step['kind']} {step.get('label')}", step_ms(step))
         elif step.get("kind") in PHOTO_STEPS:

@@ -35,6 +35,12 @@ nonisolated enum SearchQueryStatus: Sendable, Equatable {
 ///   reading is reported (`refining`) before the full one is asked for, so the first result
 ///   never waits on them; the full reading replaces it when it ends. A query whose full reading
 ///   is as quick has no first reading and is reported once.
+/// - **Ready before the first query.** The user's intent to search (`prepare`) asks the
+///   loop to load what every reading needs (the text encoder, `SearchQueryEncoder.prepare`)
+///   before any query is typed: a request revision the loop covers in turn with the readings
+///   (ADR 0032 rule 2), so a query typed while the load is in flight waits for that load
+///   rather than starting a second, and nothing is published for it. A load that fails is
+///   logged and stays asked; the query's own reading loads what it needs anyway.
 /// - **No deadline.** A reading reports when it ends, so a query is `reading` until it does,
 ///   however long Translation or Maps take; no timer stands in for that report (ADR 0033).
 /// - **A failed reading** is an error, not a fact (ADR 0032 rule 4): it is reported `failed`,
@@ -47,9 +53,17 @@ actor SearchQueryReader {
     typealias Encode = @Sendable (SearchQueryRequest) async throws -> SearchQueryEncoding
     /// The reading as typed, or nil when the full reading needs nothing slower.
     typealias FirstReading = @Sendable (SearchQueryRequest) async throws -> SearchQueryEncoding?
+    /// Loads what every reading needs, ahead of the first.
+    typealias Prepare = @Sendable () async throws -> Void
 
     private let encode: Encode
     private let first: FirstReading?
+    private let prepareReadings: Prepare?
+    /// Preparations asked for and the one the last finished load answered (ADR 0032 rule 2).
+    private var prepareRequested: UInt64 = 0
+    private var prepareCovered: UInt64 = 0
+    /// Preparations that loaded: what a test waits on.
+    private(set) var preparationsLoaded = 0
     private let backoff: (first: Duration, last: Duration)
 
     /// The query asked for last; nil while nothing is searched.
@@ -71,8 +85,10 @@ actor SearchQueryReader {
     init(
         backoff: (first: Duration, last: Duration) = (.seconds(2), .seconds(60)),
         first: FirstReading? = nil,
+        prepare: Prepare? = nil,
         encode: @escaping Encode
     ) {
+        prepareReadings = prepare
         self.backoff = backoff
         nextRetry = backoff.first
         self.first = first
@@ -89,6 +105,14 @@ actor SearchQueryReader {
             want(request)
         }
         return .reading
+    }
+
+    /// The user showed intent to search: load what every reading needs before a query comes.
+    func prepare() {
+        guard prepareReadings != nil else { return }
+        prepareRequested &+= 1
+        startLoop()
+        ring?.yield()
     }
 
     /// Nothing is searched: the last answer is let go, so a query typed again later is read
@@ -151,7 +175,8 @@ actor SearchQueryReader {
     /// Reads the query wanted now, unless its answer is held; a failed answer is read again only
     /// when its retry is due.
     private func readWanted() async {
-        guard let request = wanted else { return }
+        await prepareIfAsked()
+        guard !Task.isCancelled, let request = wanted else { return }
         if let answer, answer.request == request, answer.full, answer.encoding != nil || !retryDue {
             return
         }
@@ -186,6 +211,23 @@ actor SearchQueryReader {
         announce()
         if wanted != request {
             ring?.yield()
+        }
+    }
+
+    /// Covers the preparation asked for, before the query wanted is read: the query then finds
+    /// the encoder loaded. Publishes nothing.
+    private func prepareIfAsked() async {
+        guard let prepareReadings, prepareRequested != prepareCovered else { return }
+        let asked = prepareRequested
+        do {
+            try await prepareReadings()
+            prepareCovered = asked
+            preparationsLoaded += 1
+        } catch {
+            let failure = error as NSError
+            OtosLog.catalog.errorOperation("search.query", phase: "prepareFailed", fields: [
+                "domain": failure.domain, "code": "\(failure.code)", "error": String(describing: error),
+            ])
         }
     }
 

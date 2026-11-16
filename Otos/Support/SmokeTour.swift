@@ -516,7 +516,12 @@ extension PaneOriginalDownloads {
             case .trashAct:
                 return await ("act", WindowAct.moveToTrash.name, trashAct())
             case let .search(label, text):
-                return await ("search", label, query { $0.setSearchText(text) })
+                // The field takes focus and the query is typed at once: the least time the
+                // focus's preparation can have before the first query (`searchFieldFocused`).
+                return await ("search", label, query {
+                    $0.searchFieldFocused()
+                    $0.setSearchText(text)
+                })
             case .filterByOfferedKind:
                 return await filterByOfferedKind()
             case .sortByName:

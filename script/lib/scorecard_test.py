@@ -195,7 +195,7 @@ class ScorecardTests(unittest.TestCase):
         _, rows, _ = run(steps)
         by_label = {r["label"]: (r["value"], r["verdict"]) for r in rows}
         self.assertEqual(by_label["photo open"], (300, "PASS"))
-        self.assertEqual(by_label["search searchMany"], (1400, "FAIL"))
+        self.assertEqual(by_label["search first searchMany"], (1400, "FAIL"))
         # The filter is timed from its intent, not from the wait for the options it chose from.
         self.assertEqual(by_label["filter video"], (800, "PASS"))
         self.assertNotIn("act liked", by_label)

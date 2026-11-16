@@ -113,6 +113,11 @@ nonisolated struct SearchPerson: Hashable, Sendable {
 /// facts and the glossary are read on each call, and a date is kept as the rule the query
 /// names (`SearchDate`), so a pack the user installs counts on the next reading and "today"
 /// is the day the query is answered. `SearchQueryReader` calls it, one query at a time.
+///
+/// **Load and release.** Nothing loads at launch. The user's intent to search loads the
+/// tokenizer, the model and the list of Translation's languages and runs one prediction
+/// (`prepare`), so the first query pays none of it. Under memory pressure an idle encoder lets
+/// the tokenizer and the model go (`releaseIfIdle`); the next reading loads them again.
 actor SearchQueryEncoder {
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.search.query", qos: .userInitiated)
     private let bundle: Bundle
@@ -124,6 +129,10 @@ actor SearchQueryEncoder {
     private var installed: Set<NLLanguage> = []
     private var translations = RecentValues<TranslationKey, String>(limit: 64)
     private var embeddings = RecentValues<String, [Float]>(limit: 64)
+    /// Readings in flight: a reading suspended on Translation or Maps holds the model it is
+    /// about to use, so memory pressure does not take it away.
+    private var readingsInFlight = 0
+    private var pressure: DispatchSourceMemoryPressure?
 
     nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
@@ -155,6 +164,8 @@ actor SearchQueryEncoder {
     /// One reading of `request`. With `asTyped`, the step that would translate the query reads
     /// it as typed instead and no place is looked up; `skipped` says whether either was skipped.
     private func read(_ request: SearchQueryRequest, asTyped: Bool) async throws -> (encoding: SearchQueryEncoding, skipped: Bool) {
+        readingsInFlight += 1
+        defer { readingsInFlight -= 1 }
         if let label = request.label {
             return try (englishEncoding(of: SceneLabelNames.englishName(label), shown: request.text), false)
         }
@@ -380,15 +391,73 @@ actor SearchQueryEncoder {
         if let known = embeddings[text] {
             return known
         }
-        if tokenizer == nil {
-            tokenizer = try SearchTextTokenizer(bundle: bundle)
-        }
-        if model == nil {
-            model = try SearchTextModel(bundle: bundle)
-        }
-        let embedding = try model!.embedding(of: tokenizer!.tokenIDs(for: text))
+        let (tokenizer, model) = try loaded()
+        let embedding = try model.embedding(of: tokenizer.tokenIDs(for: text))
         embeddings[text] = embedding
         return embedding
+    }
+
+    /// The tokenizer and the model, loaded on first use (CPU only, `SearchEmbedding.load`).
+    private func loaded() throws -> (SearchTextTokenizer, SearchTextModel) {
+        if let tokenizer, let model {
+            return (tokenizer, model)
+        }
+        let start = ContinuousClock.now
+        let before = ProcessResourceSample.current().footprintBytes
+        let tokenizer = try tokenizer ?? SearchTextTokenizer(bundle: bundle)
+        let model = try model ?? SearchTextModel(bundle: bundle)
+        self.tokenizer = tokenizer
+        self.model = model
+        watchMemoryPressure()
+        OtosLog.catalog.noticeOperation("search.encoder", phase: "loaded", fields: [
+            "footprintDeltaMB": "\((Int64(ProcessResourceSample.current().footprintBytes) - Int64(before)) / 1_048_576)",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        return (tokenizer, model)
+    }
+
+    /// Loads what every reading needs — Translation's languages, the tokenizer, the model — and
+    /// runs one prediction, which Core ML makes slower the first time: what the user's intent to
+    /// search asks for (`SearchQueryReader.prepare`), so the first query pays none of it.
+    func prepare() async throws {
+        let start = ContinuousClock.now
+        if supported == nil {
+            supported = await Self.supportedLanguages()
+        }
+        let before = ProcessResourceSample.current().footprintBytes
+        let (tokenizer, model) = try loaded()
+        _ = try model.embedding(of: tokenizer.tokenIDs(for: "a photo"))
+        OtosLog.catalog.noticeOperation("search.encoder", phase: "prepared", fields: [
+            "footprintDeltaMB": "\((Int64(ProcessResourceSample.current().footprintBytes) - Int64(before)) / 1_048_576)",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+    }
+
+    /// Whether the tokenizer and the model are loaded: what a test asks.
+    var isLoaded: Bool {
+        tokenizer != nil && model != nil
+    }
+
+    /// Lets the tokenizer and the model go when no reading holds them: memory pressure's
+    /// answer. The next reading, or the next intent to search, loads them again.
+    func releaseIfIdle() {
+        guard readingsInFlight == 0, tokenizer != nil || model != nil else { return }
+        tokenizer = nil
+        model = nil
+        OtosLog.catalog.noticeOperation("search.encoder", phase: "released", fields: [:])
+        ResourceCheckpoint.record("searchEncoderReleased")
+    }
+
+    /// The system's memory-pressure warnings, heard on this actor's own queue: the handler runs
+    /// on the actor's executor, between its jobs, so it never interrupts a prediction.
+    private func watchMemoryPressure() {
+        guard pressure == nil else { return }
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: queue)
+        source.setEventHandler { [weak self] in
+            self?.assumeIsolated { $0.releaseIfIdle() }
+        }
+        source.activate()
+        pressure = source
     }
 
     /// `text` in English, translated from `source` once and kept; a failed translation keeps

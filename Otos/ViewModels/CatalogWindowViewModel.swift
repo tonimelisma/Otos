@@ -1816,6 +1816,15 @@ extension CatalogWindowViewModel {
         searchFocusRequest &+= 1
     }
 
+    /// The search field took focus — clicked, tabbed to, or Edit ▸ Find (`focusSearch`): the
+    /// user is about to search what the window shows, so the index readies the first query
+    /// (`PhotoSearchIndex.prepareForSearch`). Nothing is asked while a search is shown, whose
+    /// encoder and scope are ready already.
+    func searchFieldFocused() {
+        guard queryDescriptor.search == nil else { return }
+        photoSearchIndex?.prepareForSearch(among: state.mediaGrid.orderedAssetIDs)
+    }
+
     /// The window's title, the one every scope is named by: the person a person's photos
     /// show, else the selected scope's (`CatalogWindowPolicy.title(for:libraries:)`) — the
     /// one Projection published once the scope's state is applied, and the same policy's

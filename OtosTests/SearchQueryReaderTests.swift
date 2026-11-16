@@ -163,4 +163,67 @@ struct SearchQueryReaderTests {
         try await waitUntil { await held.started == ["koira", "koira"] }
         await reader.shutdown()
     }
+
+    /// What a reading needs, loaded once whoever asks first: the intent to search or a query.
+    private actor Encoder {
+        let gate = ArrivalGate()
+        private(set) var loads = 0
+        private(set) var loadedBeforeEncoding: [Bool] = []
+        private var loaded = false
+
+        func load() async {
+            loads += 1
+            await gate.arrive()
+            loaded = true
+        }
+
+        func encode(_ request: SearchQueryRequest) async -> SearchQueryEncoding {
+            loadedBeforeEncoding.append(loaded)
+            if !loaded {
+                loads += 1
+                loaded = true
+            }
+            return SearchQueryReaderTests.encoding(request.text)
+        }
+    }
+
+    /// ADR 0048, "The first query": the intent to search loads the encoder before a query is
+    /// typed. A query typed while that load is in flight — held at its suspension — waits for it
+    /// and is read with the encoder it loaded: one load, never a second, and the load
+    /// publishes nothing itself.
+    @Test func aQueryTypedWhileTheIntentsLoadIsInFlightIsReadWithIt() async {
+        let encoder = Encoder()
+        let reader = SearchQueryReader(prepare: { await encoder.load() }) { await encoder.encode($0) }
+        let readings = await reader.readings()
+        await reader.prepare()
+        await encoder.gate.waitForArrivals(1)
+
+        let dog = SearchQueryRequest(text: "dog")
+        #expect(await reader.status(for: dog) == .reading)
+        #expect(await encoder.loadedBeforeEncoding.isEmpty, "the query waits for the load in flight")
+        await encoder.gate.open()
+        for await _ in readings where await reader.status(for: dog) == .read(Self.encoding("dog")) {
+            break
+        }
+        #expect(await encoder.loads == 1)
+        #expect(await encoder.loadedBeforeEncoding == [true])
+        #expect(await reader.preparationsLoaded == 1)
+        #expect(await reader.readingsEnded == 1)
+        await reader.shutdown()
+    }
+
+    /// A query with no intent to search before it is read as it always was: it loads what it
+    /// needs itself.
+    @Test func aQueryWithoutAnIntentFirstIsStillRead() async throws {
+        let encoder = Encoder()
+        await encoder.gate.open()
+        let reader = SearchQueryReader(prepare: { await encoder.load() }) { await encoder.encode($0) }
+        let lake = SearchQueryRequest(text: "lake")
+        _ = await reader.status(for: lake)
+        try await waitUntil { await reader.status(for: lake) == .read(Self.encoding("lake")) }
+        #expect(await encoder.loadedBeforeEncoding == [false])
+        #expect(await encoder.loads == 1)
+        #expect(await reader.preparationsLoaded == 0)
+        await reader.shutdown()
+    }
 }

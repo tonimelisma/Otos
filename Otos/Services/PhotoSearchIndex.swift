@@ -197,12 +197,61 @@ actor PhotoSearchIndex {
         self.vectorDirectory = vectorDirectory
         embedder = SearchImageEmbedder(bundle: bundle)
         let encoder = SearchQueryEncoder(bundle: bundle)
-        self.queries = queries ?? SearchQueryReader(first: { try await encoder.firstReading($0) }) { try await encoder.encode($0) }
+        self.queries = queries ?? SearchQueryReader(
+            first: { try await encoder.firstReading($0) }, prepare: { try await encoder.prepare() }
+        ) { try await encoder.encode($0) }
         self.pageSize = pageSize
+        let (preparations, continuation) = AsyncStream<[MediaAssetID]>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        self.preparations = preparations
+        preparationsContinuation = continuation
+    }
+
+    // MARK: Intent to search
+
+    /// The scopes the user showed intent to search (`prepareForSearch(among:)`), newest wins.
+    private let preparations: AsyncStream<[MediaAssetID]>
+    private nonisolated let preparationsContinuation: AsyncStream<[MediaAssetID]>.Continuation
+    private var preparing: Task<Void, Never>?
+    /// Preparations made: what a test waits on.
+    private(set) var preparationsMade = 0
+
+    /// The user showed intent to search `scope` (the search field took focus, Edit ▸ Find), so
+    /// the first query they type finds its cold work done (ADR 0048, "The first query"): the
+    /// text encoder starts loading (`SearchQueryReader.prepare`), the kernel is asked to read
+    /// the mapped vectors ahead (`SearchVectorFile.adviseWillNeed`), and `scope`'s slots are
+    /// read (`scopedRows`). Newest wins and nothing is published; a blur cancels nothing, and a
+    /// query that comes first is answered as it always is. Returns at once: the preparation is
+    /// this owner's loop's (ADR 0032 rule 5), so no caller waits on the encoder's load.
+    nonisolated func prepareForSearch(among scope: [MediaAssetID]) {
+        preparationsContinuation.yield(scope)
+    }
+
+    private func startPreparing() {
+        guard preparing == nil else { return }
+        let preparations = preparations
+        preparing = Task { [weak self] in
+            for await scope in preparations {
+                guard let self else { return }
+                await prepare(among: scope)
+            }
+        }
+    }
+
+    private func prepare(among scope: [MediaAssetID]) async {
+        let start = ContinuousClock.now
+        await queries.prepare()
+        memory.vectors?.adviseWillNeed()
+        let rows = scopedRows(scope)
+        preparationsMade += 1
+        OtosLog.catalog.noticeOperation("search.prepare", phase: "done", fields: [
+            "scope": "\(scope.count)", "searched": "\(rows.rows.count)", "scopeReused": "\(rows.reused)",
+            "mapped": "\(memory.vectors != nil)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
     }
 
     func start() async {
         guard loop == nil else { return }
+        startPreparing()
         let (doorbell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let changes = await store.changeNotifications()
         self.ring = ring
@@ -281,6 +330,9 @@ actor PhotoSearchIndex {
         await textReader.shutdown()
         await queries.shutdown()
         forwarder?.cancel()
+        preparing?.cancel()
+        preparing = nil
+        preparationsContinuation.finish()
         loop?.cancel()
         retry?.cancel()
         forwarder = nil
@@ -401,6 +453,7 @@ actor PhotoSearchIndex {
             }
         }
         let made = ScopedRows(scope: scope, revision: revision, rows: rows, member: member, unrowed: unrowed, reused: false)
+        scopeRowsRead += 1
         scoped = made
         return made
     }
@@ -449,6 +502,9 @@ actor PhotoSearchIndex {
         }
         return vocabulary
     }
+
+    /// How many times a scope's slots were read rather than reused: what a test counts.
+    private(set) var scopeRowsRead = 0
 
     /// The embeddings in memory: what a test waits on.
     var embeddedCount: Int {

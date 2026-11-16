@@ -408,6 +408,16 @@ final nonisolated class SearchVectorFile {
         return scores
     }
 
+    /// Asks the kernel to read the mapped vectors in ahead of the first query
+    /// (`MADV_WILLNEED`): it starts the reads and returns; the pages stay clean and
+    /// file-backed, outside the footprint, and the kernel may drop them again.
+    func adviseWillNeed() {
+        guard let vectorMap else { return }
+        if madvise(UnsafeMutableRawPointer(mutating: vectorMap.base), vectorMap.length, MADV_WILLNEED) != 0 {
+            OtosLog.thumbnails.errorOperation("search.vectors", phase: "adviseFailed", fields: ["errno": "\(errno)"])
+        }
+    }
+
     /// Slots widened per step: 3 MB of Float32, so the step stays in cache.
     static let scoreChunk = 1024
 

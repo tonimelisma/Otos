@@ -294,6 +294,48 @@ struct PhotoSearchIndexTests {
         await index.shutdown()
     }
 
+    /// ADR 0048, "The first query": the intent to search reads the scope's slots ahead, so the
+    /// first query over that scope reuses them, and loads the encoder, which reports it is loaded.
+    @Test func theIntentToSearchReadiesTheScopeAndTheEncoder() async throws {
+        let catalog = try await makeCatalog()
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+        )
+        await index.start()
+        try await waitUntil {
+            let embedded = await index.embeddedCount
+            let answered = await index.answeredEveryRequest
+            return embedded == 2 && answered
+        }
+        let scope = [catalog.red, catalog.blue]
+        index.prepareForSearch(among: scope)
+        try await waitUntil { await index.preparationsMade == 1 }
+        try await waitUntil { await index.queries.preparationsLoaded == 1 }
+        let read = await index.scopeRowsRead
+
+        let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "a red picture")
+        let matches = try await index.matches(query, facts: nil, among: scope)
+        #expect(matches.searchedCount == 2)
+        #expect(await index.scopeRowsRead == read, "the first query reuses the slots the intent read")
+        await index.shutdown()
+        await catalog.store.shutdown()
+    }
+
+    /// The encoder loads only when asked, and an idle one lets its model go under memory
+    /// pressure; the next reading loads it again.
+    @Test func theEncoderLoadsWhenAskedAndLetsGoWhenIdle() async throws {
+        let encoder = SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self))
+        #expect(await !encoder.isLoaded)
+        try await encoder.prepare()
+        #expect(await encoder.isLoaded)
+        await encoder.releaseIfIdle()
+        #expect(await !encoder.isLoaded)
+        let again = try await encoder.englishEncoding(of: "a dog on a beach")
+        #expect(again.embedding?.count == SearchEmbedding.dimensions)
+        #expect(await encoder.isLoaded)
+    }
+
     /// Counts the namings of a vector file and holds the one a test chose at `gate`.
     private final class Namings: Sendable {
         private let count = Mutex(0)
