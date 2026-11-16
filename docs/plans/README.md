@@ -3,6 +3,11 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+Plan 0116 (`0116-background-work-and-derived-storage.md`) is **proposed and under due
+diligence**, opened 2026-11-16: background work that costs what it owes (a work ledger),
+derived data out of the catalog file, and search vectors as a mapped file. Nothing in it is
+built; its section 5 lists the soft spots and section 6 the experiments that decide it.
+
 Plan 0115 (stacks: RAW+JPEG pairs and bursts as one photo) is complete in six increments
 and was removed at closure. It opened 2026-11-13 from the survey
 `docs/research/2026-11-13-stacks-pairs-and-bursts.md`. Its decisions live in ADR 0052, ARC-062,
