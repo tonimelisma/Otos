@@ -43,7 +43,9 @@ What is unnamed today is about 11 MiB.
 
 ## What keeps the folder honest
 
-- `CatalogStore.reconcileDerivedFiles` runs once a launch, after the first grid.
+**Superseded the same day.** On the owner's library (installed `ece1ffe1`) the pass below listed 322,829 files and read 501,645 protected names in 89 s. One read transaction held a reader for 34.9 s. At the footprint peak the heap held the listing: 321,853 `NSPathStore2` (52 MB), 107,035 `_FileCache` (34 MB) and 227,436 `CFString` (32 MB). It removed 1,003 files (11.6 MB) as designed, but every launch paid that cost. ADR 0009 now describes the replacement: stored counters, a reconciliation only when a fact owes one, keyed pages of rows and a `readdir` stream. The rest of this section records the pass that was measured.
+
+- `CatalogStore.reconcileDerivedFiles` ran once a launch, after the first grid.
   - It lists the folder's top level (never `.staging`).
   - It then reads the protected names. These are every name a row holds in any of the three columns, and every name a present row's identity derives (`ThumbnailStore`'s SHA-256 of root path and relative path, with each kind's extension).
   - Every listed file that is not protected is re-checked against the protected names, read again inside one write transaction, and deleted there.

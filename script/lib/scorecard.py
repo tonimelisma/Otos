@@ -381,20 +381,24 @@ def step_ms(step):
 
 
 def disk(events):
-    """The derived folder after the launch's reconciliation (`op=derived.folder phase=census`)
-    and what the reconciliation removed (`op=derived.reconcile phase=finish`): the session's
-    disk, by kind, for `--compare` to show growth between sessions."""
-    census = first(events, "derived.folder", "census")
+    """The derived folder by kind (`op=derived.folder phase=counted`: the stored counters, or
+    the census of a reconciliation that ran) and, when one ran, why and what it removed
+    (`op=derived.reconcile phase=finish`): the session's disk, for `--compare` to show growth
+    between sessions."""
+    counted = first(events, "derived.folder", "counted")
     reconciled = first(events, "derived.reconcile", "finish")
-    if census is None and reconciled is None:
+    if counted is None and reconciled is None:
         return None
     kinds = ("thumbnail", "preview", "faceFrames", "other")
     return {
-        "folderMB": census.num("bytes", 0) // 1_048_576 if census else None,
-        "files": {k: census.num(f"{k}Files", 0) for k in kinds} if census else None,
-        "mb": {k: census.num(f"{k}Bytes", 0) // 1_048_576 for k in kinds} if census else None,
-        "removedFiles": reconciled.num("files") if reconciled else None,
-        "removedMB": reconciled.num("bytes", 0) // 1_048_576 if reconciled else None,
+        "folderMB": counted.num("bytes", 0) // 1_048_576 if counted else None,
+        "files": {k: counted.num(f"{k}Files", 0) for k in kinds} if counted else None,
+        "mb": {k: counted.num(f"{k}Bytes", 0) // 1_048_576 for k in kinds} if counted else None,
+        "source": counted.fields.get("source") if counted else None,
+        "reconciled": reconciled.fields.get("reason") if reconciled else None,
+        "reconcileMs": reconciled.num("ms") if reconciled else None,
+        "removedFiles": reconciled.num("removedFiles") if reconciled else None,
+        "removedMB": reconciled.num("removedBytes", 0) // 1_048_576 if reconciled else None,
     }
 
 
@@ -686,10 +690,14 @@ def print_report(report, rows, out):
           f"{fmt(event['freeMB'])} MB, last click {event['lastClick']}, tour step {event['tourStep']}\n")
     res = report["resources"]
     d = report.get("disk")
-    w("\nDISK (derived folder after the launch's reconciliation)\n")
+    w("\nDISK (derived folder, from its counters or a reconciliation's census)\n")
     if d:
-        w(f"  {fmt(d['folderMB'])} MB; files {d['files']}; MB {d['mb']}; reconciliation removed "
-          f"{fmt(d['removedFiles'])} files, {fmt(d['removedMB'])} MB\n")
+        w(f"  {fmt(d['folderMB'])} MB from {fmt(d['source'])}; files {d['files']}; MB {d['mb']}\n")
+        if d["reconciled"]:
+            w(f"  reconciled ({d['reconciled']}) in {fmt(d['reconcileMs'])} ms: removed {fmt(d['removedFiles'])} files, "
+              f"{fmt(d['removedMB'])} MB\n")
+        else:
+            w("  no reconciliation was owed\n")
     else:
         w("  - (no op=derived.folder line)\n")
     w("\nRESOURCES (who held what)\n")

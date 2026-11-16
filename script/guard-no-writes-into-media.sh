@@ -23,8 +23,9 @@ ALLOWLIST=(
   "Otos/Services/CopyfileTransfer.swift" "Otos/Services/ExclusivePublication.swift"
   "Otos/Services/CameraSourceMonitor.swift" "Otos/Services/FileMaterialization.swift"
   "Otos/Stores/CatalogStore.swift" "Otos/Stores/CatalogStorePersistence.swift"
-  # Removes only files in Otos's own derived folder that no row names or would write, and
-  # the retired JSONL sink's files in Application Support (ADR 0009, ADR 0015).
+  # Promotes, renames and removes only files in Otos's own derived folder, writes and removes
+  # its session marker beside it, and removes the retired JSONL sink's files in Application
+  # Support (ADR 0009, ADR 0015).
   "Otos/Stores/DerivedFileReconciliation.swift"
   # User-commanded Move to Trash: removeItem only after an explicit `Delete … Immediately?`
   # answer, and moveItem only to put an undone item back from the Trash (ADR 0022).

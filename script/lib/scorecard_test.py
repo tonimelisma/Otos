@@ -264,19 +264,25 @@ class ScorecardTests(unittest.TestCase):
         report, _, _ = run(SESSION[:5])
         self.assertTrue(any("process.memory" in item for item in report["notMeasured"]))
 
-    def test_the_derived_folder_census_is_the_sessions_disk(self):
-        lines = SESSION[:-1] + [
-            line(40.1, "op=derived.reconcile phase=finish files=3 bytes=3145728 listed=10 named=7 ms=40"),
-            line(40.2, "op=derived.folder phase=census files=7 bytes=10485760 thumbnailFiles=4 thumbnailBytes=1048576 "
-                       "previewFiles=3 previewBytes=9437184 faceFramesFiles=0 faceFramesBytes=0 otherFiles=0 otherBytes=0"),
-            SESSION[-1],
-        ]
+    def test_the_derived_folder_counters_are_the_sessions_disk(self):
+        counted = ("files=7 bytes=10485760 thumbnailFiles=4 thumbnailBytes=1048576 previewFiles=3 previewBytes=9437184 "
+                   "faceFramesFiles=0 faceFramesBytes=0 otherFiles=0 otherBytes=0")
+        lines = SESSION[:-1] + [line(40.2, f"op=derived.folder phase=counted source=counters {counted}"), SESSION[-1]]
         report, rows, text = run(lines)
         self.assertEqual(report["disk"]["folderMB"], 10)
         self.assertEqual(report["disk"]["files"]["preview"], 3)
-        self.assertEqual((report["disk"]["removedFiles"], report["disk"]["removedMB"]), (3, 3))
+        self.assertIsNone(report["disk"]["reconciled"])
         self.assertEqual({r["label"]: r["value"] for r in rows}["derived folder MB"], 10)
-        self.assertIn("DISK", text)
+        self.assertIn("no reconciliation was owed", text)
+        reconciled = SESSION[:-1] + [
+            line(40.1, "op=derived.reconcile phase=finish reason=uncleanExit removedFiles=3 removedBytes=3145728 rows=7 ms=40"),
+            line(40.2, f"op=derived.folder phase=counted source=census {counted}"),
+            SESSION[-1],
+        ]
+        report, _, text = run(reconciled)
+        self.assertEqual((report["disk"]["reconciled"], report["disk"]["removedFiles"], report["disk"]["removedMB"]),
+                         ("uncleanExit", 3, 3))
+        self.assertIn("reconciled (uncleanExit)", text)
         report, _, _ = run(SESSION)
         self.assertIsNone(report["disk"])
 

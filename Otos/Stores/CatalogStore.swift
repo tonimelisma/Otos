@@ -542,6 +542,8 @@ actor CatalogStore {
         var promotionFailed = false
         var discardedImages: [StagedDerivedImage] = []
         var supersededImagePaths: Set<String> = []
+        /// The superseded names' deletes, counted out in the batch's write.
+        var removal = DerivedRemoval.nothing
         var waitMs = 0
         var execMs = 0
 
@@ -739,6 +741,9 @@ actor CatalogStore {
     }
 
     private let location: Location
+    /// The derived folder and this session's changes to it (`DerivedFolder`); nil for an
+    /// in-memory catalog, which has none.
+    nonisolated let derivedFolder: DerivedFolder?
     /// Which copies Duplicates compares (ADR 0042): every Duplicates read and the Duplicates
     /// scopes use this one value, so the groups and the rows the scopes hold agree. The user's
     /// preference, which the window's owner hands over before the catalog starts and on
@@ -935,6 +940,7 @@ actor CatalogStore {
         (openings, openingContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
         self.stagingContainers = stagingContainers ?? Self.stagingContainers(for: location)
         self.location = location
+        derivedFolder = Self.thumbnailDirectory(for: location).map(DerivedFolder.init(directory:))
         self.scanner = scanner
         self.filesystemWatcher = filesystemWatcher
         self.scanCadence = scanCadence
@@ -3649,11 +3655,11 @@ extension CatalogStore {
     /// render, or enrichment, supplies them. Returns whether they were applied.
     func applyRenderedEditProducts(_ products: RenderedEditProducts) async -> Bool {
         let staged = [products.thumbnail, products.preview]
-        guard let rootID = roots.rowIDSnapshot()[products.id.libraryRootPath], let thumbnailDirectory else {
+        guard let rootID = roots.rowIDSnapshot()[products.id.libraryRootPath], let derivedFolder else {
             discardStagedImages(staged)
             return false
         }
-        let outcome: (applied: Bool, superseded: Set<String>, held: Bool)
+        let outcome: (applied: Bool, removal: DerivedRemoval, held: Bool)
         do {
             outcome = try await database().write { db in
                 guard let row = try Row.fetchOne(
@@ -3664,7 +3670,7 @@ extension CatalogStore {
                     """,
                     arguments: [rootID, products.id.relativePath.rawValue]
                 ) else {
-                    return (false, [], false)
+                    return (false, .nothing, false)
                 }
                 let revision: Int64 = row["edit_revision"]
                 let byteSize: Int64? = row["byte_size"]
@@ -3673,14 +3679,14 @@ extension CatalogStore {
                       byteSize == products.sourceSize,
                       modified.map({ Int($0.rounded(.down)) }) == products.sourceMTimeSeconds
                 else {
-                    return (false, [], false)
+                    return (false, .nothing, false)
                 }
                 // A new thumbnail leaves a compared still's signature stale (ADR 0042).
                 let held = try DuplicatesHoldSQL.holds(
                     libraryRootID: rootID, relativePath: products.id.relativePath.rawValue, db: db
                 )
                 for image in staged {
-                    try ThumbnailStore.promote(image, in: thumbnailDirectory)
+                    try derivedFolder.promote(image, db: db)
                 }
                 try db.execute(
                     sql: """
@@ -3694,7 +3700,8 @@ extension CatalogStore {
                 )
                 let oldPaths: [String?] = [row["thumbnail_path"], row["preview_path"]]
                 let newPaths = Set(staged.map(\.finalRelativePath))
-                return (true, Set(oldPaths.compactMap(\.self)).subtracting(newPaths), held)
+                let superseded = Set(oldPaths.compactMap(\.self)).subtracting(newPaths)
+                return try (true, derivedFolder.unname(superseded, db: db), held)
             }
         } catch {
             OtosLog.catalog.errorOperation("catalog.editProducts", phase: "failed", fields: [
@@ -3704,8 +3711,8 @@ extension CatalogStore {
             discardStagedImages(staged)
             return false
         }
+        outcome.removal.perform()
         if outcome.applied {
-            deleteSupersededImages(outcome.superseded)
             let facts: CatalogChangedFacts = outcome.held ? [.images, .faceTiles, .detail, .duplicateFacts] : [.images, .faceTiles, .detail]
             notifyCatalogChanged(.changed(facts, rows: .rows([products.id])))
         } else {
@@ -4289,6 +4296,11 @@ extension CatalogStore {
         var phases = LoadPhaseTimer()
         let dbQueue = try database()
         phases.lap("openMs")
+        // Before anything changes the derived folder: whether the last session left leftovers
+        // possible, and this session's marker; then the moves a rename journaled and a crash
+        // left undone.
+        derivedFolder?.openSession()
+        try await applyPendingDerivedRenames()
         let loadedRoots = try await dbQueue.readFreeingConnection { db in
             try Self.fetchRoots(db)
         }
@@ -4514,13 +4526,12 @@ extension CatalogStore {
 
         let state = OtosSignpost.persistence.beginInterval("CatalogEnrichmentBatchWrite")
         let writeOutcome: EnrichmentBatchWriteOutcome
-        let thumbnailDirectory = thumbnailDirectory
         do {
             let dbQueue = try database()
             writeOutcome = try await writeEnrichmentBatch(
                 results,
                 rootIDsByPath: rootIDsByPathBeforeWrite,
-                thumbnailDirectory: thumbnailDirectory,
+                derivedFolder: derivedFolder,
                 dbWriter: dbQueue
             )
         } catch {
@@ -4532,7 +4543,7 @@ extension CatalogStore {
         }
         OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
         discardStagedImages(writeOutcome.discardedImages)
-        deleteSupersededImages(writeOutcome.supersededImagePaths)
+        writeOutcome.removal.perform()
 
         await recordEnrichmentBatchWrite(resultsCount: results.count, writeOutcome: writeOutcome)
         await boundWAL(reason: "enrichmentBatch")
@@ -4576,7 +4587,7 @@ extension CatalogStore {
     private func writeEnrichmentBatch(
         _ results: [EnrichmentResult],
         rootIDsByPath: [LibraryRootPath: Int64],
-        thumbnailDirectory: URL?,
+        derivedFolder: DerivedFolder?,
         dbWriter: any DatabaseWriter
     ) async throws -> EnrichmentBatchWriteOutcome {
         let timedOutcome = try await timedWrite(dbWriter) { db in
@@ -4586,11 +4597,14 @@ extension CatalogStore {
                 try Self.applyEnrichmentResult(
                     result,
                     rootIDsByPath: rootIDsByPath,
-                    thumbnailDirectory: thumbnailDirectory,
+                    derivedFolder: derivedFolder,
                     outcome: &outcome,
                     db: db
                 )
             }
+            // The names the batch stopped holding are counted out in it; their files go once
+            // it commits.
+            outcome.removal = try derivedFolder?.unname(outcome.supersededImagePaths, db: db) ?? .nothing
             // Released in the write that settles the rows, so no change notification can
             // reach a claimant while a row it is due to claim still reads as claimed.
             try EnrichmentClaimGateway.releaseEnrichmentClaims(
@@ -4613,7 +4627,7 @@ extension CatalogStore {
     private static func applyEnrichmentResult(
         _ result: EnrichmentResult,
         rootIDsByPath: [LibraryRootPath: Int64],
-        thumbnailDirectory: URL?,
+        derivedFolder: DerivedFolder?,
         outcome: inout EnrichmentBatchWriteOutcome,
         db: Database
     ) throws {
@@ -4622,7 +4636,7 @@ extension CatalogStore {
             outcome.discard(staged)
             return
         }
-        guard staged.isEmpty || thumbnailDirectory != nil else {
+        guard staged.isEmpty || derivedFolder != nil else {
             outcome.failPromotion(staged)
             return
         }
@@ -4630,10 +4644,10 @@ extension CatalogStore {
             outcome.discard(staged)
             return
         }
-        if let thumbnailDirectory {
+        if let derivedFolder {
             for (index, image) in staged.enumerated() {
                 do {
-                    try ThumbnailStore.promote(image, in: thumbnailDirectory)
+                    try derivedFolder.promote(image, db: db)
                 } catch {
                     outcome.failPromotion(Array(staged[index...]))
                     return
@@ -4928,15 +4942,6 @@ extension CatalogStore {
         }
     }
 
-    private func deleteSupersededImages(_ paths: Set<String>) {
-        guard let thumbnailDirectory else {
-            return
-        }
-        for path in paths {
-            ThumbnailStore.delete(path, in: thumbnailDirectory)
-        }
-    }
-
     private func recordEnrichmentBatchError(_ error: Error, count: Int) async {
         OtosLog.metadata.error(
             """
@@ -5024,14 +5029,16 @@ extension CatalogStore {
         filesystemWatchingArmed.remove(path)
         cancelRuntimeWork(for: path)
 
-        let purgedThumbnails: [String]
+        let removal: DerivedRemoval
         do {
             let dbQueue = try database()
-            purgedThumbnails = try await dbQueue.readFreeingConnection { db in
+            let purgedThumbnails = try await dbQueue.readFreeingConnection { db in
                 try Self.fetchExistingAssetRows(libraryRootID: rootRowID, db: db)
             }.flatMap(\.derivedImagePaths)
-            try await dbQueue.write { db in
+            let derivedFolder = derivedFolder
+            removal = try await dbQueue.write { db in
                 try Self.deleteLibraryRoot(rootRowID: rootRowID, db: db)
+                return try derivedFolder?.unname(purgedThumbnails, db: db) ?? .nothing
             }
         } catch {
             OtosLog.catalog.errorOperation("catalog.library.remove", phase: "failed", fields: [
@@ -5044,11 +5051,7 @@ extension CatalogStore {
 
         namespaceMutationLeases.removeValue(forKey: path)
         removeRoot(path: path)
-        if let thumbnailDirectory {
-            for name in purgedThumbnails {
-                ThumbnailStore.delete(name, in: thumbnailDirectory)
-            }
-        }
+        removal.perform()
         deleteStagingIfNeeded(root)
         OtosLog.catalog.notice(
             "op=catalog.library.remove phase=finish rootPath=\(path.rawValue, privacy: .public)"
@@ -5299,11 +5302,13 @@ extension CatalogStore {
         dbWriter: any DatabaseWriter
     ) async throws {
         try validateNoOverlap(attachment.path, ignoring: rootRowID)
-        var thumbnailMigrations: [ThumbnailPathMigration] = []
         if existingRoot.path != attachment.path {
-            thumbnailMigrations = try await dbWriter.write { db in
-                try Self.updateLibraryRootPath(rootRowID: rootRowID, path: attachment.path, db: db)
+            let derivedFolder = derivedFolder
+            try await dbWriter.write { db in
+                let migrations = try Self.updateLibraryRootPath(rootRowID: rootRowID, path: attachment.path, db: db)
+                try derivedFolder?.journalRenames(migrations.map { ($0.oldRelativeName, $0.newRelativeName) }, db: db)
             }
+            try await applyPendingDerivedRenames()
         }
         try await dbWriter.write { db in
             try Self.updateLibraryRootSourceFacts(
@@ -5316,7 +5321,6 @@ extension CatalogStore {
                 db: db
             )
         }
-        migrateNormalizedRootThumbnails(thumbnailMigrations)
         moveRootRuntimeState(
             oldPath: existingRoot.path,
             newRoot: attachment.root(lastSeenAt: lastSeenAt),
@@ -5987,18 +5991,17 @@ extension CatalogStore {
         let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
         let rootRowID = scan.rootRowID
         let rootPath = scan.rootPath
+        let derivedFolder = derivedFolder
         let timed = try await timedWrite(dbQueue) { db in
-            try Self.writeSourceListingChanges(
+            let written = try Self.writeSourceListingChanges(
                 changes, rootRowID: rootRowID, rootPath: rootPath, capabilities: scanCapabilities, db: db
             )
+            return try (rows: written.rows, removal: derivedFolder?.unname(written.purgedImages, db: db) ?? .nothing)
         }
+        // The rows are gone whether or not the scan is still this Store's: their files go too.
+        timed.value.removal.perform()
         guard owns(scan) else {
             throw CancellationError()
-        }
-        if let thumbnailDirectory {
-            for name in timed.value.purgedImages {
-                ThumbnailStore.delete(name, in: thumbnailDirectory)
-            }
         }
         let announced = timed.value.rows.notifications
         if !announced.isEmpty {
@@ -6219,6 +6222,7 @@ extension CatalogStore {
         let observedKeys = Set(observedPaths.map {
             FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: capabilities)
         })
+        let derivedFolder = derivedFolder
         let timed = try await timedWrite(database()) { db in
             let missing = try Self.fetchExistingAssetRows(libraryRootID: rootRowID, underSubtree: nil, db: db)
                 .filter {
@@ -6237,17 +6241,13 @@ extension CatalogStore {
                 sql: "UPDATE library_root SET resync_owed = 0 WHERE id = ? AND resync_owed = ?",
                 arguments: [rootRowID, debt.revision]
             )
-            return (
-                images: missing.flatMap(\.derivedImagePaths), purged: missing.count, settled: db.changesCount > 0, rows: rows
-            )
+            let settled = db.changesCount > 0
+            let removal = try derivedFolder?.unname(missing.flatMap(\.derivedImagePaths), db: db) ?? .nothing
+            return (removal: removal, purged: missing.count, settled: settled, rows: rows)
         }
+        timed.value.removal.perform()
         guard owns(scan) else {
             throw CancellationError()
-        }
-        if let thumbnailDirectory {
-            for name in timed.value.images {
-                ThumbnailStore.delete(name, in: thumbnailDirectory)
-            }
         }
         OtosLog.catalog.noticeOperation("catalog.source.resync", phase: "complete", fields: [
             "rootPath": scan.rootPath.rawValue,
@@ -6416,9 +6416,10 @@ extension CatalogStore {
         guard !stagedByID.isEmpty else {
             return
         }
-        guard let thumbnailDirectory else {
+        guard let derivedFolder else {
             return
         }
+        let thumbnailDirectory = derivedFolder.directory
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
         let dbQueue = try database()
         let taken: Set<MediaAssetID>
@@ -6431,7 +6432,7 @@ extension CatalogStore {
                     else {
                         continue
                     }
-                    try ThumbnailStore.promote(staged, in: thumbnailDirectory)
+                    try derivedFolder.promote(staged, db: db)
                     try Self.updateThumbnailPath(
                         staged.finalRelativePath,
                         libraryRootID: rootID,
@@ -6502,6 +6503,10 @@ extension CatalogStore {
     /// it synchronously to build the enricher, and tiles need it to resolve thumbnails.
     /// It lives in an internal (not `private`) extension so those owners can read it.
     nonisolated var thumbnailDirectory: URL? {
+        Self.thumbnailDirectory(for: location)
+    }
+
+    nonisolated static func thumbnailDirectory(for location: Location) -> URL? {
         switch location {
         case let .application(bundleIdentifier):
             Self.applicationThumbnailDirectory(bundleIdentifier: bundleIdentifier)
@@ -6566,55 +6571,218 @@ extension CatalogStore {
         }
     }
 
-    /// Removes every file in the derived folder that no present row names or would write
-    /// (`DerivedFileReconciliation.protectedNames`), then reports the folder by kind,
-    /// once a launch, after the first grid; the window calls it.
-    /// Returns the census, or nil for a catalog without a derived folder.
+    /// What a launch's look at the derived folder found (`reconcileDerivedFilesIfOwed`).
+    enum DerivedFolderOutcome: Equatable, Sendable {
+        /// Nothing said leftovers could exist: the stored counters, read without a listing.
+        case counted(DerivedFileReconciliation.Census)
+        /// A reconciliation ran: why, the census it took after its deletes, and what it removed.
+        case reconciled(reason: String, census: DerivedFileReconciliation.Census, removed: DerivedFileReconciliation.Census)
+    }
+
+    /// Moves to their new names, a page at a time, the files a root's rename journaled
+    /// (`DerivedFolder.journalRenames`). The moves run off the Store and outside the writer;
+    /// each page's journal rows and counter change are one short write after it. A root's
+    /// rename journals two or three names per row it holds, so a card of 4,000 photos is about
+    /// 8,000 renames in sixteen pages; no page holds the writer for more than its row deletes.
+    func applyPendingDerivedRenames() async throws {
+        guard let derivedFolder else {
+            return
+        }
+        let dbWriter = try database()
+        let pageSize = Self.derivedRenamePageSize
+        var moved = 0
+        var failures = 0
+        while true {
+            let page = try await dbWriter.readFreeingConnection { db in
+                try DerivedFileReconciliation.pendingRenames(limit: pageSize, db: db)
+            }
+            guard !page.isEmpty else {
+                break
+            }
+            let result = await Self.moveDerivedFiles(page, in: derivedFolder)
+            do {
+                try await timedWrite(dbWriter, operation: "applyPendingDerivedRenames") { db in
+                    for move in page {
+                        try db.execute(sql: "DELETE FROM derived_rename WHERE old_name = ? AND new_name = ?", arguments: [move.old, move.new])
+                    }
+                    try DerivedFolderCounters.apply(result.change, db: db)
+                }
+            } catch {
+                derivedFolder.endOutsideWrite(failed: true)
+                throw error
+            }
+            derivedFolder.endOutsideWrite(failed: result.failures > 0)
+            moved += page.count
+            failures += result.failures
+        }
+        if moved > 0 {
+            OtosLog.thumbnails.noticeOperation("derived.rename", phase: "finish", fields: [
+                "moved": "\(moved)", "failures": "\(failures)",
+            ])
+        }
+    }
+
+    /// Journaled moves per page: each page's renames run outside the writer.
+    static let derivedRenamePageSize = 500
+
+    @concurrent
+    private nonisolated static func moveDerivedFiles(
+        _ moves: [(old: String, new: String)],
+        in folder: DerivedFolder
+    ) async -> (change: DerivedFileReconciliation.Census, failures: Int) {
+        folder.moveJournaled(moves)
+    }
+
+    /// The derived folder's stored counters, or nil while they are unknown.
+    func derivedFolderCounters() async throws -> DerivedFileReconciliation.Census? {
+        try await database().readFreeingConnection { db in
+            try DerivedFolderCounters.read(db: db)
+        }?.normalized
+    }
+
+    /// Rows per page of the protected-names read, and files per page of the folder stream and
+    /// of each delete batch: each page is one short read or write.
+    static let derivedReconcilePageSize = 2000
+
+    /// Reconciles the derived folder when a fact says leftovers can exist — the previous
+    /// session ended without closing (`DerivedFolder.openSession`), or the counters are
+    /// unknown — and otherwise only reads the stored counters. Logs the folder's files and
+    /// bytes by kind either way (`op=derived.folder phase=counted`). Nil for a catalog without
+    /// a derived folder. The window runs it once a launch, as an admitted load.
     @discardableResult
-    func reconcileDerivedFiles() async throws -> DerivedFileReconciliation.Census? {
-        guard let thumbnailDirectory else {
+    func reconcileDerivedFilesIfOwed() async throws -> DerivedFolderOutcome? {
+        guard let derivedFolder else {
             return nil
         }
-        let start = ContinuousClock.now
         let dbWriter = try database()
-        let listed = try await Self.listDerivedFolder(thumbnailDirectory)
-        let named = try await dbWriter.readFreeingConnection { db in
-            try DerivedFileReconciliation.protectedNames(db: db)
+        let stored = try await dbWriter.readFreeingConnection { db in
+            try DerivedFolderCounters.read(db: db)
         }
-        let unnamed = listed.filter { !named.contains($0.name) }
+        let reason: String? = if derivedFolder.previousSessionUnclean {
+            "uncleanExit"
+        } else if stored == nil {
+            "countersUnknown"
+        } else {
+            nil
+        }
+        guard let reason else {
+            let counted = (stored ?? DerivedFileReconciliation.Census()).normalized
+            OtosLog.thumbnails.noticeOperation("derived.folder", phase: "counted", fields: counted.fields.merging([
+                "source": "counters",
+            ]) { $1 })
+            return .counted(counted)
+        }
+        return try await reconcileDerivedFiles(reason: reason, stored: stored, folder: derivedFolder, dbWriter: dbWriter)
+    }
+
+    private func reconcileDerivedFiles(
+        reason: String,
+        stored: DerivedFileReconciliation.Census?,
+        folder: DerivedFolder,
+        dbWriter: any DatabaseWriter
+    ) async throws -> DerivedFolderOutcome {
+        let start = ContinuousClock.now
+        let pageSize = Self.derivedReconcilePageSize
+        folder.startNoting()
+        defer { folder.stopNoting() }
+        // 1. The protected names, a page of rows at a time.
+        var protected = DerivedFileReconciliation.ProtectedNames()
+        var after: Int64 = 0
+        var rows = 0
+        while true {
+            let from = after
+            let page = try await dbWriter.readFreeingConnection { db in
+                try DerivedFileReconciliation.namedRows(after: from, limit: pageSize, db: db)
+            }
+            guard let last = page.last else {
+                break
+            }
+            for row in page {
+                protected.insert(identity: row.id)
+                row.names.forEach { protected.insert(name: $0) }
+            }
+            rows += page.count
+            after = last.rowID
+        }
+        // A rename's journaled moves not yet done: both names stay until the move is.
+        let pending = try await dbWriter.readFreeingConnection { db in
+            try DerivedFileReconciliation.pendingRenames(limit: Int.max, db: db)
+        }
+        for move in pending {
+            protected.insert(name: move.old)
+            protected.insert(name: move.new)
+        }
+        // 2. The folder as a stream; its unprotected files are deleted a page at a time, each
+        // in one short write that leaves out every name written since noting began.
+        let listed = try await Self.streamDerivedFolder(folder.directory, protected: protected, pageSize: pageSize)
         var removed = DerivedFileReconciliation.Census()
-        var kept = 0
-        if !unnamed.isEmpty {
-            // Inside one write: no promotion can name a file while this holds the writer, and the
-            // protected names are read again in it, so only what no present row holds or would
-            // write is deleted.
-            let (gone, protectedNow) = try await timedWrite(dbWriter, operation: "reconcileDerivedFiles") { db in
-                let protected = try DerivedFileReconciliation.protectedNames(db: db)
-                let orphans = unnamed.filter { !protected.contains($0.name) }
-                return (DerivedFileReconciliation.delete(orphans, in: thumbnailDirectory), unnamed.count - orphans.count)
+        for page in listed.candidatePages {
+            let gone = try await timedWrite(dbWriter, operation: "reconcileDerivedFiles") { _ in
+                let noted = folder.noted()
+                return DerivedFileReconciliation.delete(page.filter { !noted.contains($0.name) }, in: folder.directory)
             }.value
-            kept = protectedNow
             gone.forEach { removed.add($0) }
         }
-        let diagnostics = DerivedFileReconciliation.removeRetiredDiagnostics(besides: thumbnailDirectory)
-        OtosLog.thumbnails.noticeOperation("derived.reconcile", phase: "finish", fields: removed.fields.merging([
-            "listed": "\(listed.count)",
-            "named": "\(named.count)",
-            "keptNamedMeanwhile": "\(kept)",
+        // 3. The counters take the census, less what went.
+        var census = listed.census
+        census.add(removed.negated)
+        let counted = census.normalized
+        try await timedWrite(dbWriter, operation: "reconcileDerivedFiles") { db in
+            try DerivedFolderCounters.replace(with: counted, db: db)
+        }
+        let diagnostics = DerivedFileReconciliation.removeRetiredDiagnostics(besides: folder.directory)
+        var fields = removed.normalized.fields(prefix: "removed")
+        fields.merge(counted.fields) { $1 }
+        if let stored {
+            var drift = counted
+            drift.add(stored.negated)
+            fields.merge(drift.normalized.fields(prefix: "drift")) { $1 }
+        } else {
+            fields["drift"] = "unknown"
+        }
+        fields.merge([
+            "reason": reason,
+            "rows": "\(rows)",
+            "protected": "\(protected.count)",
             "retiredDiagnosticsFiles": "\(diagnostics.files)",
             "retiredDiagnosticsBytes": "\(diagnostics.bytes)",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ]) { $1 }
+        OtosLog.thumbnails.noticeOperation("derived.reconcile", phase: "finish", fields: fields)
+        OtosLog.thumbnails.noticeOperation("derived.folder", phase: "counted", fields: counted.fields.merging([
+            "source": "census",
         ]) { $1 })
-        let census = try await DerivedFileReconciliation.Census(Self.listDerivedFolder(thumbnailDirectory))
-        OtosLog.thumbnails.noticeOperation("derived.folder", phase: "census", fields: census.fields)
-        return census
+        return .reconciled(reason: reason, census: counted, removed: removed.normalized)
     }
 
-    /// The derived folder's listing, off the Store actor: a library's folder holds hundreds of
-    /// thousands of files.
+    /// Streams the derived folder off the Store actor: its census, and its unprotected files
+    /// in pages. Only names and sizes are kept, never a URL or a resource cache.
     @concurrent
-    private nonisolated static func listDerivedFolder(_ directory: URL) async throws -> [DerivedFileReconciliation.Entry] {
-        try DerivedFileReconciliation.list(directory)
+    private nonisolated static func streamDerivedFolder(
+        _ directory: URL,
+        protected: DerivedFileReconciliation.ProtectedNames,
+        pageSize: Int
+    ) async throws -> (census: DerivedFileReconciliation.Census, candidatePages: [[DerivedFileReconciliation.Entry]]) {
+        var census = DerivedFileReconciliation.Census()
+        var pages: [[DerivedFileReconciliation.Entry]] = []
+        var candidates: [DerivedFileReconciliation.Entry] = []
+        try DerivedFileReconciliation.stream(directory, pageSize: pageSize) { page in
+            for entry in page {
+                census.add(entry)
+                guard !protected.protects(entry.name) else {
+                    continue
+                }
+                candidates.append(entry)
+                if candidates.count == pageSize {
+                    pages.append(candidates)
+                    candidates = []
+                }
+            }
+        }
+        if !candidates.isEmpty {
+            pages.append(candidates)
+        }
+        return (census, pages)
     }
 }
 
@@ -6953,12 +7121,15 @@ private extension CatalogStore {
         }
         do {
             let oldPath = storedRoot.path
+            let derivedFolder = derivedFolder
             let thumbnailMigrations = try await dbWriter.write { db in
                 let migrations = try Self.updateLibraryRootPath(rootRowID: storedRoot.id, path: normalizedPath, db: db)
                 try Self.moveJournaledSourceRoot(from: oldPath, to: normalizedPath, db: db)
+                // The files' moves are journaled in the write that renames the rows.
+                try derivedFolder?.journalRenames(migrations.map { ($0.oldRelativeName, $0.newRelativeName) }, db: db)
                 return migrations
             }
-            migrateNormalizedRootThumbnails(thumbnailMigrations)
+            try await applyPendingDerivedRenames()
             OtosLog.persistence.info(
                 """
                 Library root normalized oldPath=\(storedRoot.path.rawValue, privacy: .public) \
@@ -7001,39 +7172,6 @@ private extension CatalogStore {
         )
         OtosLog.catalog.error(
             "op=catalog.library.normalize phase=error oldRootPath=\(storedRoot.path.rawValue, privacy: .public) rootPath=\(normalizedPath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
-        )
-    }
-
-    private func migrateNormalizedRootThumbnails(_ migrations: [ThumbnailPathMigration]) {
-        guard !migrations.isEmpty, let thumbnailDirectory else {
-            return
-        }
-
-        var failureCount = 0
-        for migration in migrations {
-            do {
-                try ThumbnailStore.move(
-                    migration.oldRelativeName,
-                    to: migration.newRelativeName,
-                    in: thumbnailDirectory
-                )
-            } catch {
-                failureCount += 1
-                OtosLog.thumbnails.error(
-                    """
-                    Thumbnail migration failed old=\(migration.oldRelativeName, privacy: .public) \
-                    new=\(migration.newRelativeName, privacy: .public) \
-                    error=\(String(describing: error), privacy: .public)
-                    """
-                )
-            }
-        }
-
-        OtosLog.thumbnails.info(
-            """
-            Thumbnail paths migrated for normalized root count=\(migrations.count, privacy: .public) \
-            failures=\(failureCount, privacy: .public)
-            """
         )
     }
 
@@ -7470,7 +7608,8 @@ private extension CatalogStore {
         let state = OtosSignpost.persistence.beginInterval("CatalogScanReconcile")
         defer { OtosSignpost.persistence.endInterval("CatalogScanReconcile", state) }
 
-        let deleted = try await dbQueue.write { db in
+        let derivedFolder = derivedFolder
+        let (deleted, removal) = try await dbQueue.write { db in
             var rows = CatalogRowChanges()
             for row in missingRows {
                 try rows.recordDeleted(
@@ -7478,17 +7617,13 @@ private extension CatalogStore {
                     of: row.relativePath, in: scan.rootPath
                 )
             }
-            return rows.updatedRows
+            return try (rows.updatedRows, derivedFolder?.unname(purgedThumbnails, db: db) ?? .nothing)
         }
+        removal.perform()
         // Removal and same-path replacement can run while GRDB owns the writer.
         // Never treat an old row's reconciliation as proof about the replacement root.
         guard owns(scan) else {
             throw CancellationError()
-        }
-        if let thumbnailDirectory {
-            for name in purgedThumbnails {
-                ThumbnailStore.delete(name, in: thumbnailDirectory)
-            }
         }
         // The deletion names its rows and the Live Photo partners they leave, so an owner
         // that keeps a memory per asset lets go of these alone and asks the partners again;
@@ -8495,29 +8630,29 @@ private extension CatalogStore {
             if Self.isHeldInTrash(trashPath: deletionTarget?.trashPath) {
                 return .unchanged
             }
-            let deleted = try await dbQueue.write { db -> Bool in
-                try Self.purgeGonePath(
+            let derivedFolder = derivedFolder
+            let derivedImagePaths = deletionTarget?.derivedImagePaths ?? []
+            let deleted = try await dbQueue.write { db -> DerivedRemoval? in
+                guard try Self.purgeGonePath(
                     relativePath: relativePath,
                     rootRowID: rootRowID,
                     capabilities: capabilities,
                     db: db
-                )
+                ) else {
+                    return nil
+                }
+                return try derivedFolder?.unname(derivedImagePaths, db: db) ?? DerivedRemoval.nothing
             }
-            guard deleted else {
+            guard let deleted else {
                 return .unchanged
             }
+            deleted.perform()
         } catch {
             OtosLog.catalog.errorOperation("catalog.reconcile", phase: "deleteFailed", fields: [
                 "path": relativePath.rawValue,
                 "error": String(describing: error),
             ])
             return .unchanged
-        }
-
-        if let thumbnailDirectory {
-            for path in deletionTarget?.derivedImagePaths ?? [] {
-                ThumbnailStore.delete(path, in: thumbnailDirectory)
-            }
         }
         return .changed
     }
@@ -8622,7 +8757,8 @@ extension CatalogStore {
     func recordSourceFileErased(_ operation: ActiveSourceEraseOperation) async throws {
         let dbWriter = try database()
         let rootState = roots[operation.sourceRootPath]
-        let derivedImagePaths = try Self.writeWithJournalDurability(dbWriter) { db -> [String]? in
+        let derivedFolder = derivedFolder
+        let erased = try Self.writeWithJournalDurability(dbWriter) { db -> (paths: [String], removal: DerivedRemoval)? in
             try Self.deleteActiveSourceErase(key: operation.key, db: db)
             guard let rootState else {
                 return nil
@@ -8638,16 +8774,17 @@ extension CatalogStore {
                 capabilities: rootState.capabilities,
                 db: db
             )
-            return removed ? target?.derivedImagePaths ?? [] : nil
+            guard removed else {
+                return nil
+            }
+            let paths = target?.derivedImagePaths ?? []
+            return try (paths, derivedFolder?.unname(paths, db: db) ?? .nothing)
         }
-        guard let derivedImagePaths else {
+        guard let erased else {
             return
         }
-        if let thumbnailDirectory {
-            for path in derivedImagePaths {
-                ThumbnailStore.delete(path, in: thumbnailDirectory)
-            }
-        }
+        erased.removal.perform()
+        let derivedImagePaths = erased.paths
         OtosLog.catalog.noticeOperation("import.erase.catalog", phase: "removed", fields: [
             "rootPath": operation.sourceRootPath.rawValue,
             "relativePath": operation.sourceRelativePath.rawValue,
@@ -8763,7 +8900,7 @@ extension CatalogStore {
             renderingOrigin = .provisional
         }
 
-        let directory = thumbnailDirectory
+        let derivedFolder = derivedFolder
         try Self.writeWithJournalDurability(dbWriter) { db in
             var landedRendering: LandedRendering?
             if let rendering {
@@ -8772,10 +8909,10 @@ extension CatalogStore {
                     // Staged images exist only where the catalog has a derived-image
                     // directory; a rendering with no images (nothing could be drawn) needs none.
                     let promote: (StagedDerivedImage) throws -> String = { image in
-                        guard let directory else {
+                        guard let derivedFolder else {
                             throw CatalogStoreError.catalogUnavailable
                         }
-                        return try ThumbnailStore.promote(image, in: directory)
+                        return try derivedFolder.promote(image, db: db)
                     }
                     let thumbnailPath = try rendering.thumbnail.map(promote)
                     let previewPath = try rendering.preview.map(promote)
@@ -8786,9 +8923,9 @@ extension CatalogStore {
                         renderedRevision: rendering.renderedRevision
                     )
                 } catch {
-                    if let directory {
+                    if let derivedFolder {
                         for image in staged {
-                            ThumbnailStore.discard(image, in: directory)
+                            ThumbnailStore.discard(image, in: derivedFolder.directory)
                         }
                     }
                     OtosLog.thumbnails.errorOperation("mediaOperation.settle", phase: "renderingPromotionFailed", fields: [

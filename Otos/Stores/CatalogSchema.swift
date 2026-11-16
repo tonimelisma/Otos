@@ -2409,6 +2409,28 @@ nonisolated enum CatalogSchema {
         ])
     }
 
+    /// v72: the derived folder's files and allocated bytes by kind, kept by the writes that
+    /// name and unname its files (`DerivedFolderCounters`), and the journal of files a root's
+    /// rename still has to move (`DerivedFolder.journalRenames`). Created empty: the counters are
+    /// unknown until the first reconciliation's census sets them, which their absence owes.
+    static let derivedFolderMigrationIdentifier = "v72_derived_folder"
+
+    static let derivedFolderStatements: [String] = [
+        """
+        CREATE TABLE derived_folder (
+            kind TEXT NOT NULL PRIMARY KEY,
+            files INTEGER NOT NULL,
+            bytes INTEGER NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE derived_rename (
+            old_name TEXT NOT NULL PRIMARY KEY,
+            new_name TEXT NOT NULL
+        )
+        """,
+    ]
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

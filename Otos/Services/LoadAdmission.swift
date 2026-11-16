@@ -15,10 +15,14 @@ nonisolated enum BackgroundLoad: String, CaseIterable, Sendable {
     /// One account's mirror pairing, a write walk over each mirrored library
     /// (`ImmichCatalogSync`).
     case immichMirror
+    /// The launch's look at the derived folder, and its reconciliation when one is owed
+    /// (`CatalogStore.reconcileDerivedFilesIfOwed`): last, since nothing shows it.
+    case derivedFolder
 
     /// The order loads asked for before the window's first grid run in once it paints: the
     /// worst first click first (People), then the duplicate groups, then the index only a
-    /// search needs, then the pairing nothing shows until it lands. Declaration order.
+    /// search needs, then the pairing nothing shows until it lands, then the derived folder.
+    /// Declaration order.
     var launchRank: Int {
         Self.allCases.firstIndex(of: self) ?? Self.allCases.count
     }

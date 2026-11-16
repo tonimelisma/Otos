@@ -17,44 +17,13 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v71's narrow table made again as v70 left it, its rows copied into it
-    /// with the three columns v71 removed at the owner's widths (a `sort_key` of his length, a
-    /// 1 KB gray and the thumbnail stamp of every current signature), v70's indexes and
-    /// triggers made over them, and the record removed. v70's definitions are read from a
-    /// catalog migrated to it.
-    static let newest = CatalogSchema.hotAssetTableMigrationIdentifier
+    /// schema before it: v72's derived folder tables dropped and its record removed.
+    static let newest = CatalogSchema.derivedFolderMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
-        let v70 = try DatabaseQueue()
-        try CatalogStore.migrator.migrate(v70, upTo: CatalogSchema.searchVectorFileMigrationIdentifier)
-        let (table, schema) = try v70.read { db in
-            try (
-                String.fetchOne(db, sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'media_asset'") ?? "",
-                String.fetchAll(db, sql: """
-                SELECT sql FROM sqlite_master WHERE tbl_name = 'media_asset' AND type IN ('index', 'trigger') AND sql IS NOT NULL
-                """)
-            )
-        }
-        let identity = StoredThumbnailSQL.identity("a")
-        return [
-            table.replacingOccurrences(of: "CREATE TABLE media_asset (", with: "CREATE TABLE media_asset_v70 ("),
-            """
-            INSERT INTO media_asset_v70 (\(CatalogSchema.hotAssetCopiedColumns), sort_key, render_dhash, render_gray,
-                                         render_signature_source)
-            SELECT \(CatalogSchema.hotAssetCopiedColumns.split(separator: ",").map { "a.\($0.trimmingCharacters(in: .whitespacesAndNewlines))" }
-                .joined(separator: ", ")),
-                   substr(lower(r.path) || char(1) || lower(a.relative_path) || printf('%0544d', 0), 1,
-                          CASE r.kind WHEN 'immichAccount' THEN 544 ELSE 154 END),
-                   a.render_dhash, g.gray, CASE WHEN a.render_signature_read <> 0 THEN \(identity) END
-            FROM media_asset AS a
-            JOIN library_root AS r ON r.id = a.library_root_id
-            LEFT JOIN render_signature AS g ON g.library_root_id = a.library_root_id AND g.relative_path = a.relative_path
-            ORDER BY a.library_root_id, a.relative_path
-            """,
-            "DROP TABLE render_signature",
-            "DROP TABLE media_asset",
-            "ALTER TABLE media_asset_v70 RENAME TO media_asset",
-        ] + schema + [
+        [
+            "DROP TABLE derived_folder",
+            "DROP TABLE derived_rename",
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }

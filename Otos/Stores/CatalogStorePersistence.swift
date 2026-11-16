@@ -586,6 +586,11 @@ extension CatalogStore {
             steps?.began(hotAssetTable)
             try CatalogSchema.migrateToHotAssetTable(db)
         }
+        register(CatalogSchema.derivedFolderMigrationIdentifier) { db in
+            for statement in CatalogSchema.derivedFolderStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

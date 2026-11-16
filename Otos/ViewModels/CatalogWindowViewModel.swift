@@ -1164,6 +1164,8 @@ extension CatalogWindowViewModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.persistBrowserPlace()
+                // The derived folder's session ends clean only with no change in flight.
+                self?.catalogStore.derivedFolder?.closeSession()
             }
         }
 
@@ -1666,12 +1668,17 @@ extension CatalogWindowViewModel {
             "emptyState": state.mediaEmptyState?.diagnosticDescription ?? "none",
         ])
         ResourceCheckpoint.record("firstGrid", fields: ["items": "\(items)"], storeUse: storeUse)
-        // Once a launch, after the first grid, so its listing never delays it: the derived
-        // folder holds what the rows name and nothing more (`DerivedFileReconciliation`).
+        // Once a launch, after the first grid and behind every other admitted load: the derived
+        // folder's counters, and a reconciliation only when a fact says leftovers can exist
+        // (`DerivedFolder`).
         if startsEnrichment, derivedFilesTask == nil {
-            derivedFilesTask = Task { [catalogStore] in
+            derivedFilesTask = Task(priority: .background) { [catalogStore, loadAdmission] in
                 do {
-                    try await catalogStore.reconcileDerivedFiles()
+                    try await loadAdmission.run(.derivedFolder) {
+                        try await catalogStore.reconcileDerivedFilesIfOwed()
+                    }
+                } catch is CancellationError {
+                    // Refused at teardown: the next launch looks again.
                 } catch {
                     OtosLog.thumbnails.errorOperation("derived.reconcile", phase: "failed", fields: [
                         "error": String(describing: error),

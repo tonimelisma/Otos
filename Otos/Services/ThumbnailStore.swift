@@ -59,9 +59,13 @@ nonisolated enum ThumbnailStore {
     }
 
     private static func storageKey(for id: MediaAssetID) -> String {
+        storageDigest(for: id).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The hash every derived name of `id` begins with, in hexadecimal.
+    static func storageDigest(for id: MediaAssetID) -> SHA256.Digest {
         let identity = id.libraryRootPath.rawValue + "\u{0}" + id.relativePath.rawValue
-        let digest = SHA256.hash(data: Data(identity.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        return SHA256.hash(data: Data(identity.utf8))
     }
 
     static func url(for relativeName: String, in directory: URL) -> URL {
