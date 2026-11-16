@@ -319,7 +319,10 @@ SwiftFormat and SwiftLint are not among them: `script/lint-tools.sh` pins them,
 checks their checksums, and fetches them on first use. Run `"$(script/lint-tools.sh
 swiftformat)" .` to format. The
 required local check is **`script/check.sh`** — the single entry point, run with
-`run_in_background: true`. It runs the seconds-long gates first, then the full
+`run_in_background: true`. **One run of it on the final tree is a PR's verification:
+about two to three minutes, and it runs no benchmark.** Nothing else is run per PR. The
+whole suite is not looped; a failure a check reported is reproduced with
+`--only <Suite>`, scoped to the suite that failed. It runs the seconds-long gates first, then the full
 verification (requirements-authority + lint + build + test), and prints a heartbeat
 every 60 s carrying elapsed time and the running test count. Do not invoke
 `script/verify.sh`, `script/test.sh` or `script/build.sh` directly:
@@ -349,8 +352,14 @@ Benchmarks run once a day, never per PR (ADR 0043), and a session runs them.
 `script/bench.sh history [case]` reads the records back, and `script/bench.sh compare
 <base>` bisects a flagged range by hand. Compare instructions, not milliseconds: under
 the parallel load that moves wall time several-fold, a steady case's instructions hold
-within about 1%. A hot path that performance work touches gets a case, measured with
-`script/bench.sh run` and `compare` while that work is under way.
+within about 1%. A hot path that performance work touches gets a case in the suite, and
+the next daily run measures it.
+
+**Nothing but the daily run measures.** `script/bench.sh run`, `script/bench.sh compare`
+and an `OTOS_BENCHMARK` test run are never part of a PR, a brief to a subagent, or a
+DoD: no session and no agent starts one unless the owner asks for that run in chat, or
+a `verdict=flagged` range is being bisected. A change that may move a case says so in
+its DoD as "not measured until the next daily run".
 
 Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
 Application Support data; `/Applications/Otos.app` is the installed
