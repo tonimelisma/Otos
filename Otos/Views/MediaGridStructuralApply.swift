@@ -162,9 +162,10 @@ extension MediaGridViewController {
     ) {
         let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
         let commitDuration = CommitDuration(start: .now)
-        // On return the collection view holds `grid`: a Move to Trash it no longer shows has
-        // its result on screen, whether this apply reloads or animates its removal.
-        defer { stallMonitor?.completeTrashToResult(committed: grid) }
+        // On return the collection view holds `grid`: a Move to Trash it no longer shows, or a
+        // Put Back it shows again, has its result on screen, whether this apply reloads or
+        // animates.
+        defer { stallMonitor?.completeMembershipToResult(committed: grid) }
         let summary = built.summary
         let scrollAnchor = captureScrollAnchor(change: change, nextOrderedIDs: grid.orderedAssetIDs)
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")

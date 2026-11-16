@@ -616,8 +616,10 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var stackKeyForwardingTask: Task<Void, Never>?
     /// Choices sent to the forwarding consumer, and choices it has finished with —
     /// accepted, refused or failed. Equal means every choice's outcome has been applied.
-    @ObservationIgnored var submittedMediaChoiceCount = 0
-    @ObservationIgnored var handledMediaChoiceCount = 0
+    /// Observed, so a wait on `hasSettledMediaChoices` (the tour's next act) hears each
+    /// outcome; no view reads them.
+    var submittedMediaChoiceCount = 0
+    var handledMediaChoiceCount = 0
     /// The large-download question's read for a command its targets' reading does not cover
     /// (APP-045), the one Move to Trash step that can wait: a second command waits for it
     /// rather than racing it.
@@ -1364,13 +1366,27 @@ extension CatalogWindowViewModel {
 
     private func startQueryForwarding(projection: CatalogProjection) {
         queryForwardingTask = Task { [projection, projectionIntentStream, photoSearchIndex] in
-            // Before the first request, so no search reaches a projection without its index.
-            if let photoSearchIndex {
-                await projection.attachSearchIndex(photoSearchIndex)
-            }
-            for await intent in projectionIntentStream {
-                await projection.apply(intent)
-            }
+            await Self.forwardProjectionIntents(projectionIntentStream, to: projection, searchIndex: photoSearchIndex)
+        }
+    }
+
+    /// The one consumer of the window's Projection intents, in submission order, off the main
+    /// actor: each intent reaches Projection as soon as Projection is free, never after the
+    /// main thread's next turn. A loop on the main actor resumed only between main-thread
+    /// turns, so a Move to Trash's hide queued one turn behind every intent before it (about
+    /// 70 ms a turn in a Debug build; `docs/research/2026-11-16-trash-visible-time.md`).
+    @concurrent
+    nonisolated static func forwardProjectionIntents(
+        _ intents: AsyncStream<CatalogProjectionIntent>,
+        to projection: CatalogProjection,
+        searchIndex: PhotoSearchIndex?
+    ) async {
+        // Before the first request, so no search reaches a projection without its index.
+        if let searchIndex {
+            await projection.attachSearchIndex(searchIndex)
+        }
+        for await intent in intents {
+            await projection.apply(intent)
         }
     }
 

@@ -103,8 +103,11 @@ real backlog. Three instruments see those:
   The act steps (Like, Dislike, Not Rated, Move to Trash then Undo) run only in a sandbox
   home (`CFFIXED_USER_HOME`, not the account's home) whose every source lies inside it, and
   are skipped as `notSandboxHome` elsewhere. Each act is timed from its intent to the grid
-  change that shows it, `op=ui.actToResult` (the grid drawing the act's tile, now or when it is next laid out, or
-  committing an order without the trashed items), in every session, toured or not.
+  change that shows it, `op=ui.actToResult` (the grid drawing the act's tile, now or when it
+  is next laid out; committing an order without the trashed items; or, for Undo's Put Back,
+  with them again), in every session, toured or not. The scorecard reports a Move to Trash's
+  and a Put Back's file work apart, matched by batch (`fileWorkDoneMs`). Projection's intents
+  are forwarded off the main actor, so an act's hold never waits for a main-thread turn.
   `OTOS_TOUR_ABLATE` leaves named
   background owners unstarted for that session ("what if it were free"); it is read only
   beside the tour flag, every owner starts otherwise (`BackgroundOwners`, tested), and a

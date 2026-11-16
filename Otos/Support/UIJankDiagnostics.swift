@@ -47,16 +47,20 @@ nonisolated struct SidebarPaintReport: Equatable, Sendable {
 }
 
 /// An act whose result the window shows in the step that applies it (DES-120): a choice
-/// (Like, Dislike, Mark as Not Rated) or Move to Trash.
+/// (Like, Dislike, Mark as Not Rated) or Move to Trash, and Undo Move to Trash, which puts the
+/// items back.
 nonisolated enum WindowAct: Equatable, Sendable {
     case choice(MediaChoice)
     case moveToTrash
+    case putBack
 
-    /// The act's name in `op=ui.actToResult` lines: `liked`, `disliked`, `notRated`, `moveToTrash`.
+    /// The act's name in `op=ui.actToResult` lines: `liked`, `disliked`, `notRated`,
+    /// `moveToTrash`, `putBack`.
     var name: String {
         switch self {
         case let .choice(choice): choice.rawValue
         case .moveToTrash: "moveToTrash"
+        case .putBack: "putBack"
         }
     }
 }
@@ -232,16 +236,21 @@ final class MainRunLoopStallMonitor {
         return completeActToResult(pending, surface: "grid")
     }
 
-    /// The grid committed `grid`: a pending Move to Trash whose items it no longer shows has
-    /// its result on screen.
+    /// The grid committed `grid`: a pending Move to Trash whose items it no longer shows, or a
+    /// pending Put Back whose items it shows again (any of them: a stack's other files are
+    /// never shown on their own), has its result on screen.
     @discardableResult
-    func completeTrashToResult(committed grid: CatalogMediaGridState) -> Bool {
-        guard let pending = pendingActToResult, pending.act == .moveToTrash,
-              !pending.ids.contains(where: grid.content.contains)
-        else {
+    func completeMembershipToResult(committed grid: CatalogMediaGridState) -> Bool {
+        guard let pending = pendingActToResult else {
             return false
         }
-        return completeActToResult(pending, surface: "grid")
+        let shown: Bool
+        switch pending.act {
+        case .moveToTrash: shown = !pending.ids.contains(where: grid.content.contains)
+        case .putBack: shown = pending.ids.contains(where: grid.content.contains)
+        case .choice: return false
+        }
+        return shown ? completeActToResult(pending, surface: "grid") : false
     }
 
     private func completeActToResult(_ pending: PendingActToResult, surface: String) -> Bool {

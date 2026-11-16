@@ -217,6 +217,28 @@ class ScorecardTests(unittest.TestCase):
         report, _, _ = run(SESSION)
         self.assertTrue(any("act to result" in item for item in report["notMeasured"]))
 
+    def test_trash_and_put_back_report_the_visible_result_and_the_file_work_apart(self):
+        acted = SESSION[:-1] + [
+            line(40.00, "op=trash.move phase=start batch=11 count=1"),
+            line(40.00, "op=ui.actToResult phase=start act=moveToTrash count=1"),
+            line(40.05, "op=ui.actToResult phase=finish act=moveToTrash count=1 surface=grid ms=50"),
+            line(40.30, "op=mediaTrash.queue phase=trashed path=a.jpg members=1 batch=11"),
+            line(40.40, "op=trash.undo phase=start count=1 batch=11"),
+            line(40.40, "op=ui.actToResult phase=start act=putBack count=1"),
+            line(40.60, "op=mediaTrash.undo phase=finish batch=11 restored=1 failed=0"),
+            line(40.65, "op=ui.actToResult phase=finish act=putBack count=1 surface=grid ms=250"),
+            SESSION[-1],
+        ]
+        report, rows, text = run(acted)
+        trash, put_back = report["acts"]
+        self.assertEqual((trash["ms"], trash["completedMs"]), (50, 300))
+        self.assertEqual((put_back["ms"], put_back["completedMs"]), (250, 200))
+        by_label = {r["label"]: (r["value"], r["verdict"]) for r in rows}
+        self.assertEqual(by_label["act moveToTrash"], (50, "PASS"))
+        self.assertEqual(by_label["act moveToTrash file work done"], (300, "NO-TARGET"))
+        self.assertEqual(by_label["act putBack"], (250, "FAIL"))
+        self.assertIn("fileWorkDoneMs=300", text)
+
     def test_the_newest_session_of_the_asked_build_is_read(self):
         dev = "/Users/someone/build/DerivedData/Build/Products/Debug/Otos.app/Contents/MacOS/Otos"
         lines = SESSION + [line(50.0, "op=sessionStart session=D1 kind=prod", pid=200, image=dev)]

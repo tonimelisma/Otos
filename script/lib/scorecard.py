@@ -322,14 +322,40 @@ def difference(later, earlier):
     }
 
 
+# An act whose file work follows its visible result (DES-119): the line that starts the work
+# (it names the batch) and the line that ends it for that batch.
+FILE_WORK = {
+    "moveToTrash": ((("trash.move", "start"), ("trash.redo", "start")), ("mediaTrash.queue", "trashed")),
+    "putBack": ((("trash.undo", "start"),), ("mediaTrash.undo", "finish")),
+}
+
+
+def act_completion(events, act, finished):
+    """Milliseconds from the act's start to the end of its file work: the newest start line
+    of its kind at or before the visible result, and the last end line of that batch."""
+    starts, (end_op, end_phase) = FILE_WORK[act]
+    begun = [e for e in events if (e.op, e.phase) in starts and e.time <= finished.time and e.fields.get("batch")]
+    if not begun:
+        return None
+    start = begun[-1]
+    ends = [e for e in events if e.op == end_op and e.phase == end_phase
+            and e.fields.get("batch") == start.fields.get("batch") and e.time >= start.time]
+    return ms_since(start.time, ends[-1]) if ends else None
+
+
 def acts(events):
-    """Every act timed from its intent to its result on the grid (`op=ui.actToResult`)."""
+    """Every act timed from its intent to its result on the grid (`op=ui.actToResult`), and,
+    for an act whose file work follows, from its intent to that work's end (`completedMs`)."""
     result = []
     for line in of(events, "ui.actToResult"):
         if line.phase in ("finish", "abandoned"):
-            result.append({"act": line.fields.get("act"), "outcome": "shown" if line.phase == "finish" else "abandoned",
-                           "ms": line.num("ms"), "surface": line.fields.get("surface"),
-                           "supersededBy": line.fields.get("supersededBy")})
+            act = line.fields.get("act")
+            entry = {"act": act, "outcome": "shown" if line.phase == "finish" else "abandoned",
+                     "ms": line.num("ms"), "surface": line.fields.get("surface"),
+                     "supersededBy": line.fields.get("supersededBy")}
+            if act in FILE_WORK and line.phase == "finish":
+                entry["completedMs"] = act_completion(events, act, line)
+            result.append(entry)
     return result
 
 
@@ -532,6 +558,8 @@ def verdicts(report, targets):
     for act in report["acts"]:
         if act["outcome"] == "shown":
             add("act.resultMs", f"act {act['act']}", act["ms"])
+            if act["act"] in FILE_WORK:
+                add("act.completedMs", f"act {act['act']} file work done", act.get("completedMs"))
     add("stalls.count", "store stall lines", report["stalls"]["count"])
     add("stalls.per10Min", "store stall lines per 10 minutes", report["stalls"]["per10Min"])
     add("mainThreadStalls.count", "main-thread stalls", report["stalls"]["mainThread"]["count"])
@@ -591,6 +619,7 @@ def print_report(report, rows, out):
         w("\nACT TO RESULT (ms)\n")
         for act in report["acts"]:
             w(f"  {fmt(act['act']):14} {act['outcome']:9} {fmt(act['ms']):>7} ms  surface={fmt(act['surface'])}"
+              + (f" fileWorkDoneMs={fmt(act.get('completedMs'))}" if act['act'] in FILE_WORK else "")
               + (f" supersededBy={act['supersededBy']}" if act.get("supersededBy") else "") + "\n")
     w("\nBACKGROUND PASSES (phase=start lines)\n")
     for op, count in list(report["background"].items())[:15]:

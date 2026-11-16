@@ -724,6 +724,11 @@ extension PaneOriginalDownloads {
                 viewModel.exitToGrid()
             }
             viewModel.selectAssets([photo])
+            // Each act is timed on its own: the one before has written its choice, so this
+            // one does not queue behind that write's publication.
+            guard await settled() else {
+                return ("act", WindowAct.choice(choice).name, Outcome(result: "deadline", fields: ["reason": "notSettled"]))
+            }
             let before = viewModel.lastActResult?.revision ?? 0
             viewModel.submitMediaChoice(choice)
             return await ("act", WindowAct.choice(choice).name, actResult(after: before))
@@ -745,13 +750,25 @@ extension PaneOriginalDownloads {
             guard viewModel.canMoveTargetedMediaToTrash else {
                 return .skipped("cannotTrash")
             }
+            guard await settled() else {
+                return Outcome(result: "deadline", fields: ["reason": "notSettled"])
+            }
             let before = viewModel.lastActResult?.revision ?? 0
             viewModel.moveTargetedMediaToTrash()
             var outcome = await actResult(after: before)
+            // Put Back, timed the same way: from Undo to the grid showing the photo again.
+            let beforeUndo = self.viewModel?.lastActResult?.revision ?? 0
             self.viewModel?.undoLastChange()
+            let putBack = await actResult(after: beforeUndo)
             let back = await until { $0.state.mediaGrid.content.contains(photo) }
             outcome.fields["putBack"] = "\(back)"
+            outcome.fields["putBackMs"] = putBack.fields["resultMs"] ?? putBack.result
             return outcome
+        }
+
+        /// True once every choice the window submitted has been written or refused and applied.
+        private func settled() async -> Bool {
+            await until { $0.hasSettledMediaChoices }
         }
 
         private func actResult(after revision: UInt64) async -> Outcome {

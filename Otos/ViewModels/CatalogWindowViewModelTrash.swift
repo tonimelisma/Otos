@@ -396,7 +396,10 @@ extension CatalogWindowViewModel {
         if duplicatesSession.receipt?.batch == batch {
             duplicatesSession.receipt = nil
         }
-        OtosLog.ui.notice("op=trash.undo phase=start count=\(ids.count, privacy: .public)")
+        OtosLog.ui.notice(
+            "op=trash.undo phase=start count=\(ids.count, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public)"
+        )
+        uiStallMonitor.beginActToResult(.putBack, ids: ids)
         // Command: ordered after the mark it undoes and before a following redo.
         submitTrashIntent(.undo(batch: batch))
     }
@@ -431,7 +434,10 @@ extension CatalogWindowViewModel {
             self?.undoMoveToTrash(batch: target.batch, ids: ids, carries: carries)
         }
         windowUndoManager.setActionName(Self.moveToTrashActionName)
-        OtosLog.ui.notice("op=trash.redo phase=start count=\(ids.count, privacy: .public)")
+        OtosLog.ui.notice(
+            "op=trash.redo phase=start count=\(ids.count, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public)"
+        )
+        uiStallMonitor.beginActToResult(.moveToTrash, ids: ids)
         // Command: Projection takes the items off before it hears the mark landed.
         projectionIntentContinuation.yield(.hide(ids, batch: batch))
         // Command: ordered after the undo it follows.

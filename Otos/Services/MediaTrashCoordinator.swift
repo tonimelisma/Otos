@@ -774,6 +774,7 @@ actor MediaTrashCoordinator {
         forget([id])
         OtosLog.catalog.noticeOperation("mediaTrash.queue", phase: "trashed", fields: [
             "path": id.relativePath.rawValue, "members": "\(trashedItem.members.count)",
+            "batch": "\(batch.unixMilliseconds)",
         ])
     }
 

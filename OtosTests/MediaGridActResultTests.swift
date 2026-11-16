@@ -61,6 +61,19 @@ extension AppKitWindowTests {
             #expect(reports.map(\.revision) == [1, 2])
         }
 
+        /// Put Back ends when the grid commits an order that shows the item again.
+        @Test func aPutBackEndsWhenTheGridShowsTheItemAgain() {
+            let monitor = MainRunLoopStallMonitor()
+            var reports: [ActResultReport] = []
+            monitor.onActResult = { reports.append($0) }
+            let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Generated"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
+            let other = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Generated"), relativePath: MediaRelativePath(rawValue: "b.jpg"))
+            monitor.beginActToResult(.putBack, ids: [id])
+            #expect(!monitor.completeMembershipToResult(committed: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: [other])))
+            #expect(monitor.completeMembershipToResult(committed: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: [other, id])))
+            #expect(reports.map(\.act) == [.putBack])
+        }
+
         /// A newer act abandons the one still waiting, so a result is never credited to the
         /// act before it.
         @Test func aNewerActAbandonsThePendingOne() {
@@ -70,7 +83,7 @@ extension AppKitWindowTests {
             let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Generated"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
             monitor.beginActToResult(.moveToTrash, ids: [id])
             monitor.beginActToResult(.choice(.disliked), ids: [id])
-            #expect(!monitor.completeTrashToResult(committed: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: [])))
+            #expect(!monitor.completeMembershipToResult(committed: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: [])))
             #expect(monitor.completeChoiceToResult(rendered: id))
             #expect(reports.map(\.act) == [.choice(.disliked)])
             #expect(!monitor.completeChoiceToResult(rendered: id))
