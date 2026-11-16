@@ -532,7 +532,7 @@ struct ContentView: View {
             }
         }
         .confirmationDialog(
-            "Reorganize Library?",
+            "Reorganize library?",
             isPresented: Binding(
                 get: { viewModel.reorganizationConfirmation != nil },
                 set: { isPresented in
@@ -932,7 +932,7 @@ private struct PersonToolbarMenu: View {
         } label: {
             Label(person.displayName, systemImage: "person.crop.circle")
         }
-        .help("\(person.displayName)'s settings")
+        .help("\(person.displayName)’s settings")
     }
 }
 

@@ -3,11 +3,11 @@ import Foundation
 /// Copy for the Move to Trash failure alert (DES-076). Titles state the bounded
 /// outcome; the message line says what Otos did about it.
 nonisolated enum TrashAlertCopy {
-    static let moveFailedOne = "This Item Couldn't Be Moved to Trash"
-    static let moveFailedMany = "Some Items Couldn't Be Moved to Trash"
+    static let moveFailedOne = "This item couldn’t be moved to the Trash."
+    static let moveFailedMany = "Some items couldn’t be moved to the Trash."
     static let moveDetail = "The affected items are back in Otos and selected."
-    static let putBackFailedOne = "This Item Couldn't Be Put Back"
-    static let putBackFailedMany = "Some Items Couldn't Be Put Back"
+    static let putBackFailedOne = "This item couldn’t be put back."
+    static let putBackFailedMany = "Some items couldn’t be put back."
     static let putBackDetail = "They’re no longer in the Trash, or a file now has their name."
 }
 
@@ -21,9 +21,9 @@ nonisolated struct TrashDecisionPrompt: Equatable, Sendable {
         let ids = decision.ids
         if ids.count == 1, let only = ids.first {
             let name = only.relativePath.fileName
-            return "Delete “\(name)” Immediately?"
+            return "Delete “\(name)” immediately?"
         }
-        return "Delete \(ids.count) Items Immediately?"
+        return "Delete \(ids.count) items immediately?"
     }
 
     var message: String {
@@ -76,12 +76,12 @@ nonisolated struct LargeTrashDownloadPrompt: Equatable, Sendable {
 
     var title: String {
         let known = ImportBarByteFormat.string(bytes: bytes.knownBytes)
-        let size = bytes.isExact ? known : "at Least \(known)"
+        let size = bytes.isExact ? known : "at least \(known)"
         if ids.count == 1, let only = ids.first {
             let name = only.relativePath.fileName
-            return "Download \(size) to Move “\(name)” to Trash?"
+            return "Download \(size) to move “\(name)” to the Trash?"
         }
-        return "Download \(size) to Move \(ids.count) Items to Trash?"
+        return "Download \(size) to move \(ids.count) items to the Trash?"
     }
 
     var message: String {

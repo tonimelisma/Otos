@@ -216,7 +216,7 @@ struct CatalogWindowViewModelTests {
         model.removeLibrary(added.libraries[0].root)
         let notice = try await waitForValue { model.libraryRemovalNotice }
         #expect(notice == LibraryRemovalNotice(displayName: "Holiday", waitingFor: .importPublication))
-        #expect(LibraryRemovalNoticePresentation.title(for: notice) == "\u{201C}Holiday\u{201D} Is Busy")
+        #expect(LibraryRemovalNoticePresentation.title(for: notice) == "\u{201C}Holiday\u{201D} is busy.")
         #expect(
             LibraryRemovalNoticePresentation.message(for: notice)
                 == "It will be removed from Otos when its import finishes."

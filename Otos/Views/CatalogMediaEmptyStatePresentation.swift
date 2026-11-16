@@ -71,7 +71,7 @@ extension CatalogMediaEmptyState {
         case let .deviceEnumerating(name):
             """
             Reading items from \(name). This can take several minutes on this connection. \
-            For faster browsing and import, insert the memory card directly or use the camera's Mass Storage USB mode.
+            For faster browsing and import, insert the memory card directly or use the camera’s Mass Storage USB mode.
             """
         case let .cardReading(name):
             "Reading items from \(name). They appear here as they are found."

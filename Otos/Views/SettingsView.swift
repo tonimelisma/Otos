@@ -120,7 +120,7 @@ struct SettingsView: View {
 /// user's vocabulary (DES-035): the work it waits for, never lease or owner.
 enum LibraryRemovalNoticePresentation {
     static func title(for notice: LibraryRemovalNotice) -> String {
-        "\u{201C}\(notice.displayName)\u{201D} Is Busy"
+        "\u{201C}\(notice.displayName)\u{201D} is busy."
     }
 
     static func message(for notice: LibraryRemovalNotice) -> String {
@@ -249,7 +249,7 @@ private struct RemovableMediaSettingsView: View {
             }
         }
         .padding(20)
-        .alert("Forget Removable Media?", isPresented: forgetAlertBinding, presenting: forgetCandidate) { root in
+        .alert("Forget removable media?", isPresented: forgetAlertBinding, presenting: forgetCandidate) { root in
             Button("Forget", role: .destructive) {
                 forgetSource(root)
                 forgetCandidate = nil
@@ -418,7 +418,7 @@ private struct LibrariesSettingsView: View {
                 ImmichAccountSheetView(state: sheet, add: immichAccounts.add, cancel: immichAccounts.cancel)
             }
         }
-        .alert("Remove Library?", isPresented: removalAlertBinding, presenting: removalCandidate) { root in
+        .alert("Remove library?", isPresented: removalAlertBinding, presenting: removalCandidate) { root in
             Button("Remove Library", role: .destructive) {
                 removeLibrary(root)
                 removalCandidate = nil
@@ -586,12 +586,12 @@ private extension LibraryRootKind {
         switch self {
         case .immichAccount:
             """
-            The photos stay on the Immich server. Otos will delete this account's catalog information, \
+            The photos stay on the Immich server. Otos will delete this account’s catalog information, \
             thumbnails and previews, and adding it again will download them again.
             """
         case .library, .removableVolume, .deviceMTP:
             """
-            Original media files will stay on disk. Otos will delete this library's catalog information, \
+            Original media files will stay on disk. Otos will delete this library’s catalog information, \
             and adding it again will require a new scan.
             """
         }

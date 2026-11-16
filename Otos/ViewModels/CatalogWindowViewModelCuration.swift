@@ -130,7 +130,7 @@ nonisolated struct MediaChoiceFailure: Equatable {
     let count: Int
 
     var title: String {
-        count == 1 ? "This Choice Couldn't Be Saved" : "These Choices Couldn't Be Saved"
+        count == 1 ? "This choice couldn’t be saved." : "These choices couldn’t be saved."
     }
 
     static let message = "The affected items are back as they were and selected."

@@ -231,7 +231,7 @@ struct PeopleStateTests {
         }
 
         #expect(index.moveRefusal([other], to: Self.sam) == "Sam is already in this photo")
-        #expect(index.moveRefusal([early], to: Self.ian) == "1 photo is from before Ian's birthday")
+        #expect(index.moveRefusal([early], to: Self.ian) == "1 photo is from before Ian’s birthday")
         #expect(index.moveRefusal(pair, to: Self.sam) == "2 of these faces are in the same photo")
         #expect(index.moveRefusal([early], to: Self.sam) == nil)
         #expect(index.sheetRefusal(.person(Self.sam), name: "  ", birthday: nil) == "Enter a name")
@@ -277,7 +277,7 @@ struct PeopleStateTests {
         #expect(video.moveRefusal([inVideo], to: Self.ian) == "Ian is already in this video")
         let early = [Self.tile("x.mov", at: before), Self.tile("x.mov", index: 1, at: before), Self.tile("y.jpg", at: before)]
             .map { PhotoFace(tile: $0, person: nil) }
-        #expect(video.moveRefusal(Array(early.dropFirst()), to: Self.ian) == "2 photos and videos are from before Ian's birthday")
+        #expect(video.moveRefusal(Array(early.dropFirst()), to: Self.ian) == "2 photos and videos are from before Ian’s birthday")
         #expect(PeopleText.beforeTheBirthday(MediaCount(videos: 1)) == "1 video is from before the birthday")
     }
 

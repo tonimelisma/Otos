@@ -89,8 +89,8 @@ nonisolated struct PeopleActRefusal: Equatable, Sendable {
     let title: String
     let reason: String
 
-    static let mergeTitle = "Couldn't Merge These People"
-    static let failedTitle = "This Change Couldn't Be Saved"
+    static let mergeTitle = "Couldn’t Merge These People"
+    static let failedTitle = "This change couldn’t be saved."
 
     /// The words for an act other than a merge: its name on the undo stack, back as it was.
     static func failed(_ title: String) -> PeopleActRefusal {
@@ -316,7 +316,7 @@ nonisolated extension CatalogPeopleState {
         if let birthday = target.birthday?.seconds {
             let before = MediaCount(faces: faces.filter { ($0.tile.captureSeconds ?? .infinity) < birthday })
             if before.total > 0 {
-                return "\(before.text) \(before.isOrAre) from before \(target.displayName)'s birthday"
+                return "\(before.text) \(before.isOrAre) from before \(target.displayName)’s birthday"
             }
         }
         return nil

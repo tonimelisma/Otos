@@ -18,7 +18,7 @@ struct ReorganizationConfirmation: Equatable {
 /// Pure display mapper for `LibraryReorganizationRunner.ReorganizationPlanSummary`,
 /// beside `ContentView`'s confirmation dialog the same way `ImportBarPresentation`
 /// sits beside `ImportPlanFooter`: the runner reports typed counts, this is the one
-/// place that turns them into a sentence (DES-034 one clause, DES-035 user
+/// place that turns them into the dialog's message (complete sentences, DES-037; DES-035 user
 /// vocabulary — never the planner's own "relocate"/"no-op"/"components" words).
 /// `noOpCount` and `componentCount` are not decision-relevant to the user
 /// confirming a reorganization and are intentionally left out.
@@ -27,7 +27,7 @@ enum ReorganizationSummaryPresentation {
         guard summary.blockedCount > 0 else {
             return "\(summary.relocateCount) items will be renamed or moved."
         }
-        return "\(summary.relocateCount) items will be renamed or moved · \(summary.blockedCount) can't be processed."
+        return "\(summary.relocateCount) items will be renamed or moved. \(summary.blockedCount) can’t be processed."
     }
 }
 
@@ -51,9 +51,9 @@ enum ReorganizationOutcomePresentation {
         case .libraryUnavailable:
             "This library is no longer in Otos."
         case .catalogUnreadable:
-            "Otos couldn't read this library's catalog, so nothing was changed."
+            "Otos couldn’t read this library’s catalog, so nothing was changed."
         case .planInconsistent:
-            "Otos couldn't work out the new names for this library, so nothing was changed."
+            "Otos couldn’t work out the new names for this library, so nothing was changed."
         }
     }
 
@@ -64,20 +64,20 @@ enum ReorganizationOutcomePresentation {
             : "Reorganized \(relocated) \(relocated == 1 ? "item" : "items"), then stopped because \(cause(stop.fault))."
         let remainder = stop.libraryRestored
             ? "The other items were left as they were."
-            : "Some files couldn't be moved back. Otos will try again the next time it opens."
+            : "Some files couldn’t be moved back. Otos will try again the next time it opens."
         return "\(stopped) \(remainder)"
     }
 
     private static func cause(_ fault: ReorganizationFault) -> String {
         switch fault {
         case .journalWrite:
-            "the catalog couldn't be updated"
+            "the catalog couldn’t be updated"
         case let .folderUnavailable(path):
-            "a folder couldn't be created at “\(path.rawValue)”"
+            "a folder couldn’t be created at “\(path.rawValue)”"
         case let .destinationTaken(path):
             "another file is already at “\(path.rawValue)”"
         case let .moveRefused(path):
-            "“\(path.rawValue)” couldn't be moved"
+            "“\(path.rawValue)” couldn’t be moved"
         case let .fileChanged(path):
             "“\(path.rawValue)” changed while it was being moved"
         case .libraryChanged:

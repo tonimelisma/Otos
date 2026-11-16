@@ -326,9 +326,9 @@ struct EditPanelView: View {
                 .disabled(unavailableHelp != nil || !crop.autoStraighten.isAvailable)
                 .help(unavailableHelp ?? crop.autoStraighten.help(
                     available: crop.autoStraighten.source == .gravity
-                        ? "Straighten by the camera's level reading"
+                        ? "Straighten by the camera’s level reading"
                         : "Straighten by the level read from the photo",
-                    reading: "Reading the photo's level",
+                    reading: "Reading the photo’s level",
                     none: "No reliable level for this photo"
                 ))
             straightenLineTool
@@ -430,7 +430,7 @@ struct EditPanelView: View {
         .toggleStyle(.checkbox)
         .font(.body)
         .disabled(unavailableHelp != nil)
-        .help(unavailableHelp ?? "Correct the lens's distortion and vignetting")
+        .help(unavailableHelp ?? "Correct the lens’s distortion and vignetting")
     }
 
     /// Lightroom's white balance selector: armed, the next click on the loupe image makes

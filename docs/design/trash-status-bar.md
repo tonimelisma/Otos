@@ -25,7 +25,7 @@ Three zones at one fixed height across every state (DES-018, DES-053):
 | Progress | Working only: a small determinate linear indicator with `M of N` beside it; blank space otherwise |
 | Act | `Cancel`, in every state (DES-032): withdraws every item still waiting — they reappear where they were, selected — including items left from an earlier run, when no undo entry remains. Items already in the Trash stay there; ⌘Z or Finder's Put Back returns them. No confirmation: nothing is lost. |
 
-The queue's questions arrive as alerts (`Delete … Immediately?`). ⌘Z withdraws one
+The queue's questions arrive as alerts (`Delete … immediately?`). ⌘Z withdraws one
 Move to Trash within the session.
 
 ## States
@@ -44,7 +44,7 @@ formatted like the import bar (`ImportBarByteFormat`). No percentage is synthesi
 
 | Trigger | Title | Message | Buttons |
 | --- | --- | --- | --- |
-| A download is definitively refused | `Delete 2 Items Immediately?` / `Delete “IMG_1.MOV” Immediately?` | `They couldn’t be downloaded, so they can’t be moved to the Trash. You can’t undo this.` | `Delete` (destructive), `Cancel` (default) |
+| A download is definitively refused | `Delete 2 items immediately?` / `Delete “IMG_1.MOV” immediately?` | `They couldn’t be downloaded, so they can’t be moved to the Trash. You can’t undo this.` | `Delete` (destructive), `Cancel` (default) |
 | A download would leave less than 5 GB free | same | `There isn’t enough free space to download them so they can be moved to the Trash. You can’t undo this.` | same |
 
 `Delete` is destructive-styled because the user never chose permanent deletion; it is

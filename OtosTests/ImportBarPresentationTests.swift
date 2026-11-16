@@ -400,7 +400,7 @@ struct ImportBarPresentationTests {
             )
         ))
         #expect(drawn.secondaryLine == .attention(
-            clause: "Otos couldn't find a free name for 2 items in Summer Photos",
+            clause: "Otos couldn’t find a free name for 2 items in Summer Photos",
             revealLabel: "Show them",
             itemIDs: [itemID, itemID]
         ))
@@ -531,7 +531,7 @@ struct ImportBarPresentationTests {
         let drawn = Self.map(Self.presentation(state: .executing(progress: progress)), preferences: prefs)
         #expect(drawn.middleZone == .progress(
             track: .determinate(completed: 1, total: 2),
-            caption: "Into Summer Photos · the card ejects when it's done"
+            caption: "Into Summer Photos · the card ejects when it’s done"
         ))
     }
 
@@ -616,7 +616,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryLine == "40 of 42 items copied")
         #expect(drawn.primaryBadge == .attention)
         #expect(drawn.secondaryLine == .attention(
-            clause: "2 items couldn't be copied",
+            clause: "2 items couldn’t be copied",
             revealLabel: "Show them",
             itemIDs: [failedID, foreignID]
         ))
@@ -688,7 +688,7 @@ struct ImportBarPresentationTests {
         ))
         #expect(drawn.kind == .done)
         #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
-        #expect(drawn.secondaryLine == .plain("They're in Summer Photos"))
+        #expect(drawn.secondaryLine == .plain("They’re in Summer Photos"))
         #expect(drawn.middleZone == .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil))
         #expect(drawn.primaryAction == .importNewItems)
         #expect(drawn.primaryEnabled)
@@ -807,7 +807,7 @@ struct ImportBarPresentationTests {
     @Test func failedSourceRemovedNamesCauseAndPartialCount() {
         let drawn = Self.map(Self.presentation(state: .failed(reason: .sourceRemoved, publishedCount: 12)))
         #expect(drawn.kind == .failed)
-        #expect(drawn.primaryLine == "Couldn't finish the import")
+        #expect(drawn.primaryLine == "Couldn’t finish the import")
         #expect(drawn.secondaryLine == .plain("The card was removed · 12 items were copied before it stopped"))
         #expect(drawn.primaryAction == .tryAgain)
     }
@@ -818,15 +818,15 @@ struct ImportBarPresentationTests {
     @Test func planningFailureSaysPrepareNotFinish() {
         let drawn = Self.map(Self.presentation(state: .planningFailed(reason: .destinationUnavailable)))
         #expect(drawn.kind == .failed)
-        #expect(drawn.primaryLine == "Couldn't prepare the import")
-        #expect(drawn.secondaryLine == .plain("Summer Photos isn't available"))
+        #expect(drawn.primaryLine == "Couldn’t prepare the import")
+        #expect(drawn.secondaryLine == .plain("Summer Photos isn’t available"))
         #expect(drawn.primaryAction == .tryAgain)
         #expect(drawn.middleZone == .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil))
 
         let unexpected = Self.map(
             Self.presentation(state: .planningFailed(reason: .unexpected(detail: "snapshotUnavailable")))
         )
-        #expect(unexpected.primaryLine == "Couldn't prepare the import")
+        #expect(unexpected.primaryLine == "Couldn’t prepare the import")
         #expect(unexpected.secondaryLine == .none)
     }
 

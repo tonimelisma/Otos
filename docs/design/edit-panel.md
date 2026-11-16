@@ -152,7 +152,7 @@ or off; Straighten too.
 `Level ▸ Auto` straightens the photo by its level reading, as one `Auto Straighten` step: the
 camera's gravity reading when the file has one, else GeoCalib's reading of the pixels when it is
 confident (ADR 0045). It is available only once the photo has been read and a level is trusted.
-Its tooltip says which reading it uses, `Reading the photo's level` while it reads, and
+Its tooltip says which reading it uses, `Reading the photo’s level` while it reads, and
 `No reliable level for this photo` when nothing is trusted, so a wrong tilt is never offered as a
 fix. The ruler is the other way.
 

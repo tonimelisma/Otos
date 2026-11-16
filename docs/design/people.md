@@ -106,7 +106,7 @@ has none, and is a favourite if either was. Refused, by a disabled act with its 
 one photo (`Sam and Ian are both in 3 photos`) or a photo the user gave either predates
 the birthday kept. The question is judged when asked; the answer `Merge` is judged by the
 catalog when the merge is applied, after any act submitted before it (a birthday saved with
-a taken name). Should it refuse there, `Couldn't Merge These People` says why in the same
+a taken name). Should it refuse there, `Couldn’t Merge These People` says why in the same
 words, with `OK`, and nothing moves. Until the catalog answers, the person merged away is
 still the one shown and filtered, even when the People list without them arrives first; its
 confirmation names the person merged into, who takes their place. A redo of a merge is that

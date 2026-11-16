@@ -58,7 +58,7 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
             #expect(model.tileContentStore.content(for: id)?.detail.mediaChoice == .notRated)
             #expect(model.gridSelection.selection == [id])
             #expect(model.mediaChoiceFailure == MediaChoiceFailure(count: 1))
-            #expect(model.mediaChoiceFailure?.title == "This Choice Couldn't Be Saved")
+            #expect(model.mediaChoiceFailure?.title == "This choice couldn’t be saved.")
             #expect(!model.undoMenuState.canUndo)
             #expect(model.mediaChoiceOverlay.isEmpty)
             #expect(try await model.tileDetailReader.detail(for: id)?.mediaChoice == .notRated)

@@ -201,7 +201,7 @@ struct PeopleMergeAlert: ViewModifier {
             Button("Merge") { answer(true) }
             Button("Cancel", role: .cancel) { answer(false) }
         } message: { question in
-            Text("\(name(question.from)) will be merged into \(name(question.into)), keeping \(name(question.into))'s name and birthday.")
+            Text("\(name(question.from)) will be merged into \(name(question.into)), keeping \(name(question.into))’s name and birthday.")
         }
     }
 }

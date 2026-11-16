@@ -447,20 +447,20 @@ nonisolated enum ImportBarPresentation {
             // (it retries the build instead), so this clause is the model's
             // completeness, not a state the bar expects to draw.
             let noun = count == 1 ? "name" : "names"
-            return "Otos couldn't check \(count) \(noun) in \(destinationName)"
+            return "Otos couldn’t check \(count) \(noun) in \(destinationName)"
         case .noFreeDestinationName:
             return count == 1
-                ? "Otos couldn't find a free name for 1 item in \(destinationName)"
-                : "Otos couldn't find a free name for \(count) items in \(destinationName)"
+                ? "Otos couldn’t find a free name for 1 item in \(destinationName)"
+                : "Otos couldn’t find a free name for \(count) items in \(destinationName)"
         case .destinationFolderOccupied:
             // Names the cause the user can act on: a file is where a folder must go.
             return count == 1
-                ? "A file in \(destinationName) is in the way of 1 item's folder"
-                : "A file in \(destinationName) is in the way of \(count) items' folder"
+                ? "A file in \(destinationName) is in the way of 1 item’s folder"
+                : "A file in \(destinationName) is in the way of \(count) items’ folder"
         case .sourceUnreadable:
             // Names what the user can act on — the file will not copy either — without
             // the internal vocabulary DES-035 forbids.
-            return count == 1 ? "1 item couldn't be read" : "\(count) items couldn't be read"
+            return count == 1 ? "1 item couldn’t be read" : "\(count) items couldn’t be read"
         }
     }
 
@@ -494,7 +494,7 @@ nonisolated enum ImportBarPresentation {
         let destinationName = presentation.destinationDisplayName ?? "the library"
         var caption = "Into \(destinationName)"
         if preferences.autoEjectAfterImport {
-            caption += " · the card ejects when it's done"
+            caption += " · the card ejects when it’s done"
         }
         return ImportBarDrawnState(
             kind: .working,
@@ -635,7 +635,7 @@ nonisolated enum ImportBarPresentation {
         let primaryLine = "Stopped — \(copiedCount) of \(plannedCount) \(plannedCount == 1 ? "item" : "items") copied"
         let clause: String? = switch reason {
         case .user:
-            copiedCount > 0 ? "They're in \(destinationName)" : nil
+            copiedCount > 0 ? "They’re in \(destinationName)" : nil
         case let .diskFloor(bytesFree):
             bytesFree.map { "Not enough room on the disk · \(ImportBarByteFormat.string(bytes: $0)) left" }
                 ?? "Not enough room on the disk"
@@ -701,7 +701,7 @@ nonisolated enum ImportBarPresentation {
                 primaryLine: "\(copiedCount) of \(totalAttempted) \(totalAttempted == 1 ? "item" : "items") copied",
                 primaryBadge: .attention,
                 secondaryLine: .attention(
-                    clause: incompleteItems.count == 1 ? "1 item couldn't be copied" : "\(incompleteItems.count) items couldn't be copied",
+                    clause: incompleteItems.count == 1 ? "1 item couldn’t be copied" : "\(incompleteItems.count) items couldn’t be copied",
                     revealLabel: "Show them",
                     itemIDs: incompleteItems
                 ),
@@ -768,7 +768,7 @@ nonisolated enum ImportBarPresentation {
         if publishedCount > 0 {
             clauseParts.append("\(publishedCount) \(publishedCount == 1 ? "item was" : "items were") copied before it stopped")
         }
-        return failedState(primaryLine: "Couldn't finish the import", clauseParts: clauseParts)
+        return failedState(primaryLine: "Couldn’t finish the import", clauseParts: clauseParts)
     }
 
     /// G, planning variant: the same zones and act as a run failure, with the
@@ -782,7 +782,7 @@ nonisolated enum ImportBarPresentation {
             destinationName: presentation.destinationDisplayName,
             sourceKind: presentation.sourceKind
         )
-        return failedState(primaryLine: "Couldn't prepare the import", clauseParts: cause.map { [$0] } ?? [])
+        return failedState(primaryLine: "Couldn’t prepare the import", clauseParts: cause.map { [$0] } ?? [])
     }
 
     private static func failedState(primaryLine: String, clauseParts: [String]) -> ImportBarDrawnState {
@@ -811,9 +811,9 @@ nonisolated enum ImportBarPresentation {
             "The card was removed"
         case .destinationUnavailable:
             if let destinationName, !destinationName.isEmpty {
-                "\(destinationName) isn't available"
+                "\(destinationName) isn’t available"
             } else {
-                "The library isn't available"
+                "The library isn’t available"
             }
         case .sourceNotReady:
             switch sourceKind {

@@ -179,7 +179,7 @@ one of those seven.
 | 10 | `completed`, clean | **F · Done** | ✅ |
 | 11 | `completed` with failures or skips | F, incomplete variant — its `Show them` reveal selects the items that did not land, in the card's grid | folds into F |
 | 12 | `failed` — a run the user started ended in failure | **G · Failed** | ✅ actionable |
-| 12a | `planningFailed` — no plan could be made, nothing was attempted | G, planning variant: `Couldn't prepare the import` | folds into G |
+| 12a | `planningFailed` — no plan could be made, nothing was attempted | G, planning variant: `Couldn’t prepare the import` | folds into G |
 | 13 | `executionUnavailable` | treated as C or D by its totals; the build condition is never shown (DES-039) | no |
 | 14 | No libraries configured at all | B, with `Add a Library…` opening Settings instead of a pop-up | folds into B |
 | 15 | Card removed or destination lost mid-import | G, with the cause named | folds into G |
@@ -304,9 +304,9 @@ diagnosis (`MediaOperationBlockReason`, `MediaOperationModels.swift:109`):
 | Cause | Clause | Why |
 | --- | --- | --- |
 | `noUsableDate` | `3 items have no date` | The file reads fine. It carries no capture date and no modification date, so Otos cannot choose a dated folder for it. |
-| `noFreeDestinationName` | `Otos couldn't find a free name for 3 items in Summer Photos` | Every suffix the naming policy allows is taken in the destination folder. |
-| `destinationFolderOccupied` | `A file in Summer Photos is in the way of 3 items' folder` | A file holds the name of the folder the items go in (or of a folder above it), so the folder cannot be created. Waiting does not change it; the user moves or renames that file. |
-| `filesystemObservationUnavailable` | `Otos couldn't check 3 names in Summer Photos` | The planner's safety net for a folder it could not read. Never presented: the coordinator defers such a build and retries it (ADR 0019); the clause exists so the mapper stays total. |
+| `noFreeDestinationName` | `Otos couldn’t find a free name for 3 items in Summer Photos` | Every suffix the naming policy allows is taken in the destination folder. |
+| `destinationFolderOccupied` | `A file in Summer Photos is in the way of 3 items’ folder` | A file holds the name of the folder the items go in (or of a folder above it), so the folder cannot be created. Waiting does not change it; the user moves or renames that file. |
+| `filesystemObservationUnavailable` | `Otos couldn’t check 3 names in Summer Photos` | The planner's safety net for a folder it could not read. Never presented: the coordinator defers such a build and retries it (ADR 0019); the clause exists so the mapper stays total. |
 | More than one cause present | `3 items need attention` | DES-034 allows one clause; a mixed set names no single cause honestly. |
 
 `Show them` therefore needs the affected items' identities, not a count.
@@ -361,7 +361,7 @@ pressed Cancel, or the destination volume reached the disk floor (ADR 0027). It 
 still F: a partial batch is a real batch, the card is unchanged, and nothing already
 copied is lost. What differs is that the bar must *say* the run stopped, from the
 run's own facts, and offer what is left. L1 `Stopped — 12 of 42 items copied` · L3
-one clause for the cause: `They're in Summer Photos` after a Cancel (omitted when
+one clause for the cause: `They’re in Summer Photos` after a Cancel (omitted when
 nothing was copied), `Not enough room on the disk · 5.4 GB left` at the floor — the
 capacity read when the run stopped, in the bar's byte units, or `Not enough room on the
 disk` alone when the volume did not report it. Choices present. The act is **`Import`** for what is left — and this is the one F
@@ -424,8 +424,8 @@ while the card's row is selected, and it leaves with the card.
 
 ### G · Failed
 
-L1 `Couldn't finish the import` · L3 one clause naming the cause and what to do:
-`The card was removed` / `Summer Photos isn't available`. Action: `Try Again`. Never
+L1 `Couldn’t finish the import` · L3 one clause naming the cause and what to do:
+`The card was removed` / `Summer Photos isn’t available`. Action: `Try Again`. Never
 auto-dismisses. Nothing already copied is lost, and the count copied so far is stated
 when nonzero. Running out of room is **not** a failure: nothing went wrong that
 `Try Again` could fix, so it is the Stopped variant of F with the floor's clause
@@ -434,7 +434,7 @@ when nonzero. Running out of room is **not** a failure: nothing went wrong that
 **Planning variant.** When no plan could be made — the destination folder stayed
 unreadable past its retry budget, a root vanished between the wake and the
 snapshot, the builder threw — nothing was started, so "finish" would be a lie
-about what happened. L1 `Couldn't prepare the import`, the same L3 cause clause,
+about what happened. L1 `Couldn’t prepare the import`, the same L3 cause clause,
 the same choices and `Try Again`. The headline names the stage; the clause names
 the cause; the act is the same because the remedy is the same. The model keeps
 this a separate case (`planningFailed`) rather than a flag on `failed`: a run
@@ -599,7 +599,7 @@ the controls' subject does not exist (DES-053 exception).
 
 ### J7 · Items that need attention
 
-1. `.library(card)` — **D** `39 new items · 61 MB` / ⚠ `3 items can't be read · Show them`, primary `Import`. `Erase the card` disabled, tooltip `Some items still need attention.` — the invariant lives on the control it blocks, not in a status line.
+1. `.library(card)` — **D** `39 new items · 61 MB` / ⚠ `3 items can’t be read · Show them`, primary `Import`. `Erase the card` disabled, tooltip `Some items still need attention.` — the invariant lives on the control it blocks, not in a status line.
 2. `Show them` selects and scrolls those tiles **in place**, on `.library(card)`. The grid is the plan view; there is no modal list, and the selection does not move.
 3. Import proceeds on the 39, as in J1.
 4. Eject was withheld while attention remains, so the card survives: the bar settles into **F, card attached** reporting `39 copied just now`.
@@ -610,13 +610,13 @@ Where: `.library(card)` — the bar, and its Cancel, live on the card's row.
 
 1. `Cancel` (or Escape). No confirmation: copies are additive, originals read-only.
 2. **E, cancelling** — `Stopping…` / `Finishing the current item`. Indicator stays determinate and moving; button disabled.
-3. **F, Stopped** — `Stopped — 12 of 42 items copied` / `They're in Summer Photos`. Never auto-dismisses. The partial batch remains a real batch in the sidebar; selecting it shows the 12 and no bar.
+3. **F, Stopped** — `Stopped — 12 of 42 items copied` / `They’re in Summer Photos`. Never auto-dismisses. The partial batch remains a real batch in the sidebar; selecting it shows the 12 and no bar.
 4. The bar offers `Import` for what is left, once the re-plan has counted it. Pressing it creates a *second* batch. Nothing is duplicated.
 
 ### J9 · A failure mid-import
 
 1. From `.library(card)` in **E**: the destination goes offline. (Running out of room is J8's shape with the floor's clause, not this one — ADR 0027.)
-2. **G** — `Couldn't finish the import` / `Summer Photos isn't available · 12 items were copied before it stopped`. Primary `Try Again`. Never auto-dismisses.
+2. **G** — `Couldn’t finish the import` / `Summer Photos isn’t available · 12 items were copied before it stopped`. Primary `Try Again`. Never auto-dismisses.
 3. If instead the card is pulled, its row is gone and the bar with it; the selection resolves through the ordinary default. The batch row remains, holding the 12 that landed. Nothing already copied is lost.
 4. `Try Again` re-plans against what is now reachable.
 
@@ -655,8 +655,8 @@ than hidden.
 | `Destination` | `Copy into` |
 | `Delete all 181 items from the card after importing` | `Erase the card`, with the consequence stated at L3 when checked |
 | `Eject the card after importing` | `Eject the card` — the `Afterwards` label carries the timing |
-| `Failed: <problem>` | `Couldn't finish the import` + a cause clause at L3 |
-| `Failed: <problem>` before any run | `Couldn't prepare the import` + the same cause clause |
+| `Failed: <problem>` | `Couldn’t finish the import` + a cause clause at L3 |
+| `Failed: <problem>` before any run | `Couldn’t prepare the import` + the same cause clause |
 
 ## Ownership of status
 

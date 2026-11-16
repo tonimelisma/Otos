@@ -49,11 +49,11 @@ struct TrashStatusPresentationTests {
         let two = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "IMG_2.JPG"))
 
         let failed = TrashDecisionPrompt(decision: .downloadFailed([one]))
-        #expect(failed.title == "Delete “IMG_1.MOV” Immediately?")
+        #expect(failed.title == "Delete “IMG_1.MOV” immediately?")
         #expect(failed.message == "It couldn’t be downloaded, so it can’t be moved to the Trash. You can’t undo this.")
 
         let floor = TrashDecisionPrompt(decision: .diskFloor([one, two]))
-        #expect(floor.title == "Delete 2 Items Immediately?")
+        #expect(floor.title == "Delete 2 items immediately?")
         #expect(
             floor.message
                 == "There isn’t enough free space to download them so they can be moved to the Trash. "
@@ -87,11 +87,11 @@ struct LargeTrashDownloadPromptTests {
         let two = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "b.jpg"))
         #expect(
             LargeTrashDownloadPrompt(ids: [one], bytes: 1_200_000_000).title
-                == "Download 1.2 GB to Move “clip.mov” to Trash?"
+                == "Download 1.2 GB to move “clip.mov” to the Trash?"
         )
         #expect(
             LargeTrashDownloadPrompt(ids: [one, two], bytes: 340_000_000).title
-                == "Download 0.3 GB to Move 2 Items to Trash?"
+                == "Download 0.3 GB to move 2 items to the Trash?"
         )
         #expect(LargeTrashDownloadPrompt.confirmTitle == "Download and Move to Trash")
     }
@@ -104,7 +104,7 @@ struct LargeTrashDownloadPromptTests {
         let two = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: "b.mov"))
         let partial = PartialByteCount(knownBytes: 1_200_000_000, unknownCount: 1)
         #expect(LargeTrashDownloadPrompt(ids: [one, two], bytes: partial).title
-            == "Download at Least 1.2 GB to Move 2 Items to Trash?")
+            == "Download at least 1.2 GB to move 2 items to the Trash?")
         #expect(LargeTrashDownloadPrompt.asks(bytes: partial, preference: true))
         #expect(!LargeTrashDownloadPrompt.asks(bytes: PartialByteCount(knownBytes: 0, unknownCount: 3), preference: true))
         let working = TrashStatusPresentation.map(

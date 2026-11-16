@@ -1804,7 +1804,7 @@ extension CatalogWindowViewModel {
             return
         case let .busy(displayName):
             ejectAlertMessage =
-                "The disk \"\(displayName)\" couldn't be ejected because it's in use."
+                "The disk “\(displayName)” couldn’t be ejected because it’s in use."
         case let .failed(description):
             ejectAlertMessage = description
         }

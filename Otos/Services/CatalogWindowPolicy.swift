@@ -401,8 +401,8 @@ nonisolated enum CatalogWindowPolicy {
         return CatalogDeviceConnectionBanner(
             identity: identity,
             message: """
-            Browsing is faster when this camera's memory card is inserted directly, \
-            or when the camera's USB setting is Mass Storage.
+            Browsing is faster when this camera’s memory card is inserted directly, \
+            or when the camera’s USB setting is Mass Storage.
             """
         )
     }

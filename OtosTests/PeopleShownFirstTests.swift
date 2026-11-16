@@ -33,7 +33,7 @@ struct PeopleShownFirstTests {
         #expect(fixture.model.peopleState.person(ian)?.isFavorite == false)
         #expect(fixture.model.galleryOrder.first == fixture.sam)
         #expect(fixture.model.peopleSession.refusal == .failed("Add to Favorites"))
-        #expect(fixture.model.peopleSession.refusal?.title == "This Change Couldn't Be Saved")
+        #expect(fixture.model.peopleSession.refusal?.title == "This change couldn’t be saved.")
         #expect(!fixture.model.undoMenuState.canUndo)
         await fixture.store.shutdown()
     }
