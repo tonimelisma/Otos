@@ -64,8 +64,15 @@ scale × window long edge). It:
    preferred when large enough).
 4. Decodes video posters via `QLThumbnailGenerator` at the same target; loupe
    video playback after 0069 is via `VideoPreviewLoader` → `AVPlayerView` (not here).
-5. Coalesces per-id in-flight work and keeps a small byte-capped LRU (~256 MB)
-   pinned to the focus neighborhood.
+5. Coalesces per-id in-flight work and holds only what a pane can come back to: the
+   screen-sized decodes of the last three photos asked for (both Compare panes and the
+   photo just left), by count, never a full-resolution decode, which only the pane showing
+   it holds. A pane holds the image it shows, so a larger cache held only photos nobody
+   was looking at: ten photos walked held about 160 MB of stored previews in the old
+   256 MB LRU, three held with the one shown add 63 MB (`docs/research/2026-11-16-image-memory-while-used.md` §3).
+   Rejected: a byte budget, which sizes the cache by the photos' pixels rather than by the
+   one return it exists for, and holding a full-resolution decode for a return, a few
+   hundred megabytes for a photo the loupe reopens at fit (APP-040).
 
 The 256 px enrichment thumbnail paints immediately in loupe; the full decode
 replaces it when ready (APP-015 monotonic rule — never blank, never regress to

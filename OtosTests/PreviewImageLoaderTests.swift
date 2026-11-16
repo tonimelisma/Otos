@@ -353,3 +353,65 @@ private func writeTinyJPEG(to url: URL) throws {
         throw NSError(domain: "PreviewImageLoaderTests", code: 1)
     }
 }
+
+/// What the full-size view's loader holds (APP-040): the screen-sized decodes of the photos a
+/// pane can come back to, and no full-resolution decode once its photo is left. An image held
+/// is the same object when asked for again; one let go is decoded anew.
+@Suite(.testScope)
+struct PreviewImageLoaderRetentionTests {
+    private static func photos(_ count: Int) throws -> [MediaAssetID] {
+        let directory = try makeTestDirectory()
+        let root = LibraryRootPath(rawValue: directory.path(percentEncoded: false))
+        return try (0 ..< count).map { index in
+            let name = "photo-\(index).jpg"
+            try writeTinyJPEG(to: directory.appending(path: name))
+            return MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: name))
+        }
+    }
+
+    private static func loader() -> PreviewImageLoader {
+        PreviewImageLoader(
+            status: { _ in .materialized },
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in
+                MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
+            }
+        )
+    }
+
+    private static func image(_ loader: PreviewImageLoader, _ id: MediaAssetID, edge: Int = 64) async throws -> CGImage {
+        guard case let .image(image, _) = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: edge)) else {
+            throw LoaderTestError.noImage
+        }
+        return image
+    }
+
+    private enum LoaderTestError: Error {
+        case noImage
+    }
+
+    /// Four photos visited in turn: the last three are held, so stepping back through them
+    /// paints the decode already made; the first was let go and is decoded again.
+    @Test func theLoaderHoldsOnlyThePhotosAPaneCanReturnTo() async throws {
+        let ids = try Self.photos(PreviewImageLoader.retainedPhotos + 1)
+        let loader = Self.loader()
+        var first: [CGImage] = []
+        for id in ids {
+            try await first.append(Self.image(loader, id))
+        }
+        for index in ids.indices.dropFirst().reversed() {
+            #expect(try await Self.image(loader, ids[index]) === first[index], "photo \(index) is held")
+        }
+        #expect(try await Self.image(loader, ids[0]) !== first[0], "the oldest photo was let go")
+    }
+
+    /// A full-resolution decode is the pane's to hold: asked for again it is decoded again,
+    /// while the photo's screen-sized decode stays held for a return to it.
+    @Test func aFullResolutionDecodeIsHeldOnlyByThePaneShowingIt() async throws {
+        let ids = try Self.photos(1)
+        let loader = Self.loader()
+        let screen = try await Self.image(loader, ids[0])
+        let full = try await Self.image(loader, ids[0], edge: PreviewImageLoader.fullResolution)
+        #expect(try await Self.image(loader, ids[0], edge: PreviewImageLoader.fullResolution) !== full)
+        #expect(try await Self.image(loader, ids[0]) === screen)
+    }
+}

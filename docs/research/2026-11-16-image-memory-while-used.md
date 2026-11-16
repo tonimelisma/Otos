@@ -77,3 +77,23 @@ preview. Both regions are virtual memory of their own and leave the footprint wh
 goes. Unlike freed malloc blocks
 (`2026-11-16-freed-memory-stays-in-the-footprint.md`), decoded images cost the footprint
 only while something holds them. So the loupe's memory is a matter of what it holds.
+
+## 3. The full-size view held photos nobody was looking at
+
+`PreviewImageLoader` kept a 256 MB LRU of decodes, and a full-resolution decode went into it
+too. The pane already holds the image it shows (`PanePreview`), so everything the LRU held
+beyond that was a photo already left: a stored preview is about 18 MB decoded, and 256 MB is
+14 of them, or one full-resolution decode of a large original.
+
+`ImageMemoryTests.theFullSizeViewHoldsOnlyWhatItCanReturnTo` walks ten generated stored
+previews in the loader as the loupe asks for them, painting each, then steps back one. In the
+test process, alone:
+
+| | Before the walk | After the walk |
+| --- | --- | --- |
+| 256 MB LRU (before) | 194 MB | **354 MB** (+160) |
+| Last three photos, no full-resolution decode held (after) | 151 MB | **214 MB** (+63) |
+
+**Fix.** The loader holds the screen-sized decodes of the last three photos asked for, by
+count: both Compare panes and the photo just left, so a step back or a slide back paints at
+once. A full-resolution decode is held only by the pane showing it.

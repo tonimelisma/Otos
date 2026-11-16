@@ -26,10 +26,19 @@ nonisolated protocol PreviewLoading: Sendable {
 /// `FileMaterialization.status` immediately before every byte read, and returns a
 /// downsampled `CGImage` or `.unavailable`.
 ///
-/// Per-id in-flight work is coalesced. A small LRU holds recent decodes; a cache hit
-/// requires `entry.longEdge >= request.targetLongEdge` so a screen-size change re-decodes
-/// instead of upscaling. Stale results are rejected by the ViewModel's expected-asset
-/// identity check — this actor returns whatever it decoded.
+/// Per-id in-flight work is coalesced. Stale results are rejected by the ViewModel's
+/// expected-asset identity check — this actor returns whatever it decoded.
+///
+/// **What it holds.** A pane holds the image it shows (`PanePreview`), so the loader holds
+/// only what a pane can come back to: the screen-sized decodes of the last
+/// `retainedPhotos` photos asked for — the two Compare panes and the photo just left — so a
+/// step back to the previous photo, or a slide back in Compare, paints at once. A
+/// full-resolution decode, up to a few hundred megabytes for one photo, is held only by the
+/// pane showing it; leaving that photo lets it go, and coming back asks for it again only
+/// when the zoom does (APP-040). A hit requires `entry.longEdge >= request.targetLongEdge`
+/// so a screen-size change re-decodes instead of upscaling. Each decoded image's pixels are
+/// a region of their own (`2026-11-16-image-memory-while-used.md` §2), so what this lets go
+/// leaves the footprint.
 actor PreviewImageLoader: PreviewLoading {
     /// Two outcomes, because nothing downstream can act on a third.
     ///
@@ -55,9 +64,12 @@ actor PreviewImageLoader: PreviewLoading {
         let targetLongEdge: Int
     }
 
+    /// The photos whose screen-sized decode is held: both Compare panes and the photo just
+    /// left, so a return to it never waits.
+    static let retainedPhotos = 3
+
     private struct CacheEntry {
         let image: CGImage
-        let byteCost: Int
         let longEdge: Int
         let nativePixelSize: CGSize?
         /// The rendered edit revision the image shows (ADR 0036); a newer one misses.
@@ -69,10 +81,9 @@ actor PreviewImageLoader: PreviewLoading {
     /// Where stored previews live (ADR 0035); nil for an in-memory catalog, which then
     /// always decodes the original.
     private let derivedImageDirectory: URL?
-    private let maxCacheBytes: Int
     private var cache: [MediaAssetID: CacheEntry] = [:]
+    /// The held photos, least recently asked for first.
     private var cacheOrder: [MediaAssetID] = []
-    private var cacheBytes = 0
     /// One decode per asset in flight, remembered with the size it was asked for. A second
     /// request shares it only when that decode is at least as large as the one it needs;
     /// otherwise it would be handed a smaller image than it asked for.
@@ -88,12 +99,10 @@ actor PreviewImageLoader: PreviewLoading {
     private var quiescedRoots: Set<LibraryRootPath> = []
 
     init(
-        maxCacheBytes: Int = 256 * 1024 * 1024,
         status: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
         derivedImageDirectory: URL? = nil,
         materializationRequester: any MaterializationRequesting
     ) {
-        self.maxCacheBytes = maxCacheBytes
         self.status = status
         self.derivedImageDirectory = derivedImageDirectory
         self.materializationRequester = materializationRequester
@@ -129,7 +138,13 @@ actor PreviewImageLoader: PreviewLoading {
         if inFlight[request.id]?.longEdge == request.targetLongEdge, inFlight[request.id]?.revision == revision {
             inFlight[request.id] = nil
         }
-        if case let .image(image, nativePixelSize) = outcome {
+        if request.targetLongEdge == Self.fullResolution {
+            // The pane holds the full decode; the photo's screen-sized one stays the newest
+            // held, the one a return to it paints.
+            if cache[request.id] != nil {
+                touch(request.id)
+            }
+        } else if case let .image(image, nativePixelSize) = outcome {
             insert(
                 image, for: request.id, longEdge: request.targetLongEdge,
                 nativePixelSize: nativePixelSize, revision: revision
@@ -364,37 +379,15 @@ actor PreviewImageLoader: PreviewLoading {
             touch(id)
             return
         }
-        let cost = image.height * image.bytesPerRow
-        if let existing = cache[id] {
-            cacheBytes -= existing.byteCost
-        }
-        cache[id] = CacheEntry(
-            image: image, byteCost: cost, longEdge: longEdge, nativePixelSize: nativePixelSize, revision: revision
-        )
-        cacheBytes += cost
+        cache[id] = CacheEntry(image: image, longEdge: longEdge, nativePixelSize: nativePixelSize, revision: revision)
         touch(id)
-        evictIfNeeded(keeping: [id])
+        while cacheOrder.count > Self.retainedPhotos {
+            cache[cacheOrder.removeFirst()] = nil
+        }
     }
 
     private func touch(_ id: MediaAssetID) {
         cacheOrder.removeAll { $0 == id }
         cacheOrder.append(id)
-    }
-
-    private func evictIfNeeded(keeping pinned: Set<MediaAssetID>) {
-        while cacheBytes > maxCacheBytes, let oldest = cacheOrder.first {
-            cacheOrder.removeFirst()
-            if pinned.contains(oldest) {
-                cacheOrder.append(oldest)
-                // Avoid infinite loop when everything pinned exceeds budget.
-                if cacheOrder.allSatisfy(pinned.contains) {
-                    break
-                }
-                continue
-            }
-            if let entry = cache.removeValue(forKey: oldest) {
-                cacheBytes -= entry.byteCost
-            }
-        }
     }
 }

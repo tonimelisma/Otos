@@ -141,5 +141,58 @@ extension AppKitWindowTests {
 
         /// What a screenful of the People gallery may add to the footprint.
         static let galleryBoundMB = 64
+
+        /// The full-size view walked as the owner walks it: ten photos opened one after the
+        /// other, then a step back. The pane holds the photo it shows and the loader what a
+        /// pane can return to, so the footprint holds a few previews however many were seen.
+        @Test func theFullSizeViewHoldsOnlyWhatItCanReturnTo() async throws {
+            let directory = try makeTestDirectory()
+            let previews = try ImageMemoryFixture.writePreviews(count: 10, in: directory)
+            let root = LibraryRootPath(rawValue: directory.path(percentEncoded: false))
+            let loader = PreviewImageLoader(
+                status: { _ in .dataless },
+                derivedImageDirectory: directory,
+                materializationRequester: ClosureMaterializationRequester(status: { _ in .dataless }) { _ in
+                    MaterializationResult(outcome: .timedOut, rerequestCount: 0, elapsedMs: 0)
+                }
+            )
+            let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+            let probe = try #require(CGContext(
+                data: nil, width: 64, height: 48, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+            ))
+            func show(_ index: Int) async throws -> CGImage {
+                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "photo-\(index).heic"))
+                let detail = MediaTileDetail(
+                    libraryRootPath: root, relativePath: id.relativePath, previewPath: previews[index],
+                    nativePixelWidth: 6000, nativePixelHeight: 4500, bestKind: .image
+                )
+                guard case let .image(image, _) = await loader.preview(for: .init(id: id, detail: detail, targetLongEdge: 2560)) else {
+                    throw ImageMemoryError.noImage
+                }
+                // Painting reads every pixel, as the pane's layer does.
+                probe.draw(image, in: CGRect(x: 0, y: 0, width: 64, height: 48))
+                return image
+            }
+            let start = ImageMemoryFixture.footprintMB()
+            var shown = try await show(0)
+            for index in 1 ..< previews.count {
+                shown = try await show(index)
+            }
+            shown = try await show(previews.count - 2)
+            let walked = ImageMemoryFixture.footprintMB()
+            let previewMB = shown.bytesPerRow * shown.height / 1_048_576
+            ImageMemoryFixture.record(
+                "op=imageMemory step=fullSizeView startMB=\(start) walkedMB=\(walked) previewMB=\(previewMB) photos=\(previews.count)"
+            )
+            // The photo shown and the ones the loader holds to return to, and a margin for
+            // the decodes' transients; ten held previews would be twice the bound.
+            let bound = (PreviewImageLoader.retainedPhotos + 1) * previewMB + 16
+            #expect(walked - start <= bound, "Full-size view: \(start) MB → \(walked) MB, bound \(bound) MB")
+        }
+
+        private enum ImageMemoryError: Error {
+            case noImage
+        }
     }
 }
