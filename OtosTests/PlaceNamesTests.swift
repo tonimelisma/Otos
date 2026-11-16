@@ -143,10 +143,10 @@ struct PlaceNamesTests {
             for (name, coordinate) in [("helsinki.jpg", Self.helsinki), ("sydney.jpg", Self.sydney)] {
                 try db.execute(
                     sql: """
-                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, name_sort_key)
-                    VALUES (1, ?, ?, ?)
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, sort_key, name_sort_key)
+                    VALUES (1, ?, ?, ?, ?)
                     """,
-                    arguments: [name, name, name]
+                    arguments: [name, name, name, name]
                 )
                 try db.execute(
                     sql: "INSERT INTO asset_metadata (library_root_id, relative_path, primary_latitude, primary_longitude) VALUES (1, ?, ?, ?)",

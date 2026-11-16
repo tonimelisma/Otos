@@ -190,7 +190,7 @@ struct DecodeVerdictTests {
     ) throws {
         let verdictColumn = withVerdictColumn ? ", undecodable_by" : ""
         let verdictValue = withVerdictColumn ? ", ?" : ""
-        var arguments: [(any DatabaseValueConvertible)?] = [path, path, path, path, kind, preview]
+        var arguments: [(any DatabaseValueConvertible)?] = [path, path, path, kind, preview]
         if withVerdictColumn {
             arguments.append(undecodableBy)
         }
