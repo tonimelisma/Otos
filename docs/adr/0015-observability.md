@@ -61,6 +61,12 @@ consumes them; use a log line instead.
 - `script/profile-export.sh <trace>` — `xctrace export` wrapper.
 - `script/stall-stacks.sh --last <duration>` — each main-thread stall with the stacks
   sampled while it lasted, parts joined and Swift symbols demangled.
+- `script/survey.sh` — one session's whole-machine picture from outside the app, without
+  root: a Time Profiler trace attached to the pid, footprint and memory by region at each
+  moment, disk, CPU and energy counters for Otos and every readable process, the
+  neighbours' memory, folder sizes before and after, network bytes, and one
+  `summary.md`/`summary.json` holding names, counts and sizes only
+  (`docs/research/2026-11-16-broad-survey-static.md`).
 
 ### Explicit rejections
 
