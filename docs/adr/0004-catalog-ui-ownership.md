@@ -71,8 +71,8 @@ Use a single-window catalog UI ownership model:
 - `CatalogWindowViewModel` is the single main window's `@MainActor @Observable`
   adapter. It owns final SwiftUI-visible state assignment, sidebar selection,
   explicit selection delivery, catalog mutation delivery, user intents, and
-  task lifetimes. Projected state is consumed by a ViewModel-owned task that
-  holds the ViewModel only while applying one completed state. Sidebar selection
+  task lifetimes. Projected state is consumed newest-wins by a ViewModel-owned task
+  that holds the ViewModel only while applying one completed state (below). Sidebar selection
   uses a newest-value stream, while add/remove commands use a separate lossless
   serial stream. It does not own SQLite, filesystem traversal, scanning, sorting,
   filtering, availability policy, or projection cadence.
@@ -95,10 +95,26 @@ library's size. What changed is a fact Projection already holds when it publishe
   order, its days or its stacks moved. A content whose order and days are the last
   one's but whose stacks are not keeps the last one's order (`sharesOrder(with:)`), so
   the grid's mutation gate and Story tell "same order" by identity too.
-- `state` is observed by hand (`access` / `withMutation`) instead of through the
-  macro's tracked storage, whose setter compares an `Equatable` old value with the new
-  one; for a window state that comparison walked every identity, day and stack on every
-  enrichment batch. A published state is a change by construction, so a set notifies.
+- The applied state is observed by hand, part by part (`CatalogWindowParts`), instead of
+  through the macro's tracked storage, whose setter compares an `Equatable` old value with
+  the new one; for a window state that comparison walked every identity, day and stack on
+  every enrichment batch. Applying a publication notifies only the parts it changed: the
+  grid by its content's identity, descriptor and detail refresh, every other part by `==`
+  over what Projection shared. Each window surface (`SidebarColumn`, `DetailColumn`,
+  `InspectorColumn`, `CatalogToolbar`) reads its parts in its own body, so a one-tile hide
+  re-renders the detail column alone and a republication that changed nothing re-renders
+  nothing. With the whole state one observed value, every publication re-rendered the
+  whole window and the window measured its tree again for its minimum size: 45–60 ms of
+  main-thread update per publication on an optimised build
+  (`docs/research/2026-11-16-window-state-turns.md`).
+- Projected state is newest-wins. A relay off the main actor puts each publication in a
+  `NewestValueMailbox` as it arrives; the window's consumer, woken by a doorbell that
+  carries nothing, applies the newest state there is when it runs, so a state a newer one
+  replaced while the main thread was busy is never applied, and none is applied after a
+  newer one. An `AsyncStream` alone hands a value to a consumer parked in `next()`, which
+  then waits a main-thread turn holding it while newer ones queue behind. What the user
+  does never travels this lane: acts are commands on their own lossless streams, and a
+  state is recomputed from all of them.
 - Selection pruning, loupe, compare and story focus reconciliation, the ordered
   selection behind every target, and item-target membership ask the content's position
   index (`MediaDisplayOrder`), so they cost in the selection and the focus. The policies

@@ -75,7 +75,7 @@
             // The one write this seam makes goes where the developer pointed it, never
             // into a library: a capture under a root would be a file Otos wrote into the
             // user's media.
-            if viewModel.state.libraries.contains(where: { path.hasPrefix($0.path.rawValue + "/") }) {
+            if viewModel.parts.libraries.contains(where: { path.hasPrefix($0.path.rawValue + "/") }) {
                 OtosLog.app.error("op=smoke.capture phase=failed reason=insideLibrary path=\(path, privacy: .public)")
                 return
             }
@@ -136,10 +136,10 @@
             if awaitsStory {
                 return viewModel.story.map { $0.pane != .awaited } ?? false
             }
-            if case .nothingOnThisDay = viewModel.state.mediaEmptyState {
+            if case .nothingOnThisDay = viewModel.parts.mediaEmptyState {
                 return true
             }
-            return viewModel.state.onThisDay?.anniversaries.isEmpty == false
+            return viewModel.parts.onThisDay?.anniversaries.isEmpty == false
         }
 
         /// Scrolls every scroll view in the main window to the given fraction of its

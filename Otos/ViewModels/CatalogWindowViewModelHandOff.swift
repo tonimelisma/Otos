@@ -88,7 +88,7 @@ extension CatalogWindowViewModel {
     func handOff(_ action: HandOffAction) {
         // Reveal in Finder shows every file a collapsed stack is made of; every other
         // hand-off gives the picture, the stack's shown member (ADR 0052).
-        let stacks = state.mediaGrid.stacks
+        let stacks = parts.gridStacks
         let ids: [MediaAssetID] = switch action {
         case .revealInFinder:
             targetIDs(.current).flatMap(stacks.files(reachedThrough:))
@@ -258,7 +258,7 @@ extension CatalogWindowViewModel {
 
     /// The name the sidebar shows for a library or removable source.
     func sourceName(for rootPath: LibraryRootPath) -> String? {
-        (state.libraries + state.removableSources).first { $0.path == rootPath }?.displayName
+        (parts.libraries + parts.removableSources).first { $0.path == rootPath }?.displayName
     }
 
     /// The drag pasteboard writer for one photo (ADR 0028, ADR 0037): the

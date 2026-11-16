@@ -337,7 +337,7 @@ extension CatalogWindowViewModel {
                 return compareID(for: activeComparePane).map { [$0] } ?? []
             }
         case let .item(id):
-            return state.mediaGrid.content.contains(id) ? [id] : []
+            return parts.mediaGrid.content.contains(id) ? [id] : []
         case let .compare(position):
             return compareID(for: position).map { [$0] } ?? []
         }
@@ -411,7 +411,7 @@ extension CatalogWindowViewModel {
             case let .restore(record, _): record
             }
             record.map(removeMediaChoiceUndo)
-            let shown = state.mediaGrid.orderedAssetIDs.filter(Set(command.targets).contains)
+            let shown = parts.mediaGrid.orderedAssetIDs.filter(Set(command.targets).contains)
             selectAssets(shown)
             mediaChoiceFailure = MediaChoiceFailure(count: command.targets.count)
             OtosLog.persistence.errorOperation("mediaChoice.persist", phase: "failed", fields: [
@@ -486,7 +486,7 @@ extension CatalogWindowViewModel {
         }
         windowUndoManager.setActionName(record.actionName)
         let shown = record.shown(undoing: undoing)
-        let ids = state.mediaGrid.orderedAssetIDs.filter { shown[$0] != nil }
+        let ids = parts.mediaGrid.orderedAssetIDs.filter { shown[$0] != nil }
         revealUndoneChange(ids)
         let held = holdChoices(shown)
         enqueueMediaChoice(MediaChoiceCommand(
@@ -508,7 +508,7 @@ extension CatalogWindowViewModel {
     /// photo out of view is never made unseen. Items outside the shown scope stay unrevealed.
     func revealUndoneChange(_ ids: [MediaAssetID]) {
         let changed = Set(ids)
-        let shown = state.mediaGrid.orderedAssetIDs.filter(changed.contains)
+        let shown = parts.mediaGrid.orderedAssetIDs.filter(changed.contains)
         guard !shown.isEmpty, Set(targetIDs(.current)) != Set(shown) else { return }
         selectAssets(shown)
         OtosLog.ui.noticeOperation("undo.reveal", phase: "selected", fields: ["count": "\(shown.count)"])
@@ -530,7 +530,7 @@ extension CatalogWindowViewModel {
     /// the choice is shown in. A story moves itself; a choice made while it plays leaves its
     /// position alone.
     private func advanceAfterChoice(from last: MediaAssetID?) {
-        let orderedIDs = state.mediaGrid.orderedAssetIDs
+        let orderedIDs = parts.mediaGrid.orderedAssetIDs
         guard advanceAfterMediaChoice, story == nil, let last,
               let index = orderedIDs.firstIndex(of: last), index + 1 < orderedIDs.count
         else {

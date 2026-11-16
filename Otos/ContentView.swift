@@ -8,11 +8,17 @@
 import SwiftUI
 
 /// ContentView composes already-projected state and is deliberately passive: it
-/// renders `viewModel.state` and forwards intents, but never subscribes to catalog
+/// renders the view model's state and forwards intents, but never subscribes to catalog
 /// notifications, sorts, or derives catalog state in `body`. Why: a SwiftUI `body`
 /// can run many times per second, so doing real work there — or re-deriving catalog
 /// state — would be both slow and a second source of truth that could drift from
 /// the model. The model decides; the view renders.
+///
+/// It reads no part of the window state itself. Each column — `SidebarColumn`,
+/// `DetailColumn`, `InspectorColumn` and `CatalogToolbar` — reads the parts it shows from
+/// `viewModel.parts` in its own body, so a publication re-renders only the columns whose
+/// parts it changed (`CatalogWindowParts`): a one-tile hide the detail column, a
+/// publication that changed nothing none.
 struct ContentView: View {
     @Bindable var viewModel: CatalogWindowViewModel
     /// The pane the inspector last showed: view-local, so a collapsing column keeps it.
@@ -23,78 +29,6 @@ struct ContentView: View {
 
     /// The large-download question (Plan 0104): the suppression checkbox writes the same
     /// preference as Settings ▸ General.
-    /// The inspector's pane: Info or Edit. While the column collapses its last pane stays,
-    /// so the content does not switch under the animation.
-    @ViewBuilder
-    private var inspectorContent: some View {
-        switch viewModel.inspectorPane ?? lastInspectorPane {
-        case nil:
-            EmptyView()
-        case .info:
-            InfoPaneView(
-                info: viewModel.photoInfo,
-                people: InfoPanePeople(
-                    menu: viewModel.targetFaceMenu,
-                    line: viewModel.targetFacesLine,
-                    images: viewModel.faceTileImages,
-                    derivedImageDirectory: viewModel.thumbnailDirectory,
-                    perform: viewModel.performMediaItemCommand,
-                    hover: viewModel.outlineFaces
-                ),
-                search: viewModel.searchForLabel
-            )
-        case .edit:
-            EditPanelView(
-                photoName: viewModel.editTarget?.id.fileURL.lastPathComponent,
-                facts: viewModel.editPhotoFacts,
-                recipe: viewModel.editDraft,
-                histogram: viewModel.editHistogram,
-                original: EditPanelOriginalState(
-                    isShowingOriginal: viewModel.isShowingOriginal,
-                    canShowOriginal: viewModel.canShowOriginal,
-                    canRevert: viewModel.canRevertToOriginal
-                ),
-                selectedControl: viewModel.selectedEditControl,
-                isPickingNeutral: viewModel.isPickingNeutral,
-                canPickNeutral: viewModel.canPickNeutral,
-                crop: EditPanelCropState(
-                    isCropping: viewModel.isCropping,
-                    canCrop: viewModel.canCrop,
-                    aspect: viewModel.cropAspect,
-                    isLandscape: viewModel.cropAspectIsLandscape,
-                    isDrawingLine: viewModel.isDrawingStraightenLine,
-                    autoStraighten: viewModel.autoStraightenState,
-                    autoCrop: viewModel.autoCropState
-                ),
-                setValue: viewModel.setEditValue,
-                setDragging: viewModel.setEditDragging,
-                resetSection: viewModel.resetEditSection,
-                toggleNeutralPicker: viewModel.toggleNeutralPicker,
-                cropActions: EditPanelCropActions(
-                    toggleTool: viewModel.toggleCropTool,
-                    setAspect: viewModel.setCropAspect,
-                    rotateAspect: viewModel.rotateCropAspect,
-                    turn: viewModel.turnPhoto(clockwise:),
-                    flip: viewModel.flipPhoto(horizontally:),
-                    autoStraighten: viewModel.autoStraighten,
-                    toggleLine: viewModel.toggleStraightenLine,
-                    autoCrop: viewModel.autoCrop
-                ),
-                setEntering: viewModel.setEnteringEditValue,
-                setLensCorrection: viewModel.setLensCorrection,
-                resetControl: viewModel.resetEditControl,
-                originalActions: EditPanelOriginalActions(
-                    toggleShowOriginal: viewModel.toggleShowOriginal,
-                    revert: viewModel.revertToOriginal
-                ),
-                pair: viewModel.shownPair.flatMap { pair in
-                    viewModel.editTarget.map { (stack: pair, shown: $0.id) }
-                },
-                showPairMember: { viewModel.showPairMember($0) }
-            )
-        }
-    }
-
     private var largeTrashDownloadAlertHost: some View {
         Color.clear
             .alert(
@@ -125,257 +59,34 @@ struct ContentView: View {
             )
     }
 
-    /// The libraries an import may copy into now.
-    private var importDestinations: [CatalogLibraryState] {
-        viewModel.state.libraries.filter { $0.kind.isImportDestination && $0.availability == .available }
-    }
-
     var body: some View {
         NavigationSplitView {
-            SidebarView(
-                showsAllMedia: viewModel.showsAllMediaRow,
-                showsPlaces: viewModel.showsPlacesRow,
-                showsPeople: viewModel.showsPeopleRow,
-                onThisDay: viewModel.onThisDayRowDay,
-                showsDuplicates: viewModel.showsDuplicatesRow,
-                duplicatesCount: viewModel.duplicatesCount,
-                libraries: viewModel.state.libraries,
-                accountStatuses: viewModel.immichAccountStatuses,
-                importBatches: viewModel.state.importBatches,
-                removableSources: viewModel.state.removableSources,
-                importPresentations: viewModel.importPresentations,
-                sidebarSelection: viewModel.sidebarSelection,
-                ejectingSourceIdentities: viewModel.ejectingSourceIdentities,
-                selectSidebar: viewModel.selectSidebar,
-                ejectSource: viewModel.ejectRemovableSource
-            )
+            SidebarColumn(viewModel: viewModel)
         } detail: {
-            VStack(spacing: 0) {
-                if viewModel.sidebarSelection == .allImports {
-                    AllImportsListView(
-                        batches: viewModel.state.importBatches,
-                        selectBatch: { batchID in
-                            viewModel.selectSidebar(.importBatch(batchID))
+            DetailColumn(viewModel: viewModel)
+                .background { largeTrashDownloadAlertHost }
+                // The trailing inspector column collapses and expands like the sidebar. It holds
+                // one pane at a time, Info or Edit; the toolbar toggles and View ▸ Show Info /
+                // Show Edit drive the same intents.
+                .inspector(isPresented: Binding(
+                    get: { viewModel.inspectorPane != nil },
+                    set: { presented in
+                        if !presented {
+                            viewModel.setInspectorPane(nil)
                         }
-                    )
-                } else {
-                    detailContent
-                        .navigationSubtitle(viewModel.windowSubtitle)
+                    }
+                )) {
+                    InspectorColumn(viewModel: viewModel, pane: viewModel.inspectorPane ?? lastInspectorPane)
+                        .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
                 }
-                if let presentation = viewModel.selectedImportPresentation {
-                    ImportPlanFooter(
-                        presentation: presentation,
-                        fixedLibraries: importDestinations,
-                        sourceDisplayName: viewModel.state.removableSources
-                            .first { $0.path == presentation.sourcePath }?.displayName ?? "",
-                        isCancelling: viewModel.cancellingImportSources.contains(presentation.sourcePath),
-                        isImportClickHeld: viewModel.heldImportClicks.contains(presentation.sourcePath),
-                        importPreferences: viewModel.importPreferences,
-                        setDestination: { destination in
-                            viewModel.setImportDestination(destination, for: presentation.sourcePath)
-                        },
-                        queueImport: {
-                            viewModel.queueImport(for: presentation.sourcePath)
-                        },
-                        cancelImport: {
-                            viewModel.cancelImport(for: presentation.sourcePath)
-                        },
-                        ejectCard: {
-                            if let source = viewModel.state.removableSources
-                                .first(where: { $0.path == presentation.sourcePath })
-                            {
-                                viewModel.ejectRemovableSource(source.root)
-                            }
-                        },
-                        retryPlanning: {
-                            viewModel.retryImportPlanning(for: presentation.sourcePath)
-                        },
-                        revealAttentionItems: { ids in
-                            viewModel.selectAssets(ids)
-                        },
-                        sessionPreferences: viewModel.sessionPreferences(for: presentation.sourcePath),
-                        setSessionPreferences: { prefs in
-                            viewModel.setSessionPreferences(prefs, for: presentation.sourcePath)
-                        }
-                    )
-                }
-                if let trashStatus = TrashStatusPresentation.map(viewModel.trashQueueState) {
-                    TrashStatusBar(presentation: trashStatus, cancel: viewModel.cancelPendingTrash)
-                }
-                if let handOff = viewModel.handOffProgress {
-                    ProgressStatusBar(
-                        title: handOff.title,
-                        completed: handOff.completed,
-                        total: handOff.total,
-                        cancel: viewModel.cancelHandOff
-                    )
-                }
-                if let export = viewModel.exportProgress {
-                    ProgressStatusBar(
-                        title: export.title,
-                        completed: export.completed,
-                        total: export.total,
-                        cancel: viewModel.cancelExport
-                    )
-                }
-            }
-            // One title for every scope, from its one owner: no pane names itself.
-            .navigationTitle(viewModel.windowTitle)
-            // Hosted on its own view so `Do not ask again` applies to this alert only.
-            .background { largeTrashDownloadAlertHost }
-            // The trailing inspector column collapses and expands like the sidebar. It holds
-            // one pane at a time, Info or Edit; the toolbar toggles and View ▸ Show Info /
-            // Show Edit drive the same intents.
-            .inspector(isPresented: Binding(
-                get: { viewModel.inspectorPane != nil },
-                set: { presented in
-                    if !presented {
-                        viewModel.setInspectorPane(nil)
+                .onChange(of: viewModel.inspectorPane) { _, pane in
+                    if let pane {
+                        lastInspectorPane = pane
                     }
                 }
-            )) {
-                inspectorContent
-                    .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
-            }
-            .onChange(of: viewModel.inspectorPane) { _, pane in
-                if let pane {
-                    lastInspectorPane = pane
-                }
-            }
         }
         .toolbar {
-            // Back to Map, while the browser shows an area under the Places map (ADR 0040).
-            // A different scope is a different surface, so the item exists only there.
-            if viewModel.showsMapAreaLeaf {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        viewModel.returnToPlaces()
-                    } label: {
-                        Label("Back to Map", systemImage: "chevron.left")
-                    }
-                    .help("Back to Map")
-                }
-            }
-            // Back to People, while the browser shows the people it was opened on from the
-            // gallery (ADR 0047).
-            if viewModel.showsBackToPeople {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        viewModel.returnToPeople()
-                    } label: {
-                        Label("Back to People", systemImage: "chevron.left")
-                    }
-                    .help("Back to People")
-                }
-            }
-            // The person the filter shows, with their settings: the one place a person's
-            // photos are named and edited from (`docs/design/people.md`).
-            if let person = viewModel.shownPerson {
-                ToolbarItem(placement: .navigation) {
-                    PersonToolbarMenu(person: person, viewModel: viewModel)
-                }
-            }
-            // Back to Duplicates, while the browser shows one duplicate group (ADR 0042).
-            if viewModel.showsDuplicateGroupLeaf {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        viewModel.returnToDuplicates()
-                    } label: {
-                        Label("Back to Duplicates", systemImage: "chevron.left")
-                    }
-                    .help("Back to Duplicates")
-                }
-            }
-            // Four groups, each on its own glass, broad to narrow (DES-114): how the items
-            // look, which items show and in what order, acts on the current targets, and the
-            // inspector's panes nearest the column they open. Search trails them (DES-108).
-            ToolbarItemGroup(placement: .primaryAction) {
-                ViewModePicker(
-                    // The map and On This Day are not view modes: no segment is selected.
-                    viewMode: viewModel.showsViewModeSegment ? viewModel.viewMode : nil,
-                    setViewMode: viewModel.setViewMode
-                )
-                // The duplicates list has one presentation (DES-053: disabled, never removed).
-                .disabled(!viewModel.canChangeViewMode)
-                CatalogZoomControl(
-                    canZoomOut: viewModel.canZoomOut,
-                    canZoomIn: viewModel.canZoomIn,
-                    zoomOut: viewModel.zoomOut,
-                    zoomIn: viewModel.zoomIn
-                )
-            }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            ToolbarItemGroup(placement: .primaryAction) {
-                CatalogFilterControl(
-                    descriptor: viewModel.queryDescriptor,
-                    options: viewModel.state.filterOptions,
-                    isPresented: Binding(
-                        get: { viewModel.isFilterPresented },
-                        set: { viewModel.setFilterPresented($0) }
-                    ),
-                    setKind: viewModel.setMediaKind,
-                    setFileType: viewModel.setMediaFileType,
-                    setChoice: viewModel.setMediaChoice,
-                    people: viewModel.peopleFilterControls,
-                    places: PlaceFilterControls(setPlace: viewModel.setPlaceFilter),
-                    clearFilters: viewModel.clearMediaFilter
-                )
-                CatalogSortMenu(
-                    sort: viewModel.queryDescriptor.effectiveSort,
-                    search: viewModel.queryDescriptor.search,
-                    person: viewModel.shownPerson?.displayName,
-                    setOrder: viewModel.setSortOrder,
-                    orderByRelevance: viewModel.orderSearchByRelevance
-                )
-                // On This Day fixes its own order (DES-053: disabled in place; DES-038: the
-                // reason is the tooltip).
-                .disabled(!viewModel.canChangeSort)
-                .help(viewModel.canChangeSort ? "Sort" : "On This Day always shows the newest first")
-            }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            // Acts on the current targets (APP-013, APP-036). File ▸ Share… and the Photo
-            // menu are the menu-bar equivalents every toolbar item must have; the Share
-            // button is also the anchor every Share path presents from.
-            ToolbarItemGroup(placement: .primaryAction) {
-                CatalogCurationToolbarControl(
-                    currentChoice: viewModel.currentTargetChoice,
-                    isEnabled: viewModel.hasMediaChoiceTarget,
-                    choose: { viewModel.submitMediaChoice($0, origin: .toolbar) }
-                )
-                CatalogShareToolbarButton(
-                    isEnabled: !viewModel.currentTargetFileURLs.isEmpty,
-                    onAnchor: viewModel.setShareAnchor,
-                    share: { viewModel.shareCurrentTargets(origin: .toolbar) }
-                )
-                CatalogActionToolbarMenu(
-                    openWith: viewModel.openWithMenu,
-                    icons: viewModel.openWithApplicationIcons,
-                    canReveal: !viewModel.currentTargetFileURLs.isEmpty,
-                    canTrash: viewModel.canMoveTargetedMediaToTrash,
-                    open: viewModel.openTargetsInDefaultApplication,
-                    openWithApplication: viewModel.openTargets(with:),
-                    openWithOther: viewModel.openTargetsWithChosenApplication,
-                    reveal: viewModel.revealCurrentTargetsInFinder,
-                    moveToTrash: viewModel.moveTargetedMediaToTrash
-                )
-            }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            // The inspector's two panes (APP-041, DES-092, DES-097); View ▸ Show Info and
-            // Show Edit are their menu-bar equivalents.
-            ToolbarItemGroup(placement: .primaryAction) {
-                CatalogSurfaceToolbarToggle(
-                    title: "Info",
-                    systemImage: "info.circle",
-                    isShowing: viewModel.showsInfo,
-                    toggle: { viewModel.toggleInspector(.info) }
-                )
-                CatalogSurfaceToolbarToggle(
-                    title: "Edit",
-                    systemImage: "slider.horizontal.3",
-                    isShowing: viewModel.isEditPanelPresented,
-                    toggle: { viewModel.toggleInspector(.edit) }
-                )
-            }
+            CatalogToolbar(viewModel: viewModel)
         }
         // Keyword search (ADR 0048): the toolbar's trailing search field narrows whatever
         // scope is shown; Edit ▸ Find focuses it.
@@ -578,6 +289,117 @@ struct ContentView: View {
             Text(alert.message)
         }
     }
+}
+
+/// The sidebar column: depends on the libraries, sources, import batches and the rows'
+/// facts, never on the grid (`CatalogWindowParts`).
+struct SidebarColumn: View {
+    let viewModel: CatalogWindowViewModel
+
+    var body: some View {
+        SidebarView(
+            showsAllMedia: viewModel.showsAllMediaRow,
+            showsPlaces: viewModel.showsPlacesRow,
+            showsPeople: viewModel.showsPeopleRow,
+            onThisDay: viewModel.onThisDayRowDay,
+            showsDuplicates: viewModel.showsDuplicatesRow,
+            duplicatesCount: viewModel.duplicatesCount,
+            libraries: viewModel.parts.libraries,
+            accountStatuses: viewModel.immichAccountStatuses,
+            importBatches: viewModel.parts.importBatches,
+            removableSources: viewModel.parts.removableSources,
+            importPresentations: viewModel.importPresentations,
+            sidebarSelection: viewModel.sidebarSelection,
+            ejectingSourceIdentities: viewModel.ejectingSourceIdentities,
+            selectSidebar: viewModel.selectSidebar,
+            ejectSource: viewModel.ejectRemovableSource
+        )
+    }
+}
+
+/// The detail column: the surface the selected scope draws, its bars and the window's
+/// title. A one-tile change re-renders this column alone (`CatalogWindowParts`).
+struct DetailColumn: View {
+    let viewModel: CatalogWindowViewModel
+
+    /// The libraries an import may copy into now.
+    private var importDestinations: [CatalogLibraryState] {
+        viewModel.parts.libraries.filter { $0.kind.isImportDestination && $0.availability == .available }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if viewModel.sidebarSelection == .allImports {
+                AllImportsListView(
+                    batches: viewModel.parts.importBatches,
+                    selectBatch: { batchID in
+                        viewModel.selectSidebar(.importBatch(batchID))
+                    }
+                )
+            } else {
+                detailContent
+                    .navigationSubtitle(viewModel.windowSubtitle)
+            }
+            if let presentation = viewModel.selectedImportPresentation {
+                ImportPlanFooter(
+                    presentation: presentation,
+                    fixedLibraries: importDestinations,
+                    sourceDisplayName: viewModel.parts.removableSources
+                        .first { $0.path == presentation.sourcePath }?.displayName ?? "",
+                    isCancelling: viewModel.cancellingImportSources.contains(presentation.sourcePath),
+                    isImportClickHeld: viewModel.heldImportClicks.contains(presentation.sourcePath),
+                    importPreferences: viewModel.importPreferences,
+                    setDestination: { destination in
+                        viewModel.setImportDestination(destination, for: presentation.sourcePath)
+                    },
+                    queueImport: {
+                        viewModel.queueImport(for: presentation.sourcePath)
+                    },
+                    cancelImport: {
+                        viewModel.cancelImport(for: presentation.sourcePath)
+                    },
+                    ejectCard: {
+                        if let source = viewModel.parts.removableSources
+                            .first(where: { $0.path == presentation.sourcePath })
+                        {
+                            viewModel.ejectRemovableSource(source.root)
+                        }
+                    },
+                    retryPlanning: {
+                        viewModel.retryImportPlanning(for: presentation.sourcePath)
+                    },
+                    revealAttentionItems: { ids in
+                        viewModel.selectAssets(ids)
+                    },
+                    sessionPreferences: viewModel.sessionPreferences(for: presentation.sourcePath),
+                    setSessionPreferences: { prefs in
+                        viewModel.setSessionPreferences(prefs, for: presentation.sourcePath)
+                    }
+                )
+            }
+            if let trashStatus = TrashStatusPresentation.map(viewModel.trashQueueState) {
+                TrashStatusBar(presentation: trashStatus, cancel: viewModel.cancelPendingTrash)
+            }
+            if let handOff = viewModel.handOffProgress {
+                ProgressStatusBar(
+                    title: handOff.title,
+                    completed: handOff.completed,
+                    total: handOff.total,
+                    cancel: viewModel.cancelHandOff
+                )
+            }
+            if let export = viewModel.exportProgress {
+                ProgressStatusBar(
+                    title: export.title,
+                    completed: export.completed,
+                    total: export.total,
+                    cancel: viewModel.cancelExport
+                )
+            }
+        }
+        // One title for every scope, from its one owner: no pane names itself.
+        .navigationTitle(viewModel.windowTitle)
+    }
 
     @ViewBuilder
     var detailContent: some View {
@@ -597,7 +419,7 @@ struct ContentView: View {
                 PeopleView(
                     people: people,
                     session: viewModel.peopleSession,
-                    librariesState: viewModel.state.mediaEmptyState,
+                    librariesState: viewModel.parts.mediaEmptyState,
                     images: viewModel.faceTileImages,
                     derivedImageDirectory: viewModel.thumbnailDirectory,
                     actions: viewModel.peopleActions
@@ -609,7 +431,7 @@ struct ContentView: View {
             }
         } else if viewModel.showsDuplicatesList {
             // Until the groups are first built the pane claims nothing (APP-044).
-            if let duplicates = viewModel.state.duplicates {
+            if let duplicates = viewModel.parts.duplicates {
                 DuplicatesView(
                     duplicates: duplicates,
                     session: viewModel.duplicatesSession,
@@ -625,12 +447,12 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else if viewModel.showsOnThisDay {
-            if let story = viewModel.story, let item = viewModel.storyItem, let onThisDay = viewModel.state.onThisDay {
+            if let story = viewModel.story, let item = viewModel.storyItem, let onThisDay = viewModel.parts.onThisDay {
                 StoryPlayerView(
                     story: story,
                     item: item,
                     onThisDay: onThisDay,
-                    orderedIDs: viewModel.state.mediaGrid.orderedAssetIDs,
+                    orderedIDs: viewModel.parts.mediaGrid.orderedAssetIDs,
                     today: viewModel.today,
                     kind: viewModel.focusedAssetKind,
                     panePreview: viewModel.displayedPanePreview(.loupe),
@@ -652,9 +474,9 @@ struct ContentView: View {
                 )
             } else {
                 OnThisDayView(
-                    onThisDay: viewModel.state.onThisDay,
+                    onThisDay: viewModel.parts.onThisDay,
                     today: viewModel.today,
-                    emptyState: viewModel.state.mediaEmptyState,
+                    emptyState: viewModel.parts.mediaEmptyState,
                     focusRequest: viewModel.onThisDayFocusRequest,
                     tileContentStore: viewModel.tileContentStore,
                     thumbnailDirectory: viewModel.thumbnailDirectory,
@@ -666,10 +488,10 @@ struct ContentView: View {
             }
         } else if viewModel.showsPlacesMap {
             PlacesMapView(
-                map: viewModel.state.map ?? .empty,
+                map: viewModel.parts.map ?? .empty,
                 clusters: viewModel.mapClusters,
                 cameraRequest: viewModel.mapCameraRequest,
-                emptyState: viewModel.state.mediaEmptyState,
+                emptyState: viewModel.parts.mediaEmptyState,
                 tileContentStore: viewModel.tileContentStore,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
@@ -701,7 +523,7 @@ struct ContentView: View {
             .people(viewModel.shownPeople)
         case .duplicates:
             .duplicates(
-                viewModel.state.duplicates.map { duplicates in
+                viewModel.parts.duplicates.map { duplicates in
                     DuplicatesBarPresentation.map(
                         viewModel.duplicatesSession.tally(in: duplicates),
                         receipt: viewModel.duplicatesSession.receipt,
@@ -718,10 +540,10 @@ struct ContentView: View {
         switch viewModel.viewMode {
         case .grid:
             MediaGridView(
-                grid: viewModel.state.mediaGrid,
+                grid: viewModel.parts.mediaGrid,
                 tileContentStore: viewModel.tileContentStore,
                 emptyState: viewModel.mediaEmptyState,
-                deviceConnectionBanner: viewModel.state.deviceConnectionBanner,
+                deviceConnectionBanner: viewModel.parts.deviceConnectionBanner,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
                 stallMonitor: viewModel.uiStallMonitor,
@@ -746,7 +568,7 @@ struct ContentView: View {
             )
         case .loupe:
             LoupeView(
-                grid: viewModel.state.mediaGrid,
+                grid: viewModel.parts.mediaGrid,
                 tileContentStore: viewModel.tileContentStore,
                 focusedAssetID: viewModel.focusedAssetID,
                 focusedAssetKind: viewModel.focusedAssetKind,
@@ -808,7 +630,7 @@ struct ContentView: View {
             )
         case .compare:
             CompareView(
-                grid: viewModel.state.mediaGrid,
+                grid: viewModel.parts.mediaGrid,
                 tileContentStore: viewModel.tileContentStore,
                 leftID: viewModel.comparePair.left,
                 rightID: viewModel.comparePair.right,
@@ -842,6 +664,227 @@ struct ContentView: View {
                 contextMenu: viewModel.makeMediaItemContextMenu,
                 faceOutlineBoxes: viewModel.outlinedFaceBoxes,
                 tileChoiceChange: viewModel.tileChoiceChange
+            )
+        }
+    }
+}
+
+/// The inspector's column: the pane it shows, Info or Edit, built from what that pane
+/// reads alone, so a publication that changes neither renders neither.
+struct InspectorColumn: View {
+    let viewModel: CatalogWindowViewModel
+    /// The pane shown, or the one last shown while the column collapses.
+    let pane: InspectorPane?
+
+    /// The inspector's pane: Info or Edit. While the column collapses its last pane stays,
+    /// so the content does not switch under the animation.
+    var body: some View {
+        switch pane {
+        case nil:
+            EmptyView()
+        case .info:
+            InfoPaneView(
+                info: viewModel.photoInfo,
+                people: InfoPanePeople(
+                    menu: viewModel.targetFaceMenu,
+                    line: viewModel.targetFacesLine,
+                    images: viewModel.faceTileImages,
+                    derivedImageDirectory: viewModel.thumbnailDirectory,
+                    perform: viewModel.performMediaItemCommand,
+                    hover: viewModel.outlineFaces
+                ),
+                search: viewModel.searchForLabel
+            )
+            .equatable()
+        case .edit:
+            EditPanelView(
+                photoName: viewModel.editTarget?.id.fileURL.lastPathComponent,
+                facts: viewModel.editPhotoFacts,
+                recipe: viewModel.editDraft,
+                histogram: viewModel.editHistogram,
+                original: EditPanelOriginalState(
+                    isShowingOriginal: viewModel.isShowingOriginal,
+                    canShowOriginal: viewModel.canShowOriginal,
+                    canRevert: viewModel.canRevertToOriginal
+                ),
+                selectedControl: viewModel.selectedEditControl,
+                isPickingNeutral: viewModel.isPickingNeutral,
+                canPickNeutral: viewModel.canPickNeutral,
+                crop: EditPanelCropState(
+                    isCropping: viewModel.isCropping,
+                    canCrop: viewModel.canCrop,
+                    aspect: viewModel.cropAspect,
+                    isLandscape: viewModel.cropAspectIsLandscape,
+                    isDrawingLine: viewModel.isDrawingStraightenLine,
+                    autoStraighten: viewModel.autoStraightenState,
+                    autoCrop: viewModel.autoCropState
+                ),
+                setValue: viewModel.setEditValue,
+                setDragging: viewModel.setEditDragging,
+                resetSection: viewModel.resetEditSection,
+                toggleNeutralPicker: viewModel.toggleNeutralPicker,
+                cropActions: EditPanelCropActions(
+                    toggleTool: viewModel.toggleCropTool,
+                    setAspect: viewModel.setCropAspect,
+                    rotateAspect: viewModel.rotateCropAspect,
+                    turn: viewModel.turnPhoto(clockwise:),
+                    flip: viewModel.flipPhoto(horizontally:),
+                    autoStraighten: viewModel.autoStraighten,
+                    toggleLine: viewModel.toggleStraightenLine,
+                    autoCrop: viewModel.autoCrop
+                ),
+                setEntering: viewModel.setEnteringEditValue,
+                setLensCorrection: viewModel.setLensCorrection,
+                resetControl: viewModel.resetEditControl,
+                originalActions: EditPanelOriginalActions(
+                    toggleShowOriginal: viewModel.toggleShowOriginal,
+                    revert: viewModel.revertToOriginal
+                ),
+                pair: viewModel.shownPair.flatMap { pair in
+                    viewModel.editTarget.map { (stack: pair, shown: $0.id) }
+                },
+                showPairMember: { viewModel.showPairMember($0) }
+            )
+        }
+    }
+}
+
+/// The window's toolbar as its own content: it depends on what its controls show (the
+/// query, the filter's options, the targets), never on the grid's order.
+struct CatalogToolbar: ToolbarContent {
+    let viewModel: CatalogWindowViewModel
+
+    var body: some ToolbarContent {
+        // Back to Map, while the browser shows an area under the Places map (ADR 0040).
+        // A different scope is a different surface, so the item exists only there.
+        if viewModel.showsMapAreaLeaf {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    viewModel.returnToPlaces()
+                } label: {
+                    Label("Back to Map", systemImage: "chevron.left")
+                }
+                .help("Back to Map")
+            }
+        }
+        // Back to People, while the browser shows the people it was opened on from the
+        // gallery (ADR 0047).
+        if viewModel.showsBackToPeople {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    viewModel.returnToPeople()
+                } label: {
+                    Label("Back to People", systemImage: "chevron.left")
+                }
+                .help("Back to People")
+            }
+        }
+        // The person the filter shows, with their settings: the one place a person's
+        // photos are named and edited from (`docs/design/people.md`).
+        if let person = viewModel.shownPerson {
+            ToolbarItem(placement: .navigation) {
+                PersonToolbarMenu(person: person, viewModel: viewModel)
+            }
+        }
+        // Back to Duplicates, while the browser shows one duplicate group (ADR 0042).
+        if viewModel.showsDuplicateGroupLeaf {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    viewModel.returnToDuplicates()
+                } label: {
+                    Label("Back to Duplicates", systemImage: "chevron.left")
+                }
+                .help("Back to Duplicates")
+            }
+        }
+        // Four groups, each on its own glass, broad to narrow (DES-114): how the items
+        // look, which items show and in what order, acts on the current targets, and the
+        // inspector's panes nearest the column they open. Search trails them (DES-108).
+        ToolbarItemGroup(placement: .primaryAction) {
+            ViewModePicker(
+                // The map and On This Day are not view modes: no segment is selected.
+                viewMode: viewModel.showsViewModeSegment ? viewModel.viewMode : nil,
+                setViewMode: viewModel.setViewMode
+            )
+            // The duplicates list has one presentation (DES-053: disabled, never removed).
+            .disabled(!viewModel.canChangeViewMode)
+            CatalogZoomControl(
+                canZoomOut: viewModel.canZoomOut,
+                canZoomIn: viewModel.canZoomIn,
+                zoomOut: viewModel.zoomOut,
+                zoomIn: viewModel.zoomIn
+            )
+        }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItemGroup(placement: .primaryAction) {
+            CatalogFilterControl(
+                descriptor: viewModel.queryDescriptor,
+                options: viewModel.parts.filterOptions,
+                isPresented: Binding(
+                    get: { viewModel.isFilterPresented },
+                    set: { viewModel.setFilterPresented($0) }
+                ),
+                setKind: viewModel.setMediaKind,
+                setFileType: viewModel.setMediaFileType,
+                setChoice: viewModel.setMediaChoice,
+                people: viewModel.peopleFilterControls,
+                places: PlaceFilterControls(setPlace: viewModel.setPlaceFilter),
+                clearFilters: viewModel.clearMediaFilter
+            )
+            CatalogSortMenu(
+                sort: viewModel.queryDescriptor.effectiveSort,
+                search: viewModel.queryDescriptor.search,
+                person: viewModel.shownPerson?.displayName,
+                setOrder: viewModel.setSortOrder,
+                orderByRelevance: viewModel.orderSearchByRelevance
+            )
+            // On This Day fixes its own order (DES-053: disabled in place; DES-038: the
+            // reason is the tooltip).
+            .disabled(!viewModel.canChangeSort)
+            .help(viewModel.canChangeSort ? "Sort" : "On This Day always shows the newest first")
+        }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        // Acts on the current targets (APP-013, APP-036). File ▸ Share… and the Photo
+        // menu are the menu-bar equivalents every toolbar item must have; the Share
+        // button is also the anchor every Share path presents from.
+        ToolbarItemGroup(placement: .primaryAction) {
+            CatalogCurationToolbarControl(
+                currentChoice: viewModel.currentTargetChoice,
+                isEnabled: viewModel.hasMediaChoiceTarget,
+                choose: { viewModel.submitMediaChoice($0, origin: .toolbar) }
+            )
+            CatalogShareToolbarButton(
+                isEnabled: !viewModel.currentTargetFileURLs.isEmpty,
+                onAnchor: viewModel.setShareAnchor,
+                share: { viewModel.shareCurrentTargets(origin: .toolbar) }
+            )
+            CatalogActionToolbarMenu(
+                openWith: viewModel.openWithMenu,
+                icons: viewModel.openWithApplicationIcons,
+                canReveal: !viewModel.currentTargetFileURLs.isEmpty,
+                canTrash: viewModel.canMoveTargetedMediaToTrash,
+                open: viewModel.openTargetsInDefaultApplication,
+                openWithApplication: viewModel.openTargets(with:),
+                openWithOther: viewModel.openTargetsWithChosenApplication,
+                reveal: viewModel.revealCurrentTargetsInFinder,
+                moveToTrash: viewModel.moveTargetedMediaToTrash
+            )
+        }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        // The inspector's two panes (APP-041, DES-092, DES-097); View ▸ Show Info and
+        // Show Edit are their menu-bar equivalents.
+        ToolbarItemGroup(placement: .primaryAction) {
+            CatalogSurfaceToolbarToggle(
+                title: "Info",
+                systemImage: "info.circle",
+                isShowing: viewModel.showsInfo,
+                toggle: { viewModel.toggleInspector(.info) }
+            )
+            CatalogSurfaceToolbarToggle(
+                title: "Edit",
+                systemImage: "slider.horizontal.3",
+                isShowing: viewModel.isEditPanelPresented,
+                toggle: { viewModel.toggleInspector(.edit) }
             )
         }
     }

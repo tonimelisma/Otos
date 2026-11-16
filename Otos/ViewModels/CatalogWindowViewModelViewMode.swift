@@ -135,7 +135,7 @@ extension CatalogWindowViewModel {
         guard showsSelectedScope, let focus = BrowserModePolicy.loupeEntryFocus(
             preferredID: id,
             selection: gridSelection,
-            orderedIDs: state.mediaGrid.content
+            orderedIDs: parts.mediaGrid.content
         ) else {
             return
         }
@@ -154,11 +154,11 @@ extension CatalogWindowViewModel {
     }
 
     func enterCompare() {
-        let ordered = state.mediaGrid.orderedAssetIDs
+        let ordered = parts.mediaGrid.orderedAssetIDs
         guard showsSelectedScope, !ordered.isEmpty else {
             return
         }
-        let pair = ComparePairPolicy.entry(selection: gridSelection, orderedIDs: state.mediaGrid.content)
+        let pair = ComparePairPolicy.entry(selection: gridSelection, orderedIDs: parts.mediaGrid.content)
         // viewMode must be .compare before applyComparePair → refreshPanePreviews,
         // otherwise expectedAsset(for: compare*) returns nil and no decode starts.
         viewMode = .compare
@@ -197,7 +197,7 @@ extension CatalogWindowViewModel {
         guard viewMode == .compare else {
             return
         }
-        let ordered = state.mediaGrid.orderedAssetIDs
+        let ordered = parts.mediaGrid.orderedAssetIDs
         let next = ComparePairPolicy.slide(delta, pair: comparePair, orderedIDs: ordered)
         lastReplacedComparePane = delta > 0 ? .right : .left
         activeComparePane = lastReplacedComparePane ?? .right
@@ -261,7 +261,7 @@ extension CatalogWindowViewModel {
             reconcileStoryAfterGridChange(previousOrder: previousOrder)
             return
         }
-        let order = state.mediaGrid.content
+        let order = parts.mediaGrid.content
         let ordered = order.orderedAssetIDs
         if ordered.isEmpty {
             if viewMode != .grid {
@@ -380,7 +380,7 @@ extension CatalogWindowViewModel {
         guard viewMode == .loupe else {
             return
         }
-        let ordered = state.mediaGrid.orderedAssetIDs
+        let ordered = parts.mediaGrid.orderedAssetIDs
         let next = BrowserModePolicy.neighbor(of: focusedAssetID, in: ordered, delta: delta)
         guard let next, next != focusedAssetID else {
             return
@@ -641,7 +641,7 @@ extension CatalogWindowViewModel {
     }
 
     private func isEjecting(_ root: LibraryRootPath) -> Bool {
-        state.removableSources.contains { source in
+        parts.removableSources.contains { source in
             source.path == root && source.root.deviceIdentity.map(ejectingSourceIdentities.contains) == true
         }
     }

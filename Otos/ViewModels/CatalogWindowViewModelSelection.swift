@@ -31,12 +31,14 @@ extension CatalogWindowViewModel {
         gridSelection.anchor
     }
 
-    /// Selected identities in current display order.
-    var orderedSelectedAssetIDs: [MediaAssetID] {
-        GridSelection.orderedSelection(
-            gridSelection.selection,
-            in: state.mediaGrid.content
-        )
+    /// Puts `orderedSelectedAssetIDs` in step with the selection and the grid's order,
+    /// assigning only a changed order, so a grid change that leaves the selection's order as
+    /// it was notifies nobody who reads the targets.
+    func refreshOrderedSelection() {
+        let ordered = GridSelection.orderedSelection(gridSelection.selection, in: parts.mediaGrid.content)
+        if ordered != orderedSelectedAssetIDs {
+            orderedSelectedAssetIDs = ordered
+        }
     }
 
     /// Synchronous mouse-gesture intent. Applies the gesture against the model alone
@@ -120,7 +122,7 @@ extension CatalogWindowViewModel {
 
     /// Selects all visible assets. Used by Edit → Select All (\u2318A).
     func selectAll() {
-        let ordered = state.mediaGrid.orderedAssetIDs
+        let ordered = parts.mediaGrid.orderedAssetIDs
         guard !ordered.isEmpty else { return }
         gridSelection = GridSelection(
             selection: Set(ordered),

@@ -15,8 +15,11 @@ import OSLog
 /// ever lands here it belongs down in the Store or Projection instead.
 ///
 /// The three asynchronous lanes deliberately have different delivery semantics:
-/// Projection states are consumed losslessly, query descriptor changes keep only
-/// the newest pending value, and catalog mutations are lossless and serial. The
+/// Projection states are newest-wins: a relay off the main actor puts each publication
+/// in a `NewestValueMailbox` as it arrives, and the main-actor consumer applies the
+/// newest one there is when it runs, so a state a newer one replaced while the main
+/// thread was busy is never applied. Query descriptor changes keep only the newest
+/// pending value, and catalog mutations are lossless and serial. The
 /// mutation lane is also where platform source monitors enter the catalog: volume
 /// mount events, volume detach events, camera attach/detach, eject, and Forget all
 /// use the same Store-owned intent path as fixed-library add/remove.
@@ -95,25 +98,19 @@ final class CatalogWindowViewModel {
     /// user was elsewhere when the batch row first existed or left the card's row before). A run moves the selection
     /// once; a user who goes back to the card is not pulled to the batch again.
     var followedImportBatches: Set<ImportBatchID> = []
-    /// The last applied publication. Observed by hand rather than by the macro's tracked
-    /// storage: a tracked `Equatable` property compares the old value with the new one on
-    /// every set, and a window state's `==` walks every part it holds — on the owner's
-    /// catalog the order's 158,000 identities and its stacks, on every enrichment batch, on
-    /// the main actor. Projection yields only a state that changed (ADR 0005), so a set is a
-    /// change by construction and notifies without comparing.
+    /// The last applied publication, observed part by part (`CatalogWindowParts`): a view
+    /// reads the parts it shows from `parts` and depends on those alone. `state` is the
+    /// whole value, for the view model's own work and for tests; a reader of it depends on
+    /// every part. Projection yields only a state that changed (ADR 0005), and applying one
+    /// notifies only the parts it changed.
     var state: CatalogWindowState {
-        get {
-            access(keyPath: \.state)
-            return appliedState
-        }
-        set {
-            withMutation(keyPath: \.state) {
-                appliedState = newValue
-            }
-        }
+        get { parts.state }
+        set { parts.apply(newValue) }
     }
 
-    @ObservationIgnored private var appliedState: CatalogWindowState = .empty
+    @ObservationIgnored let parts = CatalogWindowParts()
+    /// How many publications `applyState` has applied: one per state the window took in.
+    @ObservationIgnored private(set) var appliedStateCount = 0
     /// User-adjustable grid density (APP-006), 3–9. `private(set)` so the only way to
     /// change it is the `setGridColumnCount(_:)` intent below — the one clamp/persist/publish
     /// path every zoom surface shares (compiler-enforced single owner). Set in `init`, not a
@@ -134,8 +131,18 @@ final class CatalogWindowViewModel {
     /// `private(set)` because those intents live in a separate file and Swift's
     /// `private(set)` is file-scoped.
     var gridSelection = GridSelection.empty {
-        didSet { refreshOpenWithMenu() }
+        didSet {
+            refreshOrderedSelection()
+            refreshOpenWithMenu()
+        }
     }
+
+    /// Selected identities in current display order, kept by `refreshOrderedSelection` as
+    /// the selection or the grid's order changes. Stored rather than derived on each read, so
+    /// what reads the targets — the toolbar, the Info pane, the menus — depends on the
+    /// selection's order and not on the whole grid: a hide elsewhere re-renders none of them.
+    /// Written only by `refreshOrderedSelection` (in the selection file, so not `private(set)`).
+    var orderedSelectedAssetIDs: [MediaAssetID] = []
 
     /// Browser presentation (grid / loupe / compare). Default `.grid`; restored at launch
     /// from the browser place (APP-043).
@@ -610,7 +617,10 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let peopleIntentContinuation: AsyncStream<PeopleIntent>.Continuation
     @ObservationIgnored var peopleIntentTask: Task<Void, Never>?
 
+    /// Applies Projection's newest publication on the main actor (`startStateConsumption`).
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
+    /// Carries Projection's publications into the consumer's mailbox, off the main actor.
+    @ObservationIgnored private var stateRelayTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
     /// The one consumer of the Store's open reports (`CatalogStore.openings`).
     @ObservationIgnored private var catalogOpeningTask: Task<Void, Never>?
@@ -1053,6 +1063,8 @@ final class CatalogWindowViewModel {
             NotificationCenter.default.removeObserver(terminationObserver)
         }
         stateConsumptionTask?.cancel()
+        // Ends the relay's subscription, which lets Projection tear down when it was the last.
+        stateRelayTask?.cancel()
         for observer in calendarDayObservers {
             calendarNotificationCenter.removeObserver(observer)
         }
@@ -1331,7 +1343,7 @@ extension CatalogWindowViewModel {
         }
         // The first query is readied as the last of the heavy loads, over the scope the first
         // grid shows; the search field's focus readies it at once if it comes first.
-        photoSearchIndex?.prepareWhenAdmitted(among: state.mediaGrid.orderedAssetIDs)
+        photoSearchIndex?.prepareWhenAdmitted(among: parts.mediaGrid.orderedAssetIDs)
         // updateViewport is delivered newest-value; the coordinator is the single owner of
         // the priority hint, so this forwards verbatim with no main-actor work.
         viewportForwardingTask = Task { [coordinator, viewportStream, immichAccounts] in
@@ -1451,23 +1463,51 @@ extension CatalogWindowViewModel {
         store: CatalogStore,
         initialRequest: CatalogQueryRequest
     ) {
-        stateConsumptionTask = Task(priority: .userInitiated) { [weak self, projection, store, initialRequest] in
+        let mailbox = NewestValueMailbox<CatalogWindowState>()
+        // Off the main actor: it takes each publication the moment Projection yields it and
+        // puts it in the mailbox, so a publication never waits for a main-thread turn holding
+        // a state a newer one has replaced.
+        stateRelayTask = Task(priority: .userInitiated) { [projection, store, initialRequest] in
             let signpost = OtosSignpost.ui.beginInterval("CatalogWindowStateStream")
             let states = await projection.states(
                 store: store,
                 initialRequest: initialRequest
             )
             OtosSignpost.ui.endInterval("CatalogWindowStateStream", signpost)
-            for await nextState in states {
+            await Self.relayStates(states, into: mailbox)
+        }
+        startApplyingStates(from: mailbox)
+    }
+
+    /// The window's one consumer of Projection's publications: on the main actor, it applies
+    /// the newest state in `mailbox` each time it runs (`applyState`).
+    func startApplyingStates(from mailbox: NewestValueMailbox<CatalogWindowState>) {
+        stateConsumptionTask = Task(priority: .userInitiated) { [weak self, mailbox] in
+            for await delivery in mailbox {
                 // Strongify only for this loop body. Moving this guard outside
                 // the loop would retain the ViewModel across the next indefinite
                 // stream wait and make deinit-based cancellation unreachable.
                 guard let self else {
                     break
                 }
-                applyState(nextState)
+                applyState(delivery.value, superseded: delivery.superseded)
             }
         }
+    }
+
+    /// Puts every publication of `states` in `mailbox`, as it arrives, until the stream ends.
+    /// `@concurrent`: on the cooperative pool, so no main-thread turn stands between a
+    /// publication and the mailbox; the window's consumer then applies the newest one there
+    /// is when it runs (`NewestValueMailbox`).
+    @concurrent
+    nonisolated static func relayStates(
+        _ states: AsyncStream<CatalogWindowState>,
+        into mailbox: NewestValueMailbox<CatalogWindowState>
+    ) async {
+        for await state in states {
+            mailbox.put(state)
+        }
+        mailbox.finish()
     }
 
     /// Reads what the Store's open reports until it ends. Weak across each wait, so the loop
@@ -1549,8 +1589,9 @@ extension CatalogWindowViewModel {
     /// Projection → ViewModel state assignment. Selection prune/clear for grid
     /// identity changes runs here (before SwiftUI re-renders and before any
     /// AppKit structural apply) so the collection view only ever *renders* the
-    /// already-updated model.
-    func applyState(_ nextState: CatalogWindowState) {
+    /// already-updated model. `superseded` counts the publications a newer one replaced
+    /// before the window could apply them, which it never applies (`NewestValueMailbox`).
+    func applyState(_ nextState: CatalogWindowState, superseded: Int = 0) {
         var nextState = nextState
         if let catalogCompatibilityProblem {
             nextState.libraries = []
@@ -1559,6 +1600,7 @@ extension CatalogWindowViewModel {
             nextState.mediaEmptyState = .catalogIncompatible(catalogCompatibilityProblem)
         }
         let previousState = state
+        appliedStateCount += 1
         applySidebarSelectionPolicy(previous: previousState, next: nextState)
 
         let updateID = stallMonitor.reserveUpdateID()
@@ -1619,7 +1661,11 @@ extension CatalogWindowViewModel {
         if scopeChanged {
             clearGridSelection(reason: "scopeChange")
         } else if contentChanged {
-            gridSelection = gridSelection.pruned(to: nextState.mediaGrid.content)
+            let pruned = gridSelection.pruned(to: nextState.mediaGrid.content)
+            if pruned != gridSelection {
+                gridSelection = pruned
+            }
+            refreshOrderedSelection()
         }
         if descriptorChanged || contentChanged {
             reconcileFocusAfterGridChange(
@@ -1664,6 +1710,7 @@ extension CatalogWindowViewModel {
             "items": "\(itemCount)",
             "delta": "\(itemCount - previousItemCount)",
             "libraries": "\(nextState.libraries.count)",
+            "superseded": "\(superseded)",
             "applyMs": "\(applyMs)",
         ])
         logFirstGridIfLoaded(nextState, items: itemCount, applyMs: applyMs)
@@ -1756,7 +1803,7 @@ extension CatalogWindowViewModel {
             fileType,
             kind: kind,
             included: included,
-            options: state.filterOptions
+            options: parts.filterOptions
         ))
     }
 
@@ -1769,10 +1816,10 @@ extension CatalogWindowViewModel {
     /// filter's own. With neither there is no row to check.
     func setPlaceFilter(_ place: PlaceFilterKey, included: Bool) {
         let filter = queryDescriptor.filter
-        guard let language = state.filterOptions.placeNameLanguage ?? filter.places?.language else {
+        guard let language = parts.filterOptions.placeNameLanguage ?? filter.places?.language else {
             return
         }
-        let towns = state.filterOptions.countries.first { $0.name == place.country }?.towns ?? []
+        let towns = parts.filterOptions.countries.first { $0.name == place.country }?.towns ?? []
         setMediaFilter(filter.settingPlace(place, included: included, towns: towns, language: language))
     }
 
@@ -1830,7 +1877,7 @@ extension CatalogWindowViewModel {
     /// encoder and scope are ready already.
     func searchFieldFocused() {
         guard queryDescriptor.search == nil else { return }
-        photoSearchIndex?.prepareForSearch(among: state.mediaGrid.orderedAssetIDs)
+        photoSearchIndex?.prepareForSearch(among: parts.mediaGrid.orderedAssetIDs)
     }
 
     /// The window's title, the one every scope is named by: the person a person's photos
@@ -1843,12 +1890,12 @@ extension CatalogWindowViewModel {
             return person.displayName
         }
         guard !showsSelectedScope else {
-            return state.title
+            return parts.title
         }
-        guard state.isCatalogLoaded else {
+        guard parts.isCatalogLoaded else {
             return CatalogWindowPolicy.titleWithoutCatalog(for: queryDescriptor.scope) ?? "Otos"
         }
-        return CatalogWindowPolicy.title(for: queryDescriptor.scope, libraries: state.libraries + state.removableSources)
+        return CatalogWindowPolicy.title(for: queryDescriptor.scope, libraries: parts.libraries + parts.removableSources)
     }
 
     /// The window's subtitle, under its title (DES-012 L3, DES-034): `Filtered` while a filter
@@ -1859,7 +1906,7 @@ extension CatalogWindowViewModel {
     var windowSubtitle: String {
         let ignoresFilter = detailPane.surface == .duplicates || detailPane.surface == .people
         let filtered = queryDescriptor.filter.isActive && !ignoresFilter
-        let searching = state.searchPhase == .reading && queryDescriptor.search != nil
+        let searching = parts.searchPhase == .reading && queryDescriptor.search != nil
         return [filtered ? "Filtered" : nil, searching ? "Searching\u{2026}" : nil]
             .compactMap(\.self)
             .joined(separator: " \u{00B7} ")
@@ -2009,7 +2056,7 @@ extension CatalogWindowViewModel {
     var showsSelectedScope: Bool {
         // Before the catalog loads no scope's state has been applied: the empty state's
         // scope is a placeholder, so every scope waits (DES-121).
-        state.isCatalogLoaded && state.resolvedSidebarSelection == queryDescriptor.scope
+        parts.isCatalogLoaded && parts.resolvedSidebarSelection == queryDescriptor.scope
     }
 
     /// What the detail pane draws (DES-118): the selected scope's surface from the click on,
@@ -2036,7 +2083,7 @@ extension CatalogWindowViewModel {
             return
         }
         waitingFramePresentedScope = scope
-        if !state.isCatalogLoaded, !catalogOpeningFramePresented {
+        if !parts.isCatalogLoaded, !catalogOpeningFramePresented {
             catalogOpeningFramePresented = true
             OtosLog.ui.noticeOperation("ui.catalogOpening", phase: "shown", fields: [
                 "vm": diagnosticID,
@@ -2062,8 +2109,8 @@ extension CatalogWindowViewModel {
     /// catalog's, or while it opens, what the open read, once the window has shown it waiting.
     /// Nil while nothing about them may be claimed.
     var sidebarFixedLibraryCount: Int? {
-        if state.isCatalogLoaded {
-            return SidebarSelectionPolicy.fixedLibraryCount(libraries: state.libraries)
+        if parts.isCatalogLoaded {
+            return SidebarSelectionPolicy.fixedLibraryCount(libraries: parts.libraries)
         }
         guard !catalogLoadFailed else {
             return nil
@@ -2080,7 +2127,7 @@ extension CatalogWindowViewModel {
     /// until a frame has been presented without it, so an open the first frame outlasts is
     /// the only one that shows anything.
     var catalogOpeningStatus: CatalogOpening? {
-        guard !state.isCatalogLoaded, catalogOpeningFramePresented else {
+        guard !parts.isCatalogLoaded, catalogOpeningFramePresented else {
             return nil
         }
         return catalogOpening

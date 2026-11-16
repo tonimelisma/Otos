@@ -577,7 +577,7 @@ extension PaneOriginalDownloads {
             guard let viewModel, viewModel.viewMode == .grid else {
                 return .skipped("notGrid")
             }
-            let order = viewModel.state.mediaGrid.orderedAssetIDs
+            let order = viewModel.parts.mediaGrid.orderedAssetIDs
             guard let index = SmokeTour.index(of: position, count: order.count) else {
                 return .skipped("scopeTooSmall")
             }
@@ -636,7 +636,7 @@ extension PaneOriginalDownloads {
             guard let viewModel else {
                 return .skipped("windowGone")
             }
-            let candidates = Array(viewModel.state.mediaGrid.orderedAssetIDs.prefix(SmokeTour.openablePhotoSearchLimit))
+            let candidates = Array(viewModel.parts.mediaGrid.orderedAssetIDs.prefix(SmokeTour.openablePhotoSearchLimit))
             let found: (openable: Set<MediaAssetID>, local: Set<MediaAssetID>, details: [MediaAssetID: MediaTileDetail])
             do {
                 found = try await openability(of: candidates, in: viewModel)
@@ -665,7 +665,7 @@ extension PaneOriginalDownloads {
             guard let viewModel, viewModel.viewMode == .loupe, let focus = viewModel.focusedAssetID else {
                 return .skipped("noLoupe")
             }
-            let order = viewModel.state.mediaGrid.orderedAssetIDs
+            let order = viewModel.parts.mediaGrid.orderedAssetIDs
             guard let next = BrowserModePolicy.neighbor(of: focus, in: order, delta: delta), next != focus else {
                 return .skipped("noNeighbour")
             }
@@ -856,7 +856,7 @@ extension PaneOriginalDownloads {
                 return ("filter", "kind", Outcome(result: "deadline", fields: ["reason": "noFilterOptions"]))
             }
             let optionsWaitMs = DiagnosticsTiming.milliseconds(since: waitStart)
-            let offered = Set(viewModel.state.filterOptions.formatsByKind.keys)
+            let offered = Set(viewModel.parts.filterOptions.formatsByKind.keys)
             let kinds = ([MediaKind.video] + MediaKind.displayOrder).filter(offered.contains)
             for kind in kinds {
                 var outcome = await query { $0.setMediaKind(kind, included: true) }
@@ -884,13 +884,13 @@ extension PaneOriginalDownloads {
                 return .skipped("queryUnchanged")
             }
             let answered = await until { model in
-                model.state.queryGeneration >= generation && model.state.searchPhase != .reading
+                model.parts.queryGeneration >= generation && model.parts.searchPhase != .reading
             }
             guard answered, let viewModel = self.viewModel else {
                 return .deadline
             }
             return .reported([
-                "items": "\(viewModel.state.mediaGrid.orderedAssetIDs.count)",
+                "items": "\(viewModel.parts.mediaGrid.orderedAssetIDs.count)",
                 "resultMs": "\(DiagnosticsTiming.milliseconds(since: started))",
             ])
         }

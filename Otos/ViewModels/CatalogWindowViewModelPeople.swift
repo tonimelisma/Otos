@@ -535,7 +535,7 @@ extension CatalogWindowViewModel {
 
     /// The published empty state; nil while the scope holds items.
     var mediaEmptyState: CatalogMediaEmptyState? {
-        state.mediaEmptyState
+        parts.mediaEmptyState
     }
 
     // MARK: - State
@@ -869,7 +869,7 @@ extension CatalogWindowViewModel {
     /// filters with it. Called when an act is submitted or answered and for every new People
     /// state; costs the people, never the photos (`CatalogPeopleState.overlaying`).
     func showPendingPeopleActs() {
-        let shown = state.people.map { $0.overlaying(pendingPeopleActs.effect) }
+        let shown = parts.people.map { $0.overlaying(pendingPeopleActs.effect) }
         if shownPeople != shown {
             shownPeople = shown
             reconcileShownPeople()

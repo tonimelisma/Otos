@@ -52,7 +52,9 @@ compiles it.
         │  ◀── DuplicatesProjection, PeopleGallery (actors): duplicate groups and People,
         │      each its own loop, asked after a catalog change; never awaited by a window pass
         ▼
-  CatalogWindowViewModel (@MainActor)  ── the SwiftUI bridge; assigns @Observable state
+  CatalogWindowViewModel (@MainActor)  ── the SwiftUI bridge; applies the newest publication
+        │  there is when it runs (`NewestValueMailbox`, filled by a relay off the main actor),
+        │  observed part by part (`CatalogWindowParts`), so a view re-renders only for its parts
         │  apply costs in what changed: content identity says the grid moved, its index
         │  answers selection/focus lookups (ADR 0004); `windowTitle` titles every scope;
         │  nothing on a pane the user has left acts until its scope publishes (`showsSelectedScope`)

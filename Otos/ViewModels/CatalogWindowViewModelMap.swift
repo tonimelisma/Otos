@@ -89,7 +89,7 @@ extension CatalogWindowViewModel {
     private func runMapClusterPasses() async {
         while mapClusterRequested != mapClusterCovered {
             let startedFrom = mapClusterRequested
-            guard let viewport = mapViewport, let map = state.map else {
+            guard let viewport = mapViewport, let map = parts.map else {
                 mapClusterCovered = startedFrom
                 mapClusters = []
                 continue
@@ -205,7 +205,7 @@ extension CatalogWindowViewModel {
     /// whatever margin fits is kept. A miss after that is logged and left: the camera
     /// stays centered on the items' average location and shows what it can.
     private func checkPendingFit(against viewport: MapViewport) {
-        guard let pending = mapPendingFit, viewport.cameraRevision == pending.revision, let map = state.map else {
+        guard let pending = mapPendingFit, viewport.cameraRevision == pending.revision, let map = parts.map else {
             return
         }
         let shown = MapClusterPolicy.bounds(of: viewport)
@@ -239,7 +239,7 @@ extension CatalogWindowViewModel {
             mapStackClick = .opened
             return
         }
-        guard let viewport = mapViewport, let map = state.map else {
+        guard let viewport = mapViewport, let map = parts.map else {
             mapStackClick = nil
             return
         }

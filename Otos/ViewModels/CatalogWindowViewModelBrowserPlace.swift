@@ -51,7 +51,7 @@ extension CatalogWindowViewModel {
             focus: focus,
             selection: GridSelection.orderedSelection(
                 gridSelection.selection,
-                in: state.mediaGrid.content
+                in: parts.mediaGrid.content
             )
         )
         place.save(to: preferences)
@@ -70,13 +70,13 @@ extension CatalogWindowViewModel {
     func restoreBrowserPlaceIfReady() {
         guard let place = pendingPlaceRestore,
               hasAppliedInitialDefault,
-              state.mediaGrid.descriptor == place.descriptor,
-              !state.mediaGrid.orderedAssetIDs.isEmpty
+              parts.mediaGrid.descriptor == place.descriptor,
+              !parts.mediaGrid.orderedAssetIDs.isEmpty
         else {
             return
         }
         pendingPlaceRestore = nil
-        let present = state.mediaGrid.content
+        let present = parts.mediaGrid.content
         let selection = place.selection.filter(present.contains)
         if !selection.isEmpty {
             let selected = Set(selection)

@@ -78,7 +78,7 @@ extension CatalogWindowViewModel {
             return false
         }
         let roots = Dictionary(
-            uniqueKeysWithValues: (state.libraries + state.removableSources).map { ($0.path, $0.root) }
+            uniqueKeysWithValues: (parts.libraries + parts.removableSources).map { ($0.path, $0.root) }
         )
         return ids.allSatisfy { roots[$0.libraryRootPath]?.kind.supportsMoveToTrash != false }
     }
@@ -101,7 +101,7 @@ extension CatalogWindowViewModel {
         if showsDuplicatesList {
             return selectedDuplicatesToMove()
         }
-        let stacks = state.mediaGrid.stacks
+        let stacks = parts.gridStacks
         var seen = Set<MediaAssetID>()
         return (targetIDs(.current).flatMap(stacks.files(reachedThrough:)).filter { seen.insert($0).inserted }, [])
     }
@@ -342,7 +342,7 @@ extension CatalogWindowViewModel {
     private func duplicateSizes(for ids: [MediaAssetID]) -> DuplicateSizes {
         var sizes: [MediaAssetID: Int64?] = [:]
         let wanted = Set(ids)
-        for group in state.duplicates?.groups ?? [] {
+        for group in parts.duplicates?.groups ?? [] {
             for copy in group.copies where wanted.contains(copy.id) {
                 sizes[copy.id] = copy.byteSize
             }
@@ -632,7 +632,7 @@ extension CatalogWindowViewModel {
     private func navigateAfterHiding(_ hidden: Set<MediaAssetID>) {
         // Only where the hidden items are on screen: a scope changed while the download
         // question was sized holds none of them, and its selection is the user's own.
-        let order = state.mediaGrid.content
+        let order = parts.mediaGrid.content
         guard showsSelectedScope, let lastHidden = order.inDisplayOrder(hidden).last else {
             return
         }

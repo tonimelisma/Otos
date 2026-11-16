@@ -28,7 +28,7 @@ extension CatalogWindowViewModel {
     /// derived from the plan on every frame.
     var selectedImportPresentation: MediaOperationSourcePresentation? {
         guard case let .library(path) = sidebarSelection,
-              state.removableSources.contains(where: { $0.path == path })
+              parts.removableSources.contains(where: { $0.path == path })
         else {
             return nil
         }
@@ -224,7 +224,7 @@ extension CatalogWindowViewModel {
     /// and only the user (Move to Trash, removing the library) takes them out from elsewhere.
     func followRunsIntoTheirBatches() {
         for (batchID, sourcePath) in importBatchesAwaitingTheirRow {
-            let rowExists = state.importBatches.contains { $0.batchID == batchID }
+            let rowExists = parts.importBatches.contains { $0.batchID == batchID }
             let onTheCard = sidebarSelection == .library(sourcePath)
             guard rowExists || !onTheCard else { continue }
             importBatchesAwaitingTheirRow[batchID] = nil
@@ -312,7 +312,7 @@ extension CatalogWindowViewModel {
         guard case let .library(path) = sidebarSelection else {
             return nil
         }
-        guard state.libraries.contains(where: { $0.path == path && $0.kind.supportsReorganization }) else {
+        guard parts.libraries.contains(where: { $0.path == path && $0.kind.supportsReorganization }) else {
             return nil
         }
         return path

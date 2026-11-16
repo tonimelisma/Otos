@@ -186,7 +186,7 @@ extension CatalogWindowViewModel {
         guard let survivor = StoryPlaybackPolicy.survivor(
             of: current,
             previousOrderedIDs: previousOrder,
-            survivingOrderedIDs: state.mediaGrid.content
+            survivingOrderedIDs: parts.mediaGrid.content
         ) else {
             closeStory(reason: "empty")
             return
@@ -207,7 +207,7 @@ extension CatalogWindowViewModel {
     /// Whether View ▸ Play Story acts: On This Day shows at least one anniversary and no
     /// story plays.
     var canPlayStory: Bool {
-        showsOnThisDay && showsSelectedScope && story == nil && state.onThisDay?.anniversaries.isEmpty == false
+        showsOnThisDay && showsSelectedScope && story == nil && parts.onThisDay?.anniversaries.isEmpty == false
     }
 
     /// View ▸ Play Story (⌘Return): from the newest anniversary.
@@ -218,11 +218,11 @@ extension CatalogWindowViewModel {
     /// An anniversary in the collection was clicked, or Return / Space pressed on it: its
     /// story, from its first item, continuing into older ones.
     func playStory(anniversary: CalendarDay?) {
-        guard canPlayStory, let onThisDay = state.onThisDay,
+        guard canPlayStory, let onThisDay = parts.onThisDay,
               let first = StoryPlaybackPolicy.start(
                   anniversary: anniversary,
                   anniversaries: onThisDay.anniversaries,
-                  orderedIDs: state.mediaGrid.orderedAssetIDs
+                  orderedIDs: parts.mediaGrid.orderedAssetIDs
               )
         else {
             return
@@ -235,7 +235,7 @@ extension CatalogWindowViewModel {
         story = StoryPlayback(visit: focusVisit)
         OtosLog.ui.noticeOperation("story.start", phase: "applied", fields: [
             "anniversary": anniversary?.diagnosticDescription ?? "newest",
-            "items": "\(state.mediaGrid.orderedAssetIDs.count)",
+            "items": "\(parts.mediaGrid.orderedAssetIDs.count)",
             "anniversaries": "\(onThisDay.anniversaries.count)",
         ])
         focusStoryItem(first)
@@ -244,7 +244,7 @@ extension CatalogWindowViewModel {
     /// → and the player's Next: the next item, across anniversaries.
     func storyNext() {
         guard let current = storyItem,
-              let next = StoryPlaybackPolicy.next(after: current, in: state.mediaGrid.orderedAssetIDs)
+              let next = StoryPlaybackPolicy.next(after: current, in: parts.mediaGrid.orderedAssetIDs)
         else {
             return
         }
@@ -254,7 +254,7 @@ extension CatalogWindowViewModel {
     /// ← and the player's Previous: the item before, across anniversaries.
     func storyPrevious() {
         guard let current = storyItem,
-              let previous = StoryPlaybackPolicy.previous(before: current, in: state.mediaGrid.orderedAssetIDs)
+              let previous = StoryPlaybackPolicy.previous(before: current, in: parts.mediaGrid.orderedAssetIDs)
         else {
             return
         }
@@ -262,11 +262,11 @@ extension CatalogWindowViewModel {
     }
 
     var canStoryNext: Bool {
-        storyItem.flatMap { StoryPlaybackPolicy.next(after: $0, in: state.mediaGrid.orderedAssetIDs) } != nil
+        storyItem.flatMap { StoryPlaybackPolicy.next(after: $0, in: parts.mediaGrid.orderedAssetIDs) } != nil
     }
 
     var canStoryPrevious: Bool {
-        storyItem.flatMap { StoryPlaybackPolicy.previous(before: $0, in: state.mediaGrid.orderedAssetIDs) } != nil
+        storyItem.flatMap { StoryPlaybackPolicy.previous(before: $0, in: parts.mediaGrid.orderedAssetIDs) } != nil
     }
 
     /// Whether Play / Pause acts: not after the last item has finished.
@@ -319,11 +319,11 @@ extension CatalogWindowViewModel {
         }
         let current = focusedAssetID
         let anniversary = current.flatMap { id in
-            state.onThisDay.flatMap { onThisDay in
+            parts.onThisDay.flatMap { onThisDay in
                 StoryPlaybackPolicy.place(
                     of: id,
                     anniversaries: onThisDay.anniversaries,
-                    orderedIDs: state.mediaGrid.orderedAssetIDs
+                    orderedIDs: parts.mediaGrid.orderedAssetIDs
                 )?.anniversary.day
             }
         }
@@ -493,7 +493,7 @@ extension CatalogWindowViewModel {
         guard var story, let current = focusedAssetID else {
             return
         }
-        if let next = StoryPlaybackPolicy.next(after: current, in: state.mediaGrid.orderedAssetIDs) {
+        if let next = StoryPlaybackPolicy.next(after: current, in: parts.mediaGrid.orderedAssetIDs) {
             showStoryItem(next, reason: reason)
             return
         }
@@ -511,8 +511,8 @@ extension CatalogWindowViewModel {
 
     /// Moves the story to `id` by moving focus.
     private func showStoryItem(_ id: MediaAssetID, reason: String) {
-        let position = state.onThisDay.flatMap { onThisDay in
-            StoryPlaybackPolicy.place(of: id, anniversaries: onThisDay.anniversaries, orderedIDs: state.mediaGrid.orderedAssetIDs)
+        let position = parts.onThisDay.flatMap { onThisDay in
+            StoryPlaybackPolicy.place(of: id, anniversaries: onThisDay.anniversaries, orderedIDs: parts.mediaGrid.orderedAssetIDs)
         }
         OtosLog.ui.noticeOperation("story.advance", phase: "applied", fields: [
             "reason": reason,

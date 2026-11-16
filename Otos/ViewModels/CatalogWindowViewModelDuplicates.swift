@@ -35,25 +35,25 @@ extension CatalogWindowViewModel {
     /// The sidebar row exists, once the catalog has loaded (APP-044), while any group is
     /// active and while it is selected.
     var showsDuplicatesRow: Bool {
-        guard state.isCatalogLoaded else {
+        guard parts.isCatalogLoaded else {
             return false
         }
-        return state.duplicates?.activeGroups.isEmpty == false || sidebarSelection.sidebarRow == .duplicates
+        return parts.duplicates?.activeGroups.isEmpty == false || sidebarSelection.sidebarRow == .duplicates
     }
 
     /// The row's count, photos with duplicates; nil until the groups are first built.
     var duplicatesCount: Int? {
-        state.duplicates?.activeGroups.count
+        parts.duplicates?.activeGroups.count
     }
 
     /// What the bar states and the act moves; nil until the groups are first built.
     var duplicatesTally: DuplicatesTally? {
-        state.duplicates.map { duplicatesSession.tally(in: $0) }
+        parts.duplicates.map { duplicatesSession.tally(in: $0) }
     }
 
     /// The group holding a copy, among those on screen or kept.
     func duplicateGroup(containing id: MediaAssetID) -> DuplicateGroup? {
-        state.duplicates?.groups.first { group in group.copies.contains { $0.id == id } }
+        parts.duplicates?.groups.first { group in group.copies.contains { $0.id == id } }
     }
 
     // MARK: - State
@@ -226,7 +226,7 @@ extension CatalogWindowViewModel {
     /// `6 photos need your choice · Show`: selects the first group whose copies hold work
     /// that cannot be combined and that the user has not decided.
     func revealDuplicateGroupNeedingChoice() {
-        guard let group = state.duplicates?.activeGroups.first(where: { $0.defaultKeep == nil && duplicatesSession.picks[$0.id] == nil })
+        guard let group = parts.duplicates?.activeGroups.first(where: { $0.defaultKeep == nil && duplicatesSession.picks[$0.id] == nil })
         else {
             return
         }

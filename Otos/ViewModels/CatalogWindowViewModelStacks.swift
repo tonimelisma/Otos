@@ -19,7 +19,7 @@ struct StackKeyCommand {
 extension CatalogWindowViewModel {
     /// The stacks the current targets show, collapsed and expanded.
     private var targetStacks: (collapsed: [PhotoStack], expanded: [PhotoStack]) {
-        let stacks = state.mediaGrid.stacks
+        let stacks = parts.gridStacks
         var seen = Set<PhotoStackID>()
         var collapsed: [PhotoStack] = []
         var expanded: [PhotoStack] = []
@@ -63,7 +63,7 @@ extension CatalogWindowViewModel {
     /// (APP-080).
     func toggleStack(shownBy id: MediaAssetID) {
         guard showsSelectedScope else { return }
-        let stacks = state.mediaGrid.stacks
+        let stacks = parts.gridStacks
         if let stack = stacks.collapsed(shownBy: id) {
             setExpandedStacks(expandedStacks.union([stack.id]))
         } else if let stack = stacks.expanded(shownBy: id) {
@@ -80,12 +80,12 @@ extension CatalogWindowViewModel {
     /// Photo ▸ Make Key Photo (⇧S): enabled on one member of an expanded stack that is not
     /// its key already.
     var canMakeKeyPhoto: Bool {
-        guard let id = singleTarget, let stack = state.mediaGrid.stacks.expanded(shownBy: id) else { return false }
+        guard let id = singleTarget, let stack = parts.gridStacks.expanded(shownBy: id) else { return false }
         return stack.key != id
     }
 
     func makeKeyPhoto() {
-        guard canMakeKeyPhoto, let id = singleTarget, let stack = state.mediaGrid.stacks.expanded(shownBy: id) else {
+        guard canMakeKeyPhoto, let id = singleTarget, let stack = parts.gridStacks.expanded(shownBy: id) else {
             return
         }
         submitStackKey(id, in: stack)
@@ -94,18 +94,18 @@ extension CatalogWindowViewModel {
     /// The pair the loupe or the edit panel shows, for its `JPG`/`RAW` switch: the pair the
     /// one target is a file of, else nil and the switch is absent.
     var shownPair: PhotoStack? {
-        singleTarget.flatMap(state.mediaGrid.stacks.pair(shownBy:))
+        singleTarget.flatMap(parts.gridStacks.pair(shownBy:))
     }
 
     /// The `JPG`/`RAW` switch: shows `member` in its pair's place. The focus and the
     /// selection follow it when the new state arrives (`carrySelectionIntoStacks`).
     func showPairMember(_ member: MediaAssetID) {
-        guard let id = singleTarget, let pair = state.mediaGrid.stacks.pair(shownBy: id),
+        guard let id = singleTarget, let pair = parts.gridStacks.pair(shownBy: id),
               pair.members.contains(member), member != id
         else {
             return
         }
-        if state.mediaGrid.stacks.tiles[id]?.pairExpanded == true {
+        if parts.gridStacks.tiles[id]?.pairExpanded == true {
             // An expanded pair shows both files; the switch moves to the other one.
             if viewMode == .loupe {
                 setFocus(member)

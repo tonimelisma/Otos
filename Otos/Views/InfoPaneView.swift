@@ -10,10 +10,21 @@ import SwiftUI
 /// of a kind (DES-053); with no single item they read `—`. Which sections are folded is the
 /// person's, remembered across launches like the Edit pane's. A scene label in In This Photo
 /// is a button that searches for its label, and the toolbar field shows its name (`search`).
-struct InfoPaneView: View {
+struct InfoPaneView: View, Equatable {
     let info: PhotoInfo?
     let people: InfoPanePeople?
     let search: (String) -> Void
+
+    /// What the pane shows. The window rebuilds its inspector for every state it applies,
+    /// and closures never compare equal, so without this every publication — a one-tile hide,
+    /// a background republish — re-resolved and re-laid out every text the pane holds, and the
+    /// window measured it again for its minimum size: on an optimised build about half of each
+    /// 45–60 ms main-thread update while acts ran in a row
+    /// (`docs/research/2026-11-16-window-state-turns.md`). An equal pane is not rendered again
+    /// (`.equatable()` where `ContentView` hosts it); its intents are not part of what it shows.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.info == rhs.info && InfoPanePeople.showSame(lhs.people, rhs.people)
+    }
 
     /// Section IDs the person folded, comma-separated.
     @AppStorage("infoPane.foldedSections") private var foldedSections = ""
@@ -342,6 +353,20 @@ struct InfoPanePeople {
     let perform: (MediaItemCommand) -> Void
     /// The pointer over a row outlines its faces on their photos; off every row, none.
     let hover: ([FaceID]) -> Void
+
+    /// Whether the two show the same groups and line from the same images; the intents are
+    /// not compared.
+    static func showSame(_ lhs: Self?, _ rhs: Self?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            true
+        case let (lhs?, rhs?):
+            lhs.menu == rhs.menu && lhs.line == rhs.line && lhs.images === rhs.images
+                && lhs.derivedImageDirectory == rhs.derivedImageDirectory
+        default:
+            false
+        }
+    }
 }
 
 /// The People section: one row per group of the photo menus — for one photo, each face as

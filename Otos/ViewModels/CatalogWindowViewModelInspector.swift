@@ -77,7 +77,7 @@ extension CatalogWindowViewModel {
         let materialization = materializationCoordinator
         let libraryName = sourceName(for: id.libraryRootPath)
         let rootNames = Dictionary(
-            (state.libraries + state.removableSources).map { ($0.path, $0.displayName) }
+            (parts.libraries + parts.removableSources).map { ($0.path, $0.displayName) }
         ) { first, _ in first }
         let labelNames = sceneLabelNames
         let availability = descriptionAvailability
@@ -104,7 +104,7 @@ extension CatalogWindowViewModel {
                 return
             }
             guard !Task.isCancelled, let self, targetIDs(.current) == [id], showsInfo else { return }
-            photoInfo = read.withStack(state.mediaGrid.stacks.stack(shownBy: id))
+            photoInfo = read.withStack(parts.gridStacks.stack(shownBy: id))
             photoInfoTask = nil
             // This read's In This Photo and Description may predate a reading announced while
             // it ran, when the refresh still re-read the item shown before; one more re-read
