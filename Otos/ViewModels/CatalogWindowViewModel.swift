@@ -479,6 +479,14 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
     @ObservationIgnored private let startsEnrichment: Bool
+    /// Which background owners `start` starts: every one, except in a tour that leaves some
+    /// out (`BackgroundOwners.configured`).
+    @ObservationIgnored let backgroundOwners: BackgroundOwners
+    /// The newest scope paint (`op=ui.sidebarSelectionToPaint phase=finish`), the fact a
+    /// tour's sidebar step waits on.
+    private(set) var lastSidebarPaint: SidebarPaintReport?
+    /// The newest moment every visible tile held its thumbnail, the fact a scroll waits on.
+    private(set) var lastVisibleThumbnails: VisibleThumbnailsReport?
     /// Removable-volume and camera monitoring observe hardware attached to the host
     /// machine, so a `true` default would make behavior depend on whatever card or
     /// camera happens to be plugged in. Production starts them; tests that assert on
@@ -730,6 +738,7 @@ final class CatalogWindowViewModel {
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
         startsSourceMonitoring: Bool = true,
+        backgroundOwners: BackgroundOwners = .all,
         preferencesDomain: PreferencesDomain,
         previewLoader: (any PreviewLoading)? = nil,
         videoLoader: VideoPreviewLoader? = nil,
@@ -922,6 +931,7 @@ final class CatalogWindowViewModel {
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
         self.startsSourceMonitoring = startsSourceMonitoring
+        self.backgroundOwners = backgroundOwners
         if let previewLoader {
             self.previewLoader = previewLoader
         } else {
@@ -975,6 +985,14 @@ final class CatalogWindowViewModel {
             pendingPlaceRestore = place
             queryDescriptor = place.descriptor
             sidebarSelection = place.descriptor.scope
+        }
+        // The paint and visible-thumbnail facts the monitor and the tile store report on the
+        // main thread, republished as this window's state.
+        stallMonitor.onIntentPainted = { [weak self] report in
+            self?.intentPainted(report)
+        }
+        tileContentStore.onVisibleThumbnailsComplete = { [weak self] report in
+            self?.lastVisibleThumbnails = report
         }
     }
 
@@ -1165,7 +1183,9 @@ extension CatalogWindowViewModel {
         }
         startMediaOperationsIfNeeded()
         if startsEnrichment {
-            startImmichAccounts(store: store)
+            if backgroundOwners.starts(.immich) {
+                startImmichAccounts(store: store)
+            }
             startEnrichment()
         }
     }
@@ -1254,7 +1274,7 @@ extension CatalogWindowViewModel {
         // `startCatalog` runs.
         enrichmentStartTask = Task { [
             coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, previewFaceReader, photoSearchIndex,
-            placeNameReader, photoDescriptionWriter, store = catalogStore
+            placeNameReader, photoDescriptionWriter, store = catalogStore, owners = backgroundOwners
         ] in
             do {
                 try await store.start()
@@ -1262,15 +1282,43 @@ extension CatalogWindowViewModel {
                 OtosLog.persistence.error("Enrichment startup skipped because catalog start failed")
                 return
             }
-            await materializationCoordinator.start()
-            await coordinator.start()
-            await renderSignatureRefresher?.start()
-            await previewFaceReader?.start()
-            await placeNameReader?.start()
-            await photoSearchIndex?.start()
-            await photoDescriptionWriter?.start()
-            await metadataRefresher?.refresh()
+            if owners.starts(.enrichment) {
+                await materializationCoordinator.start()
+                await coordinator.start()
+            }
+            if owners.starts(.renderSignatures) {
+                await renderSignatureRefresher?.start()
+            }
+            if owners.starts(.previewFaces) {
+                await previewFaceReader?.start()
+            }
+            if owners.starts(.placeNames) {
+                await placeNameReader?.start()
+            }
+            if owners.starts(.searchIndex) {
+                await photoSearchIndex?.start()
+            }
+            if owners.starts(.descriptions) {
+                await photoDescriptionWriter?.start()
+            }
+            if owners.starts(.metadataRefresh) {
+                await metadataRefresher?.refresh()
+            }
         }
+    }
+
+    /// A scope's surface painted: published for whoever waits on a paint, and a checkpoint.
+    private func intentPainted(_ report: SidebarPaintReport) {
+        lastSidebarPaint = report
+        ResourceCheckpoint.record("paint", fields: [
+            "scope": report.scope.diagnosticDescription,
+            "tileCacheMB": "\(tileContentStore.imageBytes / 1_048_576)",
+        ], storeUse: storeUse)
+    }
+
+    /// Reads the Store's cumulative use for a resource checkpoint, from any thread.
+    var storeUse: @Sendable () -> CatalogStoreUse {
+        { [catalogStore] in catalogStore.use() }
     }
 
     private func startQueryForwarding(projection: CatalogProjection) {
@@ -1552,6 +1600,7 @@ extension CatalogWindowViewModel {
             "scope": state.resolvedSidebarSelection.diagnosticDescription,
             "emptyState": state.mediaEmptyState?.diagnosticDescription ?? "none",
         ])
+        ResourceCheckpoint.record("firstGrid", fields: ["items": "\(items)"], storeUse: storeUse)
     }
 
     func clearEjectingSourceIdentity(_ identity: DeviceIdentity) {

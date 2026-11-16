@@ -107,5 +107,7 @@ otos_log_stream_close() {
     wait "$OTOS_LOG_STREAM_PID" >/dev/null 2>&1 || true
     OTOS_LOG_STREAM_PID=""
   fi
-  exec 3<&- 2>/dev/null || true
+  # Braced, so the silencing covers this close only: a bare `exec 3<&- 2>/dev/null` would
+  # send the caller's stderr to /dev/null for the rest of the script.
+  { exec 3<&-; } 2>/dev/null || true
 }

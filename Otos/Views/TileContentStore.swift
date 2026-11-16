@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import OSLog
 
 // Controller-owned tile content guide
 //
@@ -36,6 +37,14 @@ nonisolated struct TileContent: Equatable {
     }
 }
 
+/// Every visible tile holds a thumbnail: `revision` counts these reports, `milliseconds` runs
+/// from the pass boundary that made this set visible.
+nonisolated struct VisibleThumbnailsReport: Equatable, Sendable {
+    let revision: UInt64
+    let visible: Int
+    let milliseconds: Int
+}
+
 /// Classification returned by store mutations so the tile can fade only a first async
 /// paint or a same-asset newer-thumbnail replacement — never a sync cache/store repaint.
 nonisolated enum TileContentChange: Equatable {
@@ -56,11 +65,25 @@ final class TileContentStore {
         var imageCost: Int
     }
 
+    /// The visible tiles still without a thumbnail since the visible set last changed.
+    private struct VisibleWait {
+        let visible: Int
+        var missing: Set<MediaAssetID>
+        let since: ContinuousClock.Instant
+    }
+
     private var entries: [MediaAssetID: Entry] = [:]
     private var accessClock: UInt64 = 0
     private var pinnedIDs: Set<MediaAssetID> = []
     private(set) var imageBytes: Int = 0
     let imageByteBudget: Int
+    /// The visible set the last pass boundary pinned, and what of it still has no image.
+    private var trackedVisible: Set<MediaAssetID> = []
+    private var visibleWait: VisibleWait?
+    private var visibleReports: UInt64 = 0
+    /// Told each time every visible tile holds a thumbnail, once per visible set: the fact a
+    /// scroll waits for (`op=ui.mediaGrid.visibleThumbnails`).
+    var onVisibleThumbnailsComplete: ((VisibleThumbnailsReport) -> Void)?
 
     init(imageByteBudget: Int = 256 * 1024 * 1024) {
         self.imageByteBudget = max(1, imageByteBudget)
@@ -83,6 +106,52 @@ final class TileContentStore {
     /// images for currently visible identities.
     func pinVisible(_ ids: Set<MediaAssetID>) {
         pinnedIDs = ids
+        trackVisible(ids)
+    }
+
+    /// A new visible set starts a wait for its tiles' thumbnails; the same set repinned at
+    /// another pass boundary keeps the wait it has. A tile whose asset has no thumbnail keeps
+    /// its set's wait open until the visible set changes.
+    private func trackVisible(_ ids: Set<MediaAssetID>) {
+        guard ids != trackedVisible else {
+            return
+        }
+        trackedVisible = ids
+        guard !ids.isEmpty else {
+            visibleWait = nil
+            return
+        }
+        if let visibleWait, !visibleWait.missing.isEmpty {
+            OtosLog.ui.debugOperation("ui.mediaGrid.visibleThumbnails", phase: "superseded", fields: [
+                "visible": "\(visibleWait.visible)",
+                "missing": "\(visibleWait.missing.count)",
+                "ms": "\(DiagnosticsTiming.milliseconds(since: visibleWait.since))",
+            ])
+        }
+        visibleWait = VisibleWait(
+            visible: ids.count,
+            missing: ids.filter { entries[$0]?.content.image == nil },
+            since: .now
+        )
+        completeVisibleWaitIfPainted()
+    }
+
+    private func completeVisibleWaitIfPainted() {
+        guard let wait = visibleWait, wait.missing.isEmpty else {
+            return
+        }
+        visibleWait = nil
+        visibleReports &+= 1
+        let report = VisibleThumbnailsReport(
+            revision: visibleReports,
+            visible: wait.visible,
+            milliseconds: DiagnosticsTiming.milliseconds(since: wait.since)
+        )
+        OtosLog.ui.debugOperation("ui.mediaGrid.visibleThumbnails", phase: "complete", fields: [
+            "visible": "\(report.visible)",
+            "ms": "\(report.milliseconds)",
+        ])
+        onVisibleThumbnailsComplete?(report)
     }
 
     /// Additively pins one id (a tile being bound mid-pass). `pinVisible(_:)` replaces
@@ -195,6 +264,9 @@ final class TileContentStore {
         entry.accessStamp = nextAccessStamp()
         entries[id] = entry
         enforceImageBudget()
+        if visibleWait?.missing.remove(id) != nil {
+            completeVisibleWaitIfPainted()
+        }
         return hadImage ? .replacedImage : .firstImage
     }
 

@@ -86,6 +86,9 @@ actor CatalogProjection {
     let duplicatesBuilder: DuplicatesProjection.Builder?
     /// Tests replace the People build to hold it at its suspension; production builds it.
     let peopleBuilder: PeopleAssignment.Builder?
+    /// Which of the duplicates and People owners this projection starts: all of them, except
+    /// in a tour that leaves some out (`BackgroundOwners`).
+    let backgroundOwners: BackgroundOwners
 
     private var queryRequest: CatalogQueryRequest = .initial
     /// Distinguishes one projection's diagnostics from another's in a shared log.
@@ -207,12 +210,14 @@ actor CatalogProjection {
         cadence: Duration = .seconds(1),
         stateBuilder: WindowStateBuilder? = nil,
         duplicatesBuilder: DuplicatesProjection.Builder? = nil,
-        peopleBuilder: PeopleAssignment.Builder? = nil
+        peopleBuilder: PeopleAssignment.Builder? = nil,
+        backgroundOwners: BackgroundOwners = .all
     ) {
         self.cadence = cadence
         self.stateBuilder = stateBuilder
         self.duplicatesBuilder = duplicatesBuilder
         self.peopleBuilder = peopleBuilder
+        self.backgroundOwners = backgroundOwners
     }
 
     func states(
@@ -710,28 +715,35 @@ private extension CatalogProjection {
 
         // A new subscription knows no groups or people yet, so its first loaded pass asks for
         // them.
-        let duplicatesProjection = DuplicatesProjection(store: store, builder: duplicatesBuilder)
+        // A tour can leave either owner unstarted (`BackgroundOwners`): it is then never made.
+        let duplicatesProjection = backgroundOwners.starts(.duplicates)
+            ? DuplicatesProjection(store: store, builder: duplicatesBuilder) : nil
         self.duplicatesProjection = duplicatesProjection
-        let peopleAssignment = PeopleAssignment(store: store, builder: peopleBuilder)
+        let peopleAssignment = backgroundOwners.starts(.people)
+            ? PeopleAssignment(store: store, builder: peopleBuilder) : nil
         self.peopleAssignment = peopleAssignment
         duplicatesRequested &+= 1
         peopleRequested &+= 1
-        duplicatesTask = Task { [weak self, duplicatesProjection] in
-            await duplicatesProjection.start()
-            for await built in duplicatesProjection.builds {
-                guard let self else {
-                    return
+        if let duplicatesProjection {
+            duplicatesTask = Task { [weak self, duplicatesProjection] in
+                await duplicatesProjection.start()
+                for await built in duplicatesProjection.builds {
+                    guard let self else {
+                        return
+                    }
+                    await publishDuplicates(built)
                 }
-                await publishDuplicates(built)
             }
         }
-        peopleTask = Task { [weak self, peopleAssignment] in
-            await peopleAssignment.start()
-            for await built in peopleAssignment.builds {
-                guard let self else {
-                    return
+        if let peopleAssignment {
+            peopleTask = Task { [weak self, peopleAssignment] in
+                await peopleAssignment.start()
+                for await built in peopleAssignment.builds {
+                    guard let self else {
+                        return
+                    }
+                    await publishPeople(built)
                 }
-                await publishPeople(built)
             }
         }
 
@@ -742,8 +754,8 @@ private extension CatalogProjection {
         cadenceTask = Task { [weak self, continuation, duplicatesProjection, peopleAssignment] in
             defer {
                 continuation.finish()
-                duplicatesProjection.stop()
-                peopleAssignment.stop()
+                duplicatesProjection?.stop()
+                peopleAssignment?.stop()
             }
             while !Task.isCancelled {
                 do {
@@ -1028,7 +1040,8 @@ private extension CatalogProjection {
         // An injected test builder derives nothing. Otherwise a pass that took up a change
         // an owner's answer is built from asks that owner for a build, and one that took up
         // added rows asks People for its tally; it waits for neither.
-        guard stateBuilder == nil, let duplicatesProjection, let peopleAssignment else {
+        // An owner a tour left unstarted (`BackgroundOwners`) is nil and is asked nothing.
+        guard stateBuilder == nil else {
             return
         }
         let asksDuplicates = duplicatesStartedFrom != duplicatesForwarded
@@ -1037,8 +1050,11 @@ private extension CatalogProjection {
         duplicatesForwarded = duplicatesStartedFrom
         peopleForwarded = peopleStartedFrom
         tallyForwarded = tallyStartedFrom
-        if asksDuplicates {
+        if asksDuplicates, let duplicatesProjection {
             await duplicatesProjection.request()
+        }
+        guard let peopleAssignment else {
+            return
         }
         if asksPeople {
             // A full People pass reads the tally too.

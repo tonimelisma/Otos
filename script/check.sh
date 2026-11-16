@@ -151,6 +151,12 @@ if ! "$ROOT_DIR/script/ci-repo-shape.sh"; then
   echo "op=check.stage phase=fail stage=fast-gates reason=repoShape" >&2
   fast_failed=1
 fi
+# The scorecard's parser, against synthetic log lines (ADR 0015). The scorecard itself is a
+# report and never runs here.
+if ! /usr/bin/python3 -I "$ROOT_DIR/script/lib/scorecard_test.py" 2>&1 | tail -3; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=scorecardParser" >&2
+  fast_failed=1
+fi
 if [[ "$fast_failed" != "0" ]]; then
   echo "check: FAILED at fast-gates (cost you seconds, not a build)" >&2
   exit 1

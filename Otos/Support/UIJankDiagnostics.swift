@@ -37,6 +37,15 @@ nonisolated struct MainRunLoopOperationToken: Equatable {
     fileprivate let id: Int
 }
 
+/// A scope intent's surface painted (`op=ui.sidebarSelectionToPaint phase=finish`):
+/// `revision` counts these reports.
+nonisolated struct SidebarPaintReport: Equatable, Sendable {
+    let revision: UInt64
+    let scope: SidebarSelection
+    let surface: String
+    let milliseconds: Int
+}
+
 @MainActor
 final class MainRunLoopStallMonitor {
     private struct OperationRecord {
@@ -73,6 +82,10 @@ final class MainRunLoopStallMonitor {
     private var operationStack: [OperationRecord] = []
     private var lastLongOperation: CompletedOperationRecord?
     private var pendingIntentToPaint: PendingIntentToPaint?
+    private var paintReports: UInt64 = 0
+    /// Told each time a scope intent's surface paints: the fact the window's owner republishes
+    /// for whoever waits on a paint (the tour) and checkpoints resources at.
+    var onIntentPainted: ((SidebarPaintReport) -> Void)?
     /// Samples the main thread's stack while a stall lasts; present while started.
     private var watcher: StalledThreadWatcher?
     private var nextStallID = 0
@@ -148,6 +161,8 @@ final class MainRunLoopStallMonitor {
             phase: "finish",
             fields: ["scope": appliedScope.diagnosticDescription, "surface": surface, "ms": "\(ms)"]
         )
+        paintReports &+= 1
+        onIntentPainted?(SidebarPaintReport(revision: paintReports, scope: appliedScope, surface: surface, milliseconds: ms))
         return true
     }
 

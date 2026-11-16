@@ -41,14 +41,25 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     /// type takes them as required (no-default) parameters, so a caller cannot reach
     /// production data, or depend on how full the disk is, by omitting an argument
     /// (ADR 0020, ADR 0027).
-    let catalogViewModel = CatalogWindowViewModel(
-        catalogStore: CatalogStore(
-            location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
-        ),
-        preferencesDomain: .standard,
-        volumeCapacity: FreeSpaceFloor.availableBytes(onVolumeOf:),
-        trashFiles: .live
-    )
+    ///
+    /// Every background owner starts, except in a debug tour that names some to leave out
+    /// (`BackgroundOwners.configured`).
+    let catalogViewModel: CatalogWindowViewModel = {
+        let owners = BackgroundOwners.configured()
+        return CatalogWindowViewModel(
+            catalogStore: CatalogStore(
+                location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
+            ),
+            catalogProjection: CatalogProjection(backgroundOwners: owners),
+            backgroundOwners: owners,
+            preferencesDomain: .standard,
+            volumeCapacity: FreeSpaceFloor.availableBytes(onVolumeOf:),
+            trashFiles: .live
+        )
+    }()
+
+    /// The system's memory-pressure reports, checkpointed for the session.
+    private var memoryPressure: MemoryPressureReporter?
 
     func applicationWillFinishLaunching(_: Notification) {
         backgroundReading = BackgroundReading.begin()
@@ -56,6 +67,8 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
         OtosLog.app.notice(
             "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"
         )
+        memoryPressure = MemoryPressureReporter(storeUse: catalogViewModel.storeUse)
+        ResourceCheckpoint.record("sessionStart")
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -138,9 +151,11 @@ public struct OtosApp: App {
                     let state = OtosSignpost.app.beginInterval("MainWindowContentAttached")
                     OtosLog.app.notice("op=window.attached")
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
+                    ResourceCheckpoint.record("windowAttached")
                     #if DEBUG
                         SmokeLibrarySelection.applyIfPresent(to: catalogViewModel)
                         SmokeWindowCapture.applyIfPresent(to: catalogViewModel)
+                        SmokeTour.applyIfPresent(to: catalogViewModel)
                     #endif
                 }
         }

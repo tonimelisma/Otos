@@ -173,6 +173,29 @@ struct TileContentStoreTests {
         #expect(store.content(for: wasAdditive.id) == nil)
         #expect(store.content(for: keep.id) != nil)
     }
+
+    /// A new visible set reports once every one of its tiles holds a thumbnail; repinning the
+    /// same set keeps its wait, and a set already painted reports at once.
+    @Test func aVisibleSetReportsWhenEveryTileHoldsAThumbnail() {
+        let store = TileContentStore()
+        var reports: [VisibleThumbnailsReport] = []
+        store.onVisibleThumbnailsComplete = { reports.append($0) }
+        let first = makeDetail(path: "a.jpg", thumbnailPath: "a-t.jpg")
+        let second = makeDetail(path: "b.jpg", thumbnailPath: "b-t.jpg")
+        _ = store.mergeDetail(first)
+        _ = store.mergeDetail(second)
+
+        store.pinVisible([first.id, second.id])
+        _ = store.applyDecoded(makeImage(), key: MediaAssetTilePresentation.imageContentKey(first), for: first.id)
+        store.pinVisible([first.id, second.id])
+        #expect(reports.isEmpty)
+        _ = store.applyDecoded(makeImage(), key: MediaAssetTilePresentation.imageContentKey(second), for: second.id)
+        #expect(reports.map(\.revision) == [1])
+        #expect(reports.first?.visible == 2)
+
+        store.pinVisible([first.id])
+        #expect(reports.map(\.revision) == [1, 2])
+    }
 }
 
 @MainActor

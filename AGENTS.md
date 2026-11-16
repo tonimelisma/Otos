@@ -377,6 +377,17 @@ DoD: no session and no agent starts one unless the owner asks for that run in ch
 a `verdict=flagged` range is being bisected. A change that may move a case says so in
 its DoD as "not measured until the next daily run".
 
+**Performance work is measured on what the owner feels** (owner, 2026-11-16; ADR 0015).
+The daily benchmarks guard CPU work against regression; they cannot see connection waits,
+cold reads, memory pressure or owners waking each other. Every performance PR names the
+scorecard number it moves (`script/scorecard.sh`) and reports it before and after from a
+tour on the owner's library (`script/scorecard.sh --tour`: read-only, the app quits
+itself, nothing else may be running), and attributes it with `--ablate` or
+`--ablation-matrix` when the cause is an owner. A deterministic twin in the tests guards
+each win: rows visited per row returned, stall lines in `StallReproductionTests`, peak
+footprint in a hosted test. The scorecard is a report, not a benchmark, and not part of
+`script/check.sh`; one check per PR and the daily run stay as above.
+
 Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
 Application Support data; `/Applications/Otos.app` is the installed
 `net.melisma.Otos`, built by `script/install.sh` (ADR 0030). The installed app is

@@ -1,0 +1,12 @@
+{
+  "about": "Targets the scorecard (script/scorecard.sh) prints beside each user-felt number. Each comes from a plan or the owner; a metric with no number prints NO-TARGET. Change a target only with the decision that sets it.",
+  "targets": [
+    {"metric": "launch.firstGridMs", "maxMs": null, "source": "no stated target yet"},
+    {"metric": "click.smallScopeMs", "maxMs": 1000, "source": "plan 0116: a small scope paints in under a second"},
+    {"metric": "click.allMedia.firstMs", "maxMs": null, "source": "plan 0116: All Media's first visit gets its target when stage 5 is measured"},
+    {"metric": "click.allMedia.returnMs", "maxMs": 1000, "source": "plan 0116: a scope already read paints in under a second"},
+    {"metric": "stalls.count", "max": 0, "source": "plan 0116: no op=catalog.store.stall line"},
+    {"metric": "mainThreadStalls.count", "max": null, "source": "no stated target yet"},
+    {"metric": "memory.peakFootprintMB", "max": null, "source": "no stated target yet"}
+  ]
+}

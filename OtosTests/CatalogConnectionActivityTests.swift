@@ -113,4 +113,48 @@ struct CatalogConnectionActivityTests {
         #expect(stall.lastResumed == "orderedAssets")
         try pool.close()
     }
+
+    /// Every transaction adds to its role's and operation's totals, however short, so the
+    /// totals say who held the connections whether or not anyone waited.
+    @Test func everyTransactionCountsTowardItsRoleAndOperation() async throws {
+        let activity = CatalogConnectionActivity()
+        var configuration = CatalogStore.fileBackedDatabaseConfiguration(activity: activity)
+        configuration.maximumReaderCount = 2
+        let directory = try makeTestDirectory()
+        let pool = try DatabasePool(path: directory.appending(path: "use.sqlite").path(percentEncoded: false), configuration: configuration)
+        try await pool.write { db in try db.execute(sql: "CREATE TABLE t (x)") }
+        for _ in 0 ..< 3 {
+            _ = try await pool.readFreeingConnection(operation: "countRows()") { db in
+                try Int.fetchOne(db, sql: "SELECT count(*) FROM t") ?? 0
+            }
+        }
+
+        let use = activity.use()
+        let reads = try #require(use.holds.first { $0.operation == "countRows" })
+        #expect(reads.role == "main.reader")
+        #expect(reads.count == 3)
+        #expect(reads.longest <= reads.total)
+        #expect(use.busy["main.reader"] == use.holds.filter { $0.role == "main.reader" }.reduce(.zero) { $0 + $1.total })
+        #expect(CatalogConnectionActivity.role(of: "interactive.reader.2") == "interactive.reader")
+        #expect(CatalogConnectionActivity.role(of: "main.writer") == "main.writer")
+        try pool.close()
+    }
+
+    /// A stall's holders leave in parts the unified log keeps whole, none splitting a holder.
+    @Test func holdersLeaveInPartsTheLogKeepsWhole() {
+        let holders = (0 ..< 20).map { index in
+            CatalogConnectionActivity.Holder(
+                connection: "main.reader.\(index % 4 + 1)",
+                milliseconds: 1000 + index,
+                endedAgoMs: index,
+                operation: "renderSignatureCandidates",
+                statement: String(repeating: "SELECT x FROM t, u WHERE y ", count: 3)
+            )
+        }
+        let parts = CatalogConnectionActivity.holderParts(holders)
+        #expect(parts.count > 1)
+        #expect(parts.allSatisfy { $0.count <= CatalogConnectionActivity.holderPartLength })
+        #expect(parts.flatMap { $0.split(separator: ",") }.count == holders.count)
+        #expect(parts.allSatisfy { !$0.contains(" ") })
+    }
 }

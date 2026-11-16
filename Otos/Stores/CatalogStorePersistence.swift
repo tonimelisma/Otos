@@ -2592,11 +2592,34 @@ final nonisolated class CatalogConnectionActivity: Sendable {
         let end: ContinuousClock.Instant
     }
 
+    /// What one kind of connection spent on one named operation since launch.
+    struct Hold: Equatable, Sendable {
+        /// `main.reader`, `main.writer`, `interactive.reader`: the pool and role, not the
+        /// connection's number, so the readers of one pool add up.
+        let role: String
+        let operation: String
+        var count: Int
+        var total: Duration
+        var longest: Duration
+    }
+
+    /// Every transaction's time since launch, by role and operation (`op=catalog.store.use`):
+    /// who held the connections, whether or not anyone waited for them.
+    struct Use: Equatable, Sendable {
+        let holds: [Hold]
+
+        /// Busy time by role.
+        var busy: [String: Duration] {
+            holds.reduce(into: [:]) { $0[$1.role, default: .zero] += $1.total }
+        }
+    }
+
     private struct Registry {
         var connections: [ObjectIdentifier: Connection] = [:]
         var ended: [Transaction] = []
         var lastResumed: (operation: String, at: ContinuousClock.Instant)?
         var stallCount = 0
+        var holds: [String: Hold] = [:]
     }
 
     private let registry = Mutex(Registry())
@@ -2655,6 +2678,36 @@ final nonisolated class CatalogConnectionActivity: Sendable {
     func callerResumed(operation: String) {
         let now = ContinuousClock.now
         registry.withLock { $0.lastResumed = (Self.shortName(operation), now) }
+    }
+
+    /// Adds one ended transaction to its role's and operation's totals. Called for every
+    /// transaction, however short: a thousand 5 ms reads hold a connection as long as one
+    /// 5 s read.
+    fileprivate func account(connection: String, operation: String?, duration: Duration) {
+        let role = Self.role(of: connection)
+        let operation = operation.map(Self.shortName) ?? "unnamed"
+        let key = "\(role):\(operation)"
+        registry.withLock { registry in
+            var hold = registry.holds[key] ?? Hold(role: role, operation: operation, count: 0, total: .zero, longest: .zero)
+            hold.count += 1
+            hold.total += duration
+            hold.longest = max(hold.longest, duration)
+            registry.holds[key] = hold
+        }
+    }
+
+    /// The totals since launch, longest total first.
+    func use() -> Use {
+        let holds = registry.withLock { Array($0.holds.values) }
+        return Use(holds: holds.sorted { ($0.total, $1.operation) > ($1.total, $0.operation) })
+    }
+
+    /// `main.reader` for `main.reader.3`: a connection's pool and role without its number.
+    static func role(of connection: String) -> String {
+        guard let last = connection.split(separator: ".").last, Int(last) != nil else {
+            return connection
+        }
+        return String(connection.dropLast(last.count + 1))
     }
 
     fileprivate func keep(_ transaction: Transaction) {
@@ -2732,20 +2785,17 @@ final nonisolated class CatalogConnectionActivity: Sendable {
         ))
     }
 
-    /// Writes `op=catalog.store.stall`. Each holder is `connection:timing:operation:statement`,
-    /// the statement's spaces made `_` and its commas `;`, so the line keeps one value per key.
+    /// The unified log keeps about 1,017 characters of a message (ADR 0015), and a stall's
+    /// holders alone can run to several thousand, so they leave in parts of at most this many.
+    static let holderPartLength = 850
+
+    /// Writes `op=catalog.store.stall` with the wait itself, then its holders on
+    /// `op=catalog.store.stall.holders` lines carrying the same `stallID`: `kind=running`
+    /// for connections still in a transaction, `kind=ended` for transactions that ended
+    /// during the wait. Each holder is `connection:timing:operation:statement`, the
+    /// statement's spaces made `_` and its commas `;`, so a part keeps one value per key.
+    /// Apart, the holders can never cut off the waiter and its wait.
     @Sendable static func log(_ stall: Stall) {
-        func describe(_ holders: [Holder]) -> String {
-            guard !holders.isEmpty else {
-                return "none"
-            }
-            return holders.map { holder in
-                let timing = holder.endedAgoMs.map { "held\(holder.milliseconds)ms-endedAgo\($0)ms" } ?? "txn\(holder.milliseconds)ms"
-                let statement = (holder.statement ?? "none").replacingOccurrences(of: " ", with: "_")
-                    .replacingOccurrences(of: ",", with: ";")
-                return "\(holder.connection):\(timing):\(holder.operation ?? "unnamed"):\(statement)"
-            }.joined(separator: ",")
-        }
         OtosLog.catalog.noticeOperation("catalog.store.stall", phase: "waited", fields: [
             "stallID": "\(stall.stallID)",
             "operation": stall.operation,
@@ -2755,12 +2805,47 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             "connectionMs": stall.connectionMs.map { "\($0)" } ?? "unknown",
             "snapshotMs": stall.snapshotMs.map { "\($0)" } ?? "unknown",
             "lockMs": "\(stall.lockMs)",
-            "running": describe(stall.running),
-            "endedDuringWait": describe(stall.endedDuringWait),
+            "running": "\(stall.running.count)",
+            "endedDuringWait": "\(stall.endedDuringWait.count)",
             "idle": stall.idle.isEmpty ? "none" : stall.idle.joined(separator: ","),
             "lastResumed": stall.lastResumed ?? "none",
             "lastResumedAgoMs": stall.lastResumedAgoMs.map { "\($0)" } ?? "none",
         ])
+        for (kind, holders) in [("running", stall.running), ("ended", stall.endedDuringWait)] where !holders.isEmpty {
+            let parts = holderParts(holders)
+            for (index, part) in parts.enumerated() {
+                OtosLog.catalog.noticeOperation("catalog.store.stall.holders", phase: "waited", fields: [
+                    "stallID": "\(stall.stallID)",
+                    "kind": kind,
+                    "part": "\(index + 1)",
+                    "parts": "\(parts.count)",
+                    "holders": part,
+                ])
+            }
+        }
+        ResourceCheckpoint.record("storeStall", fields: ["stallID": "\(stall.stallID)"])
+    }
+
+    /// The holders as comma-joined parts, each at most `holderPartLength` characters and
+    /// none splitting a holder.
+    static func holderParts(_ holders: [Holder]) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        for holder in holders {
+            let timing = holder.endedAgoMs.map { "held\(holder.milliseconds)ms-endedAgo\($0)ms" } ?? "txn\(holder.milliseconds)ms"
+            let statement = (holder.statement ?? "none").replacingOccurrences(of: " ", with: "_")
+                .replacingOccurrences(of: ",", with: ";")
+            let described = String("\(holder.connection):\(timing):\(holder.operation ?? "unnamed"):\(statement)".prefix(holderPartLength))
+            if !current.isEmpty, current.count + 1 + described.count > holderPartLength {
+                parts.append(current)
+                current = ""
+            }
+            current = current.isEmpty ? described : "\(current),\(described)"
+        }
+        if !current.isEmpty {
+            parts.append(current)
+        }
+        return parts
     }
 
     /// One connection's record: its transaction, the transaction's first statement, and what
@@ -2857,12 +2942,16 @@ final nonisolated class CatalogConnectionActivity: Sendable {
                     state.statement = nil
                     state.operation = nil
                 }
-                guard let start = state.transactionStart, now - start >= activity.keptTransactionMinimum else {
+                guard let start = state.transactionStart else {
                     return nil
                 }
                 return Transaction(connection: name, operation: state.operation, statement: state.statement, start: start, end: now)
             }
-            if let ended {
+            guard let ended else {
+                return
+            }
+            activity.account(connection: name, operation: ended.operation, duration: ended.end - ended.start)
+            if ended.end - ended.start >= activity.keptTransactionMinimum {
                 activity.keep(ended)
             }
         }
@@ -2899,5 +2988,63 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             }
             return String(decoding: bytes, as: UTF8.self)
         }
+    }
+}
+
+// MARK: - What the Store has carried since launch
+
+/// How many change notifications the Store sent, and how many of them named each kind of
+/// fact, since launch: what woke the Store's subscribers, for `op=catalog.store.use`.
+/// Counted as each notification leaves (`CatalogStore.notifyCatalogChanged`).
+final nonisolated class CatalogChangeTally: Sendable {
+    struct Counts: Equatable, Sendable {
+        var notifications = 0
+        /// By the kind's diagnostic name (`detail`, `images`).
+        var byFact: [String: Int] = [:]
+    }
+
+    private let counts = Mutex(Counts())
+
+    func record(_ change: CatalogStoreChange) {
+        let facts = change.facts
+        let named = CatalogChangedFacts.names.filter { facts.contains($0.0) }.map(\.1)
+        counts.withLock { counts in
+            counts.notifications += 1
+            for name in named {
+                counts.byFact[name, default: 0] += 1
+            }
+        }
+    }
+
+    var current: Counts {
+        counts.withLock { $0 }
+    }
+}
+
+/// The Store's cumulative use since launch: its connections' holds and its change
+/// notifications. A reader takes the difference between two checkpoints.
+nonisolated struct CatalogStoreUse: Equatable, Sendable {
+    /// The holds a line names, longest total first; the busy time sums every hold by role.
+    static let namedHolds = 12
+
+    let connections: CatalogConnectionActivity.Use
+    let changes: CatalogChangeTally.Counts
+
+    /// `busyMs=main.reader:1234,main.writer:56`, `holds=role:operation:totalMs:count:longestMs,…`,
+    /// `changes=12`, `changeFacts=detail:10,images:3`.
+    var fields: [String: String] {
+        let busy = connections.busy.sorted { $0.key < $1.key }
+            .map { "\($0.key):\(DiagnosticsTiming.milliseconds($0.value))" }
+        let holds = connections.holds.prefix(Self.namedHolds).map { hold in
+            "\(hold.role):\(hold.operation):\(DiagnosticsTiming.milliseconds(hold.total)):\(hold.count):\(DiagnosticsTiming.milliseconds(hold.longest))"
+        }
+        let facts = changes.byFact.sorted { ($1.value, $0.key) < ($0.value, $1.key) }.map { "\($0.key):\($0.value)" }
+        return [
+            "busyMs": busy.isEmpty ? "none" : busy.joined(separator: ","),
+            "holds": holds.isEmpty ? "none" : holds.joined(separator: ","),
+            "transactions": "\(connections.holds.reduce(0) { $0 + $1.count })",
+            "changes": "\(changes.notifications)",
+            "changeFacts": facts.isEmpty ? "none" : facts.joined(separator: ","),
+        ]
     }
 }

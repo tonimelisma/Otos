@@ -361,7 +361,11 @@ actor PhotoSearchIndex {
             labels = []
             insert(all)
             loaded = true
-            OtosLog.thumbnails.noticeOperation("search.index", phase: "loaded", fields: ["count": "\(all.count)"])
+            let matrixMB = vectors.count * MemoryLayout<Float>.size / 1_048_576
+            OtosLog.thumbnails.noticeOperation("search.index", phase: "loaded", fields: [
+                "count": "\(all.count)", "matrixMB": "\(matrixMB)",
+            ])
+            ResourceCheckpoint.record("searchIndexLoaded", fields: ["matrixMB": "\(matrixMB)"])
             announce()
             return
         }

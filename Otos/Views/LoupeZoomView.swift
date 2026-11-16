@@ -149,8 +149,17 @@ final class LoupeZoomScrollView: NSScrollView {
         guard bounds.width > 0, bounds.height > 0, document.frame.width > 0 else { return }
         let wasAtFit = LoupeZoomPolicy.isFit(magnification, fit: minMagnification)
         let fit = fitMagnification
-        minMagnification = fit
-        maxMagnification = LoupeZoomPolicy.maximumMagnification(fit: fit)
+        let maximum = LoupeZoomPolicy.maximumMagnification(fit: fit)
+        // AppKit raises when the minimum would pass the maximum (`-[NSScrollView
+        // maxMagnification]`): an image small enough to fit above 100 percent raises the
+        // minimum over the last maximum, so the bound that makes room moves first.
+        if fit > maxMagnification {
+            maxMagnification = maximum
+            minMagnification = fit
+        } else {
+            minMagnification = fit
+            maxMagnification = maximum
+        }
         if needsRefit || wasAtFit {
             needsRefit = false
             magnification = fit

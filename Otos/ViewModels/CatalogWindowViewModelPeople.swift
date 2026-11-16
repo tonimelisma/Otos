@@ -538,6 +538,7 @@ extension CatalogWindowViewModel {
             "faces": "\(people.faceCount)",
             "unchecked": "\(people.unchecked.total)",
         ])
+        ResourceCheckpoint.record("peopleBuilt", fields: ["faces": "\(people.faceCount)"], storeUse: storeUse)
     }
 
     /// The one answer to which person the window shows and which people it filters by, given

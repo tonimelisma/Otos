@@ -94,7 +94,7 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     /// How many kinds there are: the bits `all` sets.
     static let bitCount = 15
 
-    private static let names: [(CatalogChangedFacts, String)] = [
+    static let names: [(CatalogChangedFacts, String)] = [
         (.membership, "membership"), (.captureDate, "captureDate"), (.kindAndFormat, "kindAndFormat"),
         (.grouping, "grouping"), (.location, "location"), (.placeNames, "placeNames"), (.faces, "faces"),
         (.copies, "copies"), (.searchReadings, "searchReadings"), (.detail, "detail"), (.choices, "choices"),
@@ -499,6 +499,15 @@ actor CatalogStore {
     /// writes (`op=catalog.store.stall`). Both pools report to it; an in-memory catalog's one
     /// connection does not.
     private nonisolated let connectionActivity = CatalogConnectionActivity()
+    /// The change notifications sent since launch, by kind of fact (`use`).
+    private nonisolated let changeTally = CatalogChangeTally()
+
+    /// What the connections and change notifications have carried since launch, for a
+    /// resource checkpoint (`op=catalog.store.use`). Two locks; callable from any thread.
+    nonisolated func use() -> CatalogStoreUse {
+        CatalogStoreUse(connections: connectionActivity.use(), changes: changeTally.current)
+    }
+
     private var databaseFileURL: URL?
     private var started = false
     private var startupTask: Task<Void, Error>?
@@ -2170,7 +2179,10 @@ extension CatalogStore {
         // 166,000 rows that is about half a second of work, and done here it held the Store
         // for it, so every read and intent behind it waited, a visible tile's among them
         // (`docs/research/2026-11-15-shared-reader-waits.md`).
+        // `readDuration` is the order's read with its stacks'; `mapDuration` makes the rows
+        // the window's IDs.
         let timedRows = try await timedRead(dbWriter) { db in
+            let readStart = ContinuousClock.now
             let order = try CatalogQueryGateway.readOrder(
                 descriptor: descriptor,
                 scope: scope,
@@ -2178,16 +2190,20 @@ extension CatalogStore {
                 held: held,
                 db: db
             )
+            let mapStart = ContinuousClock.now
+            let ordered = try Self.orderedAssets(
+                from: order.rows,
+                stacks: order.stacks.stacks,
+                rootPathsByRowID: stackRootPaths,
+                scope: scope,
+                groupsByDate: descriptor.effectiveSort.field == .bestDate
+            )
             return try (
-                order: Self.orderedAssets(
-                    from: order.rows,
-                    stacks: order.stacks.stacks,
-                    rootPathsByRowID: stackRootPaths,
-                    scope: scope,
-                    groupsByDate: descriptor.effectiveSort.field == .bestDate
-                ),
+                order: ordered,
                 pending: Self.fetchPendingIdentityRemapBatches(db: db),
-                stacks: order.stacks
+                stacks: order.stacks,
+                readDuration: mapStart - readStart,
+                mapDuration: ContinuousClock.now - mapStart
             )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
@@ -2211,6 +2227,10 @@ extension CatalogStore {
         // The log reports the stacks' read and rule apart from the order's own work (ADR 0052).
         let builtStacks = timedRows.value.stacks
         let catalogStacks = builtStacks.stacks
+        // The order's own SQL: its read less the stacks' read and rule, which it includes.
+        let stackMs = held == nil
+            ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) + DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0
+        let orderSqlMs = max(0, DiagnosticsTiming.milliseconds(timedRows.value.readDuration) - stackMs)
         OtosLog.catalog.debug(
             """
             Catalog ordered asset IDs queried descriptor=\(descriptor.diagnosticDescription, privacy: .public) \
@@ -2227,7 +2247,7 @@ extension CatalogStore {
             ])
         }
         OtosLog.catalog.notice(
-            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stacks=\(held == nil ? "read" : "held", privacy: .public) stackSpan=\(builtStacks.span == .roots ? "roots" : "rows", privacy: .public) stackCandidates=\(held == nil ? builtStacks.candidateCount : 0, privacy: .public) stackReadMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) : 0, privacy: .public) stackRuleMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) lockMs=\(timedRows.lockMs, privacy: .public) resumeMs=\(timedRows.resumeMs, privacy: .public) priority=\(timedRows.priorityName, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) stacks=\(held == nil ? "read" : "held", privacy: .public) stackSpan=\(builtStacks.span == .roots ? "roots" : "rows", privacy: .public) stackCandidates=\(held == nil ? builtStacks.candidateCount : 0, privacy: .public) stackReadMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.readDuration) : 0, privacy: .public) stackRuleMs=\(held == nil ? DiagnosticsTiming.milliseconds(builtStacks.ruleDuration) : 0, privacy: .public) orderSqlMs=\(orderSqlMs, privacy: .public) mapMs=\(DiagnosticsTiming.milliseconds(timedRows.value.mapDuration), privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) lockMs=\(timedRows.lockMs, privacy: .public) resumeMs=\(timedRows.resumeMs, privacy: .public) priority=\(timedRows.priorityName, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return CatalogOrderedAssets(
             ids: ids,
@@ -3758,6 +3778,7 @@ extension CatalogStore {
         fields["migrations"] = migrationRun.map { "\($0.applied)" } ?? "unknown"
         fields["migrationsMs"] = migrationRun.map { "\($0.milliseconds)" } ?? "unknown"
         OtosLog.catalog.noticeOperation("catalog.start", phase: "finish", fields: fields)
+        ResourceCheckpoint.record("catalogOpen", storeUse: { self.use() })
         notifyCatalogChanged(.changed(.all))
     }
 
@@ -5935,8 +5956,20 @@ private extension CatalogStore {
         }
         var resumed = timed
         resumed.resumeMs = DiagnosticsTiming.milliseconds(since: left)
+        if resumed.waitMs >= Self.writeWaitLogThresholdMs {
+            OtosLog.catalog.noticeOperation("catalog.store.writeWait", phase: "waited", fields: [
+                "operation": CatalogConnectionActivity.shortName(operation),
+                "waitMs": "\(resumed.waitMs)",
+                "execMs": "\(resumed.execMs)",
+                "priority": resumed.priorityName,
+            ])
+        }
         return resumed
     }
+
+    /// A named write that waited this long for the writer says so (`op=catalog.store.writeWait`).
+    /// time: measurement — a threshold on a wait already measured; nothing waits on it.
+    static let writeWaitLogThresholdMs = 100
 
     private func ensureStartedForMutation() async throws {
         try await loadIfNeeded()
@@ -6857,6 +6890,7 @@ private extension CatalogStore {
         defer {
             OtosSignpost.catalog.endInterval("CatalogChangeNotify", state)
         }
+        changeTally.record(change)
         for (id, continuation) in changeContinuations {
             continuation.yield(change)
             changeDeliveries[id]?.recordDelivery()
