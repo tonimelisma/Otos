@@ -356,6 +356,19 @@ nonisolated enum SourceProductsSQL {
     ORDER BY relative_path
     LIMIT ?
     """
+
+    /// The owed rows among `count` paths of one root, by key; binds the root, then the paths.
+    /// The rows on screen are asked for ahead of the walk (`ImmichCatalogSync.fetchVisibleProducts`).
+    static func visibleCandidatesSQL(count: Int) -> String {
+        """
+        SELECT relative_path, source_item_id, kind, byte_size,
+               CAST(content_modified_at_unix AS INTEGER) AS mtime
+        FROM media_asset
+        WHERE library_root_id = ?
+          AND relative_path IN (\(Array(repeating: "?", count: count).joined(separator: ",")))
+          AND \(owedPredicate)
+        """
+    }
 }
 
 /// The last row a walk over the asset key read; the next page starts after it.

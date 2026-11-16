@@ -1327,9 +1327,12 @@ extension CatalogWindowViewModel {
         photoSearchIndex?.prepareWhenAdmitted(among: state.mediaGrid.orderedAssetIDs)
         // updateViewport is delivered newest-value; the coordinator is the single owner of
         // the priority hint, so this forwards verbatim with no main-actor work.
-        viewportForwardingTask = Task { [coordinator, viewportStream] in
+        viewportForwardingTask = Task { [coordinator, viewportStream, immichAccounts] in
             for await ids in viewportStream {
                 await coordinator.updateViewport(ids)
+                // An account row on screen paints from its server's own images, fetched ahead
+                // of the backlog: enrichment reads its original only in ranges, for metadata.
+                await immichAccounts?.showVisible(ids)
             }
         }
         // The first grid follows the catalog's load, so each owner's first candidate query

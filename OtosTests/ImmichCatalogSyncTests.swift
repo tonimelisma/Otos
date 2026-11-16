@@ -1180,3 +1180,75 @@ struct ImmichCatalogSyncTests {
         await heldFixture.store.shutdown()
     }
 }
+
+// MARK: - The rows on screen first
+
+extension ImmichCatalogSyncTests {
+    /// A burst listed after the last pass, three rows owed the server's images, the walk not
+    /// reached them: the rows on screen get theirs at once, in the screen's order, and no
+    /// other row's is asked for.
+    @Test func theRowsOnScreenGetTheServersImagesAheadOfTheWalk() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 300, height: 200)
+        let serves = Flag()
+        let server = ScriptedServer(
+            [[Self.asset("a"), Self.asset("b"), Self.asset("c"), Self.exif("a", size: 1), Self.exif("b", size: 1),
+              Self.exif("c", size: 1), Self.complete]],
+            previews: { _ in
+                guard serves.isSet else {
+                    throw URLError(.networkConnectionLost)
+                }
+                return preview
+            }
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        // The pass lists all three; its walk stops at the first preview the server fails.
+        _ = await sync.pass()
+        serves.set()
+        let requestedBefore = server.requestedPreviews.count
+
+        let onScreen = [fixture.id("c/IMG.JPG"), fixture.id("b/IMG.JPG")]
+        let outcome = await sync.fetchVisibleProducts(onScreen)
+
+        #expect(outcome == .finished(made: 2, unreadable: 0))
+        #expect(Array(server.requestedPreviews.dropFirst(requestedBefore)) == ["c", "b"])
+        let assets = try await fixture.store.windowReads.mediaAssets(for: onScreen + [fixture.id("a/IMG.JPG")])
+        #expect(onScreen.allSatisfy { assets[$0]?.thumbnailPath != nil })
+        #expect(assets[fixture.id("a/IMG.JPG")]?.thumbnailPath == nil, "a row off screen waits for the walk")
+        await fixture.store.shutdown()
+    }
+
+    /// The loop for the rows on screen fetches as soon as they are shown, with no pass
+    /// running: what a listed row on screen waited for was the next poll's pass.
+    @Test func showingRowsFetchesTheirImagesWithNoPassRunning() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 300, height: 200)
+        let serves = Flag()
+        let server = ScriptedServer(
+            [[Self.asset("a"), Self.exif("a", size: 1), Self.complete]],
+            previews: { _ in
+                guard serves.isSet else {
+                    throw URLError(.networkConnectionLost)
+                }
+                return preview
+            }
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        _ = await sync.pass()
+        serves.set()
+        let loop = Task { await sync.runVisible() }
+        let row = fixture.id("a/IMG.JPG")
+
+        sync.showVisible([row])
+        try await waitUntil { try await fixture.store.windowReads.mediaAssets(for: [row])[row]?.thumbnailPath != nil }
+        #expect(server.requestedPreviews == ["a", "a"], "the pass's failed ask, then the screen's")
+
+        sync.finish()
+        await loop.value
+        await fixture.store.shutdown()
+    }
+}

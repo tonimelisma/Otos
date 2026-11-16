@@ -248,6 +248,11 @@ extension CatalogReads {
 
 /// Reads only the window asks for.
 extension CatalogReads where Lane == WindowLane {
+    /// The owed rows among those on screen: their images are what the window paints next.
+    func sourceProductCandidates(rootPath: LibraryRootPath, among ids: [MediaAssetID]) async throws -> [SourceProductCandidate] {
+        try await store.sourceProductCandidates(rootPath: rootPath, among: ids, lane: lane)
+    }
+
     func peopleGallery(availableLibraryPaths: Set<LibraryRootPath>) async throws -> PeopleGalleryRead? {
         try await store.peopleGallery(availableLibraryPaths: availableLibraryPaths, lane: lane)
     }

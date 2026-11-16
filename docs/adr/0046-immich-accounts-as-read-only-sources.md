@@ -309,6 +309,18 @@ pixel size and colour profile from the file it receives and never assumes Immich
 defaults, because they are admin configuration. The fetch keeps the free-space floor
 (ADR 0027) and stops when the server stops answering; what it did not fetch stays owed.
 
+The rows on screen do not wait for that walk. A pass reaches its images only after listing
+everything and pairing mirrors, and then goes in path order, so a row listed while on screen
+would stay blank until the next poll's pass reached it. The window hands each account the
+rows on screen, and the account fetches their owed images at once, by key and in the
+screen's order (`ImmichCatalogSync.runVisible`): when the rows on screen change, and after
+each listing batch lands, which can make a row on screen owed. The fetch is the walk's own,
+with the same floor, refusals and stop; a row both reach is fetched twice at most. Enrichment
+gives an account row no thumbnail: it reads the original only in ranges, for metadata and a
+video's faces, so the server's images are the only thing that paints a listed row. An asset
+the server has made no previews of stays without images until a listing carries its
+thumbhash.
+
 Only the server knows whether it has an asset's previews, and it says so twice. Immich
 writes an asset's `thumbhash` only after it has generated the previews, and that write
 changes the asset, so the stream lists it again; it never generates them for a hidden asset

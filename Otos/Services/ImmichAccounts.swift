@@ -77,6 +77,8 @@ actor ImmichAccounts {
         let token: String
         let sync: ImmichCatalogSync
         let loop: Task<Void, Never>
+        /// The sync's loop for the rows on screen (`ImmichCatalogSync.runVisible`).
+        let visibleLoop: Task<Void, Never>
         var timer: Task<Void, Never>?
         var failures = 0
     }
@@ -98,6 +100,8 @@ actor ImmichAccounts {
     private let schedule: Schedule
     private let clock = ContinuousClock()
     private var accounts: [LibraryRootPath: Account] = [:]
+    /// The rows last shown on screen, handed to an account that starts after they were.
+    private var visibleRows: [MediaAssetID] = []
     private var status: [LibraryRootPath: ImmichAccountStatus] = [:]
 
     init(
@@ -413,7 +417,13 @@ actor ImmichAccounts {
                 await self?.received(report, for: path, from: sync)
             }
         }
-        accounts[path] = Account(root: root, client: client, token: token, sync: sync, loop: loop)
+        let visibleLoop = Task { [sync] in
+            await sync.runVisible()
+        }
+        sync.showVisible(visibleRows)
+        accounts[path] = Account(
+            root: root, client: client, token: token, sync: sync, loop: loop, visibleLoop: visibleLoop
+        )
         update(ImmichAccountStatus(reach: .connecting, lastSynced: lastSynced), for: path)
         sync.requestSync()
     }
@@ -425,6 +435,16 @@ actor ImmichAccounts {
         account.timer?.cancel()
         account.sync.finish()
         account.loop.cancel()
+        account.visibleLoop.cancel()
+    }
+
+    /// The rows now on screen: each account fetches the server's images of its own among them
+    /// ahead of every other row (`ImmichCatalogSync.showVisible`).
+    func showVisible(_ ids: [MediaAssetID]) {
+        visibleRows = ids
+        for account in accounts.values {
+            account.sync.showVisible(ids)
+        }
     }
 
     /// A report from `sync`'s loop. One from a loop the account no longer runs (stopped, or

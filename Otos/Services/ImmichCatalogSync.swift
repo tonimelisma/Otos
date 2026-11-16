@@ -1,6 +1,7 @@
 import Foundation
 import ImageIO
 import OSLog
+import Synchronization
 import UniformTypeIdentifiers
 
 /// An account's sync stream as the catalog sync sees it. `ImmichSessionSyncSource` is
@@ -107,6 +108,13 @@ actor ImmichCatalogSync {
     private let admission: LoadAdmission
     private let doorbell: AsyncStream<Void>
     private let ring: AsyncStream<Void>.Continuation
+    /// This account's rows now on screen: their images are asked for ahead of the pass's walk,
+    /// which waits for the whole listing and then goes in path order (`runVisible`).
+    private let visibleRows = Mutex<[MediaAssetID]>([])
+    /// Rung when the rows on screen change, and when a listing batch lands, which can make a
+    /// row on screen owed its images (listed, or sized by a later line).
+    private let visibleDoorbell: AsyncStream<Void>
+    private let visibleRing: AsyncStream<Void>.Continuation
 
     init(
         rootPath: LibraryRootPath,
@@ -121,6 +129,35 @@ actor ImmichCatalogSync {
         self.store = store
         self.volumeCapacity = volumeCapacity
         (doorbell, ring) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        (visibleDoorbell, visibleRing) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    }
+
+    /// The rows now on screen. This account's owed images among them are fetched at once,
+    /// before any other row's (`runVisible`).
+    nonisolated func showVisible(_ ids: [MediaAssetID]) {
+        let mine = ids.filter { $0.libraryRootPath == rootPath }
+        let changed = visibleRows.withLock { rows in
+            defer { rows = mine }
+            return rows != mine
+        }
+        if changed, !mine.isEmpty {
+            visibleRing.yield()
+        }
+    }
+
+    /// The loop that fetches the images of the rows on screen, newest set first, until
+    /// `finish()` or cancellation. It runs beside `run()`'s passes, because a pass fetches
+    /// images only once it has listed everything and paired mirrors, and then in path order:
+    /// a row listed while on screen waited for the next poll's pass and every row before it.
+    /// A row both fetch is fetched at most twice, and both applies stamp the same source.
+    func runVisible() async {
+        for await _ in visibleDoorbell {
+            guard !Task.isCancelled else {
+                return
+            }
+            let ids = visibleRows.withLock { $0 }
+            _ = await fetchVisibleProducts(ids)
+        }
     }
 
     /// Asks for a pass. A request made while one runs is one more pass after it.
@@ -131,6 +168,7 @@ actor ImmichCatalogSync {
     /// Ends the loop after its current pass.
     nonisolated func finish() {
         ring.finish()
+        visibleRing.finish()
     }
 
     /// The loop: one pass per doorbell ring, until `finish()` or cancellation. `onReport`
@@ -432,6 +470,10 @@ actor ImmichCatalogSync {
         let changes = batch.changes(motions: motions, existingMotions: existing)
         if !changes.isEmpty {
             try await store.applySourceListingChanges(changes, scan: scan)
+            // A row on screen may now be owed its images: listed, or sized by this batch.
+            if !visibleRows.withLock({ $0.isEmpty }) {
+                visibleRing.yield()
+            }
         }
         try await source.acknowledge(batch.acks)
         tally.observed.formUnion(changes.listed.map(\.file.relativePath))
@@ -650,6 +692,39 @@ actor ImmichCatalogSync {
             "refused": "\(tally.refused)",
         ])
         return .finished(made: tally.made, unreadable: tally.unreadable)
+    }
+
+    /// Fetches the server's images for those of `ids` owed them now, through the same fetch and
+    /// apply as the pass's walk: the floor, a refusal and a server not answering end it the
+    /// same way, and what it did not fetch stays owed for the walk.
+    func fetchVisibleProducts(_ ids: [MediaAssetID]) async -> ProductPassOutcome {
+        guard let directory = store.thumbnailDirectory, !ids.isEmpty else {
+            return .finished(made: 0, unreadable: 0)
+        }
+        let owed: [SourceProductCandidate]
+        do {
+            owed = try await store.windowReads.sourceProductCandidates(rootPath: rootPath, among: ids)
+        } catch {
+            OtosLog.thumbnails.errorOperation("immich.products", phase: "visibleReadFailed", fields: [
+                "rootPath": rootPath.rawValue, "error": String(describing: error),
+            ])
+            return .catalogFailed(made: 0)
+        }
+        guard !owed.isEmpty else {
+            return .finished(made: 0, unreadable: 0)
+        }
+        // The screen's order: the rows the user looks at first get their images first.
+        let order = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        let ordered = owed.sorted { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
+        let started = ContinuousClock.now
+        var tally = ProductTally()
+        let stop = await fetch(ordered, into: directory, tally: &tally)
+        OtosLog.thumbnails.noticeOperation("immich.products", phase: "visibleFinished", fields: [
+            "rootPath": rootPath.rawValue, "visible": "\(ids.count)", "owed": "\(owed.count)",
+            "made": "\(tally.made)", "refused": "\(tally.refused)", "unreadable": "\(tally.unreadable)",
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+        ])
+        return stop ?? .finished(made: tally.made, unreadable: tally.unreadable)
     }
 
     private struct ProductTally {

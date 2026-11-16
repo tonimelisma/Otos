@@ -6699,6 +6699,35 @@ extension CatalogStore {
         }
     }
 
+    /// Of `ids`, the rows of `rootPath` owed their source's own images, by key: what the rows
+    /// on screen ask for ahead of the walk. Empty for a root the Store does not hold.
+    func sourceProductCandidates(
+        rootPath: LibraryRootPath,
+        among ids: [MediaAssetID],
+        lane: CatalogReadLane
+    ) async throws -> [SourceProductCandidate] {
+        let paths = ids.filter { $0.libraryRootPath == rootPath }.map(\.relativePath.rawValue)
+        guard let rootID = roots.rowIDSnapshot()[rootPath], !paths.isEmpty else {
+            return []
+        }
+        let statementArguments: StatementArguments = [rootID] + StatementArguments(paths)
+        let sql = SourceProductsSQL.visibleCandidatesSQL(count: paths.count)
+        return try await reader(for: lane).readFreeingConnection { db in
+            try Row.fetchAll(db, sql: sql, arguments: statementArguments).map { row in
+                let kind: String? = row["kind"]
+                return SourceProductCandidate(
+                    id: MediaAssetID(
+                        libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: row["relative_path"])
+                    ),
+                    sourceItemID: row["source_item_id"],
+                    kind: kind.flatMap(MediaKind.init(rawValue:)),
+                    byteSize: row["byte_size"],
+                    contentModifiedAtSeconds: row["mtime"]
+                )
+            }
+        }
+    }
+
     /// `file` with the size its row already holds when the report carries none.
     private nonisolated static func keepingStoredSize(
         _ file: ScannedMediaFile,

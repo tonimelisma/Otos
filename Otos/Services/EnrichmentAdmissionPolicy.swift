@@ -48,7 +48,11 @@ nonisolated struct EnrichmentAdmissionPolicy: Equatable, Sendable {
         guard inFlight.enrichCount < enrichConcurrency else {
             return .failure(.enrichCountCap)
         }
-        if candidate.isVideo, inFlight.videoEnrichCount >= videoEnrichCap, inFlight.enrichCount > 0 {
+        // The video cap keeps background videos from filling the workers; a video on screen is
+        // not background work and never waits behind it.
+        if candidate.isVideo, !candidate.isViewportOrDevice, inFlight.videoEnrichCount >= videoEnrichCap,
+           inFlight.enrichCount > 0
+        {
             return .failure(.videoEnrichCap)
         }
         let size = estimatedBytes(candidate.sourceSize)
