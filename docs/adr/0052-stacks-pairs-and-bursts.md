@@ -66,9 +66,12 @@ and never stacks; the overlay lifecycle (ADR 0008); the tile and loupe surfaces
 The identity of a stack is the derived key (`PhotoStackID`: kind, root, stem key or burst
 identifier). The Store
 reads every candidate still — each present RAW and processed image in a folder that holds a
-present RAW, and every present still carrying a burst identifier — whatever the scope or filter, so a filter that hides one file never unpairs the
-other — in the transaction that reads the order, and the pure `PhotoStackRule` decides the
-stacks in Swift, through the same stem key companions use. Nothing about the stack is stored. `media_asset.burst_identifier` becomes a column, written with every metadata record
+present RAW and another present still, and every present still carrying a burst identifier —
+whatever the scope or filter, so a filter that hides one file never unpairs the
+other — in the transaction that reads the order. A folder with one still can hold no pair: an
+Immich account stages each asset in its own folder, and its lone RAWs were 10,906 of the
+owner's 25,944 candidates (`docs/research/2026-11-16-window-reads-owner-catalog.md`). From the candidates
+the pure `PhotoStackRule` decides the stacks in Swift, through the same stem key companions use. Nothing about the stack is stored. `media_asset.burst_identifier` becomes a column, written with every metadata record
 like `content_identifier` and backfilled from the stored metadata JSON.
 
 **The stem key has one owner.** Companion pairing, import naming bundles and stacks compare

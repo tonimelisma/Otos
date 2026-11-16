@@ -1,9 +1,9 @@
 import Foundation
 
 // File guide: a stack is several files Otos shows as one photo until the user expands it
-// (ADR 0052). Stacks are derived, never stored: the Store reads the candidate stills — each
-// RAW folder's stills and every still carrying a burst identifier — and `PhotoStackRule`
-// decides the stacks from their names, kinds and identifiers alone, so a rename, move,
+// (ADR 0052). Stacks are derived, never stored: the Store reads the candidate stills — the
+// stills of each folder that can hold a pair and every still carrying a burst identifier —
+// and `PhotoStackRule` decides the stacks from their names, kinds and identifiers alone, so a rename, move,
 // deletion or enrichment can never leave one stale. A pair is one frame of a burst, so the
 // projection collapses in two passes: pairs to their key file, then bursts to their key
 // frame. Everything here is a value.

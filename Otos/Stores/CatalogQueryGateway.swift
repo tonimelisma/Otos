@@ -852,7 +852,8 @@ nonisolated enum ContentDigestSQL {
 }
 
 /// The stills that can be in a stack (ADR 0052): every present RAW and processed image in
-/// a folder that holds a present RAW, in the given roots, whatever the scope or filter, so
+/// a folder that holds a present RAW and another present still, and every present still
+/// carrying a burst identifier, in the given roots, whatever the scope or filter, so
 /// a filter that hides one file of a pair never unpairs the other. `PhotoStackRule`
 /// decides the stacks from these.
 nonisolated enum PhotoStackSQL {
@@ -995,7 +996,7 @@ nonisolated enum PhotoStackSQL {
         return String(path.rawValue[...slash])
     }
 
-    private static func stacks(of candidates: Candidates, rootPaths: [Int64: LibraryRootPath]) -> [PhotoStack] {
+    static func stacks(of candidates: Candidates, rootPaths: [Int64: LibraryRootPath]) -> [PhotoStack] {
         var stacks: [PhotoStack] = []
         for (rowID, rootCandidates) in candidates.byRoot {
             guard let rootPath = rootPaths[rowID] else {
@@ -1020,7 +1021,8 @@ nonisolated enum PhotoStackSQL {
         return try fetchCandidates(query: query, start: start, db: db)
     }
 
-    private static func fetchCandidates(query: SQLQuery, start: ContinuousClock.Instant, db: Database) throws -> Candidates {
+    /// The candidates `query` reads, selecting `candidateColumns`.
+    static func fetchCandidates(query: SQLQuery, start: ContinuousClock.Instant, db: Database) throws -> Candidates {
         // Prepared once per connection: the text depends only on the root count, and a narrow
         // scope's read runs on every publication of a batch while it imports.
         let rows = try Row.fetchCursor(db.cachedStatement(sql: query.sql), arguments: query.arguments)
@@ -1049,40 +1051,89 @@ nonisolated enum PhotoStackSQL {
         return Candidates(byRoot: byRoot, count: count, readDuration: ContinuousClock.now - start)
     }
 
-    /// The candidates' read: the folders holding a present RAW, then each folder's present
-    /// stills, both through `idx_media_asset_stack_candidate` (root, kind, folder); and every
-    /// present still carrying a burst identifier, through `idx_media_asset_burst` by name: the
-    /// planner otherwise picks the primary key and walks every row of a root.
+    /// The columns every candidate read selects from `still`, in `Column`'s order.
+    private static let candidateColumns = """
+    still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
+               still.sort_key, still.stack_key_chosen_at_unix_ms, still.burst_identifier,
+               still.best_capture_local, still.media_choice, still.burst_key_chosen_at_unix_ms
+    """
+
+    /// Whether the folder `folder` names (an alias with `library_root_id` and `parent_path`)
+    /// holds two or more present stills: a pair is a RAW and a processed still of one folder,
+    /// so a folder with fewer can hold none. One seek of `idx_media_asset_stack_candidate`
+    /// (root, kind, folder) that stops at the second still. An Immich account stages each
+    /// asset in its own folder, so its RAWs are each alone there: on the owner's catalog 10,906
+    /// of 10,917 RAW folders, whose stills were 10,906 of 25,944 candidates read for nothing
+    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+    private static func holdsTwoStills(_ folder: String) -> String {
+        """
+        (SELECT count(*) FROM (
+                SELECT 1 FROM media_asset AS other INDEXED BY idx_media_asset_stack_candidate
+                WHERE other.library_root_id = \(folder).library_root_id
+                  AND other.best_kind IN ('raw', 'image')
+                  AND other.parent_path = \(folder).parent_path
+                  AND \(CatalogVisibilitySQL.isPresent("other"))
+                LIMIT 2
+            )) = 2
+        """
+    }
+
+    /// Whether `folder` holds a present RAW, one seek of `idx_media_asset_stack_candidate`.
+    private static func holdsRaw(_ folder: String) -> String {
+        """
+        EXISTS (
+                SELECT 1 FROM media_asset AS raw INDEXED BY idx_media_asset_stack_candidate
+                WHERE raw.library_root_id = \(folder).library_root_id
+                  AND raw.best_kind = 'raw'
+                  AND raw.parent_path = \(folder).parent_path
+                  AND \(CatalogVisibilitySQL.isPresent("raw"))
+            )
+        """
+    }
+
+    /// Whether `folder` can hold a pair (ADR 0052): a present RAW and another present still.
+    /// The one test of a pairing folder every candidate read applies.
+    private static func canHoldPair(_ folder: String) -> String {
+        "\(holdsRaw(folder)) AND \(holdsTwoStills(folder))"
+    }
+
+    /// The candidates' read: the folders that can hold a pair (`canHoldPair`) — the distinct
+    /// folders holding a present RAW, each kept when it holds another present still — then
+    /// each such folder's present stills, all through `idx_media_asset_stack_candidate` (root,
+    /// kind, folder); and every present still carrying a burst identifier in any other
+    /// folder, through `idx_media_asset_burst` by name: the planner otherwise picks the
+    /// primary key and walks every row of a root. The two arms hold no row in common, so
+    /// they are joined without the temporary B-tree a `UNION` sorts every candidate through.
     static func candidateQuery(rootIDs: [Int64]) -> SQLQuery? {
         guard !rootIDs.isEmpty else {
             return nil
         }
         let placeholders = sqlPlaceholders(count: rootIDs.count)
-        let columns = """
-        still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
-                   still.sort_key, still.stack_key_chosen_at_unix_ms, still.burst_identifier,
-                   still.best_capture_local, still.media_choice, still.burst_key_chosen_at_unix_ms
-        """
         return SQLQuery(
             sql: """
-            WITH raw_folder AS (
-                SELECT DISTINCT library_root_id, parent_path FROM media_asset
+            WITH raw_folder AS MATERIALIZED (
+                SELECT DISTINCT library_root_id, parent_path FROM media_asset INDEXED BY idx_media_asset_stack_candidate
                 WHERE library_root_id IN (\(placeholders)) AND best_kind = 'raw'
                   AND \(CatalogVisibilitySQL.isPresent("media_asset"))
+            ),
+            pairing_folder AS MATERIALIZED (
+                SELECT library_root_id, parent_path FROM raw_folder
+                WHERE \(holdsTwoStills("raw_folder"))
             )
-            SELECT \(columns)
-            FROM raw_folder
-            JOIN media_asset AS still
-              ON still.library_root_id = raw_folder.library_root_id
-              AND still.parent_path = raw_folder.parent_path
-            WHERE still.best_kind IN ('raw', 'image')
-              AND \(CatalogVisibilitySQL.isPresent("still"))
-            UNION
-            SELECT \(columns)
+            SELECT \(candidateColumns)
+            FROM pairing_folder
+            CROSS JOIN media_asset AS still INDEXED BY idx_media_asset_stack_candidate
+              ON still.library_root_id = pairing_folder.library_root_id
+              AND still.best_kind IN ('raw', 'image')
+              AND still.parent_path = pairing_folder.parent_path
+            WHERE \(CatalogVisibilitySQL.isPresent("still"))
+            UNION ALL
+            SELECT \(candidateColumns)
             FROM media_asset AS still INDEXED BY idx_media_asset_burst
             WHERE still.library_root_id IN (\(placeholders)) AND still.burst_identifier IS NOT NULL
               AND still.best_kind IN ('raw', 'image')
               AND \(CatalogVisibilitySQL.isPresent("still"))
+              AND NOT (\(canHoldPair("still")))
             """,
             arguments: StatementArguments(rootIDs + rootIDs)
         )
@@ -1090,31 +1141,16 @@ nonisolated enum PhotoStackSQL {
 
     /// The candidates of the stacks that can hold some rows, from `folders` (`[[rootID,
     /// folder], …]`: the rows' folders) and `bursts` (`[[rootID, identifier], …]`: the bursts
-    /// the rows' stills carry): the present RAWs and processed images of each folder that holds
-    /// a present RAW; every still of those bursts and of the bursts those folders' stills
-    /// carry, through `idx_media_asset_burst`; and the RAWs and processed images of those
-    /// stills' folders that hold a present RAW. Folders are read through
-    /// `idx_media_asset_stack_candidate` (root, kind, folder), and a folder without a RAW is
-    /// never walked: it pairs nothing, and the rows in it name their own bursts. The
-    /// candidates `candidateQuery` reads for these folders and bursts, and no others. The join
-    /// order is fixed (`CROSS JOIN`): each step starts from the few rows the step before found.
+    /// the rows' stills carry): the present RAWs and processed images of each folder that can
+    /// hold a pair (`canHoldPair`); every still of those bursts and of the bursts those
+    /// folders' stills carry, through `idx_media_asset_burst`; and the RAWs and processed
+    /// images of those stills' folders that can hold a pair. Folders are read through
+    /// `idx_media_asset_stack_candidate` (root, kind, folder), and a folder that cannot hold a
+    /// pair is never walked: the rows in it name their own bursts. The candidates
+    /// `candidateQuery` reads for these folders and bursts, and no others. The join order is
+    /// fixed (`CROSS JOIN`): each step starts from the few rows the step before found.
     static func scopedCandidateQuery(folders: String, bursts: String) -> SQLQuery {
-        let columns = """
-        still.library_root_id, still.relative_path, still.best_kind, still.relative_path_key,
-                   still.sort_key, still.stack_key_chosen_at_unix_ms, still.burst_identifier,
-                   still.best_capture_local, still.media_choice, still.burst_key_chosen_at_unix_ms
-        """
-        func holdsRaw(_ folder: String) -> String {
-            """
-            EXISTS (
-                    SELECT 1 FROM media_asset AS raw INDEXED BY idx_media_asset_stack_candidate
-                    WHERE raw.library_root_id = \(folder).library_root_id
-                      AND raw.best_kind = 'raw'
-                      AND raw.parent_path = \(folder).parent_path
-                      AND \(CatalogVisibilitySQL.isPresent("raw"))
-                )
-            """
-        }
+        let columns = candidateColumns
         return SQLQuery(
             sql: """
             WITH seed_folder AS (
@@ -1124,7 +1160,7 @@ nonisolated enum PhotoStackSQL {
             ),
             seed_raw_folder AS (
                 SELECT seed_folder.library_root_id, seed_folder.parent_path FROM seed_folder
-                WHERE \(holdsRaw("seed_folder"))
+                WHERE \(canHoldPair("seed_folder"))
             ),
             seed_burst AS (
                 SELECT json_extract(seed.value, '$[0]') AS library_root_id,
@@ -1153,7 +1189,7 @@ nonisolated enum PhotoStackSQL {
                 SELECT library_root_id, parent_path FROM seed_raw_folder
                 UNION
                 SELECT burst_still.library_root_id, burst_still.parent_path FROM burst_still
-                WHERE \(holdsRaw("burst_still"))
+                WHERE \(canHoldPair("burst_still"))
             )
             SELECT \(columns)
             FROM raw_folder

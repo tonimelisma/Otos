@@ -1,0 +1,69 @@
+# The window's own reads on the owner's catalog (plan 0116 stage 5)
+
+Date: 2026-11-16. Method: the owner's catalog (2.56 GB, 166,990 assets, schema v65) opened
+read-only with `sqlite3 -readonly "file:…?mode=ro"`, Otos not running; "cold" means the
+file's pages were dropped from the buffer cache with `msync(MS_INVALIDATE)` on a read-only
+mapping and `mincore` reported none resident; "pages" are SQLite's page cache misses in a
+fresh process (`.stats on`). The installed build's unified log of the owner's read-only tour
+(build 661be172, 2026-11-16 09:01–09:05 UTC) was read for the order of events. No benchmark
+was run.
+
+## 1. Where the tour's long steps went
+
+The tour's `op=projection.*` lines, in order (times in seconds from each intent):
+
+| Step | Shown after | Waiting for | Then |
+| --- | --- | --- | --- |
+| Search with few results | 19.9 s | the options read of the previous pass, 16.4 s | 3.5 s: the order read again for the new descriptor, and the search |
+| Clearing the search | 24.8 s | the previous pass's options read, 22.9 s | 1.8 s: the order read again |
+| Sort by name | 41.8 s | the previous pass's options read, 15.4 s | 25.9 s: the order read through the name index |
+
+Three mechanisms, each shown in the code and measured below:
+
+1. **A pass waits for its own options read before the next pass can start.** The options are
+   read after the window publishes, inside the same pass (`CatalogProjection.pass` awaits
+   `readOwedFilterOptions`), and an intent on the same sidebar row does not supersede them,
+   since they still answer it. So a search, a sort or a filter change waits for the whole
+   options read. The options were owed on almost every pass: of the tour's 277 Store
+   changes, 227 named `copies`, and All Media's options depended on `copies` because All
+   Media shows one copy of identical files.
+2. **The held order is keyed by the whole descriptor, search included.** A search narrows
+   the order after it is read, but `CatalogProjectionReads.heldOrder` compares the
+   descriptor with its search, so typing a search, changing it and clearing it each read the
+   whole 164,762-row order again, and the search's order replaced All Media's in its slot.
+3. **The name and size order indexes hold no visibility columns.** The date indexes carry
+   every column the scope tests (v55), so the date order reads 3,578 pages; the name and size
+   indexes carry only the key, so their walk reads every table row.
+
+## 2. The order read by sort, All Media (roots 6, 7, 15)
+
+| Order | Index | Pages | Time (OS cache warm) |
+| --- | --- | --- | --- |
+| Date, newest first | `idx_media_asset_best_capture_global_desc` | 3,578 | 0.08 s |
+| Name | `idx_media_asset_name_global_asc` | 152,822 | 9.07 s |
+| Size | `idx_media_asset_size_global_desc` | 183,828 | 0.76 s |
+
+The name order took 25.9 s in the tour, cold on a Mac with 86 MB free.
+
+## 3. The stack candidates
+
+`PhotoStackSQL.candidateQuery` for roots 6, 7 and 15:
+
+| Read | Candidates | Pages | Cold | Warm |
+| --- | --- | --- | --- | --- |
+| Every still of every folder holding a RAW, `UNION` burst stills | 25,944 | 24,249 | 1.91 s | 0.16 s |
+| Only folders holding a RAW and another still, `UNION ALL` | 15,038 | 13,037 | 0.58 s | 0.08 s |
+| Of which the folder test alone (index only) | 6 folders, 15,009 stills | 4,381 | 0.14 s | |
+
+The owner's RAW folders: library 7 has 6, all holding other stills; a camera (13) has 5; the
+Immich account has 10,906, every one alone in its asset's staging folder. His bursts: 33
+identifiers on 39 stills, one burst of seven frames and 32 identifiers carried by one still.
+His pairs: 5,849 stacks in all.
+
+Of the narrower read's 0.58 s cold, 0.44 s is the 15,038 candidates' table rows. A covering
+index would have to carry `sort_key` (154 to 544 bytes a row), which the rule reads to order a
+pair's files and a burst's frames: about 96 MB over the 146,391 stills, against 20.6 MB for
+`idx_media_asset_stack_candidate` today, written on every still's write. It is not built: the
+stacks are held across passes while nothing they are built from moves (ADR 0005), so the read
+is paid at launch and after a stack fact moves, and 96 MB of index is page cache the window's
+other reads lose on a Mac that already pages.

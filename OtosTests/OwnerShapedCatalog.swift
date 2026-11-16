@@ -60,6 +60,9 @@ struct OwnerShapedCatalog {
         let kind: LibraryRootKind
         let images: Int
         let raws: Int
+        /// His RAWs that pair with a processed still of their folder (ADR 0052): the first
+        /// ones written take the names of the root's first images.
+        var pairedRaws = 0
         let videos: Int
         let hashedPermille: Int
         /// His `sort_key` lengths: a library's path is short, an account's staging path long.
@@ -69,9 +72,9 @@ struct OwnerShapedCatalog {
     private static let roots: [RootSpec] = [
         RootSpec(id: 5, kind: .deviceMTP, images: 35, raws: 0, videos: 37, hashedPermille: 0, sortKeyLength: 154),
         RootSpec(id: 6, kind: .library, images: 714, raws: 0, videos: 74, hashedPermille: 1000, sortKeyLength: 154),
-        RootSpec(id: 7, kind: .library, images: 8954, raws: 6074, videos: 1886, hashedPermille: 231, sortKeyLength: 154),
+        RootSpec(id: 7, kind: .library, images: 8954, raws: 6074, pairedRaws: 5384, videos: 1886, hashedPermille: 231, sortKeyLength: 154),
         RootSpec(id: 10, kind: .removableVolume, images: 71, raws: 0, videos: 2, hashedPermille: 0, sortKeyLength: 154),
-        RootSpec(id: 13, kind: .deviceMTP, images: 464, raws: 464, videos: 63, hashedPermille: 0, sortKeyLength: 154),
+        RootSpec(id: 13, kind: .deviceMTP, images: 464, raws: 464, pairedRaws: 464, videos: 63, hashedPermille: 0, sortKeyLength: 154),
         RootSpec(id: 14, kind: .deviceMTP, images: 903, raws: 0, videos: 185, hashedPermille: 0, sortKeyLength: 154),
         RootSpec(id: 15, kind: .immichAccount, images: 117_810, raws: 10906, videos: 18348, hashedPermille: 0, sortKeyLength: 544),
     ]
@@ -161,13 +164,21 @@ struct OwnerShapedCatalog {
             }
             var offset = 0
             for root in roots {
+                let imagesOffset = offset
+                let images = scaled(root.images, scale)
                 for (kind, count) in [("image", root.images), ("raw", root.raws), ("video", root.videos)] where count > 0 {
                     let rows = scaled(count, scale)
-                    try insertAssets(db, root: root, rootPath: paths[root.id]?.rawValue ?? "", kind: kind, count: rows, offset: offset)
+                    let pairing = kind == "raw" && root.pairedRaws > 0
+                        ? Pairing(imagesOffset: imagesOffset, count: min(scaled(root.pairedRaws, scale), rows, images)) : nil
+                    try insertAssets(
+                        db, root: root, rootPath: paths[root.id]?.rawValue ?? "", kind: kind, count: rows, offset: offset,
+                        pairing: pairing
+                    )
                     offset += rows
                 }
             }
             shape.assets = offset
+            try writeBursts(db)
             shape.unhashable = try Int.fetchOne(db, sql: "SELECT count(*) FROM media_asset WHERE content_sha1 IS NULL") ?? 0
             try writeBacklog(db, scale: scale, shape: &shape)
             try writeDerivedRows(db, scale: scale, shape: &shape)
@@ -192,11 +203,51 @@ struct OwnerShapedCatalog {
         max(1, Int((Double(count) * scale).rounded()))
     }
 
+    /// Which of a root's RAWs pair: the first `count` take the names, and so the folders, of
+    /// the root's first images, written from `imagesOffset`.
+    private struct Pairing {
+        let imagesOffset: Int
+        let count: Int
+    }
+
+    /// His bursts: 33 identifiers on 39 stills, of which one is a burst of seven frames (root
+    /// 14) and 32 are carried by one still each, so they stack nothing — two in library 7, the
+    /// first on a paired image, so a burst's still sits in a folder that can hold a pair; one
+    /// on a camera; 29 on the account's stills, each alone in its asset's folder. Never
+    /// scaled: a burst's frames are its own count, placed only where its root has the stills.
+    private static func writeBursts(_ db: Database) throws {
+        struct Burst {
+            let root: Int64
+            let identifier: String
+            let frames: Int
+            let skip: Int
+        }
+        let bursts = [
+            Burst(root: 14, identifier: "generated-burst-14", frames: 7, skip: 0),
+            Burst(root: 14, identifier: "generated-single-14", frames: 1, skip: 7),
+            Burst(root: 7, identifier: "generated-single-7-a", frames: 1, skip: 0),
+            Burst(root: 7, identifier: "generated-single-7-b", frames: 1, skip: 1),
+        ] + (0 ..< 29).map { Burst(root: 15, identifier: "generated-single-15-\($0)", frames: 1, skip: $0) }
+        for burst in bursts {
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET burst_identifier = ?
+                WHERE rowid IN (SELECT rowid FROM media_asset WHERE library_root_id = ? AND kind = 'image'
+                                ORDER BY rowid LIMIT ? OFFSET ?)
+                """,
+                arguments: [burst.identifier, burst.root, burst.frames, burst.skip]
+            )
+        }
+    }
+
     /// One root's rows of one kind. Each row is current for every product its kind has: its
     /// metadata, rendering and faces were read from its present size and date. An account's
     /// rows carry their server item, are drawn by the server (`source_products_*`, no
-    /// rendering of Otos's own) and are never hashed; a library's are hashed at its share.
-    private static func insertAssets(_ db: Database, root: RootSpec, rootPath: String, kind: String, count: Int, offset: Int) throws {
+    /// rendering of Otos's own) and are never hashed; a library's are hashed at its share. A
+    /// paired RAW (`pairing`) is named as the image it pairs with, in that image's folder.
+    private static func insertAssets(
+        _ db: Database, root: RootSpec, rootPath: String, kind: String, count: Int, offset: Int, pairing: Pairing?
+    ) throws {
         let isStill = kind != "video"
         let (type, format, ext) = switch kind {
         case "raw": ("com.sony.arw-raw-image", "ARW", "ARW")
@@ -208,7 +259,15 @@ struct OwnerShapedCatalog {
         // server's asset ID.
         let relativePath = isAccount
             ? "printf('%08x-0000-4000-8000-%012x/IMG_%06d.\(ext)', i, i, i)"
-            : "printf('%04d/%02d/\(kind)_%06d.\(ext)', 2010 + i / 20000, 1 + (i / 1700) % 12, i)"
+            : pairing.map { pairing in
+                let image = "(\(pairing.imagesOffset) + i - \(offset))"
+                return """
+                CASE WHEN i - \(offset) < \(pairing.count)
+                    THEN printf('%04d/%02d/image_%06d.\(ext)', 2010 + \(image) / 20000, 1 + (\(image) / 1700) % 12, \(image))
+                    ELSE printf('%04d/%02d/\(kind)_%06d.\(ext)', 2010 + i / 20000, 1 + (i / 1700) % 12, i)
+                END
+                """
+            } ?? "printf('%04d/%02d/\(kind)_%06d.\(ext)', 2010 + i / 20000, 1 + (i / 1700) % 12, i)"
         try db.execute(
             sql: """
             WITH RECURSIVE n(j) AS (SELECT 0 UNION ALL SELECT j + 1 FROM n WHERE j + 1 < ?),
