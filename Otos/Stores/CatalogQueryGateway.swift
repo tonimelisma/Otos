@@ -1211,6 +1211,18 @@ nonisolated enum PhotoStackSQL {
 /// stale. `idx_media_asset_content_identifier` makes each test one indexed lookup, and only
 /// a movie with an identifier reaches it.
 nonisolated enum LivePhotoSQL {
+    /// The other members of one asset's Live Photo group (binds the root and the path), through
+    /// `idx_media_asset_content_identifier`: the rows whose pairing a change to that asset
+    /// moves — a movie that is paired or no longer is, its still.
+    static let partnersSQL = """
+    SELECT m.relative_path
+    FROM media_asset AS k
+    JOIN media_asset AS m
+        ON m.library_root_id = k.library_root_id AND m.content_identifier = k.content_identifier
+        AND m.parent_path = k.parent_path AND m.relative_path != k.relative_path
+    WHERE k.library_root_id = ? AND k.relative_path = ? AND k.content_identifier IS NOT NULL
+    """
+
     /// True for a movie that a Live Photo's still stands for. `row` names the table or
     /// alias the predicate tests; an unaliased scoped query passes `media_asset`.
     static func isPairedMotion(_ row: String) -> String {

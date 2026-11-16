@@ -127,13 +127,13 @@ struct ProjectionEnrichmentCoalescingTests {
 
         _ = await store.applyEnrichmentBatch([detailEnrichment(for: asset)])
         let detail = await changes.waitForValues { $0.count == 1 }
-        #expect(detail.last == .changed([.detail, .mediaRecord, .images], rows: .named([asset.id])))
+        #expect(detail.last == .changed([.detail, .mediaRecord, .images], rows: .rows([asset.id])))
 
         _ = await store.applyEnrichmentBatch([
             detailEnrichment(for: asset, captureDate: Self.baseDate.addingTimeInterval(1_000_000)),
         ])
         let dated = await changes.waitForValues { $0.count == 2 }
-        #expect(dated.last == .changed([.detail, .mediaRecord, .images, .captureDate], rows: .named([asset.id])))
+        #expect(dated.last == .changed([.detail, .mediaRecord, .images, .captureDate], rows: .rows([asset.id])))
     }
 
     /// The stacks are held while no stack candidate's fact moves (ADR 0052): the JPEG of the

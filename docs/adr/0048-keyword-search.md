@@ -257,17 +257,37 @@ against 77.3, 85 in English for both), and every asset has one.
   - **Compaction:** once dead slots are a quarter of the live and at least 1,024, the live
     slots are written into a new pair. The catalog names it once its bytes are on the disk, so
     either the old or the new pair is current at every point.
-  - Writing the file asks the free-space floor first (ADR 0027). A page whose slots would cross
-    it is not written to the catalog either and stays owed until the retry.
+  - **The free-space floor (ADR 0027)** is asked once, before the catalog commits slots. A
+    page whose slots would cross it is not written to the catalog either, and it stays owed
+    until the retry. The write that follows a commit is never refused for the floor: a disk
+    that filled between the ask and the write would otherwise leave a good file short of the
+    count, and the rebuild that followed would be refused too, leaving search empty. A file
+    being built or compacted asks before each page, since no commit waits on it.
+  - **A write that fails after its commit** (its own `ENOSPC`, an I/O error) leaves the file
+    short of the count. Memory keeps answering from the slots it has, and the next pass builds
+    a new file.
 - **The first load:**
+  - The folder is claimed first: a `flock` on the folder itself, held until shutdown. It
+    makes the process its one writer, so a second Otos over the same Application Support
+    never cuts a file the first maps, nor removes its pairs. It waits for the backoff's retry
+    and the next change. The text-reading child never opens the folder.
   - With a current file it maps it and reads no table: one row of `search_vector_file`, the
-    headers, and the keys parsed into memory. Then it reconciles as every pass does.
+    headers, and the keys parsed into memory. Any other file in the folder, a compaction or
+    build a crash cut short, is removed. Then it reconciles as every pass does.
   - Without one it builds one, in its turn with the other heavy loads (`LoadAdmission`, ADR
     0055): which embeddings are current from indexes alone, then every stored embedding in
-    pages of 2,000, each its own read, appended as it is read. Until it ends, search shows that
-    it is still reading, as before.
+    pages of 2,000, each its own read, appended as it is read. Until it ends, search shows
+    what memory holds: nothing at a launch, the old slots after a failed write.
+  - The catalog names the new file once its bytes are on the disk, and only then are the
+    other files removed. A build that fails removes its own file and leaves the one the
+    catalog names on the disk.
 - **Roots:** a root that is not read now (a card out, a library offline) keeps its slots until
   it is back or forgotten.
+  - A root's availability moving is announced naming no rows (`CatalogChangedRows.unnamed`),
+    so the index reconciles the whole library when a library comes back. A scan or listing
+    starting or ending names `none` and asks for no pass.
+  - A deletion names the Live Photo partners it leaves (`AssetRowDeletion`), so a movie whose
+    still went is asked for by key.
 - **A scope searched again** is not hashed again: the index keeps the last scope as slots
   until the scope or its memory moves. On the owner's library, hashing 165,000 assets twice a
   query was about 180 ms of each match.

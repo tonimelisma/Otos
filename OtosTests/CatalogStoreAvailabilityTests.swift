@@ -121,4 +121,47 @@ struct CatalogStoreAvailabilityTests {
         #expect(unavailable.libraries.first?.availability == .unavailable)
         #expect(unavailable.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
     }
+
+    /// A root whose availability moves changes which rows are in reach, so it is announced
+    /// naming no rows (`CatalogChangedRows.unnamed`), never as the scan's own "no row changed"
+    /// (`.none`): an owner whose reads are bound to the roots read, such as search, reads
+    /// them again. Every availability change goes through the one setter that announces it, so
+    /// a root found again mid-session is announced the same way.
+    @Test func aRootThatComesOrGoesIsAnnouncedAsAChangeOfReach() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        try await firstStore.start(scansSavedLibraries: false)
+        try await firstStore.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(firstStore) { !$0.isScanning && $0.testAssets.count == 1 }
+        await firstStore.shutdown()
+
+        let disappearingScanner = CatalogScanner { rootPath, _, _ in
+            try FileManager.default.removeItem(at: rootPath.url)
+            throw CatalogScanError.filesystemErrorsEncountered(count: 1, summaries: [])
+        }
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanner: disappearingScanner, scanCadence: .milliseconds(10))
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
+        try await store.start()
+
+        // The scan's start and end each announce the root's own state (`.none`); the root the
+        // failing scan lost, between them, is a change of reach.
+        let rootOnly = CatalogStoreChange.changed(.membership, rows: .none)
+        let heard = await changes.waitForValues { recorded in recorded.filter { $0 == rootOnly }.count == 2 }
+        let start = try #require(heard.firstIndex(of: rootOnly))
+        let end = try #require(heard.lastIndex(of: rootOnly))
+        #expect(heard[start ..< end].contains(.changed(.membership)), "the root lost by the scan that failed")
+        #expect(try await catalogStoreTestState(store).libraries.first?.availability == .unavailable)
+        await store.shutdown()
+    }
 }

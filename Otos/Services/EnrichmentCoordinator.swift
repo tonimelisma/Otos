@@ -552,9 +552,9 @@ extension EnrichmentCoordinator {
             switch rows {
             case .unnamed:
                 demandSourcesRequested &+= 1
-            case let .named(ids) where ids.contains(where: schedule.hasDemand(for:)):
+            case let .named(rows) where rows.ids.contains(where: schedule.hasDemand(for:)):
                 demandSourcesRequested &+= 1
-            case .named:
+            case .named, .none:
                 break
             }
         }

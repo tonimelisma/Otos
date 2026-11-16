@@ -846,7 +846,7 @@ struct ImmichCatalogSyncTests {
         defer { recording.cancel() }
         let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
         // The lease announces itself; each batch after it is one change of its own.
-        #expect(await changes.waitForValues { $0.count == 1 } == [.changed(.membership, rows: .named([]))])
+        #expect(await changes.waitForValues { $0.count == 1 } == [.changed(.membership, rows: .none)])
         func apply(_ batch: SourceListingChanges) async throws -> CatalogStoreChange? {
             let before = await changes.count()
             try await store.applySourceListingChanges(batch, scan: scan)
@@ -859,10 +859,108 @@ struct ImmichCatalogSyncTests {
         func row(_ id: String) -> MediaAssetID {
             MediaAssetID(libraryRootPath: fixture.rootPath, relativePath: MediaRelativePath(rawValue: "\(id)/IMG.JPG"))
         }
-        #expect(try await apply(SourceListingChanges(listed: [item("a", size: 20), item("c")])) == .changed(.all, rows: .named([row("a")])))
-        #expect(try await apply(SourceListingChanges(listed: [item("c", hidden: true)])) == .changed(.all, rows: .named([row("c")])))
+        #expect(try await apply(SourceListingChanges(listed: [item("a", size: 20), item("c")])) == .changed(.all, rows: .rows([row("a")])))
+        #expect(try await apply(SourceListingChanges(listed: [item("c", hidden: true)])) == .changed(.all, rows: .rows([row("c")])))
         #expect(try await apply(SourceListingChanges(sizesBySourceItem: ["b": 30])) == .changed(.all))
-        #expect(try await apply(SourceListingChanges(deletedSourceItems: ["a"])) == .changed(.all, rows: .named([row("a")])))
+        #expect(try await apply(SourceListingChanges(deletedSourceItems: ["a"])) == .changed(.all, rows: .rows([row("a")])))
+        await store.endSourceListing(scan: scan)
+        await store.shutdown()
+    }
+
+    /// A new row that comes with a digest another copy holds is a new copy: its batch is
+    /// announced as added and as a change of which files are copies, naming that row, so
+    /// Duplicates and People hear it without waiting for its metadata. A new row whose digest
+    /// no other copy holds is only added.
+    @Test func aNewRowWithADigestAnotherCopyHoldsIsAnnouncedAsACopy() async throws {
+        let fixture = try await FileFixture.make()
+        let store = fixture.store
+        let digest = try #require(ContentDigest(bytes: Array(repeating: 7, count: ContentDigest.byteCount)))
+        func item(_ id: String) -> SourceListedItem {
+            var listed = SourceListedItem(
+                file: ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: "\(id)/IMG.JPG"),
+                    name: "IMG.JPG",
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: 10,
+                    createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                    contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                ),
+                sourceItemID: id,
+                isHiddenBySource: false,
+                sourceHasProducts: true
+            )
+            listed.sourceDigest = digest
+            return listed
+        }
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
+        let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
+        _ = await changes.waitForValues { $0.count == 1 }
+
+        try await store.applySourceListingChanges(SourceListingChanges(listed: [item("a")]), scan: scan)
+        #expect(await changes.waitForValues { $0.count == 2 }.last == .assetsAdded)
+
+        try await store.applySourceListingChanges(SourceListingChanges(listed: [item("b")]), scan: scan)
+        let copy = MediaAssetID(libraryRootPath: fixture.rootPath, relativePath: MediaRelativePath(rawValue: "b/IMG.JPG"))
+        let announced = await changes.waitForValues { $0.count == 4 }
+        #expect(Array(announced.suffix(2)) == [.assetsAdded, .changed([.detail, .copies], rows: .rows([copy]))])
+        await store.endSourceListing(scan: scan)
+        await store.shutdown()
+    }
+
+    /// A deleted still names the Live Photo movie it leaves, whose pairing the deletion moved:
+    /// an owner keeping a memory per asset cannot find it from a row that is gone, and the
+    /// movie, no longer a paired motion, is owed what a photo is.
+    @Test func aDeletedStillNamesTheMovieItLeaves() async throws {
+        let fixture = try await FileFixture.make()
+        let store = fixture.store
+        func item(_ path: String, id: String) -> SourceListedItem {
+            SourceListedItem(
+                file: ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: path),
+                    name: MediaRelativePath(rawValue: path).fileName,
+                    contentTypeIdentifier: path.hasSuffix("MOV") ? "com.apple.quicktime-movie" : "public.heic",
+                    byteSize: 10,
+                    createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                    contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                ),
+                sourceItemID: id,
+                isHiddenBySource: false,
+                sourceHasProducts: true
+            )
+        }
+        let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
+        try await store.applySourceListingChanges(
+            SourceListingChanges(listed: [item("a/IMG_1.HEIC", id: "still"), item("a/IMG_1.MOV", id: "movie")]), scan: scan
+        )
+        let still = fixture.id("a/IMG_1.HEIC"), movie = fixture.id("a/IMG_1.MOV")
+        for (id, kind) in [(still, MediaKind.image), (movie, MediaKind.video)] {
+            let asset = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
+            let outcome = await store.applyEnrichmentBatch([EnrichmentResult(
+                id: id, metadata: AssetMetadata(contentIdentifier: "66E9019A-9CAF-4603-A6C3-2F22030B7C65"), enrichedKind: kind,
+                thumbnailPath: nil, sourceSize: asset.byteSize, sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                contentHash: .empty
+            )])
+            try #require(outcome == .applied(count: 1))
+        }
+        #expect(try await store.livePhotoMotion(of: still) == movie)
+
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
+        try await store.applySourceListingChanges(SourceListingChanges(deletedSourceItems: ["still"]), scan: scan)
+        #expect(await changes.waitForValues { !$0.isEmpty }.first == .changed(.all, rows: .rows([still, movie])))
         await store.endSourceListing(scan: scan)
         await store.shutdown()
     }

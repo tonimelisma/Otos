@@ -130,7 +130,20 @@ struct CatalogStoreRemovableSourceTests {
         let whileQuiesced = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted)
         #expect(!whileQuiesced.contains { $0.asset.id.libraryRootPath == cardPath })
 
+        // Enrichment's gate hears that the source is claimable again: a camera, which no
+        // scan follows, would otherwise wait for an unrelated change.
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
         try await store.resumeRemovableSource(identity: .volume(uuid: "test-card"))
+        // The rescan the resume starts announces itself after anything the resume announced.
+        let heard = await changes.waitForValues { $0.contains(.changed(.membership, rows: .none)) }
+        #expect(heard.first == .changed(.detail))
         let afterResume = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted)
         #expect(afterResume.contains { $0.asset.id == cardID })
     }

@@ -871,17 +871,23 @@ extension CatalogStore {
         )
     }
 
+    /// Deletes one asset row, and reports the Live Photo partners it leaves
+    /// (`AssetRowDeletion`), read before the row goes.
     @discardableResult
     static func deleteAssetRow(
         rootRowID: Int64,
         relativePath: MediaRelativePath,
         db: Database
-    ) throws -> Bool {
+    ) throws -> AssetRowDeletion {
+        let partners = try String.fetchAll(
+            db.cachedStatement(sql: LivePhotoSQL.partnersSQL), arguments: [rootRowID, relativePath.rawValue]
+        )
         try db.execute(
             sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
             arguments: [rootRowID, relativePath.rawValue]
         )
-        return db.changesCount > 0
+        guard db.changesCount > 0 else { return .nothing }
+        return AssetRowDeletion(deleted: true, partners: partners.map { MediaRelativePath(rawValue: $0) })
     }
 
     /// Removes a path proven gone from its root — its media or companion row — and
@@ -895,7 +901,7 @@ extension CatalogStore {
         db: Database
     ) throws -> Bool {
         var changed = false
-        if try deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
+        if try deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db).deleted {
             changed = true
         }
         if try deleteCompanionRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {

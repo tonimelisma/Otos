@@ -71,14 +71,7 @@ nonisolated enum SearchEmbeddingStorage {
     /// The other members of one asset's Live Photo group (binds the root and the path), through
     /// `idx_media_asset_content_identifier`: a change to a still or a movie moves whether its
     /// partner is a paired movie, so the partner is asked whether it is owed too.
-    static let groupMembersSQL = """
-    SELECT m.relative_path
-    FROM media_asset AS k
-    JOIN media_asset AS m
-        ON m.library_root_id = k.library_root_id AND m.content_identifier = k.content_identifier
-        AND m.parent_path = k.parent_path AND m.relative_path != k.relative_path
-    WHERE k.library_root_id = ? AND k.relative_path = ? AND k.content_identifier IS NOT NULL
-    """
+    static let groupMembersSQL = LivePhotoSQL.partnersSQL
 
     /// A page of the embedding owner's newest-first walk (`CandidateWalk.capturePage`): every
     /// row is tested and stamped from the product stamps index, and its embedding's source from

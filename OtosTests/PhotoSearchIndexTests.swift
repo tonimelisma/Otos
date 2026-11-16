@@ -509,6 +509,174 @@ struct PhotoSearchIndexTests {
     }
 
     /// A torn file — a header byte changed, or vectors cut short — is rebuilt, never read.
+    /// The free space a test's volume reports: plenty until `fill(after:)`, then none once the
+    /// given number of further answers have been given.
+    private final class Space: Sendable {
+        private let roomLeft = Mutex<Int?>(nil)
+
+        /// After `answers` more answers of plenty, the volume is at the floor.
+        func fill(after answers: Int) {
+            roomLeft.withLock { $0 = answers }
+        }
+
+        func clear() {
+            roomLeft.withLock { $0 = nil }
+        }
+
+        func available(_: URL) -> Int64? {
+            roomLeft.withLock { left in
+                guard let remaining = left else { return Int64.max / 2 }
+                left = max(remaining - 1, 0)
+                return remaining > 0 ? Int64.max / 2 : 0
+            }
+        }
+    }
+
+    /// ADR 0027: the floor is asked before the catalog commits slots, never after. A disk that
+    /// reaches the floor between the ask and the file's write leaves the write to go ahead: the
+    /// catalog and the file agree, the index keeps its file and the new embedding is in it,
+    /// and search is never emptied by a rebuild the full disk then refuses.
+    @Test func aDiskThatFillsAfterTheCommitKeepsTheIndex() async throws {
+        let catalog = try await makeCatalog(onDisk: true)
+        let space = Space()
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none, backoff: (.seconds(86400), .seconds(86400)),
+            availableBytes: space.available
+        )
+        await index.start()
+        try await waitUntil {
+            let embedded = await index.embeddedCount
+            let answered = await index.answeredEveryRequest
+            return embedded == 2 && answered
+        }
+        let before = try #require(await index.vectorFileSlots)
+        let settled = await index.passesFinished
+
+        // Red gets a new thumbnail; the pass asks the floor once, before it commits, and the
+        // disk is full from then on.
+        space.fill(after: 1)
+        try Self.writeJPEG(SearchModelTests.solid(red: 0.9, green: 0.1, blue: 0), to: catalog.thumbnails.appending(path: "red-thumb-2.jpg"))
+        let red = try #require(catalog.assets.first { $0.id == catalog.red })
+        try await enrich(catalog.store, red, thumbnail: "red-thumb-2.jpg")
+        try await waitUntil {
+            let passes = await index.passesFinished
+            let answered = await index.answeredEveryRequest
+            return passes > settled && answered
+        }
+
+        #expect(try await catalog.store.searchEmbeddingPendingCount() == 0)
+        #expect(await index.embeddedCount == 2)
+        #expect(await index.vectorFileSlots?.id == before.id)
+        #expect(await index.vectorFileSlots?.slots == before.slots + 1)
+        #expect(try await catalog.store.searchVectorFileState() == SearchVectorFileState(id: before.id, slots: before.slots + 1))
+        await index.shutdown()
+        await catalog.store.shutdown()
+    }
+
+    /// A rebuild the floor refuses removes only its own file: the one the catalog names stays
+    /// on the disk until a replacement is complete, and the retry once there is room builds it.
+    @Test func aRebuildTheFloorRefusesLeavesTheOldFile() async throws {
+        let catalog = try await makeCatalog(onDisk: true)
+        let first = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+        )
+        let changes = await first.changes()
+        await first.start()
+        for await _ in changes where await first.embeddedCount == 2 {
+            break
+        }
+        await first.shutdown()
+        await catalog.store.shutdown()
+        try Self.execute(SearchVectorFileState.addSlotsSQL.replacingOccurrences(of: "?", with: "1"), on: catalog)
+        let names = try Set(FileManager.default.contentsOfDirectory(atPath: catalog.vectors.path(percentEncoded: false)))
+
+        let store = makeTestStore(
+            location: .databaseFile(Self.database(in: catalog.vectors.deletingLastPathComponent())),
+            stagingContainers: StagingContainers(base: catalog.vectors.deletingLastPathComponent().appending(path: "Staging"))
+        )
+        try await store.start()
+        let space = Space()
+        space.fill(after: 0)
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none, backoff: (.seconds(86400), .seconds(86400)),
+            availableBytes: space.available
+        )
+        await index.start()
+        try await waitUntil { await index.retriesScheduled > 0 }
+        #expect(await index.loadedFrom == nil)
+        #expect(try Set(FileManager.default.contentsOfDirectory(atPath: catalog.vectors.path(percentEncoded: false))) == names)
+
+        // Room again, and a change asks for a pass: it builds the file.
+        space.clear()
+        try await giveRedANewThumbnail(store, catalog)
+        try await waitUntil {
+            let from = await index.loadedFrom
+            let embedded = await index.embeddedCount
+            return from == .rebuilt && embedded == 2
+        }
+        #expect(await index.embeddedCount == 2)
+        #expect(try Set(FileManager.default.contentsOfDirectory(atPath: catalog.vectors.path(percentEncoded: false))).isDisjoint(with: names))
+        await index.shutdown()
+        await store.shutdown()
+    }
+
+    /// A file pair a crash left beside the current one (a compaction or a build cut short) is
+    /// removed when the current one opens, and a second index over the same folder — another
+    /// Otos over the same Application Support — writes nothing there until the first lets go.
+    @Test func leftoversGoAtOpenAndASecondWriterWaitsForTheFolder() async throws {
+        let catalog = try await makeCatalog(onDisk: true)
+        let first = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+        )
+        let changes = await first.changes()
+        await first.start()
+        for await _ in changes where await first.embeddedCount == 2 {
+            break
+        }
+        let built = try #require(await first.vectorFileSlots)
+        await first.shutdown()
+        await catalog.store.shutdown()
+        let leftover = SearchVectorFormat.urls(directory: catalog.vectors, id: UUID())
+        try Data("cut short".utf8).write(to: leftover.vectors)
+        try Data("cut short".utf8).write(to: leftover.keys)
+
+        let (store, mapped) = try await reopen(catalog)
+        #expect(await mapped.loadedFrom == .file)
+        let current = SearchVectorFormat.urls(directory: catalog.vectors, id: built.id)
+        #expect(try Set(FileManager.default.contentsOfDirectory(atPath: catalog.vectors.path(percentEncoded: false)))
+            == [current.vectors.lastPathComponent, current.keys.lastPathComponent])
+
+        let second = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none, backoff: (.seconds(86400), .seconds(86400))
+        )
+        await second.start()
+        try await waitUntil { await second.retriesScheduled > 0 }
+        #expect(await second.loadedFrom == nil)
+
+        // The first lets the folder go; the next change the second hears loads it.
+        await mapped.shutdown()
+        try await giveRedANewThumbnail(store, catalog)
+        try await waitUntil {
+            let from = await second.loadedFrom
+            let embedded = await second.embeddedCount
+            return from == .file && embedded == 2
+        }
+        await second.shutdown()
+        await store.shutdown()
+    }
+
+    /// Gives the red still a new decodable thumbnail: a change a search pass reads.
+    private func giveRedANewThumbnail(_ store: CatalogStore, _ catalog: Catalog) async throws {
+        try Self.writeJPEG(SearchModelTests.solid(red: 0.8, green: 0, blue: 0.1), to: catalog.thumbnails.appending(path: "red-thumb-3.jpg"))
+        let red = try #require(catalog.assets.first { $0.id == catalog.red })
+        try await enrich(store, red, thumbnail: "red-thumb-3.jpg")
+    }
+
     @Test func aTornFileIsRebuilt() async throws {
         let catalog = try await makeCatalog(onDisk: true)
         let first = PhotoSearchIndex(
@@ -620,6 +788,9 @@ struct PhotoSearchIndexTests {
         let blue = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [blueID] }.last
         #expect(blue?.mediaGrid.dayBuckets.isEmpty == true)
 
+        // One index writes the vector folder at a time (`SearchVectorDirectoryClaim`): the
+        // first lets it go before the second takes over the window.
+        await index.shutdown()
         let nothing = PhotoSearchIndex(
             store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
             cutoff: SearchCutoff(floor: 2, margin: 0), queries: SearchQueryReader(encode: english)
@@ -638,7 +809,6 @@ struct PhotoSearchIndexTests {
 
         await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia))
         _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 && $0.last?.queryDescriptor.search == nil }
-        await index.shutdown()
         await nothing.shutdown()
         await catalog.store.shutdown()
     }

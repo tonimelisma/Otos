@@ -134,7 +134,10 @@ struct EnrichmentHoldEndingTests {
             guard change.facts.contains(.membership) else {
                 continue
             }
-            if case let .named(rows) = change.rows, !rows.contains(row) {
+            if case let .named(rows) = change.rows, !rows.ids.contains(row) {
+                continue
+            }
+            if change.rows == .none {
                 continue
             }
             break

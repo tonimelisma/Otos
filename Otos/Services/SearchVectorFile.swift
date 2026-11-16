@@ -36,8 +36,13 @@ import Foundation
 /// `SearchIndexMemory`, which moves the index's revision in that same step; `append` and
 /// `appendLive` are for a file being built, which memory does not hold yet.
 final nonisolated class SearchVectorFile {
+    typealias AvailableBytes = @Sendable (URL) -> Int64?
+
     let id: UUID
     let directory: URL
+    /// The free space the volume of a URL reports (`FreeSpaceFloor.availableBytes`); a test's
+    /// own figure when it fills the disk at a chosen step.
+    private let availableBytes: AvailableBytes
     /// Every slot's asset and labels, and the roots and label names they number.
     private(set) var keys: SearchVectorKeys
     /// The live slot of each asset memory holds: the last appended for it, until it leaves.
@@ -62,9 +67,12 @@ final nonisolated class SearchVectorFile {
     }
 
     /// Owns `vectors` and `keyFile` from here on: they close with it.
-    private init(id: UUID, directory: URL, keys: SearchVectorKeys, vectors: Int32, keyFile: Int32) {
+    private init(
+        id: UUID, directory: URL, keys: SearchVectorKeys, vectors: Int32, keyFile: Int32, availableBytes: @escaping AvailableBytes
+    ) {
         self.id = id
         self.directory = directory
+        self.availableBytes = availableBytes
         self.keys = keys
         vectorsDescriptor = vectors
         keysDescriptor = keyFile
@@ -89,7 +97,9 @@ final nonisolated class SearchVectorFile {
     /// model revision and at least `state.slots` slots of keys and vectors. Bytes past the
     /// committed slots are cut off. Throws `SearchVectorFileInvalid` naming why it is not
     /// current.
-    static func open(directory: URL, state: SearchVectorFileState) throws -> SearchVectorFile {
+    static func open(
+        directory: URL, state: SearchVectorFileState, availableBytes: @escaping AvailableBytes = FreeSpaceFloor.availableBytes(onVolumeOf:)
+    ) throws -> SearchVectorFile {
         let urls = SearchVectorFormat.urls(directory: directory, id: state.id)
         let vectors = Darwin.open(urls.vectors.path(percentEncoded: false), O_RDWR | O_CLOEXEC)
         guard vectors >= 0 else { throw SearchVectorFileInvalid.missing }
@@ -118,7 +128,9 @@ final nonisolated class SearchVectorFile {
             guard ftruncate(vectors, off_t(vectorsNeeded)) == 0, ftruncate(keyFile, off_t(parsed.length)) == 0 else {
                 throw SearchVectorFileInvalid.io(errno)
             }
-            file = SearchVectorFile(id: state.id, directory: directory, keys: parsed, vectors: vectors, keyFile: keyFile)
+            file = SearchVectorFile(
+                id: state.id, directory: directory, keys: parsed, vectors: vectors, keyFile: keyFile, availableBytes: availableBytes
+            )
         } catch {
             close(vectors)
             close(keyFile)
@@ -129,7 +141,9 @@ final nonisolated class SearchVectorFile {
     }
 
     /// A new, empty file pair of id `id` in `directory`, not yet named by the catalog.
-    static func create(directory: URL, id: UUID) throws -> SearchVectorFile {
+    static func create(
+        directory: URL, id: UUID, availableBytes: @escaping AvailableBytes = FreeSpaceFloor.availableBytes(onVolumeOf:)
+    ) throws -> SearchVectorFile {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let urls = SearchVectorFormat.urls(directory: directory, id: id)
         let flags = O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC
@@ -141,7 +155,9 @@ final nonisolated class SearchVectorFile {
             close(vectors)
             throw SearchVectorFileInvalid.io(code)
         }
-        let file = SearchVectorFile(id: id, directory: directory, keys: SearchVectorKeys(), vectors: vectors, keyFile: keyFile)
+        let file = SearchVectorFile(
+            id: id, directory: directory, keys: SearchVectorKeys(), vectors: vectors, keyFile: keyFile, availableBytes: availableBytes
+        )
         try writeAll(SearchVectorFormat.vectorsHeader(id: id), to: vectors, at: 0)
         try writeAll(SearchVectorFormat.keysHeader(id: id), to: keyFile, at: 0)
         try file.remap()
@@ -176,6 +192,23 @@ final nonisolated class SearchVectorFile {
         }
     }
 
+    /// Removes the pair of `id` in `directory`: a build that failed removes its own file and
+    /// nothing else.
+    static func remove(_ id: UUID, in directory: URL) {
+        let urls = SearchVectorFormat.urls(directory: directory, id: id)
+        for url in [urls.vectors, urls.keys] {
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                continue
+            } catch {
+                OtosLog.thumbnails.errorOperation("search.vectors", phase: "removeFailed", fields: [
+                    "file": url.lastPathComponent, "error": String(describing: error),
+                ])
+            }
+        }
+    }
+
     // MARK: Appending
 
     /// `rows` as the next slots, in order, encoded against the file as it stands: the vectors
@@ -195,10 +228,12 @@ final nonisolated class SearchVectorFile {
     }
 
     /// Appends `rows` as the next slots of a file being built: encoded, written and taken.
+    /// The free-space floor (ADR 0027) is asked first: no catalog commit counts these slots.
     func append(_ rows: [StoredSearchEmbeddingRow]) async throws {
         precondition(!held, "a file memory holds takes appends through SearchIndexMemory")
         guard !rows.isEmpty else { return }
         let pending = try encode(rows)
+        try checkFloor(for: pending)
         try await write(pending)
         try take(pending)
     }
@@ -220,33 +255,42 @@ final nonisolated class SearchVectorFile {
                 entries.append((old.keys.slotIDs[Int(slot)], old.labels(slot: Int(slot))))
             }
             let pending = try encode(vectors: vectorBytes, entries: entries)
+            try checkFloor(for: pending)
             try await write(pending)
             try take(pending)
         }
     }
 
+    /// Throws `floorReached` when writing `pending` would take the volume below the floor:
+    /// what a file being built asks before each write, since no commit waits on it.
+    private func checkFloor(for pending: SearchVectorAppend) throws {
+        let needed = Int64(pending.vectorBytes.count + pending.keyBytes.count)
+        guard FreeSpaceFloor.admits(needed, available: availableBytes(directory)) else {
+            throw SearchVectorFileInvalid.floorReached
+        }
+    }
+
     /// Whether `rows` more slots keep the volume at the free-space floor (ADR 0027): asked
-    /// before the catalog commits slots, so a full disk leaves rows owed rather than a file
-    /// short of the count. A row's keys are counted at `estimatedKeyBytes`.
+    /// before the catalog commits slots for a file memory holds, and only then — the write
+    /// that follows the commit is never refused for the floor, so a disk that fills between
+    /// the two leaves the file and the catalog agreeing rather than a file short of the count.
+    /// A row's keys are counted at `estimatedKeyBytes`.
     func admits(rows: Int) -> Bool {
         let needed = Int64(rows * (SearchVectorFormat.slotBytes + Self.estimatedKeyBytes))
-        return FreeSpaceFloor.admits(needed, available: FreeSpaceFloor.availableBytes(onVolumeOf: directory))
+        return FreeSpaceFloor.admits(needed, available: availableBytes(directory))
     }
 
     /// A generous slot record: path, root number and about eighteen labels.
     static let estimatedKeyBytes = 512
 
     /// Writes `pending`'s bytes past the file's end, off the actor: the vectors ordered to the
-    /// disk before the keys that name them (`F_BARRIERFSYNC`). The free-space floor (ADR 0027)
-    /// is asked first. Changes nothing the file answers from: a read of it during the write
-    /// reads the slots it had, and the file takes the append afterwards (`take`).
+    /// disk before the keys that name them (`F_BARRIERFSYNC`). The floor is the caller's to ask
+    /// before it commits (`admits(rows:)`) or builds (`checkFloor`); a full disk here is the
+    /// write's own `ENOSPC`. Changes nothing the file answers from: a read of it during the
+    /// write reads the slots it had, and the file takes the append afterwards (`take`).
     func write(_ pending: SearchVectorAppend) async throws {
         guard pending.file == id, pending.fromSlots == slots, pending.fromKeysLength == keys.length else {
             throw SearchVectorFileInvalid.stale
-        }
-        let needed = Int64(pending.vectorBytes.count + pending.keyBytes.count)
-        guard FreeSpaceFloor.admits(needed, available: FreeSpaceFloor.availableBytes(onVolumeOf: directory)) else {
-            throw SearchVectorFileInvalid.floorReached
         }
         try await Self.write(pending.vectorBytes, to: vectorsDescriptor, at: SearchVectorFormat.vectorsLength(slots: pending.fromSlots))
         try await Self.write(pending.keyBytes, to: keysDescriptor, at: pending.fromKeysLength)
@@ -459,6 +503,43 @@ nonisolated enum SearchVectorFileInvalid: Error, Equatable {
         }
     }
 }
+
+/// A process's exclusive claim on a vector folder: the one writer of its files. Two Otos
+/// processes over one Application Support (a second copy started with `open -n`) would both
+/// cut files the other maps (`ftruncate` under a mapping faults the reader) and remove each
+/// other's pairs; the text-reading child (`Otos --read-text`) never opens the folder, since
+/// `main.swift` serves readings before the app starts. The claim is a `flock` on the folder
+/// itself, which `removeOthers` never removes, and the kernel releases it however the holder
+/// ends, so a crashed owner leaves nothing to clear.
+final nonisolated class SearchVectorDirectoryClaim {
+    private let descriptor: Int32
+
+    /// Claims `directory`, making it if needed; throws `SearchVectorDirectoryHeld` when
+    /// another process holds it.
+    init(directory: URL) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let descriptor = Darwin.open(directory.path(percentEncoded: false), O_RDONLY | O_CLOEXEC)
+        guard descriptor >= 0 else { throw SearchVectorFileInvalid.io(errno) }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            let code = errno
+            close(descriptor)
+            if code == EWOULDBLOCK {
+                throw SearchVectorDirectoryHeld()
+            }
+            throw SearchVectorFileInvalid.io(code)
+        }
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        flock(descriptor, LOCK_UN)
+        close(descriptor)
+    }
+}
+
+/// Another process holds the vector folder (`SearchVectorDirectoryClaim`): this one reads and
+/// writes no vector file until it is free, and asks again after the backoff.
+nonisolated struct SearchVectorDirectoryHeld: Error, Equatable {}
 
 /// An append encoded against one file at one length (`SearchVectorFile.encode`): written off
 /// the actor, then taken by the file only while it still stands where the append was encoded.

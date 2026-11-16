@@ -19,18 +19,23 @@ nonisolated enum ScannedFileUpsert: Equatable, Sendable {
     case updated
 }
 
-/// The rows one write changed, split by whether they existed before it. A write that
-/// only inserted rows changed nothing any derived owner reads, so it is announced as
-/// `.assetsAdded` and only what lists rows (the window, enrichment) takes it up; a change
-/// to an existing row's filesystem facts, presence or path can move any fact derived from
-/// it, so it is `.changed(.all)`, naming the rows when every one of them is known
-/// (`CatalogChangedRows`).
+/// The rows one write changed, split by whether they existed before it. A new row carries
+/// nothing Otos derives yet, so a write that only inserted rows is announced as
+/// `.assetsAdded` and only what lists rows (the window, enrichment) takes it up — unless it
+/// came with a fact an owner derives from, which is announced as what it changed, naming
+/// those rows: a source's digest that makes the new row a copy of another (`.copies`,
+/// `recordInserted(_:carrying:)`). A change to an existing row's filesystem facts, presence
+/// or path can move any fact derived from it, so it is `.changed(.all)`, naming the rows
+/// when every one of them is known (`CatalogChangedRows`).
 nonisolated struct CatalogRowChanges: Equatable, Sendable {
     private(set) var inserted = 0
     /// The existing rows changed, by asset.
     private(set) var updatedRows: Set<MediaAssetID> = []
     /// Existing rows changed that the write cannot name (a size reported by source item).
     private(set) var unnamedUpdates = 0
+    /// What new rows carried that an owner derives from, and those rows.
+    private(set) var insertedFacts: CatalogChangedFacts = []
+    private(set) var insertedFactRows: Set<MediaAssetID> = []
 
     var updated: Int {
         updatedRows.count + unnamedUpdates
@@ -55,6 +60,19 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
         }
     }
 
+    /// A deleted row and the Live Photo partners it leaves (`AssetRowDeletion`).
+    mutating func recordDeleted(_ deletion: AssetRowDeletion, of relativePath: MediaRelativePath, in root: LibraryRootPath) {
+        updatedRows.formUnion(deletion.ids(of: relativePath, in: root))
+    }
+
+    /// `id`'s new row was written with `facts` an owner derives from (a digest that made it a
+    /// copy); nothing when `facts` is empty.
+    mutating func recordInserted(_ id: MediaAssetID, carrying facts: CatalogChangedFacts) {
+        guard !facts.isEmpty else { return }
+        insertedFacts.formUnion(facts)
+        insertedFactRows.insert(id)
+    }
+
     /// Existing rows changed that the write does not name.
     mutating func recordUnnamedUpdates(_ count: Int) {
         unnamedUpdates += count
@@ -64,15 +82,32 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
         inserted == 0 && updated == 0
     }
 
-    /// The change to announce, nil when the write changed nothing.
-    var notification: CatalogStoreChange? {
+    /// The changes to announce, in order; none when the write changed nothing.
+    var notifications: [CatalogStoreChange] {
         if isEmpty {
-            nil
+            []
         } else if updated == 0 {
-            .assetsAdded
+            insertedFacts.isEmpty ? [.assetsAdded] : [.assetsAdded, .changed(insertedFacts, rows: .rows(insertedFactRows))]
         } else {
-            .changed(.all, rows: unnamedUpdates == 0 ? .named(updatedRows) : .unnamed)
+            [.changed(.all, rows: unnamedUpdates == 0 ? .rows(updatedRows.union(insertedFactRows)) : .unnamed)]
         }
+    }
+}
+
+/// What deleting one asset row changed (`CatalogStore.deleteAssetRow`): whether a row went,
+/// and the Live Photo partners it leaves — a movie no longer paired, or its still — whose
+/// pairing the deletion moved. An owner keeping a memory per asset cannot find them from a
+/// row that is gone, so a deletion that names its rows names these too.
+nonisolated struct AssetRowDeletion: Equatable, Sendable {
+    let deleted: Bool
+    let partners: [MediaRelativePath]
+
+    static let nothing = AssetRowDeletion(deleted: false, partners: [])
+
+    /// The deleted row and its partners in `root`, nothing when no row went.
+    func ids(of relativePath: MediaRelativePath, in root: LibraryRootPath) -> Set<MediaAssetID> {
+        guard deleted else { return [] }
+        return Set(([relativePath] + partners).map { MediaAssetID(libraryRootPath: root, relativePath: $0) })
     }
 }
 

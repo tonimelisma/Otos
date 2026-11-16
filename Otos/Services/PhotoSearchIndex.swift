@@ -64,7 +64,8 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///   file-backed pages outside the process's footprint, so a query is one pass of Float16
 ///   rows times the query (about 14 ms over 165,000 photos) and never touches SQLite. A launch
 ///   with a current file maps it and reads no table; a missing, torn or stale one is rebuilt
-///   from `search_embedding` while search shows what it has read, nothing.
+///   from `search_embedding` while search shows what it has read, nothing. The process claims
+///   the file's folder first (`SearchVectorDirectoryClaim`), so it is the folder's one writer.
 /// - **A query** is read by `queries` (`SearchQueryReader`, which owns `SearchQueryEncoder`:
 ///   language, translation, text tower) and answered here from its encoding, among the scope's
 ///   assets: the cut follows the best match in the scope, so a folder whose best photo of a
@@ -125,6 +126,11 @@ actor PhotoSearchIndex {
     private let nameVectorFile: NameVectorFile
     /// Dead slots a compaction waits for (`compactIfOwed`).
     private let compactionFloor: Int
+    /// The free space the vector folder's volume reports (ADR 0027); a test's own figure when
+    /// it fills the disk at a chosen step.
+    private let availableBytes: SearchVectorFile.AvailableBytes
+    /// This process's claim on the vector folder, held from the first load until shutdown.
+    private var directoryClaim: SearchVectorDirectoryClaim?
     private let bundle: Bundle
     /// Runs a build of the vector file one heavy load at a time with the other owners'
     /// (`LoadAdmission`).
@@ -173,8 +179,10 @@ actor PhotoSearchIndex {
         readTexts: ReadTexts? = nil,
         nameVectorFile: NameVectorFile? = nil,
         compactionFloor: Int = PhotoSearchIndex.compactionFloor,
+        availableBytes: @escaping SearchVectorFile.AvailableBytes = FreeSpaceFloor.availableBytes(onVolumeOf:),
         admission: LoadAdmission = LoadAdmission(isOpen: true)
     ) {
+        self.availableBytes = availableBytes
         self.admission = admission
         self.nameVectorFile = nameVectorFile ?? { [store] state in try await store.setSearchVectorFileState(state) }
         self.compactionFloor = compactionFloor
@@ -243,9 +251,12 @@ actor PhotoSearchIndex {
         guard change.touches(inputs) else { return }
         switch change.rows {
         case let .named(rows):
-            namedRows.formUnion(rows)
+            namedRows.formUnion(rows.ids)
         case .unnamed:
             reconcileOwed = true
+        case .none:
+            // A root's order or activity: no row, nor which rows are in reach, changed.
+            return
         }
         request()
     }
@@ -276,6 +287,10 @@ actor PhotoSearchIndex {
         loop = nil
         retry = nil
         ring = nil
+        // The folder is let go with no mapping of it left: the next writer may cut its files.
+        changeMemory { $0.replaceVectors(with: nil) }
+        loaded = false
+        directoryClaim = nil
         for continuation in changeContinuations.values {
             continuation.finish()
         }
@@ -561,6 +576,8 @@ actor PhotoSearchIndex {
         let added = missing.isEmpty ? [] : try await store.currentSearchEmbeddings(for: Set(missing))
         guard !gone.isEmpty || !added.isEmpty else { return }
         if !added.isEmpty {
+            // The floor is asked before the catalog counts the slots, never after (`admits(rows:)`).
+            guard vectors.admits(rows: added.count) else { throw SearchVectorFileInvalid.floorReached }
             try await store.addSearchVectorSlots(added.count)
         }
         try await commit(added, to: vectors, removing: gone)
@@ -580,29 +597,48 @@ actor PhotoSearchIndex {
         let added = current.filter { vectors.rowOf[$0.id] == nil }
         guard !gone.isEmpty || !added.isEmpty else { return }
         if !added.isEmpty {
+            // The floor is asked before the catalog counts the slots, never after (`admits(rows:)`).
+            guard vectors.admits(rows: added.count) else { throw SearchVectorFileInvalid.floorReached }
             try await store.addSearchVectorSlots(added.count)
         }
         try await commit(added, to: vectors, removing: Array(gone))
         await compactIfOwed()
     }
 
-    /// The first load. The file the catalog names is opened when it is current
-    /// (`SearchVectorFile.open`: off the actor, no table read, the vectors mapped not read);
-    /// otherwise it is built. Returns how memory came by it.
+    /// The first load, and the one after a write to the file memory holds failed. The folder
+    /// is claimed first (`SearchVectorDirectoryClaim`): one writer at a time, whatever the
+    /// process. The file the catalog names is opened when it is current
+    /// (`SearchVectorFile.open`: off the actor, no table read, the vectors mapped not read),
+    /// and any other file in the folder — a compaction or build a crash cut short — is removed;
+    /// otherwise a new file is built while memory answers from what it holds. Returns how
+    /// memory came by it.
     private func load() async throws -> LoadSource {
         let start = ContinuousClock.now
+        if directoryClaim == nil {
+            directoryClaim = try SearchVectorDirectoryClaim(directory: vectorDirectory)
+        }
         var source = LoadSource.file
         var stateMs = 0, openMs = 0
-        do {
-            guard let state = try await store.searchVectorFileState() else { throw SearchVectorFileInvalid.missing }
-            stateMs = DiagnosticsTiming.milliseconds(since: start)
-            let opening = ContinuousClock.now
-            let opened = try await Self.open(directory: vectorDirectory, state: state)
-            changeMemory { $0.replaceVectors(with: opened) }
-            openMs = DiagnosticsTiming.milliseconds(since: opening)
-        } catch let invalid as SearchVectorFileInvalid {
+        var invalid: SearchVectorFileInvalid?
+        if memory.vectors != nil {
+            // A write after a commit failed (`commit`): the catalog counts slots memory's file
+            // never took.
+            invalid = .short
+        } else {
+            do {
+                guard let state = try await store.searchVectorFileState() else { throw SearchVectorFileInvalid.missing }
+                stateMs = DiagnosticsTiming.milliseconds(since: start)
+                let opening = ContinuousClock.now
+                let opened = try await Self.open(directory: vectorDirectory, state: state, availableBytes: availableBytes)
+                changeMemory { $0.replaceVectors(with: opened) }
+                SearchVectorFile.removeOthers(in: vectorDirectory, keeping: state.id)
+                openMs = DiagnosticsTiming.milliseconds(since: opening)
+            } catch let reason as SearchVectorFileInvalid {
+                invalid = reason
+            }
+        }
+        if let invalid {
             OtosLog.thumbnails.noticeOperation("search.vectors", phase: "rebuilding", fields: ["reason": invalid.reason])
-            changeMemory { $0.replaceVectors(with: nil) }
             // A build reads every stored vector: one heavy load at a time with the other
             // owners'. Opening a current file reads none and waits for no one.
             try await admission.run(.searchIndex) {
@@ -623,32 +659,40 @@ actor PhotoSearchIndex {
     }
 
     @concurrent
-    private static func open(directory: URL, state: SearchVectorFileState) async throws -> sending SearchVectorFile {
-        try SearchVectorFile.open(directory: directory, state: state)
+    private static func open(
+        directory: URL, state: SearchVectorFileState, availableBytes: @escaping SearchVectorFile.AvailableBytes
+    ) async throws -> sending SearchVectorFile {
+        try SearchVectorFile.open(directory: directory, state: state, availableBytes: availableBytes)
     }
 
     /// Builds a new file from the catalog's current embeddings: which are current, from indexes
     /// alone, then every stored embedding in pages of `loadPageSize`, each its own read, the
     /// current ones appended, so no read holds a connection long and no page outlives its
-    /// append. The catalog names nothing while it is built, so no commit counts slots of it; it
-    /// names the file once every byte is on the disk, and memory takes it then. Other files in
-    /// the folder are removed. Paid once a model revision, or when a file was lost or cut short.
+    /// append. Only this pass commits slots, so none lands while it builds. The catalog names
+    /// the file once every byte is on the disk, memory takes it then, and only then are the
+    /// other files in the folder removed: a build that fails (a full disk, a read) removes its
+    /// own file and leaves the old one, and memory, as they were. Paid once a model revision,
+    /// or when a file was lost or cut short.
     private func rebuild() async throws {
-        try await nameVectorFile(nil)
-        SearchVectorFile.removeOthers(in: vectorDirectory, keeping: nil)
-        let file = try SearchVectorFile.create(directory: vectorDirectory, id: UUID())
-        let current = try await store.currentSearchEmbeddingIDs()
-        var cursor: AssetKeyCursor?
-        repeat {
-            let page = try await store.searchEmbeddingRows(after: cursor, limit: Self.loadPageSize)
-            try await file.append(page.candidates.filter { current.ids.contains($0.id) })
-            cursor = page.next
-        } while cursor != nil
-        try await SearchVectorFile.synchronize(file.descriptors)
-        try await nameVectorFile(SearchVectorFileState(id: file.id, slots: file.slots))
+        let file = try SearchVectorFile.create(directory: vectorDirectory, id: UUID(), availableBytes: availableBytes)
+        do {
+            let current = try await store.currentSearchEmbeddingIDs()
+            var cursor: AssetKeyCursor?
+            repeat {
+                let page = try await store.searchEmbeddingRows(after: cursor, limit: Self.loadPageSize)
+                try await file.append(page.candidates.filter { current.ids.contains($0.id) })
+                cursor = page.next
+            } while cursor != nil
+            try await SearchVectorFile.synchronize(file.descriptors)
+            try await nameVectorFile(SearchVectorFileState(id: file.id, slots: file.slots))
+        } catch {
+            SearchVectorFile.remove(file.id, in: vectorDirectory)
+            throw error
+        }
         changeMemory {
             $0.replaceVectors(with: file)
         }
+        SearchVectorFile.removeOthers(in: vectorDirectory, keeping: file.id)
     }
 
     /// Embeddings a build page reads: measured 32–90 ms a page of 2,000 on the owner's catalog
@@ -660,8 +704,8 @@ actor PhotoSearchIndex {
     /// and lets `gone` go: the bytes are written first, and memory takes the append and the
     /// removal in one step with its revision (`SearchIndexMemory.changeVectors`), so a query
     /// during the write answers from the slots memory had. A file that cannot take them is
-    /// short of the catalog's count, so it is no longer current: memory lets it go and the next
-    /// pass builds a new one.
+    /// short of the catalog's count, so it is no longer current: memory keeps answering from
+    /// the slots it has, and the next pass builds a new file and takes it once it is complete.
     private func commit(_ rows: [StoredSearchEmbeddingRow], to file: SearchVectorFile, removing gone: [MediaAssetID] = []) async throws {
         do {
             let pending = rows.isEmpty ? nil : try file.encode(rows)
@@ -673,7 +717,6 @@ actor PhotoSearchIndex {
             OtosLog.thumbnails.errorOperation("search.vectors", phase: "appendFailed", fields: [
                 "error": String(describing: error), "rows": "\(rows.count)",
             ])
-            changeMemory { $0.replaceVectors(with: nil) }
             loaded = false
             throw error
         }
@@ -691,7 +734,7 @@ actor PhotoSearchIndex {
         let start = ContinuousClock.now
         let copied = (slots: old.slots, live: old.live)
         do {
-            let file = try SearchVectorFile.create(directory: vectorDirectory, id: UUID())
+            let file = try SearchVectorFile.create(directory: vectorDirectory, id: UUID(), availableBytes: availableBytes)
             try await file.appendLive(of: old)
             try await SearchVectorFile.synchronize(file.descriptors)
             try await nameVectorFile(SearchVectorFileState(id: file.id, slots: file.slots))

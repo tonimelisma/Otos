@@ -524,7 +524,7 @@ nonisolated struct CatalogChangeLog: Sendable {
             guard moved.isSubset(of: .captureDate), case let .named(named) = entry.rows else {
                 return nil
             }
-            rows.formUnion(named)
+            rows.formUnion(named.ids)
             if rows.count > Self.rowCapacity {
                 return nil
             }
