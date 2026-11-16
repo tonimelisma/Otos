@@ -85,15 +85,16 @@ actor PhotoSearchIndex {
     private let pageSize: Int
     private let cutoff: SearchCutoff
 
-    private var ids: [MediaAssetID] = []
-    private var rowOf: [MediaAssetID: Int] = [:]
-    private var vectors: [Float] = []
-    /// Each row's scene labels, index-paired with `ids`.
-    private var labels: [[String: Float]] = []
+    /// Every current embedding in memory (`SearchMatrix`).
+    private var matrix = SearchMatrix()
     private var vocabulary: SearchLabelVocabulary?
     /// Every non-empty text reading, by asset, folded once for matching
     /// (`SearchTextReading.folded`).
     private var texts: [MediaAssetID: String] = [:]
+    /// Every current reading memory has taken in, empty ones included: what a reconcile
+    /// compares with the catalog's current readings, so a reading with no text is not read
+    /// again each pass. Nil until the first text reconcile has read them all.
+    private var textsRead: Set<MediaAssetID>?
     /// Moves with every change to the embeddings and readings in memory (`announce()`), in the
     /// same step as the change: what an answer is computed from. Never reset, so an equal
     /// revision means the same memory.
@@ -177,8 +178,9 @@ actor PhotoSearchIndex {
             SearchEmbeddingStorage.candidatesSQL(rootCount: 1, position: "a.best_capture_local IS NOT NULL", order: ""),
             SearchTextStorage.candidatesSQL(rootCount: 1, position: "a.best_capture_local IS NOT NULL", order: ""),
             SearchEmbeddingStorage.currentEmbeddingIDsSQL(rootCount: 1),
-            SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: 1),
-            SearchTextStorage.currentReadingsSQL(rootCount: 1, lines: true),
+            SearchEmbeddingStorage.storedRowsSQL, SearchEmbeddingStorage.currentEmbeddingByKeySQL,
+            SearchTextStorage.currentReadingIDsSQL(rootCount: 1), SearchTextStorage.storedLinesSQL,
+            SearchTextStorage.currentLinesByKeySQL,
         ],
         ownWrites: [.searchContent, .searchReadings],
         beyondSQL: .membership
@@ -253,20 +255,21 @@ actor PhotoSearchIndex {
         let vocabulary = encoding.embedding == nil ? nil : labelVocabulary()
         let computedAt = revision
         let inScope = Set(scope)
-        let rows = scope.compactMap { rowOf[$0] }
+        let rows = scope.compactMap { matrix.rowOf[$0] }
         var matched: [MediaAssetID: Float]?
         var named: [String] = []
         var textMatches = 0
         if let query = encoding.embedding {
-            let scores = Self.scores(vectors, count: ids.count, query: query)
+            let scores = Self.scores(matrix.vectors, count: matrix.ids.count, query: query)
             let best = rows.lazy.map { scores[$0] }.max() ?? 0
             let threshold = cutoff.threshold(best: best)
             named = vocabulary?.labels(namedBy: query) ?? []
             var picture: [MediaAssetID: Float] = [:]
             for row in rows
-                where scores[row] >= threshold && SearchLabelGate.keeps(score: scores[row], best: best, labels: labels[row], named: named)
+                where scores[row] >= threshold
+                && SearchLabelGate.keeps(score: scores[row], best: best, named: named, confidence: { matrix.confidence(row: row, of: $0) })
             {
-                picture[ids[row]] = scores[row]
+                picture[matrix.ids[row]] = scores[row]
             }
             // A photo showing the words matches, whatever the cut. A query naming no scene label
             // ("according", "presenting") is about the words, so those photos rank first; one
@@ -276,7 +279,7 @@ actor PhotoSearchIndex {
             let lift = named.isEmpty ? Self.textMatchScore : 0
             let typed = SearchTextQuery(encoding.text), english = SearchTextQuery(encoding.pictureText)
             for (id, folded) in texts where inScope.contains(id) && (typed.matches(folded: folded) || english.matches(folded: folded)) {
-                picture[id] = lift + (rowOf[id].map { scores[$0] } ?? 0)
+                picture[id] = lift + (matrix.rowOf[id].map { scores[$0] } ?? 0)
                 textMatches += 1
             }
             matched = picture
@@ -327,7 +330,7 @@ actor PhotoSearchIndex {
 
     /// The embeddings in memory: what a test waits on.
     var embeddedCount: Int {
-        ids.count
+        matrix.ids.count
     }
 
     private func refresh() async {
@@ -377,33 +380,68 @@ actor PhotoSearchIndex {
         request()
     }
 
-    /// Brings memory in line with the catalog's current embeddings.
+    /// Brings memory in line with the catalog's current embeddings: on the first pass, the whole
+    /// load (`load()`); after it, which embeddings are current is read from indexes alone
+    /// (`CatalogStore.currentSearchEmbeddingIDs`), the ones memory lacks are sought by key, and
+    /// those no longer current go. A root not read now (a card out, a library offline) keeps
+    /// its embeddings until it is back or forgotten.
     private func reconcile() async throws {
         if !loaded {
-            let all = try await store.currentSearchEmbeddings()
-            ids = []
-            rowOf = [:]
-            vectors = []
-            labels = []
-            insert(all)
-            loaded = true
-            let matrixMB = vectors.count * MemoryLayout<Float>.size / 1_048_576
-            OtosLog.thumbnails.noticeOperation("search.index", phase: "loaded", fields: [
-                "count": "\(all.count)", "matrixMB": "\(matrixMB)",
-            ])
-            ResourceCheckpoint.record("searchIndexLoaded", fields: ["matrixMB": "\(matrixMB)"])
-            announce()
+            try await load()
             return
         }
         let current = try await store.currentSearchEmbeddingIDs()
-        let gone = Set(ids).subtracting(current)
-        let missing = current.subtracting(ids)
-        let added = missing.isEmpty ? [] : try await store.currentSearchEmbeddings(for: missing)
+        let gone = Set(matrix.ids.filter { id in
+            current.readRoots.contains(id.libraryRootPath)
+                ? !current.ids.contains(id)
+                : !current.catalogedRoots.contains(id.libraryRootPath)
+        })
+        let missing = current.ids.filter { matrix.rowOf[$0] == nil }
+        let added = missing.isEmpty ? [] : try await store.currentSearchEmbeddings(for: Set(missing))
         guard !gone.isEmpty || !added.isEmpty else { return }
-        remove(gone)
-        insert(added)
+        matrix.remove(gone)
+        matrix.reserve(added.count)
+        for row in added {
+            matrix.append(row)
+        }
         announce()
     }
+
+    /// The first load: which embeddings are current, from indexes alone, then every stored
+    /// embedding in pages of `loadPageSize`, each its own read, appended straight into a matrix
+    /// sized once for them, so the load never holds a second copy of the vectors. Memory takes
+    /// the matrix in one step at the end: a query answered while the load runs sees the empty
+    /// index it saw before, as it did when the load was one read.
+    private func load() async throws {
+        let start = ContinuousClock.now
+        let current = try await store.currentSearchEmbeddingIDs()
+        var loading = SearchMatrix()
+        loading.reserve(current.ids.count)
+        var cursor: AssetKeyCursor?
+        var pages = 0
+        repeat {
+            let page = try await store.searchEmbeddingRows(after: cursor, limit: Self.loadPageSize)
+            for row in page.candidates where current.ids.contains(row.id) {
+                loading.append(row)
+            }
+            pages += 1
+            cursor = page.next
+        } while cursor != nil
+        matrix = loading
+        loaded = true
+        let matrixMB = matrix.vectors.count * MemoryLayout<Float>.size / 1_048_576
+        OtosLog.thumbnails.noticeOperation("search.index", phase: "loaded", fields: [
+            "count": "\(matrix.ids.count)", "matrixMB": "\(matrixMB)", "pages": "\(pages)",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        ResourceCheckpoint.record("searchIndexLoaded", fields: ["matrixMB": "\(matrixMB)"])
+        announce()
+    }
+
+    /// Embeddings a load page reads: measured 32–90 ms a page of 2,000 on the owner's catalog
+    /// (`docs/research/2026-11-16-plan-0116-due-diligence.md` §5), so no read holds a connection
+    /// long.
+    static let loadPageSize = 2000
 
     /// Embeds every asset whose thumbnail has no current embedding, a page at a time, until
     /// none is left. An asset whose read made no embedding (a thumbnail that does not decode, a
@@ -431,10 +469,12 @@ actor PhotoSearchIndex {
                 }
                 let written = try await store.applySearchEmbeddings(results)
                 unread.formUnion(Set(owed.map(\.id)).subtracting(written.map(\.id)))
-                let stored = written.map { StoredSearchEmbedding(id: $0.id, embedding: $0.embedding, labels: $0.labels) }
-                if !stored.isEmpty {
-                    remove(Set(stored.map(\.id)))
-                    insert(stored)
+                if !written.isEmpty {
+                    matrix.remove(Set(written.map(\.id)))
+                    matrix.reserve(written.count)
+                    for result in written {
+                        matrix.append(result)
+                    }
                     announce()
                 }
                 embedded += written.count
@@ -452,19 +492,42 @@ actor PhotoSearchIndex {
         OtosLog.thumbnails.noticeOperation("search.index", phase: "embedded", fields: [
             "count": "\(embedded)",
             "unread": "\(unread)",
-            "total": "\(ids.count)",
+            "total": "\(matrix.ids.count)",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
     }
 
-    /// Brings the text readings in memory in line with the catalog's: the ids first, without
-    /// the lines, and only the readings memory lacks are decoded. Both reads finish before
-    /// memory changes: a query answered while they are awaited (`matches`) reads the memory
-    /// its revision names, and the removal, the additions and the revision move in one step.
+    /// Brings the text readings in memory in line with the catalog's. Which readings are current
+    /// is read from indexes alone (`CatalogStore.currentSearchTextIDs`, empty readings
+    /// included). The first time, every stored reading is read in pages of `loadPageSize`, each
+    /// its own read, and the current ones kept; after it, only the readings memory has not
+    /// taken in are sought by key (`readTexts`), and those no longer current go. A root not
+    /// read now keeps its readings. Every read finishes before memory changes: a query answered
+    /// while they are awaited (`matches`) reads the memory its revision names, and the removal,
+    /// the additions and the revision move in one step.
     private func reconcileTexts() async throws {
         let current = try await store.currentSearchTextIDs()
-        let gone = Set(texts.keys).subtracting(current)
-        let missing = current.subtracting(texts.keys)
+        guard let read = textsRead else {
+            var loading: [MediaAssetID: String] = [:]
+            var cursor: AssetKeyCursor?
+            repeat {
+                let page = try await store.searchTextRows(after: cursor, limit: Self.loadPageSize)
+                for row in page.candidates where !row.text.isEmpty && current.ids.contains(row.id) {
+                    loading[row.id] = SearchTextReading.folded(row.text)
+                }
+                cursor = page.next
+            } while cursor != nil
+            texts = loading
+            textsRead = current.ids
+            announce()
+            return
+        }
+        let gone = read.filter { id in
+            current.readRoots.contains(id.libraryRootPath)
+                ? !current.ids.contains(id)
+                : !current.catalogedRoots.contains(id.libraryRootPath)
+        }
+        let missing = current.ids.subtracting(read)
         guard !gone.isEmpty || !missing.isEmpty else { return }
         let added = missing.isEmpty ? [:] : try await readTexts(missing)
         for id in gone {
@@ -473,6 +536,7 @@ actor PhotoSearchIndex {
         for (id, text) in added {
             texts[id] = SearchTextReading.folded(text)
         }
+        textsRead = read.subtracting(gone).union(missing)
         announce()
     }
 
@@ -509,6 +573,7 @@ actor PhotoSearchIndex {
             unread.formUnion(Set(page.candidates.map(\.id)).subtracting(written.map(\.id)))
             for result in written {
                 texts[result.id] = result.lines.isEmpty ? nil : SearchTextReading.folded(SearchTextReading.searchable(result.lines))
+                textsRead?.insert(result.id)
                 withText += result.lines.isEmpty ? 0 : 1
             }
             if !written.isEmpty {
@@ -537,39 +602,6 @@ actor PhotoSearchIndex {
             ])
         }
         return settled
-    }
-
-    private func insert(_ embeddings: [StoredSearchEmbedding]) {
-        vectors.reserveCapacity(vectors.count + embeddings.count * SearchEmbedding.dimensions)
-        for embedding in embeddings where rowOf[embedding.id] == nil {
-            rowOf[embedding.id] = ids.count
-            ids.append(embedding.id)
-            vectors.append(contentsOf: embedding.embedding)
-            labels.append(embedding.labels)
-        }
-    }
-
-    /// Removes by moving the last row into each gap, so a removal is O(dimensions).
-    private func remove(_ gone: Set<MediaAssetID>) {
-        let dimensions = SearchEmbedding.dimensions
-        for id in gone {
-            guard let row = rowOf.removeValue(forKey: id) else { continue }
-            let last = ids.count - 1
-            if row != last {
-                let moved = ids[last]
-                ids[row] = moved
-                labels[row] = labels[last]
-                rowOf[moved] = row
-                vectors.withUnsafeMutableBufferPointer { buffer in
-                    for index in 0 ..< dimensions {
-                        buffer[row * dimensions + index] = buffer[last * dimensions + index]
-                    }
-                }
-            }
-            ids.removeLast()
-            labels.removeLast()
-            vectors.removeLast(dimensions)
-        }
     }
 
     private func announce() {
@@ -643,6 +675,84 @@ actor SearchImageEmbedder {
                 ])
                 return nil
             }
+        }
+    }
+}
+
+/// Every current embedding the search index holds (ADR 0048): one row-major matrix of
+/// `SearchEmbedding.dimensions` floats a row, the asset of each row, and each row's loose scene
+/// labels, compact (`SearchLabelReadings`). The matrix grows geometrically, reserved only to
+/// the count a load or a batch knows it will hold, so appending a page never copies the whole
+/// matrix; a removal moves the last row into the gap.
+nonisolated struct SearchMatrix: Sendable {
+    private(set) var ids: [MediaAssetID] = []
+    private(set) var rowOf: [MediaAssetID: Int] = [:]
+    private(set) var vectors: [Float] = []
+    private var labels: [SearchLabelReadings] = []
+    private var labelNames = SearchLabelNames()
+
+    /// Room for `count` more rows, grown at least geometrically.
+    mutating func reserve(_ count: Int) {
+        let needed = (ids.count + count) * SearchEmbedding.dimensions
+        guard needed > vectors.capacity else { return }
+        vectors.reserveCapacity(max(needed, vectors.capacity * 2))
+        ids.reserveCapacity(ids.count + count)
+        labels.reserveCapacity(labels.count + count)
+    }
+
+    /// A stored row: its vector's bytes appended as they are (little-endian Float32,
+    /// `Float32Storage`), its labels' text read once.
+    mutating func append(_ row: StoredSearchEmbeddingRow) {
+        guard rowOf[row.id] == nil else { return }
+        #if _endian(little)
+            row.vector.withUnsafeBytes { bytes in
+                vectors.append(contentsOf: bytes.bindMemory(to: Float.self))
+            }
+        #else
+            guard let floats = SearchEmbeddingStorage.embedding(from: row.vector) else { return }
+            vectors.append(contentsOf: floats)
+        #endif
+        appendKey(row.id, labels: row.labels)
+    }
+
+    /// An embedding just written, its labels as the catalog stored them.
+    mutating func append(_ result: SearchEmbeddingResult) {
+        guard rowOf[result.id] == nil, result.embedding.count == SearchEmbedding.dimensions else { return }
+        vectors.append(contentsOf: result.embedding)
+        appendKey(result.id, labels: SearchEmbeddingStorage.labelsText(result.labels))
+    }
+
+    private mutating func appendKey(_ id: MediaAssetID, labels text: String?) {
+        rowOf[id] = ids.count
+        ids.append(id)
+        labels.append(SearchLabelReadings(text: text, names: &labelNames))
+    }
+
+    /// Row `row`'s confidence in the label `name`, nil when it has none.
+    func confidence(row: Int, of name: String) -> Float? {
+        labelNames.numbers[name].flatMap { labels[row].confidence(of: $0) }
+    }
+
+    /// Removes by moving the last row into each gap, so a removal is O(dimensions).
+    mutating func remove(_ gone: Set<MediaAssetID>) {
+        let dimensions = SearchEmbedding.dimensions
+        for id in gone {
+            guard let row = rowOf.removeValue(forKey: id) else { continue }
+            let last = ids.count - 1
+            if row != last {
+                let moved = ids[last]
+                ids[row] = moved
+                labels[row] = labels[last]
+                rowOf[moved] = row
+                vectors.withUnsafeMutableBufferPointer { buffer in
+                    for index in 0 ..< dimensions {
+                        buffer[row * dimensions + index] = buffer[last * dimensions + index]
+                    }
+                }
+            }
+            ids.removeLast()
+            labels.removeLast()
+            vectors.removeLast(dimensions)
         }
     }
 }

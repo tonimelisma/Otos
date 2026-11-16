@@ -9134,14 +9134,18 @@ extension CatalogStore {
     }
 
     /// The assets in available roots that have a current search embedding, without the
-    /// vectors: what `PhotoSearchIndex` reconciles its memory against after a catalog change.
-    func currentSearchEmbeddingIDs() async throws -> Set<MediaAssetID> {
+    /// vectors, with the roots read and every root cataloged: what `PhotoSearchIndex`
+    /// reconciles its memory against after a catalog change. A root cataloged and not read
+    /// (a card out, a library offline) keeps what memory holds of it.
+    func currentSearchEmbeddingIDs() async throws -> CurrentSearchKeys {
         let rootIDs = availableRootRowIDs()
-        guard !rootIDs.isEmpty else {
-            return []
-        }
         let pathsByRowID = roots.pathsByRowID
-        return try await database().readFreeingConnection { db in
+        let read = Set(rootIDs.compactMap { pathsByRowID[$0] })
+        let cataloged = Set(roots.values.map(\.path))
+        guard !rootIDs.isEmpty else {
+            return CurrentSearchKeys(ids: [], readRoots: read, catalogedRoots: cataloged)
+        }
+        let ids = try await database().readFreeingConnection { db in
             let rows = try Row.fetchCursor(
                 db, sql: SearchEmbeddingStorage.currentEmbeddingIDsSQL(rootCount: rootIDs.count), arguments: StatementArguments(rootIDs)
             )
@@ -9152,38 +9156,64 @@ extension CatalogStore {
             }
             return ids
         }
+        return CurrentSearchKeys(ids: ids, readRoots: read, catalogedRoots: cataloged)
     }
 
-    /// Current search embeddings, all of them or those of `ids`.
-    func currentSearchEmbeddings(for ids: Set<MediaAssetID>? = nil) async throws -> [StoredSearchEmbedding] {
-        try await readSearchEmbeddings(only: ids)
-    }
-
-    private func readSearchEmbeddings(only ids: Set<MediaAssetID>? = nil) async throws -> [StoredSearchEmbedding] {
+    /// The stored embeddings of the available roots, a page at a time in each root's key order
+    /// after `cursor` (`CandidateWalk`), each in its own transaction: the vector as stored and
+    /// the loose labels' text, which the search index keeps compact. Whether each is current is
+    /// the caller's to ask (`currentSearchEmbeddingIDs`), so a page reads only the embedding
+    /// table, never an asset row.
+    func searchEmbeddingRows(
+        after cursor: AssetKeyCursor? = nil,
+        limit: Int
+    ) async throws -> CandidatePage<StoredSearchEmbeddingRow, AssetKeyCursor> {
         let rootIDs = availableRootRowIDs()
-        guard !rootIDs.isEmpty, ids?.isEmpty != true else {
-            return []
-        }
+        guard !rootIDs.isEmpty else { return CandidatePage(candidates: [], next: nil) }
         let pathsByRowID = roots.pathsByRowID
         return try await database().readFreeingConnection { db in
-            let rows = try Row.fetchCursor(
-                db,
-                sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: rootIDs.count),
-                arguments: StatementArguments(rootIDs)
+            let (rows, next) = try CandidateWalk.keyPage(
+                sql: SearchEmbeddingStorage.storedRowsSQL, rootIDs: rootIDs, after: cursor, limit: limit, db: db
             )
-            var out: [StoredSearchEmbedding] = []
-            while let row = try rows.next() {
-                guard let root = pathsByRowID[row[0]] else { continue }
-                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1]))
-                if let ids, !ids.contains(id) {
-                    continue
-                }
-                guard let data: Data = row[2], let embedding = SearchEmbeddingStorage.embedding(from: data) else { continue }
-                out.append(StoredSearchEmbedding(id: id, embedding: embedding, labels: SearchEmbeddingStorage.labels(from: row[3])))
+            let embeddings = rows.compactMap { row -> StoredSearchEmbeddingRow? in
+                guard let root = pathsByRowID[row[0]], let vector: Data = row[2],
+                      vector.count == SearchEmbedding.dimensions * MemoryLayout<Float32>.size
+                else { return nil }
+                return StoredSearchEmbeddingRow(
+                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])),
+                    vector: vector,
+                    labels: row[3]
+                )
             }
-            return out
+            return CandidatePage(candidates: embeddings, next: next)
         }
     }
+
+    /// The current embeddings of `ids`, each sought by its key, `currentEmbeddingBatch` to a
+    /// transaction: what the search index adds after a reconcile.
+    func currentSearchEmbeddings(for ids: Set<MediaAssetID>) async throws -> [StoredSearchEmbeddingRow] {
+        let rowIDs = roots.rowIDSnapshot()
+        let keys = ids.compactMap { id in rowIDs[id.libraryRootPath].map { (id: id, rootID: $0) } }
+        let dbWriter = try database()
+        var found: [StoredSearchEmbeddingRow] = []
+        var start = 0
+        while start < keys.count {
+            let batch = keys[start ..< min(start + Self.currentEmbeddingBatch, keys.count)]
+            start += batch.count
+            found += try await dbWriter.readFreeingConnection(operation: "currentSearchEmbeddings") { db in
+                let statement = try db.cachedStatement(sql: SearchEmbeddingStorage.currentEmbeddingByKeySQL)
+                return try batch.compactMap { key -> StoredSearchEmbeddingRow? in
+                    guard let row = try Row.fetchOne(statement, arguments: [key.rootID, key.id.relativePath.rawValue]),
+                          let vector: Data = row[0], vector.count == SearchEmbedding.dimensions * MemoryLayout<Float32>.size
+                    else { return nil }
+                    return StoredSearchEmbeddingRow(id: key.id, vector: vector, labels: row[1])
+                }
+            }
+        }
+        return found
+    }
+
+    static let currentEmbeddingBatch = 500
 
     /// The people the user has named and not hidden, for search to match in a query
     /// (ADR 0048): a hidden person is found only in the People gallery.
@@ -9446,40 +9476,82 @@ extension CatalogStore {
         }
     }
 
-    /// The assets in available roots with a current, non-empty text reading, without the
-    /// lines: what `PhotoSearchIndex` reconciles its memory against after a catalog change.
-    func currentSearchTextIDs() async throws -> Set<MediaAssetID> {
-        try await Set(readSearchTexts(lines: false).keys)
-    }
-
-    /// The current, non-empty text readings of `ids`, as search matches them
-    /// (`SearchTextReading.searchable`); only theirs are decoded.
-    func currentSearchTexts(for ids: Set<MediaAssetID>) async throws -> [MediaAssetID: String] {
-        guard !ids.isEmpty else { return [:] }
-        return try await readSearchTexts(lines: true, only: ids)
-    }
-
-    private func readSearchTexts(lines: Bool, only ids: Set<MediaAssetID>? = nil) async throws -> [MediaAssetID: String] {
+    /// The stills in available roots with a current text reading, empty ones included, with the
+    /// roots read and every root cataloged: what `PhotoSearchIndex` reconciles its readings
+    /// against after a catalog change, read from indexes alone (`currentReadingIDsSQL`).
+    func currentSearchTextIDs() async throws -> CurrentSearchKeys {
         let rootIDs = availableRootRowIDs()
-        guard !rootIDs.isEmpty else { return [:] }
         let pathsByRowID = roots.pathsByRowID
-        return try await database().readFreeingConnection { db in
+        let read = Set(rootIDs.compactMap { pathsByRowID[$0] })
+        let cataloged = Set(roots.values.map(\.path))
+        guard !rootIDs.isEmpty else {
+            return CurrentSearchKeys(ids: [], readRoots: read, catalogedRoots: cataloged)
+        }
+        let ids = try await database().readFreeingConnection { db in
             let rows = try Row.fetchCursor(
-                db,
-                sql: SearchTextStorage.currentReadingsSQL(rootCount: rootIDs.count, lines: lines),
-                arguments: StatementArguments(rootIDs)
+                db, sql: SearchTextStorage.currentReadingIDsSQL(rootCount: rootIDs.count), arguments: StatementArguments(rootIDs)
             )
-            var texts: [MediaAssetID: String] = [:]
+            var ids: Set<MediaAssetID> = []
             while let row = try rows.next() {
                 guard let root = pathsByRowID[row[0]] else { continue }
-                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1]))
-                if let ids, !ids.contains(id) {
-                    continue
-                }
-                texts[id] = lines ? try SearchTextReading.searchable(SearchTextStorage.lines(fromJSON: row[2])) : ""
+                ids.insert(MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])))
             }
-            return texts
+            return ids
         }
+        return CurrentSearchKeys(ids: ids, readRoots: read, catalogedRoots: cataloged)
+    }
+
+    /// The stored readings of the available roots, a page at a time in each root's key order
+    /// after `cursor` (`CandidateWalk`), each its own read, as search matches them
+    /// (`SearchTextReading.searchable`); a reading with no text has none. Whether each is
+    /// current is the caller's to ask (`currentSearchTextIDs`): a page reads only the text table.
+    func searchTextRows(
+        after cursor: AssetKeyCursor? = nil,
+        limit: Int
+    ) async throws -> CandidatePage<StoredSearchText, AssetKeyCursor> {
+        let rootIDs = availableRootRowIDs()
+        guard !rootIDs.isEmpty else { return CandidatePage(candidates: [], next: nil) }
+        let pathsByRowID = roots.pathsByRowID
+        return try await database().readFreeingConnection { db in
+            let (rows, next) = try CandidateWalk.keyPage(
+                sql: SearchTextStorage.storedLinesSQL, rootIDs: rootIDs, after: cursor, limit: limit, db: db
+            )
+            let texts = try rows.compactMap { row -> StoredSearchText? in
+                guard let root = pathsByRowID[row[0]] else { return nil }
+                return try StoredSearchText(
+                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])),
+                    text: SearchTextReading.searchable(SearchTextStorage.lines(fromJSON: row[2]))
+                )
+            }
+            return CandidatePage(candidates: texts, next: next)
+        }
+    }
+
+    /// The current readings of `ids` with text, as search matches them
+    /// (`SearchTextReading.searchable`), each sought by its key, `currentEmbeddingBatch` to a
+    /// transaction; a still whose current reading holds no text is absent.
+    func currentSearchTexts(for ids: Set<MediaAssetID>) async throws -> [MediaAssetID: String] {
+        let rowIDs = roots.rowIDSnapshot()
+        let keys = ids.compactMap { id in rowIDs[id.libraryRootPath].map { (id: id, rootID: $0) } }
+        let dbWriter = try database()
+        var found: [MediaAssetID: String] = [:]
+        var start = 0
+        while start < keys.count {
+            let batch = keys[start ..< min(start + Self.currentEmbeddingBatch, keys.count)]
+            start += batch.count
+            let texts = try await dbWriter.readFreeingConnection(operation: "currentSearchTexts") { db in
+                let statement = try db.cachedStatement(sql: SearchTextStorage.currentLinesByKeySQL)
+                return try batch.reduce(into: [MediaAssetID: String]()) { texts, key in
+                    guard let lines = try String.fetchOne(statement, arguments: [key.rootID, key.id.relativePath.rawValue]) else { return }
+                    let text = try SearchTextReading.searchable(SearchTextStorage.lines(fromJSON: lines))
+                    if !text.isEmpty {
+                        texts[key.id] = text
+                    }
+                }
+            }
+            found.merge(texts) { $1 }
+        }
+        return found
     }
 
     /// Visible stills with a current render signature, with the column facts the same-photo

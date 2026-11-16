@@ -541,19 +541,18 @@ struct CatalogStoreQueryPlanTests {
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
-        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
-        let roots: [DatabaseValue] = [rootID1.databaseValue, rootID2.databaseValue]
+        let (rootID1, _) = try await insertPlanFixture(dbQueue)
         let plans = try await dbQueue.read { db in
             try [
                 // The keys alone walk the product stamps index whole
-                // (`everyCandidateWalkIsARangeOfItsNamedIndex`); the vectors seek by key.
-                "currentEmbeddings": explainPlan(
-                    db, sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: 2),
-                    arguments: StatementArguments(roots)
+                // (`everyCandidateWalkIsARangeOfItsNamedIndex`); a missing embedding is sought by
+                // key, and the first load walks the embedding table's key a root at a time.
+                "currentEmbeddingByKey": explainPlan(
+                    db, sql: SearchEmbeddingStorage.currentEmbeddingByKeySQL, arguments: [rootID1, "a.jpg"]
                 ),
-                "currentTexts": explainPlan(
-                    db, sql: SearchTextStorage.currentReadingsSQL(rootCount: 2, lines: false), arguments: StatementArguments(roots)
-                ),
+                "storedRows": explainPlan(db, sql: SearchEmbeddingStorage.storedRowsSQL, arguments: [rootID1, "", 2000]),
+                "currentLinesByKey": explainPlan(db, sql: SearchTextStorage.currentLinesByKeySQL, arguments: [rootID1, "a.jpg"]),
+                "storedLines": explainPlan(db, sql: SearchTextStorage.storedLinesSQL, arguments: [rootID1, "", 2000]),
             ]
         }
         for (name, plan) in plans.sorted(by: { $0.key < $1.key }) {
@@ -1267,6 +1266,11 @@ extension CatalogStoreQueryPlanTests {
             let loops = reconcile.split(separator: "\n").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "|`- ")) }
             #expect(loops.first?.contains("a USING COVERING INDEX \(ProductStampSQL.indexName)") == true, "\(reconcile)")
             #expect(loops.last?.contains("e USING COVERING INDEX \(SearchEmbeddingStorage.sourceIndexName)") == true, "\(reconcile)")
+            // The text readings' reconcile, the same way over the text source index.
+            let texts = try explainPlan(db, sql: SearchTextStorage.currentReadingIDsSQL(rootCount: 2), arguments: [1, 2])
+            let textLoops = texts.split(separator: "\n").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "|`- ")) }
+            #expect(textLoops.first?.contains("a USING COVERING INDEX \(ProductStampSQL.indexName)") == true, "\(texts)")
+            #expect(textLoops.last?.contains("t USING COVERING INDEX \(SearchTextStorage.sourceIndexName)") == true, "\(texts)")
         }
     }
 

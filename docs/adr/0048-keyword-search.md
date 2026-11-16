@@ -173,8 +173,17 @@ against 77.3, 85 in English for both), and every asset has one.
   and seeks each asset's embedding source in `idx_search_embedding_source`, never the 680 MB
   table (12k pages against 251k on the owner-shaped catalog, 0.39 s against 14 s); what is owed
   is one newest-first walk of the same two indexes per pass.
-- **Memory:** every current embedding as one matrix. A query is one matrix–vector product
-  (about 3 ms over 19,000 photos), with no SQLite read.
+- **Memory:** every current embedding as one matrix (`SearchMatrix`). A query is one
+  matrix–vector product (about 3 ms over 19,000 photos), with no SQLite read. Each row's loose
+  scene labels are kept compact: a number per label name and the confidence the stored text
+  gives (`SearchLabelReadings`), so the gate decides exactly as over the parsed dictionary
+  (`SearchMatrixTests`), in a few dozen bytes a row rather than a dictionary. The first load
+  reads which embeddings are current from indexes alone, then every stored embedding in pages
+  of 2,000, each its own read, appended straight into a matrix sized once for them: no second
+  copy of the vectors, and no read holds a connection long. Memory takes the matrix in one step
+  when the load ends, so a query answered meanwhile sees the empty index it saw before. The
+  matrix grows geometrically. A root that is not read now (a card out, a library offline) keeps
+  its rows until it is back or forgotten.
 - **Answers:** `CatalogProjection` hands it the query's encoding, its facts resolved for the
   pass's now, and the scope's assets, and shows the matches. The index's `changes` stream
   asks for a new publication while a search is shown. The index's `revision` moves in the

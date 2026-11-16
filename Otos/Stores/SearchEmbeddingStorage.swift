@@ -81,20 +81,26 @@ nonisolated enum SearchEmbeddingStorage {
         """
     }
 
-    /// The current embeddings in `rootCount` roots (bound in order) with their vectors and loose
-    /// labels. Each row is found by the embedding table's key and its asset by the asset's
-    /// (`CatalogStoreQueryPlanTests`).
-    static func currentEmbeddingsSQL(rootCount: Int) -> String {
-        """
-        SELECT e.library_root_id, e.relative_path, e.embedding, e.labels
-        FROM search_embedding AS e
-        JOIN media_asset AS a
-            ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path
-        WHERE e.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
-          AND e.embedding IS NOT NULL
-          AND e.source = \(currentSource("a"))
-        """
-    }
+    /// One root's stored embeddings in key order after a path, through the embedding table's
+    /// key (`CandidateWalk.keyPage`; binds the root, the path, the limit): the vector and the
+    /// loose labels' text.
+    static let storedRowsSQL = """
+    SELECT library_root_id, relative_path, embedding, labels
+    FROM search_embedding INDEXED BY sqlite_autoindex_search_embedding_1
+    WHERE library_root_id = ? AND relative_path > ?
+    ORDER BY relative_path
+    LIMIT ?
+    """
+
+    /// One asset's current embedding by its key (binds the root and the path): the vector and
+    /// the loose labels' text, or no row when it has none current.
+    static let currentEmbeddingByKeySQL = """
+    SELECT e.embedding, e.labels
+    FROM search_embedding AS e
+    JOIN media_asset AS a ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path
+    WHERE e.library_root_id = ? AND e.relative_path = ?
+      AND e.source = \(currentSource("a"))
+    """
 
     static func labelsText(_ labels: [String: Float]) -> String {
         labels.sorted { $0.key < $1.key }.map { "\($0.key):\(String(format: "%.3f", $0.value))" }.joined(separator: ",")
@@ -148,9 +154,19 @@ nonisolated struct SearchEmbeddingResult: Equatable, Sendable {
     var confidentLabels: [String] = []
 }
 
-/// One stored, current embedding and the scene labels read with it.
-nonisolated struct StoredSearchEmbedding: Sendable {
+/// One stored embedding as the catalog holds it: the asset, its vector's bytes
+/// (`SearchEmbedding.dimensions` little-endian Float32) and its loose labels' text
+/// (`labelsText`), which the search index keeps compact (`SearchLabelReadings`).
+nonisolated struct StoredSearchEmbeddingRow: Sendable {
     let id: MediaAssetID
-    let embedding: [Float]
-    var labels: [String: Float] = [:]
+    let vector: Data
+    let labels: String?
+}
+
+/// The assets with a current embedding in the roots read, and which roots were read and are
+/// cataloged.
+nonisolated struct CurrentSearchKeys: Equatable, Sendable {
+    let ids: Set<MediaAssetID>
+    let readRoots: Set<LibraryRootPath>
+    let catalogedRoots: Set<LibraryRootPath>
 }

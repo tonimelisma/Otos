@@ -130,7 +130,7 @@ enum StallReproduction {
         "searchEmbeddingCandidates", "searchEmbeddingCandidates.drain",
         "searchTextCandidates",
         "photoDescriptionCandidates",
-        "unnamedPlaceCells", "currentSearchTextIDs", "duplicateCopies", "peopleSnapshot", "mirrorProbes",
+        "unnamedPlaceCells", "duplicateCopies", "peopleSnapshot", "mirrorProbes",
         // A record is stale by its family's revision, which a MediaMetadata release moves, so
         // no index can hold the stale ones without a migration per release (ADR 0039): the
         // refresher's cursor walks its libraries' rows once per pass.
@@ -242,9 +242,12 @@ enum StallReproduction {
             try await store.metadataRefreshCandidates(after: nil, limit: 64).count
         }
         try await replay("unnamedPlaceCells", limit: 32) { try await store.unnamedPlaceCells(language: language, limit: 32).count }
-        try await replay("readSearchEmbeddings") { try await store.currentSearchEmbeddings().count }
-        try await replay("currentSearchEmbeddingIDs") { try await store.currentSearchEmbeddingIDs().count }
-        try await replay("currentSearchTextIDs") { try await store.currentSearchTextIDs().count }
+        // The search index's first load: every stored embedding, a page of 2,000 at a time.
+        try await replay("searchEmbeddingRows.load", limit: PhotoSearchIndex.loadPageSize) {
+            try await walk { try await store.searchEmbeddingRows(after: $0, limit: PhotoSearchIndex.loadPageSize) }
+        }
+        try await replay("currentSearchEmbeddingIDs") { try await store.currentSearchEmbeddingIDs().ids.count }
+        try await replay("currentSearchTextIDs") { try await store.currentSearchTextIDs().ids.count }
         var involved: [MediaAssetID] = []
         try await replay("samePhotoCandidates") {
             let candidates = try await store.samePhotoCandidates(availableLibraryPaths: available)

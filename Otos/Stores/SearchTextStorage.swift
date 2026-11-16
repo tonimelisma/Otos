@@ -49,18 +49,39 @@ nonisolated enum SearchTextStorage {
         """
     }
 
-    /// The current, non-empty readings in `rootCount` roots (bound in order): the asset's key,
-    /// then its lines when `lines`. Each row is found by the text table's key and its asset by
-    /// the asset's (`CatalogStoreQueryPlanTests`).
-    static func currentReadingsSQL(rootCount: Int, lines: Bool) -> String {
+    /// The keys of the current readings in `rootCount` roots, empty ones included: each still's
+    /// preview identity from the product stamps index and its reading's source from the text
+    /// source index, the asset side outer, so the check reads neither table.
+    static func currentReadingIDsSQL(rootCount: Int) -> String {
         """
-        SELECT t.library_root_id, t.relative_path\(lines ? ", t.lines" : "")
-        FROM search_text AS t
-        JOIN media_asset AS a ON a.library_root_id = t.library_root_id AND a.relative_path = t.relative_path
-        WHERE t.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", "))) AND t.lines <> '[]'
-          AND t.source = \(currentSource("a"))
+        SELECT a.library_root_id, a.relative_path
+        FROM media_asset AS a INDEXED BY \(ProductStampSQL.indexName)
+        CROSS JOIN search_text AS t INDEXED BY \(sourceIndexName)
+            ON t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path
+            AND t.source = \(currentSource("a"))
+        WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
+          AND a.preview_path IS NOT NULL
         """
     }
+
+    /// One root's stored readings in key order after a path, through the text table's key
+    /// (`CandidateWalk.keyPage`; binds the root, the path, the limit).
+    static let storedLinesSQL = """
+    SELECT library_root_id, relative_path, lines
+    FROM search_text INDEXED BY sqlite_autoindex_search_text_1
+    WHERE library_root_id = ? AND relative_path > ?
+    ORDER BY relative_path
+    LIMIT ?
+    """
+
+    /// One still's current reading by its key (binds the root and the path).
+    static let currentLinesByKeySQL = """
+    SELECT t.lines
+    FROM search_text AS t
+    JOIN media_asset AS a ON a.library_root_id = t.library_root_id AND a.relative_path = t.relative_path
+    WHERE t.library_root_id = ? AND t.relative_path = ?
+      AND t.source = \(currentSource("a"))
+    """
 
     static func linesJSON(_ lines: [RecognizedTextLine]) throws -> String {
         try String(decoding: JSONEncoder().encode(lines), as: UTF8.self)
@@ -69,6 +90,13 @@ nonisolated enum SearchTextStorage {
     static func lines(fromJSON json: String) throws -> [RecognizedTextLine] {
         try JSONDecoder().decode([RecognizedTextLine].self, from: Data(json.utf8))
     }
+}
+
+/// One stored reading as search matches it (`SearchTextReading.searchable`): empty when the
+/// preview held no text.
+nonisolated struct StoredSearchText: Sendable {
+    let id: MediaAssetID
+    let text: String
 }
 
 /// One line Vision recognised in a preview, with its confidence (0–1).

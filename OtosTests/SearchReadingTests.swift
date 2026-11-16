@@ -70,10 +70,10 @@ struct SearchReadingTests {
     }
 
     @Test func theGateKeepsWhatTheClassifierSawOrWhatSigLIPIsSureOf() {
-        #expect(SearchLabelGate.keeps(score: 0.10, best: 0.15, labels: [:], named: []))
-        #expect(!SearchLabelGate.keeps(score: 0.10, best: 0.15, labels: ["dog": 0.9], named: ["horse"]))
-        #expect(SearchLabelGate.keeps(score: 0.10, best: 0.15, labels: ["horse": 0.2], named: ["horse"]))
-        #expect(SearchLabelGate.keeps(score: 0.14, best: 0.15, labels: [:], named: ["horse"]))
+        #expect(SearchLabelGate.keeps(score: 0.10, best: 0.15, named: []) { _ in nil })
+        #expect(!SearchLabelGate.keeps(score: 0.10, best: 0.15, named: ["horse"]) { ["dog": Float(0.9)][$0] })
+        #expect(SearchLabelGate.keeps(score: 0.10, best: 0.15, named: ["horse"]) { ["horse": Float(0.2)][$0] })
+        #expect(SearchLabelGate.keeps(score: 0.14, best: 0.15, named: ["horse"]) { _ in nil })
     }
 
     /// Text drawn into a picture is read back, certain enough for the Info pane to show it.
@@ -321,7 +321,7 @@ struct SearchReadingTests {
         #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: "stale", lines: open)]).isEmpty)
         #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: candidate.source, lines: open)]).count == 1)
         #expect(try await store.searchTextCandidates(limit: 10).candidates.isEmpty)
-        #expect(try await store.currentSearchTextIDs() == [asset.id])
+        #expect(try await store.currentSearchTextIDs().ids == [asset.id])
         #expect(try await store.currentSearchTexts(for: [asset.id]) == [asset.id: "OPEN\n0p3n"])
         #expect(try await store.photoInfoOverlay(for: asset.id)?.textLines == ["OPEN"])
         await store.shutdown()
@@ -354,7 +354,8 @@ struct SearchReadingTests {
             labels: ["water": 0.88, "pool": 0.88, "horse": 0.07], confidentLabels: ["pool", "water"]
         )])
         #expect(try await store.photoInfoOverlay(for: asset.id)?.sceneLabels == ["pool", "water"])
-        #expect(try await store.currentSearchEmbeddings().first?.labels["horse"] == 0.07)
+        let stored = try await store.currentSearchEmbeddings(for: [asset.id]).first
+        #expect(SearchEmbeddingStorage.labels(from: stored?.labels)["horse"] == 0.07)
         await enrich(thumbnail: "pool-thumb-2.jpg")
         #expect(try await store.photoInfoOverlay(for: asset.id)?.sceneLabels == nil)
         await store.shutdown()

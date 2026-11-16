@@ -87,7 +87,7 @@ Each bet names the scorecard number it moves. "Building" means a PR is in progre
 | # | Bet | Moves | Status |
 | --- | --- | --- | --- |
 | 1 | **People.** First paint 48.8 s. `peopleSnapshot` takes 131 s of reader time in 4 runs and a large share of the footprint. Background writes are bounded. | People's first paint; footprint; reader time | building |
-| 2 | **Search index memory.** A paged load and compact labels, then Float16 vectors or a mapped matrix. | footprint (2,179 MB at load); search time | written (stage 4) |
+| 2 | **Search index memory.** A paged load and compact labels, then Float16 vectors or a mapped matrix. | footprint (2,179 MB at load); search time | first step done (stage 4: paged load, compact labels, index-only reconciles; 632 MB after load on the generated catalog); Float16 or a mapped matrix not started |
 | 3 | **Duplicates.** `samePhotoCandidates` takes 123 s in 5 runs and `samePhotoDetails` 64 s in 405; 227 of 277 store changes are `copies`. | reader time; stall lines; CPU | building |
 | 4 | **The window's own reads.** `filterOptions` 106 s in 11 runs, `orderedAssetIDs` 64 s in 14, the stack-candidate read, sort, search and clear. Build the installed app with `-O`, though it stays a Debug build. | click to paint; search, sort and filter | building |
 | 5 | **Window isolation.** One pool of 8 readers. Background reads are admitted at most 4 at a time. The caller's handle (`WindowReads` or `BackgroundReads`) picks the lane, and a lint keeps it so. Passive checkpoints with `journal_size_limit` replace the truncating barrier. | stall lines; window waits | building |

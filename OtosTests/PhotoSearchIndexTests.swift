@@ -203,10 +203,10 @@ struct PhotoSearchIndexTests {
 
         #expect(try await store.searchEmbeddingCandidates(limit: 10).candidates.map(\.id) == [catalog.blue])
         #expect(try await store.searchEmbeddingPendingCount() == 1)
-        let current = try await store.currentSearchEmbeddings()
+        let current = try await store.currentSearchEmbeddings(for: [catalog.red, catalog.blue])
         #expect(current.map(\.id) == [catalog.red])
-        #expect(current.first?.embedding == vector)
-        #expect(try await store.currentSearchEmbeddingIDs() == [catalog.red])
+        #expect(current.first.flatMap { SearchEmbeddingStorage.embedding(from: $0.vector) } == vector)
+        #expect(try await store.currentSearchEmbeddingIDs().ids == [catalog.red])
         await store.shutdown()
     }
 
@@ -222,7 +222,7 @@ struct PhotoSearchIndexTests {
         let asset = try #require(catalog.assets.first { $0.id == catalog.red })
         try await enrich(store, asset, thumbnail: "red-thumb-2.jpg")
 
-        #expect(try await store.currentSearchEmbeddings().isEmpty)
+        #expect(try await store.currentSearchEmbeddings(for: [catalog.red]).isEmpty)
         #expect(try await Set(store.searchEmbeddingCandidates(limit: 10).candidates.map(\.id)) == [catalog.red, catalog.blue])
         await store.shutdown()
     }
