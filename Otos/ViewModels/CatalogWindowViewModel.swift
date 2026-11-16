@@ -1291,6 +1291,9 @@ extension CatalogWindowViewModel {
             // A new wait: its indicator waits for its own first presented frame.
             waitingFramePresentedScope = nil
             stallMonitor.beginIntentToPaint(scope: descriptor.scope)
+            // The paint's other end is `intentPainted`'s checkpoint: what the process paid
+            // between the two (CPU, disk, page-ins) is the paint's own.
+            ResourceCheckpoint.record("paintStart", fields: ["scope": descriptor.scope.diagnosticDescription])
         }
         projectionIntentContinuation.yield(.query(CatalogQueryRequest(
             descriptor: descriptor,

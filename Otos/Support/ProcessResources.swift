@@ -9,8 +9,8 @@ import SQLite3
 // The app logs what it holds of the machine's scarce resources at the moments a user feels
 // something, so a scorecard read from the log can say which resource was short and who held
 // it (ADR 0015). A checkpoint is an EVENT, never a timer (ADR 0033): a launch milestone, a
-// paint, a People build, the search index loading, a store stall, a tour step, and the
-// system's own memory-pressure report. The peak between events needs no sampler: the kernel
+// scope intent and its paint, a People build, the search index loading, a store stall, a
+// tour step, and the system's own memory-pressure report. The peak between events needs no sampler: the kernel
 // keeps it (`ri_lifetime_max_phys_footprint`).
 //
 // Each checkpoint writes, from one serial utility queue so nothing runs on the caller's
@@ -18,7 +18,9 @@ import SQLite3
 //
 //   op=process.memory    footprint, its lifetime peak, resident size, SQLite's own heap,
 //                        and the system's free, compressed and swapped memory
-//   op=process.usage     CPU time and disk bytes read and written since launch
+//   op=process.usage     CPU time, disk bytes read and written, and page-ins since launch:
+//                        a page-in is a fault the kernel served from disk, so a wait full
+//                        of them is the machine paging the process back in, not Otos's work
 //   op=catalog.store.use what the Store's connections were busy with and which kinds of
 //                        fact its change notifications carried, since launch (when the
 //                        caller can reach the Store)
@@ -42,6 +44,9 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
     let cpuMilliseconds: UInt64?
     let diskBytesRead: UInt64?
     let diskBytesWritten: UInt64?
+    /// Faults served by reading a page from disk (`ri_pageins`), since launch: memory the
+    /// system had pushed out under pressure, or a mapped file read for the first time.
+    let pageIns: UInt64?
 
     static func current() -> ProcessResourceSample {
         let task = taskVMInfo()
@@ -57,7 +62,8 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
             swapUsedBytes: swapUsed(),
             cpuMilliseconds: usage?.cpuMilliseconds,
             diskBytesRead: usage?.diskRead,
-            diskBytesWritten: usage?.diskWritten
+            diskBytesWritten: usage?.diskWritten,
+            pageIns: usage?.pageIns
         )
     }
 
@@ -81,6 +87,7 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
         let cpuMilliseconds: UInt64
         let diskRead: UInt64
         let diskWritten: UInt64
+        let pageIns: UInt64
     }
 
     private static func rusage() -> Usage? {
@@ -102,7 +109,8 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
             peakFootprint: info.ri_lifetime_max_phys_footprint,
             cpuMilliseconds: nanoseconds / 1_000_000,
             diskRead: info.ri_diskio_bytesread,
-            diskWritten: info.ri_diskio_byteswritten
+            diskWritten: info.ri_diskio_byteswritten,
+            pageIns: info.ri_pageins
         )
     }
 
@@ -154,12 +162,13 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
         return fields
     }
 
-    /// The `op=process.usage` fields: CPU in milliseconds, disk in megabytes.
+    /// The `op=process.usage` fields: CPU in milliseconds, disk in megabytes, page-ins as a count.
     var usageFields: [String: String] {
         [
             "cpuMs": cpuMilliseconds.map { "\($0)" } ?? "unknown",
             "diskReadMB": diskBytesRead.map(Self.megabytes) ?? "unknown",
             "diskWrittenMB": diskBytesWritten.map(Self.megabytes) ?? "unknown",
+            "pageIns": pageIns.map { "\($0)" } ?? "unknown",
         ]
     }
 
@@ -174,9 +183,10 @@ nonisolated enum ResourceCheckpoint {
     /// main thread least of all, waits for a system call.
     private static let queue = DispatchQueue(label: "net.melisma.Otos.resourceCheckpoint", qos: .utility)
 
-    /// `event` names what just happened (`firstGrid`, `paint`, `memoryPressure`); `fields` adds
-    /// what the caller knows about it; `storeUse` reads the Store's cumulative use when the
-    /// caller can reach it.
+    /// `event` names what just happened (`firstGrid`, `paintStart`, `paint`, `memoryPressure`);
+    /// `fields` adds what the caller knows about it, on both the memory and the usage line, so
+    /// either is matched to its event alone (a paint's `scope`); `storeUse` reads the Store's
+    /// cumulative use when the caller can reach it.
     static func record(
         _ event: String,
         fields: [String: String] = [:],
@@ -187,7 +197,7 @@ nonisolated enum ResourceCheckpoint {
             var memory = sample.memoryFields.merging(fields) { mine, _ in mine }
             memory["event"] = event
             OtosLog.performance.noticeOperation("process.memory", phase: "sample", fields: memory)
-            var usage = sample.usageFields
+            var usage = sample.usageFields.merging(fields) { mine, _ in mine }
             usage["event"] = event
             OtosLog.performance.noticeOperation("process.usage", phase: "sample", fields: usage)
             if let use = storeUse?() {

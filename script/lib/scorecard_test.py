@@ -9,6 +9,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 
 # No __pycache__ under script/: every file there is a script (script/ci-repo-shape.sh).
@@ -80,6 +81,28 @@ SESSION = [
     line(40.0, "op=catalog.store.use phase=sample event=idleEnd busyMs=main.reader:9000,main.writer:400 "
                "holds=main.reader:readSearchEmbeddings:8000:3:4000,main.writer:applyEnrichmentBatch:400:8:90 transactions=11 changes=13 changeFacts=detail:12,images:3"),
     line(41.0, "op=tour phase=finish outcome=finished"),
+]
+
+
+def usage(second, event, cpu, read, page_ins, scope):
+    return line(second, f"op=process.usage phase=sample event={event} cpuMs={cpu} diskReadMB={read} diskWrittenMB=5 "
+                        f"pageIns={page_ins} scope={scope}")
+
+
+# SESSION with the paint checkpoints of a build that logs page-ins, and the tour's restore
+# of All Media after its idle window, paged back in: 1,480 page-ins across a 6.3 s paint.
+PAGED_SESSION = SESSION[:7] + [
+    SESSION[7], usage(2.0, "paintStart", 1500, 50, 100, "allMedia"),
+] + SESSION[8:16] + [usage(4.3, "paint", 2400, 52, 112, "allMedia")] + SESSION[16:20] + [
+    SESSION[20], usage(6.0, "paintStart", 2500, 52, 112, "places"),
+    SESSION[21], SESSION[22], usage(6.2, "paintStart", 2510, 52, 112, "importBatch:7"),
+    SESSION[23], usage(6.6, "paint", 2600, 52, 115, "importBatch:7"),
+] + SESSION[24:-1] + [
+    line(40.2, "op=ui.sidebarSelectionToPaint phase=start scope=allMedia"),
+    usage(40.2, "paintStart", 7000, 160, 500, "allMedia"),
+    line(46.5, "op=ui.sidebarSelectionToPaint phase=finish ms=6300 scope=allMedia surface=grid"),
+    usage(46.5, "paint", 7451, 183, 1980, "allMedia"),
+    line(46.6, "op=tour phase=finish outcome=finished"),
 ]
 
 
@@ -285,6 +308,81 @@ class ScorecardTests(unittest.TestCase):
         self.assertIn("reconciled (uncleanExit)", text)
         report, _, _ = run(SESSION)
         self.assertIsNone(report["disk"])
+
+    def test_each_paint_carries_what_the_process_paid_between_its_checkpoints(self):
+        report, rows, text = run(PAGED_SESSION)
+        warm = report["clicks"][0]
+        self.assertEqual(warm["usage"], {"cpuMs": 900, "diskReadMB": 2, "diskWrittenMB": 0, "pageIns": 12})
+        self.assertNotIn("pagedIn", warm)
+        # The abandoned click has no paint, so no cost of its own; the next paint pairs with
+        # its own start, not the abandoned one's.
+        self.assertIsNone(report["clicks"][1]["usage"])
+        self.assertEqual(report["clicks"][2]["usage"]["pageIns"], 3)
+        paged = report["clicks"][3]
+        self.assertEqual((paged["usage"]["pageIns"], paged["pagedIn"]), (1480, 1480))
+        self.assertIn("pagedIn=1480", text)
+        self.assertIn("pageIns=12]", text)
+
+    def test_a_paged_in_mark_never_changes_a_verdict(self):
+        _, rows, _ = run(PAGED_SESSION)
+        after_idle = [r for r in rows if r["label"] == "return after idle all media"][0]
+        self.assertEqual((after_idle["value"], after_idle["pagedIn"]), (6300, 1480))
+        # No target is set for a return after idle; the mark does not make it a PASS or excuse a FAIL.
+        self.assertEqual(after_idle["verdict"], "NO-TARGET")
+        targets = dict(TARGETS, **{"click.returnAfterIdleMs": {"metric": "click.returnAfterIdleMs", "maxMs": 300}})
+        report = scorecard.analyse(*reversed(scorecard.pick_session(scorecard.read_events(PAGED_SESSION))))
+        failed = [r for r in scorecard.verdicts(report, targets) if r["label"] == "return after idle all media"][0]
+        self.assertEqual(failed["verdict"], "FAIL")
+
+    def test_the_return_after_the_idle_window_is_reported_apart_from_warm_returns(self):
+        report, rows, text = run(PAGED_SESSION)
+        self.assertEqual([c["visit"] for c in report["clicks"]], ["first", "first", "return", "returnAfterIdle"])
+        by_metric = {}
+        for row in rows:
+            by_metric.setdefault(row["metric"], []).append(row["label"])
+        self.assertEqual(by_metric["click.returnMs"], ["return import"])
+        self.assertEqual(by_metric["click.returnAfterIdleMs"], ["return after idle all media"])
+        self.assertIn("return after idle", text)
+        # Without an idle window every return is a warm one.
+        report, rows, _ = run([l for l in PAGED_SESSION if "idleEnd" not in l])
+        self.assertEqual(report["clicks"][3]["visit"], "return")
+
+    def test_a_build_without_the_paint_checkpoints_reads_unknown_never_zero(self):
+        report, _, text = run(SESSION)
+        self.assertTrue(all(c["usage"] is None for c in report["clicks"]))
+        self.assertIn("pageIns=-]", text)
+        self.assertTrue(any("page-ins" in item for item in report["notMeasured"]))
+        # A usage line without pageIns: the other counters still differ, page-ins stay unknown.
+        idle = report["tour"]["idle"]
+        self.assertEqual((idle["cpuMs"], idle["pageIns"]), (3000, None))
+
+    def test_the_script_compares_with_a_saved_scorecard_older_than_its_fields(self):
+        directory = tempfile.mkdtemp()
+        log = os.path.join(directory, "session.ndjson")
+        targets = os.path.join(directory, "targets.json")
+        saved = os.path.join(directory, "saved.json")
+        with open(log, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(PAGED_SESSION) + "\n")
+        with open(targets, "w", encoding="utf-8") as handle:
+            json.dump({"targets": list(TARGETS.values())}, handle)
+        # An older scorecard: its rows carry no pagedIn, and it called the restore a plain return.
+        with open(saved, "w", encoding="utf-8") as handle:
+            json.dump({"report": {"session": "OLD"}, "verdicts": [
+                {"metric": "click.returnMs", "label": "return import", "value": 500, "target": "300", "verdict": "FAIL"},
+                {"metric": "click.returnMs", "label": "return all media", "value": 6000, "target": "300", "verdict": "FAIL"},
+            ]}, handle)
+        out = io.StringIO()
+        stdout, sys.stdout = sys.stdout, out
+        try:
+            scorecard.main(["--input", log, "--targets", targets, "--compare", saved])
+        finally:
+            sys.stdout = stdout
+        compared = out.getvalue().split("COMPARED WITH OLD")[1]
+        self.assertIn("return import", compared)
+        self.assertRegex(compared, r"return after idle all media\s+- →\s+6300  -  pagedIn - → 1480")
+        for path in (log, targets, saved):
+            os.remove(path)
+        os.rmdir(directory)
 
     def test_a_matrix_puts_each_configuration_on_one_row(self):
         report, rows, _ = run(SESSION)

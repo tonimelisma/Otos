@@ -78,13 +78,13 @@ real backlog. Three instruments see those:
 
 - **Resource checkpoints** (`ResourceCheckpoint`, `Otos/Support/ProcessResources.swift`).
   At events, never on a timer — session start, window attached, catalog open, first grid,
-  search index loaded, each People build, each scope paint, each store stall, each tour
+  search index loaded, each People build, each scope intent and its paint, each store stall, each tour
   step and the system's memory-pressure report (`DispatchSource.makeMemoryPressureSource`,
   the platform reporting the fact) — one serial utility queue writes `op=process.memory`
   (`phys_footprint` from `TASK_VM_INFO`, its kernel-kept lifetime peak
   `ri_lifetime_max_phys_footprint`, resident size, SQLite's heap, the system's free,
   compressed and swapped memory), `op=process.usage` (CPU time, disk bytes read and
-  written, `proc_pid_rusage`) and, where the caller reaches the Store, `op=catalog.store.use`:
+  written, and page-ins `ri_pageins`: faults served from disk, `proc_pid_rusage`) and, where the caller reaches the Store, `op=catalog.store.use`:
   every transaction's time by connection role and Store operation, and the change
   notifications by kind of fact, since launch. The kernel keeps the peak, so no periodic
   sampler exists. A store stall's holders leave on `op=catalog.store.stall.holders` parts
@@ -121,7 +121,13 @@ real backlog. Three instruments see those:
   their holders, background passes, memory, who held which resource, the tour's steps and
   the idle window, each number beside its target (`docs/scorecard-targets.json`); a number
   no line carries is listed as not measured, and a tour step that ended at its deadline
-  is a FAIL row of its own. `--tour` runs a tour and saves the scorecard
+  is a FAIL row of its own. Each paint carries what the process paid between its intent's
+  checkpoint (`event=paintStart`) and its paint's (`event=paint`), matched by order and
+  scope; one with 100 or more page-ins is marked `pagedIn=<n>`, so the machine paging the
+  process back in reads apart from a wait of Otos's own. The mark never changes a verdict.
+  The tour's restore of its launch scope after the idle window is a `return after idle`
+  (`click.returnAfterIdleMs`), reported apart so `click.returnMs` holds warm returns only.
+  `--compare` reads a field an older saved scorecard lacks as unknown. `--tour` runs a tour and saves the scorecard
   under `build/scorecards/`; `--optimized` with `--dev` first builds the dev app with the
   installed app's compiler settings (ADR 0030) into a DerivedData of its own, so a sandbox
   tour times the code the owner runs; `--ablation-matrix` tours with every owner off, each alone

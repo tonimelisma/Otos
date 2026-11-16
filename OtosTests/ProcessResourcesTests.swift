@@ -14,6 +14,23 @@ struct ProcessResourcesTests {
         #expect(peak >= sample.footprintBytes / 2)
         #expect(sample.memoryFields["footprintMB"] != nil)
         #expect(sample.usageFields["cpuMs"] != "unknown")
+        #expect(sample.pageIns != nil)
+    }
+
+    /// The usage line carries page-ins as a plain count beside CPU and disk, and a counter the
+    /// kernel did not report reads `unknown`, never zero.
+    @Test func theUsageLineCarriesPageInsAndSaysUnknownForAMissingCounter() {
+        func sample(pageIns: UInt64?) -> ProcessResourceSample {
+            ProcessResourceSample(
+                footprintBytes: 1, peakFootprintBytes: nil, residentBytes: 1, sqliteBytes: nil,
+                systemFreeBytes: nil, systemCompressorBytes: nil, swapUsedBytes: nil,
+                cpuMilliseconds: 451, diskBytesRead: 23 * 1_048_576, diskBytesWritten: nil, pageIns: pageIns
+            )
+        }
+        #expect(sample(pageIns: 1480).usageFields == [
+            "cpuMs": "451", "diskReadMB": "23", "diskWrittenMB": "unknown", "pageIns": "1480",
+        ])
+        #expect(sample(pageIns: nil).usageFields["pageIns"] == "unknown")
     }
 
     /// Each notification counts once, and once for each kind of fact it names.

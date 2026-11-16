@@ -5,6 +5,7 @@
     {"metric": "click.smallScopeMs", "maxMs": 1000, "source": "plan 0116: every view paints in under a second"},
     {"metric": "click.allMedia.firstMs", "maxMs": 2000, "source": "plan 0116: the first visit to All Media paints in 2 s"},
     {"metric": "click.returnMs", "maxMs": 300, "source": "plan 0116: a return to any view paints in 0.3 s"},
+    {"metric": "click.returnAfterIdleMs", "maxMs": null, "source": "a number, not a target: the tour's restore of its launch scope after the idle window, which the system may have paged out; reported apart so click.returnMs holds warm returns only"},
     {"metric": "photo.stepMs", "maxMs": 1000, "source": "plan 0116: every view paints in under a second (the loupe, Compare, Info)"},
     {"metric": "query.resultMs", "maxMs": 1000, "source": "plan 0116: a search, sort or filter result in under a second"},
     {"metric": "act.resultMs", "maxMs": 100, "source": "plan 0116: every act's result visible in 0.1 s"},

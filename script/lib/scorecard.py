@@ -28,6 +28,12 @@ SCOPE_KINDS = [
     ("duplicateGroup", "duplicate group"), ("duplicates", "duplicates"),
 ]
 
+# A paint during which the process took at least this many page-ins (faults served from disk:
+# memory the system pushed out, read back) is marked `pagedIn=<n>`, so a reader can tell the
+# machine paging the process back in from a wait of Otos's own. A warm paint takes next to
+# none. The mark is a fact beside the number; it never changes a verdict.
+PAGED_IN_MIN = 100
+
 HOLDER = re.compile(r"^(?P<conn>[a-z]+\.[a-z]+(?:\.\d+)?):(?:held(?P<held>\d+)ms-endedAgo\d+ms|txn(?P<txn>\d+)ms):(?P<op>[^:]+)")
 
 
@@ -162,26 +168,61 @@ def launch(start, events):
     }
 
 
-def clicks(events, launch_scope):
-    """Every sidebarSelectionToPaint start, with its end and what happened between."""
+def checkpoint(samples, index, scope):
+    """The `index`-th usage sample of a paint checkpoint, when it names the same scope. The
+    app writes one `paintStart` per intent's start line and one `paint` per finish line, from
+    one serial queue, so the n-th sample is the n-th line's; a sample naming another scope
+    (a capture that began mid-session) is not that line's."""
+    if index >= len(samples):
+        return None
+    sample = samples[index]
+    named = sample.fields.get("scope")
+    return sample if named is None or named == scope else None
+
+
+def clicks(events, launch_scope, idle_end=None):
+    """Every sidebarSelectionToPaint start, with its end and what happened between. A return
+    that starts after the tour's idle window (its restore of the launch scope) is a
+    `returnAfterIdle`, never a warm `return`: the idle window may have let the system page
+    the process out."""
     seen = {launch_scope} if launch_scope else set()
     result = []
     starts = of(events, "ui.sidebarSelectionToPaint", "start")
-    for start in starts:
+    finishes = of(events, "ui.sidebarSelectionToPaint", "finish")
+    usages = of(events, "process.usage")
+    start_samples = [e for e in usages if e.fields.get("event") == "paintStart"]
+    paint_samples = [e for e in usages if e.fields.get("event") == "paint"]
+    for index, start in enumerate(starts):
         scope = start.fields.get("scope", "")
         end = first(events, "ui.sidebarSelectionToPaint", after=start.time,
                     where=lambda e, s=scope: e.phase in ("finish", "abandoned") and e.fields.get("scope") == s)
+        if scope not in seen:
+            visit = "first"
+        elif idle_end is not None and start.time >= idle_end.time:
+            visit = "returnAfterIdle"
+        else:
+            visit = "return"
         click = {
             "at": start.time.isoformat(),
             "scope": scope,
             "kind": scope_kind(scope),
-            "first": scope not in seen,
+            "first": visit == "first",
+            "visit": visit,
             "outcome": "pending" if end is None else ("painted" if end.phase == "finish" else "abandoned"),
             "ms": end.num("ms") if end else None,
         }
         seen.add(scope)
         if end is not None and end.phase == "abandoned":
             click["supersededBy"] = end.fields.get("supersededBy")
+        # What the process paid from the intent to its paint: the checkpoints at both ends.
+        usage = None
+        if end is not None and end.phase == "finish":
+            usage = usage_delta(checkpoint(start_samples, index, scope),
+                                checkpoint(paint_samples, finishes.index(end), scope))
+        click["usage"] = usage
+        page_ins = (usage or {}).get("pageIns")
+        if page_ins is not None and page_ins >= PAGED_IN_MIN:
+            click["pagedIn"] = page_ins
         window = [e for e in events if e.time >= start.time and (end is None or e.time <= end.time)]
         publish = first(window, "projection.publish", "start", where=lambda e: scope_matches(e.fields.get("scope", ""), scope))
         if publish:
@@ -450,10 +491,19 @@ def memory(start, events, tour_steps, click_list):
     }
 
 
+USAGE_KEYS = ("cpuMs", "diskReadMB", "diskWrittenMB", "pageIns")
+
+
 def usage_delta(first_line, last_line):
+    """The usage counters' growth between two samples; a counter either line lacks (a build
+    older than it) is None, never 0."""
     if not first_line or not last_line:
         return None
-    return {k: (last_line.num(k, 0) - first_line.num(k, 0)) for k in ("cpuMs", "diskReadMB", "diskWrittenMB")}
+    delta = {}
+    for key in USAGE_KEYS:
+        before, after = first_line.num(key), last_line.num(key)
+        delta[key] = None if before is None or after is None else after - before
+    return delta
 
 
 def resources(events):
@@ -470,6 +520,12 @@ def resources(events):
     return result
 
 
+def idle_window(events):
+    """The tour's idle window: its `idleStart` and `idleEnd` usage checkpoints."""
+    return (first(events, "process.usage", where=lambda e: e.fields.get("event") == "idleStart"),
+            first(events, "process.usage", where=lambda e: e.fields.get("event") == "idleEnd"))
+
+
 def tour(start, events):
     steps = []
     for line in of(events, "tour", "step"):
@@ -480,8 +536,7 @@ def tour(start, events):
     config = first(events, "tour", "config")
     finish = first(events, "tour", "finish")
     idle = None
-    idle_start = first(events, "process.usage", where=lambda e: e.fields.get("event") == "idleStart")
-    idle_end = first(events, "process.usage", where=lambda e: e.fields.get("event") == "idleEnd")
+    idle_start, idle_end = idle_window(events)
     if idle_start and idle_end:
         seconds = max(0.001, (idle_end.time - idle_start.time).total_seconds())
         idle = {"seconds": round(seconds, 1), **usage_delta(idle_start, idle_end)}
@@ -518,7 +573,7 @@ def analyse(events, session_start):
     if start is None:
         return {"error": "no events"}
     launched = launch(start, events) if session_start else None
-    click_list = clicks(events, launched["scope"] if launched else None)
+    click_list = clicks(events, launched["scope"] if launched else None, idle_window(events)[1])
     toured = tour(start, events)
     report = {
         "session": start.fields.get("session"),
@@ -544,6 +599,9 @@ def analyse(events, session_start):
                        "and a tour acts only in a sandbox home)")
     if not of(events, "process.memory"):
         missing.append("memory (no op=process.memory lines: a build older than the resource checkpoints)")
+    if any(c["outcome"] == "painted" for c in click_list) and not any(c["usage"] for c in click_list):
+        missing.append("what each paint cost the process, page-ins included (no op=process.usage event=paintStart "
+                       "lines: a build older than the paint's start checkpoint)")
     if not of(events, "catalog.store.use"):
         missing.append("connection busy time and store changes by kind (no op=catalog.store.use lines)")
     if of(events, "catalog.store.stall") and not of(events, "catalog.store.stall.holders"):
@@ -555,11 +613,14 @@ def analyse(events, session_start):
 
 # ── Targets ─────────────────────────────────────────────────────────────────────
 
+VISIT_LABELS = {"first": "first", "return": "return", "returnAfterIdle": "return after idle"}
+
+
 def verdicts(report, targets):
     """One row per user-felt number: value, target, PASS/FAIL/NO-TARGET."""
     rows = []
 
-    def add(metric, label, value):
+    def add(metric, label, value, paged_in=None):
         target = targets.get(metric)
         if value is None:
             verdict = "NO-DATA"
@@ -569,20 +630,25 @@ def verdicts(report, targets):
             limit = target.get("maxMs", target.get("max"))
             verdict = "PASS" if value <= limit else "FAIL"
         shown = "none" if not target or (target.get("maxMs") is None and target.get("max") is None) else str(target.get("maxMs", target.get("max")))
-        rows.append({"metric": metric, "label": label, "value": value, "target": shown, "verdict": verdict})
+        row = {"metric": metric, "label": label, "value": value, "target": shown, "verdict": verdict}
+        if paged_in is not None:
+            row["pagedIn"] = paged_in
+        rows.append(row)
 
     launched = report.get("launch") or {}
     add("launch.firstGridMs", "launch → first grid (" + str(launched.get("scopeKind")) + ")", launched.get("firstGridMs"))
     for click in report["clicks"]:
         if click["outcome"] != "painted":
             continue
-        if not click["first"]:
+        if click["visit"] == "returnAfterIdle":
+            metric = "click.returnAfterIdleMs"
+        elif click["visit"] == "return":
             metric = "click.returnMs"
         elif click["kind"] == "all media":
             metric = "click.allMedia.firstMs"
         else:
             metric = "click.smallScopeMs"
-        add(metric, ("first " if click["first"] else "return ") + click["kind"], click["ms"])
+        add(metric, VISIT_LABELS[click["visit"]] + " " + click["kind"], click["ms"], click.get("pagedIn"))
     searches = 0
     for step in report["tour"]["steps"]:
         if step.get("outcome") == "deadline":
@@ -637,7 +703,8 @@ def print_report(report, rows, out):
     w("USER-FELT NUMBERS\n")
     w(f"  {'number':44} {'value':>9} {'target':>8}  verdict\n")
     for row in rows:
-        w(f"  {row['label'][:44]:44} {fmt(row['value']):>9} {row['target']:>8}  {row['verdict']}\n")
+        w(f"  {row['label'][:44]:44} {fmt(row['value']):>9} {row['target']:>8}  {row['verdict']}"
+          + (f"  pagedIn={row['pagedIn']}" if row.get("pagedIn") is not None else "") + "\n")
     launched = report.get("launch")
     if launched:
         w("\nLAUNCH (ms from session start)\n")
@@ -649,8 +716,11 @@ def print_report(report, rows, out):
     w("\nCLICK TO PAINT\n")
     for click in report["clicks"]:
         order = click.get("order", {})
-        w(f"  {click['kind']:16} {'first ' if click['first'] else 'return'} {click['outcome']:9} {fmt(click['ms']):>7} ms"
-          f"  beforeBuild={fmt(click.get('beforeBuildMs'))}"
+        usage = click.get("usage") or {}
+        w(f"  {click['kind']:16} {VISIT_LABELS[click['visit']]:17} {click['outcome']:9} {fmt(click['ms']):>7} ms"
+          + (f"  pagedIn={click['pagedIn']}" if click.get("pagedIn") is not None else "")
+          + f"  process[cpu={fmt(usage.get('cpuMs'))} diskRead={fmt(usage.get('diskReadMB'))}MB pageIns={fmt(usage.get('pageIns'))}]"
+          + f"  beforeBuild={fmt(click.get('beforeBuildMs'))}"
           f" order[query={fmt(order.get('queryMs'))} wait={fmt(order.get('waitMs'))} exec={fmt(order.get('execMs'))}"
           f" sql={fmt(order.get('orderSqlMs'))} map={fmt(order.get('mapMs'))} lock={fmt(order.get('lockMs'))}"
           f" stacks={fmt(order.get('stacks'))}:{fmt(order.get('stackReadMs'))}]"
@@ -752,15 +822,20 @@ def print_matrix(saved, labels, out):
 
 
 def compare(report, rows, saved, out):
-    before = {r["label"]: r["value"] for r in saved.get("verdicts", [])}
+    before = {r["label"]: r for r in saved.get("verdicts", [])}
     out.write("\nCOMPARED WITH " + str(saved.get("report", {}).get("session")) + "\n")
     for row in rows:
-        old = before.get(row["label"])
+        # A label or field the saved scorecard lacks (an older one) reads as unknown, never 0.
+        old_row = before.get(row["label"]) or {}
+        old = old_row.get("value")
         if old is None or row["value"] is None:
             delta = "-"
         else:
             delta = f"{row['value'] - old:+d}"
-        out.write(f"  {row['label'][:44]:44} {fmt(old):>9} → {fmt(row['value']):>9}  {delta}\n")
+        paged = ""
+        if old_row.get("pagedIn") is not None or row.get("pagedIn") is not None:
+            paged = f"  pagedIn {fmt(old_row.get('pagedIn'))} → {fmt(row.get('pagedIn'))}"
+        out.write(f"  {row['label'][:44]:44} {fmt(old):>9} → {fmt(row['value']):>9}  {delta}{paged}\n")
 
 
 def main(argv=None):
@@ -786,8 +861,11 @@ def main(argv=None):
         return 0
     if not args.input or not args.targets:
         parser.error("--input and --targets are required")
-    stream = sys.stdin if args.input == "-" else open(args.input, encoding="utf-8")
-    events = read_events(stream)
+    if args.input == "-":
+        events = read_events(sys.stdin)
+    else:
+        with open(args.input, encoding="utf-8") as stream:
+            events = read_events(stream)
     with open(args.targets, encoding="utf-8") as handle:
         targets = {t["metric"]: t for t in json.load(handle)["targets"]}
     if args.window:
