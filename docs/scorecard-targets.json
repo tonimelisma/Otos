@@ -1,12 +1,12 @@
 {
   "about": "Targets the scorecard (script/scorecard.sh) prints beside each user-felt number. Each comes from a plan or the owner; a metric with no number prints NO-TARGET. Change a target only with the decision that sets it.",
   "targets": [
-    {"metric": "launch.firstGridMs", "maxMs": null, "source": "no stated target yet"},
-    {"metric": "click.smallScopeMs", "maxMs": 1000, "source": "plan 0116: a small scope paints in under a second"},
-    {"metric": "click.allMedia.firstMs", "maxMs": null, "source": "plan 0116: All Media's first visit gets its target when stage 5 is measured"},
-    {"metric": "click.allMedia.returnMs", "maxMs": 1000, "source": "plan 0116: a scope already read paints in under a second"},
+    {"metric": "launch.firstGridMs", "maxMs": 2000, "source": "plan 0116: launch to a usable window in 2 s"},
+    {"metric": "click.smallScopeMs", "maxMs": 1000, "source": "plan 0116: every view paints in under a second"},
+    {"metric": "click.allMedia.firstMs", "maxMs": 2000, "source": "plan 0116: the first visit to All Media paints in 2 s"},
+    {"metric": "click.allMedia.returnMs", "maxMs": 300, "source": "plan 0116: a return to a view paints in 0.3 s"},
     {"metric": "stalls.count", "max": 0, "source": "plan 0116: no op=catalog.store.stall line"},
-    {"metric": "mainThreadStalls.count", "max": null, "source": "no stated target yet"},
-    {"metric": "memory.peakFootprintMB", "max": null, "source": "no stated target yet"}
+    {"metric": "mainThreadStalls.count", "max": null, "source": "plan 0116 bounds stalls over 250 ms; this count includes every stall from 100 ms, so it has no target"},
+    {"metric": "memory.peakFootprintMB", "max": 700, "source": "plan 0116: peak app footprint 700 MB"}
   ]
 }

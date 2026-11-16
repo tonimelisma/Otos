@@ -3,12 +3,10 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-Plan 0116 (`0116-background-work-and-derived-storage.md`) is **revised after due diligence
-and awaiting the owner's decision**, opened 2026-11-16: every background read costs what it
-owes (indexes and keyset cursors), owners wake on what they read, window reads never queue
-behind background reads, the search index loads once in pages, and the window's own first
-All Media read. A work ledger and separate store files were proposed first and rejected by
-measurement (`docs/research/2026-11-16-plan-0116-due-diligence.md`). Nothing in it is built.
+Plan 0116 (`0116-performance-program.md`) is **active**, opened 2026-11-16: the performance
+program. It sets the targets a tour on the owner's library must meet, records the baseline
+(`docs/research/2026-11-16-performance-baseline.md`), ranks the bets that close the gap and
+lists what was rejected and why. Stage 1 (one walk per drain, and v65's indexes) is merged.
 
 Plan 0115 (stacks: RAW+JPEG pairs and bursts as one photo) is complete in six increments
 and was removed at closure. It opened 2026-11-13 from the survey
