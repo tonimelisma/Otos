@@ -108,13 +108,24 @@ func waitForProjectionQuiescence(_ projection: CatalogProjection) async throws {
 /// returns what `recorder` holds. The recorder takes each state from its stream on a task of
 /// its own, so a quiescent projection can have published a state the recorder has not yet
 /// appended; its last value is read only once it is that publication.
+///
+/// Both are asked again on every look. A quiescent projection can still publish: the People
+/// and duplicates owners hand it their builds whenever they finish (`publishPeople`,
+/// `publishDuplicates`), which `isQuiescent` does not wait for. Waiting for the recorder to
+/// hold one publication read once waits forever when such a build lands after that read: the
+/// recorder's last value is then the newer state, never the one asked for.
 func waitForProjectionQuiescence(
     _ projection: CatalogProjection,
     recordedBy recorder: AsyncValueRecorder<CatalogWindowState>
 ) async throws -> [CatalogWindowState] {
-    try await waitForProjectionQuiescence(projection)
-    let published = await projection.lastPublishedState
-    return await recorder.waitForValues { $0.last == published }
+    try await waitForValue {
+        guard await projection.isQuiescent else {
+            return nil
+        }
+        let published = await projection.lastPublishedState
+        let recorded = await recorder.snapshot()
+        return recorded.last == published ? recorded : nil
+    }
 }
 
 /// Holds work at a suspension point a test chose until the test opens the gate, so the
