@@ -87,6 +87,7 @@
 				Stores/AnniversaryMatch.swift,
 				Stores/CatalogStoreDuplicates.swift,
 				Stores/CatalogStoreMirrors.swift,
+				Stores/DerivedFileReconciliation.swift,
 				Stores/PhotoDescriptionStorage.swift,
 				ViewModels/CatalogWindowViewModelDuplicates.swift,
 				ViewModels/CatalogWindowViewModelStory.swift,

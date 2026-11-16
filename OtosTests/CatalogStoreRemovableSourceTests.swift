@@ -354,11 +354,6 @@ struct CatalogStoreRemovableSourceTests {
         #expect(try await store.catalogedAssetCount(for: .allMedia) == 0)
         #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
 
-        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: relativePath)
-        try await store.applyProvisionalThumbnails([id: "camera-thumb.jpg"])
-        let assetsByID = try await store.mediaAssets(for: [id])
-        #expect(assetsByID[id]?.thumbnailPath == "camera-thumb.jpg")
-
         try await store.completeSourceListing(scan: scan, observedPaths: [relativePath])
         let complete = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.removableSources.first?.activity == .idle

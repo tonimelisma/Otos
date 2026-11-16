@@ -611,6 +611,8 @@ final class CatalogWindowViewModel {
     /// the catalog opens keeps the sidebar's rows; an open within the first frame shows none.
     private(set) var catalogOpeningFramePresented = false
     @ObservationIgnored private var queryForwardingTask: Task<Void, Never>?
+    /// The launch's one derived-folder reconciliation, started after the first grid.
+    @ObservationIgnored private var derivedFilesTask: Task<Void, Never>?
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
     @ObservationIgnored var mediaChoiceForwardingTask: Task<Void, Never>?
     @ObservationIgnored var stackKeyForwardingTask: Task<Void, Never>?
@@ -1046,6 +1048,7 @@ final class CatalogWindowViewModel {
         catalogStartupTask?.cancel()
         catalogOpeningTask?.cancel()
         queryForwardingTask?.cancel()
+        derivedFilesTask?.cancel()
         mutationForwardingTask?.cancel()
         mediaChoiceForwardingTask?.cancel()
         stackKeyForwardingTask?.cancel()
@@ -1662,6 +1665,19 @@ extension CatalogWindowViewModel {
             "emptyState": state.mediaEmptyState?.diagnosticDescription ?? "none",
         ])
         ResourceCheckpoint.record("firstGrid", fields: ["items": "\(items)"], storeUse: storeUse)
+        // Once a launch, after the first grid, so its listing never delays it: the derived
+        // folder holds what the rows name and nothing more (`DerivedFileReconciliation`).
+        if startsEnrichment, derivedFilesTask == nil {
+            derivedFilesTask = Task { [catalogStore] in
+                do {
+                    try await catalogStore.reconcileDerivedFiles()
+                } catch {
+                    OtosLog.thumbnails.errorOperation("derived.reconcile", phase: "failed", fields: [
+                        "error": String(describing: error),
+                    ])
+                }
+            }
+        }
     }
 
     func clearEjectingSourceIdentity(_ identity: DeviceIdentity) {

@@ -373,6 +373,24 @@ def step_ms(step):
     return None
 
 
+def disk(events):
+    """The derived folder after the launch's reconciliation (`op=derived.folder phase=census`)
+    and what the reconciliation removed (`op=derived.reconcile phase=finish`): the session's
+    disk, by kind, for `--compare` to show growth between sessions."""
+    census = first(events, "derived.folder", "census")
+    reconciled = first(events, "derived.reconcile", "finish")
+    if census is None and reconciled is None:
+        return None
+    kinds = ("thumbnail", "preview", "faceFrames", "other")
+    return {
+        "folderMB": census.num("bytes", 0) // 1_048_576 if census else None,
+        "files": {k: census.num(f"{k}Files", 0) for k in kinds} if census else None,
+        "mb": {k: census.num(f"{k}Bytes", 0) // 1_048_576 for k in kinds} if census else None,
+        "removedFiles": reconciled.num("files") if reconciled else None,
+        "removedMB": reconciled.num("bytes", 0) // 1_048_576 if reconciled else None,
+    }
+
+
 def background(events):
     """Passes each background owner began, by `op=… phase=start` lines that are not the window's."""
     window_ops = {"ui.sidebarSelectionToPaint", "projection.publish", "catalog.start", "tour", "smoke.select"}
@@ -502,6 +520,7 @@ def analyse(events, session_start):
         "resources": resources(events),
         "tour": toured,
         "acts": acts(events),
+        "disk": disk(events),
     }
     duration = report["durationS"]
     report["stalls"]["per10Min"] = round(report["stalls"]["count"] * 600 / duration, 1) if duration else None
@@ -567,6 +586,7 @@ def verdicts(report, targets):
     add("mainThreadStalls.count", "main-thread stalls", report["stalls"]["mainThread"]["count"])
     add("mainThreadStalls.worstMs", "worst main-thread stall ms", report["stalls"]["mainThread"]["worstMs"] or 0)
     add("memory.peakFootprintMB", "peak footprint MB", report["memory"]["peakFootprintMB"])
+    add("disk.derivedFolderMB", "derived folder MB", (report.get("disk") or {}).get("folderMB"))
     return rows
 
 
@@ -640,6 +660,13 @@ def print_report(report, rows, out):
         w(f"    memory pressure {event['level']} at {event['atMs']} ms: footprint {fmt(event['footprintMB'])} MB, free "
           f"{fmt(event['freeMB'])} MB, last click {event['lastClick']}, tour step {event['tourStep']}\n")
     res = report["resources"]
+    d = report.get("disk")
+    w("\nDISK (derived folder after the launch's reconciliation)\n")
+    if d:
+        w(f"  {fmt(d['folderMB'])} MB; files {d['files']}; MB {d['mb']}; reconciliation removed "
+          f"{fmt(d['removedFiles'])} files, {fmt(d['removedMB'])} MB\n")
+    else:
+        w("  - (no op=derived.folder line)\n")
     w("\nRESOURCES (who held what)\n")
     w(f"  process {res.get('session')}\n")
     if "connections" in res:

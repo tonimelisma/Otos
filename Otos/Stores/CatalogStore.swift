@@ -6249,31 +6249,52 @@ extension CatalogStore {
         }
     }
 
-    func applyProvisionalThumbnails(_ thumbnailsByID: [MediaAssetID: String]) async throws {
-        guard !thumbnailsByID.isEmpty else {
+    /// A camera's own thumbnails, staged: each is promoted and named in one write, and only
+    /// for a row that has no thumbnail yet, so it never replaces one Otos rendered and never
+    /// lands in the derived folder without a row that names it. What is not taken is
+    /// discarded from staging.
+    func applyProvisionalThumbnails(_ stagedByID: [MediaAssetID: StagedDerivedImage]) async throws {
+        guard !stagedByID.isEmpty else {
+            return
+        }
+        guard let thumbnailDirectory else {
             return
         }
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
         let dbQueue = try database()
-        let changed = try await timedWrite(dbQueue) { db in
-            var count = 0
-            for (id, thumbnailPath) in thumbnailsByID {
-                guard let rootID = rootIDsByPathBeforeWrite[id.libraryRootPath] else {
-                    continue
+        let taken: Set<MediaAssetID>
+        do {
+            taken = try await timedWrite(dbQueue) { db in
+                var taken = Set<MediaAssetID>()
+                for (id, staged) in stagedByID {
+                    guard let rootID = rootIDsByPathBeforeWrite[id.libraryRootPath],
+                          try Self.lacksThumbnail(libraryRootID: rootID, relativePath: id.relativePath, db: db)
+                    else {
+                        continue
+                    }
+                    try ThumbnailStore.promote(staged, in: thumbnailDirectory)
+                    try Self.updateThumbnailPath(
+                        staged.finalRelativePath,
+                        libraryRootID: rootID,
+                        relativePath: id.relativePath,
+                        onlyWhenMissing: true,
+                        db: db
+                    )
+                    taken.insert(id)
                 }
-                try Self.updateThumbnailPath(
-                    thumbnailPath,
-                    libraryRootID: rootID,
-                    relativePath: id.relativePath,
-                    onlyWhenMissing: true,
-                    db: db
-                )
-                count += db.changesCount
+                return taken
+            }.value
+        } catch {
+            for staged in stagedByID.values {
+                ThumbnailStore.discard(staged, in: thumbnailDirectory)
             }
-            return count
+            throw error
         }
-        if changed.value > 0 {
-            notifyCatalogChanged(.changed([.images, .detail], rows: .named(Set(thumbnailsByID.keys))))
+        for (id, staged) in stagedByID where !taken.contains(id) {
+            ThumbnailStore.discard(staged, in: thumbnailDirectory)
+        }
+        if !taken.isEmpty {
+            notifyCatalogChanged(.changed([.images, .detail], rows: .named(taken)))
         }
     }
 
@@ -6384,6 +6405,57 @@ extension CatalogStore {
             _ = try Int.fetchOne(db, sql: "SELECT count(*) FROM library_root")
             hold()
         }
+    }
+
+    /// Removes every file in the derived folder that no present row names or would write
+    /// (`DerivedFileReconciliation.protectedNames`), then reports the folder by kind,
+    /// once a launch, after the first grid; the window calls it.
+    /// Returns the census, or nil for a catalog without a derived folder.
+    @discardableResult
+    func reconcileDerivedFiles() async throws -> DerivedFileReconciliation.Census? {
+        guard let thumbnailDirectory else {
+            return nil
+        }
+        let start = ContinuousClock.now
+        let dbWriter = try database()
+        let listed = try await Self.listDerivedFolder(thumbnailDirectory)
+        let named = try await dbWriter.readFreeingConnection { db in
+            try DerivedFileReconciliation.protectedNames(db: db)
+        }
+        let unnamed = listed.filter { !named.contains($0.name) }
+        var removed = DerivedFileReconciliation.Census()
+        var kept = 0
+        if !unnamed.isEmpty {
+            // Inside one write: no promotion can name a file while this holds the writer, and the
+            // protected names are read again in it, so only what no present row holds or would
+            // write is deleted.
+            let (gone, protectedNow) = try await timedWrite(dbWriter, operation: "reconcileDerivedFiles") { db in
+                let protected = try DerivedFileReconciliation.protectedNames(db: db)
+                let orphans = unnamed.filter { !protected.contains($0.name) }
+                return (DerivedFileReconciliation.delete(orphans, in: thumbnailDirectory), unnamed.count - orphans.count)
+            }.value
+            kept = protectedNow
+            gone.forEach { removed.add($0) }
+        }
+        let diagnostics = DerivedFileReconciliation.removeRetiredDiagnostics(besides: thumbnailDirectory)
+        OtosLog.thumbnails.noticeOperation("derived.reconcile", phase: "finish", fields: removed.fields.merging([
+            "listed": "\(listed.count)",
+            "named": "\(named.count)",
+            "keptNamedMeanwhile": "\(kept)",
+            "retiredDiagnosticsFiles": "\(diagnostics.files)",
+            "retiredDiagnosticsBytes": "\(diagnostics.bytes)",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ]) { $1 })
+        let census = try await DerivedFileReconciliation.Census(Self.listDerivedFolder(thumbnailDirectory))
+        OtosLog.thumbnails.noticeOperation("derived.folder", phase: "census", fields: census.fields)
+        return census
+    }
+
+    /// The derived folder's listing, off the Store actor: a library's folder holds hundreds of
+    /// thousands of files.
+    @concurrent
+    private nonisolated static func listDerivedFolder(_ directory: URL) async throws -> [DerivedFileReconciliation.Entry] {
+        try DerivedFileReconciliation.list(directory)
     }
 }
 

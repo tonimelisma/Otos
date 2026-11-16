@@ -23,7 +23,7 @@ target (`docs/scorecard-targets.json`).
 | No main-thread stall over 250 ms in Otos code | `mainThreadStalls.worstMs` ≤ 250 | 0 stalls of any length |
 | Peak app footprint ≤ 700 MB | `memory.peakFootprintMB` ≤ 700 | 3,730 → 3,804 MB (336 MB with every owner off) |
 | `StallReproductionTests` passes with no known-issue marker | the test | still inside `withKnownIssue` |
-| The app's disk growth is measured and explained | the static survey | measured; orphans and remote previews open |
+| The app's disk growth is measured and explained | `disk.derivedFolderMB` (the launch's census) | measured; 11 MiB of leftovers removed each launch from the next build on; remote previews an owner question |
 
 ## 2. Evidence
 
@@ -94,8 +94,9 @@ Switch-off tours on the same build put the footprint in the owners:
   reads still keep the main pool's readers busy for most of a session (664 s of reader time
   in 235 s).
 - **Disk space.** The thumbnails folder is 52.9 GiB, of which about 35 GiB are previews of
-  the remote Immich library, and 3.58 GiB are orphans no row names. The volume has 13 to
-  24 GiB free.
+  the remote Immich library. The files no row names are 1,000 thumbnails (11 MiB) and 3
+  others; the 3.58 GiB first counted was a census that skipped face frames. The volume has
+  13 to 24 GiB free.
 
 ### 2.3 Who holds the readers (tour, 661be172)
 

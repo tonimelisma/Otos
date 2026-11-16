@@ -208,17 +208,17 @@ final class CameraCatalogSync {
             return
         }
         let batchSize = 24
-        var thumbnailsByID: [MediaAssetID: String] = [:]
+        var thumbnailsByID: [MediaAssetID: StagedDerivedImage] = [:]
         for item in items {
             if Task.isCancelled {
                 break
             }
-            if let relativeName = await writeProvisionalThumbnail(
+            if let staged = await stageProvisionalThumbnail(
                 item,
                 rootPath: rootPath,
                 thumbnailDirectory: thumbnailDirectory
             ) {
-                thumbnailsByID[MediaAssetID(libraryRootPath: rootPath, relativePath: item.relativePath)] = relativeName
+                thumbnailsByID[MediaAssetID(libraryRootPath: rootPath, relativePath: item.relativePath)] = staged
             }
             if thumbnailsByID.count >= batchSize {
                 await recordProvisionalThumbnails(thumbnailsByID)
@@ -228,7 +228,7 @@ final class CameraCatalogSync {
         await recordProvisionalThumbnails(thumbnailsByID)
     }
 
-    private func recordProvisionalThumbnails(_ thumbnailsByID: [MediaAssetID: String]) async {
+    private func recordProvisionalThumbnails(_ thumbnailsByID: [MediaAssetID: StagedDerivedImage]) async {
         do {
             try await store.applyProvisionalThumbnails(thumbnailsByID)
         } catch {
@@ -240,13 +240,13 @@ final class CameraCatalogSync {
         }
     }
 
-    /// The thumbnail's relative name once its file is written, or `nil` when the camera
-    /// had none or the write failed — the row then waits for enrichment's thumbnail.
-    private func writeProvisionalThumbnail(
+    /// The camera's thumbnail, staged for the store to promote with its row, or `nil` when the
+    /// camera had none or the write failed — the row then waits for enrichment's thumbnail.
+    private func stageProvisionalThumbnail(
         _ item: DeviceCameraCatalogItem,
         rootPath: LibraryRootPath,
         thumbnailDirectory: URL
-    ) async -> String? {
+    ) async -> StagedDerivedImage? {
         let relativeName = ThumbnailStore.relativeName(
             for: MediaAssetID(libraryRootPath: rootPath, relativePath: item.relativePath)
         )
@@ -257,8 +257,7 @@ final class CameraCatalogSync {
             ) else {
                 return nil
             }
-            try ThumbnailStore.writeProvisionalJPEG(data, finalRelativeName: relativeName, in: thumbnailDirectory)
-            return relativeName
+            return try ThumbnailStore.stageProvisionalJPEG(data, finalRelativeName: relativeName, in: thumbnailDirectory)
         } catch {
             OtosLog.thumbnails.debug(
                 "Camera provisional thumbnail failed path=\(item.relativePath.rawValue, privacy: .public)"

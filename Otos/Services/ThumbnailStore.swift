@@ -266,22 +266,18 @@ nonisolated enum ThumbnailStore {
         return thumbnail.finalRelativePath
     }
 
-    /// Stores a camera-provided thumbnail under the same deterministic name real
-    /// enrichment will later replace. This does not stamp enrichment; it only gives
-    /// the grid something truthful to show while staged bytes are still arriving.
-    static func writeProvisionalJPEG(
+    /// Stages a camera-provided thumbnail for the same deterministic name real enrichment
+    /// will later replace. `CatalogStore.applyProvisionalThumbnails` promotes it in the write
+    /// that names it, only for a row with no thumbnail; it stamps no enrichment, and only
+    /// gives the grid something truthful to show while staged bytes are still arriving.
+    static func stageProvisionalJPEG(
         _ data: Data,
         finalRelativeName: String,
         in directory: URL
-    ) throws {
-        let finalURL = url(for: finalRelativeName, in: directory)
-        let stagedURL = try url(for: newStagedRelativeName(for: finalRelativeName, in: directory), in: directory)
-        try data.write(to: stagedURL, options: [.atomic])
-        if FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)) {
-            _ = try FileManager.default.replaceItemAt(finalURL, withItemAt: stagedURL)
-        } else {
-            try FileManager.default.moveItem(at: stagedURL, to: finalURL)
-        }
+    ) throws -> StagedDerivedImage {
+        let stagedName = try newStagedRelativeName(for: finalRelativeName, in: directory)
+        try data.write(to: url(for: stagedName, in: directory), options: [.atomic])
+        return StagedDerivedImage(finalRelativePath: finalRelativeName, stagedRelativePath: stagedName)
     }
 
     /// Removes a staged thumbnail that was never accepted by the catalog.

@@ -240,9 +240,11 @@ migration's start and no finish; the log does not say why it ended.
 ## The disk
 
 From the static survey: the thumbnails folder is 52.9 GiB in 322,377 files, 49.3 GiB of it
-HEIC previews. About 35 GiB of those previews (128,673 files at the median size) belong to
-the remote Immich account, whose originals stay on its server. 11,334 files (3.58 GiB) are
-orphans that no row names. The catalog is 2.39 GiB. In the surveys the thumbnails folder
+HEIC previews and video face frames. About 35 GiB of those previews (128,673 files at the
+median size) belong to the remote Immich account, whose originals stay on its server. The
+files no row names are 1,000 thumbnails (11 MiB) and 3 others. The 3.58 GiB first reported
+was a census that did not read `face_frames_path`
+(`2026-11-16-derived-file-orphans.md`). The catalog is 2.39 GiB. In the surveys the thumbnails folder
 did not change and the catalog moved by 53 MB and −5 MB. Test runs leave temporary folders
 on the same volume (0.49 GB of stale ones in the static survey).
 

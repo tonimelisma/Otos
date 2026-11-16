@@ -49,7 +49,7 @@ The dev bundle (`net.melisma.Otos.dev`) adds 1.67 GiB, of which 1.42 GiB are thu
 
 | Kind | Files | Allocated | Median | Largest |
 | --- | --- | --- | --- | --- |
-| HEIC previews | 154,766 | 49.3 GiB | 282 KB | 3.1 MB |
+| HEIC previews and video face frames | 154,766 | 49.3 GiB | 282 KB | 3.1 MB |
 | JPEG thumbnails | 167,608 | 3.6 GiB | 20 KB | 55 KB |
 | Leftover `.tmp-*` and one file with no extension | 4 | 0 | | |
 
@@ -58,8 +58,11 @@ Against the catalog (every `thumbnail_path` and `preview_path`, one read-only wa
 
 - References by root kind: Immich account 146,869 thumbnails and 128,673 previews; folder
   libraries 17,691 and 15,737; phone (MTP) 1,982 thumbnails and no previews; cards 66 and 26.
-- **Orphans: 11,334 files, 3.58 GiB**, present on disk and named by no row: 10,330 previews,
-  1,000 thumbnails and the 4 leftovers. None is missing: every reference has its file.
+- **Correction (same day): there were no 3.58 GiB of orphans.**
+  - This walk counted 11,334 files (3.58 GiB) named by no row. It did not read `face_frames_path`, and it counted every `.heic` as a preview. The 10,330 "orphan previews" are videos' face frames (`.faces.heic`, ADR 0047): 10,336 by the afternoon, each named by its row.
+  - Counted with all three columns, the files no row names are 1,000 thumbnails (11 MiB, all written Aug 31) and 3 other files.
+  - None is missing: every reference has its file.
+  - Details: `2026-11-16-derived-file-orphans.md`.
 - The previews of the Immich account alone are 128,673 files, about 35 GiB at the median size.
   The account's originals stay on its server (3.45 TiB by the catalog's byte sizes), so the
   previews are a local copy of a remote library at about 1 % of its size.
@@ -160,10 +163,11 @@ download rate, which the session survey measures.
 
 ## 6. What this says, before any session
 
-1. "It eats up all disk space" is the thumbnails folder: 52.9 GiB, 93 % of it HEIC previews,
-   and about 35 GiB of those previews belong to a remote account whose originals are not on
-   this Mac. 3.58 GiB are orphans no row names. This is a measured fact. Whether the previews
-   should exist at that size is a product question for the owner. The orphans are a defect.
+1. "It eats up all disk space" is the thumbnails folder: 52.9 GiB, 93 % of it HEIC previews
+   and video face frames. About 35 GiB of those previews belong to a remote account whose
+   originals are not on this Mac. Whether the previews should exist at that size is a product
+   question for the owner. The files no row names are 1,000 thumbnails (11 MiB) and 3 others,
+   left by an older build. The 3.58 GiB first counted here was a census error (section 2).
 2. Otos holds no downloaded originals. The provider has evicted them.
 3. The machine has 16 GB RAM with about 100 MB free and 4 GB of swap before Otos starts. The
    system language model alone grows from 410 MB to about 1.2 GB once descriptions start

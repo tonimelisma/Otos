@@ -631,6 +631,13 @@ background.
 - Orphan hidden staged thumbnail temp files are also deleted at app-owned
   thumbnail-store startup, limited to the Application Support thumbnail directory.
   Originals and user media folders are never touched by that cleanup.
+- **A derived file lives exactly as long as a row names it.**
+  - Every promotion into a final name happens inside the write transaction that names it. That includes a camera's provisional thumbnail, which a row takes only when it has none and never over one Otos rendered.
+  - A replaced name's file is deleted after the write commits.
+  - A purge deletes what the rows it removed named.
+  - Once a launch, after the first grid, `CatalogStore.reconcileDerivedFiles` removes every file in the derived folder that no present row names and no present row would write. Names are a hash of identity, so a row protects its own names even while its column is empty. It re-checks inside one write transaction, which no promotion can interleave with. This covers what a crash between a promotion and its commit, or an older build, left behind. It logs counts and bytes only: `op=derived.reconcile`, then `op=derived.folder phase=census` by kind.
+  - The same pass removes the retired JSONL diagnostics sink's files (ADR 0015).
+  - Measurements: `docs/research/2026-11-16-derived-file-orphans.md`.
 - Existing generated thumbnails from an older private format may be deleted
   manually during a development increment; the app does not carry a compatibility
   loader or migration path for generated thumbnail overlay.

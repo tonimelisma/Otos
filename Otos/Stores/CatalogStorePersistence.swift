@@ -1553,6 +1553,15 @@ extension CatalogStore {
         }
     }
 
+    /// Whether the row exists and names no thumbnail.
+    static func lacksThumbnail(libraryRootID: Int64, relativePath: MediaRelativePath, db: Database) throws -> Bool {
+        try Bool.fetchOne(
+            db,
+            sql: "SELECT thumbnail_path IS NULL FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            arguments: [libraryRootID, relativePath.rawValue]
+        ) == true
+    }
+
     static func updateThumbnailPath(
         _ thumbnailPath: String,
         libraryRootID: Int64,
