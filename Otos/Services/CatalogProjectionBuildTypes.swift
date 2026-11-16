@@ -150,8 +150,13 @@ nonisolated struct CatalogProjectionReads: Sendable {
         let row: SidebarSelection
         let availableLibraryPaths: Set<LibraryRootPath>
         let placeNameLanguages: Set<PlaceNameLanguage>
-        let revisions: CatalogFactRevisions
-        let answer: CatalogFilterOptions
+        var revisions: CatalogFactRevisions
+        var answer: CatalogFilterOptions
+        /// What each row gave the answer, and the Store change the read it holds started after
+        /// (`CatalogChangeLog.sequence`): what a keyed re-read patches in place
+        /// (`CatalogChangeLog.keyedOptionRows`). Nil for options a test's reader gave.
+        var tally: CatalogFilterOptionTally?
+        var sequence: UInt64 = 0
     }
 
     /// The last stack collapse (ADR 0052), a pure step over the scoped order: the same
@@ -502,6 +507,46 @@ nonisolated struct CatalogChangeLog: Sendable {
             keptAfter = entries[dropped - 1].sequence
             entries.removeFirst(dropped)
         }
+    }
+
+    /// What a keyed re-read of the options of `row`, tallied after change `since`, reads again
+    /// (`CatalogFilterOptionTally`): the named rows of every later change that moved only rows'
+    /// locations or file types, and whether a change moved the cells' names. A change that
+    /// names no row (`.none`) moved none. Nil when a whole read is owed: a change that moved
+    /// which rows the row holds or how they group, one whose rows are unnamed, more rows than
+    /// `rowCapacity`, or changes no longer kept.
+    func keyedOptionRows(since: UInt64, for row: SidebarSelection) -> (rows: Set<MediaAssetID>, names: Bool)? {
+        guard since >= keptAfter else {
+            return nil
+        }
+        let inputs = CatalogChangedFacts.filterOptionsInputs(of: row)
+        var rows = Set<MediaAssetID>()
+        var names = false
+        for entry in entries where entry.sequence > since {
+            var moved = entry.facts.intersection(inputs)
+            if moved.contains(.placeNames) {
+                names = true
+                moved.remove(.placeNames)
+            }
+            guard !moved.isEmpty else {
+                continue
+            }
+            guard moved.isSubset(of: [.location, .kindAndFormat]) else {
+                return nil
+            }
+            switch entry.rows {
+            case let .named(named):
+                rows.formUnion(named.ids)
+            case .none:
+                continue
+            case .unnamed:
+                return nil
+            }
+            if rows.count > Self.rowCapacity {
+                return nil
+            }
+        }
+        return (rows, names)
     }
 
     /// The rows a keyed re-read of an order for `descriptor`, read after change `since`, reads

@@ -189,6 +189,8 @@ actor CatalogProjection {
     var keyedOrderQueryCount: UInt64 = 0
     /// Count of filter-option reads executed by publications, likewise.
     var filterOptionsQueryCount: UInt64 = 0
+    /// Options reads that patched a held tally with the rows changes named.
+    var keyedFilterOptionsQueryCount: UInt64 = 0
     /// Count of order reads that read the stack candidates rather than reusing the stacks
     /// the last read built (`CatalogProjectionReads.Stacks`).
     var stackReadCount: UInt64 = 0
@@ -1168,12 +1170,33 @@ private extension CatalogProjection {
         nextWorkID &+= 1
         let id = nextWorkID
         let startedFrom = optionsRequested
+        let plan = plan(forOptions: owed, held: reads.filterOptions)
+        let sequence = changeLog.sequence
         let task = Task { [weak self] in
             guard let self else { return }
-            let result = await Result { try await self.readFilterOptions(owed, store: store) }
+            let result = await Result { try await self.readFilterOptions(owed, plan: plan, sequence: sequence, store: store) }
             await filterOptionsReadEnded(id: id, owed: owed, startedFrom: startedFrom, result: result, store: store)
         }
         optionsInFlight = FilterOptionsInFlight(id: id, owed: owed, cancel: { task.cancel() })
+    }
+
+    /// The plan for the next read of the options `owed` names, from what is held: a keyed
+    /// re-read when the held tally is of the same row over the same roots and languages and
+    /// every Store change since its read moved only named rows' locations or file types, or the
+    /// cells' names (`CatalogChangeLog.keyedOptionRows`, ADR 0005 "Keyed re-reads"); otherwise
+    /// a whole read. Synchronous, from the state the read starts from.
+    private func plan(forOptions owed: OwedFilterOptions, held: CatalogProjectionReads.FilterOptions?) -> FilterOptionsPlan {
+        guard let held, let tally = held.tally, held.row == owed.row,
+              held.availableLibraryPaths == owed.availableLibraryPaths, held.placeNameLanguages == owed.placeNameLanguages
+        else {
+            return .whole(capacity: held?.row == owed.row ? held?.tally?.rowCount ?? 0 : 0)
+        }
+        guard let keyed = changeLog.keyedOptionRows(since: held.sequence, for: owed.row) else {
+            return .whole(capacity: tally.rowCount)
+        }
+        return .keyed(
+            rows: keyed.rows, names: keyed.names ? tally.language : nil, patching: held.sequence, capacity: tally.rowCount
+        )
     }
 
     /// Keeps a read's options and republishes the window with them, then reads the newest
@@ -1184,14 +1207,14 @@ private extension CatalogProjection {
         id: UInt64,
         owed: OwedFilterOptions,
         startedFrom: UInt64,
-        result: Result<(options: CatalogFilterOptions, ms: Int), any Error>,
+        result: Result<FilterOptionsRead, any Error>,
         store: CatalogStore
     ) {
         guard optionsInFlight?.id == id else {
             return
         }
         optionsInFlight = nil
-        let read: (options: CatalogFilterOptions, ms: Int)
+        let read: FilterOptionsRead
         switch result {
         case let .success(value):
             read = value
@@ -1203,22 +1226,64 @@ private extension CatalogProjection {
             ])
             return
         }
-        reads.filterOptions = CatalogProjectionReads.FilterOptions(
-            row: owed.row,
-            availableLibraryPaths: owed.availableLibraryPaths,
-            placeNameLanguages: owed.placeNameLanguages,
-            revisions: owed.revisions,
-            answer: read.options
-        )
+        guard let options = keep(read, for: owed) else {
+            // The keyed read patched a tally no longer held, or met a row it never counted: the
+            // tally is dropped and the ask stays outstanding, so the next read is whole.
+            reads.filterOptions?.tally = nil
+            OtosLog.catalog.noticeOperation("projection.filterOptions", phase: "unpatched", fields: [
+                "projection": diagnosticID,
+                "row": owed.row.diagnosticDescription,
+            ])
+            startAskedFilterOptionsRead(store: store)
+            return
+        }
         optionsCovered = startedFrom
-        let republished = publishFilterOptions(read.options, row: owed.row)
+        let republished = publishFilterOptions(options, row: owed.row)
         OtosLog.catalog.noticeOperation("projection.filterOptions", phase: "read", fields: [
             "projection": diagnosticID,
             "row": owed.row.diagnosticDescription,
             "ms": "\(read.ms)",
+            "keyed": "\(read.isKeyed)",
             "republished": "\(republished)",
         ])
         startAskedFilterOptionsRead(store: store)
+    }
+
+    /// Keeps what an options read gave as the options held for `owed`, and returns them: a
+    /// whole read replaces what is held; a keyed read patches the held tally in place, when it
+    /// is still the one the read was planned from and the patch counts only rows it counted
+    /// (`CatalogFilterOptionTally.take`). Nil, keeping nothing, otherwise. Synchronous.
+    private func keep(_ read: FilterOptionsRead, for owed: OwedFilterOptions) -> CatalogFilterOptions? {
+        switch read.outcome {
+        case let .answered(options):
+            reads.filterOptions = CatalogProjectionReads.FilterOptions(
+                row: owed.row, availableLibraryPaths: owed.availableLibraryPaths, placeNameLanguages: owed.placeNameLanguages,
+                revisions: owed.revisions, answer: options, tally: nil, sequence: read.sequence
+            )
+            return options
+        case let .whole(tally):
+            let options = tally.options
+            reads.filterOptions = CatalogProjectionReads.FilterOptions(
+                row: owed.row, availableLibraryPaths: owed.availableLibraryPaths, placeNameLanguages: owed.placeNameLanguages,
+                revisions: owed.revisions, answer: options, tally: tally, sequence: read.sequence
+            )
+            return options
+        case let .keyed(rows, patching):
+            // Each field is compared through the held value, never a copy of it: a copy alive
+            // while the tally is patched would make the patch copy every row's arrays.
+            guard reads.filterOptions?.sequence == patching, reads.filterOptions?.row == owed.row,
+                  reads.filterOptions?.availableLibraryPaths == owed.availableLibraryPaths,
+                  reads.filterOptions?.placeNameLanguages == owed.placeNameLanguages,
+                  reads.filterOptions?.tally?.take(rows) == true,
+                  let options = reads.filterOptions?.tally?.options
+            else {
+                return nil
+            }
+            reads.filterOptions?.answer = options
+            reads.filterOptions?.revisions = owed.revisions
+            reads.filterOptions?.sequence = read.sequence
+            return options
+        }
     }
 
     /// Cancels the options read and forgets the options asked when they are not for the row
@@ -1463,6 +1528,7 @@ private extension CatalogProjection {
         orderQueryCount = 0
         keyedOrderQueryCount = 0
         filterOptionsQueryCount = 0
+        keyedFilterOptionsQueryCount = 0
         stackReadCount = 0
         inFlight = nil
         supersededWork = nil

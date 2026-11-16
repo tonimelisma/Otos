@@ -144,27 +144,24 @@ struct CatalogStoreQueryPlanTests {
                     ))
                     return try explainPlan(db, query: query)
                 } + [
-                    // The filter's types and the counts reach the rows the same way.
-                    explainPlan(db, query: #require(try CatalogQueryGateway.distinctFilterableTypesQuery(scope: scope, db: db))),
+                    // The counts reach the rows the same way.
                     explainPlan(db, query: #require(try CatalogQueryGateway.countQuery(scope: scope, db: db))),
                 ]
-                let places = try #require(try CatalogQueryGateway.placeOptionsQuery(
-                    scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
-                ))
-                return try (name, index, orders, explainPlan(db, query: places))
+                let options = try #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db))
+                return try (name, index, orders, explainPlan(db, query: options))
             }
         }
 
-        for (name, index, orders, places) in plans {
+        for (name, index, orders, options) in plans {
             for order in orders {
                 #expect(order.contains("SEARCH media_asset USING") && order.contains(index), "\(name): \(order)")
                 #expect(!order.contains("SCAN media_asset"), "\(name): \(order)")
             }
-            let lines = places.split(separator: "\n")
-            #expect(lines.first?.contains("SEARCH media_asset") == true && places.contains(index), "\(name): \(places)")
+            let lines = options.split(separator: "\n")
+            #expect(lines.first?.contains("SEARCH media_asset") == true && options.contains(index), "\(name): \(options)")
             // A stack's members are read from their JSON argument, a scan of that argument.
             for table in ["media_asset", "place_metadata", "place_cell"] {
-                #expect(!places.contains("SCAN \(table)"), "\(name): \(places)")
+                #expect(!options.contains("SCAN \(table)"), "\(name): \(options)")
             }
         }
     }
@@ -212,11 +209,8 @@ struct CatalogStoreQueryPlanTests {
                         db: db
                     )))
                 }
-                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.distinctFilterableTypesQuery(scope: scope, db: db))))
+                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db))))
                 try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.countQuery(scope: scope, db: db))))
-                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.placeOptionsQuery(
-                    scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
-                ))))
                 return (name, firstLine, reads)
             }
         }
@@ -324,8 +318,8 @@ struct CatalogStoreQueryPlanTests {
 
     /// Place names (ADR 0051): the unnamed cells' read walks the place-cell index in its own
     /// order — no scan of every location, no temporary sort — and the filter options' read
-    /// walks the scope's date order, each located row's coordinate from the location index
-    /// by its key, never a table row of `asset_metadata`. SQLite generates each row's cell exactly as
+    /// walks the roots' rows in `idx_media_asset_stack_candidate`, each located row's coordinate
+    /// from the location index by its key, never a table row of either table. SQLite generates each row's cell exactly as
     /// `PlaceCell.init` computes it, on the pole and the 180th meridian too. The launch's
     /// hand-back of undecodable stills seeks them by their index.
     @Test func placeCellAndUndecodableReadsAreIndexDriven() async throws {
@@ -357,9 +351,7 @@ struct CatalogStoreQueryPlanTests {
         let scope = CatalogScopePredicate(rootIDs: [rootID1, rootID2])
 
         let (unnamedPlan, nextPagePlan, optionsPlan, undecodablePlans, cells) = try await dbQueue.read { db in
-            let optionsQuery = try #require(try CatalogQueryGateway.placeOptionsQuery(
-                scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
-            ))
+            let optionsQuery = try #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db))
             return try (
                 explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: false), arguments: ["en-Latn", 32]),
                 explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: true), arguments: [0, 0, "en-Latn", 32]),
@@ -383,9 +375,9 @@ struct CatalogStoreQueryPlanTests {
             #expect(!plan.contains("SCAN"))
             #expect(!usesTemporarySort(plan))
         }
-        // The options' places walk the scope's date order and find each located row's cell by
-        // its coordinate (`theOptionsReadsOfEveryRowAreIndexDriven`).
-        #expect(optionsPlan.contains("SCAN media_asset USING INDEX idx_media_asset_best_capture_global_desc"), "\(optionsPlan)")
+        // The options walk the roots' rows in the index that holds their kinds and formats, and
+        // find each located row's cell by its coordinate (`theOptionsReadsOfEveryRowAreIndexDriven`).
+        #expect(optionsPlan.contains("SEARCH media_asset USING INDEX idx_media_asset_stack_candidate"), "\(optionsPlan)")
         #expect(optionsPlan.contains("SEARCH place_metadata USING COVERING INDEX idx_asset_metadata_location"), "\(optionsPlan)")
         #expect(!optionsPlan.contains("SCAN place_metadata"))
         for undecodablePlan in undecodablePlans {
@@ -506,7 +498,7 @@ struct CatalogStoreQueryPlanTests {
         }
         let orders = orderQueries
         let (plans, typesPlan, batchesPlan, batchIDsPlan, claimsPlan, editsPlan, indexColumns) = try await dbQueue.read { db in
-            let types = try #require(try CatalogQueryGateway.distinctFilterableTypesQuery(
+            let types = try #require(try CatalogQueryGateway.filterOptionRowsQuery(
                 scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2]), db: db
             ))
             var columns: [String: Set<String>] = [:]
@@ -609,12 +601,11 @@ struct CatalogStoreQueryPlanTests {
     }
 
     /// The filter's options are read over the shown row's scope (APP-013, APP-025), whatever
-    /// that row is: the file types from the scope's own rows, the places from the named cells
-    /// in the catalog's language reaching each located row through the place-cell index —
-    /// never a scan of every row, every location or every search row. Measured on the owner's
-    /// 166,554-photo catalog (2026-11-13): every row's two reads about a second at most warm, the same
-    /// scale as the every-source read they replace. The languages read scans only
-    /// `place_cell`, one row per named cell.
+    /// that row is, in one walk of the scope's rows with each row's kind, format and located
+    /// cell — never a scan of every row, every location or every search row, and never a
+    /// table row. Measured on the owner's 166,554-photo catalog (2026-11-13): every row's reads
+    /// about a second at most warm, the same scale as the every-source read they replace. The
+    /// languages read scans only `place_cell`, one row per named cell.
     @Test func theOptionsReadsOfEveryRowAreIndexDriven() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -636,12 +627,8 @@ struct CatalogStoreQueryPlanTests {
         let (plans, languagesPlan) = try await dbQueue.read { db in
             var plans: [(String, String)] = []
             for (name, scope) in scopes {
-                let types = try #require(try CatalogQueryGateway.distinctFilterableTypesQuery(scope: scope, db: db))
-                let places = try #require(try CatalogQueryGateway.placeOptionsQuery(
-                    scope: scope, language: PlaceNameLanguage(identifier: "en-Latn"), db: db
-                ))
-                try plans.append(("\(name).types", explainPlan(db, query: types)))
-                try plans.append(("\(name).places", explainPlan(db, query: places)))
+                let options = try #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db))
+                try plans.append((name, explainPlan(db, query: options)))
             }
             return try (plans, explainPlan(db, sql: CatalogQueryGateway.placeNameLanguagesSQL))
         }
@@ -665,18 +652,16 @@ struct CatalogStoreQueryPlanTests {
                 #expect(tested.isSubset(of: indexColumns[index] ?? []), "\(name): \(plan)")
             }
             // Each located row's coordinate comes from the location index by its key, and its
-            // named cell by the cell of that coordinate: no table row of `asset_metadata`.
-            if name.hasSuffix(".places") {
-                #expect(plan.contains("SEARCH place_metadata USING COVERING INDEX idx_asset_metadata_location"), "\(name): \(plan)")
-                #expect(!plan.contains("idx_asset_metadata_place_cell"), "\(name): \(plan)")
-            }
-            // A wide scope's places walk its date order, as its order read does; a narrow
-            // scope's start from its own rows: an import batch by its key
+            // cell is computed from it: no table row of `asset_metadata`, no named cell.
+            #expect(plan.contains("SEARCH place_metadata USING COVERING INDEX idx_asset_metadata_location"), "\(name): \(plan)")
+            #expect(!plan.contains("place_cell"), "\(name): \(plan)")
+            // A wide scope walks its roots' rows in the index that holds their kinds and
+            // formats; a narrow scope starts from its own rows: an import batch by its key
             // (`keyedScopesSeekTheirOwnRowsInsteadOfWalkingTheOrder`), On This Day by its day and
             // Duplicates by the digests it groups (`narrowScopesSeekTheirOwnRows`).
             let narrow = ["importBatch", "onThisDay", "duplicates"]
-            if name.hasSuffix(".places"), !narrow.contains(where: { name.hasPrefix($0) }) {
-                #expect(plan.contains("idx_media_asset_best_capture_"), "\(name): \(plan)")
+            if !narrow.contains(where: { name.hasPrefix($0) }) {
+                #expect(plan.contains("USING INDEX \(PhotoStackSQL.candidateIndexName)"), "\(name): \(plan)")
             }
         }
         #expect(!languagesPlan.contains("media_asset") && !languagesPlan.contains("asset_metadata"))

@@ -254,6 +254,65 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
+    /// N location writes cost options reads in proportion to N, never N times the row's scope
+    /// (plan 0116, ADR 0005 "Keyed re-reads"): each re-reads only the rows its change named
+    /// and patches the options' tally, and a renamed cell re-reads only the names; the options
+    /// shown are then exactly what a full read gives. On the owner's library a sync re-read
+    /// the options whole 92 times for location changes.
+    @Test func locationWritesReadOnlyTheirRowsAndKeepTheOptionsAFullReadGives() async throws {
+        let window = try await settledWindow()
+        defer { window.recording.cancel() }
+        let language = PlaceNameLanguage(Locale(identifier: "fi_FI"))
+        let helsinki = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
+        let espoo = PlaceCoordinate(latitude: 60.21, longitude: 24.66)
+        let sydney = PlaceCoordinate(latitude: -33.87, longitude: 151.21)
+        try await window.store.applyPlaceNames([
+            PlaceCell(helsinki): PlaceNames(country: "Suomi", town: "Helsinki"),
+            PlaceCell(espoo): PlaceNames(country: "Suomi", town: "Espoo"),
+            PlaceCell(sydney): PlaceNames(country: "Australia", town: nil),
+        ], language: language)
+        // Nothing is located yet, so the names offer no place; the options read again for the
+        // language the catalog now holds names in.
+        _ = await window.recorder.waitForValues { $0.last?.filterOptions.placeNameLanguage == language }
+        _ = try await waitForProjectionQuiescence(window.projection, recordedBy: window.recorder)
+        let before = await window.reads
+        let keyedBefore = await window.projection.keyedFilterOptionsQueryCount
+        // Rows move into named cells, between them, and out of one, one write at a time.
+        let moves: [(index: Int, to: PlaceCoordinate)] = [(3, helsinki), (40, sydney), (3, espoo), (77, helsinki), (40, helsinki)]
+        for move in moves {
+            let asset = try #require(window.assets[window.ids[move.index]])
+            var metadata = AssetMetadata.absoluteCapture(instant: asset.captureLocalTime?.presentationDate())
+            metadata.locations = [
+                GeoRecord(source: "exifGPS", latitude: move.to.latitude, longitude: move.to.longitude, altitudeMeters: nil),
+            ]
+            let result = EnrichmentResult(
+                id: asset.id, metadata: metadata, enrichedKind: asset.bestKind, enrichedFormat: asset.bestFormat,
+                thumbnailPath: nil, sourceSize: asset.byteSize,
+                sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt), contentHash: .empty
+            )
+            try await window.publish {
+                _ = await window.store.applyEnrichmentBatch([result])
+            }
+        }
+        try await window.store.applyPlaceNames([PlaceCell(espoo): PlaceNames(country: "Suomi", town: "Esbo")], language: language)
+        _ = await window.recorder.waitForValues {
+            $0.last?.filterOptions.countries.contains { $0.towns.contains("Esbo") } == true
+        }
+        _ = try await waitForProjectionQuiescence(window.projection, recordedBy: window.recorder)
+        let after = await window.reads
+        #expect(after.options == before.options, "before=\(before) after=\(after)")
+        #expect(await window.projection.keyedFilterOptionsQueryCount == keyedBefore + UInt64(moves.count) + 1)
+        let shown = try #require(await window.recorder.snapshot().last)
+        let full = try await window.store.windowReads.filterOptions(
+            for: shown.resolvedSidebarSelection,
+            availableLibraryPaths: Set(shown.libraries.map(\.path)),
+            placeNameLanguages: [language]
+        )
+        #expect(shown.filterOptions == full)
+        #expect(full.countries == [PlaceFilterCountry(name: "Suomi", towns: ["Helsinki", "Esbo"])])
+        await window.store.shutdown()
+    }
+
     /// Copies kept together change what the Duplicates rows hold, never the library's order
     /// or its options: the change is published as a refresh with neither read again.
     @Test func aWriteThatCannotChangeTheOrderIsPublishedWithoutReadingIt() async throws {

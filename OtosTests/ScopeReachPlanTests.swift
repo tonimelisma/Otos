@@ -145,7 +145,7 @@ struct ScopeReachPlanTests {
                     descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort), scope: scope, db: db
                 ))
             }
-            try queries.append(#require(try CatalogQueryGateway.distinctFilterableTypesQuery(scope: scope, db: db)))
+            try queries.append(#require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db)))
             if !scope.isAnniversary {
                 try queries.append(#require(try CatalogQueryGateway.countQuery(scope: scope, db: db)))
             }

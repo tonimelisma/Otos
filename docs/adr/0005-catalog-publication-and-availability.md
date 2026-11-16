@@ -173,6 +173,28 @@ content. Before this, the earlier rejection of patching held. On the owner's cat
 a sync brought metadata for 152 rows, the order was read whole 125 times, 33.7 s of reader
 time (installed 66153b4a; `docs/research/2026-11-16-window-reads-owner-catalog.md`).
 
+The filter's options are re-read by key the same way. An options read keeps, beside its
+answer, what each row of the sidebar row's scope gave it (`CatalogFilterOptionTally`): per
+row, its SQLite row id and the indexes of its file type and its map cell in small tables of
+the types and cells present, with a count per type and per cell (about 2.2 MB for All Media's
+159,000 rows), and the cells' names in the catalog's one language; the options are derived
+from the counts. When every change since the tally was read that moved a fact the options
+depend on moved only locations or file types of named rows, or the cells' names
+(`CatalogChangeLog.keyedOptionRows`), the read seeks those rows by key through the scope's own
+predicate (`CatalogStore.filterOptionsOfRows`; a row the scope no longer counts gives
+nothing), with the names when they moved (a scan of `place_cell`), and the projection patches
+the held tally in place in the step that applies the read's end, after checking it is still
+the tally the read was planned from. A re-read row the tally never counted means the scope's
+rows changed under it: the tally is dropped and read whole. A row id names a row while it
+exists, and only a membership change removes or adds rows, which reads the tally whole, as do
+grouping (a Live Photo pairing can hide a row no change named), a change whose rows are
+unnamed, more rows than `rowCapacity`, and a scope a key cannot test (Places, a day, a batch,
+a person). The whole read is one walk of the scope's rows with each row's kind, format and
+located cell: a wide scope walks `idx_media_asset_stack_candidate`, which holds the kind, the
+format, the key and what tests visibility (the date order index holds no format), and finds
+each located row's coordinate by its key in the location index. On the owner's library a sync
+re-read All Media's options whole 92 times while 152 metadata changes arrived.
+
 Before the Store's initial load has applied, its roots are unknown, not absent.
 `CatalogStore.loadedLibraries()` returns nil until then, and Projection publishes a
 loading state for it — no title, no items, and the `.loadingCatalog` empty state,

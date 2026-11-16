@@ -3253,26 +3253,113 @@ extension CatalogStore {
         placeNameLanguages: Set<PlaceNameLanguage>,
         lane: CatalogReadLane
     ) async throws -> CatalogFilterOptions {
+        try await filterOptionTally(
+            for: selection, availableLibraryPaths: availableLibraryPaths, placeNameLanguages: placeNameLanguages, lane: lane
+        ).options
+    }
+
+    /// The options of `selection`'s sidebar row as each of its rows gives them
+    /// (`CatalogFilterOptionTally`), with the cells' names in the one language the catalog holds
+    /// names in, when it holds them in one: the whole read, which a keyed re-read then patches
+    /// (`filterOptionsOfRows`). `capacity` is the rows the last read of the row counted.
+    func filterOptionTally(
+        for selection: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>,
+        placeNameLanguages: Set<PlaceNameLanguage>,
+        capacity: Int = 0,
+        lane: CatalogReadLane
+    ) async throws -> CatalogFilterOptionTally {
         let row = selection.sidebarRow
-        var rowScope = scopePredicate(selection: row, availableLibraryPaths: availableLibraryPaths)
-        guard !rowScope.selectsNothing else {
-            return .empty
-        }
-        // Identical copies share their bytes, so their kinds, formats and places: the options
-        // are the same with every copy as with the one shown (ADR 0054), and a place's count,
-        // which orders the places, counts each copy. So the options never depend on which file
-        // is a copy, a fact enrichment moves on almost every flush
-        // (`CatalogChangedFacts.filterOptionsInputs(of:)`).
-        rowScope.showsOneCopy = false
-        let scope = rowScope
         let language = placeNameLanguages.count == 1 ? placeNameLanguages.first : nil
-        let timedOptions = try await timedRead(reader(for: lane)) { db in
-            try CatalogQueryGateway.filterOptions(scope: scope, placeNameLanguage: language, db: db)
+        guard let scope = optionsScope(of: row, availableLibraryPaths: availableLibraryPaths) else {
+            return CatalogFilterOptionTally(names: [:], language: nil)
         }
-        OtosLog.catalog.notice(
-            "op=catalog.store.query.filterOptions phase=finish row=\(row.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.formatsByKind.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) countryCount=\(timedOptions.value.countries.count, privacy: .public) placeLanguage=\(language?.identifier ?? "none", privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) lockMs=\(timedOptions.lockMs, privacy: .public) resumeMs=\(timedOptions.resumeMs, privacy: .public) priority=\(timedOptions.priorityName, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
+        let timed = try await timedRead(reader(for: lane), operation: "filterOptions") { db in
+            var tally = try CatalogFilterOptionTally(
+                names: language.map { try CatalogQueryGateway.placeCellNames(language: $0, db: db) } ?? [:],
+                language: language,
+                capacity: capacity
+            )
+            // A scope that turns out to select nothing (a day with no photos) offers nothing.
+            guard try CatalogQueryGateway.tallyFilterOptionRows(scope: scope, into: &tally, db: db) else {
+                return CatalogFilterOptionTally(names: [:], language: nil)
+            }
+            return tally
+        }
+        OtosLog.catalog.noticeOperation("catalog.store.query.filterOptions", phase: "finish", fields: [
+            "row": row.diagnosticDescription, "rootCount": "\(scope.rootIDs.count)", "rows": "\(timed.value.rowCount)",
+            "types": "\(timed.value.typeCount)", "cells": "\(timed.value.cellCount)",
+            "placeLanguage": language?.identifier ?? "none", "waitMs": "\(timed.waitMs)", "execMs": "\(timed.execMs)",
+            "lockMs": "\(timed.lockMs)", "resumeMs": "\(timed.resumeMs)", "priority": timed.priorityName,
+            "queryMs": "\(timed.totalMs)",
+        ])
+        return timed.value
+    }
+
+    /// What each of `changed` gives the options of `row` now, each by one seek of its key, and
+    /// the cells' names when `names`: what a change that names its rows re-reads (ADR 0005,
+    /// "Keyed re-reads"). A changed row the scope does not count gives no fact; a key with no
+    /// row gives nothing, since only a membership change removes a row and it reads the tally
+    /// whole. Nil when the row's scope is not a whole set of roots (Places, a day, an import, a
+    /// person), whose rows a key cannot test, and a whole read is owed.
+    func filterOptionsOfRows(
+        _ changed: Set<MediaAssetID>,
+        names language: PlaceNameLanguage?,
+        for row: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>,
+        lane: CatalogReadLane
+    ) async throws -> CatalogFilterOptionRows? {
+        guard let scope = optionsScope(of: row, availableLibraryPaths: availableLibraryPaths),
+              scope.content == .any, scope.date == .any, scope.location == .any, scope.importBatchUnixMs == nil
+        else {
+            return nil
+        }
+        let rootIDs = roots.rowIDSnapshot()
+        let keys = changed.compactMap { id in
+            rootIDs[id.libraryRootPath].flatMap { rootID in
+                scope.rootIDs.contains(rootID) ? CatalogScopePredicate.MemberKey(rootID: rootID, relativePath: id.relativePath.rawValue) : nil
+            }
+        }
+        let members = CatalogScopePredicate(
+            rootIDs: scope.rootIDs,
+            content: .members(keys),
+            showsOneCopy: scope.showsOneCopy,
+            holdsEveryCopyRoot: scope.holdsEveryCopyRoot
         )
-        return timedOptions.value
+        let timed = try await timedRead(reader(for: lane)) { db in
+            var rows: [CatalogFilterOptionTally.Row] = []
+            if !keys.isEmpty {
+                rows = try CatalogQueryGateway.filterOptionRows(scope: members, db: db)
+                let counted = Set(rows.map(\.rowID))
+                let statement = try db.cachedStatement(sql: CatalogQueryGateway.rowIDOfKeySQL)
+                for key in keys {
+                    if let rowID = try Int64.fetchOne(statement, arguments: [key.rootID, key.relativePath]), !counted.contains(rowID) {
+                        rows.append(CatalogFilterOptionTally.Row(rowID: rowID, fact: nil))
+                    }
+                }
+            }
+            let names = try language.map { try CatalogQueryGateway.placeCellNames(language: $0, db: db) }
+            return CatalogFilterOptionRows(rows: rows, names: names)
+        }
+        OtosLog.catalog.noticeOperation("catalog.store.query.filterOptions", phase: "keyed", fields: [
+            "row": row.diagnosticDescription, "changed": "\(changed.count)", "rows": "\(timed.value.rows.count)",
+            "names": "\(timed.value.names?.count ?? 0)", "waitMs": "\(timed.waitMs)", "execMs": "\(timed.execMs)",
+            "queryMs": "\(timed.totalMs)",
+        ])
+        return timed.value
+    }
+
+    /// The scope the options of `row` count: every copy of identical files, which share their
+    /// bytes, so their kinds, formats and places (ADR 0054), so the options never depend on
+    /// which file is a copy, a fact enrichment moves on almost every flush
+    /// (`CatalogChangedFacts.filterOptionsInputs(of:)`). Nil for a scope that selects nothing.
+    private func optionsScope(of row: SidebarSelection, availableLibraryPaths: Set<LibraryRootPath>) -> CatalogScopePredicate? {
+        var scope = scopePredicate(selection: row, availableLibraryPaths: availableLibraryPaths)
+        guard !scope.selectsNothing else {
+            return nil
+        }
+        scope.showsOneCopy = false
+        return scope
     }
 
     /// The languages the catalog holds place names in (ADR 0051): one once the reader has

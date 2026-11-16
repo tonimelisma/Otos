@@ -178,7 +178,7 @@ enum WindowReadPages {
                 reads: [
                     VariantRead(name: "stackCandidates") { _ in PhotoStackSQL.candidateQuery(rootIDs: roots) },
                     VariantRead(name: "filterOptions") { db in
-                        try CatalogQueryGateway.distinctFilterableTypesQuery(scope: CatalogScopePredicate(rootIDs: roots), db: db)
+                        try CatalogQueryGateway.filterOptionRowsQuery(scope: CatalogScopePredicate(rootIDs: roots), db: db)
                     },
                 ]
             ),
@@ -274,7 +274,7 @@ enum WindowReadPages {
             try CatalogQueryGateway.orderedAssetIDQuery(descriptor: liked, scope: scope, db: db)
         }
         try read("filterOptions") { db in
-            try CatalogQueryGateway.distinctFilterableTypesQuery(scope: scope, db: db)
+            try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db)
         }
         try read("peopleFaceAssetJoin") { _ in
             SQLQuery(sql: """

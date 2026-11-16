@@ -265,6 +265,29 @@ extension CatalogReads where Lane == WindowLane {
         try await store.newestFaces(of: person, limit: limit, lane: lane)
     }
 
+    func filterOptionTally(
+        for selection: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>,
+        placeNameLanguages: Set<PlaceNameLanguage>,
+        capacity: Int
+    ) async throws -> CatalogFilterOptionTally {
+        try await store.filterOptionTally(
+            for: selection, availableLibraryPaths: availableLibraryPaths, placeNameLanguages: placeNameLanguages,
+            capacity: capacity, lane: lane
+        )
+    }
+
+    func filterOptionsOfRows(
+        _ changed: Set<MediaAssetID>,
+        names language: PlaceNameLanguage?,
+        for row: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) async throws -> CatalogFilterOptionRows? {
+        try await store.filterOptionsOfRows(
+            changed, names: language, for: row, availableLibraryPaths: availableLibraryPaths, lane: lane
+        )
+    }
+
     func importPlanningSnapshot(
         source: LibraryRootPath,
         destination: LibraryRootPath,

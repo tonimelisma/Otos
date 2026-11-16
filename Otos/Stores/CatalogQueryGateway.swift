@@ -202,112 +202,101 @@ nonisolated enum CatalogQueryGateway {
         )
     }
 
-    /// The options for the row whose scope is `scope`, the places among them named in
-    /// `placeNameLanguage` (none without one).
-    static func filterOptions(
+    /// Counts each row of `scope` into `tally` (`CatalogFilterOptionTally`): its id, its file
+    /// type and the map cell of its coordinate. False for a scope that selects nothing, which
+    /// counts no row. Each row is counted as the cursor reaches it, read by position, so no copy
+    /// of every row is made first.
+    static func tallyFilterOptionRows(
         scope: CatalogScopePredicate,
-        placeNameLanguage: PlaceNameLanguage?,
+        into tally: inout CatalogFilterOptionTally,
         db: Database
-    ) throws -> CatalogFilterOptions {
-        guard let query = try distinctFilterableTypesQuery(scope: scope, db: db) else {
-            return .empty
+    ) throws -> Bool {
+        guard let query = try filterOptionRowsQuery(scope: scope, db: db) else {
+            return false
         }
-        let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
-        var formatsByKind: [MediaKind: Set<MediaFormatToken>] = [:]
-        for row in rows {
-            let kindValue: String? = row["best_kind"]
-            let formatValue: String? = row["best_format"]
-            guard let kindValue, let kind = MediaKind(rawValue: kindValue) else {
-                continue
-            }
-            var formats = formatsByKind[kind, default: []]
-            if let formatValue {
-                formats.insert(MediaFormatToken(rawValue: formatValue))
-            }
-            formatsByKind[kind] = formats
+        let rows = try Row.fetchCursor(db.cachedStatement(sql: query.sql), arguments: query.arguments)
+        while let row = try rows.next() {
+            tally.append(rowID: row[0], fact: filterOptionFact(row))
         }
-        guard let placeNameLanguage else {
-            return CatalogFilterOptions(formatsByKind: formatsByKind.mapValues { $0.sorted() })
+        return true
+    }
+
+    /// Each row of `scope` with what it gives the options: what a keyed re-read reads for the
+    /// few rows its changes name (`CatalogStore.filterOptionsOfRows`).
+    static func filterOptionRows(scope: CatalogScopePredicate, db: Database) throws -> [CatalogFilterOptionTally.Row] {
+        guard let query = try filterOptionRowsQuery(scope: scope, db: db) else {
+            return []
         }
-        return try CatalogFilterOptions(
-            formatsByKind: formatsByKind.mapValues { $0.sorted() },
-            countries: placeOptions(scope: scope, language: placeNameLanguage, db: db),
-            placeNameLanguage: placeNameLanguage
+        return try Array(Row.fetchCursor(db.cachedStatement(sql: query.sql), arguments: query.arguments).map { row in
+            CatalogFilterOptionTally.Row(rowID: row[0], fact: filterOptionFact(row))
+        })
+    }
+
+    /// The fact of one row of `filterOptionRowsQuery`, by column position.
+    private static func filterOptionFact(_ row: Row) -> CatalogFilterOptionTally.Fact {
+        let kind = (row[1] as String?).flatMap(MediaKind.init(rawValue:))
+        let format = (row[2] as String?).map(MediaFormatToken.init(rawValue:))
+        let cell: PlaceCell? = if let latitude: Int = row[3], let longitude: Int = row[4] {
+            PlaceCell(latitude: latitude, longitude: longitude)
+        } else {
+            nil
+        }
+        return CatalogFilterOptionTally.Fact(
+            type: kind.map { CatalogFilterOptionTally.FileType(kind: $0, format: format) },
+            cell: cell
         )
     }
 
-    /// The countries and towns Maps named in `language` for the located items in scope, most
-    /// items first, then the name in the locale's order (ADR 0051). A cell named nothing
-    /// offers nothing.
-    static func placeOptions(
-        scope: CatalogScopePredicate,
-        language: PlaceNameLanguage,
-        db: Database
-    ) throws -> [PlaceFilterCountry] {
-        guard let query = try placeOptionsQuery(scope: scope, language: language, db: db) else {
-            return []
-        }
-        let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
-        var countryItems: [String: Int] = [:]
-        var townItems: [String: [String: Int]] = [:]
-        for row in rows {
-            let country: String = row["country"]
-            let items: Int = row["items"]
-            countryItems[country, default: 0] += items
-            if let town = row["town"] as String? {
-                townItems[country, default: [:]][town, default: 0] += items
-            }
-        }
-        return PlaceFilterCountry.mostItemsFirst(countryItems).map { country in
-            PlaceFilterCountry(name: country, towns: PlaceFilterCountry.mostItemsFirst(townItems[country] ?? [:]))
-        }
-    }
-
-    /// The options' read: the scope's rows, each row's coordinate by its key from
-    /// `LocationIndexSQL`'s index, and each located row's named cell by the cell of that
-    /// coordinate (`PlaceCellSQL.cell`, the expression the stored cell columns are generated
-    /// by), so no table row of `asset_metadata` is read. The join order is fixed (`CROSS
-    /// JOIN`): the planner cannot tell a wide scope from a keyed one. A narrow scope
-    /// (`ScopeClause.Seek`) reaches its rows through its seek; a wide scope walks the scope's
-    /// date order index, which tests each row's visibility from the index alone. Starting from
-    /// the named cells instead read every located row of the catalog through its table row —
-    /// 168,765 pages, 8.4 s cold for All Media on the owner's catalog against 6,748 pages,
-    /// 0.57 s walking the order (`docs/research/2026-11-16-window-reads-owner-catalog.md`) —
-    /// and 21 s for an import batch of 210 rows
-    /// (`docs/research/2026-11-15-keyed-scope-query-plans.md`).
-    static func placeOptionsQuery(
-        scope: CatalogScopePredicate,
-        language: PlaceNameLanguage,
-        db: Database
-    ) throws -> SQLQuery? {
+    /// The options' read: every row of the scope with its row id, its kind and format, and the
+    /// cell of its coordinate when it is located, computed with the expression the stored cell
+    /// columns are generated by (`PlaceCellSQL.cell`) from the coordinate found by the row's key
+    /// in `LocationIndexSQL`'s index, so no table row of either table is read. A narrow scope
+    /// (`ScopeClause.Seek`) reaches its rows through its seek; a wide scope walks
+    /// `idx_media_asset_stack_candidate`, led by the root, which holds the kind, the format, the
+    /// key and what tests a row's visibility: the date order index holds no format, so walking
+    /// it would read every table row. Starting from the named cells instead read every located
+    /// row of the catalog through its table row — 168,765 pages, 8.4 s cold for All Media on
+    /// the owner's catalog against 6,748 pages walking an index
+    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`) — and 21 s for an import
+    /// batch of 210 rows (`docs/research/2026-11-15-keyed-scope-query-plans.md`). The join
+    /// order is fixed: the planner cannot tell a wide scope from a keyed one.
+    static func filterOptionRowsQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
         guard let scopeClause = try scopeClause(scope, db: db) else {
             return nil
         }
-        let rows = scopeClause.seekFrom ?? """
-        media_asset INDEXED BY \(orderPlan(for: .defaultOrder, person: nil, rootLocal: scope.rootIDs.count == 1).indexName)\(
-            scopeClause.join
-        )
-        """
-        let from = """
-        FROM \(rows)
-        CROSS JOIN asset_metadata AS place_metadata INDEXED BY \(LocationIndexSQL.indexName)
-          ON place_metadata.library_root_id = media_asset.library_root_id
-          AND place_metadata.relative_path = media_asset.relative_path
-          AND \(LocationIndexSQL.locatedSQL(row: "place_metadata"))
-        CROSS JOIN place_cell
-          ON place_cell.cell_latitude = \(PlaceCellSQL.cell("place_metadata.primary_latitude", cells: PlaceCellSQL.latitudeCells))
-          AND place_cell.cell_longitude = \(PlaceCellSQL.cell("place_metadata.primary_longitude", cells: PlaceCellSQL.longitudeCells))
-        """
+        let rows = scopeClause.seekFrom ?? "media_asset INDEXED BY \(PhotoStackSQL.candidateIndexName)\(scopeClause.join)"
         return SQLQuery(
             sql: """
-            SELECT place_cell.country, place_cell.town, COUNT(*) AS items
-            \(from)
-            WHERE place_cell.language = ? AND place_cell.country IS NOT NULL AND \(scopeClause.sql)
-            GROUP BY place_cell.country, place_cell.town
+            SELECT media_asset.rowid, media_asset.best_kind, media_asset.best_format,
+                   \(PlaceCellSQL.cell("place_metadata.primary_latitude", cells: PlaceCellSQL.latitudeCells)),
+                   \(PlaceCellSQL.cell("place_metadata.primary_longitude", cells: PlaceCellSQL.longitudeCells))
+            FROM \(rows)
+            LEFT JOIN asset_metadata AS place_metadata INDEXED BY \(LocationIndexSQL.indexName)
+              ON place_metadata.library_root_id = media_asset.library_root_id
+              AND place_metadata.relative_path = media_asset.relative_path
+              AND \(LocationIndexSQL.locatedSQL(row: "place_metadata"))
+            WHERE \(scopeClause.sql)
             """,
-            arguments: StatementArguments([language.identifier] + scopeClause.arguments)
+            arguments: StatementArguments(scopeClause.arguments)
         )
     }
+
+    /// The cells Maps named in `language`, with their names: a scan of `place_cell`, one row
+    /// per map cell a located photo falls in, a few thousand at most.
+    static func placeCellNames(language: PlaceNameLanguage, db: Database) throws -> [PlaceCell: PlaceNames] {
+        let rows = try Row.fetchCursor(
+            db.cachedStatement(sql: "SELECT cell_latitude, cell_longitude, country, town FROM place_cell WHERE language = ?"),
+            arguments: [language.identifier]
+        )
+        var names: [PlaceCell: PlaceNames] = [:]
+        while let row = try rows.next() {
+            names[PlaceCell(latitude: row[0], longitude: row[1])] = PlaceNames(country: row[2], town: row[3])
+        }
+        return names
+    }
+
+    /// The row id of the row at a key; a key with no row has none.
+    static let rowIDOfKeySQL = "SELECT rowid FROM media_asset WHERE library_root_id = ? AND relative_path = ?"
 
     /// The languages the catalog holds place names in (ADR 0051): one, once the reader has
     /// forgotten every other; none before anything is named. A scan of `place_cell`, which
@@ -349,22 +338,6 @@ nonisolated enum CatalogQueryGateway {
               AND place_cell.language = ?
           )
         """
-    }
-
-    static func distinctFilterableTypesQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
-        guard let scopeClause = try scopeClause(scope, db: db) else {
-            return nil
-        }
-        return SQLQuery(
-            sql: """
-            SELECT DISTINCT best_kind, best_format
-            FROM \(scopeClause.from)
-            WHERE \(scopeClause.sql)
-              AND best_kind IS NOT NULL
-            ORDER BY best_kind, best_format
-            """,
-            arguments: StatementArguments(scopeClause.arguments)
-        )
     }
 
     /// The count of a scope other than On This Day's (whose count judges its stacks in
@@ -879,6 +852,11 @@ nonisolated enum ContentDigestSQL {
 /// a filter that hides one file of a pair never unpairs the other. `PhotoStackRule`
 /// decides the stacks from these.
 nonisolated enum PhotoStackSQL {
+    /// Every row by root, kind and folder, with its format, key and what tests its visibility
+    /// (v59): what the candidates are read through, and what the filter's options walk
+    /// (`CatalogQueryGateway.filterOptionRowsQuery`).
+    static let candidateIndexName = "idx_media_asset_stack_candidate"
+
     /// One read of every root's candidates, and how long the read took, which the order
     /// query reports apart from its own work (`stackReadMs`).
     struct Candidates: Sendable {

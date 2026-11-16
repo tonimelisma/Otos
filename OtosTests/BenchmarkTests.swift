@@ -51,8 +51,28 @@ struct BenchmarkTests {
         // The options a published window owes, read after it publishes (`OwedFilterOptions`).
         var options = CatalogFilterOptions.empty
         try await Benchmark.measure("projection.filterOptions.allMedia") {
-            options = try await projection.readFilterOptions(owed, store: store).options
+            options = try await projection.readFilterOptions(owed, store: store).options ?? .empty
             #expect(!options.formatsByKind.isEmpty)
+        }
+        // A keyed re-read of the options after a sync moved 200 rows' locations: the rows read
+        // by key, patched into All Media's tally in place (ADR 0005, "Keyed re-reads").
+        guard case let .whole(tally) = try await projection.readFilterOptions(owed, store: store).outcome else {
+            Issue.record("a store-backed options read is whole")
+            return
+        }
+        let moved = try await Set(store.windowReads.orderedAssetIDs(
+            for: .default, availableLibraryPaths: owed.availableLibraryPaths
+        ).ids.prefix(200))
+        try await Benchmark.measure("projection.filterOptions.allMedia.keyed200") {
+            let read = try await projection.readFilterOptions(
+                owed, plan: .keyed(rows: moved, names: nil, patching: 0, capacity: tally.rowCount), store: store
+            )
+            guard case let .keyed(rows, _) = read.outcome else {
+                Issue.record("a library's options are read by key")
+                return
+            }
+            var patched = tally
+            #expect(patched.take(rows) && rows.rows.count == moved.count)
         }
         var lastReads = firstReads
         lastReads.filterOptions = CatalogProjectionReads.FilterOptions(

@@ -97,6 +97,7 @@
 				Views/DuplicatesPresentation.swift,
 				Models/CaptureTimestampProjections.swift,
 				Models/CaptureWallClock.swift,
+				Models/CatalogFilterOptionTally.swift,
 				Models/CatalogModels.swift,
 				Models/CatalogPath.swift,
 				Models/CatalogQueryModels.swift,

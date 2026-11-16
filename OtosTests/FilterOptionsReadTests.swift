@@ -54,9 +54,9 @@ struct FilterOptionsReadTests {
         )
     }
 
-    /// The places All Media offers on a catalog of the owner's shape, read by walking its order
+    /// The places All Media offers on a catalog of the owner's shape, read by walking its rows
     /// and finding each located row's cell by its coordinate, are what every located row's
-    /// stored cell names: the oracle joins the tables as the planner likes.
+    /// stored cell names: the oracle joins the tables as the planner likes and counts in SQL.
     @Test func thePlacesWalkFindsWhatEveryLocatedRowsCellNames() async throws {
         let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.05)
         let queue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
@@ -64,11 +64,9 @@ struct FilterOptionsReadTests {
         let language = PlaceNameLanguage(Locale.current)
         let (walked, oracle) = try await queue.read { db in
             let roots: [Int64] = [6, 7, 15]
-            let query = try #require(try CatalogQueryGateway.placeOptionsQuery(
-                scope: CatalogScopePredicate(rootIDs: roots), language: language, db: db
-            ))
-            let walked = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
-            let oracle = try Row.fetchAll(
+            var tally = try CatalogFilterOptionTally(names: CatalogQueryGateway.placeCellNames(language: language, db: db), language: language)
+            #expect(try CatalogQueryGateway.tallyFilterOptionRows(scope: CatalogScopePredicate(rootIDs: roots), into: &tally, db: db))
+            let rows = try Row.fetchAll(
                 db,
                 sql: """
                 SELECT place_cell.country, place_cell.town, COUNT(*) AS items
@@ -87,12 +85,19 @@ struct FilterOptionsReadTests {
                 """,
                 arguments: [language.identifier]
             )
-            func counts(_ rows: [Row]) -> [String: Int] {
-                Dictionary(uniqueKeysWithValues: rows.map { row in
-                    ("\(row["country"] as String)|\(row["town"] as String? ?? "")", row["items"] as Int)
-                })
+            var countryItems: [String: Int] = [:]
+            var townItems: [String: [String: Int]] = [:]
+            for row in rows {
+                let country: String = row["country"]
+                countryItems[country, default: 0] += row["items"] as Int
+                if let town = row["town"] as String? {
+                    townItems[country, default: [:]][town, default: 0] += row["items"] as Int
+                }
             }
-            return (counts(walked), counts(oracle))
+            let oracle = PlaceFilterCountry.mostItemsFirst(countryItems).map { country in
+                PlaceFilterCountry(name: country, towns: PlaceFilterCountry.mostItemsFirst(townItems[country] ?? [:]))
+            }
+            return (tally.options.countries, oracle)
         }
         #expect(!walked.isEmpty)
         #expect(walked == oracle)

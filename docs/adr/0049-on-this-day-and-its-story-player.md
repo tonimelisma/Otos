@@ -260,7 +260,7 @@ loupe's owners already answer every case the story needs.
 - `SidebarSelection` gains `.onThisDay(CalendarDay)`; every exhaustive switch over it
   names it, and `BrowserPlace` persists it without its day.
 - `CatalogScopePredicate` gains `date`; the gateway's scope clause decides the unit in the
-  read's transaction, so `orderedAssetIDQuery` and `distinctFilterableTypesQuery` take
+  read's transaction, so `orderedAssetIDQuery` and `filterOptionRowsQuery` take
   the `Database`.
 - `DateConstraint.anniversary` resolves to years or months inside each read with one
   extra walk of the year's rows (`CatalogQueryGateway.anniversaryRowsQuery`, through a

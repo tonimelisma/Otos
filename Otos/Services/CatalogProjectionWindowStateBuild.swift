@@ -315,24 +315,94 @@ extension CatalogProjection {
         return (patched, DiagnosticsTiming.milliseconds(since: start))
     }
 
-    /// Reads the options `owed` names: the read a pass asks for (`askFilterOptions`) after the
-    /// window it owes them to is published.
+    /// How an options read reads (`plan(forOptions:)`): the row's whole scope, room made for
+    /// the rows the last read of it counted, or only the rows the changes since the held tally
+    /// was read name, with the cells' names when they moved, to patch that tally in place.
+    enum FilterOptionsPlan: Equatable, Sendable {
+        case whole(capacity: Int)
+        case keyed(rows: Set<MediaAssetID>, names: PlaceNameLanguage?, patching: UInt64, capacity: Int)
+    }
+
+    /// What an options read gave and the Store change it started after.
+    struct FilterOptionsRead: Sendable {
+        enum Outcome: Sendable {
+            /// A test's reader's options, which no keyed read patches.
+            case answered(CatalogFilterOptions)
+            /// The row's whole tally.
+            case whole(CatalogFilterOptionTally)
+            /// The named rows and names, for the held tally read after change `patching`.
+            case keyed(CatalogFilterOptionRows, patching: UInt64)
+        }
+
+        let outcome: Outcome
+        let sequence: UInt64
+        let ms: Int
+
+        var isKeyed: Bool {
+            if case .keyed = outcome {
+                true
+            } else {
+                false
+            }
+        }
+
+        /// The options a read gave whole; nil for a keyed read, which only the tally it patches
+        /// answers.
+        var options: CatalogFilterOptions? {
+            switch outcome {
+            case let .answered(options): options
+            case let .whole(tally): tally.options
+            case .keyed: nil
+            }
+        }
+    }
+
+    /// Reads the options `owed` names as `plan` says: the read a pass asks for
+    /// (`askFilterOptions`) after the window it owes them to is published. A keyed plan whose
+    /// row's scope a key cannot test reads the whole scope instead. `sequence` is the Store
+    /// change the read starts after.
     func readFilterOptions(
         _ owed: OwedFilterOptions,
+        plan: FilterOptionsPlan = .whole(capacity: 0),
+        sequence: UInt64 = 0,
         store: CatalogStore
-    ) async throws -> (options: CatalogFilterOptions, ms: Int) {
-        filterOptionsQueryCount &+= 1
+    ) async throws -> FilterOptionsRead {
         let start = ContinuousClock.now
-        let options = if let filterOptionsReader {
-            try await filterOptionsReader(owed)
-        } else {
-            try await store.windowReads.filterOptions(
-                for: owed.row,
-                availableLibraryPaths: owed.availableLibraryPaths,
-                placeNameLanguages: owed.placeNameLanguages
-            )
+        if let filterOptionsReader {
+            filterOptionsQueryCount &+= 1
+            let options = try await filterOptionsReader(owed)
+            return FilterOptionsRead(outcome: .answered(options), sequence: sequence, ms: DiagnosticsTiming.milliseconds(since: start))
         }
-        return (options, DiagnosticsTiming.milliseconds(since: start))
+        let capacity: Int
+        switch plan {
+        case let .keyed(rows, names, patching, held):
+            capacity = held
+            // Nothing a change named moved what the options count: the held tally stands.
+            guard !rows.isEmpty || names != nil else {
+                return FilterOptionsRead(
+                    outcome: .keyed(CatalogFilterOptionRows(rows: [], names: nil), patching: patching),
+                    sequence: sequence, ms: 0
+                )
+            }
+            if let read = try await store.windowReads.filterOptionsOfRows(
+                rows, names: names, for: owed.row, availableLibraryPaths: owed.availableLibraryPaths
+            ) {
+                keyedFilterOptionsQueryCount &+= 1
+                return FilterOptionsRead(
+                    outcome: .keyed(read, patching: patching), sequence: sequence, ms: DiagnosticsTiming.milliseconds(since: start)
+                )
+            }
+        case let .whole(held):
+            capacity = held
+        }
+        filterOptionsQueryCount &+= 1
+        let tally = try await store.windowReads.filterOptionTally(
+            for: owed.row,
+            availableLibraryPaths: owed.availableLibraryPaths,
+            placeNameLanguages: owed.placeNameLanguages,
+            capacity: capacity
+        )
+        return FilterOptionsRead(outcome: .whole(tally), sequence: sequence, ms: DiagnosticsTiming.milliseconds(since: start))
     }
 
     /// Collapses each stack in the scoped order to its shown member (ADR 0052), after the
