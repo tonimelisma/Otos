@@ -2074,6 +2074,22 @@ nonisolated enum CatalogSchema {
         }
     }
 
+    /// v70: which search vector file the catalog's embeddings are mapped from, and how many of
+    /// its slots they commit (ADR 0048, "The index"). One row, or none while no file is built.
+    /// The search index trusts a file only when its name and slot count are the ones this row
+    /// holds, so a file cut short by a crash, a file of another catalog and a missing file are
+    /// told apart from a current one and rebuilt from `search_embedding`, never read.
+    static let searchVectorFileMigrationIdentifier = "v70_search_vector_file"
+
+    static let searchVectorFileStatements: [String] = [
+        """
+        CREATE TABLE search_vector_file (
+            file_id TEXT NOT NULL PRIMARY KEY,
+            slots INTEGER NOT NULL
+        )
+        """,
+    ]
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

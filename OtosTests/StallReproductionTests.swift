@@ -343,9 +343,10 @@ enum StallReproduction {
         let placeNames = PlaceNameReader(store: store, namer: PlaceNameReader.Namer { _, _ in .none })
         // The test bundle holds no search model, so no embedding is made, as on a Mac whose
         // model is still loading; every read before the model runs as in the app.
-        let searchIndex = PhotoSearchIndex(
+        let searchIndex = try PhotoSearchIndex(
             store: store,
             thumbnailDirectory: thumbnails,
+            vectorDirectory: #require(store.searchIndexDirectory),
             bundle: Bundle(for: BundleMarker.self),
             textReader: SearchTextReader { RecognizingSession { _ in [] } }
         )

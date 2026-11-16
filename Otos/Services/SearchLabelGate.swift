@@ -36,60 +36,6 @@ nonisolated enum SearchLabelGate {
     }
 }
 
-/// The identifiers of the scene labels the index holds readings of, each numbered once, so a
-/// row's labels are numbers rather than strings (`SearchLabelReadings`). About 1,303 at most.
-nonisolated struct SearchLabelNames: Sendable {
-    private(set) var numbers: [String: UInt16] = [:]
-
-    mutating func number(of name: Substring) -> UInt16 {
-        if let number = numbers[String(name)] {
-            return number
-        }
-        let number = UInt16(numbers.count)
-        numbers[String(name)] = number
-        return number
-    }
-}
-
-/// One photo's loose scene labels as the search index keeps them for every embedding in memory
-/// (ADR 0048): each label's number (`SearchLabelNames`) and its confidence as the stored text
-/// gives it, the same `Float` `SearchEmbeddingStorage.labels(from:)` parses, so the gate decides
-/// exactly as it would over that dictionary, in eight bytes a label rather than a dictionary
-/// entry. The text is parsed once, as the row joins memory.
-nonisolated struct SearchLabelReadings: Sendable {
-    private let numbers: [UInt16]
-    private let confidences: [Float]
-
-    static let none = SearchLabelReadings(numbers: [], confidences: [])
-
-    private init(numbers: [UInt16], confidences: [Float]) {
-        self.numbers = numbers
-        self.confidences = confidences
-    }
-
-    /// The labels of `text` (`SearchEmbeddingStorage.labelsText`'s form), read as
-    /// `SearchEmbeddingStorage.labels(from:)` reads them: a pair that does not parse is skipped.
-    init(text: String?, names: inout SearchLabelNames) {
-        var numbers: [UInt16] = []
-        var confidences: [Float] = []
-        for pair in (text ?? "").split(separator: ",") {
-            let parts = pair.split(separator: ":")
-            if parts.count == 2, let confidence = Float(parts[1]) {
-                numbers.append(names.number(of: parts[0]))
-                confidences.append(confidence)
-            }
-        }
-        self.numbers = numbers
-        self.confidences = confidences
-    }
-
-    /// The confidence of the label `number`; the last reading of it, as a dictionary built
-    /// from the same pairs would keep.
-    func confidence(of number: UInt16) -> Float? {
-        numbers.lastIndex(of: number).map { confidences[$0] }
-    }
-}
-
 /// Vision's scene classification of one picture, read twice over:
 /// - **For the gate:** every label at or above `SearchLabelGate.minimumConfidence`, with its
 ///   confidence — a loose reading on purpose, about 18 labels a photo on the owner's library,

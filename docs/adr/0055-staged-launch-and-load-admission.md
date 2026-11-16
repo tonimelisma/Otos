@@ -39,8 +39,9 @@ publication to ADR 0005.
    metadata re-read.
 2. **Heavy loads take turns.** One owner, `LoadAdmission`, admits the bounded loads that hold
    hundreds of megabytes or read much of the catalog, one at a time: a People pass, a
-   duplicates build, the search index's first load, and an account's mirror pairing
-   (`BackgroundLoad`). An owner wraps such a load in `run(_:_:)`, which waits for its turn and
+   duplicates build, a build of the search index's vector file from the catalog (ADR 0048;
+   opening a current file reads no table and is not admitted), and an account's mirror
+   pairing (`BackgroundLoad`). An owner wraps such a load in `run(_:_:)`, which waits for its turn and
    releases it when the body returns or throws. None runs before the window opens the
    admission at its first grid. Loads asked for before then run in `BackgroundLoad.launchRank`
    order (People, duplicates, search index, mirror pairing); after it, in the order asked, so a

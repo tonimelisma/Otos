@@ -103,8 +103,13 @@ nonisolated enum SearchTextReading {
 /// A query's words as text matching reads them: folded, each of two or more characters. A
 /// word matches at the start of a word of the text; a word in a script written without spaces
 /// (Chinese, Japanese) matches anywhere. A query with no such word matches nothing.
-nonisolated struct SearchTextQuery: Sendable {
+nonisolated struct SearchTextQuery: Sendable, Equatable {
     private let words: [(word: String, unspaced: Bool)]
+
+    /// The same words match the same texts.
+    static func == (lhs: SearchTextQuery, rhs: SearchTextQuery) -> Bool {
+        lhs.words.map(\.word) == rhs.words.map(\.word)
+    }
 
     init(_ query: String) {
         words = SearchTextReading.folded(query).split(whereSeparator: { !$0.isLetter && !$0.isNumber })

@@ -41,12 +41,33 @@ nonisolated enum PathFingerprint {
         return hash
     }
 
+    /// `text`'s UTF-8, read from its contiguous storage: the same value as over `text.utf8`,
+    /// without a generic iterator, which an unoptimized build pays per byte (2.4 µs for a
+    /// 55-byte path against 1.0 µs).
+    static func fnv1a64(_ seed: UInt64, _ text: String) -> UInt64 {
+        var text = text
+        return text.withUTF8 { bytes in
+            var hash = seed
+            for byte in bytes {
+                hash ^= UInt64(byte)
+                hash = hash &* prime
+            }
+            return hash
+        }
+    }
+
     /// Root path, then a NUL separator, then the relative path — process-independent.
     static func mediaAsset(root: String, relative: String) -> UInt64 {
-        var hash = fnv1a64(root.utf8)
+        mediaAsset(rootFingerprint: fnv1a64(offsetBasis, root), relative: relative)
+    }
+
+    /// The same, from the root's own fingerprint (`LibraryRootPath.fingerprint`, which is the
+    /// root's part of this hash), so the root is not hashed again for every asset in it.
+    static func mediaAsset(rootFingerprint: UInt64, relative: String) -> UInt64 {
+        var hash = rootFingerprint
         hash ^= 0
         hash = hash &* prime
-        return fnv1a64(hash, relative.utf8)
+        return fnv1a64(hash, relative)
     }
 }
 
@@ -60,7 +81,7 @@ nonisolated struct LibraryRootPath: Hashable, Codable, RawRepresentable, CustomS
 
     init(rawValue: String) {
         self.rawValue = rawValue
-        fingerprint = PathFingerprint.fnv1a64(rawValue.utf8)
+        fingerprint = PathFingerprint.fnv1a64(PathFingerprint.offsetBasis, rawValue)
     }
 
     init(from decoder: Decoder) throws {
@@ -106,7 +127,7 @@ nonisolated struct MediaRelativePath: Hashable, Codable, RawRepresentable, Custo
 
     init(rawValue: String) {
         self.rawValue = rawValue
-        fingerprint = PathFingerprint.fnv1a64(rawValue.utf8)
+        fingerprint = PathFingerprint.fnv1a64(PathFingerprint.offsetBasis, rawValue)
     }
 
     init(from decoder: Decoder) throws {
@@ -193,7 +214,7 @@ nonisolated struct MediaAssetID: Hashable {
         self.libraryRootPath = libraryRootPath
         self.relativePath = relativePath
         fingerprint = PathFingerprint.mediaAsset(
-            root: libraryRootPath.rawValue,
+            rootFingerprint: libraryRootPath.fingerprint,
             relative: relativePath.rawValue
         )
     }

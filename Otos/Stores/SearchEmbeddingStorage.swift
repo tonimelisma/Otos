@@ -156,11 +156,26 @@ nonisolated struct SearchEmbeddingResult: Equatable, Sendable {
 
 /// One stored embedding as the catalog holds it: the asset, its vector's bytes
 /// (`SearchEmbedding.dimensions` little-endian Float32) and its loose labels' text
-/// (`labelsText`), which the search index keeps compact (`SearchLabelReadings`).
+/// (`labelsText`), which the search index keeps compact (`SearchVectorKeys`).
 nonisolated struct StoredSearchEmbeddingRow: Sendable {
     let id: MediaAssetID
     let vector: Data
     let labels: String?
+
+    init(id: MediaAssetID, vector: Data, labels: String?) {
+        self.id = id
+        self.vector = vector
+        self.labels = labels
+    }
+
+    /// An embedding just written, as the catalog stored it.
+    init(result: SearchEmbeddingResult) {
+        self.init(
+            id: result.id,
+            vector: SearchEmbeddingStorage.data(result.embedding),
+            labels: SearchEmbeddingStorage.labelsText(result.labels)
+        )
+    }
 }
 
 /// The assets with a current embedding in the roots read, and which roots were read and are

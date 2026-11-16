@@ -569,6 +569,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.searchVectorFileMigrationIdentifier) { db in
+            for statement in CatalogSchema.searchVectorFileStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

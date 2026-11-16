@@ -55,8 +55,11 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///   failed) is logged and rings again after a backoff, 30 s doubling to 15 minutes: nothing
 ///   reports when the cause clears (a full disk, Core ML), and a settled catalog rings no
 ///   change, so without it a hidden Otos would stop reading until relaunch.
-/// - **Memory** is every current embedding as one row-major matrix, so a query is one
-///   matrix–vector product (about 3 ms over 19,000 photos) and never touches SQLite.
+/// - **Memory** is every current embedding in one mapped file (`SearchVectorFile`): clean,
+///   file-backed pages outside the process's footprint, so a query is one pass of Float16
+///   rows times the query (about 14 ms over 165,000 photos) and never touches SQLite. A launch
+///   with a current file maps it and reads no table; a missing, torn or stale one is rebuilt
+///   from `search_embedding` while search shows what it has read, nothing.
 /// - **A query** is read by `queries` (`SearchQueryReader`, which owns `SearchQueryEncoder`:
 ///   language, translation, text tower) and answered here from its encoding, among the scope's
 ///   assets: the cut follows the best match in the scope, so a folder whose best photo of a
@@ -85,8 +88,14 @@ actor PhotoSearchIndex {
     private let pageSize: Int
     private let cutoff: SearchCutoff
 
-    /// Every current embedding in memory (`SearchMatrix`).
-    private var matrix = SearchMatrix()
+    /// Where the vector file lives (`CatalogStore.searchIndexDirectory`).
+    private let vectorDirectory: URL
+    /// Every embedding memory holds (`SearchVectorFile`); nil until the first pass has opened
+    /// or built the file.
+    private var vectors: SearchVectorFile?
+    /// The last scope a query was answered among, as rows: one hash per asset when the scope
+    /// or memory changes, none while the same scope is searched again.
+    private var scoped: ScopedRows?
     private var vocabulary: SearchLabelVocabulary?
     /// Every non-empty text reading, by asset, folded once for matching
     /// (`SearchTextReading.folded`).
@@ -104,7 +113,8 @@ actor PhotoSearchIndex {
     /// suspends the read to answer a query at that await.
     private let readTexts: ReadTexts
     private let bundle: Bundle
-    /// Runs the first load one heavy load at a time with the other owners' (`LoadAdmission`).
+    /// Runs a build of the vector file one heavy load at a time with the other owners'
+    /// (`LoadAdmission`).
     private let admission: LoadAdmission
     private var loaded = false
 
@@ -127,6 +137,7 @@ actor PhotoSearchIndex {
     init(
         store: CatalogStore,
         thumbnailDirectory: URL?,
+        vectorDirectory: URL,
         bundle: Bundle,
         pageSize: Int = 16,
         cutoff: SearchCutoff = .calibrated,
@@ -145,6 +156,7 @@ actor PhotoSearchIndex {
         self.bundle = bundle
         self.cutoff = cutoff
         self.thumbnailDirectory = thumbnailDirectory
+        self.vectorDirectory = vectorDirectory
         embedder = SearchImageEmbedder(bundle: bundle)
         let encoder = SearchQueryEncoder(bundle: bundle)
         self.queries = queries ?? SearchQueryReader { try await encoder.encode($0) }
@@ -258,32 +270,39 @@ actor PhotoSearchIndex {
         let start = ContinuousClock.now
         let vocabulary = encoding.embedding == nil ? nil : labelVocabulary()
         let computedAt = revision
-        let inScope = Set(scope)
-        let rows = scope.compactMap { matrix.rowOf[$0] }
+        let rows = scopedRows(scope)
         var matched: [MediaAssetID: Float]?
         var named: [String] = []
         var textMatches = 0
         if let query = encoding.embedding {
-            let scores = Self.scores(matrix.vectors, count: matrix.ids.count, query: query)
-            let best = rows.lazy.map { scores[$0] }.max() ?? 0
+            let scores = vectors?.scores(query) ?? []
+            let best = rows.rows.lazy.map { scores[Int($0)] }.max() ?? 0
             let threshold = cutoff.threshold(best: best)
             named = vocabulary?.labels(namedBy: query) ?? []
             var picture: [MediaAssetID: Float] = [:]
-            for row in rows
-                where scores[row] >= threshold
-                && SearchLabelGate.keeps(score: scores[row], best: best, named: named, confidence: { matrix.confidence(row: row, of: $0) })
-            {
-                picture[matrix.ids[row]] = scores[row]
+            if let vectors {
+                for row in rows.rows.lazy.map({ Int($0) })
+                    where scores[row] >= threshold
+                    && SearchLabelGate.keeps(score: scores[row], best: best, named: named, confidence: { vectors.confidence(slot: row, of: $0) })
+                {
+                    picture[vectors.keys.slotIDs[row]] = scores[row]
+                }
             }
             // A photo showing the words matches, whatever the cut. A query naming no scene label
             // ("according", "presenting") is about the words, so those photos rank first; one
             // naming a thing ("dog", "lake") is about the picture, and a sign saying DOG keeps
             // its picture's place (research §9: word queries 0.13 → 0.84 recall@10, picture
-            // queries unchanged at 0.846). The words are tried as typed and as the English.
+            // queries unchanged at 0.846). The words are tried as typed and as the English, once
+            // when they are the same words.
             let lift = named.isEmpty ? Self.textMatchScore : 0
             let typed = SearchTextQuery(encoding.text), english = SearchTextQuery(encoding.pictureText)
-            for (id, folded) in texts where inScope.contains(id) && (typed.matches(folded: folded) || english.matches(folded: folded)) {
-                picture[id] = lift + (matrix.rowOf[id].map { scores[$0] } ?? 0)
+            let englishDiffers = english != typed
+            let rowOf = vectors?.rowOf
+            for (id, folded) in texts
+                where (typed.matches(folded: folded) || (englishDiffers && english.matches(folded: folded)))
+                && rows.contains(id, rowOf: rowOf)
+            {
+                picture[id] = lift + (rowOf?[id].map { scores[Int($0)] } ?? 0)
                 textMatches += 1
             }
             matched = picture
@@ -294,7 +313,8 @@ actor PhotoSearchIndex {
         }
         OtosLog.catalog.noticeOperation("search.match", phase: "done", fields: [
             "scope": "\(scope.count)",
-            "searched": "\(rows.count)",
+            "searched": "\(rows.rows.count)",
+            "scopeReused": "\(rows.reused)",
             "matched": "\(matched.map { "\($0.count)" } ?? "unnarrowed")",
             "allowed": "\(allowed.map { "\($0.count)" } ?? "unnarrowed")",
             "labels": "\(named.count)",
@@ -303,8 +323,53 @@ actor PhotoSearchIndex {
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
         return SearchMatches(
-            encoding: encoding, scores: matched, allowed: allowed, searchedCount: rows.count, indexRevision: computedAt
+            encoding: encoding, scores: matched, allowed: allowed, searchedCount: rows.rows.count, indexRevision: computedAt
         )
+    }
+
+    /// `scope`'s assets as the slots memory holds them, and those it holds none for: the last
+    /// answer while the scope and memory are what they were (`revision`), else read again.
+    private func scopedRows(_ scope: [MediaAssetID]) -> ScopedRows {
+        if var held = scoped, held.revision == revision, held.scope == scope {
+            held.reused = true
+            return held
+        }
+        var rows: [Int32] = []
+        rows.reserveCapacity(scope.count)
+        var member = [Bool](repeating: false, count: vectors?.slots ?? 0)
+        var unrowed: Set<MediaAssetID> = []
+        let rowOf = vectors?.rowOf ?? [:]
+        for id in scope {
+            if let row = rowOf[id] {
+                rows.append(row)
+                member[Int(row)] = true
+            } else {
+                unrowed.insert(id)
+            }
+        }
+        let made = ScopedRows(scope: scope, revision: revision, rows: rows, member: member, unrowed: unrowed, reused: false)
+        scoped = made
+        return made
+    }
+
+    /// A scope's assets as memory's slots (`scopedRows`).
+    nonisolated struct ScopedRows {
+        let scope: [MediaAssetID]
+        let revision: UInt64
+        /// The live slot of every asset of the scope memory holds one for.
+        let rows: [Int32]
+        /// By slot, whether it is one of `rows`.
+        let member: [Bool]
+        /// The scope's assets memory holds no slot for.
+        let unrowed: Set<MediaAssetID>
+        var reused: Bool
+
+        func contains(_ id: MediaAssetID, rowOf: [MediaAssetID: Int32]?) -> Bool {
+            if let row = rowOf?[id] {
+                return Int(row) < member.count && member[Int(row)]
+            }
+            return unrowed.contains(id)
+        }
     }
 
     /// Added to a text match's picture score for a query about words, so it ranks above every
@@ -334,7 +399,22 @@ actor PhotoSearchIndex {
 
     /// The embeddings in memory: what a test waits on.
     var embeddedCount: Int {
-        matrix.ids.count
+        vectors?.live ?? 0
+    }
+
+    /// The vector file memory maps, and its slots, dead ones included: what a test inspects.
+    var vectorFileSlots: (id: UUID, slots: Int)? {
+        vectors.map { ($0.id, $0.slots) }
+    }
+
+    /// How the first pass came by the vector file: what a test waits on.
+    private(set) var loadedFrom: LoadSource?
+
+    nonisolated enum LoadSource: Sendable, Equatable {
+        /// The file the catalog names, mapped with no table read.
+        case file
+        /// Built from `search_embedding`, because none was current (`SearchVectorFileInvalid`).
+        case rebuilt
     }
 
     private func refresh() async {
@@ -387,72 +467,145 @@ actor PhotoSearchIndex {
         request()
     }
 
-    /// Brings memory in line with the catalog's current embeddings: on the first pass, the whole
-    /// load (`load()`); after it, which embeddings are current is read from indexes alone
-    /// (`CatalogStore.currentSearchEmbeddingIDs`), the ones memory lacks are sought by key, and
-    /// those no longer current go. A root not read now (a card out, a library offline) keeps
-    /// its embeddings until it is back or forgotten.
+    /// Brings memory in line with the catalog's current embeddings. On the first pass memory is
+    /// loaded (`load()`): a file built now is current, and the pass goes on; a file opened is
+    /// memory as the last session left it, and is reconciled like any pass. Which embeddings are
+    /// current is read from indexes alone (`CatalogStore.currentSearchEmbeddingIDs`), the ones
+    /// memory lacks are sought by key and appended, and those no longer current go. A root not
+    /// read now (a card out, a library offline) keeps its embeddings until it is back or
+    /// forgotten. A file with many dead slots is then compacted.
     private func reconcile() async throws {
-        if !loaded {
-            // The matrix is hundreds of megabytes: one heavy load at a time with the other
-            // owners, none before the window's first grid.
-            try await admission.run(.searchIndex) {
-                try await load()
-            }
+        if !loaded, try await load() == .rebuilt {
             return
         }
+        guard let vectors else { return }
         let current = try await store.currentSearchEmbeddingIDs()
-        let gone = Set(matrix.ids.filter { id in
+        let gone = vectors.rowOf.keys.filter { id in
             current.readRoots.contains(id.libraryRootPath)
                 ? !current.ids.contains(id)
                 : !current.catalogedRoots.contains(id.libraryRootPath)
-        })
-        let missing = current.ids.filter { matrix.rowOf[$0] == nil }
+        }
+        let missing = current.ids.filter { vectors.rowOf[$0] == nil }
         let added = missing.isEmpty ? [] : try await store.currentSearchEmbeddings(for: Set(missing))
         guard !gone.isEmpty || !added.isEmpty else { return }
-        matrix.remove(gone)
-        matrix.reserve(added.count)
-        for row in added {
-            matrix.append(row)
+        vectors.remove(gone)
+        if !added.isEmpty {
+            try await store.addSearchVectorSlots(added.count)
+            try await append(added, to: vectors)
         }
         announce()
+        await compactIfOwed()
     }
 
-    /// The first load: which embeddings are current, from indexes alone, then every stored
-    /// embedding in pages of `loadPageSize`, each its own read, appended straight into a matrix
-    /// sized once for them, so the load never holds a second copy of the vectors. Memory takes
-    /// the matrix in one step at the end: a query answered while the load runs sees the empty
-    /// index it saw before, as it did when the load was one read.
-    private func load() async throws {
+    /// The first load. The file the catalog names is opened when it is current
+    /// (`SearchVectorFile.open`: off the actor, no table read, the vectors mapped not read);
+    /// otherwise it is built. Returns how memory came by it.
+    private func load() async throws -> LoadSource {
         let start = ContinuousClock.now
+        var source = LoadSource.file
+        var stateMs = 0, openMs = 0
+        do {
+            guard let state = try await store.searchVectorFileState() else { throw SearchVectorFileInvalid.missing }
+            stateMs = DiagnosticsTiming.milliseconds(since: start)
+            let opening = ContinuousClock.now
+            vectors = try await Self.open(directory: vectorDirectory, state: state)
+            openMs = DiagnosticsTiming.milliseconds(since: opening)
+        } catch let invalid as SearchVectorFileInvalid {
+            OtosLog.thumbnails.noticeOperation("search.vectors", phase: "rebuilding", fields: ["reason": invalid.reason])
+            vectors = nil
+            // A build reads every stored vector: one heavy load at a time with the other
+            // owners'. Opening a current file reads none and waits for no one.
+            try await admission.run(.searchIndex) {
+                try await rebuild()
+            }
+            source = .rebuilt
+        }
+        loaded = true
+        loadedFrom = source
+        let slots = vectors?.slots ?? 0
+        let mappedMB = SearchVectorFormat.vectorsLength(slots: slots) / 1_048_576
+        OtosLog.thumbnails.noticeOperation("search.index", phase: "loaded", fields: [
+            "count": "\(embeddedCount)", "slots": "\(slots)", "mappedMB": "\(mappedMB)", "from": "\(source)",
+            "stateMs": "\(stateMs)", "openMs": "\(openMs)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+        ResourceCheckpoint.record("searchIndexLoaded", fields: ["mappedMB": "\(mappedMB)", "from": "\(source)"])
+        announce()
+        return source
+    }
+
+    @concurrent
+    private static func open(directory: URL, state: SearchVectorFileState) async throws -> sending SearchVectorFile {
+        try SearchVectorFile.open(directory: directory, state: state)
+    }
+
+    /// Builds a new file from the catalog's current embeddings: which are current, from indexes
+    /// alone, then every stored embedding in pages of `loadPageSize`, each its own read, the
+    /// current ones appended, so no read holds a connection long and no page outlives its
+    /// append. The catalog names nothing while it is built, so no commit counts slots of it; it
+    /// names the file once every byte is on the disk, and memory takes it then. Other files in
+    /// the folder are removed. Paid once a model revision, or when a file was lost or cut short.
+    private func rebuild() async throws {
+        try await store.setSearchVectorFileState(nil)
+        SearchVectorFile.removeOthers(in: vectorDirectory, keeping: nil)
+        let file = try SearchVectorFile.create(directory: vectorDirectory, id: UUID())
         let current = try await store.currentSearchEmbeddingIDs()
-        var loading = SearchMatrix()
-        loading.reserve(current.ids.count)
         var cursor: AssetKeyCursor?
-        var pages = 0
         repeat {
             let page = try await store.searchEmbeddingRows(after: cursor, limit: Self.loadPageSize)
-            for row in page.candidates where current.ids.contains(row.id) {
-                loading.append(row)
-            }
-            pages += 1
+            try await file.append(page.candidates.filter { current.ids.contains($0.id) })
             cursor = page.next
         } while cursor != nil
-        matrix = loading
-        loaded = true
-        let matrixMB = matrix.vectors.count * MemoryLayout<Float>.size / 1_048_576
-        OtosLog.thumbnails.noticeOperation("search.index", phase: "loaded", fields: [
-            "count": "\(matrix.ids.count)", "matrixMB": "\(matrixMB)", "pages": "\(pages)",
-            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
-        ])
-        ResourceCheckpoint.record("searchIndexLoaded", fields: ["matrixMB": "\(matrixMB)"])
-        announce()
+        try await SearchVectorFile.synchronize(file.descriptors)
+        try await store.setSearchVectorFileState(SearchVectorFileState(id: file.id, slots: file.slots))
+        vectors = file
     }
 
-    /// Embeddings a load page reads: measured 32–90 ms a page of 2,000 on the owner's catalog
+    /// Embeddings a build page reads: measured 32–90 ms a page of 2,000 on the owner's catalog
     /// (`docs/research/2026-11-16-plan-0116-due-diligence.md` §5), so no read holds a connection
     /// long.
     static let loadPageSize = 2000
+
+    /// Appends rows the catalog has just committed slots for. A file that cannot take them is
+    /// short of the catalog's count, so it is no longer current: memory lets it go and the next
+    /// pass builds a new one.
+    private func append(_ rows: [StoredSearchEmbeddingRow], to file: SearchVectorFile) async throws {
+        do {
+            try await file.append(rows)
+        } catch {
+            OtosLog.thumbnails.errorOperation("search.vectors", phase: "appendFailed", fields: [
+                "error": String(describing: error), "rows": "\(rows.count)",
+            ])
+            vectors = nil
+            loaded = false
+            throw error
+        }
+    }
+
+    /// Writes the live slots into a new file once dead ones are a quarter of the live and at
+    /// least `compactionFloor`: dead slots cost each query their product and the disk their
+    /// bytes. The catalog names the new file once its bytes are on the disk; until then the old
+    /// one is current, so a crash at any point leaves one the catalog names. A compaction that
+    /// fails keeps the old file and is logged.
+    private func compactIfOwed() async {
+        guard let old = vectors, old.dead >= Self.compactionFloor, old.dead * 4 >= old.live else { return }
+        let start = ContinuousClock.now
+        do {
+            let file = try SearchVectorFile.create(directory: vectorDirectory, id: UUID())
+            try await file.appendLive(of: old)
+            try await SearchVectorFile.synchronize(file.descriptors)
+            try await store.setSearchVectorFileState(SearchVectorFileState(id: file.id, slots: file.slots))
+            vectors = file
+            SearchVectorFile.removeOthers(in: vectorDirectory, keeping: file.id)
+            OtosLog.thumbnails.noticeOperation("search.vectors", phase: "compacted", fields: [
+                "dead": "\(old.dead)", "slots": "\(file.slots)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+            ])
+        } catch {
+            SearchVectorFile.removeOthers(in: vectorDirectory, keeping: old.id)
+            OtosLog.thumbnails.errorOperation("search.vectors", phase: "compactFailed", fields: ["error": String(describing: error)])
+        }
+    }
+
+    static let compactionFloor = 1024
 
     /// Embeds every asset whose thumbnail has no current embedding, a page at a time, until
     /// none is left. An asset whose read made no embedding (a thumbnail that does not decode, a
@@ -478,14 +631,18 @@ actor PhotoSearchIndex {
                 guard let results = await embedder.embed(owed, thumbnailDirectory: thumbnailDirectory) else {
                     return (false, unread)
                 }
+                // The file takes what the catalog commits; a volume at the free-space floor
+                // (ADR 0027) takes neither, and the page stays owed until the retry.
+                guard let file = vectors, file.admits(rows: results.count) else {
+                    OtosLog.thumbnails.noticeOperation("search.vectors", phase: "floorReached", fields: [
+                        "rows": "\(results.count)",
+                    ])
+                    return (false, unread)
+                }
                 let written = try await store.applySearchEmbeddings(results)
                 unread.formUnion(Set(owed.map(\.id)).subtracting(written.map(\.id)))
                 if !written.isEmpty {
-                    matrix.remove(Set(written.map(\.id)))
-                    matrix.reserve(written.count)
-                    for result in written {
-                        matrix.append(result)
-                    }
+                    try await append(written.map(StoredSearchEmbeddingRow.init(result:)), to: file)
                     announce()
                 }
                 embedded += written.count
@@ -503,7 +660,7 @@ actor PhotoSearchIndex {
         OtosLog.thumbnails.noticeOperation("search.index", phase: "embedded", fields: [
             "count": "\(embedded)",
             "unread": "\(unread)",
-            "total": "\(matrix.ids.count)",
+            "total": "\(embeddedCount)",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
     }
@@ -686,84 +843,6 @@ actor SearchImageEmbedder {
                 ])
                 return nil
             }
-        }
-    }
-}
-
-/// Every current embedding the search index holds (ADR 0048): one row-major matrix of
-/// `SearchEmbedding.dimensions` floats a row, the asset of each row, and each row's loose scene
-/// labels, compact (`SearchLabelReadings`). The matrix grows geometrically, reserved only to
-/// the count a load or a batch knows it will hold, so appending a page never copies the whole
-/// matrix; a removal moves the last row into the gap.
-nonisolated struct SearchMatrix: Sendable {
-    private(set) var ids: [MediaAssetID] = []
-    private(set) var rowOf: [MediaAssetID: Int] = [:]
-    private(set) var vectors: [Float] = []
-    private var labels: [SearchLabelReadings] = []
-    private var labelNames = SearchLabelNames()
-
-    /// Room for `count` more rows, grown at least geometrically.
-    mutating func reserve(_ count: Int) {
-        let needed = (ids.count + count) * SearchEmbedding.dimensions
-        guard needed > vectors.capacity else { return }
-        vectors.reserveCapacity(max(needed, vectors.capacity * 2))
-        ids.reserveCapacity(ids.count + count)
-        labels.reserveCapacity(labels.count + count)
-    }
-
-    /// A stored row: its vector's bytes appended as they are (little-endian Float32,
-    /// `Float32Storage`), its labels' text read once.
-    mutating func append(_ row: StoredSearchEmbeddingRow) {
-        guard rowOf[row.id] == nil else { return }
-        #if _endian(little)
-            row.vector.withUnsafeBytes { bytes in
-                vectors.append(contentsOf: bytes.bindMemory(to: Float.self))
-            }
-        #else
-            guard let floats = SearchEmbeddingStorage.embedding(from: row.vector) else { return }
-            vectors.append(contentsOf: floats)
-        #endif
-        appendKey(row.id, labels: row.labels)
-    }
-
-    /// An embedding just written, its labels as the catalog stored them.
-    mutating func append(_ result: SearchEmbeddingResult) {
-        guard rowOf[result.id] == nil, result.embedding.count == SearchEmbedding.dimensions else { return }
-        vectors.append(contentsOf: result.embedding)
-        appendKey(result.id, labels: SearchEmbeddingStorage.labelsText(result.labels))
-    }
-
-    private mutating func appendKey(_ id: MediaAssetID, labels text: String?) {
-        rowOf[id] = ids.count
-        ids.append(id)
-        labels.append(SearchLabelReadings(text: text, names: &labelNames))
-    }
-
-    /// Row `row`'s confidence in the label `name`, nil when it has none.
-    func confidence(row: Int, of name: String) -> Float? {
-        labelNames.numbers[name].flatMap { labels[row].confidence(of: $0) }
-    }
-
-    /// Removes by moving the last row into each gap, so a removal is O(dimensions).
-    mutating func remove(_ gone: Set<MediaAssetID>) {
-        let dimensions = SearchEmbedding.dimensions
-        for id in gone {
-            guard let row = rowOf.removeValue(forKey: id) else { continue }
-            let last = ids.count - 1
-            if row != last {
-                let moved = ids[last]
-                ids[row] = moved
-                labels[row] = labels[last]
-                rowOf[moved] = row
-                vectors.withUnsafeMutableBufferPointer { buffer in
-                    for index in 0 ..< dimensions {
-                        buffer[row * dimensions + index] = buffer[last * dimensions + index]
-                    }
-                }
-            }
-            ids.removeLast()
-            labels.removeLast()
-            vectors.removeLast(dimensions)
         }
     }
 }

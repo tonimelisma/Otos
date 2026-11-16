@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import GRDB
 import ImageIO
 @testable import OtosKit
 import Synchronization
@@ -16,6 +17,8 @@ struct PhotoSearchIndexTests {
     private struct Catalog {
         let store: CatalogStore
         let thumbnails: URL
+        /// Where the index keeps its vector file.
+        let vectors: URL
         let red: MediaAssetID
         let blue: MediaAssetID
         let assets: [MediaAsset]
@@ -23,7 +26,7 @@ struct PhotoSearchIndexTests {
 
     /// A library of two stills whose stored thumbnails are a red and a blue picture, and with
     /// `broken`, a third, the newest, whose stored thumbnail does not decode.
-    private func makeCatalog(broken: Bool = false) async throws -> Catalog {
+    private func makeCatalog(broken: Bool = false, onDisk: Bool = false) async throws -> Catalog {
         let temp = try makeTestDirectory()
         let library = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let thumbnails = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
@@ -38,7 +41,11 @@ struct PhotoSearchIndexTests {
             try Data("not an image".utf8).write(to: thumbnails.appending(path: "broken-thumb.jpg"))
         }
         let count = broken ? 3 : 2
-        let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let store = makeTestStore(
+            location: onDisk ? .databaseFile(Self.database(in: temp)) : .inMemory,
+            scanCadence: .milliseconds(10),
+            stagingContainers: onDisk ? StagingContainers(base: temp.appending(path: "Staging", directoryHint: .isDirectory)) : nil
+        )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: library)
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == count }
@@ -51,7 +58,8 @@ struct PhotoSearchIndexTests {
             try await enrich(store, asset, thumbnail: "\(name)-thumb.jpg", captured: captured)
         }
         return try Catalog(
-            store: store, thumbnails: thumbnails, red: #require(ids["red"]), blue: #require(ids["blue"]), assets: scanned.testAssets
+            store: store, thumbnails: thumbnails, vectors: temp.appending(path: "SearchIndex", directoryHint: .isDirectory),
+            red: #require(ids["red"]), blue: #require(ids["blue"]), assets: scanned.testAssets
         )
     }
 
@@ -117,7 +125,7 @@ struct PhotoSearchIndexTests {
         let lost = Recognitions(failing: 1, with: SearchReadingTests.readerLostError)
         let reader = SearchTextReader { RecognizingSession(lost.recognize) }
         let index = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: Bundle(for: CatalogWindowViewModel.self),
             cutoff: .none, backoff: (.zero, .zero), textReader: reader
         )
         await index.start()
@@ -136,7 +144,7 @@ struct PhotoSearchIndexTests {
         try await givePreviews(catalog)
         let once = Recognitions(failing: 1, with: NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError))
         let index = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: Bundle(for: CatalogWindowViewModel.self),
             cutoff: .none, backoff: (.zero, .zero), textReader: SearchTextReader { RecognizingSession(once.recognize) }
         )
         await index.start()
@@ -166,7 +174,7 @@ struct PhotoSearchIndexTests {
             }
         }
         let index = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: Bundle(for: CatalogWindowViewModel.self),
             cutoff: .none, backoff: (.zero, .zero), textReader: reader
         )
         await index.start()
@@ -239,7 +247,7 @@ struct PhotoSearchIndexTests {
         #expect(second.candidates.count == 1 && second.candidates.first?.id != broken.id)
 
         let index = PhotoSearchIndex(
-            store: store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: Bundle(for: CatalogWindowViewModel.self),
             pageSize: 1, cutoff: .none, backoff: (.seconds(86400), .seconds(86400))
         )
         await index.start()
@@ -271,7 +279,7 @@ struct PhotoSearchIndexTests {
         }
         let bundle = try #require(Bundle(url: folder))
         let index = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle, cutoff: .none,
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle, cutoff: .none,
             backoff: (.zero, .zero)
         )
         let changes = await index.changes()
@@ -286,11 +294,112 @@ struct PhotoSearchIndexTests {
         await index.shutdown()
     }
 
+    private static func database(in temp: URL) -> URL {
+        temp.appending(path: "Catalog/catalog.sqlite")
+    }
+
+    /// Runs `sql` on an on-disk catalog no store has open.
+    private static func execute(_ sql: String, on catalog: Catalog) throws {
+        let queue = try DatabaseQueue(path: database(in: catalog.vectors.deletingLastPathComponent()).path(percentEncoded: false))
+        try queue.write { try $0.execute(sql: sql) }
+        try queue.close()
+    }
+
+    /// A store and index over `catalog`'s file, started, after their first pass.
+    private func reopen(_ catalog: Catalog) async throws -> (CatalogStore, PhotoSearchIndex) {
+        let store = makeTestStore(
+            location: .databaseFile(Self.database(in: catalog.vectors.deletingLastPathComponent())),
+            stagingContainers: StagingContainers(base: catalog.vectors.deletingLastPathComponent().appending(path: "Staging"))
+        )
+        try await store.start()
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+        )
+        await index.start()
+        try await waitUntil { await index.passesFinished > 0 }
+        return (store, index)
+    }
+
+    /// ADR 0048, "The index": a launch with the vector file the catalog names maps it and reads
+    /// no stored vector — with every stored vector zeroed, it still tells red from blue — and a
+    /// file short of the catalog's count (a crash between a commit and its append) is never
+    /// trusted: it is rebuilt from the catalog, under a new name, and the old pair is removed.
+    @Test func aCurrentFileIsMappedAndOneShortOfTheCatalogsCountIsRebuilt() async throws {
+        let catalog = try await makeCatalog(onDisk: true)
+        let bundle = Bundle(for: CatalogWindowViewModel.self)
+        let query = try await SearchQueryEncoder(bundle: bundle).englishEncoding(of: "a red picture")
+        let first = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle, cutoff: .none
+        )
+        let changes = await first.changes()
+        await first.start()
+        for await _ in changes where await first.embeddedCount == 2 {
+            break
+        }
+        #expect(await first.loadedFrom == .rebuilt)
+        let built = try #require(await first.vectorFileSlots)
+        #expect(built.slots == 2)
+        await first.shutdown()
+        await catalog.store.shutdown()
+
+        try Self.execute("UPDATE search_embedding SET embedding = zeroblob(\(SearchEmbedding.dimensions * 4))", on: catalog)
+        let (store, mapped) = try await reopen(catalog)
+        #expect(await mapped.loadedFrom == .file)
+        #expect(await mapped.vectorFileSlots?.id == built.id)
+        let fromFile = try await mapped.matches(query, facts: nil, among: [catalog.red, catalog.blue])
+        #expect(try #require(fromFile.scores?[catalog.red]) > #require(fromFile.scores?[catalog.blue]))
+        await mapped.shutdown()
+        await store.shutdown()
+
+        try Self.execute(SearchVectorFileState.addSlotsSQL.replacingOccurrences(of: "?", with: "1"), on: catalog)
+        let (rebuiltStore, rebuilt) = try await reopen(catalog)
+        #expect(await rebuilt.loadedFrom == .rebuilt)
+        let replaced = try #require(await rebuilt.vectorFileSlots)
+        #expect(replaced.id != built.id && replaced.slots == 2)
+        // Rebuilt from the zeroed rows: nothing tells red from blue now.
+        let fromCatalog = try await rebuilt.matches(query, facts: nil, among: [catalog.red, catalog.blue])
+        #expect(fromCatalog.scores?[catalog.red] == 0 && fromCatalog.scores?[catalog.blue] == 0)
+        let names = try Set(FileManager.default.contentsOfDirectory(atPath: catalog.vectors.path(percentEncoded: false)))
+        let urls = SearchVectorFormat.urls(directory: catalog.vectors, id: replaced.id)
+        #expect(names == [urls.vectors.lastPathComponent, urls.keys.lastPathComponent])
+        await rebuilt.shutdown()
+        await rebuiltStore.shutdown()
+    }
+
+    /// A torn file — a header byte changed, or vectors cut short — is rebuilt, never read.
+    @Test func aTornFileIsRebuilt() async throws {
+        let catalog = try await makeCatalog(onDisk: true)
+        let first = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+        )
+        let changes = await first.changes()
+        await first.start()
+        for await _ in changes where await first.embeddedCount == 2 {
+            break
+        }
+        let built = try #require(await first.vectorFileSlots)
+        await first.shutdown()
+        await catalog.store.shutdown()
+
+        let vectors = SearchVectorFormat.urls(directory: catalog.vectors, id: built.id).vectors
+        let handle = try FileHandle(forWritingTo: vectors)
+        try handle.truncate(atOffset: UInt64(SearchVectorFormat.vectorsLength(slots: 2) - 100))
+        try handle.close()
+        let (store, index) = try await reopen(catalog)
+        #expect(await index.loadedFrom == .rebuilt)
+        #expect(await index.embeddedCount == 2)
+        #expect(await index.vectorFileSlots?.id != built.id)
+        await index.shutdown()
+        await store.shutdown()
+    }
+
     @Test func theIndexEmbedsThumbnailsAndRanksAQuery() async throws {
         let catalog = try await makeCatalog()
         let index = PhotoSearchIndex(
             store: catalog.store,
-            thumbnailDirectory: catalog.thumbnails,
+            thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
             bundle: Bundle(for: CatalogWindowViewModel.self),
             cutoff: .none
         )
@@ -316,7 +425,7 @@ struct PhotoSearchIndexTests {
     @Test func theCutFollowsTheBestMatchInTheScope() async throws {
         let catalog = try await makeCatalog()
         let index = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: Bundle(for: CatalogWindowViewModel.self),
             cutoff: SearchCutoff(floor: -1, margin: 0.0001)
         )
         let changes = await index.changes()
@@ -343,7 +452,7 @@ struct PhotoSearchIndexTests {
         let english: SearchQueryReader.Encode = { try await encoder.englishEncoding(of: $0.text) }
         // A margin this small keeps only the best photo.
         let index = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
             cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: SearchQueryReader(encode: english)
         )
         let changes = await index.changes()
@@ -371,7 +480,7 @@ struct PhotoSearchIndexTests {
         #expect(blue?.mediaGrid.dayBuckets.isEmpty == true)
 
         let nothing = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
             cutoff: SearchCutoff(floor: 2, margin: 0), queries: SearchQueryReader(encode: english)
         )
         let nothingChanges = await nothing.changes()
@@ -415,7 +524,7 @@ struct PhotoSearchIndexTests {
         let encoder = SearchQueryEncoder(bundle: bundle)
         let english: SearchQueryReader.Encode = { try await encoder.englishEncoding(of: $0.text) }
         let index = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
             cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: SearchQueryReader(encode: english)
         )
         let changes = await index.changes()
@@ -524,7 +633,7 @@ struct PhotoSearchIndexTests {
             return try await encoder.englishEncoding(of: request.text)
         }
         let index = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
             cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader
         )
         let changes = await index.changes()
@@ -606,7 +715,7 @@ struct PhotoSearchIndexTests {
             return try await encoder.englishEncoding(of: request.text)
         }
         let index = PhotoSearchIndex(
-            store: catalog.store, thumbnailDirectory: catalog.thumbnails, bundle: bundle,
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
             cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader
         )
         let changes = await index.changes()
@@ -659,7 +768,8 @@ struct PhotoSearchIndexTests {
             id: blue.id, source: candidate.source, lines: [RecognizedTextLine(text: "Proof of Insurance", confidence: 1)]
         )])
         let index = PhotoSearchIndex(
-            store: store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none
         )
         let changes = await index.changes()
         await index.start()
@@ -687,7 +797,8 @@ struct PhotoSearchIndexTests {
         try await giveReading(store, blue, preview: "blue-preview.heic", text: "Proof of Insurance")
         let held = ArrivalGate()
         let index = PhotoSearchIndex(
-            store: store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
             textReader: SearchTextReader { RecognizingSession { _ in [] } },
             readTexts: { [redID = catalog.red] ids in
                 // Only the pass that reads red's new reading is held.

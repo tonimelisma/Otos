@@ -6237,6 +6237,22 @@ extension CatalogStore {
         }
     }
 
+    /// Where the search index keeps its vector file (ADR 0048): beside the thumbnails in
+    /// Application Support, or beside an explicit database file. An in-memory catalog has
+    /// none. Derived overlay, never in a media folder.
+    nonisolated var searchIndexDirectory: URL? {
+        switch location {
+        case let .application(bundleIdentifier):
+            URL.applicationSupportDirectory
+                .appending(path: bundleIdentifier, directoryHint: .isDirectory)
+                .appending(path: "SearchIndex", directoryHint: .isDirectory)
+        case let .databaseFile(url):
+            url.deletingLastPathComponent().appending(path: "SearchIndex", directoryHint: .isDirectory)
+        case .inMemory:
+            nil
+        }
+    }
+
     /// The staging containers a catalog at `location` owns when none is given.
     nonisolated static func stagingContainers(for location: Location) -> StagingContainers {
         switch location {
@@ -9271,6 +9287,12 @@ extension CatalogStore {
                 }
                 written.append(result)
             }
+            // The written rows take the vector file's next slots, in this order, in the same
+            // commit (v70): a file the index has not yet appended them to is short of the
+            // count, so a crash before it does leaves a file that is rebuilt, never trusted.
+            if !written.isEmpty {
+                try db.execute(sql: SearchVectorFileState.addSlotsSQL, arguments: [written.count])
+            }
             return (written, changesOnThisDay)
         }
         if !applied.isEmpty {
@@ -9360,6 +9382,39 @@ extension CatalogStore {
     }
 
     static let currentEmbeddingBatch = 500
+
+    /// The search vector file the catalog's embeddings commit, and how many of its slots
+    /// (v70, ADR 0048): nil while none is built.
+    func searchVectorFileState() async throws -> SearchVectorFileState? {
+        try await database().readFreeingConnection(operation: "searchVectorFileState") { db in
+            try Row.fetchOne(db, sql: "SELECT file_id, slots FROM search_vector_file").flatMap { row in
+                UUID(uuidString: row["file_id"]).map { SearchVectorFileState(id: $0, slots: row["slots"]) }
+            }
+        }
+    }
+
+    /// Names `state` as the search vector file, or none: a file built or compacted is current
+    /// from this commit on. Search's own bookkeeping, so no change is announced.
+    func setSearchVectorFileState(_ state: SearchVectorFileState?) async throws {
+        try await database().write { db in
+            try db.execute(sql: "DELETE FROM search_vector_file")
+            if let state {
+                try db.execute(
+                    sql: "INSERT INTO search_vector_file (file_id, slots) VALUES (?, ?)",
+                    arguments: [state.id.uuidString, state.slots]
+                )
+            }
+        }
+    }
+
+    /// Commits `count` more slots of the search vector file: embeddings the index read from the
+    /// catalog and appends to the file next, in this order. No change is announced.
+    func addSearchVectorSlots(_ count: Int) async throws {
+        guard count > 0 else { return }
+        try await database().write { db in
+            try db.execute(sql: SearchVectorFileState.addSlotsSQL, arguments: [count])
+        }
+    }
 
     /// The people the user has named and not hidden, for search to match in a query
     /// (ADR 0048): a hidden person is found only in the People gallery.

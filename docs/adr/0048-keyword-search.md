@@ -163,7 +163,7 @@ against 77.3, 85 in English for both), and every asset has one.
   and each is read once more from that preview (1,498 of 1,930 readings on the owner's
   catalog; at about 0.15 s each, some four minutes of reading, and nothing downloads).
 
-### The index: one owner, in memory
+### The index: one owner, one mapped file
 
 `PhotoSearchIndex` (an actor):
 - **Embedding loop:** woken by the Store's change notifications, it reconciles memory with
@@ -173,17 +173,68 @@ against 77.3, 85 in English for both), and every asset has one.
   and seeks each asset's embedding source in `idx_search_embedding_source`, never the 680 MB
   table (12k pages against 251k on the owner-shaped catalog, 0.39 s against 14 s); what is owed
   is one newest-first walk of the same two indexes per pass.
-- **Memory:** every current embedding as one matrix (`SearchMatrix`). A query is one
-  matrix–vector product (about 3 ms over 19,000 photos), with no SQLite read. Each row's loose
-  scene labels are kept compact: a number per label name and the confidence the stored text
-  gives (`SearchLabelReadings`), so the gate decides exactly as over the parsed dictionary
-  (`SearchMatrixTests`), in a few dozen bytes a row rather than a dictionary. The first load
-  reads which embeddings are current from indexes alone, then every stored embedding in pages
-  of 2,000, each its own read, appended straight into a matrix sized once for them: no second
-  copy of the vectors, and no read holds a connection long. Memory takes the matrix in one step
-  when the load ends, so a query answered meanwhile sees the empty index it saw before. The
-  matrix grows geometrically. A root that is not read now (a card out, a library offline) keeps
-  its rows until it is back or forgotten.
+- **Memory is a mapped file** (`SearchVectorFile`), not the heap. Measured on the owner's library,
+  a heap matrix added about 640 MB to the footprint (973 MB with search the only owner, 336 MB
+  with none), against a whole-app target of 700 MB, and its first load read 650 MB of rows for
+  16.5 s at every launch. So the vectors are kept as one file pair in Application Support
+  (`SearchIndex/<id>.vectors` and `<id>.keys`), mapped read-only. Its pages are clean and
+  file-backed: the kernel drops and re-reads them under pressure, and they are not in the
+  footprint. The heap keeps only each slot's asset and the lookup by asset.
+  - **Format:** `<id>.vectors` is a header (format, dimensions, model revision, the file's
+    id, a checksum), then one slot per embedding: 768 Float16 values, appended in order.
+    `<id>.keys` holds each slot's asset and loose scene labels. Labels are stored as numbered
+    names with the exact Float32 confidence the stored text gives, so the label gate decides
+    exactly as over the parsed text (`SearchVectorFileTests`).
+  - **Float16, not Float32:** measured on the owner's 165,653 embeddings against Float32
+    (`docs/research/2026-11-16-search-vector-file.md`): top-10 overlap 99.88% for 1,303 text
+    queries and 99.72% for 500 image queries. 294 of 352,147 shown memberships move (0.08%),
+    each within 5.1e-5 of the cut. That is far below the 0.01 the cut was calibrated in. The
+    file is half the disk and half the pages a query reads. On This Day's screenshot and
+    document exclusion reads `confident_labels` in SQL and does not move.
+  - **A query** widens 1,024 slots at a time to Float32 (`vImageConvert_Planar16FtoPlanarF`,
+    exact) and multiplies them by the query (`vDSP_mmul`). That is about 14 ms over 165,000
+    slots whose pages are resident, and about 85 ms more when the 254 MB must be read back.
+    It reads no SQLite.
+- **One source of truth:** `search_embedding` keeps every vector at full precision. The file
+  is derived overlay, rebuilt from those rows whenever it is not current. The vectors stay in
+  the catalog because a lost or torn file then costs a rebuild of about a minute from the
+  catalog, not hours of embedding the library again. A commit across the catalog and a second
+  file cannot be atomic (P3: 60 of 150 crashes left two files out of step), so the catalog
+  must stay the side that cannot be wrong. Their 650 MB leave the catalog's disk only with a
+  `VACUUM`, which plan 0116 bet 8 holds for the owner's go.
+- **Currency:** the catalog names the file and how many slots its embeddings commit
+  (`search_vector_file`, v70).
+  - The count moves in the same commit as the rows: `applySearchEmbeddings`, and
+    `addSearchVectorSlots` for rows a reconcile adds.
+  - The index appends those rows right after. Vectors are ordered to the disk before the keys
+    that name them (`F_BARRIERFSYNC`).
+  - A file is opened only when its headers are intact, of this model revision, and it holds at
+    least the committed slots. Bytes past them were never committed and are cut off.
+  - What a crash can leave:
+    - Before the commit: nothing changed.
+    - Between the commit and the append: a file short of the count, which is detected and
+      rebuilt, never read.
+    - A torn header, a missing file, another catalog's file: all fail the same checks.
+  - A later slot for an asset supersedes its earlier one. A slot whose asset left memory is
+    dead.
+  - **Compaction:** once dead slots are a quarter of the live and at least 1,024, the live
+    slots are written into a new pair. The catalog names it once its bytes are on the disk, so
+    either the old or the new pair is current at every point.
+  - Writing the file asks the free-space floor first (ADR 0027). A page whose slots would cross
+    it is not written to the catalog either and stays owed until the retry.
+- **The first load:**
+  - With a current file it maps it and reads no table: one row of `search_vector_file`, the
+    headers, and the keys parsed into memory. Then it reconciles as every pass does.
+  - Without one it builds one, in its turn with the other heavy loads (`LoadAdmission`, ADR
+    0055): which embeddings are current from indexes alone, then every stored embedding in
+    pages of 2,000, each its own read, appended as it is read. Until it ends, search shows that
+    it is still reading, as before.
+- **Roots:** a root that is not read now (a card out, a library offline) keeps its slots until
+  it is back or forgotten.
+- **A scope searched again** is not hashed again: the index keeps the last scope as slots
+  until the scope or its memory moves. On the owner's library, hashing 165,000 assets twice a
+  query was about 180 ms of each match.
+- **Text matching** runs the typed and the English words once when they are the same words.
 - **Answers:** `CatalogProjection` hands it the query's encoding, its facts resolved for the
   pass's now, and the scope's assets, and shows the matches. The index's `changes` stream
   asks for a new publication while a search is shown. The index's `revision` moves in the

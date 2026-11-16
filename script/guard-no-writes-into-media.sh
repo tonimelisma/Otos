@@ -14,6 +14,8 @@ ALLOWLIST=(
   "Otos/Services/MediaFileWriter.swift"
   # These writers target Otos-owned thumbnails, staging, device imports, or provider materialization.
   "Otos/Services/ThumbnailStore.swift" "Otos/Services/DeviceStagingRegistry.swift"
+  # The search index's vector files, in Application Support's SearchIndex folder (ADR 0048).
+  "Otos/Services/SearchVectorFile.swift"
   # Deletes only an error page URLSession downloaded into the system temporary folder.
   "Otos/Services/ImmichClient.swift"
   # Owns the staging cache layout, so every path it deletes it also constructs.

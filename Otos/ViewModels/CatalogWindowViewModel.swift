@@ -929,12 +929,15 @@ final class CatalogWindowViewModel {
             : nil
         placeNameReader = startsEnrichment && enrichmentCoordinator == nil ? PlaceNameReader(store: catalogStore) : nil
         photoSearchIndex = startsEnrichment && enrichmentCoordinator == nil
-            ? PhotoSearchIndex(
-                store: catalogStore,
-                thumbnailDirectory: catalogStore.thumbnailDirectory,
-                bundle: Bundle(for: CatalogWindowViewModel.self),
-                admission: loadAdmission
-            )
+            ? catalogStore.searchIndexDirectory.map { vectorDirectory in
+                PhotoSearchIndex(
+                    store: catalogStore,
+                    thumbnailDirectory: catalogStore.thumbnailDirectory,
+                    vectorDirectory: vectorDirectory,
+                    bundle: Bundle(for: CatalogWindowViewModel.self),
+                    admission: loadAdmission
+                )
+            }
             : nil
         photoDescriptionWriter = startsEnrichment && enrichmentCoordinator == nil
             ? PhotoDescriptionWriter(

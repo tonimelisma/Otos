@@ -338,6 +338,7 @@
 				Models/SearchLanguages.swift,
 				Support/BackgroundReading.swift,
 				Services/PhotoSearchIndex.swift,
+				Services/SearchVectorFile.swift,
 				Services/SearchEmbeddingModel.swift,
 				Services/SearchQueryEncoder.swift,
 				Services/SearchTextTokenizer.swift,

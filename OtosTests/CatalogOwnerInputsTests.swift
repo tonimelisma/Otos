@@ -163,7 +163,10 @@ struct CatalogOwnerInputsTests {
 
     @Test func theSearchIndexAsksForAPassOnlyOnWhatItReads() async throws {
         let (store, library) = try await Self.store()
-        let index = PhotoSearchIndex(store: store, thumbnailDirectory: nil, bundle: Bundle(for: CatalogWindowViewModel.self))
+        let index = try PhotoSearchIndex(
+            store: store, thumbnailDirectory: nil, vectorDirectory: makeTestDirectory().appending(path: "SearchIndex"),
+            bundle: Bundle(for: CatalogWindowViewModel.self)
+        )
         await index.start()
         let probe = await ChangeProbe(store, heard: { await index.changesHeard }, wakes: { await Int(index.requested) })
         try await Self.deliverChanges(to: store, library: library)
