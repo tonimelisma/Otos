@@ -26,7 +26,9 @@ import OSLog
 /// undo pressed before the mark lands is applied after it: the stream's one consumer knows
 /// what each command's mark hid (`hiddenByBatch`) and undoes exactly that. Undo asks
 /// `MediaTrashCoordinator.undo` to withdraw what is still pending and put back what is in
-/// the Trash; redo hides the items again at once and marks what the undone command hid
+/// the Trash. Undo shows its result first, as the move does: the items are on the window
+/// again in the step that applies it (`CatalogProjectionIntent.putBack`), and those the queue
+/// could not put back leave again under DES-076's put-back alert. Redo hides the items again at once and marks what the undone command hid
 /// under a new command identity. A mark that fails or hides nothing takes its undo entry
 /// back off the stack (`TrashUndoTarget`); a failed one puts its items back and says so.
 ///
@@ -400,6 +402,10 @@ extension CatalogWindowViewModel {
             "op=trash.undo phase=start count=\(ids.count, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public)"
         )
         uiStallMonitor.beginActToResult(.putBack, ids: ids)
+        // The result first, as Move to Trash's is (DES-119): Projection shows the window the
+        // command took its items from again now; the queue's work follows, and what it cannot
+        // put back leaves again and is reported (`finishTrashUndo`).
+        projectionIntentContinuation.yield(.putBack(batch))
         // Command: ordered after the mark it undoes and before a following redo.
         submitTrashIntent(.undo(batch: batch))
     }
@@ -469,7 +475,8 @@ extension CatalogWindowViewModel {
         let store = catalogStore
         let projection = projectionIntentContinuation
         let markHook = trashMarkHook
-        mediaTrashIntentTask = Task { [weak self, coordinator, store, projection, markHook] in
+        let undoHook = trashUndoHook
+        mediaTrashIntentTask = Task { [weak self, coordinator, store, projection, markHook, undoHook] in
             // The queue starts before the first intent reaches it, in the same task.
             await coordinator.start()
             // What each command's mark hid: what its undo puts back and its redo marks again.
@@ -501,6 +508,7 @@ extension CatalogWindowViewModel {
                 case let .undo(batch):
                     // Kept: a redo marks again what this command hid.
                     let ids = hiddenByBatch[batch] ?? []
+                    await undoHook?()
                     let outcome = ids.isEmpty
                         ? MediaTrashCoordinator.UndoResult()
                         : await coordinator.undo(batch: batch, ids: ids)

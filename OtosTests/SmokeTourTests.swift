@@ -143,7 +143,7 @@ struct SmokeTourTests {
         state.libraries = [libraryState(path: "/Pictures"), libraryState(path: "/Archive")]
         let full = try #require(SmokeTour.Configuration(environment: [SmokeTour.tourVariable: "1"]))
         let plan = SmokeTour.plan(for: state, configuration: full, today: CalendarDay.today())
-        #expect(plan.contains(.choiceAct(0)) && plan.contains(.choiceAct(2)) && plan.contains(.trashAct))
+        #expect(plan.contains(.choiceAct(0)) && plan.contains(.choiceAct(2)) && plan.contains(.trashAct) && plan.contains(.trashRun))
         #expect(plan.contains(.filterByOfferedKind))
     }
 

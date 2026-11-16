@@ -104,7 +104,7 @@ real backlog. Three instruments see those:
   deadline. A tour's loupe and Compare never download an original:
   their requester refuses every download for the session (`PaneOriginalDownloads.never`,
   `ReadOnlyOriginals`), so a cloud-only photo shows its stored preview and nothing more.
-  The act steps (Like, Dislike, Not Rated, Move to Trash then Undo) run only in a sandbox
+  The act steps (Like, Dislike, Not Rated, Move to Trash then Undo, then five of each in a row, each issued once the one before shows its result) run only in a sandbox
   home (`CFFIXED_USER_HOME`, not the account's home) whose every source lies inside it, and
   are skipped as `notSandboxHome` elsewhere. Each act is timed from its intent to the grid
   change that shows it, `op=ui.actToResult` (the grid drawing the act's tile, now or when it

@@ -179,6 +179,10 @@ extension PaneOriginalDownloads {
             /// Move to Trash on the first photo, timed to its result, then undone. Only in a
             /// sandbox home.
             case trashAct
+            /// Five Move to Trash acts in a row, each issued once the one before shows its
+            /// result, as Delete pressed quickly is, then five Undos the same way; each act is
+            /// timed to its result. Only in a sandbox home.
+            case trashRun
             case search(label: String, text: String)
             /// A kind the scope's published filter options offer, chosen when the step runs.
             case filterByOfferedKind
@@ -244,7 +248,7 @@ extension PaneOriginalDownloads {
                 .previousPhoto, .previousPhoto, .previousPhoto,
                 .compare,
                 .info,
-                .choiceAct(0), .choiceAct(1), .choiceAct(2), .trashAct,
+                .choiceAct(0), .choiceAct(1), .choiceAct(2), .trashAct, .trashRun,
                 .search(label: "searchMany", text: manyResultsQuery),
                 .search(label: "searchFew", text: fewResultsQuery),
                 .search(label: "searchClear", text: ""),
@@ -515,6 +519,8 @@ extension PaneOriginalDownloads {
                 return await choiceAct(index)
             case .trashAct:
                 return await ("act", WindowAct.moveToTrash.name, trashAct())
+            case .trashRun:
+                return await ("act", "trashRun", trashRun())
             case let .search(label, text):
                 // The field takes focus and the query is typed at once: the least time the
                 // focus's preparation can have before the first query (`searchFieldFocused`).
@@ -783,6 +789,50 @@ extension PaneOriginalDownloads {
             outcome.fields["putBack"] = "\(back)"
             outcome.fields["putBackMs"] = putBack.fields["resultMs"] ?? putBack.result
             return outcome
+        }
+
+        /// Five Move to Trash acts on the first photo and the survivors the selection moves to,
+        /// each issued as soon as the one before shows its result (its file work still
+        /// running), then five Undos the same way; the step ends once all five are back.
+        private func trashRun() async -> Outcome {
+            if let refusal = actsRefusal() {
+                return .skipped(refusal)
+            }
+            guard let viewModel, let photo = openablePhotos.first else {
+                return .skipped("windowGone")
+            }
+            if viewModel.viewMode != .grid {
+                viewModel.exitToGrid()
+            }
+            guard await settled() else {
+                return Outcome(result: "deadline", fields: ["reason": "notSettled"])
+            }
+            viewModel.selectAssets([photo])
+            var trashed: [MediaAssetID] = []
+            var trashMs: [String] = []
+            for _ in 0 ..< 5 {
+                guard let viewModel = self.viewModel, viewModel.canMoveTargetedMediaToTrash else {
+                    return Outcome(result: "skipped", fields: ["reason": "cannotTrash", "trashed": "\(trashed.count)"])
+                }
+                trashed.append(contentsOf: viewModel.targetIDs(.current))
+                let before = viewModel.lastActResult?.revision ?? 0
+                viewModel.moveTargetedMediaToTrash()
+                let shown = await actResult(after: before)
+                trashMs.append(shown.fields["resultMs"] ?? shown.result)
+            }
+            var putBackMs: [String] = []
+            for _ in 0 ..< 5 {
+                let before = self.viewModel?.lastActResult?.revision ?? 0
+                self.viewModel?.undoLastChange()
+                let shown = await actResult(after: before)
+                putBackMs.append(shown.fields["resultMs"] ?? shown.result)
+            }
+            let back = await until { state in trashed.allSatisfy { state.state.mediaGrid.content.contains($0) } }
+            return .reported([
+                "trashMs": trashMs.joined(separator: ","),
+                "putBackMs": putBackMs.joined(separator: ","),
+                "allBack": "\(back)",
+            ])
         }
 
         /// True once every choice the window submitted has been written or refused and applied.

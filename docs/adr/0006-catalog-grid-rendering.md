@@ -245,7 +245,10 @@ given apply batch actually inserted or deleted, leaving every other
 appearing/disappearing item (scroll dequeue, a zoom swap) — and every moved item in a
 move-only batch — at `super`'s unmodified attributes so moves animate as plain
 position changes. Reorder-only completion
-skips `TileContentStore.prune` (membership identical by definition). The
+skips `TileContentStore.prune` (membership identical by definition), and so does the
+completion of an apply that followed an edit: a Move to Trash's tiles come back by its Put
+Back, inserted beside their neighbours, and come back painted (APP-015); the next apply of another order
+prunes them. The
 apply-policy summary reads membership from the previous structure's own identity
 index, so no apply rebuilds a set of the identities on screen.
 Descriptor-changed reorders (sort/scope/filter flips) and large membership
@@ -282,7 +285,8 @@ The pure half — the next `MediaGridStructure`, the diff summary against the st
 screen, and, for an animated apply, the `MediaGridBatchUpdates` between the two — is
 built off the main actor (`@concurrent`) from `Sendable` values copied when the gate
 admits the apply. The exception is an order made from the one on screen by an edit (a
-Move to Trash's hide, a stack expanding or collapsing: `CatalogGridContent.edit(from:)`):
+Move to Trash's hide, its Put Back's items inserted beside their neighbours, a stack
+expanding or collapsing: `CatalogGridContent.edit(from:)`):
 its structure is the old sections edited, its batch the edit's deletes and inserts, a cost
 of the sections and the edit rather than the items, so it is built in the main-actor turn
 that delivered it and committed in the same turn. Sending it off the main actor bought

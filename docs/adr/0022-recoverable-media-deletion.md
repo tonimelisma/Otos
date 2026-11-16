@@ -112,7 +112,14 @@ inside the queue's drain task, between passes, so it never interleaves with a
 half-finished move: items still pending are withdrawn with no filesystem call;
 trashed items are moved back primary first under the root lease, never over an
 existing file, and reconciled from the filesystem, which shows their kept rows
-again. Redo hides the items again under a new command. Undo records are in memory,
+again. Undo shows its result before that work, as the move does (DES-119, APP-085):
+the window shows the items again in the step that applies Undo, and items the queue
+then cannot put back leave again under the put-back alert. The file work takes from a
+few milliseconds to tens (a cloud placeholder's put-back waits on its provider), and the
+act's result must be visible within 100 ms whatever it takes; a failure is rare and is
+reported, as a failed move is. Waiting for the Store before showing anything was the
+rejected alternative: it made Undo the one act whose result waited on the filesystem.
+Redo hides the items again under a new command. Undo records are in memory,
 like every undo entry; after a relaunch, Finder's Put Back is the way back, and it
 returns the item with its overlay because the row was kept.
 

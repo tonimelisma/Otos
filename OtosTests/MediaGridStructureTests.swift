@@ -478,6 +478,43 @@ extension AppKitWindowTests {
             #expect(controller.collectionView.item(at: path) != nil)
         }
 
+        /// Five hides undone in turn, as Projection publishes Put Back: each item inserted back
+        /// into the order shown, an edit of it. Each is committed in the call that delivers it,
+        /// and each returning tile still has the content it painted (APP-015).
+        @Test func aPutBackIsAnInsertAndKeepsWhatItPainted() async throws {
+            let (controller, window, onScreen) = try await movingGrid(reducesMotion: false)
+            defer { window.close() }
+            let ids = onScreen.orderedAssetIDs
+            for id in ids {
+                _ = controller.tileContents.mergeDetail(MediaTileDetail(libraryRootPath: id.libraryRootPath, relativePath: id.relativePath))
+            }
+            var shown = [onScreen]
+            for id in ids.prefix(5) {
+                let next = try #require(shown.last).hiding([id])
+                controller.receive(next)
+                shown.append(next)
+            }
+            var current = try #require(shown.last)
+            for target in shown.dropLast().reversed() {
+                // The item the target holds that the grid does not, inserted where it was.
+                let position = try #require(target.orderedAssetIDs.indices.first { !current.content.contains(target.orderedAssetIDs[$0]) })
+                let grid = current.replacingContent(current.content.edited(
+                    by: CatalogGridContent.Edit(removed: [], inserted: [position]),
+                    to: target.orderedAssetIDs,
+                    dayBuckets: target.content.dayBuckets,
+                    stacks: target.content.stacks
+                ))
+                current = grid
+                controller.receive(grid)
+                #expect(controller.mutationGate.showsDisplayedOrder(grid), "committed in the delivering call")
+                #expect(controller.mutationGate.inFlight == .none)
+                #expect(Set(controller.visibleAssetIDs()) == Set(grid.orderedAssetIDs))
+                for id in grid.orderedAssetIDs {
+                    #expect(controller.tileContents.content(for: id) != nil, "a returning tile keeps its content")
+                }
+            }
+        }
+
         /// Under Reduce Motion the apply runs with no motion at all (DES-075) and shows its
         /// result as its commit returns, as it does with motion.
         @Test func underReduceMotionAnApplyHasNoMotionAndShowsAtOnce() async throws {

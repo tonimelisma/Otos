@@ -61,7 +61,7 @@ struct MediaGridZoomTests {
             batchUpdatesMs: 0,
             insertedCount: 1,
             removedCount: 0,
-            reorderOnly: false,
+            reorderOnly: false, followsEdit: false,
             largeApply: false,
             animatingDifferences: true,
             animationSuppressed: false,

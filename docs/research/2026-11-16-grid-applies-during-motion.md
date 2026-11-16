@@ -129,3 +129,31 @@ Optimised dev build, sandbox home, 28 generated JPEGs, one tour each
   Profiler runs for these tours did not complete: one attached after the acts had run, and
   an all-process recording grew to 1.7 GB on a disk with 6 GB free and was stopped and
   deleted.
+
+## Put Back before its file work (the follow-up)
+
+Put Back now shows its result the way Move to Trash does: Projection puts each item back
+beside the neighbours its hide recorded, first into the order last published, so the grid
+takes it in by the inserts and commits it in the turn that delivers it; the file work and
+the Store follow (APP-085, DES-119). Optimised dev build, sandbox home, 28 generated JPEGs,
+two tours (`script/scorecard.sh --tour --dev --optimized --home <sandbox>`), the tour now
+also running five Moves to Trash in a row and then five Undos, each issued once the one
+before shows its result:
+
+| Act (intent to grid) | Tour A | Tour B |
+| --- | --- | --- |
+| Put Back (single) | 100 ms | 27 ms |
+| Five Moves to Trash | 342 (fixed below), 85, 96, 171, 85 ms | 86, 163, 100, 121, 104 ms |
+| Five Undos | 83, 84, 66, 88, 25 ms | 83, 150, 164, 85, 85 ms |
+| Put Back's file work done | 192–552 ms | 196–491 ms |
+
+- **Every Put Back and every Move to Trash committed in the call that delivered it** (the
+  grid's `actions=apply` and `structural apply started` in the same millisecond).
+- **What is over 100 ms is the window's main thread.** In each slow act the window first
+  applied a publication from before the act (`op=ui.state.apply … delta=0` at +60 to +76
+  ms), then the act's own at +121 to +141 ms: one main-thread turn of about 60 ms each.
+  This is not the grid, and it is not attributed further here.
+- **Tour A's 342 ms Move to Trash was a defect, fixed before Tour B.** It trashed the photo
+  whose Put Back was still held, and the Put Back put it back on every publication until
+  its hold retired. A Put Back now never puts back an item a newer Move to Trash holds
+  (`CatalogProjectionTests.aPutBackStaysShownThroughAnotherHideAndARead`).

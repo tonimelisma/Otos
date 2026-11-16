@@ -355,6 +355,64 @@ struct CatalogWindowViewModelTrashInterleavingTests {
             #expect(model.state.mediaGrid.orderedAssetIDs == [order[1]])
         }
     }
+
+    /// Put Back shows its result before its file work (DES-119): with the undo's work held at
+    /// its suspension, Undo has the item back in the window; the work, let go, puts the file
+    /// back and the item stays where it is.
+    @Test func undoShowsTheItemBackBeforeTheFileIsBack() async throws {
+        try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
+            let gate = ArrivalGate()
+            let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory(), undoHook: { await gate.arrive() })
+            let order = try await startShowing(model, fixture)
+            model.selectAssets([order[0]])
+            model.setAsksBeforeLargeTrashDownload(false)
+            model.moveTargetedMediaToTrash()
+            let path = fixture.path(order[0])
+            try await waitUntil { !FileManager.default.fileExists(atPath: path) }
+            try await waitForProjectionQuiescence(model.catalogProjection)
+
+            model.undoLastChange()
+            await gate.waitForArrivals(1)
+            _ = try await waitForWindowState(model) { $0.mediaGrid.orderedAssetIDs == order }
+            #expect(!FileManager.default.fileExists(atPath: path), "the file work is still held")
+
+            await gate.open()
+            try await waitUntil { FileManager.default.fileExists(atPath: path) }
+            try await waitUntil { await model.catalogProjection.holdsNothing }
+            try await waitForProjectionQuiescence(model.catalogProjection)
+            #expect(model.state.mediaGrid.orderedAssetIDs == order)
+            #expect(model.trashAlertMessage == nil)
+        }
+    }
+
+    /// A Put Back whose file cannot come back: shown at once, then gone again with the
+    /// put-back alert (DES-076), the failure delivered at the undo's suspension.
+    @Test func anUndoThatCannotPutTheFileBackTakesTheItemAwayAndSaysSo() async throws {
+        try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
+            let gate = ArrivalGate()
+            let trash = try makeTestDirectory()
+            let model = makeTrashModel(store: fixture.store, trash: trash, undoHook: { await gate.arrive() })
+            let order = try await startShowing(model, fixture)
+            model.selectAssets([order[0]])
+            model.setAsksBeforeLargeTrashDownload(false)
+            model.moveTargetedMediaToTrash()
+            try await waitUntil { !FileManager.default.fileExists(atPath: fixture.path(order[0])) }
+            try await waitForProjectionQuiescence(model.catalogProjection)
+
+            model.undoLastChange()
+            await gate.waitForArrivals(1)
+            _ = try await waitForWindowState(model) { $0.mediaGrid.orderedAssetIDs == order }
+            // The file leaves the Trash while the undo waits: there is nothing to put back.
+            for name in try FileManager.default.contentsOfDirectory(atPath: trash.path) {
+                try FileManager.default.removeItem(at: trash.appending(path: name))
+            }
+
+            await gate.open()
+            try await waitUntil { model.trashAlertMessage != nil }
+            #expect(model.trashAlertMessage == TrashAlertCopy.putBackFailedOne)
+            _ = try await waitForWindowState(model) { $0.mediaGrid.orderedAssetIDs == [order[1]] }
+        }
+    }
 }
 
 private struct InjectedMarkFailure: Error {}
@@ -376,6 +434,7 @@ private func makeTrashModel(
     store: CatalogStore,
     trash: URL?,
     markHook: (@Sendable () async throws -> Void)? = nil,
+    undoHook: (@Sendable () async -> Void)? = nil,
     fileStatus: @escaping MediaTrashCoordinator.StatusReader = { FileMaterialization.status(of: $0) }
 ) -> CatalogWindowViewModel {
     CatalogWindowViewModel(
@@ -387,7 +446,8 @@ private func makeTrashModel(
         volumeCapacity: ampleVolumeCapacity,
         trashFiles: trash.map { .folder($0) } ?? .refusing,
         trashFileStatus: fileStatus,
-        trashMarkHook: markHook
+        trashMarkHook: markHook,
+        trashUndoHook: undoHook
     )
 }
 

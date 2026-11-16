@@ -650,6 +650,9 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var trashUndoTargets: [MediaTrashBatchID: TrashUndoTarget] = [:]
     /// Tests hold the Store's mark at its suspension, or fail it, here; nil in the app.
     @ObservationIgnored let trashMarkHook: (@Sendable () async throws -> Void)?
+    /// Tests hold an undo's file work at its suspension here, before the queue puts anything
+    /// back; nil in the app.
+    @ObservationIgnored let trashUndoHook: (@Sendable () async -> Void)?
     /// The scope whose waiting pane has had a frame presented (`waitingFramePresented()`):
     /// its indicator shows. Cleared by every scope intent.
     private(set) var waitingFramePresentedScope: SidebarSelection?
@@ -774,9 +777,11 @@ final class CatalogWindowViewModel {
         volumeCapacity: @escaping VolumeCapacityReader,
         trashFiles: MediaTrashCoordinator.FileOperations,
         trashFileStatus: @escaping MediaTrashCoordinator.StatusReader = { FileMaterialization.status(of: $0) },
-        trashMarkHook: (@Sendable () async throws -> Void)? = nil
+        trashMarkHook: (@Sendable () async throws -> Void)? = nil,
+        trashUndoHook: (@Sendable () async -> Void)? = nil
     ) {
         self.trashMarkHook = trashMarkHook
+        self.trashUndoHook = trashUndoHook
         self.volumeCapacity = volumeCapacity
         self.workspace = workspace
         self.tileContentStore = tileContentStore

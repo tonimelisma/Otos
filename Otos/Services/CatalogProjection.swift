@@ -138,7 +138,10 @@ actor CatalogProjection {
     /// The build the last publication was made from and the items it took off it. While the
     /// build is the same, a hold that takes more off is taken off the last publication
     /// itself (`republish`), so its order is an edit of the order the window shows.
-    private var publishedFrom: (builtRevision: Int, hidden: Set<MediaAssetID>)?
+    private var publishedFrom: (builtRevision: Int, hidden: Set<MediaAssetID>, putBacks: Set<MediaTrashBatchID>)?
+    /// Where each Move to Trash took its items from, for its Put Back (`putBack(_:)`); taken
+    /// by the Put Back. A few values per item taken.
+    private var removals: [MediaTrashBatchID: TrashRemoval] = [:]
     /// What each Move to Trash and each choice keeps off the window until a read of the
     /// Store's write (`hold(_:_:)`), by act.
     private var holds: [WindowHoldKey: WindowHold] = [:]
@@ -492,6 +495,9 @@ nonisolated enum CatalogProjectionIntent: Sendable {
     /// `batch` is not hidden after all: its mark failed (`storeChanged` false), or its undo
     /// put the items back in the Store (true).
     case hideWithdrawn(MediaTrashBatchID, storeChanged: Bool)
+    /// Undo of `batch`: its items return to the window now, where its hide took them from,
+    /// ahead of the file work that puts them back (DES-119); `hideWithdrawn` follows it.
+    case putBack(MediaTrashBatchID)
     /// Choices shown ahead of the Store's write (DES-120): an item a choice filter no longer
     /// matches leaves the window now. `request` is the window's number for them.
     case choose([MediaAssetID: MediaChoice], request: UInt64)
@@ -509,6 +515,8 @@ private nonisolated struct WindowHold {
         case items(Set<MediaAssetID>)
         /// Choices: an item whose newest held choice the shown filter excludes is off it.
         case choices([MediaAssetID: MediaChoice])
+        /// A Put Back's items, on the window again where their Move to Trash took them from.
+        case putBack(TrashRemoval)
     }
 
     let content: Content
@@ -519,18 +527,73 @@ private nonisolated struct WindowHold {
         switch content {
         case let .items(ids): ids.count
         case let .choices(choices): choices.count
+        case let .putBack(removal): removal.ids.count
         }
     }
 }
 
-/// One hold per act: a Move to Trash by its batch, choices by the window's number for them.
+/// Where one Move to Trash took each of its items from in the grid: for each, the shown
+/// items either side of it that the command did not take, its day and its stack. Its Put
+/// Back puts each item back beside those neighbours (`puttingBack`). A few values per item,
+/// never the order itself, so a session's removals cost what they took.
+private nonisolated struct TrashRemoval {
+    nonisolated struct Item {
+        let id: MediaAssetID
+        /// The nearest item before it in the grid that the command did not take.
+        let predecessor: MediaAssetID?
+        /// The nearest item after it that the command did not take.
+        let successor: MediaAssetID?
+        let dayBucket: Date?
+        let tile: TileStacks?
+        /// The hidden files that showed through it in a collapsed stack.
+        let hiddenMembers: [MediaAssetID]
+    }
+
+    let descriptor: CatalogQueryDescriptor
+    let items: [Item]
+
+    var ids: Set<MediaAssetID> {
+        Set(items.map(\.id))
+    }
+
+    /// What taking `ids` off `grid` removes, or nil when `grid` shows none of them.
+    init?(taking ids: Set<MediaAssetID>, from grid: CatalogMediaGridState) {
+        let content = grid.content
+        let order = content.orderedAssetIDs
+        let positions = ids.compactMap { content.position(of: $0) }.sorted()
+        guard !positions.isEmpty else {
+            return nil
+        }
+        let taken = Set(positions)
+        let hiddenMembers = Dictionary(grouping: content.stacks.shownForHiddenMember.filter { ids.contains($0.value) }, by: \.value)
+        items = positions.map { position in
+            let id = order[position]
+            let predecessor = (0 ..< position).reversed().first { !taken.contains($0) }.map { order[$0] }
+            let successor = (position + 1 ..< order.count).first { !taken.contains($0) }.map { order[$0] }
+            return Item(
+                id: id,
+                predecessor: predecessor,
+                successor: successor,
+                dayBucket: content.dayBuckets.isEmpty ? nil : content.dayBuckets[position],
+                tile: content.stacks.tiles[id],
+                hiddenMembers: hiddenMembers[id]?.map(\.key) ?? []
+            )
+        }
+        descriptor = grid.descriptor
+    }
+}
+
+/// One hold per act: a Move to Trash by its batch, its Put Back by the same batch, choices by
+/// the window's number for them.
 private nonisolated enum WindowHoldKey: Hashable {
     case trash(MediaTrashBatchID)
+    case putBack(MediaTrashBatchID)
     case choices(UInt64)
 
     var diagnosticDescription: String {
         switch self {
         case let .trash(batch): "trash:\(batch.unixMilliseconds)"
+        case let .putBack(batch): "putBack:\(batch.unixMilliseconds)"
         case let .choices(request): "choices:\(request)"
         }
     }
@@ -560,6 +623,19 @@ private nonisolated enum WindowHoldKey: Hashable {
 /// `withdrawn(_:storeChanged:)` drops a hold: a failed write republishes what was built, and an
 /// undo that put the items back in the Store records the change and rings the loop, as the
 /// landing does.
+///
+/// Put Back is a Move to Trash undone, and shows its result the same way: at once, ahead of
+/// the file work (DES-119). Each hide records where it took each item from (`TrashRemoval`:
+/// the neighbours either side that it did not take). `putBack(_:)` drops the hide's hold if
+/// it has not retired and keeps a put-back hold, which every publication applies
+/// (`puttingBack`): an item the window does not show goes back beside its neighbour, after
+/// its predecessor or else before its successor, either one shown or itself being put back.
+/// The first publication is the last one with the items put back, so its order is an edit of
+/// the order the window shows and the grid commits it in the turn that delivers it. The hold
+/// retires as a hide does, once a pass that read the undo's Store work covers it; items the
+/// undo could not put back are absent from that read and leave again, and the window reports
+/// them (DES-076). An item neither of whose neighbours is shown waits for the Store's read.
+/// The map, On This Day and the duplicate groups follow that read.
 extension CatalogProjection {
     func apply(_ intent: CatalogProjectionIntent) {
         switch intent {
@@ -571,6 +647,8 @@ extension CatalogProjection {
             hideLanded(batch)
         case let .hideWithdrawn(batch, storeChanged):
             hideWithdrawn(batch, storeChanged: storeChanged)
+        case let .putBack(batch):
+            putBack(batch)
         case let .choose(choices, request):
             guard !choices.isEmpty else { return }
             hold(.choices(request), WindowHold(content: .choices(choices)))
@@ -586,6 +664,11 @@ extension CatalogProjection {
         guard !ids.isEmpty else {
             return
         }
+        if holds[.trash(batch)] == nil, let shown = lastPublishedState?.mediaGrid,
+           let removal = TrashRemoval(taking: Set(ids), from: shown)
+        {
+            removals[batch] = removal
+        }
         hold(.trash(batch), WindowHold(content: .items(Set(ids))))
     }
 
@@ -595,8 +678,147 @@ extension CatalogProjection {
     }
 
     /// `batch`'s items come back: its mark failed, or its undo put them back in the Store.
+    /// After a Put Back this is the undo's Store work done: its hold retires once a pass has
+    /// read it.
     func hideWithdrawn(_ batch: MediaTrashBatchID, storeChanged: Bool) {
         withdrawn(.trash(batch), storeChanged: storeChanged)
+        if holds[.putBack(batch)] != nil {
+            requestPublication(ringNow: true)
+            holds[.putBack(batch)]?.retiresAt = requested
+            OtosLog.catalog.noticeOperation("projection.hold", phase: "landed", fields: [
+                "projection": diagnosticID,
+                "hold": WindowHoldKey.putBack(batch).diagnosticDescription,
+                "retiresAt": "\(requested)",
+            ])
+        }
+    }
+
+    /// Undo of `batch`: its items are on the window again now, where its hide took them from.
+    /// A hide not yet landed takes nothing off any more; a hide whose removal is not known
+    /// (it took nothing off what was published) leaves the Put Back to the Store's read.
+    func putBack(_ batch: MediaTrashBatchID) {
+        let start = ContinuousClock.now
+        holds[.trash(batch)] = nil
+        guard let removal = removals.removeValue(forKey: batch) else {
+            republish()
+            OtosLog.catalog.noticeOperation("projection.hold", phase: "putBackFollowsStore", fields: [
+                "projection": diagnosticID,
+                "hold": WindowHoldKey.putBack(batch).diagnosticDescription,
+            ])
+            return
+        }
+        holds[.putBack(batch)] = WindowHold(content: .putBack(removal))
+        republish()
+        let grid = lastPublishedState?.mediaGrid.content
+        let shown = removal.items.filter { grid?.contains($0.id) == true }.count
+        OtosLog.catalog.noticeOperation("projection.hold", phase: "held", fields: [
+            "projection": diagnosticID,
+            "hold": WindowHoldKey.putBack(batch).diagnosticDescription,
+            "count": "\(removal.items.count)",
+            "shown": "\(shown)",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+    }
+
+    /// `state` with every held Put Back's items that it does not show put back beside their
+    /// neighbours: after the predecessor, or else before the successor, whichever is shown or
+    /// is itself put back. The order is an edit of `state`'s (`CatalogGridContent.edited`), so
+    /// the grid follows it by the inserts alone. Items put back beside the same neighbour keep
+    /// the order they were taken in. An item neither of whose neighbours is there is left to
+    /// the Store's read, and one a newer Move to Trash holds (`hidden`) stays off.
+    private func puttingBack(_ state: CatalogWindowState, hidden: Set<MediaAssetID>) -> CatalogWindowState {
+        let content = state.mediaGrid.content
+        var pending: [MediaAssetID: TrashRemoval.Item] = [:]
+        for (key, hold) in holds {
+            guard case .putBack = key, case let .putBack(removal) = hold.content,
+                  removal.descriptor == state.mediaGrid.descriptor
+            else {
+                continue
+            }
+            for item in removal.items where !content.contains(item.id) && !hidden.contains(item.id) {
+                pending[item.id] = item
+            }
+        }
+        guard !pending.isEmpty else {
+            return state
+        }
+        var after: [MediaAssetID: [TrashRemoval.Item]] = [:]
+        var before: [MediaAssetID: [TrashRemoval.Item]] = [:]
+        var placed = Set<MediaAssetID>()
+        func isThere(_ id: MediaAssetID?) -> Bool {
+            id.map { content.contains($0) || placed.contains($0) } ?? false
+        }
+        var progressed = true
+        while progressed {
+            progressed = false
+            for item in pending.values where !placed.contains(item.id) {
+                if isThere(item.predecessor), let predecessor = item.predecessor {
+                    after[predecessor, default: []].append(item)
+                } else if isThere(item.successor), let successor = item.successor {
+                    before[successor, default: []].append(item)
+                } else {
+                    continue
+                }
+                placed.insert(item.id)
+                progressed = true
+            }
+        }
+        guard !placed.isEmpty else {
+            return state
+        }
+        /// Beside one neighbour, an item taken while the next was still shown goes before it.
+        func ordered(_ items: [TrashRemoval.Item]) -> [TrashRemoval.Item] {
+            items.sorted { lhs, rhs in
+                lhs.successor == rhs.id || (rhs.successor != lhs.id && lhs.id.relativePath.rawValue < rhs.id.relativePath.rawValue)
+            }
+        }
+        let hasDays = !content.dayBuckets.isEmpty
+        var ids: [MediaAssetID] = []
+        var days: [Date?] = []
+        var inserted: [Int] = []
+        ids.reserveCapacity(content.orderedAssetIDs.count + placed.count)
+        func emitPutBack(_ item: TrashRemoval.Item) {
+            for earlier in ordered(before[item.id] ?? []) {
+                emitPutBack(earlier)
+            }
+            inserted.append(ids.count)
+            ids.append(item.id)
+            if hasDays {
+                days.append(item.dayBucket)
+            }
+            for later in ordered(after[item.id] ?? []) {
+                emitPutBack(later)
+            }
+        }
+        for (position, id) in content.orderedAssetIDs.enumerated() {
+            for earlier in ordered(before[id] ?? []) {
+                emitPutBack(earlier)
+            }
+            ids.append(id)
+            if hasDays {
+                days.append(content.dayBuckets[position])
+            }
+            for later in ordered(after[id] ?? []) {
+                emitPutBack(later)
+            }
+        }
+        var tiles = content.stacks.tiles
+        var shownFor = content.stacks.shownForHiddenMember
+        for id in placed {
+            guard let item = pending[id] else { continue }
+            tiles[id] = item.tile
+            for member in item.hiddenMembers {
+                shownFor[member] = id
+            }
+        }
+        var shown = state
+        shown.mediaGrid = state.mediaGrid.replacingContent(content.edited(
+            by: CatalogGridContent.Edit(removed: [], inserted: inserted),
+            to: ids,
+            dayBuckets: days,
+            stacks: CatalogGridStacks(tiles: tiles, shownForHiddenMember: shownFor)
+        ))
+        return shown
     }
 
     /// Keeps `hold` and republishes without what it takes off.
@@ -663,7 +885,7 @@ extension CatalogProjection {
                 for (id, choice) in choices where (newestChoice[id]?.request ?? 0) < request {
                     newestChoice[id] = (request, choice)
                 }
-            case (.trash, .choices):
+            case (_, .putBack), (.trash, .choices), (.putBack, .choices):
                 break
             }
         }
@@ -1390,8 +1612,8 @@ private extension CatalogProjection {
         // them — and a read that answers what a hide already showed applies nothing.
         lastBuiltState = publication.state
         let hidden = hiddenItems(for: publication.state.queryDescriptor)
-        let state = publication.state.hidingItems(hidden).sharingUnchanged(with: lastPublishedState)
-        publishedFrom = (builtRevision, hidden)
+        let state = puttingBack(publication.state.hidingItems(hidden), hidden: hidden).sharingUnchanged(with: lastPublishedState)
+        publishedFrom = (builtRevision, hidden, heldPutBacks)
         let changeSummary = CatalogProjectionChangeSummary.compare(
             previous: lastPublishedState,
             current: state
@@ -1436,7 +1658,7 @@ private extension CatalogProjection {
         loading.resolvedSidebarSelection = request.descriptor.scope
         loading.queryGeneration = request.generation
         lastBuiltState = loading
-        publishedFrom = (builtRevision, [])
+        publishedFrom = (builtRevision, [], heldPutBacks)
         OtosLog.catalog.notice("op=projection.publish phase=loadingCatalog")
         if loading != lastPublishedState {
             yield(loading)
@@ -1461,21 +1683,45 @@ private extension CatalogProjection {
             lastBuiltState = built
         }
         let hidden = hiddenItems(for: built.queryDescriptor)
+        let putBacks = heldPutBacks
         let state: CatalogWindowState
         if let last = lastPublishedState,
            let from = publishedFrom,
            from.builtRevision == builtRevision,
-           from.hidden.isSubset(of: hidden)
+           from.putBacks.isSubset(of: putBacks),
+           from.hidden.subtracting(hidden).isSubset(of: putBackItems)
         {
-            state = last.hidingItems(hidden.subtracting(from.hidden))
+            // What is no longer hidden is being put back: put back beside its neighbours in the
+            // last publication, as a new hide is taken off it.
+            state = puttingBack(last.hidingItems(hidden.subtracting(from.hidden)), hidden: hidden)
             state.mediaGrid.content.prepareIndex()
         } else {
-            state = built.hidingItems(hidden).sharingUnchanged(with: lastPublishedState)
+            state = puttingBack(built.hidingItems(hidden), hidden: hidden).sharingUnchanged(with: lastPublishedState)
         }
-        publishedFrom = (builtRevision, hidden)
+        publishedFrom = (builtRevision, hidden, putBacks)
         if state != lastPublishedState {
             yield(state)
         }
+    }
+
+    /// Every item a held Put Back puts back.
+    private var putBackItems: Set<MediaAssetID> {
+        holds.values.reduce(into: Set<MediaAssetID>()) { items, hold in
+            if case let .putBack(removal) = hold.content {
+                items.formUnion(removal.ids)
+            }
+        }
+    }
+
+    /// The batches whose Put Back is held.
+    private var heldPutBacks: Set<MediaTrashBatchID> {
+        Set(holds.keys.compactMap { key in
+            if case let .putBack(batch) = key {
+                batch
+            } else {
+                nil
+            }
+        })
     }
 
     private func yield(_ state: CatalogWindowState) {
@@ -1522,6 +1768,7 @@ private extension CatalogProjection {
         changeLog = CatalogChangeLog()
         lastPublishedState = nil
         lastBuiltState = nil
+        removals = [:]
         holds = [:]
         duplicates = nil
         people = nil

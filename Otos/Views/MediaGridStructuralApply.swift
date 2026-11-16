@@ -20,6 +20,8 @@ extension MediaGridViewController {
         let insertedCount: Int
         let removedCount: Int
         let reorderOnly: Bool
+        /// The order was an edit of the one on screen (`MediaGridStructure.isEdited(into:)`).
+        let followsEdit: Bool
         let largeApply: Bool
         let animatingDifferences: Bool
         let animationSuppressed: Bool
@@ -54,6 +56,8 @@ extension MediaGridViewController {
         /// `nil` when the apply reloads: the summary chose the reloadData path, or no batch
         /// can describe the change (`MediaGridBatchUpdates.between`).
         let batchUpdates: MediaGridBatchUpdates?
+        /// The new order was an edit of the one on screen, or that edit undone.
+        let followsEdit: Bool
         let diffPolicyMs: Int
         let structureBuildMs: Int
         let batchUpdatesMs: Int
@@ -146,6 +150,7 @@ extension MediaGridViewController {
             structure: structure,
             summary: summary,
             batchUpdates: batchUpdates,
+            followsEdit: previous.isEdited(into: grid.content),
             diffPolicyMs: diffPolicyMs,
             structureBuildMs: structureBuildMs,
             batchUpdatesMs: DiagnosticsTiming.milliseconds(since: batchStart)
@@ -214,6 +219,7 @@ extension MediaGridViewController {
             insertedCount: summary.insertedCount,
             removedCount: summary.removedCount,
             reorderOnly: summary.reorderOnly,
+            followsEdit: built.followsEdit,
             largeApply: summary.largeApply,
             animatingDifferences: summary.animatingDifferences,
             animationSuppressed: animationSuppressed,
@@ -535,8 +541,11 @@ extension MediaGridViewController {
             scrollToTop()
         }
         // Reorder-only applies keep identical membership by definition, so a prune would
-        // only re-ask every stored entry a question whose answer cannot have changed.
-        if !context.reorderOnly {
+        // only re-ask every stored entry a question whose answer cannot have changed. An
+        // apply that followed an edit keeps what it removed too: a Move to Trash's tiles come
+        // back by its Put Back, inserted beside their neighbours, and come back painted (the no-blank
+        // invariant). The next apply of another order prunes them.
+        if !context.reorderOnly, !context.followsEdit {
             tileContents.prune(keeping: structure.contains)
         }
         let (visibleDetailRequestCount, preheatCount) = runPostApplyDetailAndPreheatPass(
