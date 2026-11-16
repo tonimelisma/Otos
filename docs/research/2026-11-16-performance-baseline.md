@@ -30,6 +30,8 @@ No benchmark was run. Numbers and kinds only: no paths, file names, people or se
 | Survey before | installed, before stage 1a (the survey's folder names 487baebd) | 2026-11-16 00:47 | 256 s | launch, no clicks |
 | Survey after | installed 661be172 | 2026-11-16 00:56 | 250 s | launch, no clicks |
 | Tour | installed 661be172 | 2026-11-16 01:01 | 235 s | the full read-only tour |
+| After-tour | installed f192041a | 2026-11-16 02:07 | 166 s | the full read-only tour |
+| Switch-off tours | installed f192041a | 2026-11-16 02:11 to 02:13 | 26 to 76 s | sidebar steps with every owner off, the search index alone, People alone |
 
 The survey records only the checkout's revision, so both surveys' summaries carry
 661be172 in their title line; the build each measured is named by its folder and by its
@@ -177,6 +179,57 @@ window reads no longer waited. Background reads still waited 252 s in all for a 
 in a 250 s session, and the footprint fell by a fifth. People (`PersonRun`, `Fill`) and duplicates (`BlockedSimilarity`) are still the
 largest CPU owners after SQLite.
 
+## After stage 2 and the search index's paged load (build f192041a)
+
+Installed build f192041a holds #807 (each owner wakes only on what its own SQL reads), #809
+(a digest write wakes the copy-built owners only when it changes what is a copy), #810 (a
+face's embedding in its own table, v66) and #811 (the search index loads once, in pages).
+The tour ran on 2026-11-16 at 02:07, 166 s, read-only, the same steps as the 661be172 one.
+The first after-tour, on build 5d80f22e, ran on an overloaded machine and is not evidence.
+
+| Number | 661be172 | f192041a |
+| --- | --- | --- |
+| Store stall lines | 62 | **0** |
+| Launch to first grid (All Media) | 4,038 ms | 2,760 ms |
+| Import, first | 676 ms | 617 ms |
+| Library, first | 1,008 ms | 626 ms |
+| People, first | 48,818 ms | 35,495 ms |
+| A person, first | 4,094 ms | 4,261 ms (stack candidates 2,708 ms) |
+| Places, first | 1,469 ms | 1,282 ms |
+| On This Day, first | 137 ms | 169 ms |
+| Duplicates, first | 193 ms | 119 ms |
+| All Media, return | 545 ms | 385 ms (its filter options ran 14,049 ms after the paint) |
+| Search, many / few results | 9,281 / 19,899 ms | 6,195 / 17,705 ms |
+| Clear the search | 24,818 ms | 1,653 ms |
+| Sort by name | 41,806 ms | 27,922 ms |
+| Store changes / of them `copies` | 277 / 227 | 170 / 2 |
+| Disk read | 49,414 MB | 20,967 MB |
+| CPU | 328.6 s in 235 s | 159.5 s in 166 s |
+| Main pool's reader time | 663.9 s | 220.7 s |
+| Peak footprint | 3,730 MB | 3,804 MB |
+| Footprint when the search index has loaded | 2,179 MB (21.3 s) | 2,191 MB (17.4 s) |
+| Footprint when People is built | 1,912 MB (54.8 s) | 2,717 MB (39.7 s) |
+| Main-thread stalls | 0 | 0 |
+
+The photo steps and the filter were still skipped (this build predates #813). The longest
+reader holds were the window's own `orderedAssetIDs` (88.5 s in 15 runs, longest 43.8 s),
+`peopleSnapshot` (40.4 s in 2), `filterOptions` (30.4 s in 9) and `samePhotoCandidates`
+(15.1 s in 2).
+
+**Switch-off tours** (the same build, sidebar steps only, named owners left unstarted):
+
+| Owners running | Length | Peak footprint | Launch to first grid | Disk read | CPU |
+| --- | --- | --- | --- | --- | --- |
+| none | 26 s | 336 MB | 2,200 ms | 104 MB | 13.5 s |
+| the search index alone | 28 s | 973 MB | 3,608 ms | 1,850 MB | 24.1 s |
+| People alone | 76 s | 2,263 MB | 1,875 ms | 553 MB | 66.5 s |
+
+With People alone, People's first paint took 48,613 ms and a person 1,348 ms. The search
+index alone loaded its 482 MB matrix at 16.5 s, with the footprint at 927 MB then. With
+every owner off the footprint stays under the 700 MB target, so the gap is the owners:
+People is the largest holder (about 1.9 GB over the floor), then the search index (about
+0.6 GB).
+
 ## The migration
 
 v65 ran on the owner's real file in **4,159 ms** (`op=catalog.migration phase=finish
@@ -203,17 +256,17 @@ is about 43 h and 66 h of running time.
 
 The targets the plan sets, against the tour:
 
-| Target | Tour (661be172) | Met |
-| --- | --- | --- |
-| Launch to first grid ≤ 2,000 ms | 4,038 ms | no |
-| First visit to a view ≤ 1,000 ms | 676 to 48,818 ms; 3 of 7 met | no |
-| First visit to All Media ≤ 2,000 ms | not visited first in this tour (launch scope); 14,456 ms before | unknown |
-| Return to a view ≤ 300 ms | 545 ms | no |
-| Search, sort or filter result ≤ 1,000 ms | 9,281 to 41,806 ms; filter not measured | no |
-| An act's result visible ≤ 100 ms | not measured | unknown |
-| Store stall lines in a session | 62 | no |
-| Main-thread stall over 250 ms | none | yes |
-| Peak footprint ≤ 700 MB | 3,730 MB | no |
+| Target | Tour (661be172) | Tour (f192041a) | Met (f192041a) |
+| --- | --- | --- | --- |
+| Launch to first grid ≤ 2,000 ms | 4,038 ms | 2,760 ms | no |
+| First visit to a view ≤ 1,000 ms | 137 to 48,818 ms; 3 of 7 met | 119 to 35,495 ms; 4 of 7 met | no |
+| First visit to All Media ≤ 2,000 ms | not visited first (launch scope); 14,456 ms before | not visited first | unknown |
+| Return to a view ≤ 300 ms | 545 ms | 385 ms | no |
+| Search, sort or filter result ≤ 1,000 ms | 9,281 to 41,806 ms; filter not measured | 1,653 to 27,922 ms; filter not measured | no |
+| An act's result visible ≤ 100 ms | not measured | not measured | unknown |
+| Store stall lines in a session | 62 | 0 | yes |
+| Main-thread stall over 250 ms | none | none | yes |
+| Peak footprint ≤ 700 MB | 3,730 MB | 3,804 MB | no |
 
 ## What it does not capture
 
@@ -235,3 +288,9 @@ The targets the plan sets, against the tour:
   `samePhotoCandidates`, the window's own `filterOptions` and `orderedAssetIDs` hold the most.
 - Memory is the scarcest resource: the search index's load alone takes the footprint from
   355 MB to 2,179 MB.
+- After stage 2 and the paged search load (f192041a) the store stall lines are gone (62 to
+  0), almost no change is a `copies` change (227 to 2), the session read 21 GB instead of
+  49 GB, and clearing a search takes 1.7 s instead of 24.8 s. People (35.5 s), sort
+  (27.9 s), search (6 to 18 s), launch (2.8 s) and the footprint (3.8 GB) remain.
+- The switch-off tours put the footprint's gap in the owners: 336 MB with none running,
+  973 MB with the search index alone, 2,263 MB with People alone.

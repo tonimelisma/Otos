@@ -1,6 +1,7 @@
 # Plan 0116: the performance program
 
-Status: **active** (2026-11-16). Stage 1 is merged. The bets below are ranked by how much of
+Status: **active** (2026-11-16). Stages 1, 2 and 4 are merged; on installed f192041a the
+tour logged no store stall line (section 2.1b). The bets below are ranked by how much of
 the gap to the targets each one closes. The baseline is
 `docs/research/2026-11-16-performance-baseline.md`.
 
@@ -10,17 +11,17 @@ The program is done when one tour on the owner's library, on a quiet machine, sh
 one of these. The scorecard (`script/scorecard.sh`) prints each one it can read beside its
 target (`docs/scorecard-targets.json`).
 
-| Target | Scorecard number | Today (tour, 661be172) |
+| Target | Scorecard number | Tour 661be172 → f192041a |
 | --- | --- | --- |
-| Launch to a usable window ≤ 2 s | `launch.firstGridMs` ≤ 2,000 | 4,038 ms |
-| Click to paint ≤ 1 s for every view | `click.smallScopeMs` ≤ 1,000; the loupe, Compare and Info `photo.stepMs` ≤ 1,000 | 137 to 48,818 ms; 3 of 7 met; photo steps not measured |
+| Launch to a usable window ≤ 2 s | `launch.firstGridMs` ≤ 2,000 | 4,038 → 2,760 ms |
+| Click to paint ≤ 1 s for every view | `click.smallScopeMs` ≤ 1,000; the loupe, Compare and Info `photo.stepMs` ≤ 1,000 | 137 to 48,818 → 119 to 35,495 ms; 3 → 4 of 7 met; photo steps not measured |
 | First visit to All Media ≤ 2 s | `click.allMedia.firstMs` ≤ 2,000 | not visited first; 14,456 ms before stage 1 |
-| Return to any view ≤ 0.3 s | `click.returnMs` ≤ 300 | 545 ms |
-| A search, sort or filter result ≤ 1 s | `query.resultMs` ≤ 1,000 | 9.3 to 41.8 s; filter not measured |
-| Every act's result visible ≤ 0.1 s (Like, Dislike, Move to Trash) | `act.resultMs` ≤ 100, from a tour in a sandbox home | not measured |
-| No `op=catalog.store.stall` line in a 10-minute session | `stalls.count` = 0 and `stalls.per10Min` = 0 | 62 in 4 minutes (158 per 10 minutes) |
+| Return to any view ≤ 0.3 s | `click.returnMs` ≤ 300 | 545 → 385 ms |
+| A search, sort or filter result ≤ 1 s | `query.resultMs` ≤ 1,000 | 9.3 to 41.8 → 1.7 to 27.9 s; filter not measured |
+| Every act's result visible ≤ 0.1 s (Like, Dislike, Move to Trash) | `act.resultMs` ≤ 100, from a tour in a sandbox home | not measured on the owner's library; a sandbox of 28 photos: choices 22 to 23 ms, Move to Trash 515 ms |
+| No `op=catalog.store.stall` line in a 10-minute session | `stalls.count` = 0 and `stalls.per10Min` = 0 | 62 in 4 minutes (158 per 10 minutes) → 0 in 3 minutes |
 | No main-thread stall over 250 ms in Otos code | `mainThreadStalls.worstMs` ≤ 250 | 0 stalls of any length |
-| Peak app footprint ≤ 700 MB | `memory.peakFootprintMB` ≤ 700 | 3,730 MB |
+| Peak app footprint ≤ 700 MB | `memory.peakFootprintMB` ≤ 700 | 3,730 → 3,804 MB (336 MB with every owner off) |
 | `StallReproductionTests` passes with no known-issue marker | the test | still inside `withKnownIssue` |
 | The app's disk growth is measured and explained | the static survey | measured; orphans and remote previews open |
 
@@ -53,13 +54,42 @@ target (`docs/scorecard-targets.json`).
 | Connection waits | 57, 275 s in all (four minutes, no clicks) | – |
 | v65 migration on the real file | – | 4,159 ms |
 
+### 2.1b After stage 2 and the paged search load (tour on installed f192041a)
+
+Build f192041a holds #807, #809, #810 and #811. The first after-tour, on 5d80f22e, ran on an
+overloaded machine and is not evidence.
+
+| Number | 661be172 | f192041a |
+| --- | --- | --- |
+| Store stall lines | 62 | **0** |
+| Launch to first grid | 4,038 ms | 2,760 ms |
+| People, first click | 48,818 ms | 35,495 ms |
+| A person, first click | 4,094 ms | 4,261 ms |
+| All Media, return | 545 ms | 385 ms |
+| Search: many / few results | 9.3 s / 19.9 s | 6.2 s / 17.7 s |
+| Clear the search | 24,818 ms | 1,653 ms |
+| Sort by name | 41,806 ms | 27,922 ms |
+| `copies` store changes | 227 of 277 | 2 of 170 |
+| Disk read | 49 GB | 21 GB |
+| Peak footprint | 3,730 MB | 3,804 MB |
+
+Switch-off tours on the same build put the footprint in the owners:
+
+| Owners running | Peak footprint |
+| --- | --- |
+| none | 336 MB |
+| the search index alone | 973 MB |
+| People alone | 2,263 MB |
+
 ### 2.2 What is scarce
 
 - **Memory.** The Mac has 16 GB. About 100 MB are free and about 4 GB are in swap before
   Otos starts. The footprint is 355 MB at the first grid and 2,179 MB once the search index
   has loaded, 21 s in. At the peak the heap holds up to 1.6 GB of face and search vectors.
+  With every owner off the app peaks at 336 MB. People alone takes it to 2,263 MB and the
+  search index alone to 973 MB (f192041a).
 - **Disk reads paid cold.** Memory pressure evicts the catalog's pages, so background reads
-  read from disk: 49 GB in a four-minute tour.
+  read from disk: 49 GB in a four-minute tour, 21 GB in a three-minute tour on f192041a.
 - **Connections no longer limit the window.** No window read waited in the tour. Background
   reads still keep the main pool's readers busy for most of a session (664 s of reader time
   in 235 s).
@@ -86,14 +116,14 @@ Each bet names the scorecard number it moves. "Building" means a PR is in progre
 
 | # | Bet | Moves | Status |
 | --- | --- | --- | --- |
-| 1 | **People.** First paint 48.8 s. `peopleSnapshot` takes 131 s of reader time in 4 runs and a large share of the footprint. Background writes are bounded. | People's first paint; footprint; reader time | building |
-| 2 | **Search index memory.** A paged load and compact labels, then Float16 vectors or a mapped matrix. | footprint (2,179 MB at load); search time | first step done (stage 4: paged load, compact labels, index-only reconciles; 632 MB after load on the generated catalog); Float16 or a mapped matrix not started |
-| 3 | **Duplicates.** `samePhotoCandidates` takes 123 s in 5 runs and `samePhotoDetails` 64 s in 405; 227 of 277 store changes are `copies`. | reader time; stall lines; CPU | building |
+| 1 | **People.** First paint 48.8 s, 35.5 s on f192041a. `peopleSnapshot` takes 131 s of reader time in 4 runs (40 s in 2 on f192041a). Alone, People takes the footprint from 336 MB to 2,263 MB, the largest share. Background writes are bounded. | People's first paint; footprint; reader time | building |
+| 2 | **Search index memory.** A paged load and compact labels, then Float16 vectors or a mapped matrix. | footprint (2,179 MB at load); search time | first step done (#811, stage 4: paged load, compact labels, index-only reconciles; 632 MB after load on the generated catalog). On the owner's library alone it peaks at 973 MB, and clearing a search went from 24.8 s to 1.7 s. Float16 or a mapped matrix not started |
+| 3 | **Duplicates.** `samePhotoCandidates` takes 123 s in 5 runs and `samePhotoDetails` 64 s in 405; 227 of 277 store changes are `copies` (2 of 170 after #809). | reader time; stall lines; CPU | #809 and #814 merged, more building |
 | 4 | **The window's own reads.** `filterOptions` 106 s in 11 runs, `orderedAssetIDs` 64 s in 14, the stack-candidate read, sort, search and clear. Build the installed app with `-O`, though it stays a Debug build. | click to paint; search, sort and filter | building |
 | 5 | **Window isolation.** One pool of 8 readers. Background reads are admitted at most 4 at a time. The caller's handle (`WindowReads` or `BackgroundReads`) picks the lane, and a lint keeps it so. Passive checkpoints with `journal_size_limit` replace the truncating barrier. | stall lines; window waits | building |
 | 6 | **Staged launch.** Background owners start after the first grid paints; heavy loads run one at a time. | launch; footprint | not started |
 | 7 | **Wake on inputs.** Each owner wakes only on the facts its own SQL reads. | stall lines; CPU; disk reads | done (#807) |
-| 8 | **Split tables in the file, and one `VACUUM`.** `render_gray` and face embeddings move to their own tables. | disk reads; catalog size | not started; one-way, needs the owner's go |
+| 8 | **Split tables in the file, and one `VACUUM`.** `render_gray` and face embeddings move to their own tables. | disk reads; catalog size | face embeddings moved (#810); `render_gray` and the `VACUUM` not started (one-way, needs the owner's go) |
 | 9 | **Disk.** Remove orphaned thumbnails; stop the test temp-folder leak; decide whether remote-library previews exist at full size (owner question). | disk growth | not started |
 | 10 | **The description and text-reading backlog.** About 43 h of text readings and 66 h of descriptions. Whether it runs while the window is in use is an owner question. | footprint; CPU while in use | not started |
 
@@ -113,7 +143,15 @@ experiment's tables are not yet in a research note; the bet's PR adds them.
 | #803 | `script/survey.sh` and the static survey |
 | #804 | The scorecard, resource checkpoints and the read-only tour |
 | #805 | Stage 1b: v65, an index for every "what is owed" read |
+| #806 | This plan and the baseline |
 | #807 | Stage 2: each owner wakes only on what its own SQL reads |
+| #808 | Bet 4: the stack candidates are the stills of folders that can hold a pair |
+| #809 | A digest write wakes the copy-built owners only when it changes what is a copy |
+| #810 | A face's embedding in its own table (v66) |
+| #811 | Stage 4: the search index loads once, in pages |
+| #812 | A listing writes an item's source facts in one statement |
+| #813 | The tour opens photos without a download and filters by an offered kind; acts are timed to their result |
+| #814 | A duplicates build costs what changed (v67) |
 
 ## 5. Rejected
 
