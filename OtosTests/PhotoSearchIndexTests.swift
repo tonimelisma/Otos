@@ -297,6 +297,82 @@ struct PhotoSearchIndexTests {
 
     /// ADR 0048, "The first query": the intent to search reads the scope's slots ahead, so the
     /// first query over that scope reuses them, and loads the encoder, which reports it is loaded.
+    /// Counts the encoder's loads, and whether each query found it loaded.
+    private actor CountingEncoder {
+        private(set) var loads = 0
+        private(set) var loadedBeforeEncoding: [Bool] = []
+        private var loaded = false
+
+        func load() {
+            loads += 1
+            loaded = true
+        }
+
+        func encode(_ request: SearchQueryRequest) -> SearchQueryEncoding {
+            loadedBeforeEncoding.append(loaded)
+            if !loaded {
+                load()
+            }
+            return SearchQueryReaderTests.encoding(request.text)
+        }
+    }
+
+    private func indexWithCountingEncoder(_ catalog: Catalog, admission: LoadAdmission) -> (PhotoSearchIndex, CountingEncoder) {
+        let encoder = CountingEncoder()
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            queries: SearchQueryReader(prepare: { await encoder.load() }) { await encoder.encode($0) },
+            textReader: .readingNoText(), admission: admission
+        )
+        return (index, encoder)
+    }
+
+    /// ADR 0048, "The first query": with no intent to search, the window's first grid readies
+    /// the first query as the last admitted load, so a query typed at once finds the encoder
+    /// loaded and loads nothing itself.
+    @Test func theFirstGridReadiesTheFirstQueryAsTheLastLoad() async throws {
+        let catalog = try await makeCatalog()
+        let admission = LoadAdmission()
+        let (index, encoder) = indexWithCountingEncoder(catalog, admission: admission)
+        await index.start()
+        index.prepareWhenAdmitted(among: [catalog.red, catalog.blue])
+        try await waitUntil { admission.snapshot.waiting.contains { $0.load == .searchPrepare } }
+        #expect(await encoder.loads == 0, "nothing is readied before the first grid")
+        admission.open()
+        try await waitUntil { await index.preparationsMade == 1 }
+        #expect(await encoder.loads == 1)
+
+        let dog = SearchQueryRequest(text: "dog")
+        _ = await index.queries.status(for: dog)
+        try await waitUntil { await index.queries.status(for: dog) == .read(SearchQueryReaderTests.encoding("dog")) }
+        #expect(await encoder.loadedBeforeEncoding == [true])
+        #expect(await encoder.loads == 1)
+        await index.shutdown()
+        admission.shutdown()
+        await catalog.store.shutdown()
+    }
+
+    /// A shutdown while the admitted preparation waits for its turn starts nothing: the request
+    /// withdraws, and opening the admission afterwards grants nothing.
+    @Test func aShutdownWhileThePreparationWaitsStartsNothing() async throws {
+        let catalog = try await makeCatalog()
+        let admission = LoadAdmission()
+        let (index, encoder) = indexWithCountingEncoder(catalog, admission: admission)
+        await index.start()
+        index.prepareWhenAdmitted(among: [catalog.red, catalog.blue])
+        try await waitUntil { admission.snapshot.waiting.contains { $0.load == .searchPrepare } }
+
+        await index.shutdown()
+        try await waitUntil { !admission.snapshot.waiting.contains { $0.load == .searchPrepare } }
+        admission.open()
+        try await waitUntil { admission.snapshot.running == nil }
+        #expect(await index.preparationsMade == 0)
+        #expect(await encoder.loads == 0)
+        admission.shutdown()
+        await catalog.store.shutdown()
+    }
+
     @Test func theIntentToSearchReadiesTheScopeAndTheEncoder() async throws {
         let catalog = try await makeCatalog()
         let index = PhotoSearchIndex(

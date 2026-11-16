@@ -316,8 +316,22 @@ against 77.3, 85 in English for both), and every asset has one.
     - asks the kernel to read the mapped vectors ahead (`MADV_WILLNEED`);
     - reads the scope's slots, which the first query then reuses.
   - A blur cancels nothing, and a query with no intent before it is answered as before.
-  - Rejected: loading the encoder at launch. Every model loaded eagerly cost 15 s and 525 MB,
-    and most sessions never search.
+  - **The same preparation runs without the intent**, so the first query is quick even when
+    it is typed at once, which is what the 1 s target is checked against. When the window's
+    first grid paints (`prepareWhenAdmitted`), it is asked of the load admission as its last
+    load (`BackgroundLoad.searchPrepare`, `runsLast`). It waits behind every other heavy
+    load, whenever that load asked: People, Duplicates, the index's own build, a mirror
+    pairing, the derived folder's reconciliation.
+    - If the intent comes first, the preparation runs at once and the admitted request
+      withdraws.
+    - A shutdown while it waits starts nothing.
+  - **Why this is not the eager loading the project rejected.** That rule was against loading
+    every model at launch (15 s and 525 MB, ahead of the window). This is different:
+    - one model, memory-mapped, measured at 0 MB of footprint for its load and 3–34 MB with
+      its first prediction (1.0–2.4 s on the test host);
+    - after the first grid, never before it;
+    - admitted last;
+    - released under memory pressure.
   - Under memory pressure an idle encoder lets its model go, and the next reading loads it
     again. `op=search.encoder phase=loaded|prepared` logs the load's footprint (it is CPU
     only, like every model here).

@@ -45,7 +45,9 @@ publication to ADR 0005.
    releases it when the body returns or throws. None runs before the window opens the
    admission at its first grid. Loads asked for before then run in `BackgroundLoad.launchRank`
    order (People, duplicates, search index, mirror pairing); after it, in the order asked, so a
-   load that asks again goes behind those already waiting and never starves them.
+   load that asks again goes behind those already waiting and never starves them. Readying
+   the first search query (`searchPrepare`, ADR 0048) runs last (`runsLast`): behind every other
+   waiting load, whenever it asked.
 3. **The view's load goes first.** Every query the window applies says which load its view
    cannot answer without (`BackgroundLoad.needed(by:)`: a search needs the index, People and
    a person need People, Duplicates and a group need the duplicates build), and that load runs

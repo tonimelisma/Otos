@@ -62,6 +62,20 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.release(3)) == [.grant(4, .duplicates)])
     }
 
+    /// Readying a search runs behind every other waiting load, whenever it asked: before the
+    /// first grid and after it, behind a People pass that asked later.
+    @Test func readyingASearchRunsBehindEveryOtherLoad() {
+        var machine = LoadAdmissionMachine()
+        _ = machine.handle(.request(1, .searchPrepare))
+        _ = machine.handle(.request(2, .derivedFolder))
+        _ = machine.handle(.request(3, .immichMirror))
+        #expect(machine.handle(.open) == [.grant(3, .immichMirror)])
+        _ = machine.handle(.request(4, .people))
+        #expect(machine.handle(.release(3)) == [.grant(2, .derivedFolder)])
+        #expect(machine.handle(.release(2)) == [.grant(4, .people)])
+        #expect(machine.handle(.release(4)) == [.grant(1, .searchPrepare)])
+    }
+
     @Test func aWithdrawnRequestNeverRuns() {
         var machine = LoadAdmissionMachine(isOpen: true)
         _ = machine.handle(.request(1, .people))

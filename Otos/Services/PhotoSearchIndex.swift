@@ -201,17 +201,27 @@ actor PhotoSearchIndex {
             first: { try await encoder.firstReading($0) }, prepare: { try await encoder.prepare() }
         ) { try await encoder.encode($0) }
         self.pageSize = pageSize
-        let (preparations, continuation) = AsyncStream<[MediaAssetID]>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let (preparations, continuation) = AsyncStream<Preparation>.makeStream(bufferingPolicy: .unbounded)
         self.preparations = preparations
         preparationsContinuation = continuation
     }
 
     // MARK: Intent to search
 
-    /// The scopes the user showed intent to search (`prepareForSearch(among:)`), newest wins.
-    private let preparations: AsyncStream<[MediaAssetID]>
-    private nonisolated let preparationsContinuation: AsyncStream<[MediaAssetID]>.Continuation
+    /// What asks for the first query to be readied, in the order asked (ADR 0032 rule 5).
+    private enum Preparation {
+        /// The user showed intent to search: now.
+        case now([MediaAssetID])
+        /// The window's first grid painted: when the admission grants it, last of the loads.
+        case admitted([MediaAssetID])
+    }
+
+    private let preparations: AsyncStream<Preparation>
+    private nonisolated let preparationsContinuation: AsyncStream<Preparation>.Continuation
     private var preparing: Task<Void, Never>?
+    /// The admitted preparation waiting for its turn or running; cancelled when the user's
+    /// intent prepares first (a waiting one withdraws and never runs) and at shutdown.
+    private var admittedPreparation: Task<Void, Never>?
     /// Preparations made: what a test waits on.
     private(set) var preparationsMade = 0
 
@@ -223,16 +233,47 @@ actor PhotoSearchIndex {
     /// query that comes first is answered as it always is. Returns at once: the preparation is
     /// this owner's loop's (ADR 0032 rule 5), so no caller waits on the encoder's load.
     nonisolated func prepareForSearch(among scope: [MediaAssetID]) {
-        preparationsContinuation.yield(scope)
+        preparationsContinuation.yield(.now(scope))
+    }
+
+    /// The window's first grid painted over `scope`: the same preparation, without waiting for
+    /// the user's intent, as the last of the heavy loads the admission grants
+    /// (`BackgroundLoad.searchPrepare`, which runs behind every other), so the first query of a
+    /// session is quick even when typed at once. One mapped model, released under memory
+    /// pressure (`SearchQueryEncoder`). The intent to search, if it comes first, prepares at
+    /// once and this one withdraws; a shutdown while it waits starts nothing.
+    nonisolated func prepareWhenAdmitted(among scope: [MediaAssetID]) {
+        preparationsContinuation.yield(.admitted(scope))
     }
 
     private func startPreparing() {
         guard preparing == nil else { return }
         let preparations = preparations
         preparing = Task { [weak self] in
-            for await scope in preparations {
+            for await preparation in preparations {
                 guard let self else { return }
-                await prepare(among: scope)
+                await handle(preparation)
+            }
+        }
+    }
+
+    private func handle(_ preparation: Preparation) async {
+        switch preparation {
+        case let .now(scope):
+            admittedPreparation?.cancel()
+            admittedPreparation = nil
+            await prepare(among: scope)
+        case let .admitted(scope):
+            guard preparationsMade == 0, admittedPreparation == nil else { return }
+            admittedPreparation = Task { [weak self, admission] in
+                do {
+                    try await admission.run(.searchPrepare) {
+                        await self?.prepare(among: scope)
+                    }
+                } catch {
+                    // Withdrawn (the intent prepared first) or refused at shutdown: nothing ran.
+                    OtosLog.catalog.noticeOperation("search.prepare", phase: "withdrawn", fields: [:])
+                }
             }
         }
     }
@@ -332,6 +373,8 @@ actor PhotoSearchIndex {
         forwarder?.cancel()
         preparing?.cancel()
         preparing = nil
+        admittedPreparation?.cancel()
+        admittedPreparation = nil
         preparationsContinuation.finish()
         loop?.cancel()
         retry?.cancel()

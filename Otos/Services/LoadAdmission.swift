@@ -16,15 +16,24 @@ nonisolated enum BackgroundLoad: String, CaseIterable, Sendable {
     /// (`ImmichCatalogSync`).
     case immichMirror
     /// The launch's look at the derived folder, and its reconciliation when one is owed
-    /// (`CatalogStore.reconcileDerivedFilesIfOwed`): last, since nothing shows it.
+    /// (`CatalogStore.reconcileDerivedFilesIfOwed`): after every load a view shows.
     case derivedFolder
+    /// Readying the first query (`PhotoSearchIndex.prepareWhenAdmitted`): the text encoder's
+    /// load, the vectors read ahead, the shown scope's slots. It runs last (`runsLast`).
+    case searchPrepare
 
     /// The order loads asked for before the window's first grid run in once it paints: the
     /// worst first click first (People), then the duplicate groups, then the index only a
-    /// search needs, then the pairing nothing shows until it lands, then the derived folder.
-    /// Declaration order.
+    /// search needs, then the pairing nothing shows until it lands, then the derived folder,
+    /// then readying the first search query. Declaration order.
     var launchRank: Int {
         Self.allCases.firstIndex(of: self) ?? Self.allCases.count
+    }
+
+    /// A load that waits behind every other one waiting, whenever it asked: readying a search
+    /// nobody has asked for yet goes after everything a view shows.
+    var runsLast: Bool {
+        self == .searchPrepare
     }
 
     /// The load a query's view cannot show its answer without: a search needs the index, and
@@ -57,8 +66,9 @@ nonisolated extension TaskPriority {
 /// (`op=launch.firstGrid`) — so no load competes with the window's first read. A load asked
 /// for before then waits in `BackgroundLoad.launchRank` order; after it, in the order asked,
 /// so a load that asks again (a People pass after each batch of faces) goes behind the loads
-/// already waiting and never starves them. The load the window's current view needs (`want`)
-/// goes before every other waiting one; it does not stop the one running. `shutdown` refuses
+/// already waiting and never starves them. A load that runs last (`BackgroundLoad.runsLast`)
+/// goes behind every other waiting one, whenever it asked. The load the window's current view
+/// needs (`want`) goes before every other waiting one; it does not stop the one running. `shutdown` refuses
 /// every waiting load and every later request, and grants nothing again.
 nonisolated struct LoadAdmissionMachine: Equatable, Sendable {
     typealias Request = UInt64
@@ -131,7 +141,8 @@ nonisolated struct LoadAdmissionMachine: Equatable, Sendable {
 
     private mutating func grantIfIdle() -> [Effect] {
         guard isOpen, !isShutDown, running == nil, !waiting.isEmpty else { return [] }
-        let index = wanted.flatMap { load in waiting.firstIndex { $0.load == load } } ?? 0
+        let index = wanted.flatMap { load in waiting.firstIndex { $0.load == load } }
+            ?? waiting.firstIndex { !$0.load.runsLast } ?? 0
         let next = waiting.remove(at: index)
         running = next
         return [.grant(next.request, next.load)]

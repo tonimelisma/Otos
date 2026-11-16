@@ -1312,6 +1312,9 @@ extension CatalogWindowViewModel {
         guard startsEnrichment, ownerStartTask == nil, let coordinator = enrichmentCoordinator else {
             return
         }
+        // The first query is readied as the last of the heavy loads, over the scope the first
+        // grid shows; the search field's focus readies it at once if it comes first.
+        photoSearchIndex?.prepareWhenAdmitted(among: state.mediaGrid.orderedAssetIDs)
         // updateViewport is delivered newest-value; the coordinator is the single owner of
         // the priority hint, so this forwards verbatim with no main-actor work.
         viewportForwardingTask = Task { [coordinator, viewportStream] in
