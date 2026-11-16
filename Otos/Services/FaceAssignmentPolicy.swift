@@ -60,30 +60,101 @@ nonisolated struct FaceFact: Sendable, Equatable {
     /// The photo's local capture time (`CaptureLocalTime.seconds`); nil when the photo has
     /// no date. A birthday is midnight UTC of its day, so the two compare day for day.
     let captureSeconds: Double?
-    let embedding: FaceEmbedding
+    /// The face's vector as assignment compares it, at half precision (`FaceVector`).
+    let vector: FaceVector
     let assignment: FaceAssignment
     /// People the user said this face is not (Remove Name).
     let rejected: Set<PersonID>
-    /// The model can tell who this face is (`FaceRecognisability`). A face it cannot is still
-    /// a face, and keeps what the user says of it, but Otos never guesses it, never groups
-    /// it, and never compares another face with it.
-    let isRecognisable: Bool
+
+    init(id: FaceID, captureSeconds: Double?, vector: FaceVector, assignment: FaceAssignment, rejected: Set<PersonID>) {
+        self.id = id
+        self.captureSeconds = captureSeconds
+        self.vector = vector
+        self.assignment = assignment
+        self.rejected = rejected
+    }
 
     init(
         id: FaceID, captureSeconds: Double?, embedding: FaceEmbedding, assignment: FaceAssignment, rejected: Set<PersonID>
     ) {
-        self.id = id
-        self.captureSeconds = captureSeconds
-        self.embedding = embedding
-        self.assignment = assignment
-        self.rejected = rejected
-        isRecognisable = FaceRecognisability.isRecognisable(embedding)
+        self.init(id: id, captureSeconds: captureSeconds, vector: FaceVector(embedding), assignment: assignment, rejected: rejected)
+    }
+
+    /// The model can tell who this face is (`FaceRecognisability`). A face it cannot is still
+    /// a face, and keeps what the user says of it, but Otos never guesses it, never groups
+    /// it, and never compares another face with it.
+    var isRecognisable: Bool {
+        vector.isRecognisable
+    }
+
+    /// The vector widened back to single precision: the values assignment compares.
+    var embedding: FaceEmbedding {
+        vector.embedding
     }
 
     /// The same face with no person: a seed whose group no longer stands is Otos's to decide
     /// again.
     var opened: FaceFact {
-        FaceFact(id: id, captureSeconds: captureSeconds, embedding: embedding, assignment: .open, rejected: rejected)
+        FaceFact(id: id, captureSeconds: captureSeconds, vector: vector, assignment: .open, rejected: rejected)
+    }
+}
+
+/// A face's vector as People holds and compares it: the stored embedding rounded to half
+/// precision, a view into the chunk of `FaceVectors` that holds it, with whether the model
+/// can tell anyone by it decided from the stored single-precision values. Half precision halves
+/// what People keeps resident (103k faces: 105 MB rather than 211 MB); on the owner's 102,978
+/// stored vectors it changed no face's best person, threshold or margin decision in 3,029
+/// faces sampled, the largest similarity moving 9.6e-5
+/// (`docs/research/2026-11-16-people-memory-and-kernel.md`). Assignment widens a block of
+/// vectors to single precision for each matrix product (`copy(into:)`).
+nonisolated struct FaceVector: Sendable, Equatable {
+    let values: ArraySlice<Float16>
+    let isRecognisable: Bool
+
+    init(view values: ArraySlice<Float16>, isRecognisable: Bool) {
+        self.values = values
+        self.isRecognisable = isRecognisable
+    }
+
+    /// `embedding` rounded to half precision, in an array of its own.
+    init(_ embedding: FaceEmbedding) {
+        values = ArraySlice(Self.halves(embedding.values))
+        isRecognisable = FaceRecognisability.isRecognisable(embedding)
+    }
+
+    /// The values widened to single precision: what every comparison reads.
+    var embedding: FaceEmbedding {
+        var widened = [Float](repeating: 0, count: values.count)
+        widened.withUnsafeMutableBufferPointer { copy(into: $0.baseAddress!) }
+        return FaceEmbedding(view: ArraySlice(widened))
+    }
+
+    /// Writes the values, widened to single precision, at `target`.
+    func copy(into target: UnsafeMutablePointer<Float>) {
+        values.withUnsafeBufferPointer { source in
+            guard let base = source.baseAddress else { return }
+            var from = vImage_Buffer(
+                data: UnsafeMutableRawPointer(mutating: base), height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 2
+            )
+            var to = vImage_Buffer(data: target, height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 4)
+            vImageConvert_Planar16FtoPlanarF(&from, &to, 0)
+        }
+    }
+
+    /// `values` rounded to half precision.
+    static func halves(_ values: ArraySlice<Float>) -> [Float16] {
+        var halves = [Float16](repeating: 0, count: values.count)
+        values.withUnsafeBufferPointer { source in
+            halves.withUnsafeMutableBufferPointer { target in
+                guard let from = source.baseAddress, let to = target.baseAddress else { return }
+                var input = vImage_Buffer(
+                    data: UnsafeMutableRawPointer(mutating: from), height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 4
+                )
+                var output = vImage_Buffer(data: to, height: 1, width: vImagePixelCount(source.count), rowBytes: source.count * 2)
+                vImageConvert_PlanarFtoPlanar16F(&input, &output, 0)
+            }
+        }
+        return halves
     }
 }
 
@@ -364,13 +435,11 @@ nonisolated enum FaceAssignmentPolicy {
             let columns = PersonRun(faces: rows.filter { seen.insert(photo($0)).inserted }, birthday: birthday)
             let columnOfPhoto = Dictionary(uniqueKeysWithValues: columns.faces.enumerated().map { (photo($1), $0) })
             BlockedSimilarity(rows: rows, columns: columns.faces).forEachBlock { block, values in
-                values.withUnsafeBufferPointer { buffer in
-                    for row in block {
-                        let start = (row - block.lowerBound) * columns.faces.count
-                        let face = rows[row]
-                        if let best = columns.best(for: face, row: buffer, rowStart: start, skipping: columnOfPhoto[photo(face)]) {
-                            likeness[face.id] = best
-                        }
+                for row in block {
+                    let start = (row - block.lowerBound) * columns.faces.count
+                    let face = rows[row]
+                    if let best = columns.best(for: face, row: values, rowStart: start, skipping: columnOfPhoto[photo(face)]) {
+                        likeness[face.id] = best
                     }
                 }
             }
@@ -415,11 +484,20 @@ nonisolated enum FaceAssignmentPolicy {
 /// One run of chaining: from the anchors, every guessable face given out strongest first,
 /// round by round (`FaceAssignmentPolicy`). Internal so its tests can compare it with the
 /// rules applied one comparison at a time.
+///
+/// Each open face keeps, per person, its best similarity to that person's evidence so far
+/// (`Bests`). Only a best of `kept` or more is kept: a decision reads a best only when it
+/// reaches `threshold`, and a runner-up only when it is within `margin` of a best that does,
+/// so a lower one decides nothing. On the owner's faces a face keeps about 6 of 752 people.
 nonisolated struct Fill {
     /// Every face with a person, anchors included, by index into the faces.
     var assigned: [Int: FaceAssignmentResult.Person]
     /// Guessable faces no person reached, by index into the faces.
     var leftover: [Int]
+
+    /// Below this a best decides nothing (see the type's guide); 0.01 under the lowest value
+    /// a decision reads, so float rounding of `threshold - margin` cannot reach it.
+    static let kept = FaceAssignmentPolicy.threshold - FaceAssignmentPolicy.margin - 0.01
 
     static func run(
         faces: [FaceFact],
@@ -441,51 +519,45 @@ nonisolated struct Fill {
         let rowFaces = rows.map { faces[$0] }
         let rowCaptures = rowFaces.map(\.captureSeconds)
         let rowPhotos = rowFaces.map(\.id.asset)
-        let rejected = rowFaces.map { face in face.rejected.compactMap { slotOf[.existing($0)] } }
-        let bornSlots = people.indices.filter { birthdayOf[$0] != nil }
+        let rejected = rowFaces.map { face in Set(face.rejected.compactMap { slotOf[.existing($0)] }) }
         var assigned = anchors
         var photoPeople: [MediaAssetID: Set<Int>] = [:]
         for (index, person) in anchors {
             photoPeople[faces[index].id.asset, default: []].insert(slotOf[person]!)
         }
-        let count = max(people.count, 1)
-        // `best[row * count + slot]`: the row's best similarity to that person's evidence so
-        // far; -2 before any of it is within reach.
-        var best = [Float](repeating: -2, count: rows.count * count)
+        let layout = RowLayout(captures: rowCaptures)
+        var bests = Bests(rows: rows.count)
         var open = Set(rows.indices)
         var evidence = anchors.keys.filter { faces[$0].isRecognisable }.sorted()
 
-        // The row's best similarity per person, with the people it may not have lowered out
-        // of the way, then two vectorised maxima: assignment asks this of every open row
-        // every round, so it is never a loop over the people. The first maximum wins a tie.
-        var candidates = [Float](repeating: -2, count: count)
+        /// The row's best person and runner-up among those it may have: not rejected, not
+        /// born after it, and, when `excludingPhoto`, not already in its photo. The first
+        /// person in slot order wins a tie, as a vectorised maximum over every slot would.
         func top(_ row: Int, excludingPhoto: Bool) -> (slot: Int, value: Float, second: Float)? {
-            guard !people.isEmpty else { return nil }
-            candidates.replaceSubrange(0 ..< people.count, with: best[row * count ..< row * count + people.count])
-            for slot in rejected[row] {
-                candidates[slot] = -2
-            }
-            if excludingPhoto, let inPhoto = photoPeople[rowPhotos[row]] {
-                for slot in inPhoto {
-                    candidates[slot] = -2
+            let inPhoto = excludingPhoto ? photoPeople[rowPhotos[row]] : nil
+            var best: (slot: Int, value: Float)?
+            var second: Float = -2
+            for (slot, value) in bests.entries(row) {
+                guard !rejected[row].contains(slot), !(inPhoto?.contains(slot) ?? false),
+                      FaceAssignmentPolicy.notBeforeBirthday(rowCaptures[row], birthdayOf[slot])
+                else { continue }
+                if let current = best {
+                    if value > current.value || (value == current.value && slot < current.slot) {
+                        second = current.value
+                        best = (slot, value)
+                    } else {
+                        second = max(second, value)
+                    }
+                } else {
+                    best = (slot, value)
                 }
             }
-            for slot in bornSlots where !FaceAssignmentPolicy.notBeforeBirthday(rowCaptures[row], birthdayOf[slot]) {
-                candidates[slot] = -2
-            }
-            var value: Float = 0
-            var index: vDSP_Length = 0
-            vDSP_maxvi(candidates, 1, &value, &index, vDSP_Length(people.count))
-            guard value > -2 else { return nil }
-            candidates[Int(index)] = -2
-            var second: Float = 0
-            vDSP_maxv(candidates, 1, &second, vDSP_Length(people.count))
-            return (Int(index), value, second)
+            return best.map { ($0.slot, $0.value, second) }
         }
 
         while !evidence.isEmpty, !open.isEmpty {
             raise(
-                &best, count: count, rows: rowFaces, captures: rowCaptures, open: open.sorted(),
+                &bests, layout: layout, rows: rowFaces, open: open, people: people.count,
                 evidence: evidence.map { (faces[$0], slotOf[assigned[$0]!]!) }, birthdays: birthdayOf
             )
             let ranked = open.compactMap { row -> (row: Int, slot: Int, value: Float)? in
@@ -528,88 +600,212 @@ nonisolated struct Fill {
         }
     }
 
-    /// Raises each open row's best similarity per person with the new evidence within reach:
-    /// one matrix product for the round, then one vectorised maximum per person and row.
-    /// Every round visits each open row once per person with new evidence (75 million visits
-    /// a pass on the owner's 89,474 faces and 682 people), so a visit is pointer reads and
-    /// the one reach scan, `PersonRun.best(in:)`, with no copy or allocation.
+    /// Raises each open face's kept bests with the round's new evidence within its reach.
+    ///
+    /// The open faces are taken in blocks of `FaceAssignmentPolicy.blockRows`, in layout order
+    /// (`RowLayout`), and the evidence in chunks of `evidenceChunk` faces; each block and
+    /// chunk is one matrix product, evidence by face, so every evidence face's similarities to
+    /// the block lie in one contiguous row. For each evidence face the rows that reach it are
+    /// at most two runs of the block — the rows within `window` of it, and the rows for whom
+    /// its person was an adult with the undated rows after them — and one vectorised maximum
+    /// per run raises that person's column of the block. The work per round is one visit per
+    /// evidence face and block, never one per face and person, and nothing it allocates grows
+    /// with the faces or the people.
     private static func raise(
-        _ best: inout [Float],
-        count: Int,
+        _ bests: inout Bests,
+        layout: RowLayout,
         rows: [FaceFact],
-        captures: [Double?],
-        open: [Int],
+        open: Set<Int>,
+        people: Int,
         evidence: [(face: FaceFact, slot: Int)],
         birthdays: [Double?]
     ) {
+        let dimensions = FaceEmbeddingModel.dimensions
+        // The evidence by person, each person's laid out as `PersonRun` lays it out.
         let bySlot = Dictionary(grouping: evidence, by: \.slot)
-        var runs: [PersonRun] = []
-        var slots: [Int] = []
         var columns: [FaceFact] = []
+        var columnRun: [Int] = []
+        var runSlots: [Int] = []
         for slot in bySlot.keys.sorted() {
-            let run = PersonRun(faces: bySlot[slot]!.map(\.face), birthday: birthdays[slot], start: columns.count)
-            runs.append(run)
-            slots.append(slot)
+            let run = PersonRun(faces: bySlot[slot]!.map(\.face), birthday: birthdays[slot])
             columns += run.faces
+            columnRun += Array(repeating: runSlots.count, count: run.faces.count)
+            runSlots.append(slot)
         }
-        // Per cell, only pointer reads: an array subscript is a checked call at -Onone, the
-        // configuration the installed app runs (ADR 0030).
-        var layouts: [RunLayout] = []
-        var times: [Double] = []
-        for (run, slot) in zip(runs, slots) {
-            layouts.append(RunLayout(
-                slot: slot, start: run.start, count: run.faces.count, dated: run.times.count,
-                timeStart: times.count, birthday: run.birthday
-            ))
-            times += run.times
-        }
-        let openRows = open.map { (row: $0, capture: captures[$0]) }
-        BlockedSimilarity(rows: open.map { rows[$0] }, columns: columns).forEachBlock { range, values in
-            values.withUnsafeBufferPointer { values in
-                times.withUnsafeBufferPointer { times in
-                    layouts.withUnsafeBufferPointer { layouts in
-                        openRows.withUnsafeBufferPointer { openRows in
-                            best.withUnsafeMutableBufferPointer { best in
-                                guard let values = values.baseAddress, let firstRun = layouts.baseAddress,
-                                      let openRows = openRows.baseAddress, let best = best.baseAddress
-                                else { return }
-                                let lastRun = firstRun + layouts.count
-                                let allTimes = times.baseAddress
-                                for local in range {
-                                    let open = (openRows + local).pointee
-                                    let similarities = values + (local - range.lowerBound) * columns.count
-                                    var run = firstRun
-                                    while run < lastRun {
-                                        let layout = run.pointee
-                                        run += 1
-                                        guard let value = PersonRun.best(
-                                            in: similarities + layout.start,
-                                            times: allTimes?.advanced(by: layout.timeStart),
-                                            dated: layout.dated, count: layout.count,
-                                            capture: open.capture, birthday: layout.birthday
-                                        ) else { continue }
-                                        let cell = best + open.row * count + layout.slot
-                                        if value > cell.pointee {
-                                            cell.pointee = value
-                                        }
-                                    }
-                                }
+        let columnTimes = columns.map(\.captureSeconds)
+        let placed = open.map { layout.place[$0] }.sorted()
+        let blockRows = FaceAssignmentPolicy.blockRows
+        var block = [Float](repeating: 0, count: blockRows * dimensions)
+        var blockT = [Float](repeating: 0, count: blockRows * dimensions)
+        var chunk = [Float](repeating: 0, count: evidenceChunk * dimensions)
+        var products = [Float](repeating: 0, count: evidenceChunk * blockRows)
+        var maxima = [Float](repeating: -2, count: runSlots.count * blockRows)
+        var adultStart = [Int](repeating: -1, count: runSlots.count)
+        var start = 0
+        while start < placed.count {
+            let count = min(blockRows, placed.count - start)
+            let positions = placed[start ..< start + count]
+            let datedCount = positions.prefix { $0 < layout.dated }.count
+            let blockLow = positions.prefix(datedCount).map { layout.low[$0] }
+            let blockHigh = positions.prefix(datedCount).map { layout.high[$0] }
+            let blockCaptures = positions.prefix(datedCount).map { layout.captures[$0] }
+            for (k, position) in positions.enumerated() {
+                copy(rows[layout.order[position]].vector, into: &block, row: k)
+            }
+            vDSP_mtrans(block, 1, &blockT, 1, vDSP_Length(dimensions), vDSP_Length(count))
+            vDSP.fill(&maxima, with: -2)
+            for index in adultStart.indices {
+                adultStart[index] = -1
+            }
+            var chunkStart = 0
+            while chunkStart < columns.count {
+                let chunkCount = min(evidenceChunk, columns.count - chunkStart)
+                for j in 0 ..< chunkCount {
+                    copy(columns[chunkStart + j].vector, into: &chunk, row: j)
+                }
+                vDSP_mmul(chunk, 1, blockT, 1, &products, 1, vDSP_Length(chunkCount), vDSP_Length(count), vDSP_Length(dimensions))
+                products.withUnsafeBufferPointer { products in
+                    maxima.withUnsafeMutableBufferPointer { maxima in
+                        guard let products = products.baseAddress, let maxima = maxima.baseAddress else { return }
+                        for j in 0 ..< chunkCount {
+                            let column = chunkStart + j
+                            let run = columnRun[column]
+                            let into = maxima + run * blockRows
+                            let from = products + j * count
+                            guard let time = columnTimes[column] else {
+                                raise(into, from, 0 ..< count)
+                                continue
+                            }
+                            if adultStart[run] < 0 {
+                                adultStart[run] = adults(blockCaptures, birthday: birthdays[runSlots[run]])
+                            }
+                            // Rows within the window of this face: the dated rows whose high
+                            // edge is at or past it and whose low edge is not past it.
+                            let low = partition(blockHigh) { $0 < time }
+                            let high = partition(blockLow) { $0 <= time }
+                            let adults = adultStart[run]
+                            if adults <= high {
+                                raise(into, from, min(low, adults) ..< count)
+                            } else {
+                                raise(into, from, low ..< high)
+                                raise(into, from, adults ..< count)
                             }
                         }
                     }
                 }
+                chunkStart += chunkCount
             }
+            for (run, slot) in runSlots.enumerated() {
+                maxima.withUnsafeBufferPointer { maxima in
+                    guard let base = maxima.baseAddress else { return }
+                    let values = base + run * blockRows
+                    var top: Float = 0
+                    vDSP_maxv(values, 1, &top, vDSP_Length(count))
+                    guard top >= kept else { return }
+                    for k in 0 ..< count where values[k] >= kept {
+                        bests.raise(layout.order[positions[positions.startIndex + k]], slot: slot, to: values[k])
+                    }
+                }
+            }
+            start += count
         }
     }
 
-    /// Where one person's new evidence sits among a round's columns and capture times.
-    private struct RunLayout {
-        let slot: Int
-        let start: Int
-        let count: Int
-        let dated: Int
-        let timeStart: Int
-        let birthday: Double?
+    /// Evidence faces per matrix product: with a block of rows, a product of at most 4 MB.
+    static let evidenceChunk = 2048
+
+    /// The first of `captures` (ascending) for whom a person born at `birthday` was an adult;
+    /// all of them when there is no birthday, which makes no one an adult.
+    private static func adults(_ captures: [Double], birthday: Double?) -> Int {
+        guard birthday != nil else { return captures.count }
+        return partition(captures) { !FaceAssignmentPolicy.isAdult(at: $0, birthday: birthday) }
+    }
+
+    /// The first index of `values` for which `before` is false; `before` holds for a prefix.
+    private static func partition(_ values: [Double], _ before: (Double) -> Bool) -> Int {
+        var low = 0, high = values.count
+        while low < high {
+            let middle = (low + high) / 2
+            if before(values[middle]) {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        return low
+    }
+
+    /// Raises `into` to the elementwise maximum of itself and `from` over `part`.
+    private static func raise(_ into: UnsafeMutablePointer<Float>, _ from: UnsafePointer<Float>, _ part: Range<Int>) {
+        guard !part.isEmpty else { return }
+        vDSP_vmax(into + part.lowerBound, 1, from + part.lowerBound, 1, into + part.lowerBound, 1, vDSP_Length(part.count))
+    }
+
+    private static func copy(_ vector: FaceVector, into matrix: inout [Float], row: Int) {
+        matrix.withUnsafeMutableBufferPointer { target in
+            guard let to = target.baseAddress else { return }
+            vector.copy(into: to + row * FaceEmbeddingModel.dimensions)
+        }
+    }
+}
+
+/// Each open face's kept bests (`Fill.kept` or more), per person slot: a few a face, so a
+/// face holds a short list rather than a value for every person.
+nonisolated struct Bests {
+    private var slots: [[Int32]]
+    private var values: [[Float]]
+
+    init(rows: Int) {
+        slots = Array(repeating: [], count: rows)
+        values = Array(repeating: [], count: rows)
+    }
+
+    func entries(_ row: Int) -> Zip2Sequence<LazyMapSequence<[Int32], Int>, [Float]> {
+        zip(slots[row].lazy.map(Int.init), values[row])
+    }
+
+    /// Raises the row's best for `slot` to `value`.
+    mutating func raise(_ row: Int, slot: Int, to value: Float) {
+        let slot = Int32(slot)
+        if let index = slots[row].firstIndex(of: slot) {
+            values[row][index] = max(values[row][index], value)
+        } else {
+            slots[row].append(slot)
+            values[row].append(value)
+        }
+    }
+}
+
+/// The open faces laid out by capture time, so the faces a dated face of a person reaches —
+/// those taken within `window` of it, those for whom the person was an adult, and the undated
+/// — are at most two runs of consecutive rows. Dated faces first, oldest first, then the
+/// undated; within one time, by row.
+nonisolated struct RowLayout {
+    /// Rows in layout order.
+    let order: [Int]
+    /// Each row's place in `order`.
+    let place: [Int]
+    /// How many of `order` are dated.
+    let dated: Int
+    /// For the dated, in layout order: capture − window and capture + window, the same
+    /// expressions `PersonRun.best` compares, so a reach is decided by the same arithmetic.
+    let low: [Double]
+    let high: [Double]
+    let captures: [Double]
+
+    init(captures rowCaptures: [Double?]) {
+        let datedRows = rowCaptures.indices.filter { rowCaptures[$0] != nil }
+            .sorted { (rowCaptures[$0]!, $0) < (rowCaptures[$1]!, $1) }
+        order = datedRows + rowCaptures.indices.filter { rowCaptures[$0] == nil }
+        var place = [Int](repeating: 0, count: rowCaptures.count)
+        for (index, row) in order.enumerated() {
+            place[row] = index
+        }
+        self.place = place
+        dated = datedRows.count
+        captures = datedRows.map { rowCaptures[$0]! }
+        low = captures.map { $0 - FaceAssignmentPolicy.window }
+        high = captures.map { $0 + FaceAssignmentPolicy.window }
     }
 }
 
@@ -716,10 +912,9 @@ nonisolated struct PersonRun: Sendable {
 
 /// Ranks faces against the people of the last assignment (ADR 0047): for each face, the
 /// people it could be, most likely first, each by its best similarity to that person's faces
-/// within reach. Built once per assignment from every face with a person the ranking may
-/// offer; ranking a few faces is then one matrix product.
+/// within reach. Built from every face with a person the ranking may offer; ranking a few
+/// faces compares them with one person's faces at a time.
 nonisolated struct FaceRanker: Sendable {
-    private let columns: [FaceFact]
     private let runs: [(person: PersonID, run: PersonRun)]
     private let birthdays: [PersonID: Double]
 
@@ -734,99 +929,106 @@ nonisolated struct FaceRanker: Sendable {
                 byPerson[person, default: []].append(face)
             }
         }
-        var columns: [FaceFact] = []
-        var runs: [(person: PersonID, run: PersonRun)] = []
-        for person in byPerson.keys.sorted() {
-            let run = PersonRun(faces: byPerson[person]!, birthday: birthdays[person], start: columns.count)
-            runs.append((person, run))
-            columns += run.faces
-        }
-        self.columns = columns
-        self.runs = runs
+        runs = byPerson.keys.sorted().map { person in (person, PersonRun(faces: byPerson[person]!, birthday: birthdays[person])) }
         self.birthdays = birthdays
     }
 
     /// For each face, the people it could be, most likely first: its own person, people in
     /// `photoPeople` of its photo, people it was said not to be and people born after it are
-    /// left out.
+    /// left out. One person's faces at a time, so ranking holds one person's vectors and never
+    /// a copy of everyone's.
     func candidates(
         for faces: [FaceFact],
         photoPeople: [MediaAssetID: Set<PersonID>]
     ) -> [FaceID: [FaceCandidate]] {
-        var out: [FaceID: [FaceCandidate]] = [:]
-        BlockedSimilarity(rows: faces, columns: columns).forEachBlock { range, values in
-            values.withUnsafeBufferPointer { buffer in
-                for row in range {
-                    let face = faces[row]
-                    let excluded = (photoPeople[face.id.asset] ?? []).union(face.rejected)
-                        .union(face.assignment.person.map { [$0] } ?? [])
-                    let start = (row - range.lowerBound) * columns.count
-                    var ranked: [FaceCandidate] = []
-                    for (person, run) in runs where !excluded.contains(person)
-                        && FaceAssignmentPolicy.notBeforeBirthday(face.captureSeconds, birthdays[person])
-                    {
-                        // A face is only in its own person's run, which `excluded` already
-                        // leaves out: the ranker and the faces come from one snapshot.
-                        if let best = run.best(for: face, row: buffer, rowStart: start) {
-                            ranked.append(FaceCandidate(person: person, similarity: best))
-                        }
+        let excluded = faces.map { face in
+            (photoPeople[face.id.asset] ?? []).union(face.rejected).union(face.assignment.person.map { [$0] } ?? [])
+        }
+        var ranked = [[FaceCandidate]](repeating: [], count: faces.count)
+        for (person, run) in runs {
+            let asked = faces.indices.filter {
+                !excluded[$0].contains(person)
+                    && FaceAssignmentPolicy.notBeforeBirthday(faces[$0].captureSeconds, birthdays[person])
+            }
+            guard !asked.isEmpty else { continue }
+            BlockedSimilarity(rows: asked.map { faces[$0] }, columns: run.faces).forEachBlock { block, values in
+                for row in block {
+                    // A face is only in its own person's run, which `excluded` already leaves
+                    // out: the ranker and the faces come from one read.
+                    if let best = run.best(for: faces[asked[row]], row: values, rowStart: (row - block.lowerBound) * run.faces.count) {
+                        ranked[asked[row]].append(FaceCandidate(person: person, similarity: best))
                     }
-                    out[face.id] = ranked.sorted { ($0.similarity, $1.person) > ($1.similarity, $0.person) }
                 }
             }
+        }
+        var out: [FaceID: [FaceCandidate]] = [:]
+        for (index, face) in faces.enumerated() {
+            out[face.id] = ranked[index].sorted { ($0.similarity, $1.person) > ($1.similarity, $0.person) }
         }
         return out
     }
 }
 
 /// Cosine similarities of `rows` against `columns`, unit-length embeddings, computed with
-/// Accelerate one block of rows at a time so a large library never holds the whole matrix.
+/// Accelerate a block of rows at a time into one reused buffer, so a large library never holds
+/// the whole matrix and a pass allocates the same few megabytes however many faces it holds:
+/// the columns once, transposed, and one block of rows and its products.
 nonisolated struct BlockedSimilarity {
-    let rowMatrix: [Float]
-    let columnsTransposed: [Float]
-    let rowCount: Int
+    private let rows: [FaceFact]
+    private let columnsTransposed: [Float]
     let columnCount: Int
+    /// Rows per block: `FaceAssignmentPolicy.blockRows`, fewer when the columns are many,
+    /// so a block's products stay within `blockValues`.
+    private let blockRows: Int
     static let dimensions = FaceEmbeddingModel.dimensions
+    /// The most products a block holds: 16 MB.
+    static let blockValues = 4 * 1024 * 1024
 
     init(rows: [FaceFact], columns: [FaceFact]) {
-        rowCount = rows.count
+        self.rows = rows
         columnCount = columns.count
-        rowMatrix = rows.flatMap(\.embedding.values)
+        blockRows = max(1, min(FaceAssignmentPolicy.blockRows, Self.blockValues / max(columns.count, 1)))
         var transposed = [Float](repeating: 0, count: columns.count * Self.dimensions)
-        let flat = columns.flatMap(\.embedding.values)
-        if !columns.isEmpty {
-            vDSP_mtrans(flat, 1, &transposed, 1, vDSP_Length(Self.dimensions), vDSP_Length(columns.count))
+        var widened = [Float](repeating: 0, count: Self.dimensions)
+        transposed.withUnsafeMutableBufferPointer { target in
+            guard let base = target.baseAddress else { return }
+            for (column, face) in columns.enumerated() {
+                widened.withUnsafeMutableBufferPointer { row in
+                    guard let from = row.baseAddress else { return }
+                    face.vector.copy(into: from)
+                    vDSP_mmov(from, base + column, 1, vDSP_Length(Self.dimensions), 1, vDSP_Length(columns.count))
+                }
+            }
         }
         columnsTransposed = transposed
     }
 
-    /// Calls `body(rows, values)` for each block of at most `FaceAssignmentPolicy.blockRows`
-    /// rows, in order; `values` holds those rows' similarities to every column, row-major.
-    /// Every row is visited even with no columns, when `values` is empty.
-    func forEachBlock(_ body: (Range<Int>, [Float]) -> Void) {
-        guard rowCount > 0 else { return }
+    /// Calls `body(rows, values)` for each block of rows, in order; `values` holds those rows'
+    /// similarities to every column, row-major, and is reused by the next block. Every row is
+    /// visited even with no columns, when `values` is empty.
+    func forEachBlock(_ body: (Range<Int>, UnsafeBufferPointer<Float>) -> Void) {
+        guard !rows.isEmpty else { return }
+        var block = [Float](repeating: 0, count: blockRows * Self.dimensions)
+        var products = [Float](repeating: 0, count: columnCount > 0 ? blockRows * columnCount : 0)
         var start = 0
-        while start < rowCount {
-            let count = min(FaceAssignmentPolicy.blockRows, rowCount - start)
-            body(start ..< start + count, products(start: start, count: count))
-            start += count
-        }
-    }
-
-    private func products(start: Int, count: Int) -> [Float] {
-        guard columnCount > 0 else { return [] }
-        var out = [Float](repeating: 0, count: count * columnCount)
-        rowMatrix.withUnsafeBufferPointer { rows in
-            columnsTransposed.withUnsafeBufferPointer { columns in
-                guard let rowBase = rows.baseAddress, let columnBase = columns.baseAddress else { return }
+        while start < rows.count {
+            let count = min(blockRows, rows.count - start)
+            if columnCount > 0 {
+                block.withUnsafeMutableBufferPointer { target in
+                    guard let to = target.baseAddress else { return }
+                    for k in 0 ..< count {
+                        rows[start + k].vector.copy(into: to + k * Self.dimensions)
+                    }
+                }
                 vDSP_mmul(
-                    rowBase + start * Self.dimensions, 1,
-                    columnBase, 1,
-                    &out, 1,
+                    block, 1, columnsTransposed, 1, &products, 1,
                     vDSP_Length(count), vDSP_Length(columnCount), vDSP_Length(Self.dimensions)
                 )
             }
+            products.withUnsafeBufferPointer { values in
+                body(start ..< start + count, UnsafeBufferPointer(rebasing: values[0 ..< count * columnCount]))
+            }
+            start += count
         }
-        return out
     }
 }

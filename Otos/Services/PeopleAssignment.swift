@@ -387,7 +387,7 @@ extension PeopleAssignment {
     private static func assign(_ read: PeopleSnapshot, vectors: FaceVectors) async -> (FaceAssignmentPlan, missing: Int) {
         let facts = read.facts(with: vectors)
         // A malformed vector is held as such: its face is left out on purpose, not missing.
-        let missing = read.faces.count { vectors.embedding($0.vector) == nil && !vectors.malformed.contains($0.vector) }
+        let missing = read.faces.count { vectors.vector($0.vector) == nil && !vectors.malformed.contains($0.vector) }
         return (FaceAssignmentPlan.assignment(of: read, facts: facts), missing)
     }
 
@@ -539,10 +539,10 @@ nonisolated enum PeopleStateBuilder {
 
 /// Face vectors guide
 ///
-/// The face vectors People holds (ADR 0047): every stored face's embedding, read from the
-/// catalog once and afterwards only as new readings write them (`FaceEmbeddingSQL`), kept in
-/// fixed-size chunks of contiguous rows so an embedding handed out is a view into its chunk,
-/// never a copy.
+/// The face vectors People holds (ADR 0047): every stored face's embedding at half precision
+/// (`FaceVector`), read from the catalog once and afterwards only as new readings write them
+/// (`FaceEmbeddingSQL`), kept in fixed-size chunks of contiguous rows so a vector handed out is
+/// a view into its chunk, never a copy: about 105 MB for the owner's 103k faces.
 ///
 /// - **Reading:** `owed` is the number above which the catalog may hold vectors this does not.
 ///   `CatalogStore.faceEmbeddings(after:limit:)` reads them `pageSize` at a time, each page its
@@ -570,8 +570,8 @@ nonisolated struct FaceVectors: Sendable {
     static let chunkRows = 4096
     private static let dimensions = FaceEmbeddingModel.dimensions
 
-    private var chunks: [[Float]] = []
-    /// Each vector's chunk and row.
+    private var chunks: [[Float16]] = []
+    /// Each vector's chunk and row, and whether the model can tell anyone by it.
     private var places: [Int64: Place] = [:]
     private var emptyRows = 0
     /// The vectors whose bytes hold no embedding.
@@ -582,6 +582,7 @@ nonisolated struct FaceVectors: Sendable {
     private struct Place: Sendable {
         let chunk: Int
         let row: Int
+        let isRecognisable: Bool
     }
 
     /// The vectors held.
@@ -589,11 +590,11 @@ nonisolated struct FaceVectors: Sendable {
         places.count
     }
 
-    /// The face's embedding, a view into its chunk; nil when the vector is not held.
-    func embedding(_ vector: Int64) -> FaceEmbedding? {
+    /// The face's vector, a view into its chunk; nil when the vector is not held.
+    func vector(_ vector: Int64) -> FaceVector? {
         guard let place = places[vector] else { return nil }
         let start = place.row * Self.dimensions
-        return FaceEmbedding(view: chunks[place.chunk][start ..< start + Self.dimensions])
+        return FaceVector(view: chunks[place.chunk][start ..< start + Self.dimensions], isRecognisable: place.isRecognisable)
     }
 
     /// Appends the rows of a page read in number order above `owed`; rows at or below it are
@@ -605,19 +606,19 @@ nonisolated struct FaceVectors: Sendable {
                 malformed.insert(read.vector)
                 continue
             }
-            append(read.vector, embedding)
+            append(read.vector, FaceVector(embedding))
         }
     }
 
-    private mutating func append(_ vector: Int64, _ embedding: FaceEmbedding) {
+    private mutating func append(_ vector: Int64, _ face: FaceVector) {
         if chunks.isEmpty || chunks[chunks.count - 1].count == Self.chunkRows * Self.dimensions {
-            var chunk: [Float] = []
+            var chunk: [Float16] = []
             chunk.reserveCapacity(Self.chunkRows * Self.dimensions)
             chunks.append(chunk)
         }
         let chunk = chunks.count - 1
-        places[vector] = Place(chunk: chunk, row: chunks[chunk].count / Self.dimensions)
-        chunks[chunk].append(contentsOf: embedding.values)
+        places[vector] = Place(chunk: chunk, row: chunks[chunk].count / Self.dimensions, isRecognisable: face.isRecognisable)
+        chunks[chunk].append(contentsOf: face.values)
     }
 
     /// Keeps only `vectors`, the ones stored faces name.
@@ -631,8 +632,8 @@ nonisolated struct FaceVectors: Sendable {
         guard emptyRows * 4 > places.count + emptyRows else { return }
         var compacted = FaceVectors()
         for vector in places.keys.sorted() {
-            if let embedding = embedding(vector) {
-                compacted.append(vector, embedding)
+            if let face = self.vector(vector) {
+                compacted.append(vector, face)
             }
         }
         compacted.malformed = malformed

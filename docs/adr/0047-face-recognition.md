@@ -287,6 +287,17 @@ grouping had put with the right child.
   anchors, so moving one face moves the guesses reached through it (owner decision,
   2026-11-12). From a cold start, ten moves left nothing wrong on the owner's
   labels.
+- **The kernel and its memory:** a face keeps, per person, only a best of 0.264 or more (a
+  lower one decides nothing: a decision reads a best at the threshold and a runner-up within the
+  margin of it); on the owner's faces that is about six people of 752. Each round raises those
+  bests a block of 512 faces and a chunk of 2,048 evidence faces at a time, the faces in capture
+  order so the faces an evidence face reaches are at most two runs of the block, with one
+  vectorised maximum per evidence face and run; its buffers are reused. People holds the
+  vectors at half precision (105 MB for 103k faces): on the owner's 102,978 vectors it changed
+  no best person, threshold or margin decision in 3,029 faces sampled
+  (`docs/research/2026-11-16-people-memory-and-kernel.md`). Rejected: the dense table of every
+  face's best per person (310 MB on the owner's catalog, rebuilt every run of chaining), and
+  single precision resident (211 MB, against People's share of a 700 MB app).
 - **Settles on its own output:** assignment reads only the anchors, so run on what it wrote it
   writes nothing; the hash of its inputs says when it need not run at all (Work and placement).
 - **A new reading** of the same source keeps the user's word: each act, and each seed, moves

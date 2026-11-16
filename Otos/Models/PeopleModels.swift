@@ -76,8 +76,8 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         /// The face as assignment compares it, with its vector; nil when the vector is not
         /// held or holds no embedding.
         func fact(with vectors: FaceVectors) -> FaceFact? {
-            vectors.embedding(vector).map {
-                FaceFact(id: id, captureSeconds: captureSeconds, embedding: $0, assignment: assignment, rejected: rejected)
+            vectors.vector(vector).map {
+                FaceFact(id: id, captureSeconds: captureSeconds, vector: $0, assignment: assignment, rejected: rejected)
             }
         }
     }
