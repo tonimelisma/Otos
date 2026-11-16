@@ -241,9 +241,10 @@ Adjacent decisions requiring separate ADRs or specs:
    disk growth macOS has not yet evicted. A download that would take the volume below
    the free-space floor is not started: `MaterializationCoordinator` reads capacity
    off the actor for background- and device-priority work, returns
-   `insufficientLocalSpace`, and the schedule gives a cloud row's claim back and offers
-   it again after `spaceRecheck` (60 s, `time: poll` — macOS reports no free-space
-   change at an app-defined threshold). Interactive and command work does not wait for
+   `insufficientLocalSpace`, and the schedule holds the cloud row, with its claim, and
+   offers it again after `spaceRecheck` (60 s, `time: poll` — macOS reports no free-space
+   change at an app-defined threshold). A held row is not outstanding, so it holds back
+   neither a local row nor a device seed. Interactive and command work does not wait for
    the floor. The catalog is already media-only, so non-media is never downloaded.
 
 8. **Separate enrichment and materialization owners.** `EnrichmentCoordinator`
@@ -331,16 +332,26 @@ Adjacent decisions requiring separate ADRs or specs:
    drain, for example) releases the claim without consuming a retry attempt: it is
    not a signal about the provider's ability to materialize the asset. Ordinary
    background failure retries in-window through a capped exponential schedule
-   (`[15, 60, 300, 900]` seconds); once that schedule is exhausted the claim releases
-   from the 32-item working window and pacing continues through a small process-local
-   ledger (identity → earliest reclaim time, attempt count, and the `sourceSize`
-   fragment of its `(size, mtime)` source signature) so a permanently-failing
-   population cannot hold claim-window capacity forever the way an unbounded in-window
-   retry would. The ledger is consulted when Store re-offers a claim: a candidate whose
-   earliest-reclaim time has not arrived is deferred (its claim released back) unless
-   its recorded source size no longer matches, which resets pacing immediately. The
-   ledger holds no work payload and resets on success, source-signature change, or
-   process restart (it is in-memory only). Device staging retries remain capped at
+   (`[15, 60, 300, 900]` seconds); once that schedule is exhausted the row leaves the
+   32-item working window and is held, with its claim, for `ledgerPacing` (900 s,
+   `time: backoff`), then starts a fresh set of retries. A claimed row the hand-off has no
+   slot for is held the same way, with no deadline, and handed off when a slot frees.
+   **The blocked state is the schedule's, not rediscovered by the Store** (plan 0116): a
+   row held by a full hand-off, the free-space floor or a failing download was claimed,
+   found blocked and given back on every pass — on the owner's Mac, hundreds of
+   `claimedEnrichmentCandidates` write transactions a session, with writer waits up to
+   1.1 s behind them, while nothing was imported. A held row keeps its claim, so the Store
+   never offers it again until it is handed off, and a background claim that found nothing
+   is not asked again until a Store change or a claim the coordinator gave back moves its
+   inputs (`claimInputsRevision`): an empty claim is still a write transaction, and an
+   idle coordinator writes nothing (`BackgroundOwnersIdleTests`). A row whose source sends
+   the original only for the user's work, its ranges not served now, is paced through a
+   small process-local ledger (identity → earliest reclaim time, attempt count, and the
+   `sourceSize` fragment of its `(size, mtime)` source signature), consulted when Store
+   re-offers a claim: a candidate whose earliest-reclaim time has not arrived is deferred
+   (its claim released back) unless its recorded source size no longer matches, which
+   resets pacing immediately. The ledger holds no work payload and resets on success,
+   source-signature change, or process restart (it is in-memory only). Device staging retries remain capped at
    3 in-window attempts (unbounded for the `insufficientLocalSpace` waiting condition)
    and never enter the ledger, since staged device seeds hold no Store claim.
 

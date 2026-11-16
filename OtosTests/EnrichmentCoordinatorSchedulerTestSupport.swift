@@ -9,23 +9,16 @@ struct TestEnrichmentReadinessChecker: EnrichmentReadinessChecking, Sendable {
     }
 }
 
-/// A schedule whose ledger paces each row, built through the transitions a background
-/// materialization takes when its last in-window retry fails. The rows hold no claim in
-/// it, so a coordinator started from it owes the Store nothing for them.
+/// A schedule whose ledger paces each row, as it paces a row whose source sends the original
+/// only for the user's work (`EnrichmentSchedule.pace`). The rows hold no claim in it, so a
+/// coordinator started from it owes the Store nothing for them.
 func pacedSchedule(
     _ rows: [(id: MediaAssetID, sourceSize: Int64?)],
     now: ContinuousClock.Instant = .now
 ) -> EnrichmentSchedule {
     var schedule = EnrichmentSchedule(retrySchedule: .production)
-    let lastAttempt = EnrichmentRetrySchedule.production.backgroundDownloadDelays.count
     for row in rows {
-        let work = EnrichmentCoordinator.DownloadWork(
-            id: row.id, url: row.id.fileURL, sourceSize: row.sourceSize, captureLocalTime: nil,
-            isVideo: false, attemptCount: lastAttempt
-        )
-        schedule.demand(work, ownsStoreClaim: false)
-        _ = schedule.takeSubmissions(globalLimit: .max, backgroundPerRoot: .max, viewport: [], now: now)
-        _ = schedule.finish(work, outcome: .requestFailed, now: now)
+        schedule.pace(row.id, sourceSize: row.sourceSize, now: now)
     }
     return schedule
 }

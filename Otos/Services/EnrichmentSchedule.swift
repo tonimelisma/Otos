@@ -55,12 +55,20 @@ nonisolated struct EnrichmentSchedule: Sendable {
     typealias DownloadWork = EnrichmentCoordinator.DownloadWork
     typealias RetryLedgerEntry = EnrichmentCoordinator.RetryLedgerEntry
 
-    /// One row's outstanding materialization: the transfer it waits for or has in flight,
-    /// and whether it holds the row's Store enrichment claim (a device seed holds none).
+    /// One row's materialization: the transfer it waits for or has in flight, and whether it
+    /// holds the row's Store enrichment claim (a device seed holds none).
+    ///
+    /// A held demand is one the hand-off cannot take now — no transfer slot was free when it
+    /// was claimed, the free-space floor turned it away, or its in-window retries are spent and
+    /// it waits out the pacing — and it keeps its Store claim while it waits. The blocked
+    /// state lives here, with the owner of the hand-off, so the row is not claimed and given
+    /// back on every pass to rediscover it, a claim write and a release write each time. A held demand
+    /// is not outstanding: it does not stop a device seed or a local row from being admitted.
     struct Materialization: Equatable, Sendable {
         var work: DownloadWork
         let ownsStoreClaim: Bool
         var isInFlight: Bool
+        var isHeld = false
     }
 
     /// What became of a finished materialization.
@@ -106,8 +114,9 @@ nonisolated struct EnrichmentSchedule: Sendable {
 
     // MARK: - Materialization demands
 
+    /// The demands the hand-off has taken: in flight, or waiting for a slot it promised.
     var outstandingCount: Int {
-        materializations.count
+        materializations.values.count { !$0.isHeld }
     }
 
     var inFlightCount: Int {
@@ -116,6 +125,11 @@ nonisolated struct EnrichmentSchedule: Sendable {
 
     var waitingCount: Int {
         outstandingCount - inFlightCount
+    }
+
+    /// The demands held until a slot frees, the floor lets them through, or their pacing ends.
+    var heldCount: Int {
+        materializations.values.count(where: \.isHeld)
     }
 
     func hasDemand(for id: MediaAssetID) -> Bool {
@@ -135,6 +149,12 @@ nonisolated struct EnrichmentSchedule: Sendable {
     /// demand finished is demanded afresh.
     mutating func demand(_ work: DownloadWork, ownsStoreClaim: Bool) {
         materializations[work.id] = Materialization(work: work, ownsStoreClaim: ownsStoreClaim, isInFlight: false)
+    }
+
+    /// Holds a claimed row the hand-off has no slot for now: it keeps its claim and is handed
+    /// off when a slot frees (`takeSubmissions`), never claimed and given back to wait.
+    mutating func hold(_ work: DownloadWork) {
+        materializations[work.id] = Materialization(work: work, ownsStoreClaim: true, isInFlight: false, isHeld: true)
     }
 
     /// Drops the demands under `rootPath` not yet handed to the materializer and returns
@@ -179,6 +199,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
                 continue
             }
             materializations[work.id]?.isInFlight = true
+            materializations[work.id]?.isHeld = false
             selected.append(work)
             available -= 1
         }
@@ -200,17 +221,16 @@ nonisolated struct EnrichmentSchedule: Sendable {
             return Settlement(disposition: .cancelled, releasesStoreClaim: record.ownsStoreClaim)
         }
         if outcome == .insufficientLocalSpace, !work.isDeviceStaging {
-            // A cloud download held by the free-space floor spends no attempt and gives
-            // its claim back, so enrichment of files already local is not stuck behind a
-            // full disk; the ledger offers the row again after the recheck.
-            materializations[work.id] = nil
+            // A cloud download held by the free-space floor spends no attempt and is held,
+            // with its claim, until the recheck offers it again. Held, it is not outstanding,
+            // so enrichment of files already local is not stuck behind a full disk.
             let entry = RetryLedgerEntry(
                 notBefore: now.advanced(by: retrySchedule.spaceRecheck),
-                attemptCount: retryLedger[work.id]?.attemptCount ?? 0,
+                attemptCount: work.attemptCount,
                 sourceSize: work.sourceSize
             )
-            retryLedger[work.id] = entry
-            return Settlement(disposition: .paced(entry), releasesStoreClaim: record.ownsStoreClaim)
+            holdUntil(entry.notBefore, work, attemptCount: work.attemptCount, record: record)
+            return Settlement(disposition: .paced(entry), releasesStoreClaim: false)
         }
         if let retry = retry(after: work, outcome: outcome, now: now) {
             materializations[work.id] = Materialization(
@@ -228,13 +248,39 @@ nonisolated struct EnrichmentSchedule: Sendable {
         if work.isDeviceStaging {
             return Settlement(disposition: .unobtainable, releasesStoreClaim: record.ownsStoreClaim)
         }
+        // The in-window retries are spent: the row is held, with its claim, for the pacing,
+        // and then starts a fresh set of retries.
         let entry = RetryLedgerEntry(
             notBefore: now.advanced(by: retrySchedule.ledgerPacing),
-            attemptCount: (retryLedger[work.id]?.attemptCount ?? 0) + 1,
+            attemptCount: work.attemptCount,
             sourceSize: work.sourceSize
         )
-        retryLedger[work.id] = entry
-        return Settlement(disposition: .paced(entry), releasesStoreClaim: record.ownsStoreClaim)
+        holdUntil(entry.notBefore, work, attemptCount: 0, record: record)
+        return Settlement(disposition: .paced(entry), releasesStoreClaim: false)
+    }
+
+    /// Holds a finished transfer's demand until `notBefore`, keeping whatever claim it held.
+    private mutating func holdUntil(
+        _ notBefore: ContinuousClock.Instant,
+        _ work: DownloadWork,
+        attemptCount: Int,
+        record: Materialization
+    ) {
+        materializations[work.id] = Materialization(
+            work: DownloadWork(
+                id: work.id,
+                url: work.url,
+                sourceSize: work.sourceSize,
+                captureLocalTime: work.captureLocalTime,
+                isVideo: work.isVideo,
+                isDeviceStaging: work.isDeviceStaging,
+                attemptCount: attemptCount,
+                retryNotBefore: notBefore
+            ),
+            ownsStoreClaim: record.ownsStoreClaim,
+            isInFlight: false,
+            isHeld: true
+        )
     }
 
     /// The next attempt for a failed transfer, or nil when its in-window attempts are

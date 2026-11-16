@@ -35,6 +35,9 @@ extension EnrichmentCoordinator {
             // A digest alone changes nothing the user sees, so it is written at once rather
             // than batched with products; the write releases the row's claim.
             readyClaims[id] = nil
+            // The write gives the claim back, and a digest that moved nothing announces
+            // nothing: the coordinator counts its own release.
+            claimInputsRevision &+= 1
             await handleApplyOutcome(store.applyContentHash(result), batchCount: 1)
         case .notMaterialized:
             let locality = await materializationRequester.locality(of: id)
@@ -243,6 +246,8 @@ extension EnrichmentCoordinator {
         let batchIDs = batch.map(\.id)
         let diagnosedBatchIDs = batch.map(\.id).filter { diagnosedThumbnailLifecycleIDs.contains($0) }
         pendingApply.removeAll(keepingCapacity: true)
+        // The apply gives every row's claim back.
+        claimInputsRevision &+= 1
         let outcome = await store.applyEnrichmentBatch(batch)
         OtosLog.metadata.notice(
             "op=catalog.enrichment.coordinator phase=flush count=\(batch.count, privacy: .public) outcome=\(String(describing: outcome), privacy: .public)"
@@ -295,6 +300,7 @@ extension EnrichmentCoordinator {
     }
 
     private func releaseClaims(_ ids: [MediaAssetID], visibleID: MediaAssetID) async {
+        claimInputsRevision &+= 1
         do {
             try await store.releaseEnrichmentClaims(ids)
         } catch {

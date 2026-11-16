@@ -30,9 +30,10 @@ struct EnrichmentScheduleTests {
         schedule.takeSubmissions(globalLimit: 16, backgroundPerRoot: 16, viewport: [], now: now).map(\.id)
     }
 
-    /// ENR-008: a cloud download held by the free-space floor spends no attempt and gives its
-    /// claim back, and the ledger offers the row again after the space recheck, without limit.
-    @Test func cloudDownloadHeldByTheFloorReleasesItsClaimAndRechecks() throws {
+    /// ENR-008: a cloud download held by the free-space floor spends no attempt and keeps its
+    /// claim, held until the space recheck offers it again, without limit. Held, it is not
+    /// outstanding, so it holds back no other row's hand-off.
+    @Test func cloudDownloadHeldByTheFloorKeepsItsClaimAndRechecks() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("a.jpg")
         schedule.demand(work(row), ownsStoreClaim: true)
@@ -40,18 +41,41 @@ struct EnrichmentScheduleTests {
         let pending = try #require(schedule.materializations[row]?.work)
         let finished = schedule.finish(pending, outcome: .insufficientLocalSpace, now: start)
         let settlement = try #require(finished)
-        let entry = EnrichmentCoordinator.RetryLedgerEntry(
-            notBefore: start.advanced(by: EnrichmentRetrySchedule.production.spaceRecheck),
-            attemptCount: 0,
-            sourceSize: 100
-        )
-        #expect(settlement == EnrichmentSchedule.Settlement(disposition: .paced(entry), releasesStoreClaim: true))
-        #expect(schedule.materializations[row] == nil)
-        #expect(schedule.retryLedger[row] == entry)
+        let recheck = start.advanced(by: EnrichmentRetrySchedule.production.spaceRecheck)
+        let entry = EnrichmentCoordinator.RetryLedgerEntry(notBefore: recheck, attemptCount: 0, sourceSize: 100)
+        #expect(settlement == EnrichmentSchedule.Settlement(disposition: .paced(entry), releasesStoreClaim: false))
+        #expect(schedule.materializations[row]?.isHeld == true)
+        #expect(schedule.outstandingCount == 0)
+        #expect(schedule.heldCount == 1)
+        #expect(schedule.retryLedger[row] == nil, "the hold is the demand's, not the ledger's")
+        #expect(schedule.nextWake(after: start) == recheck)
+        #expect(submitAll(&schedule, at: recheck.advanced(by: .milliseconds(-1))).isEmpty)
+        #expect(submitAll(&schedule, at: recheck) == [row])
+        #expect(schedule.materializations[row]?.work.attemptCount == 0)
+    }
+
+    /// A claimed row the hand-off has no slot for is held with its claim and handed off when a
+    /// slot frees, never given back to be claimed again.
+    @Test func aRowWithNoSlotIsHeldAndHandedOffWhenOneFrees() throws {
+        var schedule = EnrichmentSchedule(retrySchedule: .production)
+        let first = id("a.jpg")
+        let second = id("b.jpg")
+        schedule.demand(work(first), ownsStoreClaim: true)
+        schedule.hold(work(second))
+        #expect(schedule.outstandingCount == 1)
+        #expect(schedule.heldCount == 1)
+        let taken = schedule.takeSubmissions(globalLimit: 1, backgroundPerRoot: 1, viewport: [], now: start)
+        #expect(taken.count == 1)
+        let inFlight = try #require(taken.first)
+        _ = schedule.finish(inFlight, outcome: .materialized, now: start)
+        let next = schedule.takeSubmissions(globalLimit: 1, backgroundPerRoot: 1, viewport: [], now: start)
+        #expect(next.count == 1)
+        #expect(Set([inFlight.id] + next.map(\.id)) == [first, second])
+        #expect(schedule.heldCount == 0)
     }
 
     /// ENR-009: background materialization retries in-window on the shipped schedule, and
-    /// the failure after the last delay releases the claim and hands the row to the ledger.
+    /// the failure after the last delay holds the row, with its claim, for the pacing.
     @Test func backgroundRetriesFollowTheScheduleThenPaceThroughTheLedger() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("a.jpg")
@@ -81,23 +105,26 @@ struct EnrichmentScheduleTests {
         let settlement = try #require(finished)
         #expect(settlement == EnrichmentSchedule.Settlement(
             disposition: .paced(EnrichmentCoordinator.RetryLedgerEntry(
-                notBefore: now.advanced(by: .seconds(900)), attemptCount: 1, sourceSize: 100
+                notBefore: now.advanced(by: .seconds(900)), attemptCount: 4, sourceSize: 100
             )),
-            releasesStoreClaim: true
+            releasesStoreClaim: false
         ))
+        // Held, with its claim, for the pacing; then a fresh set of in-window retries.
         #expect(schedule.outstandingCount == 0)
+        #expect(schedule.heldCount == 1)
         #expect(schedule.nextWake(after: now) == now.advanced(by: .seconds(900)))
+        let afterPacing = schedule.takeSubmissions(
+            globalLimit: 16, backgroundPerRoot: 2, viewport: [], now: now.advanced(by: .seconds(900))
+        )
+        #expect(afterPacing.map(\.attemptCount) == [0])
     }
 
-    /// ENR-009: the ledger defers a row whose source signature matches until its pacing
-    /// comes due, and a changed signature lets it through at once and drops the entry.
+    /// ENR-009: the ledger defers a row it paces — one whose source sends the original only
+    /// for the user's work — whose source signature matches until its pacing comes due, and a changed signature lets it through at once and drops the entry.
     @Test func ledgerDefersAMatchingSignatureUntilDueAndResetsOnChange() {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("a.jpg")
-        schedule.demand(work(row, attemptCount: 4), ownsStoreClaim: true)
-        let submitted = submitAll(&schedule, at: start)
-        #expect(submitted == [row])
-        _ = schedule.finish(work(row, attemptCount: 4), outcome: .requestFailed, now: start)
+        schedule.pace(row, sourceSize: 100, now: start)
 
         let beforeDue = schedule.ledgerAdmits(row, sourceSize: 100, now: start.advanced(by: .seconds(899)))
         let atDue = schedule.ledgerAdmits(row, sourceSize: 100, now: start.advanced(by: .seconds(900)))
@@ -116,9 +143,7 @@ struct EnrichmentScheduleTests {
     @Test func materializationSuccessClearsTheLedgerEntry() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("a.jpg")
-        schedule.demand(work(row, attemptCount: 4), ownsStoreClaim: true)
-        _ = submitAll(&schedule, at: start)
-        _ = schedule.finish(work(row, attemptCount: 4), outcome: .requestFailed, now: start)
+        schedule.pace(row, sourceSize: 100, now: start)
         #expect(schedule.retryLedger[row]?.attemptCount == 1)
 
         schedule.demand(work(row), ownsStoreClaim: true)

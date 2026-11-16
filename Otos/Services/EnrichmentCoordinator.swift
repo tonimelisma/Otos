@@ -198,6 +198,13 @@ actor EnrichmentCoordinator {
     /// failing it, so this is measured rather than assumed. A root absent from this set
     /// stages, which is what every device did before this path existed.
     var rangeCapableRootPaths: Set<LibraryRootPath> = []
+    /// Bumped by every Store change this coordinator hears and every claim it gives back: the
+    /// facts a background claim's answer depends on (ADR 0032 rule 2).
+    var claimInputsRevision: UInt64 = 0
+    /// The revision and video-faces admission a background claim last found nothing at. While
+    /// both stand, another claim would find nothing again, so none is asked: an empty claim is
+    /// still a write transaction, and an idle coordinator writes nothing (plan 0116).
+    var exhaustedClaims: (revision: UInt64, videoFaces: VideoFacesAdmission)?
 
     private var supervisor: Task<Void, Never>?
     private var changeConsumer: Task<Void, Never>?
@@ -533,6 +540,7 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return
         }
+        claimInputsRevision &+= 1
         signal()
     }
 

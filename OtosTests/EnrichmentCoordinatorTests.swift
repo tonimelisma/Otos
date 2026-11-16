@@ -523,6 +523,43 @@ struct EnrichmentCoordinatorTests {
         await materializer.shutdown()
     }
 
+    // MARK: - An idle coordinator writes nothing
+
+    /// ENR-009: a background claim that found nothing is not asked again until a Store change
+    /// or a claim the coordinator gave back moves its inputs: an empty claim is still a write
+    /// transaction, and an idle coordinator writes nothing.
+    @Test func anEmptyClaimIsNotAskedAgainUntilItsInputsMove() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = makeTestStore(location: .databaseFile(temp.appending(path: "db/catalog.sqlite")))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            originalStatus: { _ in .materialized },
+            claimBatchSize: 8,
+            schedule: EnrichmentSchedule(retrySchedule: .production),
+            claimWindowLimit: 32
+        )
+        func claims() -> Int {
+            store.use().connections.holds.filter { $0.operation == "claimedEnrichmentCandidates" }.reduce(0) { $0 + $1.count }
+        }
+        let start = claims()
+        _ = await coordinator.dequeueEnrichmentWork()
+        #expect(claims() == start + 1, "the first pass asks")
+        _ = await coordinator.dequeueEnrichmentWork()
+        _ = await coordinator.dequeueEnrichmentWork()
+        #expect(claims() == start + 1, "nothing moved, so nothing is asked")
+        await coordinator.markDirtyAndSignal()
+        _ = await coordinator.dequeueEnrichmentWork()
+        #expect(claims() == start + 2, "a Store change moves the claim's inputs")
+        await coordinator.shutdown()
+    }
+
     // MARK: - Claim-window release and retry exhaustion
 
     @Test func exhaustedBackgroundRetriesReleaseClaimWindowForFreshCandidate() async throws {

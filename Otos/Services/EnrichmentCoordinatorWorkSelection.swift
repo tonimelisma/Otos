@@ -131,8 +131,9 @@ extension EnrichmentCoordinator {
     }
 
     /// Routes claimed rows by where their bytes are: ready rows join the queue, dataless
-    /// rows become materialization demand, and rows whose readiness is unknown or that
-    /// the hand-off cannot take now are released back to the Store.
+    /// rows become materialization demand — held, with their claim, when the hand-off has no
+    /// slot for them now — and rows whose readiness is unknown, or whose source sends the
+    /// original only for the user's work, are released back to the Store.
     private func route(
         _ candidates: [ClaimedEnrichmentCandidate],
         now: ContinuousClock.Instant,
@@ -179,22 +180,23 @@ extension EnrichmentCoordinator {
                 enqueueReadyCandidate(candidate)
                 routing.readinessCounts["ready", default: 0] += 1
             case .fetchable:
+                let work = DownloadWork(
+                    id: asset.id,
+                    url: asset.id.fileURL,
+                    sourceSize: asset.byteSize,
+                    captureLocalTime: asset.captureLocalTime,
+                    isVideo: asset.bestKind == .video,
+                    isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath)
+                )
+                // With no slot for it, the row keeps its claim and waits held, handed off when
+                // a slot frees; given back, the next pass would claim it again to find the
+                // same full hand-off (plan 0116).
                 guard schedule.outstandingCount < handoffPolicy.globalOutstandingLimit else {
-                    releasedIDs.append(asset.id)
+                    schedule.hold(work)
                     routing.readinessCounts["materializationBound", default: 0] += 1
                     continue
                 }
-                schedule.demand(
-                    DownloadWork(
-                        id: asset.id,
-                        url: asset.id.fileURL,
-                        sourceSize: asset.byteSize,
-                        captureLocalTime: asset.captureLocalTime,
-                        isVideo: asset.bestKind == .video,
-                        isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath)
-                    ),
-                    ownsStoreClaim: true
-                )
+                schedule.demand(work, ownsStoreClaim: true)
                 routing.readinessCounts["needsMaterialization", default: 0] += 1
             case .fetchableForUserWork:
                 // Its source sends the whole original only for the user's work, and its
@@ -271,6 +273,7 @@ extension EnrichmentCoordinator {
     }
 
     private func releaseDeferredLedgerClaims(_ ids: [MediaAssetID]) async {
+        claimInputsRevision &+= 1
         do {
             try await store.releaseEnrichmentClaims(ids)
         } catch {
@@ -355,7 +358,14 @@ extension EnrichmentCoordinator {
         limit: Int,
         videoFaces: VideoFacesAdmission
     ) async throws -> [ClaimedEnrichmentCandidate] {
+        if let exhausted = exhaustedClaims, exhausted.revision == claimInputsRevision, exhausted.videoFaces == videoFaces {
+            return []
+        }
+        let startedFrom = claimInputsRevision
         let candidates = try await store.enrichmentCandidates(limit: limit, videoFaces: videoFaces)
+        // A claim that found nothing at a revision finds nothing again until a Store change or
+        // a claim given back moves it; one that found rows says nothing of the next.
+        exhaustedClaims = candidates.isEmpty ? (startedFrom, videoFaces) : nil
         for candidate in candidates {
             await recordClaimedCandidate(candidate.asset)
         }

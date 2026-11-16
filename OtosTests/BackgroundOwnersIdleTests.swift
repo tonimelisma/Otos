@@ -30,13 +30,6 @@ struct BackgroundOwnersIdleTests {
     /// mirror pass, or by its own timer, checks what it owes once.
     static let readsPerOperation = 2
 
-    /// Operations an owner is known to run while idle, by the owner: each is
-    /// an open defect, held as a known issue so the guard still fails for any other owner.
-    static let knownIdleOperations: [String: String] = [
-        "claimedEnrichmentCandidates": "EnrichmentCoordinator",
-        "releaseEnrichmentClaims": "EnrichmentCoordinator",
-    ]
-
     @Test func everyBackgroundOwnerIsQuietOnceItsWorkIsDone() async throws {
         let directory = try makeTestDirectory()
         let catalog = try OwnerShapedCatalog.make(in: directory, scale: 0.01)
@@ -55,7 +48,7 @@ struct BackgroundOwnersIdleTests {
             // time: measurement — one window of the settle (`window`).
             try await Task.sleep(for: Self.window)
             lastWindow = IdleUse(from: before, to: store.use())
-            if lastWindow.changes == 0, lastWindow.writes(excluding: Self.knownIdleOperations).isEmpty {
+            if lastWindow.changes == 0, lastWindow.writes.isEmpty {
                 settledAfter = windowIndex
                 break
             }
@@ -74,24 +67,9 @@ struct BackgroundOwnersIdleTests {
 
         #expect(settledAfter != nil, "never a quiet window: \(lastWindow.summary)")
         #expect(idle.changes == 0, "\(idle.summary)")
-        #expect(idle.writes(excluding: Self.knownIdleOperations).isEmpty, "\(idle.summary)")
-        let heavy = idle.reads.filter { $0.value > Self.readsPerOperation && Self.knownIdleOperations[$0.key] == nil }
+        #expect(idle.writes.isEmpty, "\(idle.summary)")
+        let heavy = idle.reads.filter { $0.value > Self.readsPerOperation }
         #expect(heavy.isEmpty, "\(idle.summary)")
-        withKnownIssue(
-            """
-            Open defect, EnrichmentCoordinator: while rows it can only read after a download \
-            stay owed and each download fails, it keeps cycling them through the \
-            materializer: each time a request ends it claims the next page \
-            (`claimedEnrichmentCandidates`, most of it routed `materializationBound`) and \
-            releases what it could not admit (`releaseEnrichmentClaims`), a write transaction \
-            each, while nothing changes and nothing is announced. Intermittent: the cycle runs \
-            in bursts, and a measured period can fall between two of them.
-            """,
-            isIntermittent: true
-        ) {
-            let known = idle.writes.filter { Self.knownIdleOperations[$0.key] != nil }
-            #expect(known.isEmpty, "\(idle.summary)")
-        }
     }
 }
 
@@ -128,11 +106,6 @@ struct IdleUse {
         }
         self.writes = writes
         self.reads = reads
-    }
-
-    /// The write transactions of every operation but `known`'s.
-    func writes(excluding known: [String: String]) -> [String: Int] {
-        writes.filter { known[$0.key] == nil }
     }
 
     var summary: String {
