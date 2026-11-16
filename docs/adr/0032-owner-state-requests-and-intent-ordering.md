@@ -120,8 +120,13 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    that fact with the deadline or event that ends it, arms its wake on that alone, and reads
    nothing before it: a ring that brings no change of what it reads and no deadline reads
    nothing (`PreviewFaceDebt`, `PhotoDescriptionWriter`'s owed walks, the search index's
-   wait for its retry, enrichment's parked rows). A change that names its rows owes those
+   wait for its retry, enrichment's parked rows, `PeopleGallery`'s owed reads). A change that names its rows owes those
    rows; one that names none owes the whole walk.
+
+   A wake an owner names is an input like a change. When a named deadline comes due — a
+   retry's backoff after a failed download — the work it owes runs, ring or no ring, so a
+   caller measuring a ring with nothing new reads the deadlines the owners named when they
+   settled and runs the round again when one came due within it, never waiting it out.
 
 ## Rejected alternatives
 

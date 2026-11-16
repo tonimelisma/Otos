@@ -24,6 +24,8 @@ struct BackgroundOwnersIdleTests {
     static let readsPerOwner = 2
     /// Rows those reads may return: an owner rung with nothing owed finds nothing to visit.
     static let rowsPerOwner = 0
+    /// Rounds run again because a named wake came due within them, before the guard fails.
+    static let dueRoundLimit = 8
 
     @Test func everyBackgroundOwnerIsQuietOnceItsWorkIsDone() async throws {
         let rounds = try await Self.measure(scale: 0.01, named: "small")
@@ -55,13 +57,31 @@ struct BackgroundOwnersIdleTests {
             account: catalog.account
         )
         await owners.start(store: store)
-        let settled = try await owners.untilQuiescent(store: store)
+        var settled = try await owners.untilQuiescent(store: store)
 
-        let before = store.use()
-        for owner in await owners.quiescentOwners() {
-            await owner.ringIdle()
+        // A wake an owner named when it settled (`OwnerWake`: enrichment's retry backoff, a
+        // breaker's cooldown) that comes due within the round is an input, not idle work: the
+        // retry it owes runs then, with or without the ring. Such a round is run again from
+        // the facts it ended on; only a round in which no named wake came due is measured.
+        // Whether one came due is read from the deadlines the owners named, never waited out.
+        var dueRounds: [String] = []
+        var before: CatalogStoreUse
+        var rung: [OwnerQuiescence]
+        while true {
+            before = store.use()
+            for owner in await owners.quiescentOwners() {
+                await owner.ringIdle()
+            }
+            rung = try await owners.untilQuiescent(store: store)
+            let due = OwnerRound.dueWakes(settled, by: .now)
+            guard !due.isEmpty else { break }
+            dueRounds.append(due.joined(separator: ","))
+            // Each round takes up every deadline at or before its end, and a retry's next
+            // backoff is longer than its last (`EnrichmentRetrySchedule`), so an idle round
+            // follows within a few.
+            try #require(dueRounds.count <= Self.dueRoundLimit, "named wakes kept coming due: \(dueRounds)")
+            settled = rung
         }
-        let rung = try await owners.untilQuiescent(store: store)
         let idle = IdleUse(from: before, to: store.use())
         let rounds = OwnerRound.between(settled, rung)
         // Every original is dataless and no download succeeds, as on a cloud-only library: what
@@ -72,7 +92,8 @@ struct BackgroundOwnersIdleTests {
         await owners.shutdown()
         await store.shutdown()
         try IdleUse.write(
-            "settled: \(OwnerRound.summary(settled))\nidle store: \(idle.summary)\nidle owners:\n"
+            "settled: \(OwnerRound.summary(settled))\nrounds run again for a wake that came due: "
+                + "\(dueRounds.isEmpty ? "none" : dueRounds.joined(separator: " | "))\nidle store: \(idle.summary)\nidle owners:\n"
                 + rounds.map { "  \($0.summary)" }.joined(separator: "\n") + "\n",
             named: name
         )
@@ -86,16 +107,9 @@ struct BackgroundOwnersIdleTests {
         #expect(idle.writes.isEmpty, "\(idle.summary)")
         let libraries = [catalog.pictures, catalog.archive].count
         for round in rounds {
-            let check = {
-                #expect(round.work.written == 0, "\(round.summary)")
-                #expect(round.work.reads <= Self.readsPerOwner, "\(round.summary)")
-                #expect(round.work.rows <= Self.rowsPerOwner + IdleBound.rows(of: round.owner, libraries: libraries), "\(round.summary)")
-            }
-            if let known = KnownIdleIssue.of(round.owner) {
-                withKnownIssue(Comment(rawValue: known.reason), isIntermittent: known.isIntermittent, check)
-            } else {
-                check()
-            }
+            #expect(round.work.written == 0, "\(round.summary)")
+            #expect(round.work.reads <= Self.readsPerOwner, "\(round.summary)")
+            #expect(round.work.rows <= Self.rowsPerOwner + IdleBound.rows(of: round.owner, libraries: libraries), "\(round.summary)")
         }
         return rounds
     }
@@ -111,31 +125,6 @@ enum IdleBound {
     }
 }
 
-/// What an owner is known to do in the idle round, named so a fix shows as a known issue no
-/// longer recorded (figures at 1% / the owner's size).
-enum KnownIdleIssue: String {
-    case peopleGallery, materialization
-
-    /// What the owner does in the idle round.
-    var reason: String {
-        switch self {
-        case .peopleGallery: "peopleGallery reads the gallery again on its own ring with nothing new (7 / 748 rows)"
-        case .materialization:
-            "materialization admits the downloads enrichment's retries hand it when their backoff comes due within the round "
-                + "(37 at the owner's size)"
-        }
-    }
-
-    static func of(_ owner: String) -> KnownIdleIssue? {
-        KnownIdleIssue(rawValue: owner)
-    }
-
-    /// Whether it is recorded depends on a backoff coming due within the round.
-    var isIntermittent: Bool {
-        self == .materialization
-    }
-}
-
 /// One owner's idle round: what it did between two quiescent facts, and the wake it was left
 /// quiet until.
 struct OwnerRound {
@@ -147,6 +136,15 @@ struct OwnerRound {
         let before = Dictionary(settled.map { ($0.owner, $0.work) }, uniquingKeysWith: { first, _ in first })
         return rung.map { fact in
             OwnerRound(owner: fact.owner, work: fact.work - (before[fact.owner] ?? OwnerWork()), wake: fact.wake)
+        }
+    }
+
+    /// The owners whose named wake, armed when they settled, is due by `instant`: each as
+    /// `owner:wake`. A wake still ahead of `instant` cannot have moved anything before it.
+    static func dueWakes(_ settled: [OwnerQuiescence], by instant: ContinuousClock.Instant) -> [String] {
+        settled.compactMap { fact in
+            guard let wake = fact.wake, let at = wake.at, at <= instant else { return nil }
+            return "\(fact.owner):\(wake.kind.rawValue)"
         }
     }
 

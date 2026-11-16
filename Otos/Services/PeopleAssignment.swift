@@ -390,6 +390,10 @@ extension PeopleAssignment {
 /// One loop runs every read off a `bufferingNewest(1)` doorbell. A failed read publishes
 /// nothing and leaves its request outstanding for the next one (ADR 0032 rule 4). The
 /// requests, the read and its rows are kept in `OwnerActivity` (`QuiescentOwner`).
+///
+/// A ring is not a read owed (ADR 0032 rule 8): only `request()` owes one (`readsOwed`), and
+/// the read that starts from it covers it (`readsCovered`). A ring that owes none — the idle
+/// guard's — runs a pass that reads nothing and publishes nothing.
 actor PeopleGallery: QuiescentOwner {
     typealias Builder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws -> CatalogPeopleState?
 
@@ -408,6 +412,10 @@ actor PeopleGallery: QuiescentOwner {
     /// Tests replace the read to hold it at its suspension; production reads the catalog.
     private let builder: Builder?
     let activity = OwnerActivity(owner: "peopleGallery")
+    /// Reads owed: one per `request()`, never cleared.
+    private var readsOwed: UInt64 = 0
+    /// The `readsOwed` value the last read that succeeded started from.
+    private var readsCovered: UInt64 = 0
     private var published: CatalogPeopleState?
     private var loopTask: Task<Void, Never>?
 
@@ -438,13 +446,19 @@ actor PeopleGallery: QuiescentOwner {
     /// read after it carries as `covers`.
     @discardableResult
     func request() -> UInt64 {
+        readsOwed &+= 1
+        return ring()
+    }
+
+    /// Rings the loop with no read owed: its pass reads nothing.
+    func ringIdle() {
+        ring()
+    }
+
+    private func ring() -> UInt64 {
         let requested = activity.request()
         doorbell.yield()
         return requested
-    }
-
-    func ringIdle() {
-        request()
     }
 
     /// Teardown, callable from anywhere: ends the loop and the stream of builds.
@@ -456,10 +470,16 @@ actor PeopleGallery: QuiescentOwner {
     private func read() async {
         guard activity.isOwed else { return }
         let startedFrom = activity.beginPass()
+        let owed = readsOwed
         var answered: UInt64?
         defer {
             activity.endPass(covering: answered)
             settleQuiescence()
+        }
+        // A ring that owes no read: the state published stands.
+        guard owed != readsCovered else {
+            answered = startedFrom
+            return
         }
         let built: CatalogPeopleState?
         do {
@@ -487,6 +507,7 @@ actor PeopleGallery: QuiescentOwner {
             return
         }
         answered = startedFrom
+        readsCovered = owed
         // A gallery not known yet (`peopleGallery` nil) is not published: the pane keeps
         // claiming nothing until People has written what it paints from.
         if var built {
