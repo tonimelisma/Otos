@@ -98,7 +98,8 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     static let placeNames = CatalogChangedFacts(rawValue: 1 << 5)
     /// Faces, and who they are.
     static let faces = CatalogChangedFacts(rawValue: 1 << 6)
-    /// Which files are identical copies of which: their digests.
+    /// Which files are identical copies of which: the digests two or more copies share, and
+    /// the shown copy and `has_copies` they decide. A digest no other copy holds is `.detail`.
     static let copies = CatalogChangedFacts(rawValue: 1 << 7)
     /// What search read of a row that decides where it shows: the labels On This Day
     /// leaves a photo out by.
@@ -218,8 +219,11 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
             .update(tableName: "immich_mirror", columnNames: ["account_root_id", "library_root_id", "server_prefix"]),
         ]),
         (.searchReadings, [.update(tableName: "search_embedding", columnNames: ["confident_labels"])]),
+        // A row's own digest is detail too: a digest no other copy holds makes no file a copy,
+        // and its write names `.detail` alone (`DigestStanding`).
         (.detail, [.update(tableName: "media_asset", columnNames: [
             "metadata_source_size", "metadata_source_mtime", "enrichment_claimed", "undecodable_by", "duration_seconds",
+            "content_sha1", "content_hash_source_size", "content_hash_source_mtime",
         ])]),
         (.choices, [
             .update(tableName: "media_asset", columnNames: [
@@ -263,11 +267,33 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
         }
     }
 
-    /// What a write of digests touched: which files are copies, and — when a copy that joined
-    /// a photo took the photo's choice in the same write (ADR 0054, `CatalogSchema.choiceJoins`)
-    /// — the choices.
-    static func digests(choicesJoined: Bool) -> CatalogChangedFacts {
-        choicesJoined ? [.copies, .choices] : .copies
+    /// What a write of digests touched, from where its rows stood before and after it
+    /// (`DigestStanding`): which files are copies only when a row joined or left copies, the
+    /// rows' own digests otherwise (`.detail`: a tile's copy digest, Info's `Copies` row), and
+    /// — when a copy that joined a photo took the photo's choice in the same write (ADR 0054,
+    /// `CatalogSchema.choiceJoins`) — the choices. A write that moved no digest names nothing.
+    static func digests(copiesChanged: Bool, digestsChanged: Bool, choicesJoined: Bool) -> CatalogChangedFacts {
+        var facts: CatalogChangedFacts = []
+        if digestsChanged {
+            facts.insert(.detail)
+        }
+        if copiesChanged {
+            facts.insert(.copies)
+        }
+        if choicesJoined {
+            facts.insert(.choices)
+        }
+        return facts
+    }
+
+    /// What a digest write changed, from where each row it wrote stood before and after it,
+    /// read in the same transaction.
+    static func digests(from standings: [(before: DigestStanding, after: DigestStanding)], choicesJoined: Bool) -> CatalogChangedFacts {
+        digests(
+            copiesChanged: standings.contains { $0.before.changesCopies(to: $0.after) },
+            digestsChanged: standings.contains { $0.before != $0.after },
+            choicesJoined: choicesJoined
+        )
     }
 
     /// The kinds by name, comma-separated, `all` or `none`: one log field.
@@ -277,6 +303,42 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
         }
         let names = Self.names.filter { contains($0.0) }.map(\.1)
         return names.isEmpty ? "none" : names.joined(separator: ",")
+    }
+}
+
+/// Where one row stands among identical copies (ADR 0054), read inside a digest write before
+/// and after it (`CatalogSchema.digestStandingSQL`). Most digests a library's backlog brings
+/// are of files nothing else holds: such a write changes the row's own digest and nothing
+/// about which files are copies, so it must not wake what is built from copies — the
+/// combined scopes' order and filter options, People and Duplicates (ADR 0054).
+nonisolated struct DigestStanding: Equatable, Sendable {
+    /// The stored digest and the file facts it was read at, whatever they say of currency.
+    let storedDigest: Data?
+    let storedSize: Int64?
+    let storedMTime: Int64?
+    /// The digest while the row is a copy at all: current, of some bytes, in a library or an
+    /// account (`CatalogSchema.isCopy`); nil otherwise.
+    let copyDigest: Data?
+    /// Whether another copy, of any presence, shares `copyDigest`.
+    let shared: Bool
+
+    static func read(libraryRootID: Int64, relativePath: String, db: Database) throws -> DigestStanding? {
+        try Row.fetchOne(
+            db.cachedStatement(sql: CatalogSchema.digestStandingSQL),
+            arguments: [libraryRootID, relativePath]
+        ).map { row in
+            DigestStanding(
+                storedDigest: row[0], storedSize: row[1], storedMTime: row[2], copyDigest: row[3], shared: row[4]
+            )
+        }
+    }
+
+    /// Whether going from this standing to `after` changed which files are copies of which:
+    /// the row joined or left a digest another copy holds, or another copy joined or left
+    /// its own — a mirrored asset the write paired. A digest no other copy holds, before or
+    /// after, makes no file a copy.
+    func changesCopies(to after: DigestStanding) -> Bool {
+        (copyDigest != after.copyDigest || shared != after.shared) && (shared || after.shared)
     }
 }
 
@@ -403,7 +465,8 @@ actor CatalogStore {
         /// The kinds of fact the applied results changed, from what SQLite stored before
         /// and after each write (`EnrichmentOverlayBeforeWrite.changedFacts(to:)`): a batch
         /// that moved no capture date, kind, format, grouping identifier or location is
-        /// `.detail` (with `.faces` and `.copies` for what it read of them), and a reader
+        /// `.detail` (with `.faces` for what it read of them, and `.copies` when a digest it
+        /// read made a file a copy or not, `DigestStanding`), and a reader
         /// of the order or the filter's options does not repeat its read for it (ADR 0005).
         var facts: CatalogChangedFacts = []
         var namingChangedRoots: Set<LibraryRootPath> = []
@@ -4002,8 +4065,9 @@ extension CatalogStore {
         }
         let relativePath = result.id.relativePath.rawValue
         do {
-            let (written, choicesJoined) = try await database().write { db -> (Int, Bool) in
+            let (written, facts) = try await database().write { db -> (Int, CatalogChangedFacts) in
                 let joinsBefore = try CatalogSchema.choiceJoins(db)
+                let before = try DigestStanding.read(libraryRootID: rootRowID, relativePath: relativePath, db: db)
                 try db.execute(
                     sql: """
                     UPDATE media_asset SET
@@ -4036,14 +4100,22 @@ extension CatalogStore {
                         arguments: [rootRowID, relativePath]
                     )
                 }
-                return try (written, CatalogSchema.choiceJoins(db) != joinsBefore)
+                guard written > 0, let before,
+                      let after = try DigestStanding.read(libraryRootID: rootRowID, relativePath: relativePath, db: db)
+                else {
+                    return (written, [])
+                }
+                return try (written, .digests(
+                    from: [(before, after)], choicesJoined: CatalogSchema.choiceJoins(db) != joinsBefore
+                ))
             }
             OtosLog.metadata.noticeOperation("enrichment.contentHash", phase: written > 0 ? "applied" : "stale", fields: [
                 "rootPath": result.id.libraryRootPath.rawValue,
                 "relativePath": relativePath,
+                "facts": facts.diagnosticDescription,
             ])
-            if written > 0 {
-                notifyCatalogChanged(.changed(.digests(choicesJoined: choicesJoined)))
+            if !facts.isEmpty {
+                notifyCatalogChanged(.changed(facts))
             }
             return .applied(count: written)
         } catch {
@@ -4222,6 +4294,9 @@ extension CatalogStore {
             sql: overlayColumnsSQL,
             arguments: overlayColumnsArguments
         ).map(EnrichmentOverlayBeforeWrite.init(row:))
+        let digestBefore = try result.contentHash == nil ? nil : DigestStanding.read(
+            libraryRootID: rootID, relativePath: result.id.relativePath.rawValue, db: db
+        )
         try writeEnrichmentOverlay(result, libraryRootID: rootID, db: db)
         // Ask SQLite what it actually stored for the STORED generated columns rather
         // than predicting it: the COALESCE chain lives once, in the schema
@@ -4254,8 +4329,10 @@ extension CatalogStore {
         if result.videoFaces != nil {
             outcome.facts.insert(.faces)
         }
-        if result.contentHash != nil {
-            outcome.facts.insert(.copies)
+        if let digestBefore,
+           let digestAfter = try DigestStanding.read(libraryRootID: rootID, relativePath: result.id.relativePath.rawValue, db: db)
+        {
+            outcome.facts.formUnion(.digests(from: [(digestBefore, digestAfter)], choicesJoined: false))
         }
         if oldRow?.captureWallCompact != newRow?.captureWallCompact {
             outcome.namingChangedRoots.insert(result.id.libraryRootPath)
@@ -8798,8 +8875,10 @@ extension CatalogStore {
             "paired": "\(paired)",
             "ms": "\(DiagnosticsTiming.milliseconds(from: started, to: ContinuousClock.now))",
         ])
+        // A pair is an asset taking the digest its library file holds (`MirrorGateway.pairSQL`
+        // writes only an asset that lacks it), so every pair makes two files copies.
         if paired > 0 {
-            notifyCatalogChanged(.changed(.digests(choicesJoined: choicesJoined)))
+            notifyCatalogChanged(.changed(.digests(copiesChanged: true, digestsChanged: true, choicesJoined: choicesJoined)))
         }
         return paired
     }

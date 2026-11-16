@@ -205,5 +205,13 @@ is never reported as none.
   the owner's shape, 16,000 more preview readings than photos, once each (the readings are
   stamped and never repeat). The photo counts once in every count People shows.
 - A digest write recomputes its group in the same transaction, about 0.7 ms on the owner's
-  catalog. It notifies `.copies`, which the combined scopes and People depend on, and
-  `.choices` too when a copy that joined a photo took its choice (`choice_sequence.joins`).
+  catalog. It notifies `.copies`, which the combined scopes, People and Duplicates are built
+  from, only when it changed which files are copies: where the written row stood before and
+  after the write (`DigestStanding`, read in the same transaction) says whether it joined or
+  left a digest another copy holds, or a mirrored asset took its digest. A digest no other
+  copy holds — most of a library's backlog — notifies only `.detail` (the tile's copy digest,
+  Info's `Copies` row), and a digest written again unchanged notifies nothing. On the owner's
+  library a read-only session that imported and edited nothing announced `.copies` for 226 of
+  its 277 changes, one per digest read, and each woke All Media's order, People and Duplicates
+  (2026-11-16 scorecard). It notifies `.choices` too when a copy that joined a photo took its
+  choice (`choice_sequence.joins`).

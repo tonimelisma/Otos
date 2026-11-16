@@ -105,6 +105,46 @@ struct OneCopyTests {
         MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
     }
 
+    /// A digest write wakes what is built from copies only when it makes a file a copy or no
+    /// longer one: a digest no other file holds changes the row's own detail, the second
+    /// file with it makes two copies, and writing it again changes nothing and names nothing.
+    @Test func aDigestWriteNamesCopiesOnlyWhenItMakesOrEndsACopy() async throws {
+        let fixture = try await fixture(digested: false, twin: "IMG_3.JPG")
+        let store = fixture.store
+        let assets = try #require(await store.planningMedia(for: fixture.library))
+        func facts(of path: String) throws -> (result: ContentHashResult, id: MediaAssetID) {
+            let asset = try #require(assets.first { $0.id.relativePath.rawValue == path })
+            let bytes = try Data(contentsOf: URL(filePath: fixture.library.rawValue).appending(path: path))
+            return (ContentHashResult(
+                id: asset.id, contentHash: Self.digest(bytes), sourceSize: asset.byteSize,
+                sourceMTimeSeconds: asset.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
+            ), asset.id)
+        }
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
+
+        // "other": no file shares it.
+        _ = try await store.applyContentHash(facts(of: "IMG_2.JPG").result)
+        // "same": the first file with it, then the second, which makes both copies.
+        _ = try await store.applyContentHash(facts(of: "IMG_1.JPG").result)
+        _ = try await store.applyContentHash(facts(of: "IMG_3.JPG").result)
+        let recorded = await changes.waitForValues { $0.count == 3 }
+        #expect(recorded == [.changed(.detail), .changed(.detail), .changed([.detail, .copies])])
+
+        // The same digest again moves nothing, so nothing is announced: a later change is the
+        // next one recorded.
+        _ = try await store.applyContentHash(facts(of: "IMG_3.JPG").result)
+        await store.setDuplicatesReach(.acrossLibraries)
+        let after = await changes.waitForValues { $0.count == 4 }
+        #expect(after.last == .changed(.duplicateFacts))
+    }
+
     /// All Media shows the library's copy and not the account's; the account's own row, and
     /// Duplicates, show the account's copy too.
     @Test func aCombinedScopeShowsTheLibrarysCopyAndOneRootShowsEveryFile() async throws {
