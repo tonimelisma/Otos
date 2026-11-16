@@ -65,6 +65,102 @@ nonisolated struct FacePreview: Hashable, Sendable {
     }
 }
 
+/// The faces of a People snapshot, held as columns (ADR 0047, "The kernel and its memory"):
+/// each face is a few numbers in flat arrays, and its photo a position in one table of the
+/// photos' IDs held once, so 103k faces are a handful of arrays, never an array or a path
+/// string per face. A face read from it (`subscript`) is a value made on the spot, whose ID
+/// shares its photo's strings with the table.
+nonisolated struct PeopleFaces: RandomAccessCollection, Equatable, Sendable {
+    /// Each photo with a face, once.
+    private var photos: [MediaAssetID] = []
+    /// While the faces are appended: each photo's place in `photos`.
+    private var photoPlace: [MediaAssetID: Int32] = [:]
+    private var photo: [Int32] = []
+    private var index: [Int32] = []
+    /// The capture time; NaN for none.
+    private var capture: [Double] = []
+    private var vector: [Int64] = []
+    /// `FaceAssignmentColumn`, with `videoFlag` set for a face read in a video.
+    private var kind: [UInt8] = []
+    /// The person; 0 for none.
+    private var person: [Int64] = []
+    /// The few faces the user said are not someone, by position.
+    private var rejected: [Int32: Set<PersonID>] = [:]
+
+    private static let videoFlag: UInt8 = 0x80
+
+    init() {}
+
+    init(_ faces: some Sequence<PeopleSnapshot.Face>) {
+        for face in faces {
+            append(face)
+        }
+        photoPlace = [:]
+    }
+
+    var startIndex: Int {
+        0
+    }
+
+    var endIndex: Int {
+        photo.count
+    }
+
+    subscript(position: Int) -> PeopleSnapshot.Face {
+        let row = kind[position]
+        let id = person[position]
+        let assignment: FaceAssignment = switch FaceAssignmentColumn(rawValue: Int(row & ~Self.videoFlag)) {
+        case .model: .model(PersonID(rawValue: id))
+        case .seed: .seed(PersonID(rawValue: id))
+        case .user: .user(PersonID(rawValue: id))
+        case .held: .held
+        case .open, nil: .open
+        }
+        let seconds = capture[position]
+        return PeopleSnapshot.Face(
+            id: FaceID(asset: photos[Int(photo[position])], index: Int(index[position])),
+            captureSeconds: seconds.isNaN ? nil : seconds,
+            vector: vector[position],
+            assignment: assignment,
+            rejected: rejected[Int32(position)] ?? [],
+            isInVideo: row & Self.videoFlag != 0
+        )
+    }
+
+    /// Appends `face`; a photo already held is not held again.
+    mutating func append(_ face: PeopleSnapshot.Face) {
+        let asset = face.id.asset
+        let place: Int32
+        if let last = photos.last, last == asset {
+            place = Int32(photos.count - 1)
+        } else if let known = photoPlace[asset] {
+            place = known
+        } else {
+            place = Int32(photos.count)
+            photos.append(asset)
+            photoPlace[asset] = place
+        }
+        if !face.rejected.isEmpty {
+            rejected[Int32(photo.count)] = face.rejected
+        }
+        photo.append(place)
+        index.append(Int32(face.id.index))
+        capture.append(face.captureSeconds ?? .nan)
+        vector.append(face.vector)
+        kind.append(UInt8(FaceAssignmentColumn(face.assignment).rawValue) | (face.isInVideo ? Self.videoFlag : 0))
+        person.append(face.assignment.person?.rawValue ?? 0)
+    }
+
+    /// Done appending: the lookup that kept each photo once is let go.
+    mutating func finish() {
+        photoPlace = [:]
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.elementsEqual(rhs)
+    }
+}
+
 /// Everything assignment reads from the catalog, in one transaction: who the faces are, never
 /// their tiles, which the surfaces read by key, nor their vectors, which `FaceVectors` holds,
 /// read apart. The snapshot is assignment's alone: nothing a surface paints waits for it.
@@ -101,7 +197,7 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
 
     /// Every face of a photo still in the catalog and out of the Trash, in reading order;
     /// none the user marked as not a face.
-    private(set) var faces: [Face]
+    private(set) var faces: PeopleFaces
     /// The largest vector number in the catalog when the snapshot was read: every vector at or
     /// below it that no face here names is gone; one above it is a newer reading.
     var vectorHorizon: Int64 = 0
@@ -186,7 +282,7 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// This snapshot with only the faces among `ids`.
     func keeping(_ ids: Set<FaceID>) -> PeopleSnapshot {
         var kept = self
-        kept.faces = faces.filter { ids.contains($0.id) }
+        kept.faces = PeopleFaces(faces.filter { ids.contains($0.id) })
         return kept
     }
 

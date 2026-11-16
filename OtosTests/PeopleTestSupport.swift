@@ -47,7 +47,7 @@ extension PeopleSnapshot {
         photoOf: [MediaAssetID: MediaAssetID] = [:]
     ) {
         self.init(
-            faces: facts.enumerated().map { Face($0.element, vector: Int64($0.offset + 1)) },
+            faces: PeopleFaces(facts.enumerated().map { Face($0.element, vector: Int64($0.offset + 1)) }),
             people: people,
             likeness: likeness,
             keyPhotos: keyPhotos,

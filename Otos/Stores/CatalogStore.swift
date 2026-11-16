@@ -1584,7 +1584,7 @@ extension CatalogStore {
             for row in try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, face_index, person_id FROM face_rejection") {
                 rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
             }
-            var faces: [PeopleSnapshot.Face] = []
+            var faces = PeopleFaces()
             var likeness: [FaceID: Float] = [:]
             var keyPhotos: [PersonID: FaceID] = [:]
             // The digests of the files with a face and a present copy, whose copies follow.
@@ -1647,6 +1647,7 @@ extension CatalogStore {
                     keyPhotos[PersonID(rawValue: person)] = id
                 }
             }
+            faces.finish()
             // The present copies of each photo with a face, by the digest they share (ADR 0054).
             var copies: [[PeopleSnapshot.Copy]] = []
             let copiesOfDigest = try db.cachedStatement(sql: PhotoFaceSQL.presentCopiesOfDigest)
@@ -1678,7 +1679,7 @@ extension CatalogStore {
                 rowIDs[id.asset.libraryRootPath].map { !malformed.contains(FaceRowKey.Photo(rootID: $0, path: id.asset.relativePath)) } ?? true
             }
             var snapshot = PeopleSnapshot(
-                faces: malformed.isEmpty ? faces : faces.filter { left($0.id) },
+                faces: malformed.isEmpty ? faces : PeopleFaces(faces.filter { left($0.id) }),
                 people: people,
                 likeness: malformed.isEmpty ? likeness : likeness.filter { left($0.key) },
                 keyPhotos: keyPhotos.filter { left($0.value) },

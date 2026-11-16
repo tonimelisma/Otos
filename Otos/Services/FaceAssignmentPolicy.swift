@@ -382,7 +382,12 @@ nonisolated enum FaceAssignmentPolicy {
             }
         }
         var root = Array(faces.indices)
-        var photos = faces.map { Set([$0.id.asset]) }
+        // The photos of each group of two or more faces, by its root; a face alone is its own
+        // photo, so no set is made for the many faces no link joins.
+        var grouped: [Int: Set<MediaAssetID>] = [:]
+        func photos(_ root: Int) -> Set<MediaAssetID> {
+            grouped[root] ?? [faces[root].id.asset]
+        }
         func find(_ x: Int) -> Int {
             var x = x
             while root[x] != x {
@@ -393,15 +398,20 @@ nonisolated enum FaceAssignmentPolicy {
         }
         for link in links.sorted(by: { ($0.similarity, $1.a, $1.b) > ($1.similarity, $0.a, $0.b) }) {
             let a = find(link.a), b = find(link.b)
-            guard a != b, photos[a].isDisjoint(with: photos[b]) else { continue }
-            let (into, from) = photos[a].count >= photos[b].count ? (a, b) : (b, a)
+            let (photosA, photosB) = (photos(a), photos(b))
+            guard a != b, photosA.isDisjoint(with: photosB) else { continue }
+            let (into, from) = photosA.count >= photosB.count ? (a, b) : (b, a)
             root[from] = into
-            photos[into].formUnion(photos[from])
-            photos[from] = []
+            grouped[into] = photosA.union(photosB)
+            grouped[from] = nil
         }
+        // A face alone spans one day at most, so only the joined groups can stand.
         var groups: [Int: [Int]] = [:]
         for index in faces.indices {
-            groups[find(index), default: []].append(index)
+            let group = find(index)
+            if grouped[group] != nil {
+                groups[group, default: []].append(index)
+            }
         }
         return groups.values
             .filter { members in Set(members.compactMap { day(faces[$0].captureSeconds) }).count >= 2 }
@@ -521,9 +531,10 @@ nonisolated struct Fill {
         let rowPhotos = rowFaces.map(\.id.asset)
         let rejected = rowFaces.map { face in Set(face.rejected.compactMap { slotOf[.existing($0)] }) }
         var assigned = anchors
-        var photoPeople: [MediaAssetID: Set<Int>] = [:]
+        // Which person slots each photo holds, as one set of pairs rather than a set per photo.
+        var photoPeople: Set<PhotoSlot> = []
         for (index, person) in anchors {
-            photoPeople[faces[index].id.asset, default: []].insert(slotOf[person]!)
+            photoPeople.insert(PhotoSlot(photo: faces[index].id.asset, slot: slotOf[person]!))
         }
         let layout = RowLayout(captures: rowCaptures)
         var bests = Bests(rows: rows.count)
@@ -534,11 +545,11 @@ nonisolated struct Fill {
         /// born after it, and, when `excludingPhoto`, not already in its photo. The first
         /// person in slot order wins a tie, as a vectorised maximum over every slot would.
         func top(_ row: Int, excludingPhoto: Bool) -> (slot: Int, value: Float, second: Float)? {
-            let inPhoto = excludingPhoto ? photoPeople[rowPhotos[row]] : nil
             var best: (slot: Int, value: Float)?
             var second: Float = -2
             for (slot, value) in bests.entries(row) {
-                guard !rejected[row].contains(slot), !(inPhoto?.contains(slot) ?? false),
+                guard !rejected[row].contains(slot),
+                      !(excludingPhoto && photoPeople.contains(PhotoSlot(photo: rowPhotos[row], slot: slot))),
                       FaceAssignmentPolicy.notBeforeBirthday(rowCaptures[row], birthdayOf[slot])
                 else { continue }
                 if let current = best {
@@ -570,8 +581,7 @@ nonisolated struct Fill {
             evidence = []
             for candidate in ranked.sorted(by: { ($0.value, $1.row) > ($1.value, $0.row) }) {
                 let asset = rowFaces[candidate.row].id.asset
-                guard !(photoPeople[asset]?.contains(candidate.slot) ?? false) else { continue }
-                photoPeople[asset, default: []].insert(candidate.slot)
+                guard photoPeople.insert(PhotoSlot(photo: asset, slot: candidate.slot)).inserted else { continue }
                 assigned[rows[candidate.row]] = people[candidate.slot]
                 open.remove(candidate.row)
                 evidence.append(rows[candidate.row])
@@ -586,11 +596,17 @@ nonisolated struct Fill {
         }
         for candidate in close.sorted(by: { ($0.value, $1.row) > ($1.value, $0.row) }) {
             guard let found = top(candidate.row, excludingPhoto: true), found.value >= FaceAssignmentPolicy.threshold else { continue }
-            photoPeople[rowFaces[candidate.row].id.asset, default: []].insert(found.slot)
+            photoPeople.insert(PhotoSlot(photo: rowFaces[candidate.row].id.asset, slot: found.slot))
             assigned[rows[candidate.row]] = people[found.slot]
             open.remove(candidate.row)
         }
         return Fill(assigned: assigned, leftover: open.sorted().map { rows[$0] })
+    }
+
+    /// One person slot in one photo.
+    private struct PhotoSlot: Hashable {
+        let photo: MediaAssetID
+        let slot: Int
     }
 
     private static func order(_ person: FaceAssignmentResult.Person) -> (Int, Int64) {
@@ -635,11 +651,13 @@ nonisolated struct Fill {
         let columnTimes = columns.map(\.captureSeconds)
         let placed = open.map { layout.place[$0] }.sorted()
         let blockRows = FaceAssignmentPolicy.blockRows
-        var block = [Float](repeating: 0, count: blockRows * dimensions)
-        var blockT = [Float](repeating: 0, count: blockRows * dimensions)
-        var chunk = [Float](repeating: 0, count: evidenceChunk * dimensions)
-        var products = [Float](repeating: 0, count: evidenceChunk * blockRows)
-        var maxima = [Float](repeating: -2, count: runSlots.count * blockRows)
+        // The round's matrices, each its own region returned to the system when the round
+        // ends (`ScratchBuffer`), so a pass leaves none of them in the footprint.
+        let block = ScratchBuffer<Float>(count: blockRows * dimensions)
+        let blockT = ScratchBuffer<Float>(count: blockRows * dimensions)
+        let chunk = ScratchBuffer<Float>(count: evidenceChunk * dimensions)
+        let products = ScratchBuffer<Float>(count: evidenceChunk * blockRows)
+        let maxima = ScratchBuffer<Float>(count: runSlots.count * blockRows)
         var adultStart = [Int](repeating: -1, count: runSlots.count)
         var start = 0
         while start < placed.count {
@@ -650,10 +668,10 @@ nonisolated struct Fill {
             let blockHigh = positions.prefix(datedCount).map { layout.high[$0] }
             let blockCaptures = positions.prefix(datedCount).map { layout.captures[$0] }
             for (k, position) in positions.enumerated() {
-                copy(rows[layout.order[position]].vector, into: &block, row: k)
+                rows[layout.order[position]].vector.copy(into: block.base + k * dimensions)
             }
-            vDSP_mtrans(block, 1, &blockT, 1, vDSP_Length(dimensions), vDSP_Length(count))
-            vDSP.fill(&maxima, with: -2)
+            vDSP_mtrans(block.base, 1, blockT.base, 1, vDSP_Length(dimensions), vDSP_Length(count))
+            maxima.fill(with: -2)
             for index in adultStart.indices {
                 adultStart[index] = -1
             }
@@ -661,50 +679,45 @@ nonisolated struct Fill {
             while chunkStart < columns.count {
                 let chunkCount = min(evidenceChunk, columns.count - chunkStart)
                 for j in 0 ..< chunkCount {
-                    copy(columns[chunkStart + j].vector, into: &chunk, row: j)
+                    columns[chunkStart + j].vector.copy(into: chunk.base + j * dimensions)
                 }
-                vDSP_mmul(chunk, 1, blockT, 1, &products, 1, vDSP_Length(chunkCount), vDSP_Length(count), vDSP_Length(dimensions))
-                products.withUnsafeBufferPointer { products in
-                    maxima.withUnsafeMutableBufferPointer { maxima in
-                        guard let products = products.baseAddress, let maxima = maxima.baseAddress else { return }
-                        for j in 0 ..< chunkCount {
-                            let column = chunkStart + j
-                            let run = columnRun[column]
-                            let into = maxima + run * blockRows
-                            let from = products + j * count
-                            guard let time = columnTimes[column] else {
-                                raise(into, from, 0 ..< count)
-                                continue
-                            }
-                            if adultStart[run] < 0 {
-                                adultStart[run] = adults(blockCaptures, birthday: birthdays[runSlots[run]])
-                            }
-                            // Rows within the window of this face: the dated rows whose high
-                            // edge is at or past it and whose low edge is not past it.
-                            let low = partition(blockHigh) { $0 < time }
-                            let high = partition(blockLow) { $0 <= time }
-                            let adults = adultStart[run]
-                            if adults <= high {
-                                raise(into, from, min(low, adults) ..< count)
-                            } else {
-                                raise(into, from, low ..< high)
-                                raise(into, from, adults ..< count)
-                            }
-                        }
+                vDSP_mmul(
+                    chunk.base, 1, blockT.base, 1, products.base, 1,
+                    vDSP_Length(chunkCount), vDSP_Length(count), vDSP_Length(dimensions)
+                )
+                for j in 0 ..< chunkCount {
+                    let column = chunkStart + j
+                    let run = columnRun[column]
+                    let into = maxima.base + run * blockRows
+                    let from = UnsafePointer(products.base) + j * count
+                    guard let time = columnTimes[column] else {
+                        raise(into, from, 0 ..< count)
+                        continue
+                    }
+                    if adultStart[run] < 0 {
+                        adultStart[run] = adults(blockCaptures, birthday: birthdays[runSlots[run]])
+                    }
+                    // Rows within the window of this face: the dated rows whose high
+                    // edge is at or past it and whose low edge is not past it.
+                    let low = partition(blockHigh) { $0 < time }
+                    let high = partition(blockLow) { $0 <= time }
+                    let adults = adultStart[run]
+                    if adults <= high {
+                        raise(into, from, min(low, adults) ..< count)
+                    } else {
+                        raise(into, from, low ..< high)
+                        raise(into, from, adults ..< count)
                     }
                 }
                 chunkStart += chunkCount
             }
             for (run, slot) in runSlots.enumerated() {
-                maxima.withUnsafeBufferPointer { maxima in
-                    guard let base = maxima.baseAddress else { return }
-                    let values = base + run * blockRows
-                    var top: Float = 0
-                    vDSP_maxv(values, 1, &top, vDSP_Length(count))
-                    guard top >= kept else { return }
-                    for k in 0 ..< count where values[k] >= kept {
-                        bests.raise(layout.order[positions[positions.startIndex + k]], slot: slot, to: values[k])
-                    }
+                let values = maxima.base + run * blockRows
+                var top: Float = 0
+                vDSP_maxv(values, 1, &top, vDSP_Length(count))
+                guard top >= kept else { continue }
+                for k in 0 ..< count where values[k] >= kept {
+                    bests.raise(layout.order[positions[positions.startIndex + k]], slot: slot, to: values[k])
                 }
             }
             start += count
@@ -740,39 +753,55 @@ nonisolated struct Fill {
         guard !part.isEmpty else { return }
         vDSP_vmax(into + part.lowerBound, 1, from + part.lowerBound, 1, into + part.lowerBound, 1, vDSP_Length(part.count))
     }
-
-    private static func copy(_ vector: FaceVector, into matrix: inout [Float], row: Int) {
-        matrix.withUnsafeMutableBufferPointer { target in
-            guard let to = target.baseAddress else { return }
-            vector.copy(into: to + row * FaceEmbeddingModel.dimensions)
-        }
-    }
 }
 
-/// Each open face's kept bests (`Fill.kept` or more), per person slot: a few a face, so a
-/// face holds a short list rather than a value for every person.
+/// Each open face's kept bests (`Fill.kept` or more), per person slot: a few a face, held as
+/// one list per face threaded through four flat arrays (`head`, `next`, `slot`, `value`), so a
+/// run of chaining allocates a handful of arrays that grow by doubling, never one per face.
 nonisolated struct Bests {
-    private var slots: [[Int32]]
-    private var values: [[Float]]
+    /// Each row's first entry, or -1.
+    private var head: [Int32]
+    private var next: [Int32] = []
+    private var slots: [Int32] = []
+    private var values: [Float] = []
 
     init(rows: Int) {
-        slots = Array(repeating: [], count: rows)
-        values = Array(repeating: [], count: rows)
+        head = [Int32](repeating: -1, count: rows)
     }
 
-    func entries(_ row: Int) -> Zip2Sequence<LazyMapSequence<[Int32], Int>, [Float]> {
-        zip(slots[row].lazy.map(Int.init), values[row])
+    /// The row's entries, as (slot, best).
+    func entries(_ row: Int) -> Entries {
+        Entries(bests: self, entry: head[row])
+    }
+
+    nonisolated struct Entries: Sequence, IteratorProtocol {
+        let bests: Bests
+        var entry: Int32
+
+        mutating func next() -> (Int, Float)? {
+            guard entry >= 0 else { return nil }
+            let index = Int(entry)
+            entry = bests.next[index]
+            return (Int(bests.slots[index]), bests.values[index])
+        }
     }
 
     /// Raises the row's best for `slot` to `value`.
     mutating func raise(_ row: Int, slot: Int, to value: Float) {
         let slot = Int32(slot)
-        if let index = slots[row].firstIndex(of: slot) {
-            values[row][index] = max(values[row][index], value)
-        } else {
-            slots[row].append(slot)
-            values[row].append(value)
+        var entry = head[row]
+        while entry >= 0 {
+            let index = Int(entry)
+            if slots[index] == slot {
+                values[index] = max(values[index], value)
+                return
+            }
+            entry = next[index]
         }
+        next.append(head[row])
+        slots.append(slot)
+        values.append(value)
+        head[row] = Int32(slots.count - 1)
     }
 }
 
@@ -975,7 +1004,7 @@ nonisolated struct FaceRanker: Sendable {
 /// the columns once, transposed, and one block of rows and its products.
 nonisolated struct BlockedSimilarity {
     private let rows: [FaceFact]
-    private let columnsTransposed: [Float]
+    private let columnsTransposed: ScratchBuffer<Float>
     let columnCount: Int
     /// Rows per block: `FaceAssignmentPolicy.blockRows`, fewer when the columns are many,
     /// so a block's products stay within `blockValues`.
@@ -988,16 +1017,13 @@ nonisolated struct BlockedSimilarity {
         self.rows = rows
         columnCount = columns.count
         blockRows = max(1, min(FaceAssignmentPolicy.blockRows, Self.blockValues / max(columns.count, 1)))
-        var transposed = [Float](repeating: 0, count: columns.count * Self.dimensions)
+        let transposed = ScratchBuffer<Float>(count: columns.count * Self.dimensions)
         var widened = [Float](repeating: 0, count: Self.dimensions)
-        transposed.withUnsafeMutableBufferPointer { target in
-            guard let base = target.baseAddress else { return }
-            for (column, face) in columns.enumerated() {
-                widened.withUnsafeMutableBufferPointer { row in
-                    guard let from = row.baseAddress else { return }
-                    face.vector.copy(into: from)
-                    vDSP_mmov(from, base + column, 1, vDSP_Length(Self.dimensions), 1, vDSP_Length(columns.count))
-                }
+        for (column, face) in columns.enumerated() {
+            widened.withUnsafeMutableBufferPointer { row in
+                guard let from = row.baseAddress else { return }
+                face.vector.copy(into: from)
+                vDSP_mmov(from, transposed.base + column, 1, vDSP_Length(Self.dimensions), 1, vDSP_Length(columns.count))
             }
         }
         columnsTransposed = transposed
@@ -1008,26 +1034,21 @@ nonisolated struct BlockedSimilarity {
     /// visited even with no columns, when `values` is empty.
     func forEachBlock(_ body: (Range<Int>, UnsafeBufferPointer<Float>) -> Void) {
         guard !rows.isEmpty else { return }
-        var block = [Float](repeating: 0, count: blockRows * Self.dimensions)
-        var products = [Float](repeating: 0, count: columnCount > 0 ? blockRows * columnCount : 0)
+        let block = ScratchBuffer<Float>(count: blockRows * Self.dimensions)
+        let products = ScratchBuffer<Float>(count: blockRows * columnCount)
         var start = 0
         while start < rows.count {
             let count = min(blockRows, rows.count - start)
             if columnCount > 0 {
-                block.withUnsafeMutableBufferPointer { target in
-                    guard let to = target.baseAddress else { return }
-                    for k in 0 ..< count {
-                        rows[start + k].vector.copy(into: to + k * Self.dimensions)
-                    }
+                for k in 0 ..< count {
+                    rows[start + k].vector.copy(into: block.base + k * Self.dimensions)
                 }
                 vDSP_mmul(
-                    block, 1, columnsTransposed, 1, &products, 1,
+                    block.base, 1, columnsTransposed.base, 1, products.base, 1,
                     vDSP_Length(count), vDSP_Length(columnCount), vDSP_Length(Self.dimensions)
                 )
             }
-            products.withUnsafeBufferPointer { values in
-                body(start ..< start + count, UnsafeBufferPointer(rebasing: values[0 ..< count * columnCount]))
-            }
+            body(start ..< start + count, UnsafeBufferPointer(start: products.base, count: count * columnCount))
             start += count
         }
     }

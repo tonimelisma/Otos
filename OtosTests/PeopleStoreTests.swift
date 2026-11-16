@@ -600,6 +600,7 @@ struct PeopleStoreTests {
         }
         defer { sampler.cancel() }
         var fields: [String] = []
+        var footprints: [String: (before: UInt64, after: UInt64)] = [:]
         /// Runs `body`, recording the footprint before and after it and the highest between.
         func phase<T>(_ name: String, _ body: () async throws -> T) async rethrows -> T {
             let before = ProcessResourceSample.current().footprintBytes
@@ -607,6 +608,7 @@ struct PeopleStoreTests {
             let start = ContinuousClock.now
             let value = try await body()
             let after = ProcessResourceSample.current().footprintBytes
+            footprints[name] = (before, after)
             fields.append(
                 "\(name)Ms=\(DiagnosticsTiming.milliseconds(since: start)) \(name)BeforeMB=\(mb(before)) "
                     + "\(name)PeakMB=\(mb(peak.withLock { max($0, after) })) \(name)AfterMB=\(mb(after))"
@@ -635,6 +637,13 @@ struct PeopleStoreTests {
         _ = try await phase("settledLaunch") { try await PeopleAssignment.settle(store: store, libraries: libraries) }
         // The gallery's own read, as the window makes it on a visit.
         _ = try await phase("galleryRead") { try await store.peopleGallery(availableLibraryPaths: paths) }
+        // Its parts, each alone: the people with their covers, the anchors, the unchecked tally.
+        let reader = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        _ = try await phase("galleryPeople") { try await reader.read { try Row.fetchAll($0, sql: PeopleGallerySQL.people).count } }
+        _ = try await phase("galleryAnchors") { try await reader.read { try Row.fetchAll($0, sql: PeopleGallerySQL.anchors).count } }
+        _ = try await phase("galleryHasFaces") { try await reader.read { try Bool.fetchOne($0, sql: PeopleGallerySQL.hasFaces) } }
+        _ = try await phase("galleryUnchecked") { try await store.uncheckedForFaces(availableLibraryPaths: paths) }
+        try reader.close()
         // One face read again: a new vector row for it, as a new reading writes.
         let writer = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         func readAgain() async throws {
@@ -647,17 +656,35 @@ struct PeopleStoreTests {
             }
         }
         try await readAgain()
+        // An owner holding every vector, as the app's does after its first pass: what each
+        // later pass leaves behind is what it strands.
         let owner = PeopleAssignment(store: store)
         try await owner.settle()
+        try await phase("heldSettledPass") { try await owner.settle() }
         try await readAgain()
         try await phase("oneNewFace") { try await owner.settle() }
+        // A birthday before every face moves an input and decides nothing: assignment runs whole.
+        try await writer.write { db in
+            try db.execute(sql: "UPDATE person SET birthday = '1900' WHERE id = (SELECT min(id) FROM person)")
+        }
+        try await phase("fullAssignment") { try await owner.settle() }
         let line = "op=peopleCost " + fields.joined(separator: " ")
         let url = SourceTree.root.appending(path: "build/people-cost/owner.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(line.utf8).write(to: url)
+        // The guard: a pass over held vectors leaves the footprint within the margin of where it
+        // found it, so nothing it allocated for the pass stays counted (ADR 0047).
+        for name in ["heldSettledPass", "oneNewFace", "fullAssignment"] {
+            let (before, after) = try #require(footprints[name])
+            #expect(mb(after) <= mb(before) + Self.strandedMarginMB, "\(name): \(mb(before)) MB → \(mb(after)) MB")
+        }
         try writer.close()
         await store.shutdown()
     }
+
+    /// How far a People pass over held vectors may leave the footprint above where it found it,
+    /// at the owner's scale: the allocator's own reuse slack, nothing a pass holds.
+    static let strandedMarginMB: UInt64 = 48
 
     /// A vector written after a snapshot was read is a newer reading of some face, which the next
     /// snapshot names: forgetting the vectors a snapshot does not name keeps every vector above

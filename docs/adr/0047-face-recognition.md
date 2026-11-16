@@ -292,7 +292,13 @@ grouping had put with the right child.
   margin of it); on the owner's faces that is about six people of 752. Each round raises those
   bests a block of 512 faces and a chunk of 2,048 evidence faces at a time, the faces in capture
   order so the faces an evidence face reaches are at most two runs of the block, with one
-  vectorised maximum per evidence face and run; its buffers are reused. People holds the
+  vectorised maximum per evidence face and run. What the kernel needs only while it runs —
+  its blocks, products and transposed columns — is mapped memory of its own (`ScratchBuffer`),
+  unmapped as it returns: on macOS 27 memory `malloc` frees stays in the footprint
+  (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). What it builds per face
+  is a few flat arrays, never an allocation per face: the kept bests are lists threaded
+  through four arrays (`Bests`), and the snapshot's faces are columns over one table of the
+  photos' IDs held once (`PeopleFaces`). People holds the
   vectors at half precision (105 MB for 103k faces): on the owner's 102,978 vectors it changed
   no best person, threshold or margin decision in 3,029 faces sampled
   (`docs/research/2026-11-16-people-memory-and-kernel.md`). Rejected: the dense table of every
