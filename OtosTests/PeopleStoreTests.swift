@@ -528,8 +528,14 @@ struct PeopleStoreTests {
         let store = CatalogStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
         let libraries = try #require(await store.loadedLibraries())
+        /// A read is counted as its transaction ends, which can be after its caller resumed
+        /// (`readFreeingConnection` frees the caller first), so a count is waited for.
         func vectorReads() -> Int {
             store.use().connections.holds.filter { $0.operation == "faceEmbeddings" }.reduce(0) { $0 + $1.count }
+        }
+        func vectorReads(reaching count: Int) async throws -> Int {
+            try await waitUntil { vectorReads() >= count }
+            return vectorReads()
         }
         let people = PeopleAssignment(store: store, builder: nil)
         let relaunched = try await people.settle(libraries: libraries)
@@ -538,8 +544,9 @@ struct PeopleStoreTests {
 
         let candidates = await people.candidates(for: [library.id("0.jpg")])
         #expect(candidates.count == 1)
-        let afterRanking = vectorReads()
-        #expect(afterRanking >= 1)
+        // The ranking's one page, and none before it: the settled pass read no vector.
+        let afterRanking = try await vectorReads(reaching: 1)
+        #expect(afterRanking == 1)
 
         let reopened = FaceEnrichmentTests.ScannedLibrary(
             store: store, root: library.root, rootPath: library.rootPath, emit: library.emit, databaseURL: databaseURL
@@ -547,7 +554,7 @@ struct PeopleStoreTests {
         try await reopened.readFaces([reopened.result(for: "new.jpg", faces: [Self.lookalike(4)])])
         let grown = try await people.settle(libraries: libraries)
         #expect(grown.person(sam)?.media.total == 5)
-        #expect(vectorReads() == afterRanking + 1, "one page above the vectors held")
+        #expect(try await vectorReads(reaching: afterRanking + 1) == afterRanking + 1, "one page above the vectors held")
         await store.shutdown()
     }
 
