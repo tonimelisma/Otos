@@ -145,6 +145,8 @@ def launch(start, events):
     opened = first(events, "catalog.database.open", "finish")
     started = first(events, "catalog.start", "finish")
     grid = first(events, "launch.firstGrid", "applied")
+    # When every background owner first owed nothing, from the launch (`op=owners.quiescent`).
+    quiet = first(events, "owners.quiescent", "reached")
     return {
         "windowAttachedMs": ms_since(start.time, attached) if attached else None,
         "databaseOpenMs": opened.num("ms") if opened else None,
@@ -156,6 +158,7 @@ def launch(start, events):
         "scope": grid.fields.get("scope") if grid else None,
         "scopeKind": scope_kind(grid.fields.get("scope", "")) if grid else None,
         "items": grid.num("items") if grid else None,
+        "ownersQuiescentMs": quiet.num("ms") if quiet else None,
     }
 
 
@@ -641,7 +644,8 @@ def print_report(report, rows, out):
         w(f"  window attached {fmt(launched['windowAttachedMs'])}, database open took {fmt(launched['databaseOpenMs'])} "
           f"(migrations {fmt(launched['databaseMigrations'])}), catalog open at {fmt(launched['catalogOpenAtMs'])} "
           f"(migrations {fmt(launched['catalogMigrationsMs'])} ms), first grid {fmt(launched['firstGridMs'])} "
-          f"(catalog {fmt(launched['firstGridCatalogMs'])}) in {launched['scopeKind']}, {fmt(launched['items'])} items\n")
+          f"(catalog {fmt(launched['firstGridCatalogMs'])}) in {launched['scopeKind']}, {fmt(launched['items'])} items, "
+          f"owners quiescent {fmt(launched['ownersQuiescentMs'])}\n")
     w("\nCLICK TO PAINT\n")
     for click in report["clicks"]:
         order = click.get("order", {})

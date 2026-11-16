@@ -41,8 +41,9 @@ import OSLog
 /// first such question, and again after either changes.
 ///
 /// A failed pass leaves its request outstanding for the next request to retry. `stop()` is
-/// teardown: it ends the doorbell, so the loop ends with it.
-actor PeopleAssignment {
+/// teardown: it ends the doorbell, so the loop ends with it. The requests, the pass and its
+/// reads are kept in `OwnerActivity` (`QuiescentOwner`).
+actor PeopleAssignment: QuiescentOwner {
     /// What the People snapshot reads (`CatalogStore.peopleSnapshot`), so `CatalogProjection`
     /// asks for a pass only when one of these moved: the faces, who they are and the people;
     /// which rows are shown and which movies a Live Photo hides; the stacks a face's photo
@@ -56,11 +57,8 @@ actor PeopleAssignment {
     private nonisolated let bell: AsyncStream<Void>
     private nonisolated let doorbell: AsyncStream<Void>.Continuation
     private let store: CatalogStore
-    /// Bumped by every request. Nothing decrements or clears it.
-    private var requested: UInt64 = 0
-    /// The `requested` value the last successful pass started from.
-    private var covered: UInt64 = 0
-    private var runningPasses = 0
+    /// Every request, the one the last successful pass started from, and the pass running.
+    let activity = OwnerActivity(owner: "people")
     /// What the last pass read, for `candidates(for:)`.
     private var lastRead: PeopleSnapshot?
     /// Every face's vector read so far; read on the first assignment or ranking that needs it.
@@ -76,7 +74,7 @@ actor PeopleAssignment {
 
     /// True when every request has been covered by a successful pass and none is running.
     var isQuiescent: Bool {
-        requested == covered && runningPasses == 0
+        quiescence != nil
     }
 
     /// Runs each pass one heavy load at a time with the other owners' (`LoadAdmission`).
@@ -113,8 +111,13 @@ actor PeopleAssignment {
         case .none: break
         case let .named(photos): owedRows?.formUnion(photos.ids)
         }
-        requested &+= 1
+        activity.request()
         doorbell.yield()
+    }
+
+    /// Asks for a pass with no rows named and no read owed again: the held read stands.
+    func ringIdle() {
+        request(rows: .none)
     }
 
     /// The facts a change can name rows of and still be read by key: the faces of those
@@ -154,10 +157,13 @@ actor PeopleAssignment {
     }
 
     private func pass() async {
-        guard requested != covered else { return }
-        runningPasses += 1
-        defer { runningPasses -= 1 }
-        let startedFrom = requested
+        guard activity.isOwed else { return }
+        let startedFrom = activity.beginPass()
+        var answered: UInt64?
+        defer {
+            activity.endPass(covering: answered)
+            settleQuiescence()
+        }
         do {
             // Before the catalog's first load there is nothing to read; the load is a catalog
             // change, so a request follows it.
@@ -180,8 +186,8 @@ actor PeopleAssignment {
             ])
             return
         }
-        covered = startedFrom
-        if requested != covered {
+        answered = startedFrom
+        if activity.requested != startedFrom {
             doorbell.yield()
         }
     }
@@ -200,6 +206,9 @@ actor PeopleAssignment {
         } else {
             try await store.backgroundReads.peopleSnapshot()
         }
+        // The rows a read returned are the faces of the photos it read: all of them for a
+        // whole read, the named photos' for a keyed one.
+        activity.read(rows: rows == nil || lastRead == nil ? read.faces.count : read.faces.count { rows?.contains($0.id.asset) == true })
         let readMs = DiagnosticsTiming.milliseconds(since: start)
         OtosLog.catalog.debugOperation("people.read", phase: rows == nil || lastRead == nil ? "whole" : "byKey", fields: [
             "photos": rows.map { "\($0.count)" } ?? "all", "ms": "\(readMs)",
@@ -210,6 +219,7 @@ actor PeopleAssignment {
         ranker = nil
         let (inputs, galleryFacts) = await Self.derive(read)
         let galleryRows = try await store.writePeopleGalleryFacts(galleryFacts, stored: read.galleryFacts)
+        activity.wrote(galleryRows)
         if settled == nil {
             let stored = try await store.backgroundReads.settledPeopleAssignment()
             settled = settled ?? stored.map(AssignmentInputs.init(digest:))
@@ -229,6 +239,7 @@ actor PeopleAssignment {
         let assignMs = DiagnosticsTiming.milliseconds(since: assignStart)
         try Task.checkCancellation()
         let written = try await store.applyAssignment(plan)
+        activity.wrote(written)
         // The photos written are owed a read by key, which the write's own change also asks.
         if written > 0 {
             owedRows?.formUnion(plan.photos)
@@ -292,12 +303,18 @@ extension PeopleAssignment {
     /// Internal for the tests and benchmarks that run passes without the loop.
     func settle() async throws {
         while true {
-            requested &+= 1
-            let startedFrom = requested
-            let assigned = try await admission.run(.people) {
-                try await readThenAssign()
+            let startedFrom = activity.request()
+            activity.beginPass()
+            let assigned: Bool
+            do {
+                assigned = try await admission.run(.people) {
+                    try await readThenAssign()
+                }
+            } catch {
+                activity.endPass(covering: nil)
+                throw error
             }
-            covered = startedFrom
+            activity.endPass(covering: startedFrom)
             if !assigned {
                 return
             }
@@ -371,8 +388,9 @@ extension PeopleAssignment {
 /// value it started from and publishes a state that covers it (`CatalogPeopleState.covers`),
 /// so a People act the window shows ahead is retired by the first state read after its write.
 /// One loop runs every read off a `bufferingNewest(1)` doorbell. A failed read publishes
-/// nothing and leaves its request outstanding for the next one (ADR 0032 rule 4).
-actor PeopleGallery {
+/// nothing and leaves its request outstanding for the next one (ADR 0032 rule 4). The
+/// requests, the read and its rows are kept in `OwnerActivity` (`QuiescentOwner`).
+actor PeopleGallery: QuiescentOwner {
     typealias Builder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws -> CatalogPeopleState?
 
     /// What the gallery's read reads: the people and their faces (`.faces`), which rows are
@@ -389,14 +407,12 @@ actor PeopleGallery {
     private let store: CatalogStore
     /// Tests replace the read to hold it at its suspension; production reads the catalog.
     private let builder: Builder?
-    private var requested: UInt64 = 0
-    private var covered: UInt64 = 0
-    private var running = 0
+    let activity = OwnerActivity(owner: "peopleGallery")
     private var published: CatalogPeopleState?
     private var loopTask: Task<Void, Never>?
 
     var isQuiescent: Bool {
-        requested == covered && running == 0
+        quiescence != nil
     }
 
     init(store: CatalogStore, builder: Builder?) {
@@ -422,9 +438,13 @@ actor PeopleGallery {
     /// read after it carries as `covers`.
     @discardableResult
     func request() -> UInt64 {
-        requested &+= 1
+        let requested = activity.request()
         doorbell.yield()
         return requested
+    }
+
+    func ringIdle() {
+        request()
     }
 
     /// Teardown, callable from anywhere: ends the loop and the stream of builds.
@@ -434,10 +454,13 @@ actor PeopleGallery {
     }
 
     private func read() async {
-        guard requested != covered else { return }
-        running += 1
-        defer { running -= 1 }
-        let startedFrom = requested
+        guard activity.isOwed else { return }
+        let startedFrom = activity.beginPass()
+        var answered: UInt64?
+        defer {
+            activity.endPass(covering: answered)
+            settleQuiescence()
+        }
         let built: CatalogPeopleState?
         do {
             // Before the catalog's first load there is nothing to read; the load is a catalog
@@ -450,6 +473,7 @@ actor PeopleGallery {
                 built = try await Self.read(store: store, libraries: libraries)
             }
             try Task.checkCancellation()
+            activity.read(rows: built?.people.count ?? 0)
             OtosLog.catalog.debugOperation("people.gallery", phase: "read", fields: [
                 "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
                 "people": built.map { "\($0.people.count)" } ?? "unknown",
@@ -462,7 +486,7 @@ actor PeopleGallery {
             ])
             return
         }
-        covered = startedFrom
+        answered = startedFrom
         // A gallery not known yet (`peopleGallery` nil) is not published: the pane keeps
         // claiming nothing until People has written what it paints from.
         if var built {
@@ -472,7 +496,7 @@ actor PeopleGallery {
                 buildsContinuation.yield(built)
             }
         }
-        if requested != covered {
+        if activity.requested != startedFrom {
             doorbell.yield()
         }
     }

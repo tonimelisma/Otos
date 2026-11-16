@@ -41,7 +41,12 @@ import OSLog
 /// Lifecycle mirrors `CatalogStore`: it is a process-lifetime owner started by the
 /// ViewModel; `shutdown()` cancels its tasks and releases process-local SQLite
 /// claims before dropping queued work (tests use it to stop cleanly).
-actor EnrichmentCoordinator {
+///
+/// Each signal is a request (`OwnerActivity`) a pass covers, so the coordinator reports when
+/// it owes nothing (`QuiescentOwner`): every signal covered, every Store change acted on, no
+/// claim queued or being read, no transfer in flight and no result waiting to be written. The
+/// schedule's earliest wait is then its wake.
+actor EnrichmentCoordinator: QuiescentOwner {
     struct WorkStateSnapshot: Equatable, Sendable {
         let readyQueued: Int
         let enriching: Int
@@ -201,6 +206,10 @@ actor EnrichmentCoordinator {
     /// Bumped by every Store change this coordinator hears and every claim it gives back: the
     /// facts a background claim's answer depends on (ADR 0032 rule 2).
     var claimInputsRevision: UInt64 = 0
+    /// Signals, passes and the work they did (`QuiescentOwner`).
+    let activity = OwnerActivity(owner: "enrichment")
+    /// Set by a pass whose candidate read failed, so the pass covers nothing (ADR 0032 rule 4).
+    var claimReadFailed = false
     /// The revision and video-faces admission a background claim last found nothing at. While
     /// both stand, another claim would find nothing again, so none is asked: an empty claim is
     /// still a write transaction, and an idle coordinator writes nothing (plan 0116).
@@ -274,7 +283,7 @@ extension EnrichmentCoordinator {
         guard supervisor == nil else {
             return
         }
-        let changes = await store.changeNotifications()
+        let changes = await store.changeNotifications(deliveries: activity.deliveries)
         // A concurrent `start()` may have won while this one subscribed; its stream is
         // dropped here, which ends that subscription.
         guard supervisor == nil else {
@@ -286,7 +295,7 @@ extension EnrichmentCoordinator {
                 guard let self else {
                     return
                 }
-                await noteStoreChange(change)
+                await actOnDelivered(change)
             }
         }
         supervisor = Task { await self.runLoop() }
@@ -307,6 +316,7 @@ extension EnrichmentCoordinator {
         capturedWakeTask?.cancel()
         wakeTask = nil
         wakeAt = nil
+        activity.wake = nil
         await supervisor?.value
         await capturedChangeConsumer?.value
         await capturedApplyFlushTask?.value
@@ -566,6 +576,25 @@ extension EnrichmentCoordinator {
         markDirtyAndSignal()
     }
 
+    /// A change the Store delivered to this coordinator's subscription: noted, and counted as
+    /// acted on in the same step.
+    private func actOnDelivered(_ change: CatalogStoreChange) {
+        noteStoreChange(change)
+        activity.actedOnChange()
+        settleQuiescence()
+    }
+
+    /// Work the coordinator holds beyond its passes: a claim queued or being read, a transfer
+    /// in flight, a result waiting to be written, a device seed waiting for room.
+    var holdsWork: Bool {
+        !readyClaims.isEmpty || schedule.inFlightCount > 0 || !pendingApply.isEmpty || applyFlushTask != nil
+            || !pendingDeviceSeeds.isEmpty
+    }
+
+    func ringIdle() {
+        signal()
+    }
+
     /// Asks the Store which of the rows to check it still offers, and ends the demands of rows
     /// it no longer has (`EnrichmentSchedule.reconcile`). A failed read leaves the rows to
     /// check for the next pass.
@@ -589,6 +618,7 @@ extension EnrichmentCoordinator {
             demandRowsToCheck.formUnion(named)
             return
         }
+        activity.read(rows: sources.count)
         guard !isShuttingDown else {
             return
         }
@@ -613,6 +643,7 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return
         }
+        activity.request()
         signalContinuation.yield()
     }
 
@@ -636,6 +667,8 @@ extension EnrichmentCoordinator {
                 if Task.isCancelled {
                     break
                 }
+                let answering = activity.beginPass()
+                claimReadFailed = false
                 let passStart = ContinuousClock.now
                 for work in await dequeueEnrichmentWork(now: passStart) {
                     if work.sourceSize == 0 {
@@ -689,6 +722,8 @@ extension EnrichmentCoordinator {
                 }
                 schedule.endPass(at: passStart)
                 armWake(after: passStart)
+                activity.endPass(covering: claimReadFailed ? nil : answering)
+                settleQuiescence()
             }
         }
     }
@@ -703,10 +738,12 @@ extension EnrichmentCoordinator {
         wakeTask?.cancel()
         wakeTask = nil
         wakeAt = nil
+        activity.wake = nil
         guard let next, !isShuttingDown else {
             return
         }
         wakeAt = next
+        activity.wake = OwnerWake(kind: .backoff, at: next)
         wakeTask = Task { [weak self] in
             do {
                 // time: backoff — the earliest retry, recheck or pacing the schedule holds
@@ -722,6 +759,7 @@ extension EnrichmentCoordinator {
         if wakeAt == instant {
             wakeAt = nil
             wakeTask = nil
+            activity.wake = nil
         }
         signal()
     }

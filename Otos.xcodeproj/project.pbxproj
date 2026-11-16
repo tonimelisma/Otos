@@ -179,6 +179,8 @@
 				Services/LiveEditRenderer.swift,
 				Services/Admission.swift,
 				Services/LoadAdmission.swift,
+				Services/OwnerQuiescence.swift,
+				Services/BackgroundOwnerSet.swift,
 				Services/MaterializationAdmissionPolicy.swift,
 				Services/MaterializationCoordinator.swift,
 				Services/MediaEligibility.swift,

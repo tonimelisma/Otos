@@ -26,12 +26,17 @@ import OSLog
 /// (`locality(of:)`, ADR 0046 §4) and reads only a local one, re-checking the file's
 /// materialization immediately before its read, reads on the cooperative pool off this actor (`@concurrent`), and hands records
 /// to `CatalogStore.applyMetadataRefresh`, which writes one only while its row still has
-/// the signature it was read at. The actor holds no state but the pass's task.
-actor MetadataRefresher {
+/// the signature it was read at. The actor holds the pass's task and its `OwnerActivity`: the
+/// launch's pass is its one request, covered when the pass ends however it ended but torn
+/// down — a failure is logged and its rows are the next launch's pass's, like a skipped row —
+/// so the refresher is quiescent once that pass is done and nothing rings it again
+/// (`QuiescentOwner`).
+actor MetadataRefresher: QuiescentOwner {
     private let store: CatalogStore
     private let locality: @Sendable (MediaAssetID) async -> OriginalLocality
     private let pageSize: Int
     private var task: Task<MetadataRefreshSummary, Never>?
+    let activity = OwnerActivity(owner: "metadataRefresh")
 
     init(
         store: CatalogStore,
@@ -52,12 +57,34 @@ actor MetadataRefresher {
         let store = store
         let locality = locality
         let pageSize = pageSize
+        let answering = activity.request()
+        activity.beginPass()
         let pass = Task {
-            await Self.runPass(store: store, locality: locality, pageSize: pageSize)
+            let ran = await Self.runPass(store: store, locality: locality, pageSize: pageSize)
+            await self.passEnded(ran, answering: answering)
+            return ran.summary
         }
         task = pass
         return await pass.value
     }
+
+    private func passEnded(_ ran: Pass, answering: UInt64) {
+        activity.work.reads += ran.work.reads
+        activity.work.rows += ran.work.rows
+        activity.wrote(ran.summary.written + ran.summary.downloadsRequested)
+        activity.endPass(covering: ran.cancelled ? nil : answering)
+        settleQuiescence()
+    }
+
+    /// What a pass did: its summary, the candidate pages it read and whether it was cancelled.
+    private nonisolated struct Pass: Sendable {
+        var summary = MetadataRefreshSummary()
+        var work = OwnerWork()
+        var cancelled = false
+    }
+
+    /// One pass a launch: nothing rings it again.
+    func ringIdle() {}
 
     func shutdown() {
         task?.cancel()
@@ -67,9 +94,10 @@ actor MetadataRefresher {
         store: CatalogStore,
         locality: @escaping @Sendable (MediaAssetID) async -> OriginalLocality,
         pageSize: Int
-    ) async -> MetadataRefreshSummary {
+    ) async -> Pass {
         let start = ContinuousClock.now
         var summary = MetadataRefreshSummary()
+        var work = OwnerWork()
         var cursor: MediaAssetID?
         OtosLog.metadata.noticeOperation("metadata.refresh", phase: "start", fields: [:])
         while !Task.isCancelled {
@@ -83,6 +111,8 @@ actor MetadataRefresher {
                 ])
                 break
             }
+            work.reads += 1
+            work.rows += page.count
             guard let last = page.last else { break }
             cursor = last.id
             var refreshes: [MetadataRefresh] = []
@@ -109,7 +139,8 @@ actor MetadataRefresher {
                 break
             }
         }
-        OtosLog.metadata.noticeOperation("metadata.refresh", phase: Task.isCancelled ? "cancelled" : "finish", fields: [
+        let cancelled = Task.isCancelled
+        OtosLog.metadata.noticeOperation("metadata.refresh", phase: cancelled ? "cancelled" : "finish", fields: [
             "read": "\(summary.read)",
             "written": "\(summary.written)",
             "skipped": "\(summary.skipped)",
@@ -117,7 +148,7 @@ actor MetadataRefresher {
             "failed": "\(summary.failed)",
             "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
-        return summary
+        return Pass(summary: summary, work: work, cancelled: cancelled)
     }
 
     private enum CandidateRead {

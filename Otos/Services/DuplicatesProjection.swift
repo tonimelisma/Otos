@@ -29,8 +29,9 @@ import OSLog
 /// A failed build publishes nothing and leaves its request outstanding for the next
 /// request to retry. `stop()` is teardown: it ends both streams, so the loop and the
 /// consumer end with them. Every build whose groups differ from the last published ones is
-/// yielded on `builds`, which `CatalogProjection` merges into the window state.
-actor DuplicatesProjection {
+/// yielded on `builds`, which `CatalogProjection` merges into the window state. The requests,
+/// the pass and its reads are kept in `OwnerActivity` (`QuiescentOwner`).
+actor DuplicatesProjection: QuiescentOwner {
     typealias Builder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws -> CatalogDuplicatesState
 
     /// What the groups are built from, so `CatalogProjection` asks for a build only when one
@@ -52,11 +53,8 @@ actor DuplicatesProjection {
     private let store: CatalogStore
     /// Tests replace the build to hold it at its suspension; production builds the groups.
     private let builder: Builder?
-    /// Bumped by every request. Nothing decrements or clears it.
-    private var requested: UInt64 = 0
-    /// The `requested` value the last successful build started from.
-    private var covered: UInt64 = 0
-    private var runningPasses = 0
+    /// Every request, the one the last successful build started from, and the build running.
+    let activity = OwnerActivity(owner: "duplicates")
     private var published: CatalogDuplicatesState?
     /// What the last successful build leaves the next one.
     private var memory = SamePhotoMemory.empty
@@ -65,7 +63,7 @@ actor DuplicatesProjection {
     /// True when every request has been covered by a successful build and none is running.
     /// Lets a test wait for settlement instead of guessing a sleep duration.
     var isQuiescent: Bool {
-        requested == covered && runningPasses == 0
+        quiescence != nil
     }
 
     /// Runs each build one heavy load at a time with the other owners' (`LoadAdmission`).
@@ -97,8 +95,12 @@ actor DuplicatesProjection {
 
     /// The catalog may have changed: the groups are owed a build.
     func request() {
-        requested &+= 1
+        activity.request()
         doorbell.yield()
+    }
+
+    func ringIdle() {
+        request()
     }
 
     /// Teardown, callable from anywhere: ends the loop and the stream of builds. A build in
@@ -109,12 +111,15 @@ actor DuplicatesProjection {
     }
 
     private func pass() async {
-        guard requested != covered else {
+        guard activity.isOwed else {
             return
         }
-        runningPasses += 1
-        defer { runningPasses -= 1 }
-        let startedFrom = requested
+        let startedFrom = activity.beginPass()
+        var answered: UInt64?
+        defer {
+            activity.endPass(covering: answered)
+            settleQuiescence()
+        }
         let built: CatalogDuplicatesState
         do {
             // Before the catalog's first load there is nothing to build; the load is a
@@ -125,12 +130,16 @@ actor DuplicatesProjection {
             // One heavy load at a time with the other owners, none before the first grid.
             built = try await admission.run(.duplicates) {
                 if let builder {
+                    activity.read(rows: 0)
                     return try await builder(store, libraries)
                 }
                 let result = try await Self.build(store: store, libraries: libraries, memory: memory)
                 try Task.checkCancellation()
                 // The only writer of `memory` is this loop's pass, one at a time.
                 memory = result.memory
+                // A build is one read in this owner's units; its rows are the stills whose
+                // evidence it read rather than kept.
+                activity.read(rows: result.evidenceRead)
                 return result.state
             }
             try Task.checkCancellation()
@@ -144,12 +153,12 @@ actor DuplicatesProjection {
         }
         // Synchronous from here: nothing interleaves between covering the request and
         // publishing what covers it.
-        covered = startedFrom
+        answered = startedFrom
         if built != published {
             published = built
             buildsContinuation.yield(built)
         }
-        if requested != covered {
+        if activity.requested != startedFrom {
             doorbell.yield()
         }
     }

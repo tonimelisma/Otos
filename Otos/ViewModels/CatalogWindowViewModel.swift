@@ -478,6 +478,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let photoDescriptionWriter: PhotoDescriptionWriter?
     /// Writes On This Day's titles from its photos' descriptions (ADR 0053).
     @ObservationIgnored let anniversaryTitleWriter: AnniversaryTitleWriter?
+    /// The launch's one derived-folder load, started with the background owners.
+    @ObservationIgnored let derivedFolderLoad: DerivedFolderLoad?
     @ObservationIgnored let materializationCoordinator: MaterializationCoordinator
     /// Reads a volume's free space for every free-space floor this window's owners keep
     /// (ADR 0027): the system's reading in the app, a test's own so no outcome depends on
@@ -621,8 +623,6 @@ final class CatalogWindowViewModel {
     /// the catalog opens keeps the sidebar's rows; an open within the first frame shows none.
     private(set) var catalogOpeningFramePresented = false
     @ObservationIgnored private var queryForwardingTask: Task<Void, Never>?
-    /// The launch's one derived-folder reconciliation, started after the first grid.
-    @ObservationIgnored private var derivedFilesTask: Task<Void, Never>?
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
     @ObservationIgnored var mediaChoiceForwardingTask: Task<Void, Never>?
     @ObservationIgnored var stackKeyForwardingTask: Task<Void, Never>?
@@ -657,8 +657,8 @@ final class CatalogWindowViewModel {
     /// its indicator shows. Cleared by every scope intent.
     private(set) var waitingFramePresentedScope: SidebarSelection?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
-    /// Starts the background owners, in `BackgroundOwner.launchOrder`, once the first grid has
-    /// been applied.
+    /// Starts the background owners (`BackgroundOwnerSet`) once the first grid has been
+    /// applied, then waits for every one of them to owe nothing (`op=owners.quiescent`).
     @ObservationIgnored private var ownerStartTask: Task<Void, Never>?
     @ObservationIgnored var deviceStagingSweepTask: Task<Void, Never>?
     @ObservationIgnored var gridTelemetryTask: Task<Void, Never>?
@@ -967,6 +967,7 @@ final class CatalogWindowViewModel {
         anniversaryTitleWriter = photoDescriptionWriter.map { writer in
             AnniversaryTitleWriter(store: catalogStore, descriptions: writer, writeTitle: AnniversaryTitler.live)
         }
+        derivedFolderLoad = startsEnrichment ? DerivedFolderLoad(store: catalogStore, admission: loadAdmission) : nil
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
@@ -1064,7 +1065,6 @@ final class CatalogWindowViewModel {
         catalogStartupTask?.cancel()
         catalogOpeningTask?.cancel()
         queryForwardingTask?.cancel()
-        derivedFilesTask?.cancel()
         mutationForwardingTask?.cancel()
         mediaChoiceForwardingTask?.cancel()
         stackKeyForwardingTask?.cancel()
@@ -1146,9 +1146,11 @@ final class CatalogWindowViewModel {
         let refresher = metadataRefresher
         let immich = immichAccounts
         let searchIndex = photoSearchIndex
+        let derivedFolder = derivedFolderLoad
         // swiftlint:disable:next unowned_view_model_task
         Task {
             await withDiscardingTaskGroup { group in
+                group.addTask { await derivedFolder?.shutdown() }
                 group.addTask { await immich?.shutdown() }
                 group.addTask { await searchIndex?.shutdown() }
                 group.addTask { await mediaOps?.shutdown() }
@@ -1318,10 +1320,10 @@ extension CatalogWindowViewModel {
     /// heavy loads also wait for the admission this opens, so the duplicates builds and People
     /// passes the projection asked for meanwhile start now too, one at a time.
     ///
-    /// The order: enrichment first (the visible tiles' thumbnails), then the Immich accounts'
-    /// sync, the walks that read stored thumbnails, the search index, descriptions, and the
-    /// metadata re-read last. Every owner's tasks run below the window's priority
-    /// (`TaskPriority.backgroundOwner`), inherited from this one.
+    /// The owners and their order are `BackgroundOwnerSet`'s. Every owner's tasks run below
+    /// the window's priority (`TaskPriority.backgroundOwner`), inherited from this one. Once
+    /// they are started, the task waits for every one of them to owe nothing and logs when
+    /// (`op=owners.quiescent`, from the launch).
     private func startBackgroundOwners() {
         loadAdmission.open()
         guard startsEnrichment, ownerStartTask == nil, let coordinator = enrichmentCoordinator else {
@@ -1340,43 +1342,38 @@ extension CatalogWindowViewModel {
                 await immichAccounts?.showVisible(ids)
             }
         }
+        let owners = BackgroundOwnerSet(
+            store: catalogStore,
+            projection: catalogProjection,
+            materialization: materializationCoordinator,
+            enrichment: coordinator,
+            immich: immichAccounts,
+            renderSignatures: renderSignatureRefresher,
+            previewFaces: previewFaceReader,
+            placeNames: placeNameReader,
+            searchIndex: photoSearchIndex,
+            descriptions: photoDescriptionWriter,
+            metadata: metadataRefresher,
+            derivedFolder: derivedFolderLoad,
+            starts: backgroundOwners
+        )
+        let launchStartedAt = launchStartedAt ?? .now
         // The first grid follows the catalog's load, so each owner's first candidate query
         // sees persisted rows. `store.start()` is idempotent and shared: it returns the load
         // `startCatalog` ran, and a failed load starts no owner.
-        ownerStartTask = Task(priority: .backgroundOwner) { [
-            coordinator, materializationCoordinator, metadataRefresher, renderSignatureRefresher, previewFaceReader, photoSearchIndex,
-            placeNameReader, photoDescriptionWriter, immichAccounts, store = catalogStore, owners = backgroundOwners
-        ] in
+        ownerStartTask = Task(priority: .backgroundOwner) { [owners, store = catalogStore] in
             do {
                 try await store.start()
             } catch {
                 OtosLog.persistence.error("Background owners skipped because catalog start failed")
                 return
             }
-            if owners.starts(.enrichment) {
-                await materializationCoordinator.start()
-                await coordinator.start()
-            }
-            if owners.starts(.immich) {
-                await immichAccounts?.start()
-            }
-            if owners.starts(.renderSignatures) {
-                await renderSignatureRefresher?.start()
-            }
-            if owners.starts(.previewFaces) {
-                await previewFaceReader?.start()
-            }
-            if owners.starts(.placeNames) {
-                await placeNameReader?.start()
-            }
-            if owners.starts(.searchIndex) {
-                await photoSearchIndex?.start()
-            }
-            if owners.starts(.descriptions) {
-                await photoDescriptionWriter?.start()
-            }
-            if owners.starts(.metadataRefresh) {
-                await metadataRefresher?.refresh()
+            await owners.start()
+            do {
+                let facts = try await BackgroundOwnerQuiescence.untilQuiescent(owners.quiescentOwners(), store: store)
+                BackgroundOwnerQuiescence.log(facts, sinceLaunch: launchStartedAt)
+            } catch {
+                // Cancelled at teardown: the window closed before its owners settled.
             }
         }
     }
@@ -1690,24 +1687,6 @@ extension CatalogWindowViewModel {
             "emptyState": state.mediaEmptyState?.diagnosticDescription ?? "none",
         ])
         ResourceCheckpoint.record("firstGrid", fields: ["items": "\(items)"], storeUse: storeUse)
-        // Once a launch, after the first grid and behind every other admitted load: the derived
-        // folder's counters, and a reconciliation only when a fact says leftovers can exist
-        // (`DerivedFolder`).
-        if startsEnrichment, derivedFilesTask == nil {
-            derivedFilesTask = Task(priority: .background) { [catalogStore, loadAdmission] in
-                do {
-                    try await loadAdmission.run(.derivedFolder) {
-                        try await catalogStore.backgroundReads.reconcileDerivedFilesIfOwed()
-                    }
-                } catch is CancellationError {
-                    // Refused at teardown: the next launch looks again.
-                } catch {
-                    OtosLog.thumbnails.errorOperation("derived.reconcile", phase: "failed", fields: [
-                        "error": String(describing: error),
-                    ])
-                }
-            }
-        }
     }
 
     func clearEjectingSourceIdentity(_ identity: DeviceIdentity) {

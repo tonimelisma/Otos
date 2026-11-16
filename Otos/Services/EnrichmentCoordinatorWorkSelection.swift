@@ -68,6 +68,7 @@ extension EnrichmentCoordinator {
             }
             if !unclaimedPriority.isEmpty {
                 let claimed = try await store.priorityEnrichmentCandidates(unclaimedPriority, videoFaces: videoFaces)
+                activity.read(rows: claimed.count)
                 for candidate in claimed {
                     await recordClaimedCandidate(candidate.asset)
                 }
@@ -277,6 +278,7 @@ extension EnrichmentCoordinator {
         claimInputsRevision &+= 1
         do {
             try await store.releaseEnrichmentClaims(ids)
+            activity.wrote(ids.count)
         } catch {
             OtosLog.metadata.error(
                 """
@@ -378,6 +380,7 @@ extension EnrichmentCoordinator {
         }
         let startedFrom = claimInputsRevision
         let candidates = try await store.enrichmentCandidates(limit: limit, videoFaces: videoFaces)
+        activity.read(rows: candidates.count)
         // A claim that found nothing at a revision finds nothing again until a Store change or
         // a claim given back moves it; one that found rows says nothing of the next.
         exhaustedClaims = candidates.isEmpty ? (startedFrom, videoFaces) : nil
@@ -604,6 +607,7 @@ extension EnrichmentCoordinator {
     }
 
     private func recordCandidateQueryFailure(_ error: any Error) async {
+        claimReadFailed = true
         OtosLog.metadata.error(
             "op=catalog.enrichment.coordinator phase=queryError error=\(String(describing: error), privacy: .public)"
         )

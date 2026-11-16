@@ -9,7 +9,10 @@ import OSLog
 /// releases the claims of work that ends without an apply: retryable failure or shutdown.
 extension EnrichmentCoordinator {
     func finishEnrich(_ work: EnrichWork, _ outcome: EnrichmentOutcome) async {
-        defer { resumeDrainedWaiters() }
+        defer {
+            resumeDrainedWaiters()
+            settleQuiescence()
+        }
         let id = work.id
         guard !isShuttingDown else {
             return
@@ -105,7 +108,10 @@ extension EnrichmentCoordinator {
     /// enricher would produce for unreadable media and flush through the normal
     /// apply path (ENR-007 self-heals if real bytes appear later).
     func finishEmptySource(_ work: EnrichWork) async {
-        defer { resumeDrainedWaiters() }
+        defer {
+            resumeDrainedWaiters()
+            settleQuiescence()
+        }
         let id = work.id
         guard !isShuttingDown else {
             return
@@ -143,7 +149,10 @@ extension EnrichmentCoordinator {
         result: MaterializationResult,
         attemptMs: Int
     ) async {
-        defer { resumeDrainedWaiters() }
+        defer {
+            resumeDrainedWaiters()
+            settleQuiescence()
+        }
         let id = work.id
         guard !isShuttingDown else {
             return
@@ -252,6 +261,7 @@ extension EnrichmentCoordinator {
         }
         guard !pendingApply.isEmpty else {
             applyFlushTask = nil
+            settleQuiescence()
             return
         }
         let batch = pendingApply
@@ -261,6 +271,7 @@ extension EnrichmentCoordinator {
         // The apply gives every row's claim back.
         claimInputsRevision &+= 1
         let outcome = await store.applyEnrichmentBatch(batch)
+        activity.wrote(batch.count)
         OtosLog.metadata.notice(
             "op=catalog.enrichment.coordinator phase=flush count=\(batch.count, privacy: .public) outcome=\(String(describing: outcome), privacy: .public)"
         )
@@ -278,6 +289,7 @@ extension EnrichmentCoordinator {
         // during the write are taken by the next apply, and none starts beside this one.
         applyFlushTask = nil
         scheduleApplyFlushIfNeeded()
+        settleQuiescence()
     }
 
     func releaseOutstandingClaimsForShutdown() async {

@@ -20,8 +20,9 @@ import MapKit
 /// One loop, woken by a doorbell (ADR 0032 rule 3) that a Store change of a kind its read
 /// reads (`inputs`; its own name writes do not) and a change of the user's locale ring; each
 /// wake drains every unnamed cell in pages, in cell order. The forwarder and the
-/// loop hold this actor weakly and end with it.
-actor PlaceNameReader {
+/// loop hold this actor weakly and end with it. Each ring is a request (`OwnerActivity`),
+/// covered by a drain that read and wrote without failing (`QuiescentOwner`).
+actor PlaceNameReader: QuiescentOwner {
     /// How a cell is named. `mapKit` asks Apple Maps; tests substitute their own so none
     /// reaches the network. It returns the names, `PlaceNames.none` only for an answer that
     /// there are none, and throws for every failure.
@@ -82,6 +83,8 @@ actor PlaceNameReader {
     private var keptLanguage: PlaceNameLanguage?
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
+    private var doorbell: AsyncStream<Void>.Continuation?
+    let activity = OwnerActivity(owner: "placeNames")
 
     init(
         store: CatalogStore,
@@ -111,8 +114,20 @@ actor PlaceNameReader {
     private(set) var changesHeard = 0
     private(set) var wakes = 0
 
+    /// The locale changed: a drain in its language is owed.
     private func woke() {
         wakes += 1
+        request()
+    }
+
+    /// Asks for a drain (ADR 0032 rule 2).
+    private func request() {
+        activity.request()
+        doorbell?.yield()
+    }
+
+    func ringIdle() {
+        request()
     }
 
     /// What the next drain owes: every unnamed cell (at start, after a change that names no
@@ -124,29 +139,36 @@ actor PlaceNameReader {
     private var owesFullDrain = true
     private var owedRows: Set<MediaAssetID> = []
 
-    /// Whether `change` rings: a change of a kind a drain reads, naming rows or not.
-    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) -> Bool {
+    /// Rings for `change` when it is of a kind a drain reads, naming rows or not.
+    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) {
         changesHeard += 1
-        guard change.touches(inputs) else { return false }
+        defer {
+            activity.actedOnChange()
+            settleQuiescence()
+        }
+        guard change.touches(inputs) else { return }
         switch change.rows {
         case .unnamed:
             owesFullDrain = true
         case let .named(rows):
             owedRows.formUnion(rows.ids)
         case .none:
-            return false
+            return
         }
         wakes += 1
-        return true
+        request()
     }
 
     func start() async {
         guard loop == nil else { return }
-        let (doorbell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let changes = await store.changeNotifications()
+        let (bell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let changes = await store.changeNotifications(deliveries: activity.deliveries)
         let inputs = await Self.inputs.facts(in: store, owner: "place.names")
+        // Read after the awaits: a concurrent `start()` may have won.
+        guard loop == nil else { return }
         let languages = localeChanges()
-        ring.yield()
+        doorbell = ring
+        request()
         forwarder = Task { [weak self] in
             await withDiscardingTaskGroup { group in
                 // The language a drain names cells in is the locale's, read at its start: a
@@ -155,25 +177,30 @@ actor PlaceNameReader {
                     for await _ in languages {
                         guard let self else { break }
                         await woke()
-                        ring.yield()
                     }
                 }
                 for await change in changes {
                     guard let self else { break }
-                    if await self.heard(change, inputs: inputs) {
-                        ring.yield()
-                    }
+                    await self.heard(change, inputs: inputs)
                 }
                 group.cancelAll()
             }
             ring.finish()
         }
         loop = Task { [weak self] in
-            for await _ in doorbell {
+            for await _ in bell {
                 guard let self else { return }
-                await drain()
+                await pass()
             }
         }
+    }
+
+    private func pass() async {
+        guard activity.isOwed else { return }
+        let answering = activity.beginPass()
+        let drained = await drain()
+        activity.endPass(covering: drained ? answering : nil)
+        settleQuiescence()
     }
 
     /// Ends the loop now — a test's teardown; in the app, the loops end with the actor.
@@ -182,12 +209,15 @@ actor PlaceNameReader {
         loop?.cancel()
         forwarder = nil
         loop = nil
+        doorbell = nil
     }
 
     /// Names what is owed: every unnamed cell, a page at a time in cell order, until a pass
     /// names them all; or, when only named rows changed, the unnamed cells of those rows. A
-    /// read or write that fails leaves what it owed owed, and is logged.
-    func drain() async {
+    /// read or write that fails leaves what it owed owed, and is logged. Returns whether the
+    /// drain named what it owed without a failed read or write.
+    @discardableResult
+    func drain() async -> Bool {
         let locale = locale()
         let language = PlaceNameLanguage(locale)
         let full = owesFullDrain || keptLanguage != language
@@ -195,13 +225,12 @@ actor PlaceNameReader {
         owesFullDrain = false
         owedRows = []
         if full {
-            await drainEveryCell(language: language, locale: locale)
-        } else {
-            await drainCells(of: rows, language: language, locale: locale)
+            return await drainEveryCell(language: language, locale: locale)
         }
+        return await drainCells(of: rows, language: language, locale: locale)
     }
 
-    private func drainEveryCell(language: PlaceNameLanguage, locale: Locale) async {
+    private func drainEveryCell(language: PlaceNameLanguage, locale: Locale) async -> Bool {
         if keptLanguage != language {
             do {
                 let forgotten = try await store.forgetPlaceNames(notIn: language)
@@ -214,7 +243,7 @@ actor PlaceNameReader {
             } catch {
                 OtosLog.metadata.errorOperation("place.names", phase: "forgetFailed", fields: ["error": String(describing: error)])
                 owesFullDrain = true
-                return
+                return false
             }
         }
         var named = 0
@@ -228,8 +257,9 @@ actor PlaceNameReader {
             } catch {
                 OtosLog.metadata.errorOperation("place.names", phase: "readFailed", fields: ["error": String(describing: error)])
                 owesFullDrain = true
-                return
+                return false
             }
+            activity.read(rows: page.count)
             guard let last = page.last else {
                 guard passLeftCells else { break }
                 // Another pass for the cells this one could not name; each failure has
@@ -242,48 +272,49 @@ actor PlaceNameReader {
             passLeftCells = passLeftCells || naming.leftCells
             guard await apply(naming.names, language: language) else {
                 owesFullDrain = true
-                return
+                return false
             }
             named += naming.names.count
             guard !naming.cancelled else {
                 // A drain stopped mid-walk leaves cells unnamed: the next drain walks them all.
                 owesFullDrain = true
-                break
+                return false
             }
             after = last
         }
         if named > 0 {
             OtosLog.metadata.noticeOperation("place.names", phase: "named", fields: ["cells": "\(named)"])
         }
+        return !Task.isCancelled
     }
 
     /// Names the unnamed cells of `rows`. A cell Maps could not name, or a read or write that
     /// failed, leaves a whole drain owed: the next pass walks every cell, as a pass that left
     /// a cell unnamed does.
-    private func drainCells(of rows: Set<MediaAssetID>, language: PlaceNameLanguage, locale: Locale) async {
+    private func drainCells(of rows: Set<MediaAssetID>, language: PlaceNameLanguage, locale: Locale) async -> Bool {
         let cells: [PlaceCell]
         do {
             cells = try await store.backgroundReads.unnamedPlaceCells(language: language, of: rows)
         } catch {
             OtosLog.metadata.errorOperation("place.names", phase: "readFailed", fields: ["error": String(describing: error)])
             owedRows.formUnion(rows)
-            return
+            return false
         }
+        activity.read(rows: cells.count)
         guard !cells.isEmpty else {
-            return
+            return true
         }
         var backoff = Self.firstBackoff
         let naming = await name(cells, locale: locale, backoff: &backoff)
         guard await apply(naming.names, language: language), !naming.leftCells else {
             owesFullDrain = true
-            if !naming.cancelled {
-                await drainEveryCell(language: language, locale: locale)
-            }
-            return
+            guard !naming.cancelled else { return false }
+            return await drainEveryCell(language: language, locale: locale)
         }
         OtosLog.metadata.noticeOperation("place.names", phase: "named", fields: [
             "cells": "\(naming.names.count)", "rows": "\(rows.count)",
         ])
+        return true
     }
 
     /// Asks Maps to name each cell, waiting out a doubling backoff after each failure.
@@ -323,6 +354,7 @@ actor PlaceNameReader {
     private func apply(_ names: [PlaceCell: PlaceNames], language: PlaceNameLanguage) async -> Bool {
         do {
             try await store.applyPlaceNames(names, language: language)
+            activity.wrote(names.count)
             return true
         } catch {
             OtosLog.metadata.errorOperation("place.names", phase: "writeFailed", fields: [

@@ -147,7 +147,12 @@ nonisolated struct ReadOnlyOriginals: MaterializationRequesting {
 /// enqueue cost grow with the library. Per-ID waiters carry their own priority: joining
 /// interactive demand raises an active background transfer's effective priority without
 /// pretending that the provider itself can reprioritize the already-issued request.
-actor MaterializationCoordinator: MaterializationRequesting {
+///
+/// Each wake is a request a scheduling pass covers (`OwnerActivity`), so the coordinator
+/// reports when it owes nothing (`QuiescentOwner`): every wake through admission, no transfer
+/// in flight, and nothing pending but what an open provider breaker holds, whose cooldown is
+/// then its wake.
+actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
     /// `command` is user-commanded work nobody is watching on screen (Move to Trash
     /// downloading a dataless member). It outranks device and background so a library's
     /// enrichment backlog cannot starve it, is exempt from the background per-root cap,
@@ -256,8 +261,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     /// Wakes sent, and the newest one a scheduling pass has covered. The wake stream
     /// keeps only the newest value, so the counts — not the stream — say whether every
     /// registration, release and cancellation so far has been through admission.
-    private var wakeGeneration: UInt64 = 0
-    private var passedWakeGeneration: UInt64 = 0
+    let activity = OwnerActivity(owner: "materialization")
 
     private var pendingByID: [MediaAssetID: PendingEntry] = [:]
     private var interactiveQueue: [MediaAssetID] = []
@@ -438,7 +442,17 @@ actor MaterializationCoordinator: MaterializationRequesting {
     /// caller can assert what admission decided — including that it started nothing —
     /// instead of guessing how long admission takes.
     var isQuiescent: Bool {
-        passedWakeGeneration == wakeGeneration
+        !activity.isOwed
+    }
+
+    /// A transfer in flight, or a request pending that no open breaker holds back.
+    var holdsWork: Bool {
+        !inFlightByID.isEmpty || (!pendingByID.isEmpty && breakerOpenUntilByRoot.isEmpty)
+    }
+
+    /// Nothing outside a request rings admission: a wake with nothing pending admits nothing.
+    func ringIdle() {
+        wake()
     }
 
     private func register(_ request: Request, token: UInt64, waiter: Waiter) {
@@ -577,6 +591,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 break
             }
             schedulePass()
+            settleQuiescence()
         }
     }
 
@@ -586,7 +601,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         }
         // A pass sees every state change made before it starts; a wake raised during
         // the pass gets a later pass.
-        passedWakeGeneration = wakeGeneration
+        activity.endPass(covering: activity.beginPass())
         var admitted = 0
         var rejections: [MaterializationAdmissionPolicy.Rejection: Int] = [:]
         let selectedPriority = selectedPendingPriority()
@@ -654,6 +669,8 @@ actor MaterializationCoordinator: MaterializationRequesting {
     }
 
     private func dispatch(_ entry: PendingEntry) {
+        // A transfer is this owner's read.
+        activity.read(rows: 1)
         let request = entry.request
         let estimatedBytes = policy.estimatedBytes(request.sourceSize)
         let now = clock.now
@@ -947,9 +964,11 @@ actor MaterializationCoordinator: MaterializationRequesting {
         guard let nextUntil = breakerOpenUntilByRoot.values.min() else {
             breakerWakeTask?.cancel()
             breakerWakeTask = nil
+            activity.wake = nil
             return
         }
         breakerWakeTask?.cancel()
+        activity.wake = OwnerWake(kind: .backoff, at: nextUntil)
         breakerWakeTask = Task { [weak self, clock, nextUntil] in
             do {
                 // time: backoff — the per-root breaker after a provider stopped serving
@@ -1068,7 +1087,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         guard !isShuttingDown else {
             return
         }
-        wakeGeneration &+= 1
+        activity.request()
         wakeContinuation.yield()
     }
 

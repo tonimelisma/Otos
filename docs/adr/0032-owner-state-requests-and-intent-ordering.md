@@ -97,6 +97,23 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    another event can arrive, so each gets a test that delivers an event exactly there: a
    sequence of `handle(_:)` calls for a pure machine, a seam that parks the async work for
    an actor. Tests never use time to create an interleaving and never wait with a deadline.
+8. **A background owner reports its quiescence as a fact.** Each background owner
+   (`QuiescentOwner`) keeps its requests, its pass in flight, the Store changes delivered to
+   it against those it acted on, and the wake it keeps armed in one `OwnerActivity`, and is
+   quiescent when every request is covered by a pass that succeeded, no pass runs, every
+   delivered change was acted on (`CatalogStore.DeliveryCount`), and it holds no work in
+   flight of its own. `untilQuiescent()` returns at once when that holds, or in the step that
+   makes it hold; nothing polls it. An owner that keeps a wake armed while it owes nothing — a
+   backoff, a retry pacing, a poll, the projection's cadence — is quiescent and names that
+   wake (`OwnerWake`), so a caller asserts "quiet until it" instead of waiting it out. A
+   doorbell rung from outside the owner's isolation counts each ring as it rings
+   (`RequestCount`). Several owners are quiescent at one instant when each, read twice, holds
+   with one revision and the Store announced nothing between
+   (`BackgroundOwnerQuiescence.untilQuiescent`). What an owner did is counted in its own units
+   (`OwnerWork`: passes, reads, rows, rows written), so a test bounds what one round of its
+   wake path costs without timing it. The window starts its owners through one value,
+   `BackgroundOwnerSet`, which the idle guard runs too, and logs `op=owners.quiescent` when
+   they first all owe nothing.
 
 ## Rejected alternatives
 
@@ -111,6 +128,12 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
   production interleavings with a test-only schedule; injected events test the real ones.
 - **`Task.immediate` for ordered intents.** SE-0472 gives no ordering between two such tasks
   after their first suspension.
+- **Judge a background owner settled by a quiet window** (no write for a few seconds). Time is
+  then a stand-in for a fact every owner holds (ADR 0033): a slow pass reads as settled, and
+  an owner that rereads a set on each wake but writes nothing passes.
+- **A quiescence hook per owner.** Twelve shapes of one fact; one protocol and one bookkeeping
+  value make a forgotten settle point the only way to be wrong, and the idle guard finds that
+  as a hang.
 
 ## Consequences
 

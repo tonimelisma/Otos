@@ -84,7 +84,12 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 /// showing results can ask again. The forwarder and the loop hold this actor weakly and end
 /// with it. `shutdown` also ends the text reader's child process, a reading in it or not,
 /// and returns once it is gone; the still whose reading it cut short stays owed.
-actor PhotoSearchIndex {
+///
+/// Its requests, its retry and the preparation of the first query are kept in
+/// `OwnerActivity`, so the index reports when it owes nothing (`QuiescentOwner`): no pass owed
+/// or running, no preparation asked for and not yet made, and the retry, when one is armed,
+/// named as its wake.
+actor PhotoSearchIndex: QuiescentOwner {
     typealias ReadTexts = @Sendable (Set<MediaAssetID>) async throws -> [MediaAssetID: String]
     typealias NameVectorFile = @Sendable (SearchVectorFileState?) async throws -> Void
 
@@ -153,10 +158,13 @@ actor PhotoSearchIndex {
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
     private var ring: AsyncStream<Void>.Continuation?
-    /// Passes asked for and the one the last finished pass answered (ADR 0032 rule 2); a test
-    /// waits on `requested` to know a change asked for a pass.
-    private(set) var requested: UInt64 = 0
-    private var covered: UInt64 = 0
+    /// Passes asked for and the one the last finished pass answered (ADR 0032 rule 2).
+    let activity = OwnerActivity(owner: "searchIndex")
+    /// What a test waits on to know a change asked for a pass.
+    var requested: UInt64 {
+        activity.requested
+    }
+
     private var retry: Task<Void, Never>?
     private let backoff: (first: Duration, last: Duration)
     private var nextRetry: Duration
@@ -218,6 +226,12 @@ actor PhotoSearchIndex {
 
     private let preparations: AsyncStream<Preparation>
     private nonisolated let preparationsContinuation: AsyncStream<Preparation>.Continuation
+    /// Preparations asked for, counted as each is yielded, against those handled: the index
+    /// owes one while they differ.
+    private nonisolated let preparationsAsked = RequestCount()
+    private var preparationsHandled: UInt64 = 0
+    /// Whether the admitted preparation waits for its turn or runs.
+    private var admittedPreparationRunning = false
     private var preparing: Task<Void, Never>?
     /// The admitted preparation waiting for its turn or running; cancelled when the user's
     /// intent prepares first (a waiting one withdraws and never runs) and at shutdown.
@@ -233,6 +247,7 @@ actor PhotoSearchIndex {
     /// query that comes first is answered as it always is. Returns at once: the preparation is
     /// this owner's loop's (ADR 0032 rule 5), so no caller waits on the encoder's load.
     nonisolated func prepareForSearch(among scope: [MediaAssetID]) {
+        preparationsAsked.record()
         preparationsContinuation.yield(.now(scope))
     }
 
@@ -243,6 +258,7 @@ actor PhotoSearchIndex {
     /// pressure (`SearchQueryEncoder`). The intent to search, if it comes first, prepares at
     /// once and this one withdraws; a shutdown while it waits starts nothing.
     nonisolated func prepareWhenAdmitted(among scope: [MediaAssetID]) {
+        preparationsAsked.record()
         preparationsContinuation.yield(.admitted(scope))
     }
 
@@ -258,6 +274,11 @@ actor PhotoSearchIndex {
     }
 
     private func handle(_ preparation: Preparation) async {
+        defer {
+            preparationsHandled &+= 1
+            activity.noteInput()
+            settleQuiescence()
+        }
         switch preparation {
         case let .now(scope):
             admittedPreparation?.cancel()
@@ -265,6 +286,7 @@ actor PhotoSearchIndex {
             await prepare(among: scope)
         case let .admitted(scope):
             guard preparationsMade == 0, admittedPreparation == nil else { return }
+            admittedPreparationRunning = true
             admittedPreparation = Task { [weak self, admission] in
                 do {
                     try await admission.run(.searchPrepare) {
@@ -274,8 +296,19 @@ actor PhotoSearchIndex {
                     // Withdrawn (the intent prepared first) or refused at shutdown: nothing ran.
                     OtosLog.catalog.noticeOperation("search.prepare", phase: "withdrawn", fields: [:])
                 }
+                await self?.admittedPreparationEnded()
             }
         }
+    }
+
+    private func admittedPreparationEnded() {
+        admittedPreparationRunning = false
+        settleQuiescence()
+    }
+
+    /// A preparation asked for and not yet handled, or the admitted one waiting or running.
+    var holdsWork: Bool {
+        preparationsHandled != preparationsAsked.value || admittedPreparationRunning
     }
 
     private func prepare(among scope: [MediaAssetID]) async {
@@ -294,10 +327,10 @@ actor PhotoSearchIndex {
         guard loop == nil else { return }
         startPreparing()
         let (doorbell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let changes = await store.changeNotifications()
+        let changes = await store.changeNotifications(deliveries: activity.deliveries)
         self.ring = ring
         ring.yield()
-        requested &+= 1
+        activity.request()
         let inputs = await Self.inputs.facts(in: store, owner: "search.index")
         forwarder = Task { [weak self] in
             for await change in changes {
@@ -338,6 +371,10 @@ actor PhotoSearchIndex {
     /// that pass to reconcile by key, or, when it names none, owing a whole-library reconcile.
     private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) {
         changesHeard += 1
+        defer {
+            activity.actedOnChange()
+            settleQuiescence()
+        }
         guard change.touches(inputs) else { return }
         switch change.rows {
         case let .named(rows):
@@ -355,13 +392,20 @@ actor PhotoSearchIndex {
     /// backlog walk stops where it is, so the pass that follows takes the change's rows before
     /// more of the backlog is read.
     private func request() {
-        requested &+= 1
+        activity.request()
         ring?.yield()
     }
 
+    func ringIdle() {
+        request()
+    }
+
     private func refreshIfRequested() async {
-        guard requested != covered else { return }
-        await refresh()
+        guard activity.isOwed else { return }
+        activity.beginPass()
+        let answered = await refresh()
+        activity.endPass(covering: answered)
+        settleQuiescence()
     }
 
     /// Ends the loop and the text reader's child now: the window's teardown and a test's. A
@@ -381,6 +425,7 @@ actor PhotoSearchIndex {
         forwarder = nil
         loop = nil
         retry = nil
+        activity.wake = nil
         ring = nil
         // The folder is let go with no mapping of it left: the next writer may cut its files.
         changeMemory { $0.replaceVectors(with: nil) }
@@ -571,10 +616,12 @@ actor PhotoSearchIndex {
 
     /// One pass. The first, and one after a change that named no rows, reconciles the whole
     /// library and starts the backlog walks again from the newest; any other reconciles the
-    /// rows its changes named by key. A pass that fails owes what it took again.
-    private func refresh() async {
+    /// rows its changes named by key. A pass that fails owes what it took again. Returns the
+    /// request it answered, nil when it failed or was cancelled.
+    private func refresh() async -> UInt64? {
         var settled = false
-        let answering = requested
+        var answered: UInt64?
+        let answering = activity.requested
         let whole = reconcileOwed || !loaded
         let rows = namedRows
         reconcileOwed = false
@@ -594,10 +641,10 @@ actor PhotoSearchIndex {
                 try await reconcileTexts(rows)
             }
             settled = try await drainTexts(rows: whole ? [] : rows, answering: answering) && embedding
-            covered = answering
+            answered = answering
         } catch is CancellationError {
             // Teardown: the task, or the load admission it waited in, ended.
-            return
+            return nil
         } catch {
             reconcileOwed = reconcileOwed || whole
             namedRows.formUnion(rows)
@@ -605,7 +652,7 @@ actor PhotoSearchIndex {
                 "error": String(describing: error),
             ])
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return nil }
         passesFinished += 1
         if whole {
             wholePasses += 1
@@ -613,10 +660,12 @@ actor PhotoSearchIndex {
         if settled {
             retry?.cancel()
             retry = nil
+            activity.wake = nil
             nextRetry = backoff.first
         } else {
             scheduleRetry()
         }
+        return answered
     }
 
     /// Passes that reconciled the whole library: what a test counts.
@@ -624,7 +673,7 @@ actor PhotoSearchIndex {
 
     /// Whether the last pass answered every request: what a test waits on.
     var answeredEveryRequest: Bool {
-        covered == requested
+        !activity.isOwed
     }
 
     /// One retry at a time; each one waits twice as long as the last, up to `backoff.last`.
@@ -636,6 +685,7 @@ actor PhotoSearchIndex {
         OtosLog.thumbnails.noticeOperation("search.index", phase: "retryScheduled", fields: [
             "seconds": "\(delay.components.seconds)",
         ])
+        activity.wake = OwnerWake(kind: .backoff, at: ContinuousClock.now.advanced(by: delay))
         retry = Task { [weak self] in
             // time: backoff — a read that failed; nothing reports when it would succeed
             try? await Task.sleep(for: delay)
@@ -648,6 +698,7 @@ actor PhotoSearchIndex {
     /// full disk stopped goes on from where it stopped.
     private func retryFired() {
         retry = nil
+        activity.wake = nil
         namedRows.formUnion(pagedPast)
         pagedPast = []
         request()
@@ -875,6 +926,7 @@ actor PhotoSearchIndex {
         }
         if !rows.isEmpty {
             let owed = try await store.backgroundReads.searchEmbeddingCandidates(for: rows)
+            activity.read(rows: owed.count)
             var at = 0
             while at < owed.count, !Task.isCancelled {
                 let page = Array(owed[at ..< min(at + pageSize, owed.count)])
@@ -887,10 +939,11 @@ actor PhotoSearchIndex {
             }
         }
         while !Task.isCancelled, !embeddingWalk.done {
-            if requested != answering {
+            if activity.requested != answering {
                 return unread.isEmpty
             }
             let page = try await store.backgroundReads.searchEmbeddingCandidates(after: embeddingWalk.cursor, limit: pageSize)
+            activity.read(rows: page.candidates.count)
             let owed = page.candidates.filter { !unread.contains($0.id) }
             if !owed.isEmpty {
                 guard let written = try await embed(owed, unread: &unread) else {
@@ -918,6 +971,7 @@ actor PhotoSearchIndex {
             return nil
         }
         let written = try await store.applySearchEmbeddings(results)
+        activity.wrote(results.count)
         unread.formUnion(Set(owed.map(\.id)).subtracting(written.map(\.id)))
         if !written.isEmpty {
             try await commit(written.map(StoredSearchEmbeddingRow.init(result:)), to: file)
@@ -1020,6 +1074,7 @@ actor PhotoSearchIndex {
         }
         if !rows.isEmpty {
             let owed = try await store.backgroundReads.searchTextCandidates(for: rows)
+            activity.read(rows: owed.count)
             var at = 0
             while at < owed.count, !Task.isCancelled {
                 let page = Array(owed[at ..< min(at + Self.textPageSize, owed.count)])
@@ -1035,11 +1090,12 @@ actor PhotoSearchIndex {
         while !Task.isCancelled, !textWalk.done {
             // A change since the pass began comes first: the next pass embeds what it made
             // owed before more previews are read. The first page is read either way.
-            if !first, requested != answering {
+            if !first, activity.requested != answering {
                 return tally.unread.isEmpty
             }
             first = false
             let page = try await store.backgroundReads.searchTextCandidates(after: textWalk.cursor, limit: Self.textPageSize)
+            activity.read(rows: page.candidates.count)
             try await readPreviews(page.candidates, tally: &tally)
             textWalk.advance(to: page.next)
             if tally.sessionEnded {
@@ -1073,6 +1129,7 @@ actor PhotoSearchIndex {
             tally.sessionEnded = true
         }
         let written = results.isEmpty ? [] : try await store.applySearchTexts(results)
+        activity.wrote(results.count)
         tally.unread.formUnion(Set(candidates.map(\.id)).subtracting(written.map(\.id)))
         var changes: [MediaAssetID: String?] = [:]
         for result in written {

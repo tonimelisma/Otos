@@ -94,8 +94,11 @@ nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
 ///   end purges every row it did not list and settles the debt in one Store transaction.
 ///
 /// `run()` is the one loop, woken by `requestSync()` (a newest-wins doorbell, ADR 0032):
-/// passes never overlap, and a request during a pass is one more pass.
-actor ImmichCatalogSync {
+/// passes never overlap, and a request during a pass is one more pass. Both doorbells are
+/// rung from anywhere, so each ring is counted as it is made (`RequestCount`) against the
+/// rings a pass has taken up: the sync owes nothing while every ring is taken up and no pass
+/// or fetch runs (`QuiescentOwner`).
+actor ImmichCatalogSync: QuiescentOwner {
     /// Lines applied per Store transaction, and acknowledged together after it.
     static let batchSize = 500
 
@@ -115,6 +118,12 @@ actor ImmichCatalogSync {
     /// row on screen owed its images (listed, or sized by a later line).
     private let visibleDoorbell: AsyncStream<Void>
     private let visibleRing: AsyncStream<Void>.Continuation
+    /// Rings of each doorbell, and the ring the last pass or fetch took up.
+    private nonisolated let syncRequests = RequestCount()
+    private nonisolated let visibleRequests = RequestCount()
+    private var syncsTaken: UInt64 = 0
+    private var visibleTaken: UInt64 = 0
+    let activity = OwnerActivity(owner: "immichSync")
 
     init(
         rootPath: LibraryRootPath,
@@ -141,6 +150,7 @@ actor ImmichCatalogSync {
             return rows != mine
         }
         if changed, !mine.isEmpty {
+            visibleRequests.record()
             visibleRing.yield()
         }
     }
@@ -155,14 +165,30 @@ actor ImmichCatalogSync {
             guard !Task.isCancelled else {
                 return
             }
+            let taking = visibleRequests.value
+            activity.beginPass()
             let ids = visibleRows.withLock { $0 }
             _ = await fetchVisibleProducts(ids)
+            visibleTaken = taking
+            activity.endPass(covering: nil)
+            settleQuiescence()
         }
     }
 
     /// Asks for a pass. A request made while one runs is one more pass after it.
     nonisolated func requestSync() {
+        syncRequests.record()
         ring.yield()
+    }
+
+    /// A ring of either doorbell not yet taken up by a pass or a fetch.
+    var holdsWork: Bool {
+        syncRequests.value != syncsTaken || visibleRequests.value != visibleTaken
+    }
+
+    /// Rings the pass, as the account's poll does.
+    func ringIdle() {
+        requestSync()
     }
 
     /// Ends the loop after its current pass.
@@ -180,7 +206,14 @@ actor ImmichCatalogSync {
             guard !Task.isCancelled else {
                 return
             }
-            await onReport(.ended(pass(onReport: onReport)))
+            let taking = syncRequests.value
+            activity.noteInput()
+            activity.beginPass()
+            let outcome = await pass(onReport: onReport)
+            syncsTaken = taking
+            activity.endPass(covering: nil)
+            settleQuiescence()
+            await onReport(.ended(outcome))
         }
     }
 
@@ -216,14 +249,16 @@ actor ImmichCatalogSync {
             ])
             return
         }
+        activity.read(rows: probes.count)
         for probe in probes {
             await learnMirror(probe)
         }
         do {
             // A write walk over every mirrored library: one heavy load at a time.
-            _ = try await admission.run(.immichMirror) {
+            let paired = try await admission.run(.immichMirror) {
                 try await store.backgroundReads.pairMirroredCopies(account: rootPath)
             }
+            activity.wrote(paired)
         } catch is CancellationError {
             return
         } catch {
@@ -470,8 +505,10 @@ actor ImmichCatalogSync {
         let changes = batch.changes(motions: motions, existingMotions: existing)
         if !changes.isEmpty {
             try await store.applySourceListingChanges(changes, scan: scan)
+            activity.wrote(changes.listed.count + changes.deletedSourceItems.count)
             // A row on screen may now be owed its images: listed, or sized by this batch.
             if !visibleRows.withLock({ $0.isEmpty }) {
+                visibleRequests.record()
                 visibleRing.yield()
             }
         }
@@ -666,6 +703,7 @@ actor ImmichCatalogSync {
             return .finished(made: 0, unreadable: 0)
         }
         var tally = ProductTally()
+        defer { activity.wrote(tally.made) }
         var cursor: MediaRelativePath?
         while true {
             let page: [SourceProductCandidate]
@@ -673,6 +711,7 @@ actor ImmichCatalogSync {
                 page = try await store.backgroundReads.sourceProductCandidates(
                     rootPath: rootPath, after: cursor, limit: Self.productPageSize
                 )
+                activity.read(rows: page.count)
             } catch {
                 OtosLog.thumbnails.errorOperation("immich.products", phase: "readFailed", fields: [
                     "rootPath": rootPath.rawValue, "made": "\(tally.made)", "error": String(describing: error),

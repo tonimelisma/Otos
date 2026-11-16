@@ -21,13 +21,17 @@ import OSLog
 /// thumbnails are decoded off this actor (`@concurrent`), and the results are written only
 /// where the row's thumbnail is still the one decoded. A thumbnail that does not decode is
 /// recorded as such, so it is not offered again until it changes. The forwarder and the loop
-/// hold this actor weakly and end with it.
-actor RenderSignatureRefresher {
+/// hold this actor weakly and end with it. Each ring is a request (`OwnerActivity`), covered
+/// by a walk that read and wrote without failing, so the refresher reports when it owes
+/// nothing (`QuiescentOwner`).
+actor RenderSignatureRefresher: QuiescentOwner {
     private let store: CatalogStore
     private let thumbnailDirectory: URL?
     private let pageSize: Int
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
+    private var doorbell: AsyncStream<Void>.Continuation?
+    let activity = OwnerActivity(owner: "renderSignatures")
 
     init(store: CatalogStore, thumbnailDirectory: URL?, pageSize: Int = 128) {
         self.store = store
@@ -47,33 +51,55 @@ actor RenderSignatureRefresher {
 
     func start() async {
         guard loop == nil else { return }
-        let (doorbell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let changes = await store.changeNotifications()
+        let (bell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let changes = await store.changeNotifications(deliveries: activity.deliveries)
         let inputs = await Self.inputs.facts(in: store, owner: "renderSignature")
-        ring.yield()
+        // Read after the awaits: a concurrent `start()` may have won.
+        guard loop == nil else { return }
+        doorbell = ring
+        request()
         forwarder = Task { [weak self] in
             for await change in changes {
                 guard let self else { break }
-                if await heard(change, inputs: inputs) {
-                    ring.yield()
-                }
+                await heard(change, inputs: inputs)
             }
             ring.finish()
         }
         loop = Task { [weak self] in
-            for await _ in doorbell {
+            for await _ in bell {
                 guard let self else { return }
-                await drain()
+                await pass()
             }
         }
     }
 
-    /// Whether `change` rings: a change of a kind a pass reads.
-    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) -> Bool {
+    /// Rings for `change` when it is of a kind a pass reads.
+    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) {
         changesHeard += 1
-        guard change.touches(inputs) else { return false }
-        wakes += 1
-        return true
+        if change.touches(inputs) {
+            wakes += 1
+            request()
+        }
+        activity.actedOnChange()
+        settleQuiescence()
+    }
+
+    /// Asks for a walk (ADR 0032 rule 2).
+    private func request() {
+        activity.request()
+        doorbell?.yield()
+    }
+
+    func ringIdle() {
+        request()
+    }
+
+    private func pass() async {
+        guard activity.isOwed else { return }
+        let answering = activity.beginPass()
+        let walked = await drain()
+        activity.endPass(covering: walked ? answering : nil)
+        settleQuiescence()
     }
 
     /// Ends the loop now — a test's teardown; in the app, the loops end with the actor.
@@ -82,12 +108,14 @@ actor RenderSignatureRefresher {
         loop?.cancel()
         forwarder = nil
         loop = nil
+        doorbell = nil
     }
 
     /// Signs every stale row in one walk (`CandidateWalk`), a page at a time; a failed read or
     /// write is logged and waits for the next ring. A row whose thumbnail changed while it was
-    /// read is not written, and the change that made it stale rings the next walk.
-    private func drain() async {
+    /// read is not written, and the change that made it stale rings the next walk. Returns
+    /// whether the walk read and wrote without failing.
+    private func drain() async -> Bool {
         var signed = 0
         var cursor: AssetKeyCursor?
         while !Task.isCancelled {
@@ -98,16 +126,18 @@ actor RenderSignatureRefresher {
                 OtosLog.thumbnails.errorOperation("renderSignature", phase: "readFailed", fields: [
                     "error": String(describing: error),
                 ])
-                return
+                return false
             }
+            activity.read(rows: page.candidates.count)
             let results = await Self.sign(page.candidates, thumbnailDirectory: thumbnailDirectory)
             do {
                 signed += results.isEmpty ? 0 : try await store.applyRenderSignatures(results)
+                activity.wrote(results.count)
             } catch {
                 OtosLog.thumbnails.errorOperation("renderSignature", phase: "writeFailed", fields: [
                     "count": "\(results.count)", "error": String(describing: error),
                 ])
-                return
+                return false
             }
             guard let next = page.next else { break }
             cursor = next
@@ -115,6 +145,7 @@ actor RenderSignatureRefresher {
         if signed > 0 {
             OtosLog.thumbnails.noticeOperation("renderSignature", phase: "signed", fields: ["count": "\(signed)"])
         }
+        return !Task.isCancelled
     }
 
     @concurrent

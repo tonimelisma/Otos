@@ -102,6 +102,10 @@ actor CatalogProjection {
     /// owners' (`LoadAdmission`): the window's, which opens it at its first grid.
     let admission: LoadAdmission
 
+    /// The changes delivered against those acted on, the inputs and the passes, for the
+    /// projection's quiescence (`QuiescentOwner`); its own counters say what it owes.
+    let activity = OwnerActivity(owner: "projection")
+
     private var queryRequest: CatalogQueryRequest = .initial
     /// Distinguishes one projection's diagnostics from another's in a shared log.
     private let diagnosticID = String(UUID().uuidString.prefix(8))
@@ -286,7 +290,7 @@ actor CatalogProjection {
         initialRequest: CatalogQueryRequest
     ) async -> AsyncStream<CatalogWindowState> {
         queryRequest = initialRequest
-        let changes = changeTask == nil ? await store.changeNotifications() : nil
+        let changes = changeTask == nil ? await store.changeNotifications(deliveries: activity.deliveries) : nil
         ensurePublicationLoop(store: store, changes: changes)
 
         let (stream, continuation) = AsyncStream<CatalogWindowState>.makeStream(
@@ -971,7 +975,7 @@ private extension CatalogProjection {
                 guard let self else {
                     return
                 }
-                await storeDidChange(change)
+                await actOnDelivered(change)
             }
         }
 
@@ -1033,6 +1037,8 @@ private extension CatalogProjection {
         // doorbell and the derived owners on every exit: `loopTask`, `duplicatesTask` and
         // `galleryTask` wait indefinitely, and a wait nothing can end keeps `store` alive
         // through its closure.
+        // The cadence rings only when a publication is owed: the projection's one wake.
+        activity.wake = OwnerWake(kind: .cadence, at: nil)
         cadenceTask = Task { [weak self, continuation, duplicatesProjection, peopleAssignment, peopleGallery] in
             defer {
                 continuation.finish()
@@ -1059,6 +1065,7 @@ private extension CatalogProjection {
     /// the cadence tick picks the request up.
     private func requestPublication(ringNow: Bool) {
         requested &+= 1
+        activity.noteInput()
         if ringNow {
             doorbell?.yield()
         }
@@ -1079,6 +1086,14 @@ private extension CatalogProjection {
     func searchQueryDidRead() {
         guard queryRequest.descriptor.search != nil else { return }
         requestPublication(ringNow: true)
+    }
+
+    /// A change the Store delivered to this projection's subscription, counted as acted on in
+    /// the step that takes it up.
+    private func actOnDelivered(_ change: CatalogStoreChange) {
+        storeDidChange(change)
+        activity.actedOnChange()
+        settleQuiescence()
     }
 
     func storeDidChange(_ change: CatalogStoreChange) {
@@ -1197,7 +1212,12 @@ private extension CatalogProjection {
             return
         }
         runningPasses += 1
-        defer { runningPasses -= 1 }
+        activity.work.passes += 1
+        defer {
+            runningPasses -= 1
+            activity.work.reads = Int(orderQueryCount + keyedOrderQueryCount + filterOptionsQueryCount + stackReadCount)
+            settleQuiescence()
+        }
         let startedFrom = requested
         let duplicatesStartedFrom = duplicatesRequested
         let peopleStartedFrom = peopleRequested
@@ -1432,6 +1452,7 @@ private extension CatalogProjection {
         result: Result<FilterOptionsRead, any Error>,
         store: CatalogStore
     ) {
+        defer { settleQuiescence() }
         guard optionsInFlight?.id == id else {
             return
         }
@@ -1760,6 +1781,7 @@ private extension CatalogProjection {
         loopTask = nil
         cadenceTask?.cancel()
         cadenceTask = nil
+        activity.wake = nil
         doorbell?.finish()
         doorbell = nil
         requested = 0
@@ -1821,3 +1843,22 @@ private nonisolated struct WorkWaiter {
 
 /// A pass's work was cancelled by an intent that left the descriptor it was for.
 nonisolated struct CatalogProjectionWorkSuperseded: Error {}
+
+extension CatalogProjection: QuiescentOwner {
+    /// A publication or an options read owed or running: the projection's own counters.
+    var holdsWork: Bool {
+        !isQuiescent
+    }
+
+    /// Asks for a publication on the cadence, as a background change does.
+    func ringIdle() {
+        requestPublication(ringNow: false)
+    }
+
+    /// This projection and the owners it runs under it — the duplicate groups, People's
+    /// assignment and its gallery — each of which reports its own quiescence.
+    func quiescentOwners() -> [any QuiescentOwner] {
+        let owners: [(any QuiescentOwner)?] = [self, duplicatesProjection, peopleAssignment, peopleGallery]
+        return owners.compactMap(\.self)
+    }
+}

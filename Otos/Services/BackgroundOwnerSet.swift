@@ -1,0 +1,144 @@
+import Foundation
+import OSLog
+
+/// Background owner set guide (plan 0116 bet 6, ADR 0032 rule 8)
+///
+/// The background owners a window starts once its first grid has painted, and the one place
+/// that starts them: the window's start path and the idle guard both run `start()`, so the
+/// owners a test measures start exactly as the app's do, in the app's order. The heavy loads
+/// among them wait for the window's `LoadAdmission`, which the window opens at the same grid.
+///
+/// The order: the derived folder's once-a-launch load (it waits behind every admitted load),
+/// enrichment and the materializer it feeds (the visible tiles' thumbnails), the Immich
+/// accounts' sync, the walks that read stored thumbnails, the search index, descriptions, and
+/// the metadata re-read last, which `start()` runs to its end. Every owner's tasks run below
+/// the window's priority (`TaskPriority.backgroundOwner`), inherited from the caller.
+///
+/// `quiescentOwners()` lists every owner that reports quiescence (`QuiescentOwner`), the
+/// projection's own owners included, for `BackgroundOwnerQuiescence.untilQuiescent`.
+nonisolated struct BackgroundOwnerSet: Sendable {
+    let store: CatalogStore
+    let projection: CatalogProjection
+    let materialization: MaterializationCoordinator
+    let enrichment: EnrichmentCoordinator?
+    let immich: ImmichAccounts?
+    let renderSignatures: RenderSignatureRefresher?
+    let previewFaces: PreviewFaceReader?
+    let placeNames: PlaceNameReader?
+    let searchIndex: PhotoSearchIndex?
+    let descriptions: PhotoDescriptionWriter?
+    let metadata: MetadataRefresher?
+    let derivedFolder: DerivedFolderLoad?
+    /// Which owners this session starts (`BackgroundOwners`).
+    let starts: BackgroundOwners
+
+    /// Starts every owner `starts` names, in order, and returns when the metadata pass ends.
+    func start() async {
+        await derivedFolder?.start()
+        if starts.starts(.enrichment), let enrichment {
+            await materialization.start()
+            await enrichment.start()
+        }
+        if starts.starts(.immich) {
+            await immich?.start()
+        }
+        if starts.starts(.renderSignatures) {
+            await renderSignatures?.start()
+        }
+        if starts.starts(.previewFaces) {
+            await previewFaces?.start()
+        }
+        if starts.starts(.placeNames) {
+            await placeNames?.start()
+        }
+        if starts.starts(.searchIndex) {
+            await searchIndex?.start()
+        }
+        if starts.starts(.descriptions) {
+            await descriptions?.start()
+        }
+        if starts.starts(.metadataRefresh) {
+            await metadata?.refresh()
+        }
+    }
+
+    /// Every owner `start()` started that reports quiescence, the projection and the owners
+    /// it runs included. An owner a tour leaves out is not listed: it owes nothing it was asked.
+    func quiescentOwners() async -> [any QuiescentOwner] {
+        var owners: [any QuiescentOwner] = await projection.quiescentOwners()
+        if let derivedFolder {
+            owners.append(derivedFolder)
+        }
+        if starts.starts(.enrichment), let enrichment {
+            owners += [materialization, enrichment]
+        }
+        if starts.starts(.immich), let immich {
+            owners += await immich.quiescentOwners()
+        }
+        let walkers: [(BackgroundOwner, (any QuiescentOwner)?)] = [
+            (.renderSignatures, renderSignatures), (.previewFaces, previewFaces), (.placeNames, placeNames),
+            (.searchIndex, searchIndex), (.descriptions, descriptions), (.metadataRefresh, metadata),
+        ]
+        for (owner, running) in walkers where starts.starts(owner) {
+            if let running {
+                owners.append(running)
+            }
+        }
+        return owners
+    }
+}
+
+/// The derived folder's once-a-launch load: its counters, and a reconciliation only when a
+/// fact says leftovers can exist (`CatalogStore.reconcileDerivedFilesIfOwed`), as a heavy load
+/// behind every other admitted one (`BackgroundLoad.derivedFolder`). One pass, its one
+/// request covered when it ends, however it ended but torn down: a failure is logged and the
+/// next launch looks again. Nothing rings it again (`QuiescentOwner`).
+actor DerivedFolderLoad: QuiescentOwner {
+    private let store: CatalogStore
+    private let admission: LoadAdmission
+    private var task: Task<Void, Never>?
+    let activity = OwnerActivity(owner: "derivedFolder")
+
+    init(store: CatalogStore, admission: LoadAdmission) {
+        self.store = store
+        self.admission = admission
+    }
+
+    /// Starts the launch's load, once.
+    func start() {
+        guard task == nil else { return }
+        let answering = activity.request()
+        activity.beginPass()
+        task = Task(priority: .background) { [store, admission] in
+            var answered: UInt64?
+            do {
+                try await admission.run(.derivedFolder) {
+                    try await store.backgroundReads.reconcileDerivedFilesIfOwed()
+                }
+                answered = answering
+            } catch is CancellationError {
+                // Refused at teardown: the next launch looks again.
+            } catch {
+                // This launch's one look ended: the next launch looks again.
+                OtosLog.thumbnails.errorOperation("derived.reconcile", phase: "failed", fields: [
+                    "error": String(describing: error),
+                ])
+                answered = answering
+            }
+            await self.ended(covering: answered)
+        }
+    }
+
+    private func ended(covering answered: UInt64?) {
+        activity.read(rows: 0)
+        activity.endPass(covering: answered)
+        settleQuiescence()
+    }
+
+    /// One load a launch: nothing rings it again.
+    func ringIdle() {}
+
+    func shutdown() {
+        task?.cancel()
+    }
+}

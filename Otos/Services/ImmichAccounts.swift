@@ -438,6 +438,12 @@ actor ImmichAccounts {
         account.visibleLoop.cancel()
     }
 
+    /// Every running account's sync, each of which reports its own quiescence; the poll and
+    /// the backoff that ring it are this owner's timers.
+    func quiescentOwners() -> [any QuiescentOwner] {
+        accounts.values.map(\.sync)
+    }
+
     /// The rows now on screen: each account fetches the server's images of its own among them
     /// ahead of every other row (`ImmichCatalogSync.showVisible`).
     func showVisible(_ ids: [MediaAssetID]) {

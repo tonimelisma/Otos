@@ -27,9 +27,11 @@ import ImageIO
 ///
 /// One loop, woken by a doorbell (ADR 0032 rule 3) that a Store change of a kind its walk reads
 /// (`inputs`; its own face writes do not) and the retry wake ring; each wake drains every stale row in pages. The previews are decoded
-/// and analysed off this actor, by `FaceAnalyzer` on its own queue. The forwarder and the loop
-/// hold this actor weakly and end with it; the wake holds only the doorbell.
-actor PreviewFaceReader {
+/// and analysed off this actor, by `FaceAnalyzer` on its own queue. The forwarder, the loop
+/// and the wake hold this actor weakly and end with it. Each ring is a request
+/// (`OwnerActivity`), covered by a drain that read and wrote without failing; a drain that
+/// leaves stills paced arms the wake, which the reader's quiescence names (`QuiescentOwner`).
+actor PreviewFaceReader: QuiescentOwner {
     private let store: CatalogStore
     private let thumbnailDirectory: URL?
     private let analyzeFaces: FaceAnalysisReader
@@ -42,6 +44,7 @@ actor PreviewFaceReader {
     private var wake: (task: Task<Void, Never>, at: ContinuousClock.Instant)?
     /// Drains run, to their end or stopped: what a test waits on, and logged with each read.
     private(set) var drains = 0
+    let activity = OwnerActivity(owner: "previewFaces")
 
     /// How long a still whose faces could not be read, or every still while the model cannot
     /// be loaded, waits before it is read again.
@@ -69,24 +72,43 @@ actor PreviewFaceReader {
         guard loop == nil else { return }
         let (bell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         doorbell = ring
-        forwarder = Task { [weak self, store] in
-            let changes = await store.changeNotifications()
+        // The first drain is owed from here, before the forwarder subscribes: a change made
+        // before it did is read by that drain.
+        activity.request()
+        forwarder = Task { [weak self, store, deliveries = activity.deliveries] in
+            let changes = await store.changeNotifications(deliveries: deliveries)
             let inputs = await Self.inputs.facts(in: store, owner: "face.preview")
             ring.yield()
             for await change in changes {
                 guard let self else { break }
-                if await heard(change, inputs: inputs) {
-                    ring.yield()
-                }
+                await heard(change, inputs: inputs)
             }
             ring.finish()
         }
         loop = Task { [weak self] in
             for await _ in bell {
                 guard let self else { return }
-                await drain()
+                await pass()
             }
         }
+    }
+
+    /// Asks for a drain (ADR 0032 rule 2).
+    private func request() {
+        activity.request()
+        doorbell?.yield()
+    }
+
+    func ringIdle() {
+        request()
+    }
+
+    private func pass() async {
+        guard activity.isOwed else { return }
+        let answering = activity.beginPass()
+        let drained = await drain()
+        activity.endPass(covering: drained ? answering : nil)
+        settleQuiescence()
     }
 
     /// What a drain reads (`CatalogOwnerInputs`): its candidate walk's columns, less its own
@@ -99,12 +121,15 @@ actor PreviewFaceReader {
     private(set) var changesHeard = 0
     private(set) var wakes = 0
 
-    /// Whether `change` rings: a change of a kind a drain reads.
-    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) -> Bool {
+    /// Rings for `change` when it is of a kind a drain reads.
+    private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) {
         changesHeard += 1
-        guard change.touches(inputs) else { return false }
-        wakes += 1
-        return true
+        if change.touches(inputs) {
+            wakes += 1
+            request()
+        }
+        activity.actedOnChange()
+        settleQuiescence()
     }
 
     /// Ends the loop now — a test's teardown; in the app, the loops end with the actor.
@@ -115,18 +140,21 @@ actor PreviewFaceReader {
         forwarder = nil
         loop = nil
         wake = nil
+        activity.wake = nil
         doorbell = nil
     }
 
     /// Reads every row owed faces once, a page at a time in catalog order, each page after the
     /// last row of the one before. A row whose read failed is left owed, paced and passed over,
     /// so it never holds back the rows after it. A model that cannot be loaded stops the drain.
-    private func drain() async {
+    /// Returns whether the drain read and wrote without failing: a paced still is owed to the
+    /// wake, not to this drain.
+    private func drain() async -> Bool {
         defer { drains += 1 }
         let now = ContinuousClock.now
         guard retries.admitsModel(at: now) else {
             armWake(after: now)
-            return
+            return true
         }
         var stored = 0
         var failed = 0
@@ -142,8 +170,9 @@ actor PreviewFaceReader {
                 OtosLog.metadata.errorOperation("face.preview", phase: "readFailed", fields: [
                     "error": String(describing: error),
                 ])
-                return
+                return false
             }
+            activity.read(rows: page.candidates.count)
             var results: [PreviewFaceResult] = []
             for candidate in page.candidates where !modelUnavailable {
                 offered.insert(candidate.id)
@@ -162,11 +191,12 @@ actor PreviewFaceReader {
             }
             do {
                 stored += try await store.applyPreviewFaces(results)
+                activity.wrote(results.count)
             } catch {
                 OtosLog.metadata.errorOperation("face.preview", phase: "writeFailed", fields: [
                     "count": "\(results.count)", "error": String(describing: error),
                 ])
-                return
+                return false
             }
             guard let next = page.next else {
                 reachedEnd = true
@@ -185,6 +215,7 @@ actor PreviewFaceReader {
                 "paced": "\(retries.stills.count)", "drain": "\(drains)",
             ])
         }
+        return !Task.isCancelled
     }
 
     /// Rings the doorbell when the earliest retry comes due, if one waits.
@@ -192,12 +223,13 @@ actor PreviewFaceReader {
         guard let due = retries.nextWake(after: now) else {
             wake?.task.cancel()
             wake = nil
+            activity.wake = nil
             return
         }
         guard wake?.at != due else { return }
         wake?.task.cancel()
-        let ring = doorbell
-        wake = (Task {
+        activity.wake = OwnerWake(kind: .backoff, at: due)
+        wake = (Task { [weak self] in
             do {
                 // time: backoff — a preview that could not be read, or a model that could not
                 // be loaded, reports nothing when it would succeed.
@@ -205,8 +237,16 @@ actor PreviewFaceReader {
             } catch {
                 return
             }
-            ring?.yield()
+            await self?.wakeFired(at: due)
         }, due)
+    }
+
+    private func wakeFired(at due: ContinuousClock.Instant) {
+        if wake?.at == due {
+            wake = nil
+            activity.wake = nil
+        }
+        request()
     }
 
     /// What reading one candidate came to.

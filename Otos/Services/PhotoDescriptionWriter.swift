@@ -30,8 +30,10 @@ import ImageIO
 /// left behind a long backlog. Requests run one at
 /// a time: the model takes one photo at a time, and a second request would only wait in it. The
 /// forwarder and the loop hold this actor weakly and end with it. `changes()` rings after
-/// descriptions are written, which the Info pane and On This Day's titles read again on.
-actor PhotoDescriptionWriter {
+/// descriptions are written, which the Info pane and On This Day's titles read again on. The
+/// requests and the wake are kept in `OwnerActivity`, so the writer reports when it owes
+/// nothing (`QuiescentOwner`).
+actor PhotoDescriptionWriter: QuiescentOwner {
     private let store: CatalogStore
     private let thumbnailDirectory: URL?
     private let describe: PhotoDescribing
@@ -42,11 +44,15 @@ actor PhotoDescriptionWriter {
     private var failedUntil: [MediaAssetID: ContinuousClock.Instant] = [:]
     /// When requests may be made again after the model was unavailable or busy.
     private var modelNotBefore: ContinuousClock.Instant?
-    /// Walks asked for and the one the last finished walk answered (ADR 0032 rule 2); a test
-    /// waits on `requested` to deliver an event while a walk is under way.
-    private(set) var requested: UInt64 = 0
-    private var covered: UInt64 = 0
+    /// Walks asked for and the one the last finished walk answered (ADR 0032 rule 2).
+    let activity = OwnerActivity(owner: "descriptions")
+    /// What a test waits on to deliver an event while a walk is under way.
+    var requested: UInt64 {
+        activity.requested
+    }
+
     private var doorbell: AsyncStream<Void>.Continuation?
+    private var subscribing = false
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
     private var wake: (task: Task<Void, Never>, at: ContinuousClock.Instant)?
@@ -92,10 +98,13 @@ actor PhotoDescriptionWriter {
         guard loop == nil else { return }
         let (bell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         doorbell = ring
-        forwarder = Task { [weak self, store] in
-            let changes = await store.changeNotifications()
+        // Until the forwarder holds the change stream and asks for the first walk, the writer
+        // is not quiescent: nothing it owes is known yet.
+        subscribing = true
+        forwarder = Task { [weak self, store, deliveries = activity.deliveries] in
+            let changes = await store.changeNotifications(deliveries: deliveries)
             let inputs = await Self.inputs.facts(in: store, owner: "description")
-            await self?.request()
+            await self?.subscribed()
             for await change in changes {
                 guard let self else { break }
                 await heard(change, inputs: inputs)
@@ -105,7 +114,7 @@ actor PhotoDescriptionWriter {
         loop = Task { [weak self] in
             for await _ in bell {
                 guard let self else { return }
-                await drainIfRequested()
+                await pass()
             }
         }
     }
@@ -119,19 +128,39 @@ actor PhotoDescriptionWriter {
         if change.touches(inputs) {
             request()
         }
+        activity.actedOnChange()
+        settleQuiescence()
     }
 
     /// Asks for a walk from the newest still (ADR 0032 rule 2): a walk under way starts again
     /// from the top at its next page, so a still made owed now — an import's newest photo — is
     /// described before the rest of a long backlog.
     private func request() {
-        requested &+= 1
+        activity.request()
         doorbell?.yield()
     }
 
-    private func drainIfRequested() async {
-        guard requested != covered else { return }
-        await drain()
+    func ringIdle() {
+        request()
+    }
+
+    /// The forwarder holds the change stream: the first walk is asked for.
+    private func subscribed() {
+        subscribing = false
+        request()
+    }
+
+    /// Started, with the forwarder not yet subscribed.
+    var holdsWork: Bool {
+        subscribing
+    }
+
+    private func pass() async {
+        guard activity.isOwed else { return }
+        activity.beginPass()
+        let answered = await drain()
+        activity.endPass(covering: answered)
+        settleQuiescence()
     }
 
     /// Ends the loop now — a test's teardown; in the app, the loops end with the actor.
@@ -142,6 +171,7 @@ actor PhotoDescriptionWriter {
         forwarder = nil
         loop = nil
         wake = nil
+        activity.wake = nil
         doorbell = nil
         for continuation in changeContinuations.values {
             continuation.finish()
@@ -166,15 +196,15 @@ actor PhotoDescriptionWriter {
 
     /// Describes every owed still once, a page at a time, newest first. A still whose request
     /// failed is passed over until its pacing passes; a model that is unavailable or busy stops
-    /// the drain.
-    private func drain() async {
+    /// the drain. Returns the request the walk answered; nil when it failed, so the request
+    /// stays owed.
+    private func drain() async -> UInt64? {
         defer { drains += 1 }
         let now = ContinuousClock.now
         if let notBefore = modelNotBefore, notBefore > now {
             // The wake asks again when the model may answer.
-            covered = requested
             armWake(after: now)
-            return
+            return activity.requested
         }
         modelNotBefore = nil
         failedUntil = failedUntil.filter { $0.value > now }
@@ -182,11 +212,12 @@ actor PhotoDescriptionWriter {
         var stopped = false
         // The request the walk answers; a newer one restarts it from the newest still. A walk
         // that fails covers nothing, so the next ring walks again.
-        var walking = requested
+        var walking = activity.requested
+        var answered: UInt64?
         var cursor: CaptureOrderCursor?
         while !Task.isCancelled, !stopped {
-            if requested != walking {
-                walking = requested
+            if activity.requested != walking {
+                walking = activity.requested
                 cursor = nil
             }
             let page: CandidatePage<PhotoDescriptionCandidate, CaptureOrderCursor>
@@ -200,6 +231,7 @@ actor PhotoDescriptionWriter {
                 ])
                 break
             }
+            activity.read(rows: page.candidates.count)
             var results: [PhotoDescriptionResult] = []
             for candidate in page.candidates where !stopped {
                 let start = ContinuousClock.now
@@ -230,6 +262,7 @@ actor PhotoDescriptionWriter {
                 if !results.isEmpty, try await !store.applyPhotoDescriptions(results).isEmpty {
                     announce()
                 }
+                activity.wrote(results.count)
             } catch {
                 OtosLog.metadata.errorOperation("description", phase: "writeFailed", fields: [
                     "count": "\(results.count)", "error": String(describing: error),
@@ -238,7 +271,7 @@ actor PhotoDescriptionWriter {
             }
             // A model that stopped answering ends the walk; its wake asks for the next one.
             guard let next = page.next, !stopped else {
-                covered = walking
+                answered = walking
                 break
             }
             cursor = next
@@ -250,6 +283,7 @@ actor PhotoDescriptionWriter {
                 "stopped": "\(stopped)", "paced": "\(failedUntil.count)", "drain": "\(drains)",
             ])
         }
+        return answered
     }
 
     private func announce() {
@@ -263,10 +297,12 @@ actor PhotoDescriptionWriter {
         guard let due = ([modelNotBefore].compactMap(\.self) + failedUntil.values).filter({ $0 > now }).min() else {
             wake?.task.cancel()
             wake = nil
+            activity.wake = nil
             return
         }
         guard wake?.at != due else { return }
         wake?.task.cancel()
+        activity.wake = OwnerWake(kind: .backoff, at: due)
         wake = (Task { [weak self] in
             do {
                 // time: backoff — a failed request, an unavailable model and a busy one report
@@ -275,8 +311,16 @@ actor PhotoDescriptionWriter {
             } catch {
                 return
             }
-            await self?.request()
+            await self?.wakeFired(at: due)
         }, due)
+    }
+
+    private func wakeFired(at due: ContinuousClock.Instant) {
+        if wake?.at == due {
+            wake = nil
+            activity.wake = nil
+        }
+        request()
     }
 
     /// What describing one candidate came to.
