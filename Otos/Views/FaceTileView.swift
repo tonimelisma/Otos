@@ -48,8 +48,10 @@ final class FaceTileImages {
 
     private let cache: NSCache<KeyBox, Entry> = {
         let cache = NSCache<KeyBox, Entry>()
-        // About 700 tiles at 192 px.
-        cache.totalCostLimit = 100 * 1024 * 1024
+        // About 190 gallery tiles at 256 px, several screenfuls of the gallery, or 2,400 of
+        // the Info pane's at 80 px. Each entry owns its pixels (`FaceCrop.crop`), so its cost
+        // is what it holds and what dropping it gives back.
+        cache.totalCostLimit = 48 * 1024 * 1024
         return cache
     }()
 
@@ -131,12 +133,18 @@ nonisolated enum FaceCrop {
     /// How much larger than the face box the tile shows.
     static let enlargement: CGFloat = 1.6
 
+    /// The tile for `box`, cut from the preview at no more than `pixelEdge` on a side. An
+    /// upright preview, as every one Otos writes is, is never decoded whole: the cut is drawn
+    /// from the uncached image, so Image I/O decodes only the part of the preview the face
+    /// covers (`docs/research/2026-11-16-image-memory-while-used.md`). A turned one is first
+    /// decoded upright at the tile's scale.
     @concurrent
     static func decode(_ box: CGRect, from preview: FacePreview, in directory: URL, pixelEdge: Int) async -> CGImage? {
         let signpost = OtosSignpost.thumbnails.beginInterval("FaceTileDecode")
         defer { OtosSignpost.thumbnails.endInterval("FaceTileDecode", signpost) }
         let url = ThumbnailStore.url(for: preview.name, in: directory)
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+        let uncached = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, uncached),
               preview.image < CGImageSourceGetCount(source),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, preview.image, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
@@ -152,19 +160,22 @@ nonisolated enum FaceCrop {
             OtosLog.thumbnails.debugOperation("people.faceTile", phase: "outsideCrop", fields: ["name": preview.name])
             return nil
         }
-        let side = max(onPreview.width * shown.width, onPreview.height * shown.height) * enlargement
-        guard side > 0 else { return nil }
-        let longEdge = max(shown.width, shown.height)
-        let scale = min(1, CGFloat(pixelEdge) / side)
-        let options = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: Int((longEdge * scale).rounded(.up)),
-        ] as CFDictionary
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, preview.image, options) else {
-            return nil
+        let image: CGImage?
+        if orientation == 1 {
+            image = CGImageSourceCreateImageAtIndex(source, preview.image, uncached)
+        } else {
+            let side = max(onPreview.width * shown.width, onPreview.height * shown.height) * enlargement
+            guard side > 0 else { return nil }
+            let scale = min(1, CGFloat(pixelEdge) / side)
+            image = CGImageSourceCreateThumbnailAtIndex(source, preview.image, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCache: false,
+                kCGImageSourceThumbnailMaxPixelSize: Int((max(shown.width, shown.height) * scale).rounded(.up)),
+            ] as CFDictionary)
         }
-        return crop(image, box: onPreview)
+        guard let image else { return nil }
+        return crop(image, box: onPreview, pixelEdge: pixelEdge)
     }
 
     /// Where `box`, a fraction of the upright photo, shows on a preview of `size` made with
@@ -178,8 +189,10 @@ nonisolated enum FaceCrop {
     }
 
     /// The square around `box` (fractions, top-left origin), enlarged and kept inside the
-    /// image; smaller than asked only when the image is.
-    static func crop(_ image: CGImage, box: CGRect) -> CGImage? {
+    /// image, drawn at no more than `pixelEdge` on a side into pixels of its own
+    /// (`MappedImage`): a crop sharing `image`'s pixels would keep all of `image` alive for as
+    /// long as the tile is held. Smaller than asked only when the image is.
+    static func crop(_ image: CGImage, box: CGRect, pixelEdge: Int = .max) -> CGImage? {
         let width = CGFloat(image.width)
         let height = CGFloat(image.height)
         var side = max(box.width * width, box.height * height) * enlargement
@@ -187,6 +200,15 @@ nonisolated enum FaceCrop {
         let center = CGPoint(x: box.midX * width, y: box.midY * height)
         let x = min(max(center.x - side / 2, 0), width - side)
         let y = min(max(center.y - side / 2, 0), height - side)
-        return image.cropping(to: CGRect(x: x, y: y, width: side, height: side).integral)
+        guard let region = image.cropping(to: CGRect(x: x, y: y, width: side, height: side).integral) else {
+            return nil
+        }
+        let edge = min(pixelEdge, region.width, region.height)
+        let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)
+        guard let colorSpace else { return nil }
+        return MappedImage.draw(width: edge, height: edge, colorSpace: colorSpace) { context in
+            context.interpolationQuality = .high
+            context.draw(region, in: CGRect(x: 0, y: 0, width: edge, height: edge))
+        }
     }
 }

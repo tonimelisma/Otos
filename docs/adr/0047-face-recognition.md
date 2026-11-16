@@ -363,6 +363,13 @@ grouping had put with the right child.
   exists only there), the People filter, whose several people are photos of them together,
   the face acts in
   the photo menus and the Info pane (`docs/design/people.md`).
+- **A face tile holds its own pixels:** a tile is drawn from the uncached preview, so Image I/O
+  decodes only the part of the preview the face covers. It is drawn at the cell's backing size
+  into a `MappedImage` (`Otos/Support/MappedImage.swift`), pixels of its own that leave the
+  footprint when the tile goes. `FaceTileImages` costs each tile at what it holds, up to
+  48 MB. Rejected: `CGImage.cropping(to:)` of a scaled decode. A crop keeps the whole image it
+  was cut from, so 24 small faces in a Retina window held 812 MB in the test process
+  (`docs/research/2026-11-16-image-memory-while-used.md`).
 - **The gallery paints from its own read** (`PeopleGallery`, the window's, not a heavy load):
   the people, each with the gallery facts the catalog stores for them (`person_summary`, v73:
   their photo and video counts, a photo's copies and a stack's files counted once, and their

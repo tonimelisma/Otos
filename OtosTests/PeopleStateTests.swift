@@ -366,6 +366,20 @@ struct PeopleStateTests {
         #expect(await FaceCrop.decode(box, from: FacePreview(name: "cropped.png", recipe: leftHalf), in: directory, pixelEdge: 64) == nil)
     }
 
+    /// A face tile holds its own pixels and no more: a small face on a 2560 px preview gives a
+    /// tile at most the size asked for, whose bytes are its own rows, not the preview's
+    /// (`MappedImage`). A crop sharing the preview's pixels kept the whole decode alive.
+    @Test func aFaceTileHoldsOnlyItsOwnPixels() async throws {
+        let directory = try makeTestDirectory()
+        try Self.writePreview("large.png", width: 2560, height: 1920, face: CGRect(x: 1200, y: 900, width: 100, height: 100), in: directory)
+        let box = CGRect(x: 1200.0 / 2560, y: 900.0 / 1920, width: 100.0 / 2560, height: 100.0 / 1920)
+        let tile = try #require(await FaceCrop.decode(box, from: FacePreview(name: "large.png", recipe: .neutral), in: directory, pixelEdge: 128))
+        #expect(tile.width == 128 && tile.height == 128)
+        #expect(tile.bytesPerRow == tile.width * 4)
+        #expect(tile.dataProvider?.data.map(CFDataGetLength) == tile.bytesPerRow * tile.height)
+        #expect(Self.isFace(Self.centerPixel(of: tile)))
+    }
+
     /// A face's outline on the edited photo: the box itself without an edit, mapped through
     /// a quarter turn and a crop, and nothing when the crop leaves it out.
     @Test func aFacesOutlineFollowsTheEdit() throws {
