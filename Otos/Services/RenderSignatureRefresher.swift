@@ -93,7 +93,7 @@ actor RenderSignatureRefresher {
         while !Task.isCancelled {
             let page: CandidatePage<RenderSignatureCandidate, AssetKeyCursor>
             do {
-                page = try await store.renderSignatureCandidates(after: cursor, limit: pageSize)
+                page = try await store.backgroundReads.renderSignatureCandidates(after: cursor, limit: pageSize)
             } catch {
                 OtosLog.thumbnails.errorOperation("renderSignature", phase: "readFailed", fields: [
                     "error": String(describing: error),

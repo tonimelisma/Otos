@@ -45,7 +45,7 @@ struct PhotoStackStoreTests {
     /// order, and a burst's key choice is kept apart from a pair's (ADR 0052).
     @Test func stillsSharingABurstIdentifierAreReadAsOneBurst() async throws {
         try await withLibrary(["IMG_1.HEIC", "IMG_2.HEIC", "IMG_3.HEIC"]) { library in
-            let assets = try await library.store.mediaAssets(for: ["IMG_1.HEIC", "IMG_2.HEIC", "IMG_3.HEIC"].map(library.id))
+            let assets = try await library.store.windowReads.mediaAssets(for: ["IMG_1.HEIC", "IMG_2.HEIC", "IMG_3.HEIC"].map(library.id))
             let results = assets.values.map { asset in
                 EnrichmentResult(
                     id: asset.id,
@@ -84,7 +84,7 @@ struct PhotoStackStoreTests {
             "2024/07/DSC0201.JPG": 1, "2024/07/DSC0202.JPG": 2,
         ]
         try await withLibrary(Array(frames.keys)) { library in
-            let assets = try await library.store.mediaAssets(for: frames.keys.map(library.id))
+            let assets = try await library.store.windowReads.mediaAssets(for: frames.keys.map(library.id))
             let results = assets.values.map { asset in
                 EnrichmentResult(
                     id: asset.id,
@@ -125,7 +125,7 @@ struct PhotoStackStoreTests {
         ]
         let bursts = ["c/IMG_1.HEIC": "B1", "d/IMG_2.HEIC": "B1", "e/IMG_7.HEIC": "B2", "e/IMG_8.HEIC": "B2"]
         try await withLibrary(files) { library in
-            let assets = try await library.store.mediaAssets(for: bursts.keys.map(library.id))
+            let assets = try await library.store.windowReads.mediaAssets(for: bursts.keys.map(library.id))
             _ = await library.store.applyEnrichmentBatch(assets.values.map { asset in
                 EnrichmentResult(
                     id: asset.id,
@@ -148,7 +148,7 @@ struct PhotoStackStoreTests {
             try stamp.close()
 
             let whole = try await library.ordered()
-            let ordered = try await library.store.orderedAssetIDs(
+            let ordered = try await library.store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .importBatch(batch)),
                 availableLibraryPaths: [library.rootPath]
             )
@@ -172,7 +172,7 @@ struct PhotoStackStoreTests {
             "a/DSC1.ARW", "a/DSC1.JPG", "a/DSC2.JPG", "a/DSC3.ARW", "a/DSC3.JPG", "c/IMG_1.HEIC", "c/IMG_2.HEIC",
         ]
         try await withLibrary(files) { library in
-            let frames = try await library.store.mediaAssets(for: [library.id("c/IMG_1.HEIC"), library.id("c/IMG_2.HEIC")])
+            let frames = try await library.store.windowReads.mediaAssets(for: [library.id("c/IMG_1.HEIC"), library.id("c/IMG_2.HEIC")])
             _ = await library.store.applyEnrichmentBatch(frames.values.map { asset in
                 EnrichmentResult(
                     id: asset.id,
@@ -202,13 +202,13 @@ struct PhotoStackStoreTests {
             }
             try stamp.close()
 
-            let batches = try await library.store.importBatches(counting: .every)
+            let batches = try await library.store.windowReads.importBatches(counting: .every)
             // First: the DSC1 pair, DSC2, the DSC3 RAW alone, the burst. Second: the DSC3 JPEG.
             #expect(batches == [
                 ImportBatchSummary(batchID: second, photoCount: 1),
                 ImportBatchSummary(batchID: first, photoCount: 4),
             ])
-            let grid = try await library.store.orderedAssetIDs(
+            let grid = try await library.store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .importBatch(first)),
                 availableLibraryPaths: [library.rootPath]
             )
@@ -238,12 +238,12 @@ struct PhotoStackStoreTests {
             try stamp.close()
             let oldest = batches[0]
 
-            let sidebar = try await library.store.importBatches(counting: ImportBatchListing.counting(for: .library(library.rootPath)))
+            let sidebar = try await library.store.windowReads.importBatches(counting: ImportBatchListing.counting(for: .library(library.rootPath)))
             #expect(sidebar.map(\.batchID) == batches.reversed())
             #expect(sidebar.map(\.photoCount) == [1, 1, 1, 1, 1, nil])
-            let selected = try await library.store.importBatches(counting: ImportBatchListing.counting(for: .importBatch(oldest)))
+            let selected = try await library.store.windowReads.importBatches(counting: ImportBatchListing.counting(for: .importBatch(oldest)))
             #expect(selected.map(\.photoCount) == [1, 1, 1, 1, 1, 1])
-            let all = try await library.store.importBatches(counting: .every)
+            let all = try await library.store.windowReads.importBatches(counting: .every)
             #expect(all.allSatisfy { $0.photoCount == 1 })
             #expect(ImportBatchListing.sidebarRows(batches.reversed(), selection: .importBatch(oldest)).last == oldest)
         }
@@ -259,7 +259,7 @@ struct PhotoStackStoreTests {
         }
 
         func ordered(kinds: Set<MediaKind> = []) async throws -> CatalogOrderedAssets {
-            try await store.orderedAssetIDs(
+            try await store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .library(rootPath), filter: MediaFilter(kinds: kinds)),
                 availableLibraryPaths: [rootPath]
             )

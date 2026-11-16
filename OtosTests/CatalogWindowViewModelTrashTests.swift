@@ -40,7 +40,7 @@ struct CatalogWindowViewModelTrashTests {
             try await waitUntil { !FileManager.default.fileExists(atPath: path) }
             // Moved: no longer waiting for the queue. Its row is kept, hidden, while the file
             // is in the Trash (ADR 0022).
-            try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
+            try await waitUntil { try await fixture.store.windowReads.pendingTrashItems().isEmpty }
             // The queue can move the file before the main actor registers the undo, and
             // undo with nothing registered does nothing; wait for the registration itself.
             try await waitUntil { model.undoMenuState.canUndo }
@@ -238,7 +238,7 @@ struct CatalogWindowViewModelTrashInterleavingTests {
 
             await gate.waitForArrivals(1)
             _ = try await waitForWindowState(model) { $0.mediaGrid.orderedAssetIDs == [order[0], order[2]] }
-            #expect(try await fixture.store.pendingTrashItems().isEmpty, "the mark is still held")
+            #expect(try await fixture.store.windowReads.pendingTrashItems().isEmpty, "the mark is still held")
 
             await gate.open()
             let path = fixture.path(order[1])
@@ -286,7 +286,7 @@ struct CatalogWindowViewModelTrashInterleavingTests {
 
             await gate.open()
             _ = try await waitForWindowState(model) { $0.mediaGrid.orderedAssetIDs == order }
-            try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
+            try await waitUntil { try await fixture.store.windowReads.pendingTrashItems().isEmpty }
             try await waitForProjectionQuiescence(model.catalogProjection)
             #expect(model.state.mediaGrid.orderedAssetIDs == order)
             #expect(FileManager.default.fileExists(atPath: fixture.path(order[0])))

@@ -1,6 +1,5 @@
 import Foundation
 import OSLog
-import Synchronization
 
 /// A bounded load a background owner runs that holds a lot of memory or reads a lot of the
 /// catalog at once (plan 0116 bet 6): what `LoadAdmission` runs one at a time.
@@ -70,8 +69,27 @@ nonisolated extension TaskPriority {
 /// goes behind every other waiting one, whenever it asked. The load the window's current view
 /// needs (`want`) goes before every other waiting one; it does not stop the one running. `shutdown` refuses
 /// every waiting load and every later request, and grants nothing again.
-nonisolated struct LoadAdmissionMachine: Equatable, Sendable {
-    typealias Request = UInt64
+nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
+    typealias Request = AdmissionRequest
+
+    static func requested(_ request: Request, _ load: BackgroundLoad) -> Event {
+        .request(request, load)
+    }
+
+    static func withdrawn(_ request: Request) -> Event {
+        .withdraw(request)
+    }
+
+    static func released(_ request: Request) -> Event {
+        .release(request)
+    }
+
+    static func resolution(of effect: Effect) -> (request: Request, granted: Bool) {
+        switch effect {
+        case let .grant(request, _): (request, true)
+        case let .refuse(request): (request, false)
+        }
+    }
 
     enum Event: Equatable, Sendable {
         /// The window's first grid painted.
@@ -163,55 +181,53 @@ nonisolated struct LoadAdmissionMachine: Equatable, Sendable {
 /// the admission. The window opens it at its first grid (`open()`), says what its view needs
 /// on every query (`want(_:)`), and shuts it at teardown (`shutdown()`). All three are
 /// synchronous, so the main actor calls them in the step that applies the intent, without a
-/// hop. State lives in one `Mutex` and changes only in the machine's `handle(_:)`; a
-/// continuation is resumed after the lock is released. A waiting caller whose task is
-/// cancelled withdraws its request at once and hears `CancellationError`, and so does every
-/// waiting caller at shutdown: a load queued at teardown never starts.
+/// hop. The machine and its waiters live in the shared shell (`Admission`): a waiting caller
+/// whose task is cancelled withdraws its request at once and hears `CancellationError`, and
+/// so does every waiting caller at shutdown: a load queued at teardown never starts.
 ///
 /// A load must not wait on another admitted load from inside its body; none does — each
 /// reads and writes the Store and computes off its actor.
 final nonisolated class LoadAdmission: Sendable {
-    private struct State {
-        var machine: LoadAdmissionMachine
-        var next: LoadAdmissionMachine.Request = 0
-        var waiters: [LoadAdmissionMachine.Request: CheckedContinuation<Void, any Error>] = [:]
-    }
-
-    private let state: Mutex<State>
+    private let admission: Admission<LoadAdmissionMachine>
 
     /// Closed until `open()`. An owner a test makes alone gets an open admission of its own.
     init(isOpen: Bool = false) {
-        state = Mutex(State(machine: LoadAdmissionMachine(isOpen: isOpen)))
+        admission = Admission(LoadAdmissionMachine(isOpen: isOpen))
     }
 
     /// The machine as it is now: what a test reads to see which load runs and which wait.
     var snapshot: LoadAdmissionMachine {
-        state.withLock { $0.machine }
+        admission.machine
     }
 
     /// The window's first grid painted: loads may run.
     func open() {
-        perform(.open)
+        admission.perform(.open)
     }
 
     /// The load the window's current view needs, or nil: it runs next.
     func want(_ load: BackgroundLoad?) {
-        perform(.want(load))
+        admission.perform(.want(load))
     }
 
     /// Teardown: every waiting load is refused and none is granted again.
     func shutdown() {
-        perform(.shutdown)
+        admission.perform(.shutdown)
     }
 
     /// Runs `body` once `load` is admitted, and releases the admission when it ends. Throws
     /// `CancellationError` without running it when the caller's task is cancelled while it
     /// waits, or the admission shuts down first.
     func run<T>(_ load: BackgroundLoad, _ body: () async throws -> T) async throws -> T {
-        let request = try await admit(load)
+        let asked = ContinuousClock.now
+        let request = try await admission.admit(load)
+        OtosLog.performance.noticeOperation("load.admission", phase: "granted", fields: [
+            "load": load.rawValue, "request": "\(request)",
+            "waitMs": "\(DiagnosticsTiming.milliseconds(since: asked))",
+        ])
         let started = ContinuousClock.now
         defer {
-            perform(.release(request))
+            admission.release(request)
             // The footprint each load leaves: memory a load freed stays counted until reused,
             // and asking malloc to return it returns nothing on macOS 27
             // (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`).
@@ -222,68 +238,5 @@ final nonisolated class LoadAdmission: Sendable {
             ])
         }
         return try await body()
-    }
-
-    private func admit(_ load: BackgroundLoad) async throws -> LoadAdmissionMachine.Request {
-        let request = state.withLock { state in
-            state.next &+= 1
-            return state.next
-        }
-        let asked = ContinuousClock.now
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                let resumptions = state.withLock { state in
-                    state.waiters[request] = continuation
-                    // Read under the lock that `onCancel` takes: a cancellation before this
-                    // point is seen here, one after it finds the request waiting.
-                    if Task.isCancelled {
-                        return Self.take([.refuse(request)], from: &state)
-                    }
-                    return Self.step(.request(request, load), in: &state)
-                }
-                Self.resume(resumptions)
-            }
-        } onCancel: {
-            perform(.withdraw(request))
-        }
-        OtosLog.performance.noticeOperation("load.admission", phase: "granted", fields: [
-            "load": load.rawValue, "request": "\(request)",
-            "waitMs": "\(DiagnosticsTiming.milliseconds(since: asked))",
-        ])
-        return request
-    }
-
-    private func perform(_ event: LoadAdmissionMachine.Event) {
-        Self.resume(state.withLock { Self.step(event, in: &$0) })
-    }
-
-    private typealias Resumption = (continuation: CheckedContinuation<Void, any Error>, granted: Bool)
-
-    /// The machine's step and the continuations its effects name, taken in one hold of the
-    /// lock, so no event can fall between a decision and the waiter it names.
-    private static func step(_ event: LoadAdmissionMachine.Event, in state: inout State) -> [Resumption] {
-        take(state.machine.handle(event), from: &state)
-    }
-
-    private static func take(_ effects: [LoadAdmissionMachine.Effect], from state: inout State) -> [Resumption] {
-        effects.compactMap { effect in
-            switch effect {
-            case let .grant(request, _):
-                state.waiters.removeValue(forKey: request).map { ($0, true) }
-            case let .refuse(request):
-                state.waiters.removeValue(forKey: request).map { ($0, false) }
-            }
-        }
-    }
-
-    /// After the lock is released: a resumed task may ask again at once.
-    private static func resume(_ resumptions: [Resumption]) {
-        for resumption in resumptions {
-            if resumption.granted {
-                resumption.continuation.resume()
-            } else {
-                resumption.continuation.resume(throwing: CancellationError())
-            }
-        }
     }
 }

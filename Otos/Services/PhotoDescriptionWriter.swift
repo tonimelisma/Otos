@@ -191,7 +191,7 @@ actor PhotoDescriptionWriter {
             }
             let page: CandidatePage<PhotoDescriptionCandidate, CaptureOrderCursor>
             do {
-                page = try await store.photoDescriptionCandidates(
+                page = try await store.backgroundReads.photoDescriptionCandidates(
                     after: cursor, limit: pageSize, excluding: Set(failedUntil.keys)
                 )
             } catch {

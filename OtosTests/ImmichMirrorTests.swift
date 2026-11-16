@@ -74,7 +74,7 @@ struct ImmichMirrorTests {
         try await store.addLibrary(url: folder)
         let library = try CatalogPath.normalizedDirectoryPath(for: folder)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == (secondCopy ? 2 : 1) }
-        let file = try #require(await store.planningMedia(for: library)?.first { $0.id.relativePath.rawValue == "2024/IMG_1.JPG" })
+        let file = try #require(await store.windowReads.planningMedia(for: library)?.first { $0.id.relativePath.rawValue == "2024/IMG_1.JPG" })
         if digested {
             try await digest(file, store: store)
         }
@@ -121,12 +121,12 @@ struct ImmichMirrorTests {
 
     private func ids(_ scope: SidebarSelection, _ store: CatalogStore) async throws -> Set<MediaAssetID> {
         let paths = await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
-        return try await Set(store.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: paths).ids)
+        return try await Set(store.windowReads.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: paths).ids)
     }
 
     private func digest(of path: String, in root: LibraryRootPath, _ store: CatalogStore) async throws -> ContentDigest? {
         let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
-        return try await store.mediaAssets(for: [id])[id]?.contentHash
+        return try await store.windowReads.mediaAssets(for: [id])[id]?.contentHash
     }
 
     /// A pass that lists the asset after the file's digest was read learns the mirror from
@@ -179,7 +179,7 @@ struct ImmichMirrorTests {
         let store = fixture.store
         var files: Set<MediaAssetID> = []
         if secondCopy {
-            let second = try #require(await store.planningMedia(for: fixture.library)?.first { $0.id != fixture.file.id })
+            let second = try #require(await store.windowReads.planningMedia(for: fixture.library)?.first { $0.id != fixture.file.id })
             try await digest(second, store: store)
             files = [fixture.file.id, second.id]
         }
@@ -193,8 +193,8 @@ struct ImmichMirrorTests {
             } else {
                 await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
             }
-            let copies = try await store.duplicateCopies(availableLibraryPaths: paths).copies.map(\.copy.id)
-            let scope = try await store.orderedAssetIDs(for: CatalogQueryDescriptor(scope: .duplicates), availableLibraryPaths: paths).ids
+            let copies = try await store.backgroundReads.duplicateCopies(availableLibraryPaths: paths).copies.map(\.copy.id)
+            let scope = try await store.windowReads.orderedAssetIDs(for: CatalogQueryDescriptor(scope: .duplicates), availableLibraryPaths: paths).ids
             return (Set(copies), Set(scope))
         }
 
@@ -203,7 +203,7 @@ struct ImmichMirrorTests {
         #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, store) == Self.contentDigest)
         #expect(try await duplicates().copies == files)
         #expect(try await duplicates().scope == files)
-        #expect(try await store.visibleAssetCount(for: .duplicates, availableLibraryPaths: [fixture.library, fixture.account]) == files.count)
+        #expect(try await store.windowReads.visibleAssetCount(for: .duplicates, availableLibraryPaths: [fixture.library, fixture.account]) == files.count)
         #expect(try await duplicates([fixture.account]).copies.isEmpty)
         #expect(try await duplicates([fixture.account]).scope.isEmpty)
         await store.shutdown()
@@ -237,7 +237,7 @@ struct ImmichMirrorTests {
         )
 
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await fixture.store.mirrorProbes(account: fixture.account).map(\.serverPrefix) == [nil])
+        #expect(try await fixture.store.backgroundReads.mirrorProbes(account: fixture.account).map(\.serverPrefix) == [nil])
         #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, fixture.store) == nil)
         #expect(try await ids(.allMedia, fixture.store).count == 2)
         await fixture.store.shutdown()

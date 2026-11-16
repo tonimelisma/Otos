@@ -31,7 +31,7 @@ struct MediaTileDetailReader {
     func details(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaTileDetail] {
         let started = choices.readStarted()
         do {
-            let details = try await store.mediaTileDetails(for: ids)
+            let details = try await store.windowReads.mediaTileDetails(for: ids)
             return choices.answer(details, asked: ids, startedAt: started)
         } catch {
             if !(error is CancellationError) {

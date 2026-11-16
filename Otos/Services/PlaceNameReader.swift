@@ -224,7 +224,7 @@ actor PlaceNameReader {
         while !Task.isCancelled {
             let page: [PlaceCell]
             do {
-                page = try await store.unnamedPlaceCells(language: language, after: after, limit: pageSize)
+                page = try await store.backgroundReads.unnamedPlaceCells(language: language, after: after, limit: pageSize)
             } catch {
                 OtosLog.metadata.errorOperation("place.names", phase: "readFailed", fields: ["error": String(describing: error)])
                 owesFullDrain = true
@@ -263,7 +263,7 @@ actor PlaceNameReader {
     private func drainCells(of rows: Set<MediaAssetID>, language: PlaceNameLanguage, locale: Locale) async {
         let cells: [PlaceCell]
         do {
-            cells = try await store.unnamedPlaceCells(language: language, of: rows)
+            cells = try await store.backgroundReads.unnamedPlaceCells(language: language, of: rows)
         } catch {
             OtosLog.metadata.errorOperation("place.names", phase: "readFailed", fields: ["error": String(describing: error)])
             owedRows.formUnion(rows)

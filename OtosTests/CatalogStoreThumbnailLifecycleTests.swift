@@ -55,7 +55,7 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(outcome == .applied(count: 1))
         #expect(FileManager.default.fileExists(atPath: fixture.finalURL(for: preview).path(percentEncoded: false)))
         #expect(!FileManager.default.fileExists(atPath: fixture.stagedURL(for: preview).path(percentEncoded: false)))
-        let detail = try #require(try await fixture.store.mediaTileDetails(for: [fixture.id])[fixture.id])
+        let detail = try #require(try await fixture.store.windowReads.mediaTileDetails(for: [fixture.id])[fixture.id])
         #expect(detail.thumbnailPath == "thumb.jpg")
         #expect(detail.previewPath == "preview.heic")
 

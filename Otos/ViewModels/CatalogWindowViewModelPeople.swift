@@ -693,7 +693,7 @@ extension CatalogWindowViewModel {
         personSheetFacesTask = Task { [weak self] in
             let faces: [FaceTile]
             do {
-                faces = try await store.newestFaces(of: person, limit: PersonSummary.newestFaceCount)
+                faces = try await store.windowReads.newestFaces(of: person, limit: PersonSummary.newestFaceCount)
             } catch {
                 OtosLog.ui.errorOperation("people.sheetFaces", phase: "readFailed", fields: [
                     "person": "\(person.rawValue)", "error": String(describing: error),
@@ -1097,7 +1097,7 @@ extension CatalogWindowViewModel {
                 do {
                     let faces = photos.isEmpty
                         ? PhotoFaces(photos: [], own: [:], landedThrough: landed)
-                        : try await store.photoFaces(of: photos, landedThrough: landed)
+                        : try await store.windowReads.photoFaces(of: photos, landedThrough: landed)
                     guard !Task.isCancelled, let self else { break }
                     if targetIDs(.current) == photos {
                         applyTargetPhotoFaces(faces)
@@ -1115,7 +1115,7 @@ extension CatalogWindowViewModel {
                 }
                 let read: PhotoFacesRead?
                 do {
-                    read = try await store.facesRead(for: target)
+                    read = try await store.windowReads.facesRead(for: target)
                 } catch {
                     OtosLog.ui.errorOperation("people.facesRead", phase: "readFailed", fields: [
                         "id": target.relativePath.rawValue, "error": String(describing: error),

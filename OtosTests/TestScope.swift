@@ -145,6 +145,7 @@ func makeTestStore(
     importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil,
     walByteBudget: Int64 = CatalogStore.defaultWALByteBudget,
     stagingContainers: StagingContainers? = nil,
+    stallThreshold: Duration = CatalogConnectionActivity.defaultStallThreshold,
     sourceLocation: SourceLocation = #_sourceLocation
 ) -> CatalogStore {
     // swiftlint:disable:next test_store_owned_by_scope
@@ -157,7 +158,8 @@ func makeTestStore(
         initialLoadDidRead: initialLoadDidRead,
         importJournalFailure: importJournalFailure,
         walByteBudget: walByteBudget,
-        stagingContainers: stagingContainers
+        stagingContainers: stagingContainers,
+        stallThreshold: stallThreshold
     )
     if let stores = TestScope.stores {
         stores.own(store)

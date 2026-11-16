@@ -151,33 +151,42 @@ recovery.
 Use `DatabasePool` with WAL for file-backed locations so Store-owned projection,
 grid-detail, and enrichment reads can run alongside serialized writes. Keep
 `.inMemory` test locations on `DatabaseQueue`, because GRDB pools require files.
-File-backed pools use `maximumReaderCount = 4`. Those readers are shared by every
-background read — the window's order and options, enrichment's claims, the derived owners'
-builds — and at 164,517 assets with an account enriching, each of those holds a reader for
-seconds; a visible tile's detail read then waited 2.5–4.5 s for one, with 0 ms of its own
-work (`docs/research/2026-11-14-scope-switch-and-background-laps.md`; at ~23k assets the
-same wait's p95 was 17 ms, `docs/research/2026-07-10-grdb-reader-pool-qos.md`). So a
-file-backed Store also opens a second, read-only `DatabasePool` of two readers on the same
-file after migrating it (`CatalogStore.interactiveReader`), and the reads a user waits on
-with something on screen — the visible tiles' details and the inspector's item — use only
-it. No background read can occupy it, so it never queues behind one. It is not a cache:
-every read is a SQLite read of the current WAL snapshot. A read reaches its connection
-through the Store actor, so the Store keeps O(rows) work off itself: an order read turns
+File-backed pools use `maximumReaderCount = 8` (`CatalogStore.readerCount`), in two lanes
+(plan 0116 bet 5, `CatalogReadLanes`). A window read — a scope's order, counts and filter
+options, the visible tiles' details, the Info pane, a user's act — enters the pool at once.
+A background read — enrichment's claims, the candidate walks, the People, duplicates and
+search builds — first takes one of four turns (`CatalogReadAdmission`), so background reads
+hold at most four readers and a window read always finds one of the other four free. The
+admission is the Store's: a waiter holds no lock and no connection, a cancelled waiter leaves
+the queue, and a turn is given back on the connection's queue as the connection goes back,
+on every exit. The lane is the caller's: an owner reads through the handle it was given
+(`CatalogStore.windowReads` or `.backgroundReads`), a Store read takes the handle's
+`CatalogReadLane`, which only a handle makes, and a Store read reaches a connection only
+through `reader(for:)` (lint `read_outside_lane`). Before the lanes, four shared readers were
+held for seconds at a time by background reads, and a visible tile's detail read waited
+2.5–4.5 s for one with 0 ms of its own work
+(`docs/research/2026-11-14-scope-switch-and-background-laps.md`); a second, read-only pool of
+two readers for the tiles and the inspector fixed only those two reads, and the window's
+order and options still waited (window waits 1.9 s at p95 on a generated owner-size catalog
+with every owner running). One pool with admission replaced it: measured on the same
+reproduction, `docs/research/2026-11-16-window-read-lanes.md`. Rejected: a lower QoS for the
+background readers (background work ten times slower in a loaded run, no window gain), and
+more shared readers without admission (background work fans out to fill any count). It is
+not a cache: every read is a SQLite read of the current WAL snapshot. A read reaches its
+connection through the Store actor, so the Store keeps O(rows) work off itself: an order read turns
 its rows into the window's IDs inside the read, on the connection's queue, because at
 166,000 rows that mapping held the Store for half a second per read and every visible
 tile's read queued behind it (`docs/research/2026-11-15-shared-reader-waits.md`). Readers
 wait on SQLite's locks through a busy handler of the Store's own (`ReaderLockWait`, with
 GRDB's ten-second limit), so a read's log line tells the wait for a lock (`lockMs`) from
 the wait for a connection, and a detail read's line carries the wait for the Store itself
-(`storeMs`). Every connection of both pools reports its transaction, first statement and
+(`storeMs`). Every connection reports its transaction, first statement and
 the Store's name for it to `CatalogConnectionActivity` through its SQLite trace, and a read
 that waited a second or more writes `op=catalog.store.stall` as its body starts: its wait
 split at the instant its connection began it, and, on `op=catalog.store.stall.holders`
 parts beside it, what every other connection was running or ended during the wait
 (`docs/research/2026-11-15-startup-read-stalls.md`). The WAL's checkpoint (below) never
-waits for either pool's reads.
-Raising the shared pool's reader count was rejected: background work fans out to fill any
-count.
+waits for a read.
 Do not add a second cache
 layer or query-paging architecture until measurements or implemented
 requirements prove the current Store-owned query model insufficient.

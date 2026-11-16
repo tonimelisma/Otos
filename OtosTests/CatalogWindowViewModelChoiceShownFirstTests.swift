@@ -27,13 +27,13 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
             #expect(model.currentTargetChoice == .liked)
             #expect(model.undoMenuState.undoTitle == "Undo Like")
             try await waitUntil { await held.arrived == 1 }
-            #expect(try await library.store.mediaAssets(for: [id])[id]?.mediaChoice == .notRated, "the write is held")
+            #expect(try await library.store.windowReads.mediaAssets(for: [id])[id]?.mediaChoice == .notRated, "the write is held")
             // A read that started before the write landed answers with the choice.
             #expect(try await model.tileDetailReader.detail(for: id)?.mediaChoice == .liked)
 
             await held.release()
             try await waitUntil { model.hasSettledMediaChoices }
-            #expect(try await library.store.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
+            #expect(try await library.store.windowReads.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
             // The first read that started after the landing retires the held choice.
             #expect(try await model.tileDetailReader.detail(for: id)?.mediaChoice == .liked)
             #expect(model.mediaChoiceOverlay.isEmpty)
@@ -87,12 +87,12 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
 
             await held.release()
             try await waitUntil { await held.arrived == 2 }
-            #expect(try await library.store.mediaAssets(for: [id])[id]?.mediaChoice == .liked, "the act landed first")
+            #expect(try await library.store.windowReads.mediaAssets(for: [id])[id]?.mediaChoice == .liked, "the act landed first")
             #expect(model.tileContentStore.content(for: id)?.detail.mediaChoice == .notRated)
             #expect(try await model.tileDetailReader.detail(for: id)?.mediaChoice == .notRated, "the undo is held")
             await held.release()
             try await waitUntil { model.hasSettledMediaChoices }
-            #expect(try await library.store.mediaAssets(for: [id])[id]?.mediaChoice == .notRated)
+            #expect(try await library.store.windowReads.mediaAssets(for: [id])[id]?.mediaChoice == .notRated)
             #expect(model.undoMenuState.redoTitle == "Redo Like")
         }
     }
@@ -117,7 +117,7 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
             #expect(model.mediaChoiceFailure == MediaChoiceFailure(count: 1))
             await held.release()
             try await waitUntil { model.hasSettledMediaChoices }
-            #expect(try await library.store.mediaAssets(for: [id])[id]?.mediaChoice == .disliked)
+            #expect(try await library.store.windowReads.mediaAssets(for: [id])[id]?.mediaChoice == .disliked)
             #expect(model.undoMenuState.undoTitle == "Undo Dislike")
         }
     }
@@ -167,11 +167,11 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
             #expect(model.tileContentStore.content(for: unread)?.detail.mediaChoice == .notRated)
             #expect(model.tileChoiceChange.ids == [target, copy])
             try await waitUntil { await held.arrived == 1 }
-            #expect(try await library.store.mediaAssets(for: [copy])[copy]?.mediaChoice == .notRated, "the write is held")
+            #expect(try await library.store.windowReads.mediaAssets(for: [copy])[copy]?.mediaChoice == .notRated, "the write is held")
             #expect(try await model.tileDetailReader.detail(for: copy)?.mediaChoice == .liked)
             await held.release()
             try await waitUntil { model.hasSettledMediaChoices }
-            #expect(try await library.store.mediaAssets(for: [copy])[copy]?.mediaChoice == .liked)
+            #expect(try await library.store.windowReads.mediaAssets(for: [copy])[copy]?.mediaChoice == .liked)
             // The first read of both that started after the landing retires the choice on each.
             #expect(try await model.tileDetailReader.details(for: [target, copy]).values.map(\.mediaChoice) == [.liked, .liked])
             #expect(model.mediaChoiceOverlay.isEmpty)
@@ -192,7 +192,7 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
 
     /// Reads each of `ids`' digest from its bytes, as enrichment would.
     private func digest(_ ids: some Sequence<MediaAssetID>, in library: CatalogedLibrary) async throws {
-        let facts = try #require(await library.store.planningMedia(for: library.rootPath))
+        let facts = try #require(await library.store.windowReads.planningMedia(for: library.rootPath))
         for id in ids {
             let fact = try #require(facts.first { $0.id == id })
             let bytes = try Data(contentsOf: library.root.appending(path: id.relativePath.rawValue))

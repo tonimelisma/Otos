@@ -53,7 +53,7 @@ struct CatalogStoreRemovablePresenceTests {
         try await store.completeSourceListing(scan: scan, observedPaths: [kept.relativePath])
 
         #expect(try await visiblePaths(store, rootPath) == [kept.relativePath.rawValue])
-        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
+        #expect(try await store.windowReads.catalogedAssetCount(for: .library(rootPath)) == 1)
         await store.shutdown()
     }
 
@@ -71,7 +71,7 @@ struct CatalogStoreRemovablePresenceTests {
         try await store.detachRemovableSource(identity: identity, reason: .disconnected)
 
         // Nothing proved the second file gone, so the offline camera still holds both.
-        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 2)
+        #expect(try await store.windowReads.catalogedAssetCount(for: .library(rootPath)) == 2)
         await store.shutdown()
     }
 
@@ -132,7 +132,7 @@ struct CatalogStoreRemovablePresenceTests {
 
         let relaunched = makeTestStore(location: .databaseFile(database), stagingContainers: containers)
         try await relaunched.start(scansSavedLibraries: false)
-        #expect(try await relaunched.catalogedAssetCount(for: .library(rootPath)) == 1)
+        #expect(try await relaunched.windowReads.catalogedAssetCount(for: .library(rootPath)) == 1)
         await relaunched.shutdown()
     }
 
@@ -157,8 +157,8 @@ struct CatalogStoreRemovablePresenceTests {
         try await store.recordSourceFileErased(operation)
 
         #expect(try await visiblePaths(store, rootPath) == [kept.relativePath.rawValue])
-        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
-        #expect(try await store.activeSourceEraseOperations().isEmpty)
+        #expect(try await store.windowReads.catalogedAssetCount(for: .library(rootPath)) == 1)
+        #expect(try await store.backgroundReads.activeSourceEraseOperations().isEmpty)
         // The card's contents changed, so a plan built before the erase is stale.
         let after = try #require(await store.planningRevisions(for: rootPath))
         #expect(after.namespaceRevision > before.namespaceRevision)
@@ -236,6 +236,6 @@ struct CatalogStoreRemovablePresenceTests {
 }
 
 private func visiblePaths(_ store: CatalogStore, _ rootPath: LibraryRootPath) async throws -> [String] {
-    let ids = try await store.orderedAssetIDs(for: .library(rootPath), availableLibraryPaths: [rootPath])
+    let ids = try await store.windowReads.orderedAssetIDs(for: .library(rootPath), availableLibraryPaths: [rootPath])
     return ids.map(\.relativePath.rawValue).sorted()
 }

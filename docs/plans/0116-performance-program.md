@@ -22,7 +22,7 @@ target (`docs/scorecard-targets.json`).
 | No `op=catalog.store.stall` line in a 10-minute session | `stalls.count` = 0 and `stalls.per10Min` = 0 | 62 in 4 minutes (158 per 10 minutes) → 0 in 3 minutes |
 | No main-thread stall over 250 ms in Otos code | `mainThreadStalls.worstMs` ≤ 250 | 0 stalls of any length |
 | Peak app footprint ≤ 700 MB | `memory.peakFootprintMB` ≤ 700 | 3,730 → 3,804 MB (336 MB with every owner off) |
-| `StallReproductionTests` passes with no known-issue marker | the test | still inside `withKnownIssue` |
+| `StallReproductionTests` passes with no known-issue marker | the test | no marker: window waits, window read work and walks once per drain asserted; answer times reported |
 | The app's disk growth is measured and explained | `disk.derivedFolderMB` (the launch's census) | measured; 11 MiB of leftovers removed each launch from the next build on; remote previews an owner question |
 
 ## 2. Evidence
@@ -121,18 +121,18 @@ Each bet names the scorecard number it moves. "Building" means a PR is in progre
 | 2 | **Search index memory.** A paged load and compact labels, then Float16 vectors or a mapped matrix. | footprint (2,179 MB at load); search time | first step done (#811, stage 4: paged load, compact labels, index-only reconciles; 632 MB after load on the generated catalog). On the owner's library alone it peaks at 973 MB, and clearing a search went from 24.8 s to 1.7 s. bet 2b building: the vectors in a mapped Float16 file the catalog names (v70), no table read at a launch with a current file, the match without hashing the scope again (`2026-11-16-search-vector-file.md`) |
 | 3 | **Duplicates.** `samePhotoCandidates` takes 123 s in 5 runs and `samePhotoDetails` 64 s in 405; 227 of 277 store changes are `copies` (2 of 170 after #809). | reader time; stall lines; CPU | #809 and #814 merged, more building |
 | 4 | **The window's own reads.** `filterOptions` 106 s in 11 runs, `orderedAssetIDs` 64 s in 14, the stack-candidate read, sort, search and clear. Build the installed app with `-O`, though it stays a Debug build. | click to paint; search, sort and filter | building |
-| 5 | **Window isolation.** One pool of 8 readers. Background reads are admitted at most 4 at a time. The caller's handle (`WindowReads` or `BackgroundReads`) picks the lane, and a lint keeps it so. Passive checkpoints with `journal_size_limit` replace the truncating barrier. | stall lines; window waits | passive checkpoints with `journal_size_limit` done (ADR 0002, ARC-063; evidence `CatalogWALBoundTests`); the pool and lanes building |
+| 5 | **Window isolation.** One pool of 8 readers. Background reads are admitted at most 4 at a time. The caller's handle (`WindowReads` or `BackgroundReads`) picks the lane, and a lint keeps it so. Passive checkpoints with `journal_size_limit` replace the truncating barrier. | stall lines; window waits | passive checkpoints with `journal_size_limit` done (ADR 0002, ARC-063; evidence `CatalogWALBoundTests`); the pool and lanes done (ARC-067): window waits 0–4 ms and none of a second on the owner-size reproduction (`2026-11-16-window-read-lanes.md`) |
 | 6 | **Staged launch.** Background owners start after the first grid paints; heavy loads run one at a time (ADR 0055). | launch; footprint | done: owners start at `op=launch.firstGrid` below the window's priority; People, duplicates, the search index's load and mirror pairing take turns through `LoadAdmission`, the view's load first. Before (bc159591): first grid 2,677 ms, peak 4,387 MB; after: not measured until the next tour |
 | 7 | **Wake on inputs.** Each owner wakes only on the facts its own SQL reads. | stall lines; CPU; disk reads | done (#807) |
 | 8 | **Split tables in the file, and one `VACUUM`.** `render_gray` and face embeddings move to their own tables. | disk reads; catalog size | face embeddings moved (#810); `render_gray` and the `VACUUM` not started (one-way, needs the owner's go) |
 | 9 | **Disk.** Remove orphaned thumbnails; stop the test temp-folder leak; decide whether remote-library previews exist at full size (owner question). | disk growth | not started |
 | 10 | **The description and text-reading backlog.** About 43 h of text readings and 66 h of descriptions. Whether it runs while the window is in use is an owner question. | footprint; CPU while in use | not started |
 
-**Bet 5's measurement.** On a generated owner-size catalog, window waits today are about
-1.9 s at p95 with 14 waits of a second or more; every isolation variant measured kept them
-under 30 ms with none of a second. Lower QoS for the background pool was rejected: in one
-loaded run it made background work 10 times slower and the window gained nothing. The
-experiment's tables are not yet in a research note; the bet's PR adds them.
+**Bet 5's measurement.** On a generated owner-size catalog, window waits were about 1.9 s at
+p95 with 14 waits of a second or more; with one pool of eight and four background turns they
+are 0–4 ms with none of a second (`docs/research/2026-11-16-window-read-lanes.md`). Lower QoS
+for the background pool was rejected: in one loaded run it made background work 10 times
+slower and the window gained nothing.
 
 ## 4. Done
 

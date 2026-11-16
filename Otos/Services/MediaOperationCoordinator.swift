@@ -482,7 +482,7 @@ actor MediaOperationCoordinator {
         let destination = request.destination
         let runID = request.runID
         do {
-            guard let snapshot = try await store.importPlanningSnapshot(
+            guard let snapshot = try await store.windowReads.importPlanningSnapshot(
                 source: source,
                 destination: destination,
                 policy: request.policy,
@@ -563,7 +563,7 @@ actor MediaOperationCoordinator {
         // finds no embedded capture wall moves the row from `.pending` to `.terminal`
         // without changing `capture_wall_compact`, so `namingRevision` stays put while the
         // gate's answer flips.
-        let liveMedia = await store.planningMedia(for: source) ?? []
+        let liveMedia = await store.windowReads.planningMedia(for: source) ?? []
         let liveNamingSettled = !liveMedia.isEmpty
             && !liveMedia.contains(where: { $0.namingFactState == .pending && !$0.isSourceUnreadable })
         return Machine.NamingPending(
@@ -627,7 +627,7 @@ actor MediaOperationCoordinator {
     /// logged, never taken as zero.
     private nonisolated static func batchAssetCount(_ batch: ImportBatchID, store: CatalogStore) async -> Int? {
         do {
-            return try await store.importBatchAssetCount(batch)
+            return try await store.windowReads.importBatchAssetCount(batch)
         } catch {
             OtosLog.catalog.errorOperation("import.batchCount", phase: "readFailed", fields: [
                 "batch": "\(batch.unixMilliseconds)",

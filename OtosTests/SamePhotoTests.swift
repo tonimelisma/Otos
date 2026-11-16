@@ -257,7 +257,7 @@ struct SamePhotoTests {
             contentHash: nil
         )])
 
-        let candidates = try await store.renderSignatureCandidates(limit: 10).candidates
+        let candidates = try await store.backgroundReads.renderSignatureCandidates(limit: 10).candidates
         let candidate = try #require(candidates.first)
         #expect(candidates.map(\.id) == [id])
 
@@ -269,17 +269,17 @@ struct SamePhotoTests {
         #expect(try await store.applyRenderSignatures([
             RenderSignatureResult(id: id, source: candidate.source, signature: signature),
         ]) == 1)
-        #expect(try await store.renderSignatureCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await store.backgroundReads.renderSignatureCandidates(limit: 10).candidates.isEmpty)
 
         // The still is offered for pairing by its column facts and the stamp its evidence is
         // read at; its evidence carries the signature, and its copy is the one a group lists.
-        let paired = try await store.samePhotoCandidates(availableLibraryPaths: [id.libraryRootPath])
+        let paired = try await store.backgroundReads.samePhotoCandidates(availableLibraryPaths: [id.libraryRootPath])
         #expect(paired.map(\.id) == [id])
         #expect(paired.first?.differenceHash == 42)
         #expect(paired.first?.evidenceStamp.signatureSource == candidate.source)
-        let evidence = try #require(try await store.samePhotoEvidence(for: [id])[id])
+        let evidence = try #require(try await store.backgroundReads.samePhotoEvidence(for: [id])[id])
         #expect(evidence.signature == signature)
-        let copy = try #require(try await store.samePhotoCopies(for: [id])[id])
+        let copy = try #require(try await store.backgroundReads.samePhotoCopies(for: [id])[id])
         #expect(copy.id == id)
         #expect(copy.libraryDisplayName == "Pictures")
         #expect(copy.byteSize == scanned.testAssets.first?.byteSize)

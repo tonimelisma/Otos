@@ -102,7 +102,7 @@ struct ProjectionEnrichmentCoalescingTests {
         }
         let settled = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
         let ids = try #require(settled.last?.mediaGrid.orderedAssetIDs)
-        let assets = try await store.mediaAssets(for: ids)
+        let assets = try await store.windowReads.mediaAssets(for: ids)
         return Window(store: store, projection: projection, recorder: recorder, recording: recording, ids: ids, assets: assets)
     }
 
@@ -245,7 +245,7 @@ struct ProjectionEnrichmentCoalescingTests {
         #expect(after.order == before.order, "before=\(before) after=\(after)")
         #expect(await window.keyedReads == UInt64(moves.count))
         let shown = try #require(await window.recorder.snapshot().last)
-        let full = try await window.store.orderedAssetIDs(
+        let full = try await window.store.windowReads.orderedAssetIDs(
             for: shown.queryDescriptor,
             availableLibraryPaths: Set(shown.libraries.map(\.path))
         )
@@ -387,7 +387,7 @@ struct ProjectionEnrichmentCoalescingTests {
         let allMedia = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
         let ids = try #require(allMedia.last?.mediaGrid.orderedAssetIDs)
         try #require(ids.count == 2 * Self.assetCount, "All Media shows \(ids.count)")
-        let assets = try await store.mediaAssets(for: ids)
+        let assets = try await store.windowReads.mediaAssets(for: ids)
         let libraryPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let library = SidebarSelection.library(libraryPath)
         await projection.updateSidebarSelection(library)

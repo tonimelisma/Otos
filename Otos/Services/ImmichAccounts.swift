@@ -383,7 +383,7 @@ actor ImmichAccounts {
     /// logged, when the catalog cannot say.
     private func sourceItemID(for id: MediaAssetID) async -> String? {
         do {
-            return try await store.sourceItemID(for: id)
+            return try await store.backgroundReads.sourceItemID(for: id)
         } catch {
             OtosLog.mediaIO.errorOperation("immich.sourceItem", phase: "readFailed", fields: [
                 "relativePath": id.relativePath.rawValue, "error": String(describing: error),
@@ -601,7 +601,7 @@ actor ImmichAccounts {
     /// catalog cannot say (`ImmichAccountStatus.lastSynced`).
     private func lastSynced(of path: LibraryRootPath) async -> Date? {
         do {
-            return try await store.sourceLastSynced(rootPath: path)
+            return try await store.backgroundReads.sourceLastSynced(rootPath: path)
         } catch {
             OtosLog.catalog.errorOperation("immich.account.lastSynced", phase: "readFailed", fields: [
                 "rootPath": path.rawValue, "error": String(describing: error),

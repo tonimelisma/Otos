@@ -135,7 +135,7 @@ struct MediaCompanionInventoryTests {
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["IMG_1.JPG"]
         }
 
-        let companions = try await store.companions(in: rootPath)
+        let companions = try await store.windowReads.companions(in: rootPath)
         #expect(companions.map(\.relativePath.rawValue) == ["IMG_1.xmp"])
         #expect(companions[0].primaryRelativePath?.rawValue == "IMG_1.JPG")
         #expect(companions[0].kind == .xmp)
@@ -163,7 +163,7 @@ struct MediaCompanionInventoryTests {
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
-        var companions = try await store.companions(in: rootPath)
+        var companions = try await store.windowReads.companions(in: rootPath)
         #expect(companions[0].primaryRelativePath?.rawValue == "shot.JPG")
 
         try FileManager.default.removeItem(at: media)
@@ -175,7 +175,7 @@ struct MediaCompanionInventoryTests {
         )
 
         _ = try await waitForCatalogStoreState(store) { $0.testAssets.isEmpty }
-        companions = try await store.companions(in: rootPath)
+        companions = try await store.windowReads.companions(in: rootPath)
         #expect(companions.count == 1)
         #expect(companions[0].primaryRelativePath == nil)
     }

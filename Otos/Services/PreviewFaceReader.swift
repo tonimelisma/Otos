@@ -137,7 +137,7 @@ actor PreviewFaceReader {
         while !Task.isCancelled, !modelUnavailable {
             let page: PreviewFacePage
             do {
-                page = try await store.previewFaceCandidates(after: cursor, limit: pageSize)
+                page = try await store.backgroundReads.previewFaceCandidates(after: cursor, limit: pageSize)
             } catch {
                 OtosLog.metadata.errorOperation("face.preview", phase: "readFailed", fields: [
                     "error": String(describing: error),

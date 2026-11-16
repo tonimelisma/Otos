@@ -143,7 +143,7 @@ struct ImmichAccountsTests {
     }
 
     private func assetPaths(_ store: CatalogStore, _ rootPath: LibraryRootPath) async throws -> [String] {
-        try await store.orderedAssetIDs(
+        try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .library(rootPath)), availableLibraryPaths: [rootPath]
         ).ids.map(\.relativePath.rawValue)
     }
@@ -247,7 +247,7 @@ struct ImmichAccountsTests {
         }
         // The first pass has ended, so no listing lease is held.
         await waitForStatuses(in: accounts) { $0[rootPath]?.reach == .online && $0[rootPath]?.isSyncing == false }
-        #expect(try await store.sourceResyncOwed(rootPath: rootPath) == nil)
+        #expect(try await store.backgroundReads.sourceResyncOwed(rootPath: rootPath) == nil)
 
         // A row the server no longer has, as one deleted while signed out would be.
         let scan = try await store.beginSourceListing(rootPath: rootPath)
@@ -266,7 +266,7 @@ struct ImmichAccountsTests {
         _ = await accounts.add(server: address, email: "a", password: "right")
         try await waitUntil { await (try? assetPaths(store, rootPath)) == ["a1/IMG_1.JPG"] }
         #expect(server.streamResets == [true, true])
-        try await waitUntil { await (try? store.sourceResyncOwed(rootPath: rootPath)) == .some(nil) }
+        try await waitUntil { await (try? store.backgroundReads.sourceResyncOwed(rootPath: rootPath)) == .some(nil) }
         await accounts.shutdown()
         await store.shutdown()
     }
@@ -309,7 +309,7 @@ struct ImmichAccountsTests {
         }
         await waitForStatuses(in: first) { $0[rootPath]?.lastSynced != nil }
         await first.shutdown()
-        let kept = try #require(try await store.sourceLastSynced(rootPath: rootPath))
+        let kept = try #require(try await store.backgroundReads.sourceLastSynced(rootPath: rootPath))
         #expect(kept >= before.addingTimeInterval(-1))
 
         let down = FakeServer(host: "kept.test", streams: [FakeServer.noAnswer])

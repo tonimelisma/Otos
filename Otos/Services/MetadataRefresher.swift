@@ -75,7 +75,7 @@ actor MetadataRefresher {
         while !Task.isCancelled {
             let page: [MetadataRefreshCandidate]
             do {
-                page = try await store.metadataRefreshCandidates(after: cursor, limit: pageSize)
+                page = try await store.backgroundReads.metadataRefreshCandidates(after: cursor, limit: pageSize)
             } catch {
                 summary.failed = true
                 OtosLog.metadata.errorOperation("metadata.refresh", phase: "candidatesFailed", fields: [

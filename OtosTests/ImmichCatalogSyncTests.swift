@@ -203,7 +203,7 @@ struct ImmichCatalogSyncTests {
         }
 
         func visible() async throws -> [String] {
-            let ids = try await store.orderedAssetIDs(
+            let ids = try await store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .library(rootPath)), availableLibraryPaths: [rootPath]
             ).ids
             return ids.map(\.relativePath.rawValue).sorted()
@@ -211,7 +211,7 @@ struct ImmichCatalogSyncTests {
 
         func size(of path: String) async throws -> Int64? {
             let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: path))
-            return try await store.mediaAssets(for: [id])[id]?.byteSize
+            return try await store.windowReads.mediaAssets(for: [id])[id]?.byteSize
         }
     }
 
@@ -288,16 +288,16 @@ struct ImmichCatalogSyncTests {
         _ = try await fixture.store.setMediaChoices([id: .liked])
         _ = await sync.pass()
         #expect(try await fixture.visible().isEmpty)
-        #expect(try await fixture.store.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
+        #expect(try await fixture.store.windowReads.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
 
         _ = await sync.pass()
         #expect(try await fixture.visible() == ["a/IMG.JPG"])
-        #expect(try await fixture.store.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
+        #expect(try await fixture.store.windowReads.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
         // A line about the asset without its EXIF keeps the size the catalog holds.
         #expect(try await fixture.size(of: "a/IMG.JPG") == 10)
 
         #expect(await sync.pass() == .synced(listed: 0, deleted: 1, full: false))
-        #expect(try await fixture.store.mediaAssets(for: [id])[id] == nil)
+        #expect(try await fixture.store.windowReads.mediaAssets(for: [id])[id] == nil)
         await fixture.store.shutdown()
     }
 
@@ -337,7 +337,7 @@ struct ImmichCatalogSyncTests {
         #expect(server.acknowledgements.contains(["SyncResetV1|1"]))
         // The resync after the reset asked the server to read from zero.
         #expect(server.streamsFromZero == [false, false, true])
-        #expect(try await fixture.store.sourceResyncOwed(rootPath: fixture.rootPath) == nil)
+        #expect(try await fixture.store.backgroundReads.sourceResyncOwed(rootPath: fixture.rootPath) == nil)
         await fixture.store.shutdown()
     }
 
@@ -358,7 +358,7 @@ struct ImmichCatalogSyncTests {
         // history, and the resync drops after its first batch was applied and acknowledged.
         server.serve(kept + [Self.asset("late")], pendingReset: true, failAfter: [nil, ImmichCatalogSync.batchSize])
         #expect(await sync.pass() == .serverFailed(.unreachable(.networkConnectionLost)))
-        #expect(try await fixture.store.sourceResyncOwed(rootPath: fixture.rootPath) != nil)
+        #expect(try await fixture.store.backgroundReads.sourceResyncOwed(rootPath: fixture.rootPath) != nil)
         #expect(try await fixture.visible().contains("gone/IMG.JPG"))
 
         #expect(await sync.pass() == .synced(listed: ImmichCatalogSync.batchSize + 1, deleted: 0, full: true))
@@ -367,7 +367,7 @@ struct ImmichCatalogSyncTests {
         #expect(visible.contains("x0/IMG.JPG"))
         #expect(visible.contains("late/IMG.JPG"))
         #expect(!visible.contains("gone/IMG.JPG"))
-        #expect(try await fixture.store.sourceResyncOwed(rootPath: fixture.rootPath) == nil)
+        #expect(try await fixture.store.backgroundReads.sourceResyncOwed(rootPath: fixture.rootPath) == nil)
         #expect(server.streamsFromZero == [false, false, true, true])
 
         // Settled: the next pass resumes from the cursor.
@@ -384,11 +384,11 @@ struct ImmichCatalogSyncTests {
         let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
         let second = try #require(try await store.requestSourceResync(rootPath: fixture.rootPath))
         try await store.completeSourceResync(scan: scan, observedPaths: [], settling: first)
-        #expect(try await store.sourceResyncOwed(rootPath: fixture.rootPath) == second)
+        #expect(try await store.backgroundReads.sourceResyncOwed(rootPath: fixture.rootPath) == second)
 
         let next = try await store.beginSourceListing(rootPath: fixture.rootPath)
         try await store.completeSourceResync(scan: next, observedPaths: [], settling: second)
-        #expect(try await store.sourceResyncOwed(rootPath: fixture.rootPath) == nil)
+        #expect(try await store.backgroundReads.sourceResyncOwed(rootPath: fixture.rootPath) == nil)
         await store.shutdown()
     }
 
@@ -488,7 +488,7 @@ struct ImmichCatalogSyncTests {
             [first, [Self.asset("late"), Self.complete]],
             failAfter: [ImmichCatalogSync.batchSize],
             onAck: { _ in
-                let ids = await (try? store.orderedAssetIDs(
+                let ids = await (try? store.windowReads.orderedAssetIDs(
                     for: CatalogQueryDescriptor(scope: .library(rootPath)), availableLibraryPaths: [rootPath]
                 ).ids) ?? []
                 heldAtAck.withLock { $0.append(ids.map(\.relativePath.rawValue)) }
@@ -599,7 +599,7 @@ struct ImmichCatalogSyncTests {
         #expect(server.requestedPreviews.sorted() == ["a", "v"])
         let still = fixture.id("a/IMG_1.JPG")
         let video = fixture.id("v/CLIP.MOV")
-        let assets = try await fixture.store.mediaAssets(for: [still, video])
+        let assets = try await fixture.store.windowReads.mediaAssets(for: [still, video])
         #expect(assets[still]?.thumbnailPath == ThumbnailStore.relativeName(for: still))
         #expect(assets[video]?.thumbnailPath == ThumbnailStore.relativeName(for: video))
         // The server's size, not upscaled to Otos's 2560 px; the thumbnail Otos's 256 px.
@@ -642,7 +642,7 @@ struct ImmichCatalogSyncTests {
         _ = await sync.pass()
         _ = await sync.pass()
         #expect(server.requestedPreviews == ["a"])
-        #expect(try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+        #expect(try await fixture.store.backgroundReads.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
             .isEmpty)
         await fixture.store.shutdown()
     }
@@ -673,7 +673,7 @@ struct ImmichCatalogSyncTests {
         )
         _ = await sync.pass()
         #expect(server.requestedPreviews.sorted() == ["a", "b", "c"])
-        #expect(try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+        #expect(try await fixture.store.backgroundReads.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
             .isEmpty)
 
         _ = await sync.pass()
@@ -682,7 +682,7 @@ struct ImmichCatalogSyncTests {
         previewMade.set()
         _ = await sync.pass()
         #expect(server.requestedPreviews.sorted() == ["a", "a", "b", "c"])
-        #expect(try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+        #expect(try await fixture.store.backgroundReads.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
             .isEmpty)
 
         await fixture.store.shutdown()
@@ -698,7 +698,7 @@ struct ImmichCatalogSyncTests {
         )
         _ = await refusedSession.pass()
         #expect(await refusedSession.fetchProducts() == .serverFailed(made: 0))
-        #expect(try await signedOutFixture.store.sourceProductCandidates(
+        #expect(try await signedOutFixture.store.backgroundReads.sourceProductCandidates(
             rootPath: signedOutFixture.rootPath, after: nil, limit: 10
         ).map(\.sourceItemID) == ["d"])
         await signedOutFixture.store.shutdown()
@@ -721,7 +721,7 @@ struct ImmichCatalogSyncTests {
                 volumeCapacity: ampleVolumeCapacity
             )
             _ = await failingSync.pass()
-            #expect(try await failingFixture.store.sourceProductCandidates(
+            #expect(try await failingFixture.store.backgroundReads.sourceProductCandidates(
                 rootPath: failingFixture.rootPath, after: nil, limit: 10
             ).map(\.sourceItemID) == ["f"])
             #expect(await failingSync.fetchProducts() == .serverFailed(made: 0))
@@ -749,7 +749,7 @@ struct ImmichCatalogSyncTests {
         )
         _ = await sync.pass()
         #expect(server.requestedPreviews == ["s"])
-        #expect(try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+        #expect(try await fixture.store.backgroundReads.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
             .isEmpty)
         await fixture.store.shutdown()
     }
@@ -775,7 +775,7 @@ struct ImmichCatalogSyncTests {
         )
         _ = await sync.pass()
         #expect(await sync.fetchProducts() == .serverFailed(made: 0))
-        let owed = try await fixture.store.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
+        let owed = try await fixture.store.backgroundReads.sourceProductCandidates(rootPath: fixture.rootPath, after: nil, limit: 10)
         #expect(owed.map(\.sourceItemID) == ["a", "c"])
         await fixture.store.shutdown()
     }
@@ -810,7 +810,7 @@ struct ImmichCatalogSyncTests {
         await store.endSourceListing(scan: scan)
 
         let ids = paths.map(fixture.id)
-        let kept = try await store.mediaAssets(for: ids).keys.map(\.relativePath.rawValue).sorted()
+        let kept = try await store.windowReads.mediaAssets(for: ids).keys.map(\.relativePath.rawValue).sorted()
         #expect(kept == ["a-b/IMG.JPG", "a.jpg", "a/IMG.JPG", "a2/IMG.JPG"])
         await store.shutdown()
     }
@@ -949,7 +949,7 @@ struct ImmichCatalogSyncTests {
             )])
             try #require(outcome == .applied(count: 1))
         }
-        #expect(try await store.livePhotoMotion(of: still) == movie)
+        #expect(try await store.windowReads.livePhotoMotion(of: still) == movie)
 
         let changes = AsyncValueRecorder<CatalogStoreChange>()
         let stream = await store.changeNotifications()
@@ -1002,7 +1002,7 @@ struct ImmichCatalogSyncTests {
         #expect(try await fixture.size(of: "s/IMG_1.MOV") == 2000)
         #expect(server.requestedDetails.isEmpty)
         let motionRow = MediaAssetID(libraryRootPath: fixture.rootPath, relativePath: MediaRelativePath(rawValue: "s/IMG_1.MOV"))
-        #expect(try await fixture.store.sourceItemID(for: motionRow) == "m")
+        #expect(try await fixture.store.backgroundReads.sourceItemID(for: motionRow) == "m")
         await fixture.store.shutdown()
     }
 
@@ -1082,10 +1082,10 @@ struct ImmichCatalogSyncTests {
         _ = await sync.pass()
         _ = await sync.pass()
         let motion = MediaAssetID(libraryRootPath: fixture.rootPath, relativePath: MediaRelativePath(rawValue: "s/IMG_1.MOV"))
-        let row = try #require(try await fixture.store.mediaAssets(for: [motion])[motion])
+        let row = try #require(try await fixture.store.windowReads.mediaAssets(for: [motion])[motion])
         #expect(row.byteSize == 3)
         #expect(row.contentModifiedAt == Date(timeIntervalSince1970: 1_700_000_900))
-        #expect(try await fixture.store.sourceItemRows(["m"], in: fixture.rootPath)["m"]?.isHiddenBySource == true)
+        #expect(try await fixture.store.backgroundReads.sourceItemRows(["m"], in: fixture.rootPath)["m"]?.isHiddenBySource == true)
         #expect(server.requestedDetails.isEmpty)
         await fixture.store.shutdown()
     }
@@ -1115,7 +1115,7 @@ struct ImmichCatalogSyncTests {
         #expect(try await fixture.visible().isEmpty)
         _ = await sync.pass()
         #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
-        let rows = try await fixture.store.sourceItemRows(["m"], in: fixture.rootPath)
+        let rows = try await fixture.store.backgroundReads.sourceItemRows(["m"], in: fixture.rootPath)
         #expect(rows["m"]?.relativePath.rawValue == "s/IMG_1.MOV")
 
         _ = await sync.pass()
@@ -1176,7 +1176,7 @@ struct ImmichCatalogSyncTests {
         )
         _ = try await heldFixture.store.setMediaChoices([motion: .liked])
         #expect(await heldSync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await heldFixture.store.mediaAssets(for: [motion])[motion]?.mediaChoice == .liked)
+        #expect(try await heldFixture.store.windowReads.mediaAssets(for: [motion])[motion]?.mediaChoice == .liked)
         await heldFixture.store.shutdown()
     }
 }

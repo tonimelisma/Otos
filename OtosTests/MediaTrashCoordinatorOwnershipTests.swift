@@ -110,9 +110,9 @@ struct MediaTrashCoordinatorOwnershipTests {
                     throw InjectedReadFailure()
                 }
                 successfulReadsSinceFailure.withLock { $0 += 1 }
-                return try await store.pendingTrashItems()
+                return try await store.windowReads.pendingTrashItems()
             },
-            trashItems: { try await store.mediaTrashItems(for: $0) }
+            trashItems: { try await store.windowReads.mediaTrashItems(for: $0) }
         )
         // The file is cloud-only and its download never finishes, so the item stays pending.
         let coordinator = MediaTrashCoordinator(
@@ -171,7 +171,7 @@ struct MediaTrashCoordinatorOwnershipTests {
                     defer { isArmed = false }
                     return isArmed
                 }
-                let items = try await store.pendingTrashItems()
+                let items = try await store.windowReads.pendingTrashItems()
                 if deliver, let coordinator = box.withLock({ $0.coordinator }) {
                     shutdownBegun.withLock { $0 = true }
                     shutdownTask.withLock { $0 = Task { await coordinator.shutdown() } }
@@ -181,7 +181,7 @@ struct MediaTrashCoordinatorOwnershipTests {
                 }
                 return items
             },
-            trashItems: { try await store.mediaTrashItems(for: $0) }
+            trashItems: { try await store.windowReads.mediaTrashItems(for: $0) }
         )
         let coordinator = MediaTrashCoordinator(
             store: store,
@@ -251,14 +251,14 @@ struct MediaTrashCoordinatorOwnershipTests {
         _ = try await fixture.store.markPendingTrash(fixture.ids, batch: MediaTrashBatchID())
         await coordinator.start()
 
-        try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
+        try await waitUntil { try await fixture.store.windowReads.pendingTrashItems().isEmpty }
         try await waitUntil { log.entries.count >= 1 }
 
         let first = try #require(handled.withLock { $0.first })
         let other = try #require(ids.first { $0 != first })
         #expect(log.entries == ["trash \(first.relativePath.rawValue)"])
         #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: other.relativePath.rawValue).path))
-        #expect(try await fixture.store.mediaAssets(for: [other]).keys.contains(other))
+        #expect(try await fixture.store.windowReads.mediaAssets(for: [other]).keys.contains(other))
         await coordinator.shutdown()
     }
 
@@ -266,7 +266,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         let fixture = try await Fixture.make(names: ["a.jpg"])
         let store = fixture.store
         let reads = MediaTrashCoordinator.StoreReads(
-            pendingItems: { try await store.pendingTrashItems() },
+            pendingItems: { try await store.windowReads.pendingTrashItems() },
             trashItems: { _ in throw InjectedReadFailure() }
         )
         // The file is cloud-only, so its size is read from the catalog, and that read fails.
@@ -289,7 +289,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         let fixture = try await Fixture.make(names: ["a.jpg"])
         let store = fixture.store
         let reads = MediaTrashCoordinator.StoreReads(
-            pendingItems: { try await store.pendingTrashItems() },
+            pendingItems: { try await store.windowReads.pendingTrashItems() },
             trashItems: { _ in throw InjectedReadFailure() }
         )
         let coordinator = MediaTrashCoordinator(

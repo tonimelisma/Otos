@@ -45,7 +45,7 @@ struct OneCopyTests {
 
     /// Reads each library file's digest from its bytes.
     private func digestLibrary(_ fixture: Fixture) async throws {
-        for facts in try #require(await fixture.store.planningMedia(for: fixture.library)) {
+        for facts in try #require(await fixture.store.windowReads.planningMedia(for: fixture.library)) {
             let bytes = try Data(contentsOf: URL(filePath: fixture.library.rawValue).appending(path: facts.id.relativePath.rawValue))
             _ = try await fixture.store.applyContentHash(ContentHashResult(
                 id: facts.id,
@@ -96,7 +96,7 @@ struct OneCopyTests {
         } else {
             await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
         }
-        return try await Set(store.orderedAssetIDs(
+        return try await Set(store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: scope, filter: filter), availableLibraryPaths: paths
         ).ids)
     }
@@ -111,7 +111,7 @@ struct OneCopyTests {
     @Test func aDigestWriteNamesCopiesOnlyWhenItMakesOrEndsACopy() async throws {
         let fixture = try await fixture(digested: false, twin: "IMG_3.JPG")
         let store = fixture.store
-        let assets = try #require(await store.planningMedia(for: fixture.library))
+        let assets = try #require(await store.windowReads.planningMedia(for: fixture.library))
         func facts(of path: String) throws -> (result: ContentHashResult, id: MediaAssetID) {
             let asset = try #require(assets.first { $0.id.relativePath.rawValue == path })
             let bytes = try Data(contentsOf: URL(filePath: fixture.library.rawValue).appending(path: path))
@@ -223,7 +223,7 @@ struct OneCopyTests {
 
         try await apply(SourceListingChanges(sizesBySourceItem: ["a1": 4]), to: fixture.account, store: store)
         #expect(try await !ids(.allMedia, store).contains(accountCopy))
-        #expect(try await store.photoInfoOverlay(for: accountCopy)?.otherCopyRoots == [fixture.library])
+        #expect(try await store.windowReads.photoInfoOverlay(for: accountCopy)?.otherCopyRoots == [fixture.library])
         await store.shutdown()
     }
 
@@ -244,7 +244,7 @@ struct OneCopyTests {
         #expect(try await ids(.allMedia, store).intersection(copies) == [libraryCopy])
         let offline = try await ids(.allMedia, store, available: [fixture.account])
         #expect(offline == [first])
-        #expect(try await store.visibleAssetCount(for: .allMedia, availableLibraryPaths: [fixture.account]) == 1)
+        #expect(try await store.windowReads.visibleAssetCount(for: .allMedia, availableLibraryPaths: [fixture.account]) == 1)
         #expect(try await ids(.allMedia, store).intersection(copies) == [libraryCopy])
         await store.shutdown()
     }
@@ -320,7 +320,7 @@ struct OneCopyTests {
         #expect(try await ids(.allMedia, store) == [first, other])
         #expect(try await ids(.library(fixture.library), store) == [first, second, other])
         #expect(try await ids(.duplicates, store) == [first, second])
-        let copies = try await store.duplicateCopies(availableLibraryPaths: [fixture.library, fixture.account]).copies
+        let copies = try await store.backgroundReads.duplicateCopies(availableLibraryPaths: [fixture.library, fixture.account]).copies
         #expect(Set(copies.map(\.copy.id)) == [first, second])
         #expect(Set(copies.map(\.digest)).count == 1)
 
@@ -332,7 +332,7 @@ struct OneCopyTests {
     }
 
     private func choices(of ids: [MediaAssetID], _ store: CatalogStore) async throws -> [MediaChoice?] {
-        let assets = try await store.mediaAssets(for: ids)
+        let assets = try await store.windowReads.mediaAssets(for: ids)
         return ids.map { assets[$0]?.mediaChoice }
     }
 
@@ -346,9 +346,9 @@ struct OneCopyTests {
             to: fixture.account, store: store
         )
         let libraryCopy = id("IMG_1.JPG", in: fixture.library)
-        #expect(try await store.photoInfoOverlay(for: libraryCopy)?.otherCopyRoots == [fixture.account])
-        #expect(try await store.photoInfoOverlay(for: id("IMG_2.JPG", in: fixture.library))?.otherCopyRoots == [])
-        #expect(try await store.photoInfoOverlay(for: id("a2/IMG_1.JPG", in: fixture.account))?.otherCopyRoots == nil)
+        #expect(try await store.windowReads.photoInfoOverlay(for: libraryCopy)?.otherCopyRoots == [fixture.account])
+        #expect(try await store.windowReads.photoInfoOverlay(for: id("IMG_2.JPG", in: fixture.library))?.otherCopyRoots == [])
+        #expect(try await store.windowReads.photoInfoOverlay(for: id("a2/IMG_1.JPG", in: fixture.account))?.otherCopyRoots == nil)
 
         let names = [fixture.account: "Family", fixture.library: "Pictures"]
         #expect(PhotoInfo.copiesText([fixture.account], names: names) == "Family")

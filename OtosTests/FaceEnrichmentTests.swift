@@ -34,12 +34,12 @@ struct FaceEnrichmentTests {
 
         try await library.readFaces([library.result(for: "a.jpg", faces: first)])
 
-        #expect(try await library.store.faces(of: library.id("a.jpg")) == first)
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await library.store.windowReads.faces(of: library.id("a.jpg")) == first)
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.isEmpty)
 
         let second = [Self.face(seed: 3)]
         try await library.readFaces([library.result(for: "a.jpg", faces: second)])
-        #expect(try await library.store.faces(of: library.id("a.jpg")) == second)
+        #expect(try await library.store.windowReads.faces(of: library.id("a.jpg")) == second)
         await library.store.shutdown()
     }
 
@@ -52,8 +52,8 @@ struct FaceEnrichmentTests {
             library.result(for: "a.jpg", faces: [Self.face(seed: 1)], sizeOffset: 1),
         ])
 
-        #expect(try await library.store.faces(of: library.id("a.jpg")).isEmpty)
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
+        #expect(try await library.store.windowReads.faces(of: library.id("a.jpg")).isEmpty)
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
         await library.store.shutdown()
     }
 
@@ -71,13 +71,13 @@ struct FaceEnrichmentTests {
         _ = try await library.store.perform(.notAFace([a1]))
 
         try await library.readFaces([library.result(for: "a.jpg", faces: [marked])])
-        var facts = try await library.store.peopleSnapshot().faces
-        #expect(try await library.store.faces(of: library.id("a.jpg")) == [marked, named])
+        var facts = try await library.store.backgroundReads.peopleSnapshot().faces
+        #expect(try await library.store.windowReads.faces(of: library.id("a.jpg")) == [marked, named])
         #expect(facts.map(\.assignment) == [.user(sam)])
 
         try await library.readFaces([library.result(for: "a.jpg", faces: [])])
-        facts = try await library.store.peopleSnapshot().faces
-        #expect(try await library.store.faces(of: library.id("a.jpg")) == [marked, named])
+        facts = try await library.store.backgroundReads.peopleSnapshot().faces
+        #expect(try await library.store.windowReads.faces(of: library.id("a.jpg")) == [marked, named])
         #expect(facts.map(\.assignment) == [.user(sam)])
 
         let file = library.root.appending(path: "a.jpg")
@@ -90,8 +90,8 @@ struct FaceEnrichmentTests {
             !snapshot.isScanning && snapshot.testAssets.first?.byteSize == 35
         }
         try await library.readFaces([library.result(for: "a.jpg", faces: [named])])
-        facts = try await library.store.peopleSnapshot().faces
-        #expect(try await library.store.faces(of: library.id("a.jpg")) == [named])
+        facts = try await library.store.backgroundReads.peopleSnapshot().faces
+        #expect(try await library.store.windowReads.faces(of: library.id("a.jpg")) == [named])
         #expect(facts.map(\.assignment) == [.user(sam)])
         await library.store.shutdown()
     }
@@ -112,8 +112,8 @@ struct FaceEnrichmentTests {
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["after.jpg"]
         }
 
-        #expect(try await library.store.faces(of: library.id("after.jpg")) == faces)
-        #expect(try await library.store.faces(of: library.id("before.jpg")).isEmpty)
+        #expect(try await library.store.windowReads.faces(of: library.id("after.jpg")) == faces)
+        #expect(try await library.store.windowReads.faces(of: library.id("before.jpg")).isEmpty)
         await library.store.shutdown()
     }
 
@@ -132,7 +132,7 @@ struct FaceEnrichmentTests {
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["b.jpg"]
         }
 
-        #expect(try await library.store.faces(of: library.id("a.jpg")).isEmpty)
+        #expect(try await library.store.windowReads.faces(of: library.id("a.jpg")).isEmpty)
         await library.store.shutdown()
     }
 
@@ -191,7 +191,7 @@ struct FaceEnrichmentTests {
         /// for the file as scanned; each face read in its own frame, with no frames file.
         @discardableResult
         func readVideoFaces(_ name: String, faces: [DetectedFace]) async throws -> EnrichmentApplyOutcome {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id(name)])[id(name)])
             return await store.applyEnrichmentBatch([EnrichmentResult(
                 id: id(name),
                 metadata: AssetMetadata(),
@@ -215,7 +215,7 @@ struct FaceEnrichmentTests {
             var renderings: [EnrichmentResult] = []
             var candidates: [PreviewFaceCandidate] = []
             for reading in readings {
-                let asset = try #require(try await store.mediaAssets(for: [id(reading.name)])[id(reading.name)])
+                let asset = try #require(try await store.windowReads.mediaAssets(for: [id(reading.name)])[id(reading.name)])
                 let size = try #require(asset.byteSize)
                 let mtime = MediaAsset.mtimeSeconds(asset.contentModifiedAt)
                 renderings.append(EnrichmentResult(

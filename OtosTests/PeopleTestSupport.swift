@@ -12,7 +12,7 @@ extension PeopleAssignment {
 extension CatalogStore {
     /// The People state the window's gallery read gives now; `.empty` while it is not known.
     func gallery(libraries: [CatalogLibraryState]) async throws -> CatalogPeopleState {
-        try await peopleGallery(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
+        try await windowReads.peopleGallery(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
             .map { CatalogPeopleState(gallery: $0) } ?? .empty
     }
 }

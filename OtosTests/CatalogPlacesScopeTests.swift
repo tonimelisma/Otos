@@ -40,7 +40,7 @@ struct CatalogPlacesScopeTests {
             ("nowhere.jpg", nil, 1_700_200_000),
         ]
         for (name, coordinate, captured) in placed {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id(name)])[id(name)])
             var metadata = AssetMetadata.absoluteCapture(instant: Date(timeIntervalSince1970: captured))
             if let coordinate {
                 metadata.locations = [
@@ -65,37 +65,37 @@ struct CatalogPlacesScopeTests {
         }
         let available: Set<LibraryRootPath> = [rootPath]
 
-        let places = try await store.orderedAssetIDs(
+        let places = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .places, sort: .dateNewest),
             availableLibraryPaths: available
         )
-        let helsinkiOnly = try await store.orderedAssetIDs(
+        let helsinkiOnly = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .mapArea(Self.helsinkiPoint)),
             availableLibraryPaths: available
         )
         // A stack opened from the map holds exactly its members, in the scope's order.
-        let stack = try await store.orderedAssetIDs(
+        let stack = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(
                 scope: .mapStack(MapStack(members: [places.ids[2], places.ids[1]])), sort: .dateNewest
             ),
             availableLibraryPaths: available
         )
         // Northern Europe: Helsinki in, Sydney out.
-        let europe = try await store.orderedAssetIDs(
+        let europe = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .mapArea(MapArea(south: 50, north: 70, west: 0, east: 40))),
             availableLibraryPaths: available
         )
         // A box across the antimeridian, from 150° east to 170° west: Sydney in.
-        let pacific = try await store.orderedAssetIDs(
+        let pacific = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .mapArea(MapArea(south: -40, north: -20, west: 150, east: -170))),
             availableLibraryPaths: available
         )
-        let allMedia = try await store.orderedAssetIDs(
+        let allMedia = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia),
             availableLibraryPaths: available
         )
-        let placesCount = try await store.visibleAssetCount(for: .places, availableLibraryPaths: available)
-        let imagesInLibrary = try await store.visibleAssetCount(
+        let placesCount = try await store.windowReads.visibleAssetCount(for: .places, availableLibraryPaths: available)
+        let imagesInLibrary = try await store.windowReads.visibleAssetCount(
             for: .allMedia,
             filter: MediaFilter(kinds: [.image]),
             availableLibraryPaths: available

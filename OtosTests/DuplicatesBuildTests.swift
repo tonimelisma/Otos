@@ -47,7 +47,7 @@ struct DuplicatesBuildTests {
         #expect(try await liked.state == build(library).state)
 
         // A redrawn thumbnail leaves the member's signature stale: it is no longer compared.
-        let asset = try #require(try await store.mediaAssets(for: [member])[member])
+        let asset = try #require(try await store.windowReads.mediaAssets(for: [member])[member])
         let signature = try #require(first.memory.evidence[member]?.evidence.signature)
         _ = await store.applyEnrichmentBatch([EnrichmentResult(
             id: member,
@@ -64,7 +64,7 @@ struct DuplicatesBuildTests {
 
         // Signed again with the same pixels, it returns to its group; only the evidence that
         // moved is read, not every proposed still's.
-        let owed = try await store.renderSignatureCandidates(limit: 10).candidates
+        let owed = try await store.backgroundReads.renderSignatureCandidates(limit: 10).candidates
         #expect(owed.map(\.id) == [member])
         #expect(try await store.applyRenderSignatures(owed.map {
             RenderSignatureResult(id: $0.id, source: $0.source, signature: signature)

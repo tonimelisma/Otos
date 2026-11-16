@@ -75,7 +75,7 @@ struct PlaceNamesTests {
         #expect(await asked.count(of: PlaceCell(Self.espoo)) == 2)
         #expect(await asked.count(of: PlaceCell(Self.sydney)) == 1)
         #expect(await waits.coordinates.count == 2)
-        #expect(try await library.store.unnamedPlaceCells(language: finnish, limit: 10).isEmpty)
+        #expect(try await library.store.backgroundReads.unnamedPlaceCells(language: finnish, limit: 10).isEmpty)
         let options = try await Self.options(library)
         #expect(options.countries == [PlaceFilterCountry(name: "Suomi", towns: ["Helsinki", "Espoo"])])
         await library.store.shutdown()
@@ -107,7 +107,7 @@ struct PlaceNamesTests {
         _ = try await library.store.forgetPlaceNames(notIn: PlaceNameLanguage(Locale(identifier: "en_US")))
 
         let row = library.id("nowhere.jpg")
-        let asset = try #require(try await library.store.mediaAssets(for: [row])[row])
+        let asset = try #require(try await library.store.windowReads.mediaAssets(for: [row])[row])
         var metadata = AssetMetadata()
         metadata.locations = [GeoRecord(source: "exifGPS", latitude: tampere.latitude, longitude: tampere.longitude, altitudeMeters: nil)]
         _ = await library.store.applyEnrichmentBatch([
@@ -137,7 +137,7 @@ struct PlaceNamesTests {
         await reader.drain()
 
         let english = PlaceNameLanguage(Locale(identifier: "en_US"))
-        #expect(try await library.store.unnamedPlaceCells(language: english, limit: 10).count == 3)
+        #expect(try await library.store.backgroundReads.unnamedPlaceCells(language: english, limit: 10).count == 3)
         await library.store.shutdown()
     }
 
@@ -204,8 +204,8 @@ struct PlaceNamesTests {
 
         let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
-        #expect(try await store.unnamedPlaceCells(language: PlaceNameLanguage(Locale(identifier: "en_GB")), limit: 10).isEmpty)
-        #expect(try await store.unnamedPlaceCells(language: PlaceNameLanguage(Locale(identifier: "fi_FI")), limit: 10).count == 2)
+        #expect(try await store.backgroundReads.unnamedPlaceCells(language: PlaceNameLanguage(Locale(identifier: "en_GB")), limit: 10).isEmpty)
+        #expect(try await store.backgroundReads.unnamedPlaceCells(language: PlaceNameLanguage(Locale(identifier: "fi_FI")), limit: 10).count == 2)
         await store.shutdown()
     }
 
@@ -247,7 +247,7 @@ struct PlaceNamesTests {
         ])
         #expect(options.placeNameLanguage == Self.english)
         func photos(_ places: Set<PlaceFilterKey>, in language: PlaceNameLanguage = Self.english) async throws -> [String] {
-            try await library.store.orderedAssetIDs(
+            try await library.store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(
                     scope: .library(library.rootPath), filter: MediaFilter(places: language.places(places)), sort: .filenameAscending
                 ),
@@ -314,7 +314,7 @@ struct PlaceNamesTests {
         )
         func resolved() async throws -> MediaFilter {
             try await CatalogWindowPolicy.resolvedDescriptor(
-                held, libraries: [], removableSources: [], placeNameLanguages: library.store.placeNameLanguages()
+                held, libraries: [], removableSources: [], placeNameLanguages: library.store.windowReads.placeNameLanguages()
             ).filter
         }
         #expect(try await resolved() == held.filter)
@@ -324,12 +324,12 @@ struct PlaceNamesTests {
         locale.withLock { $0 = Locale(identifier: "fi_FI") }
         renameable.withLock { $0 = false }
         await reader.drain()
-        #expect(try await library.store.placeNameLanguages().isEmpty)
+        #expect(try await library.store.windowReads.placeNameLanguages().isEmpty)
         #expect(try await resolved() == MediaFilter(kinds: [.image]))
 
         renameable.withLock { $0 = true }
         await reader.drain()
-        #expect(try await library.store.placeNameLanguages() == [Self.finnish])
+        #expect(try await library.store.windowReads.placeNameLanguages() == [Self.finnish])
         #expect(try await resolved() == MediaFilter(kinds: [.image]))
         #expect(try await Self.options(library).countries.map(\.name) == ["Suomi"])
         await library.store.shutdown()
@@ -358,8 +358,8 @@ struct PlaceNamesTests {
         ], language: Self.english)
         let available: Set<LibraryRootPath> = [library.rootPath, travelPath]
         func options(_ selection: SidebarSelection) async throws -> CatalogFilterOptions {
-            try await library.store.filterOptions(
-                for: selection, availableLibraryPaths: available, placeNameLanguages: library.store.placeNameLanguages()
+            try await library.store.windowReads.filterOptions(
+                for: selection, availableLibraryPaths: available, placeNameLanguages: library.store.windowReads.placeNameLanguages()
             )
         }
 
@@ -385,16 +385,16 @@ struct PlaceNamesTests {
 
     /// The options the library's own row offers, places in the language the catalog holds.
     static func options(_ library: FaceEnrichmentTests.ScannedLibrary) async throws -> CatalogFilterOptions {
-        try await library.store.filterOptions(
+        try await library.store.windowReads.filterOptions(
             for: .library(library.rootPath),
             availableLibraryPaths: [library.rootPath],
-            placeNameLanguages: library.store.placeNameLanguages()
+            placeNameLanguages: library.store.windowReads.placeNameLanguages()
         )
     }
 
     /// Stores `coordinate` as the item's location, as enrichment does.
     static func locate(_ id: MediaAssetID, at coordinate: PlaceCoordinate, in store: CatalogStore) async throws {
-        let asset = try #require(try await store.mediaAssets(for: [id])[id])
+        let asset = try #require(try await store.windowReads.mediaAssets(for: [id])[id])
         var metadata = AssetMetadata()
         metadata.locations = [
             GeoRecord(source: "exifGPS", latitude: coordinate.latitude, longitude: coordinate.longitude, altitudeMeters: nil),
@@ -415,7 +415,7 @@ struct PlaceNamesTests {
         ]
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: files.map(\.0), database: database)
         for (name, coordinate) in files {
-            let asset = try #require(try await library.store.mediaAssets(for: [library.id(name)])[library.id(name)])
+            let asset = try #require(try await library.store.windowReads.mediaAssets(for: [library.id(name)])[library.id(name)])
             var metadata = AssetMetadata()
             if let coordinate {
                 metadata.locations = [

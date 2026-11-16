@@ -127,7 +127,7 @@ struct PeopleViewModelTests {
         }
 
         func assignment(of face: FaceID) async throws -> FaceAssignment? {
-            try await store.peopleSnapshot().faces.first { $0.id == face }?.assignment
+            try await store.backgroundReads.peopleSnapshot().faces.first { $0.id == face }?.assignment
         }
     }
 
@@ -446,16 +446,16 @@ struct PeopleViewModelTests {
         fixture.model.beginNamingFaces([fixture.stranger])
         fixture.model.savePersonSheet(.faces([fixture.stranger]), name: "Kai", birthday: "1990")
         try await Self.waitForStore(fixture.store) {
-            try await fixture.store.peopleSnapshot().people.contains { $0.name == "Kai" }
+            try await fixture.store.backgroundReads.peopleSnapshot().people.contains { $0.name == "Kai" }
         }
-        let kai = try #require(try await fixture.store.peopleSnapshot().people.first { $0.name == "Kai" })
+        let kai = try #require(try await fixture.store.backgroundReads.peopleSnapshot().people.first { $0.name == "Kai" })
         #expect(kai.birthday == PersonBirthday("1990"))
         #expect(try await fixture.assignment(of: fixture.stranger) == .user(kai.id))
         try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
 
         fixture.model.undoLastChange()
         try await Self.waitForStore(fixture.store) {
-            try await !fixture.store.peopleSnapshot().people.contains { $0.name == "Kai" }
+            try await !fixture.store.backgroundReads.peopleSnapshot().people.contains { $0.name == "Kai" }
         }
         #expect(try await fixture.assignment(of: fixture.stranger)?.isGuessable == true)
         await fixture.store.shutdown()
@@ -715,7 +715,7 @@ struct PeopleViewModelTests {
         fixture.model.undoLastChange()
         fixture.model.undoLastChange()
         try await Self.waitForStore(fixture.store) {
-            let sam = try await fixture.store.peopleSnapshot().people.first { $0.id == fixture.sam }
+            let sam = try await fixture.store.backgroundReads.peopleSnapshot().people.first { $0.id == fixture.sam }
             let assignment = try await fixture.assignment(of: fixture.stranger)
             return sam?.isFavorite == false && assignment?.isGuessable == true
         }
@@ -726,7 +726,7 @@ struct PeopleViewModelTests {
         #expect(fixture.model.undoMenuState.redoTitle == "Redo Add to Favorites")
         fixture.model.redoLastChange()
         try await Self.waitForStore(fixture.store) {
-            let sam = try await fixture.store.peopleSnapshot().people.first { $0.id == fixture.sam }
+            let sam = try await fixture.store.backgroundReads.peopleSnapshot().people.first { $0.id == fixture.sam }
             let assignment = try await fixture.assignment(of: fixture.stranger)
             return sam?.isFavorite == true && assignment == .user(ian)
         }
@@ -742,9 +742,9 @@ struct PeopleViewModelTests {
         try await fixture.select([fixture.stranger.asset])
         fixture.model.savePersonSheet(.faces([fixture.stranger]), name: "Kai", birthday: nil)
         try await Self.waitForStore(fixture.store) {
-            try await fixture.store.peopleSnapshot().people.contains { $0.name == "Kai" }
+            try await fixture.store.backgroundReads.peopleSnapshot().people.contains { $0.name == "Kai" }
         }
-        let kai = try #require(try await fixture.store.peopleSnapshot().people.first { $0.name == "Kai" }?.id)
+        let kai = try #require(try await fixture.store.backgroundReads.peopleSnapshot().people.first { $0.name == "Kai" }?.id)
         try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
         try await fixture.show(fixture.people(), scope: .allMedia)
         fixture.model.setFavorite(kai, true)
@@ -753,16 +753,16 @@ struct PeopleViewModelTests {
         fixture.model.undoLastChange()
         fixture.model.undoLastChange()
         try await Self.waitForStore(fixture.store) {
-            try await !fixture.store.peopleSnapshot().people.contains { $0.id == kai }
+            try await !fixture.store.backgroundReads.peopleSnapshot().people.contains { $0.id == kai }
         }
         fixture.model.redoLastChange()
         try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(kai) }
         try await Self.waitForUndo(fixture.model, title: "Undo Name 1 Photo")
         fixture.model.redoLastChange()
         try await Self.waitForStore(fixture.store) {
-            try await fixture.store.peopleSnapshot().people.first { $0.id == kai }?.isFavorite == true
+            try await fixture.store.backgroundReads.peopleSnapshot().people.first { $0.id == kai }?.isFavorite == true
         }
-        #expect(try await fixture.store.peopleSnapshot().people.first { $0.id == kai }?.name == "Kai")
+        #expect(try await fixture.store.backgroundReads.peopleSnapshot().people.first { $0.id == kai }?.name == "Kai")
         await fixture.store.shutdown()
     }
 

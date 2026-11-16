@@ -256,7 +256,7 @@ struct VideoFaceTests {
     /// yet checked; removing the library deletes the frames.
     @Test func aVideosFacesAreStoredWithTheirFramesAndPurgedWithIt() async throws {
         let fixture = try await VideoLibrary.make(in: makeTestDirectory())
-        #expect(try await fixture.store.peopleGallery(availableLibraryPaths: [fixture.rootPath])?.unchecked == MediaCount(videos: 1))
+        #expect(try await fixture.store.windowReads.peopleGallery(availableLibraryPaths: [fixture.rootPath])?.unchecked == MediaCount(videos: 1))
 
         let frames = try ThumbnailStore.stageFaceFrames(
             [Self.image(), Self.image()], finalRelativeName: ThumbnailStore.faceFramesRelativeName(for: fixture.id), in: fixture.thumbnailDirectory
@@ -268,14 +268,14 @@ struct VideoFaceTests {
         ))
         #expect(outcome == .applied(count: 1))
 
-        #expect(try await fixture.store.peopleGallery(availableLibraryPaths: [fixture.rootPath])?.unchecked == MediaCount())
-        let faces = try await fixture.store.photoFaces(of: [fixture.id], landedThrough: 0)
+        #expect(try await fixture.store.windowReads.peopleGallery(availableLibraryPaths: [fixture.rootPath])?.unchecked == MediaCount())
+        let faces = try await fixture.store.windowReads.photoFaces(of: [fixture.id], landedThrough: 0)
         let second = try #require(faces.face(FaceID(asset: fixture.id, index: 1))?.tile)
         #expect(second.isInVideo)
         #expect(second.preview == FacePreview(name: frames.finalRelativePath, recipe: .neutral, image: 1))
         let file = ThumbnailStore.url(for: frames.finalRelativePath, in: fixture.thumbnailDirectory)
         #expect(FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
-        let asset = try #require(try await fixture.store.mediaAssets(for: [fixture.id])[fixture.id])
+        let asset = try #require(try await fixture.store.windowReads.mediaAssets(for: [fixture.id])[fixture.id])
         #expect(!asset.needsEnrichment(.library))
 
         _ = try await fixture.store.removeLibrary(path: fixture.rootPath)
@@ -294,7 +294,7 @@ struct VideoFaceTests {
         ))
         _ = try await fixture.apply(.noneFound)
 
-        #expect(try await fixture.store.peopleSnapshot().faces.isEmpty)
+        #expect(try await fixture.store.backgroundReads.peopleSnapshot().faces.isEmpty)
         let file = ThumbnailStore.url(for: frames.finalRelativePath, in: fixture.thumbnailDirectory)
         #expect(!FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
         await fixture.store.shutdown()
@@ -390,7 +390,7 @@ struct VideoFaceTests {
 
         /// Writes `faces` as an enrichment of the video as scanned, with every other product.
         func apply(_ faces: EnrichedVideoFaces) async throws -> EnrichmentApplyOutcome {
-            let asset = try #require(try await store.mediaAssets(for: [id])[id])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id])[id])
             return await store.applyEnrichmentBatch([EnrichmentResult(
                 id: id,
                 metadata: AssetMetadata(),
@@ -456,7 +456,7 @@ extension VideoFaceTests {
         // The re-read keeps person 2 from a frame where they stand where Sam stood.
         try await library.readVideoFaces("clip.mov", faces: [face(person: 2, box: here), face(person: 1, box: there)])
 
-        let faces = try await library.store.peopleSnapshot().faces
+        let faces = try await library.store.backgroundReads.peopleSnapshot().faces
         #expect(faces.map(\.assignment) == [.open, .user(sam)])
         await library.store.shutdown()
     }
@@ -538,7 +538,7 @@ extension VideoFaceTests {
     /// analyser never sees a frame.
     @Test func aVideoAVFoundationCannotDecodeIsStampedWithNoFacesByThatDecoder() async throws {
         let fixture = try await VideoLibrary.make(in: makeTestDirectory())
-        let asset = try #require(try await fixture.store.mediaAssets(for: [fixture.id])[fixture.id])
+        let asset = try #require(try await fixture.store.windowReads.mediaAssets(for: [fixture.id])[fixture.id])
         let enricher = MediaEnricher.live(
             thumbnailDirectory: fixture.thumbnailDirectory,
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
@@ -562,9 +562,9 @@ extension VideoFaceTests {
         #expect(result.decodeVerdict == .undecodable(decoder: VideoFaceReader.decoderIdentity))
         #expect(await fixture.store.applyEnrichmentBatch([result]) == .applied(count: 1))
         #expect(asset.videoFacesStale)
-        let stamped = try #require(try await fixture.store.mediaAssets(for: [fixture.id])[fixture.id])
+        let stamped = try #require(try await fixture.store.windowReads.mediaAssets(for: [fixture.id])[fixture.id])
         #expect(!stamped.videoFacesStale)
-        #expect(try await fixture.store.peopleGallery(availableLibraryPaths: [fixture.rootPath])?.unchecked == MediaCount())
+        #expect(try await fixture.store.windowReads.peopleGallery(availableLibraryPaths: [fixture.rootPath])?.unchecked == MediaCount())
         await fixture.store.shutdown()
     }
 

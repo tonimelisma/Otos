@@ -31,38 +31,38 @@ struct PhotoDescriptionTests {
         let still = library.id("a.jpg")
         let store = library.store
         try await library.readFaces([library.result(for: "a.jpg", faces: [FaceEnrichmentTests.face(seed: 1)])])
-        #expect(try await store.photoDescriptionCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.isEmpty)
 
         try await Self.readText(["SAUNA"], in: store)
-        #expect(try await store.photoDescriptionCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.isEmpty)
         try await Self.readLabels(["lake"], in: store)
 
-        let first = try await store.photoDescriptionCandidates(limit: 10).candidates
+        let first = try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates
         #expect(first.map(\.id) == [still])
         #expect(first.first?.facts.faces.map(\.name) == [nil])
         #expect(first.first?.facts.textLines == ["SAUNA"])
         #expect(first.first?.facts.labels == ["lake"])
         let written = try #require(first.first)
         #expect(try await store.applyPhotoDescriptions([Self.result(written, "A lake.")]).count == 1)
-        #expect(try await store.photoDescriptionCandidates(limit: 10).candidates.isEmpty)
-        #expect(try await store.photoInfoOverlay(for: still)?.photoDescription == .written("A lake."))
+        #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("A lake."))
 
         let sam = try #require(try await store.perform(.moveToNewPerson([FaceID(asset: still, index: 0)], name: "Sam")).person)
-        #expect(try await store.photoInfoOverlay(for: still)?.photoDescription == nil)
-        let named = try await store.photoDescriptionCandidates(limit: 10).candidates
+        #expect(try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == nil)
+        let named = try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates
         #expect(named.first?.facts.faces.map(\.name) == ["Sam"])
         #expect(try await store.applyPhotoDescriptions([Self.result(written, "Stale.")]).isEmpty)
 
         _ = try await store.perform(.edit(sam, name: "Sam", birthday: PersonBirthday("2020-05-01")))
-        let dated = try await store.photoDescriptionCandidates(limit: 10).candidates
+        let dated = try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates
         #expect(dated.first?.facts.faces.first?.birthday == PersonBirthday("2020-05-01"))
         #expect(try await store.applyPhotoDescriptions(named.map { Self.result($0, "Sam.") }).isEmpty)
         #expect(try await store.applyPhotoDescriptions(dated.map { Self.result($0, nil) }).count == 1)
-        #expect(try await store.photoInfoOverlay(for: still)?.photoDescription == .declined)
-        #expect(try await store.currentPhotoDescriptions(for: [still]).isEmpty)
+        #expect(try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .declined)
+        #expect(try await store.backgroundReads.currentPhotoDescriptions(for: [still]).isEmpty)
 
         _ = try await store.perform(.setHidden(sam, true))
-        #expect(try await store.photoDescriptionCandidates(limit: 10).candidates.first?.facts.faces.map(\.name) == [nil])
+        #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.first?.facts.faces.map(\.name) == [nil])
         await store.shutdown()
     }
 
@@ -118,9 +118,9 @@ struct PhotoDescriptionTests {
         }
 
         await writer.start()
-        try await waitUntil { try await store.photoInfoOverlay(for: still)?.photoDescription == .written("Sam by a lake.") }
+        try await waitUntil { try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("Sam by a lake.") }
         _ = try await store.perform(.edit(sam, name: "Max", birthday: nil))
-        try await waitUntil { try await store.photoInfoOverlay(for: still)?.photoDescription == .written("Max by a lake.") }
+        try await waitUntil { try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("Max by a lake.") }
         await writer.shutdown()
 
         #expect(prompts.value.first?.facts.contains("- Sam: face on the left.") == true)
@@ -139,7 +139,7 @@ struct PhotoDescriptionTests {
         try await library.readFaces(["a.jpg", "b.jpg", "c.jpg"].map { library.result(for: $0, faces: []) })
         try await Self.readText([], in: store)
         try await Self.readLabels([], in: store)
-        let owed = try await store.photoDescriptionCandidates(limit: 10).candidates
+        let owed = try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates
         #expect(owed.count == 3)
         for candidate in owed {
             try writeSubjectJPEG(to: directory.appending(path: candidate.previewPath), center: CGPoint(x: 0.5, y: 0.5))
@@ -149,9 +149,9 @@ struct PhotoDescriptionTests {
         _ = try await store.applyPhotoDescriptions([Self.result(newest, "Before.")])
         try await library.readFaces([library.result(for: newest.id.relativePath.rawValue, faces: [FaceEnrichmentTests.face(seed: 1)])])
         let person = try #require(try await store.perform(.moveToNewPerson([FaceID(asset: newest.id, index: 0)], name: "Sam")).person)
-        _ = try await store.applyPhotoDescriptions(store.photoDescriptionCandidates(limit: 10).candidates.filter { $0.id == newest.id }
+        _ = try await store.applyPhotoDescriptions(store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.filter { $0.id == newest.id }
             .map { Self.result($0, "Sam.") })
-        #expect(try await store.photoDescriptionCandidates(limit: 10).candidates.map(\.id) == Array(owed.dropFirst().map(\.id)))
+        #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.map(\.id) == Array(owed.dropFirst().map(\.id)))
 
         let described = Mutex<[String]>([])
         let (held, hold) = AsyncStream<Void>.makeStream()
@@ -177,7 +177,7 @@ struct PhotoDescriptionTests {
         _ = try await store.perform(.edit(person, name: "Max", birthday: nil))
         try await waitUntil { await writer.requested != before }
         release.yield()
-        try await waitUntil { try await store.photoDescriptionCandidates(limit: 10).candidates.isEmpty }
+        try await waitUntil { try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.isEmpty }
         await writer.shutdown()
 
         #expect(described.withLock { $0 } == ["other", "max", "other"])
@@ -202,7 +202,7 @@ struct PhotoDescriptionTests {
         try await waitUntil { await writer.drains >= 1 }
         await writer.shutdown()
 
-        #expect(try await store.photoDescriptionCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
+        #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
         await store.shutdown()
     }
 
@@ -216,7 +216,7 @@ struct PhotoDescriptionTests {
         ])
         try await Self.readText([], in: store)
         try await Self.readLabels([], in: store)
-        let owed = try await store.photoDescriptionCandidates(limit: 10).candidates
+        let owed = try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates
         let a = try #require(owed.first { $0.id == library.id("a.jpg") })
         _ = try await store.applyPhotoDescriptions([Self.result(a, "Picking berries at the cottage.")])
         let descriptions = PhotoDescriptionWriter(store: store, thumbnailDirectory: nil) { _, _ in .declined }
@@ -337,7 +337,7 @@ struct PhotoDescriptionTests {
     }
 
     private static func readText(_ lines: [String], in store: CatalogStore) async throws {
-        let owed = try await store.searchTextCandidates(limit: 100).candidates
+        let owed = try await store.backgroundReads.searchTextCandidates(limit: 100).candidates
         _ = try await store.applySearchTexts(owed.map { candidate in
             SearchTextResult(
                 id: candidate.id, source: candidate.source,
@@ -347,7 +347,7 @@ struct PhotoDescriptionTests {
     }
 
     private static func readLabels(_ labels: [String], in store: CatalogStore) async throws {
-        let owed = try await store.searchEmbeddingCandidates(limit: 100).candidates
+        let owed = try await store.backgroundReads.searchEmbeddingCandidates(limit: 100).candidates
         _ = try await store.applySearchEmbeddings(owed.map { candidate in
             SearchEmbeddingResult(
                 id: candidate.id, source: candidate.source,

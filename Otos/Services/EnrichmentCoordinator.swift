@@ -580,7 +580,7 @@ extension EnrichmentCoordinator {
         }
         let sources: [MediaAssetID: Int64?]
         do {
-            sources = try await store.enrichmentDemandSources(checked)
+            sources = try await store.backgroundReads.enrichmentDemandSources(checked)
         } catch {
             OtosLog.metadata.errorOperation("enrichment.demandSources", phase: "readFailed", fields: [
                 "count": "\(checked.count)", "error": String(describing: error),
@@ -653,7 +653,7 @@ extension EnrichmentCoordinator {
                         // cannot be read is not guessed at: the work is retried.
                         let recipe: StoredEditRecipe?
                         do {
-                            recipe = try await store.editRecipe(for: work.id)
+                            recipe = try await store.backgroundReads.editRecipe(for: work.id)
                         } catch {
                             OtosLog.metadata.errorOperation("enrichment.editRecipe", phase: "readFailed", fields: [
                                 "relativePath": work.id.relativePath.rawValue,

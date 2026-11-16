@@ -12,7 +12,7 @@ struct InThisPhotoRefreshTests {
     @Test func inThisPhotoReadsTheShownItemAgainWhenItsDoorbellRings() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            let asset = try #require(try await library.store.mediaAssets(for: [id])[id])
+            let asset = try #require(try await library.store.windowReads.mediaAssets(for: [id])[id])
             _ = await library.store.applyEnrichmentBatch([EnrichmentResult(
                 id: id, metadata: AssetMetadata(), enrichedKind: .image, thumbnailPath: "pool-thumb.jpg",
                 sourceSize: asset.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
@@ -27,7 +27,7 @@ struct InThisPhotoRefreshTests {
             try await waitUntil { model.photoInfo?.id == id }
             #expect(model.photoInfo?.recognized?.labels == nil)
 
-            let candidate = try #require(try await library.store.searchEmbeddingCandidates(limit: 10).candidates.first)
+            let candidate = try #require(try await library.store.backgroundReads.searchEmbeddingCandidates(limit: 10).candidates.first)
             _ = try await library.store.applySearchEmbeddings([SearchEmbeddingResult(
                 id: id, source: candidate.source, embedding: [Float](repeating: 1, count: SearchEmbedding.dimensions),
                 labels: ["pool": 0.88], confidentLabels: ["pool"]

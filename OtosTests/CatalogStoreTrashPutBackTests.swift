@@ -94,7 +94,7 @@ struct CatalogStoreTrashPutBackTests {
             trashURL: library.trash.appending(path: "a.jpg")
         )], batch: MediaTrashBatchID(), under: released)
 
-        #expect(try await store.pendingTrashItems().map(\.item.id) == [id])
+        #expect(try await store.windowReads.pendingTrashItems().map(\.item.id) == [id])
         await store.shutdown()
     }
 
@@ -108,8 +108,8 @@ struct CatalogStoreTrashPutBackTests {
         try await Self.moveToTrash(library.ids, in: library, store: store, batch: batch)
 
         // Moved items are no longer waiting, and nothing of them shows, but their rows stay.
-        #expect(try await store.pendingTrashItems().isEmpty)
-        #expect(try await store.mediaAssets(for: library.ids).count == 3)
+        #expect(try await store.windowReads.pendingTrashItems().isEmpty)
+        #expect(try await store.windowReads.mediaAssets(for: library.ids).count == 3)
         await store.shutdown()
 
         // Between runs: Finder puts one back, and the Trash loses another.
@@ -125,16 +125,16 @@ struct CatalogStoreTrashPutBackTests {
             !$0.isScanning && $0.testAssets.count == 1
         }
         #expect(settled.testAssets.map(\.id) == [putBack])
-        #expect(try await relaunched.mediaAssets(for: [putBack])[putBack]?.mediaChoice == .liked)
+        #expect(try await relaunched.windowReads.mediaAssets(for: [putBack])[putBack]?.mediaChoice == .liked)
         #expect(
-            try await relaunched.editRecipe(for: putBack)
+            try await relaunched.windowReads.editRecipe(for: putBack)
                 == StoredEditRecipe(recipe: EditRecipe(shadows: 40), revision: 1)
         )
         // The Trash no longer holds the emptied one: proven deleted, purged.
-        #expect(try await relaunched.mediaAssets(for: [emptied]).isEmpty)
+        #expect(try await relaunched.windowReads.mediaAssets(for: [emptied]).isEmpty)
         // Still in the Trash: kept, hidden, and not offered to the queue again.
-        #expect(try await relaunched.mediaAssets(for: [stillInTrash]).keys.contains(stillInTrash))
-        #expect(try await relaunched.pendingTrashItems().isEmpty)
+        #expect(try await relaunched.windowReads.mediaAssets(for: [stillInTrash]).keys.contains(stillInTrash))
+        #expect(try await relaunched.windowReads.pendingTrashItems().isEmpty)
         await relaunched.shutdown()
     }
 
@@ -166,7 +166,7 @@ struct CatalogStoreTrashPutBackTests {
         let withdrawn = await coordinator.withdrawAllPending()
 
         #expect(Set(withdrawn) == Set(library.ids))
-        #expect(try await store.pendingTrashItems().isEmpty)
+        #expect(try await store.windowReads.pendingTrashItems().isEmpty)
         let snapshot = try await waitForCatalogStoreState(store) { $0.testAssets.count == 2 }
         #expect(Set(snapshot.testAssets.map(\.id)) == Set(library.ids))
         await coordinator.shutdown()

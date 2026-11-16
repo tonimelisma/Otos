@@ -404,7 +404,7 @@ struct CatalogStoreFilesystemEventTests {
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
         let id = try #require(cataloged.testAssets.first?.id)
-        let item = try #require(try await store.mediaTrashItems(for: [id]).first)
+        let item = try #require(try await store.windowReads.mediaTrashItems(for: [id]).first)
         _ = try await store.setMediaChoice(.liked, for: [id])
 
         try FileManager.default.moveItem(at: file, to: aside)
@@ -417,7 +417,7 @@ struct CatalogStoreFilesystemEventTests {
         await gate.waitForArrivals(1)
 
         try FileManager.default.moveItem(at: aside, to: file)
-        let restored = await store.restoreTrashedItem(TrashedItem(
+        let restored = await store.windowReads.restoreTrashedItem(TrashedItem(
             item: item,
             members: item.members.map { TrashedMember(member: $0, trashURL: nil) }
         ))
@@ -427,7 +427,7 @@ struct CatalogStoreFilesystemEventTests {
         try await waitUntil { await store.isFilesystemQuiescent }
         let settled = try await waitForCatalogStoreState(store) { !$0.isScanning }
         #expect(settled.testAssets.map(\.id) == [id])
-        #expect(try await store.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
+        #expect(try await store.windowReads.mediaAssets(for: [id])[id]?.mediaChoice == .liked)
     }
 
     @Test func fileDirtSurvivesQueuedOtherRootScan() async throws {
@@ -518,7 +518,7 @@ struct CatalogStoreFilesystemEventTests {
         _ = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 2
         }
-        let companionsBefore = try await store.companions(in: rootPath)
+        let companionsBefore = try await store.windowReads.companions(in: rootPath)
         #expect(companionsBefore.map(\.relativePath.rawValue) == ["album/photo.xmp"])
         let baseline = await recorder.invocations().count
 
@@ -535,7 +535,7 @@ struct CatalogStoreFilesystemEventTests {
                 && snapshot.testAssets.map(\.relativePath.rawValue) == ["keep/keep.jpg"]
         }
         #expect(settled.testAssets.map(\.relativePath.rawValue) == ["keep/keep.jpg"])
-        let companionsAfter = try await store.companions(in: rootPath)
+        let companionsAfter = try await store.windowReads.companions(in: rootPath)
         #expect(companionsAfter.isEmpty)
         #expect(await recorder.invocations().count == baseline)
     }

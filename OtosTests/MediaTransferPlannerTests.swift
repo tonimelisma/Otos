@@ -664,7 +664,7 @@ struct MediaTransferPlannerTests {
 
     /// The verdict as planning reads it: the planning facts the Store hands the planner.
     private static func plansAsUnreadable(_ id: MediaAssetID, in store: CatalogStore) async throws -> Bool {
-        let facts = try #require(await store.planningMedia(for: id.libraryRootPath))
+        let facts = try #require(await store.windowReads.planningMedia(for: id.libraryRootPath))
         return try #require(facts.first { $0.id == id }).isSourceUnreadable
     }
 

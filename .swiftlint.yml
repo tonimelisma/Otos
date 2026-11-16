@@ -158,6 +158,14 @@ custom_rules:
     excluded_match_kinds: [comment, doccomment]
     message: "URL(fileURLWithPath:) without isDirectory: stats the disk, and its answer becomes a trailing slash in the path: a file that became a directory then names a different path. Pass isDirectory:, or work on the text (CatalogPath.relativePath(rootPath:absolutePath:), MediaRelativePath's components)."
     severity: error
+  read_outside_lane:
+    name: "A Store read enters the pool through its lane"
+    included: 'Otos/Stores/.*\.swift'
+    excluded: 'Otos/Stores/CatalogReadLanes\.swift'
+    regex: '\b(dbWriter|dbQueue|database\(\)|pool|writer|reader|interactiveReader)\s*\.\s*(readFreeingConnection|read|asyncRead|unsafeRead|unsafeReentrantRead)\b'
+    excluded_match_kinds: [comment, doccomment]
+    message: "The caller's handle picks a read's lane (plan 0116 bet 5): read through `reader(for: lane)`, which admits a background read before it takes one of the pool's readers. Only the open's own reads, before any lane exists, enter the pool directly."
+    severity: error
   wall_clock_interval:
     name: "An interval inside the process is measured on ContinuousClock"
     regex: 'Date\(\)\.(timeIntervalSince|addingTimeInterval)\(|\btimeIntervalSinceNow\b|Date\.distant(Past|Future)\b|Date\(timeIntervalSinceNow:'

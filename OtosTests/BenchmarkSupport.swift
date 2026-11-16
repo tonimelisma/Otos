@@ -202,7 +202,7 @@ struct BenchmarkLibrary {
         }
 
         let indexByID = Dictionary(uniqueKeysWithValues: assets.enumerated().map { ($1.id, $0) })
-        let signatures = try await store.renderSignatureCandidates(limit: count).candidates.map { candidate in
+        let signatures = try await store.backgroundReads.renderSignatureCandidates(limit: count).candidates.map { candidate in
             let still = try stills[#require(indexByID[candidate.id])]
             return RenderSignatureResult(
                 id: candidate.id,

@@ -113,7 +113,7 @@ actor AnniversaryTitleWriter {
             let items = Array(anniversary.items.prefix(Self.maximumDescriptions * 3))
             let texts: [MediaAssetID: String]
             do {
-                texts = try await store.currentPhotoDescriptions(for: items)
+                texts = try await store.backgroundReads.currentPhotoDescriptions(for: items)
             } catch {
                 OtosLog.ui.errorOperation("onThisDay.title", phase: "readFailed", fields: [
                     "day": anniversary.day.diagnosticDescription, "error": String(describing: error),

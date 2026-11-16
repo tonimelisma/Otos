@@ -74,7 +74,7 @@ struct CatalogStoreRemovableSourceTests {
         try await store.completeSourceListing(
             scan: firstScan, observedPaths: [kept.relativePath, deleted.relativePath]
         )
-        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 2)
+        #expect(try await store.windowReads.catalogedAssetCount(for: .library(rootPath)) == 2)
         try await store.detachRemovableSource(identity: .camera(id: "serial"), reason: .disconnected)
 
         _ = try await store.attachDeviceMTP(
@@ -88,7 +88,7 @@ struct CatalogStoreRemovableSourceTests {
             store, rootPath: rootPath, expected: [kept.relativePath.rawValue]
         )
         #expect(selected == [kept.relativePath.rawValue])
-        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
+        #expect(try await store.windowReads.catalogedAssetCount(for: .library(rootPath)) == 1)
         await store.shutdown()
     }
 
@@ -307,7 +307,7 @@ struct CatalogStoreRemovableSourceTests {
             snapshot.removableSources.first?.availability == .unavailable
         }
         #expect(detached.removableSources.first?.path == firstPath)
-        #expect(try await store.catalogedAssetCount(for: .library(firstPath)) == 1)
+        #expect(try await store.windowReads.catalogedAssetCount(for: .library(firstPath)) == 1)
 
         try await store.attachRemovableVolume(
             mountURL: fixture.secondMount,
@@ -364,8 +364,8 @@ struct CatalogStoreRemovableSourceTests {
         #expect(enumerating.removableSources.first?.kind == .deviceMTP)
         #expect(enumerating.removableSources.first?.activity == .enumerating)
         #expect(enumerating.testAssets.isEmpty)
-        #expect(try await store.catalogedAssetCount(for: .allMedia) == 0)
-        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
+        #expect(try await store.windowReads.catalogedAssetCount(for: .allMedia) == 0)
+        #expect(try await store.windowReads.catalogedAssetCount(for: .library(rootPath)) == 1)
 
         try await store.completeSourceListing(scan: scan, observedPaths: [relativePath])
         let complete = try await waitForCatalogStoreState(store) { snapshot in
@@ -384,7 +384,7 @@ struct CatalogStoreRemovableSourceTests {
         // with a launch sweep as the crash-safe backstop (APP-018, owner decision
         // 2026-08-30, reversing the previous "only while connected" rule).
         #expect(FileManager.default.fileExists(atPath: stagingRoot.path(percentEncoded: false)))
-        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
+        #expect(try await store.windowReads.catalogedAssetCount(for: .library(rootPath)) == 1)
     }
 
     @Test func staleDeviceEnumerationCannotWriteOrReconcileNewerRows() async throws {
@@ -507,8 +507,8 @@ private func selectedRelativePaths(
     _ store: CatalogStore,
     rootPath: LibraryRootPath
 ) async throws -> [String] {
-    let ids = try await store.orderedAssetIDs(for: .library(rootPath), availableLibraryPaths: [rootPath])
-    let assetsByID = try await store.mediaAssets(for: ids)
+    let ids = try await store.windowReads.orderedAssetIDs(for: .library(rootPath), availableLibraryPaths: [rootPath])
+    let assetsByID = try await store.windowReads.mediaAssets(for: ids)
     return ids.compactMap { assetsByID[$0]?.relativePath.rawValue }
 }
 

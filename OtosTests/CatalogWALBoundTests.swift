@@ -5,7 +5,7 @@ import Testing
 
 /// The catalog's write-ahead log stays bounded without waiting on a reader (ADR 0002,
 /// ARC-063). A long background read is held open on the main pool's snapshot
-/// (`CatalogStore.holdBackgroundRead`) while bulk writes pass the WAL's budget: the writes,
+/// (`CatalogStore.holdRead`) while bulk writes pass the WAL's budget: the writes,
 /// the window's reads and a user's write go on, and once the read ends the file returns to
 /// its limit. Every competing event is delivered while the read is held; nothing waits on time.
 @Suite(.testScope)
@@ -19,7 +19,7 @@ struct CatalogWALBoundTests {
         try await Catalog.with(budget: 0) { catalog in
             try await catalog.whileReadIsHeld {
                 try await catalog.list(count: 500, prefix: "a")
-                _ = try await catalog.store.orderedAssetIDs(for: .allMedia, availableLibraryPaths: [catalog.rootPath])
+                _ = try await catalog.store.windowReads.orderedAssetIDs(for: .allMedia, availableLibraryPaths: [catalog.rootPath])
                 let person = try await catalog.store.perform(.moveToNewPerson([], name: "Ian")).person
                 #expect(person != nil)
             }
@@ -129,7 +129,7 @@ struct CatalogWALBoundTests {
             let entered = AsyncStream<Void>.makeStream()
             held.task = Task { [store] in
                 defer { entered.continuation.finish() }
-                try await store.holdBackgroundRead {
+                try await store.backgroundReads.holdRead {
                     entered.continuation.yield()
                     held.gate.wait()
                 }

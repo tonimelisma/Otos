@@ -158,7 +158,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
     @Test func thePlaceNameIsLookedUpForTheItemShownAndAStaleAnswerIsDropped() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
             for (index, id) in library.ids.enumerated() {
-                let asset = try #require(try await library.store.mediaAssets(for: [id])[id])
+                let asset = try #require(try await library.store.windowReads.mediaAssets(for: [id])[id])
                 let located = AssetMetadata(locations: [
                     GeoRecord(source: "exifGPS", latitude: Double(index + 1), longitude: 0, altitudeMeters: nil),
                 ])
@@ -170,7 +170,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
                     sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
                     contentHash: nil
                 )])
-                try #require(try await library.store.metadata(for: id)?.locations.count == 1)
+                try #require(try await library.store.windowReads.metadata(for: id)?.locations.count == 1)
             }
             let model = library.makeEditModel()
             let places = PlaceGate()

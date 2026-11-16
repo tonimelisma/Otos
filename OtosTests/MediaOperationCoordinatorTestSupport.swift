@@ -193,7 +193,7 @@ extension ControlledImportPlanBuilder: ImportPlanBuilding {
 /// looked and found no embedded capture wall" outcome, which makes the filesystem mtime
 /// a *proven* fallback rather than an assumed one.
 func markEnrichmentLookedAtEveryRow(_ store: CatalogStore, root: LibraryRootPath) async {
-    guard let media = await store.planningMedia(for: root), !media.isEmpty else {
+    guard let media = await store.windowReads.planningMedia(for: root), !media.isEmpty else {
         return
     }
     let results = media.map { facts in

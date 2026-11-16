@@ -161,6 +161,6 @@ private func expectSettledChoices(
     sourceLocation: SourceLocation = #_sourceLocation
 ) async throws {
     try await waitUntil { model.hasSettledMediaChoices }
-    let assets = try await library.store.mediaAssets(for: library.ids)
+    let assets = try await library.store.windowReads.mediaAssets(for: library.ids)
     #expect(library.ids.map { assets[$0]?.mediaChoice } == expected, sourceLocation: sourceLocation)
 }

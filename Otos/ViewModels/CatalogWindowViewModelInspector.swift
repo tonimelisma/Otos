@@ -134,12 +134,12 @@ extension CatalogWindowViewModel {
         labelNames: SceneLabelNames,
         descriptionAvailability: PhotoDescriptionAvailability
     ) async throws -> PhotoInfo {
-        async let asset = store.mediaAssets(for: [id])[id]
-        async let metadata = store.metadata(for: id)
-        async let overlay = store.photoInfoOverlay(for: id)
+        async let asset = store.windowReads.mediaAssets(for: [id])[id]
+        async let metadata = store.windowReads.metadata(for: id)
+        async let overlay = store.windowReads.photoInfoOverlay(for: id)
         async let detail = reader.detail(for: id)
         async let locality = materialization.locality(of: id)
-        async let recipe = store.editRecipe(for: id)
+        async let recipe = store.windowReads.editRecipe(for: id)
         let resolvedDetail = try await detail
         let resolvedOverlay = try await overlay
         let names = try await name(resolvedOverlay?.sceneLabels, labelNames: labelNames)
@@ -220,7 +220,7 @@ extension CatalogWindowViewModel {
                     let recognized: PhotoInfo.Recognized
                     let description: PhotoInfo.Description?
                     do {
-                        let overlay = try await store.photoInfoOverlay(for: id)
+                        let overlay = try await store.windowReads.photoInfoOverlay(for: id)
                         recognized = try await PhotoInfo.Recognized(
                             overlay: overlay, labels: Self.name(overlay?.sceneLabels, labelNames: labelNames), readsText: readsText
                         )

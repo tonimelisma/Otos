@@ -41,8 +41,8 @@ func catalogStoreTestState(_ store: CatalogStore) async throws -> CatalogStoreTe
     let libraries = roots.filter { $0.kind == .library }
     let removableSources = roots.filter { $0.kind != .library }
     let allLibraryPaths = Set(roots.map(\.path))
-    let ids = try await store.orderedAssetIDs(for: .allMedia, availableLibraryPaths: allLibraryPaths)
-    let assetsByID = try await store.mediaAssets(for: ids)
+    let ids = try await store.windowReads.orderedAssetIDs(for: .allMedia, availableLibraryPaths: allLibraryPaths)
+    let assetsByID = try await store.windowReads.mediaAssets(for: ids)
     return CatalogStoreTestState(
         libraries: libraries,
         removableSources: removableSources,

@@ -28,7 +28,7 @@ struct CatalogStoreAvailabilityTests {
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
 
         #expect(loaded.libraries.first?.availability == .available)
-        let shown = try await reloadedStore.orderedAssetIDs(for: .allMedia, availableLibraryPaths: [rootPath])
+        let shown = try await reloadedStore.windowReads.orderedAssetIDs(for: .allMedia, availableLibraryPaths: [rootPath])
         #expect(shown.map(\.relativePath.rawValue) == ["a.jpg"])
         await reloadedStore.shutdown()
     }
@@ -86,7 +86,7 @@ struct CatalogStoreAvailabilityTests {
         }
         #expect(unavailable.libraries.first?.availability == .unavailable)
         #expect(unavailable.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
-        #expect(try await secondStore.mediaAssets(for: [assetID])[assetID]?.mediaChoice == .liked)
+        #expect(try await secondStore.windowReads.mediaAssets(for: [assetID])[assetID]?.mediaChoice == .liked)
     }
 
     @Test func scanFailureRechecksRootBeforeMarkingUnavailable() async throws {

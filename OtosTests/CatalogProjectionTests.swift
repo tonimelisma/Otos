@@ -436,7 +436,7 @@ struct CatalogProjectionTests {
             fixture.recordingTask.cancel()
         }
 
-        let asset = try #require(try await fixture.store.mediaAssets(for: [fixture.id])[fixture.id])
+        let asset = try #require(try await fixture.store.windowReads.mediaAssets(for: [fixture.id])[fixture.id])
         let sourceMTime = try #require(asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) })
         let outcome = await fixture.store.applyEnrichmentBatch([
             EnrichmentResult(

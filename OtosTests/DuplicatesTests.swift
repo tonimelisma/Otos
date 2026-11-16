@@ -646,7 +646,7 @@ struct DuplicatesTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 4 }
         let shared = try #require(ContentDigest(data: Data(repeating: 1, count: ContentDigest.byteCount)))
         for library in libraries {
-            for facts in try #require(await store.planningMedia(for: library)) {
+            for facts in try #require(await store.windowReads.planningMedia(for: library)) {
                 let byte: UInt8 = facts.relativePath.rawValue == "c.jpg" ? 2 : 1
                 _ = try await store.applyContentHash(ContentHashResult(
                     id: facts.id,
@@ -661,13 +661,13 @@ struct DuplicatesTests {
             Set(ids.map { "\($0.libraryRootPath == libraries[0] ? "first" : "second")/\($0.relativePath.rawValue)" })
         }
         func scoped(_ scope: SidebarSelection) async throws -> Set<String> {
-            try await names(store.orderedAssetIDs(
+            try await names(store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: available
             ).ids)
         }
 
         #expect(await store.duplicatesReach == .withinEachLibrary)
-        #expect(try await names(store.duplicateCopies(availableLibraryPaths: available).copies.map(\.copy.id))
+        #expect(try await names(store.backgroundReads.duplicateCopies(availableLibraryPaths: available).copies.map(\.copy.id))
             == ["first/a.jpg", "first/b.jpg"])
         #expect(try await scoped(.duplicates) == ["first/a.jpg", "first/b.jpg"])
         #expect(try await scoped(.duplicateGroup(.identical(shared, library: libraries[0])))
@@ -678,8 +678,8 @@ struct DuplicatesTests {
         for await change in changes where change.facts.contains(.duplicateFacts) {
             break
         }
-        #expect(try await store.duplicateCopies(availableLibraryPaths: available).reach == .acrossLibraries)
-        #expect(try await names(store.duplicateCopies(availableLibraryPaths: available).copies.map(\.copy.id))
+        #expect(try await store.backgroundReads.duplicateCopies(availableLibraryPaths: available).reach == .acrossLibraries)
+        #expect(try await names(store.backgroundReads.duplicateCopies(availableLibraryPaths: available).copies.map(\.copy.id))
             == ["first/a.jpg", "first/b.jpg", "second/a.jpg"])
         #expect(try await scoped(.duplicates) == ["first/a.jpg", "first/b.jpg", "second/a.jpg"])
         #expect(try await scoped(.duplicateGroup(.identical(shared, library: nil)))
@@ -703,7 +703,7 @@ struct DuplicatesTests {
         try await store.addLibrary(url: root)
         let library = try CatalogPath.normalizedDirectoryPath(for: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 5 }
-        let media = try #require(await store.planningMedia(for: library))
+        let media = try #require(await store.windowReads.planningMedia(for: library))
         for facts in media {
             let byte: UInt8 = switch facts.relativePath.rawValue {
             case "b.jpg": 2
@@ -718,11 +718,11 @@ struct DuplicatesTests {
             ))
         }
 
-        let read = try await store.duplicateCopies(availableLibraryPaths: [library])
+        let read = try await store.backgroundReads.duplicateCopies(availableLibraryPaths: [library])
         #expect(Set(read.copies.map(\.copy.id.relativePath.rawValue)) == ["a.jpg", "Print/a.jpg"])
         #expect(read.keptPairs.isEmpty)
         // The Duplicates scope holds the copies the groups list, and no empty file.
-        let scoped = try await store.orderedAssetIDs(
+        let scoped = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .duplicates), availableLibraryPaths: [library]
         ).ids
         #expect(Set(scoped.map(\.relativePath.rawValue)) == ["a.jpg", "Print/a.jpg"])
@@ -730,11 +730,11 @@ struct DuplicatesTests {
         let ids = read.copies.map(\.copy.id)
         let added = try await store.keepCopiesTogether([ids])
         #expect(added.count == 1)
-        #expect(try await store.duplicateCopies(availableLibraryPaths: [library]).keptPairs == added)
+        #expect(try await store.backgroundReads.duplicateCopies(availableLibraryPaths: [library]).keptPairs == added)
 
         // A copy waiting for the Trash makes no one else a duplicate.
         _ = try await store.markPendingTrash([ids[0]], batch: MediaTrashBatchID())
-        #expect(try await store.duplicateCopies(availableLibraryPaths: [library]).copies.isEmpty)
+        #expect(try await store.backgroundReads.duplicateCopies(availableLibraryPaths: [library]).copies.isEmpty)
         await store.shutdown()
     }
 
@@ -765,17 +765,17 @@ struct DuplicatesTests {
             DuplicateCarry(from: moved, to: kept, work: .edit),
         ])
         #expect(hidden == [moved])
-        #expect(try await store.mediaAssets(for: [kept])[kept]?.mediaChoice == .liked)
-        #expect(try await store.editRecipe(for: kept)?.recipe == recipe)
+        #expect(try await store.windowReads.mediaAssets(for: [kept])[kept]?.mediaChoice == .liked)
+        #expect(try await store.windowReads.editRecipe(for: kept)?.recipe == recipe)
 
         // The moved copy came back: what was carried comes off the kept copy.
         _ = try await store.clearPendingTrash([moved])
         try await store.revertCarriedWork(batch: batch, restored: [moved])
-        #expect(try await store.mediaAssets(for: [kept])[kept]?.mediaChoice == .notRated)
-        #expect(try await store.editRecipe(for: kept) == nil)
+        #expect(try await store.windowReads.mediaAssets(for: [kept])[kept]?.mediaChoice == .notRated)
+        #expect(try await store.windowReads.editRecipe(for: kept) == nil)
         // The moved copy still holds its own.
-        #expect(try await store.mediaAssets(for: [moved])[moved]?.mediaChoice == .liked)
-        #expect(try await store.editRecipe(for: moved)?.recipe == recipe)
+        #expect(try await store.windowReads.mediaAssets(for: [moved])[moved]?.mediaChoice == .liked)
+        #expect(try await store.windowReads.editRecipe(for: moved)?.recipe == recipe)
         await store.shutdown()
     }
 }

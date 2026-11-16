@@ -123,7 +123,7 @@ struct MetadataRefresherTests {
         }
         let store = makeTestStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
-        let candidates = try await store.metadataRefreshCandidates(after: nil, limit: 10)
+        let candidates = try await store.backgroundReads.metadataRefreshCandidates(after: nil, limit: 10)
         await store.shutdown()
 
         #expect(candidates.map(\.id.relativePath.rawValue) == ["older.heic", "unknown.heic"])
@@ -207,7 +207,7 @@ struct MetadataRefresherTests {
         #expect(reads.values == [[.metadata, .rendering]])
         #expect(enriched.testAssets.first { $0.id == apple }?.thumbnailPath == "new.jpg")
         #expect(enriched.testAssets.first { $0.id == other }?.thumbnailPath == "old.jpg")
-        let stored = try await store.metadataRefreshCandidates(after: nil, limit: 10)
+        let stored = try await store.backgroundReads.metadataRefreshCandidates(after: nil, limit: 10)
         #expect(stored.map(\.id) == [other])
     }
 

@@ -46,7 +46,7 @@ extension CatalogProjection {
             reuse.importBatches = true
             reuse.held = true
         } else {
-            importBatches = try await store.importBatches(counting: counting)
+            importBatches = try await store.windowReads.importBatches(counting: counting)
             reads.importBatches = CatalogProjectionReads.ImportBatches(
                 counting: counting, answer: importBatches, revisions: revisions
             )
@@ -60,7 +60,7 @@ extension CatalogProjection {
             reuse.placeNameLanguages = true
             reuse.held = true
         } else {
-            placeNameLanguages = try await store.placeNameLanguages()
+            placeNameLanguages = try await store.windowReads.placeNameLanguages()
             reads.placeNameLanguages = CatalogProjectionReads.PlaceNameLanguages(
                 answer: placeNameLanguages, revisions: revisions
             )
@@ -152,7 +152,7 @@ extension CatalogProjection {
             orderQueryCount &+= 1
             let orderStart = ContinuousClock.now
             let heldStacks = previous.stacks(at: revisions)
-            ordered = try await store.orderedAssetIDs(
+            ordered = try await store.windowReads.orderedAssetIDs(
                 for: resolvedDescriptor,
                 availableLibraryPaths: availableLibraryPaths,
                 heldStacks: heldStacks
@@ -305,7 +305,7 @@ extension CatalogProjection {
             return nil
         }
         let start = ContinuousClock.now
-        guard let reread = try await store.orderedAssetIDs(
+        guard let reread = try await store.windowReads.orderedAssetIDs(
             ofRows: rows, for: descriptor, availableLibraryPaths: availableLibraryPaths
         ), let patched = CatalogOrderPatch.patching(
             held.answer, changed: rows, reread: reread, descending: descriptor.effectiveSort.direction == .descending
@@ -326,7 +326,7 @@ extension CatalogProjection {
         let options = if let filterOptionsReader {
             try await filterOptionsReader(owed)
         } else {
-            try await store.filterOptions(
+            try await store.windowReads.filterOptions(
                 for: owed.row,
                 availableLibraryPaths: owed.availableLibraryPaths,
                 placeNameLanguages: owed.placeNameLanguages
@@ -425,7 +425,7 @@ extension CatalogProjection {
             throw CatalogProjectionSearchUnavailable()
         }
         let request = try await SearchQueryRequest(
-            text: search.text, languages: search.languages, people: store.namedPeople(), label: search.label
+            text: search.text, languages: search.languages, people: store.windowReads.namedPeople(), label: search.label
         )
         return await searchIndex.queries.status(for: request)
     }
@@ -497,7 +497,7 @@ extension CatalogProjection {
         facts.scopedCoordinates = searched.coordinates
         facts.search = try await .read(
             unsearchedScopeCount: unsearched,
-            stillReadingCount: searched.ids.isEmpty ? store.searchEmbeddingPendingCount() : 0
+            stillReadingCount: searched.ids.isEmpty ? store.windowReads.searchEmbeddingPendingCount() : 0
         )
     }
 
@@ -607,7 +607,7 @@ extension CatalogProjection {
         guard facts.resolvedDescriptor.filter.isActive, facts.scopedAssetIDs.isEmpty else {
             return facts.scopedAssetIDs.count
         }
-        return try await store.visibleAssetCount(
+        return try await store.windowReads.visibleAssetCount(
             for: facts.resolvedDescriptor.scope,
             availableLibraryPaths: facts.availableLibraryPaths
         )
@@ -620,7 +620,7 @@ extension CatalogProjection {
         guard facts.scopedAssetIDs.isEmpty else {
             return facts.orderedAssetIDs.count
         }
-        return try await store.catalogedAssetCount(for: facts.resolvedDescriptor.scope)
+        return try await store.windowReads.catalogedAssetCount(for: facts.resolvedDescriptor.scope)
     }
 }
 

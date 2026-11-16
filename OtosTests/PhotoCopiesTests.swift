@@ -188,35 +188,35 @@ struct PhotoCopiesTests {
         // A digest of the same bytes, as enrichment would read for two identical files.
         let sameBytes = try #require(ContentDigest(bytes: Array(repeating: 7, count: ContentDigest.byteCount)))
         func digest(_ ids: [MediaAssetID]) async throws {
-            for (id, asset) in try await store.mediaAssets(for: ids) {
+            for (id, asset) in try await store.windowReads.mediaAssets(for: ids) {
                 _ = try await store.applyContentHash(ContentHashResult(
                     id: id, contentHash: sameBytes, sourceSize: asset.byteSize,
                     sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt)
                 ))
             }
         }
-        #expect(try await store.uncheckedForFaces(availableLibraryPaths: paths) == MediaCount(photos: 3))
+        #expect(try await store.backgroundReads.uncheckedForFaces(availableLibraryPaths: paths) == MediaCount(photos: 3))
         try await digest([a, b])
-        #expect(try await store.uncheckedForFaces(availableLibraryPaths: paths) == MediaCount(photos: 2))
+        #expect(try await store.backgroundReads.uncheckedForFaces(availableLibraryPaths: paths) == MediaCount(photos: 2))
 
         try await library.readFaces([library.result(for: "b.jpg", faces: [PeopleStoreTests.face(x: 0.3)])])
         try await digest([b])
         let named = FaceID(asset: b, index: 0)
         let sam = try #require(try await store.perform(.moveToNewPerson([named], name: "Sam")).person)
-        var faces = try await store.photoFaces(of: [a], landedThrough: 0)
+        var faces = try await store.windowReads.photoFaces(of: [a], landedThrough: 0)
         #expect(faces.faces(of: a).map(\.id) == [named], "a, not yet read, shows the name on b")
-        #expect(try await store.uncheckedForFaces(availableLibraryPaths: paths) == MediaCount(photos: 2))
+        #expect(try await store.backgroundReads.uncheckedForFaces(availableLibraryPaths: paths) == MediaCount(photos: 2))
 
         try await library.readFaces([library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.3)])])
         try await digest([a])
         let own = FaceID(asset: a, index: 0)
-        let snapshot = try await store.peopleSnapshot()
+        let snapshot = try await store.backgroundReads.peopleSnapshot()
         #expect(snapshot.faces.first { $0.id == named }?.assignment == .user(sam), "the user's word survives")
-        faces = try await store.photoFaces(of: [a], landedThrough: 0)
+        faces = try await store.windowReads.photoFaces(of: [a], landedThrough: 0)
         #expect(faces.faces(of: a).map(\.id) == [own, named])
 
         let state = try await PeopleAssignment.settle(store: store, libraries: libraries)
-        faces = try await store.photoFaces(of: [a], landedThrough: 0)
+        faces = try await store.windowReads.photoFaces(of: [a], landedThrough: 0)
         #expect(faces.faces(of: a).map(\.id) == [own])
         #expect(faces.faces(of: a).first?.person == sam)
         #expect(state.person(sam)?.media.total == 1)

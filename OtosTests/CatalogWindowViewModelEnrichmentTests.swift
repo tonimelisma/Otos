@@ -124,7 +124,7 @@ private func waitForFirstAsset(
         guard let id = state.mediaGrid.orderedAssetIDs.first else {
             continue
         }
-        guard let asset = try await store.mediaAssets(for: [id])[id] else {
+        guard let asset = try await store.windowReads.mediaAssets(for: [id])[id] else {
             continue
         }
         lastAsset = asset

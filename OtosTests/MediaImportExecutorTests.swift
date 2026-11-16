@@ -109,7 +109,7 @@ struct ActiveFileOperationJournalTests {
             updatedAt: Date()
         )
         try await store.beginImportOperation(operation)
-        let loaded = try await store.activeImportOperations()
+        let loaded = try await store.backgroundReads.activeImportOperations()
         #expect(loaded.count == 1)
         #expect(loaded.first?.operationKey == operation.operationKey)
         #expect(loaded.first?.phase == .copying)
@@ -119,12 +119,12 @@ struct ActiveFileOperationJournalTests {
         updated.phase = .readyToPublish
         updated.updatedAt = Date()
         try await store.recordImportOperationProgress(updated)
-        let reloaded = try await store.activeImportOperations()
+        let reloaded = try await store.backgroundReads.activeImportOperations()
         #expect(reloaded.first?.phase == .readyToPublish)
         #expect(reloaded.first?.contentHash == .empty)
 
         try await store.abandonImportOperation(key: operation.operationKey)
-        #expect(try await store.activeImportOperations().isEmpty)
+        #expect(try await store.backgroundReads.activeImportOperations().isEmpty)
     }
 }
 
@@ -206,7 +206,7 @@ struct ImportRecoveryTests {
 
         #expect(FileManager.default.fileExists(atPath: final.path))
         #expect(!FileManager.default.fileExists(atPath: staging.path))
-        #expect(try await store.activeImportOperations().isEmpty)
+        #expect(try await store.backgroundReads.activeImportOperations().isEmpty)
         let asset = try #require(try await catalogStoreTestState(store).testAssets.first)
         #expect(asset.contentHash == digest)
         #expect(asset.contentHashSourceSize == 8)
@@ -241,8 +241,8 @@ struct ImportRecoveryTests {
 
         #expect(try Data(contentsOf: final) == Data("foreign!".utf8))
         #expect(!FileManager.default.fileExists(atPath: staging.path))
-        #expect(try await store.activeImportOperations().isEmpty)
-        #expect(try await store.importBatches(counting: .every).isEmpty)
+        #expect(try await store.backgroundReads.activeImportOperations().isEmpty)
+        #expect(try await store.windowReads.importBatches(counting: .every).isEmpty)
     }
 
     @Test func matchingFinalOnlyRecoverySettlesAfterOwnershipProof() async throws {
@@ -272,7 +272,7 @@ struct ImportRecoveryTests {
 
         await MediaImportRecovery(store: store).run()
 
-        #expect(try await store.activeImportOperations().isEmpty)
+        #expect(try await store.backgroundReads.activeImportOperations().isEmpty)
         let asset = try #require(try await catalogStoreTestState(store).testAssets.first)
         #expect(asset.contentHash == digest)
     }
@@ -307,8 +307,8 @@ struct ImportRecoveryTests {
         await MediaImportRecovery(store: store).run()
 
         #expect(try Data(contentsOf: final) == Data("foreign!".utf8))
-        #expect(try await store.activeImportOperations().isEmpty)
-        #expect(try await store.importBatches(counting: .every).isEmpty)
+        #expect(try await store.backgroundReads.activeImportOperations().isEmpty)
+        #expect(try await store.windowReads.importBatches(counting: .every).isEmpty)
     }
 
     /// Launch order: the coordinator starts on its own task, independent of
@@ -351,7 +351,7 @@ struct ImportRecoveryTests {
         #expect(FileManager.default.fileExists(atPath: destination.appending(path: "final.jpg").path))
         #expect(!FileManager.default.fileExists(atPath: staging.path))
         #expect(!FileManager.default.fileExists(atPath: companionStaging.path))
-        #expect(try await store.activeImportOperations().isEmpty)
+        #expect(try await store.backgroundReads.activeImportOperations().isEmpty)
         await store.shutdown()
     }
 
@@ -383,13 +383,13 @@ struct ImportRecoveryTests {
 
         await MediaImportRecovery(store: store).run()
 
-        #expect(try await store.activeImportOperations().map(\.phase) == [.abandoned])
+        #expect(try await store.backgroundReads.activeImportOperations().map(\.phase) == [.abandoned])
         #expect(FileManager.default.fileExists(atPath: staging.path))
 
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
         await MediaImportRecovery(store: store).run()
 
-        #expect(try await store.activeImportOperations().isEmpty)
+        #expect(try await store.backgroundReads.activeImportOperations().isEmpty)
         #expect(!FileManager.default.fileExists(atPath: staging.path))
         await store.shutdown()
     }
@@ -424,7 +424,7 @@ struct ImportRecoveryTests {
         )
         await coordinator.start()
 
-        #expect(try await relaunched.activeImportOperations().isEmpty)
+        #expect(try await relaunched.backgroundReads.activeImportOperations().isEmpty)
         #expect(!FileManager.default.fileExists(atPath: staging.path))
         await coordinator.shutdown()
     }
@@ -801,7 +801,7 @@ struct ImportExecutionProgressTests {
         }
         #expect(eraseOutcome.deletedCount == 1)
         #expect(!FileManager.default.fileExists(atPath: fixture.sourceFile.path))
-        #expect(try await fixture.store.activeImportOperations().isEmpty)
+        #expect(try await fixture.store.backgroundReads.activeImportOperations().isEmpty)
     }
 
     @Test func zeroCopyPlanWithoutDeleteStaysReady() async throws {
@@ -823,7 +823,7 @@ struct ImportExecutionProgressTests {
         #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
         let sourceAfter = try FilesystemTreeSnapshot.capture(root: fixture.sourceRoot)
         #expect(sourceAfter == sourceBefore)
-        #expect(try await fixture.store.activeImportOperations().isEmpty)
+        #expect(try await fixture.store.backgroundReads.activeImportOperations().isEmpty)
     }
 
     @Test func failedCopySourceSurvivesEraseSweep() async throws {
@@ -998,7 +998,7 @@ struct ImportExecutionProgressTests {
 
         _ = await executeFloorRun(fixture) { _ in nil }
 
-        let journal = try await fixture.store.activeImportOperations()
+        let journal = try await fixture.store.backgroundReads.activeImportOperations()
         #expect(journal.map(\.operationKey) == [inFlight.operationKey])
         #expect(journal.map(\.phase) == [.copying])
         #expect(journal.map(\.stagingURL) == [staging])
@@ -1030,7 +1030,7 @@ struct ImportExecutionProgressTests {
                 )
             )
         }
-        #expect(try await fixture.store.activeSourceEraseOperations().count == 5)
+        #expect(try await fixture.store.backgroundReads.activeSourceEraseOperations().count == 5)
 
         await MediaImportRecovery(store: fixture.store).run()
 
@@ -1038,7 +1038,7 @@ struct ImportExecutionProgressTests {
             let url = fixture.sourceRoot.appending(path: relative.rawValue)
             #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
         }
-        #expect(try await fixture.store.activeSourceEraseOperations().isEmpty)
+        #expect(try await fixture.store.backgroundReads.activeSourceEraseOperations().isEmpty)
     }
 
     // MARK: - ADR 0027: the disk floor
@@ -1358,7 +1358,7 @@ struct ImportExecutionProgressTests {
         #expect(publishedCount == 1)
         #expect(incompleteItems.isEmpty)
         #expect(FileManager.default.fileExists(atPath: fixture.destinationRoot.appending(path: "IMG_0.xmp").path))
-        let companions = try await fixture.store.companions(in: fixture.destinationPath)
+        let companions = try await fixture.store.windowReads.companions(in: fixture.destinationPath)
         #expect(companions.map(\.relativePath.rawValue) == ["IMG_0.xmp"])
         #expect(companions.first?.primaryRelativePath?.rawValue == "IMG_0.jpg")
         #expect(!FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_0.xmp").path))
@@ -1382,7 +1382,7 @@ struct ImportExecutionProgressTests {
         }
         try await expectCompanionLeftOnCard(fixture, result: result)
         #expect(!FileManager.default.fileExists(atPath: fixture.destinationRoot.appending(path: "IMG_0.xmp").path))
-        #expect(try await fixture.store.companions(in: fixture.destinationPath).isEmpty)
+        #expect(try await fixture.store.windowReads.companions(in: fixture.destinationPath).isEmpty)
     }
 
     /// A file that took the companion's destination after planning is never
@@ -1646,7 +1646,7 @@ struct ImportVerifiesTheStagedCopyTests {
         await markEnrichmentLookedAtEveryRow(store, root: source)
         // The card row's digest says other bytes than a.jpg holds: what a copy through a
         // failing reader would produce, seen from the other side.
-        let media = try #require(await store.planningMedia(for: source))
+        let media = try #require(await store.windowReads.planningMedia(for: source))
         let first = try #require(media.first { $0.relativePath.rawValue == "a.jpg" })
         let wrong = try #require(ContentDigest(data: Data(repeating: 9, count: ContentDigest.byteCount)))
         let written = await store.applyContentHash(ContentHashResult(
@@ -1714,7 +1714,7 @@ struct LibraryContentRecheckTests {
         try await store.addLibrary(url: libraryURL)
         let library = try CatalogPath.normalizedDirectoryPath(for: libraryURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
-        let facts = try #require(await store.planningMedia(for: library)?.first)
+        let facts = try #require(await store.windowReads.planningMedia(for: library)?.first)
         let digest = try #require(ContentDigest(data: Data(repeating: 4, count: ContentDigest.byteCount)))
         _ = await store.applyContentHash(ContentHashResult(
             id: facts.id,
@@ -1723,9 +1723,9 @@ struct LibraryContentRecheckTests {
             sourceMTimeSeconds: facts.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
         ))
 
-        #expect(try await store.librariesHoldContent([digest]) == [digest])
+        #expect(try await store.backgroundReads.librariesHoldContent([digest]) == [digest])
         _ = try await store.markPendingTrash([facts.id], batch: MediaTrashBatchID())
-        #expect(try await store.librariesHoldContent([digest]).isEmpty)
+        #expect(try await store.backgroundReads.librariesHoldContent([digest]).isEmpty)
         await store.shutdown()
     }
 }

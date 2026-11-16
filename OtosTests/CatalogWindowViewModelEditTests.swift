@@ -32,10 +32,10 @@ struct CatalogWindowViewModelEditTests {
             try await waitUntil { model.hasSettledEdits }
 
             #expect(
-                try await library.store.editRecipe(for: id)
+                try await library.store.windowReads.editRecipe(for: id)
                     == StoredEditRecipe(recipe: EditRecipe(exposure: 1), revision: 1)
             )
-            #expect(try await library.store.mediaTileDetails(for: [id])[id]?.renderedRevision == 1)
+            #expect(try await library.store.windowReads.mediaTileDetails(for: [id])[id]?.renderedRevision == 1)
             #expect(model.undoMenuState.undoTitle == "Undo Exposure")
             try await waitUntil { model.panePreviews[.loupe]?.renderedRevision == 1 }
             #expect(model.displayedPanePreview(.loupe)?.image === model.panePreviews[.loupe]?.image)
@@ -79,7 +79,7 @@ struct CatalogWindowViewModelEditTests {
 
             #expect(model.targetIDs(.current) == [library.ids[0]])
             try await waitUntil { model.hasSettledEdits && model.editTarget?.id == library.ids[0] }
-            #expect(try await library.store.editRecipe(for: library.ids[0])?.recipe == .neutral)
+            #expect(try await library.store.windowReads.editRecipe(for: library.ids[0])?.recipe == .neutral)
         }
     }
 
@@ -99,16 +99,16 @@ struct CatalogWindowViewModelEditTests {
             model.undoLastChange()
             #expect(model.editDraft == .neutral)
             try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe == .neutral)
+            #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe == .neutral)
             #expect(model.undoMenuState.redoTitle == "Redo Contrast")
             #expect(!model.undoMenuState.canUndo)
 
             model.redoLastChange()
             #expect(model.editDraft == EditRecipe(contrast: 40))
             try await waitUntil { model.hasSettledEdits }
-            let redone = try await library.store.editRecipe(for: id)
+            let redone = try await library.store.windowReads.editRecipe(for: id)
             #expect(redone?.recipe == EditRecipe(contrast: 40))
-            #expect(try await library.store.mediaTileDetails(for: [id])[id]?.renderedRevision == redone?.revision)
+            #expect(try await library.store.windowReads.mediaTileDetails(for: [id])[id]?.renderedRevision == redone?.revision)
         }
     }
 
@@ -125,12 +125,12 @@ struct CatalogWindowViewModelEditTests {
 
             model.resetEditSection(.light)
             try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe == .neutral)
+            #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe == .neutral)
             #expect(model.undoMenuState.undoTitle == "Undo Reset Light")
 
             model.undoLastChange()
             try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe == EditRecipe(exposure: 0.5, shadows: 25))
+            #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe == EditRecipe(exposure: 0.5, shadows: 25))
         }
     }
 
@@ -153,7 +153,7 @@ struct CatalogWindowViewModelEditTests {
             #expect(!model.isPickingNeutral)
             try await waitUntil { model.hasSettledEdits && model.submittedEditCommandCount == 2 }
 
-            let saved = try await library.store.editRecipe(for: id)?.recipe
+            let saved = try await library.store.windowReads.editRecipe(for: id)?.recipe
             #expect((saved?.temperature ?? 0) < 0)
             #expect(model.editDraft == saved)
             #expect(model.undoMenuState.undoTitle == "Undo White Balance")
@@ -195,7 +195,7 @@ struct CatalogWindowViewModelEditTests {
             #expect(model.submittedEditCommandCount == 0)
             model.setCrop(crop, dragging: false)
             try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe.crop == crop)
+            #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe.crop == crop)
             #expect(model.undoMenuState.undoTitle == "Undo Crop")
 
             model.loupeEscape()
@@ -220,7 +220,7 @@ struct CatalogWindowViewModelEditTests {
             model.straighten(along: .zero, to: CGPoint(x: 100, y: -100 * tan(4 * Double.pi / 180)))
             #expect(!model.isDrawingStraightenLine)
             try await waitUntil { model.hasSettledEdits }
-            let straighten = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
+            let straighten = try #require(try await library.store.windowReads.editRecipe(for: id)?.recipe.straighten)
             #expect(abs(straighten - 4) < 0.051)
             #expect(model.undoMenuState.undoTitle == "Undo Straighten")
         }
@@ -287,7 +287,7 @@ struct CatalogWindowViewModelEditTests {
 
             model.autoStraighten()
             try await waitUntil { model.hasSettledEdits }
-            let plain = try #require(try await library.store.editRecipe(for: id)?.recipe.straighten)
+            let plain = try #require(try await library.store.windowReads.editRecipe(for: id)?.recipe.straighten)
             #expect(abs(plain + 3) < 0.05)
             #expect(model.undoMenuState.undoTitle == "Undo Auto Straighten")
 
@@ -296,7 +296,7 @@ struct CatalogWindowViewModelEditTests {
             model.flipPhoto(horizontally: true)
             model.autoStraighten()
             try await waitUntil { model.hasSettledEdits }
-            let flipped = try #require(try await library.store.editRecipe(for: id)?.recipe)
+            let flipped = try #require(try await library.store.windowReads.editRecipe(for: id)?.recipe)
             #expect(flipped.flipHorizontal)
             #expect(abs(flipped.straighten - 3) < 0.05)
         }
@@ -338,7 +338,7 @@ struct CatalogWindowViewModelEditTests {
             #expect(model.autoCropState == .available(nil))
             model.autoCrop()
             try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe.crop == suggested)
+            #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe.crop == suggested)
             #expect(model.undoMenuState.undoTitle == "Undo Auto Crop")
 
             model.editAutoCrop = AutoCropReading(id: id, frame: model.editDraft.uncropped, crop: suggested)

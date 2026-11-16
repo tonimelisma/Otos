@@ -68,14 +68,14 @@ struct CatalogWindowViewModelEditCommandsTests {
             model.revertToOriginal()
             #expect(model.editDraft == .neutral)
             try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe == .neutral)
+            #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe == .neutral)
             #expect(model.undoMenuState.undoTitle == "Undo Revert to Original")
             #expect(!model.canRevertToOriginal)
 
             model.undoLastChange()
             try await waitUntil { model.hasSettledEdits }
             #expect(
-                try await library.store.editRecipe(for: id)?.recipe == EditRecipe(exposure: 0.5, quarterTurns: 1)
+                try await library.store.windowReads.editRecipe(for: id)?.recipe == EditRecipe(exposure: 0.5, quarterTurns: 1)
             )
         }
     }
@@ -95,7 +95,7 @@ struct CatalogWindowViewModelEditCommandsTests {
 
             model.revertToOriginal()
             try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe == .neutral)
+            #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe == .neutral)
             #expect(model.loupeVideoState?.recipe == .neutral)
             #expect(model.undoMenuState.undoTitle == "Undo Revert to Original")
         }
@@ -125,7 +125,7 @@ struct CatalogWindowViewModelEditCommandsTests {
             model.nudgeSelectedEditControl(up: true)
             model.nudgeSelectedEditControl(up: false)
             try await waitUntil { model.hasSettledEdits }
-            let nudged = try #require(try await library.store.editRecipe(for: id)?.recipe)
+            let nudged = try #require(try await library.store.windowReads.editRecipe(for: id)?.recipe)
             #expect(abs(nudged.exposure - 0.05) < 1e-9)
             #expect(nudged.contrast == 0)
             #expect(model.undoMenuState.undoTitle == "Undo Exposure")
@@ -145,7 +145,7 @@ struct CatalogWindowViewModelEditCommandsTests {
 
             model.resetEditControl(.shadows)
             try await waitUntil { model.hasSettledEdits }
-            #expect(try await library.store.editRecipe(for: id)?.recipe == EditRecipe(exposure: 0.5))
+            #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe == EditRecipe(exposure: 0.5))
             #expect(model.undoMenuState.undoTitle == "Undo Reset Shadows")
         }
     }

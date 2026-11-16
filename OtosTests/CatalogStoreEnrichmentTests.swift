@@ -417,7 +417,7 @@ struct CatalogStoreEnrichmentTests {
             ),
         ]) == .applied(count: 1))
 
-        let sourceWall = try await store.captureWall(for: sourceID)
+        let sourceWall = try await store.windowReads.captureWall(for: sourceID)
         #expect(sourceWall != nil)
         // ADR 0036: the source's edit is overlay, so the library copy carries it.
         _ = try await store.setEditRecipe(EditRecipe(exposure: 1), for: sourceID)
@@ -443,7 +443,7 @@ struct CatalogStoreEnrichmentTests {
         )
         try await store.beginImportOperation(operation)
 
-        let result = try await store.settleImportedAsset(
+        let result = try await store.backgroundReads.settleImportedAsset(
             operation: operation,
             byteSize: scannedSize,
             contentModifiedAt: scannedModifiedAt,
@@ -457,16 +457,16 @@ struct CatalogStoreEnrichmentTests {
         )
         // The copy is identical to its source, so All Media shows the source in its place
         // (ADR 0054); the copy's own row is read by its ID.
-        let destinationAsset = try #require(try await store.mediaAssets(for: [destinationID])[destinationID])
+        let destinationAsset = try #require(try await store.windowReads.mediaAssets(for: [destinationID])[destinationID])
         // The ordering column, rebuilt from the cloned records.
         // The record's wall clock is the instant's UTC reading (`localCapture`), and the local
         // time is that wall clock.
         #expect(destinationAsset.captureLocalTime == CaptureLocalTime(seconds: captureDate.timeIntervalSince1970))
         // The naming column, rebuilt from the same records — the two agree because
         // there is only one thing left for them to disagree about.
-        #expect(try await store.captureWall(for: destinationID) == sourceWall)
+        #expect(try await store.windowReads.captureWall(for: destinationID) == sourceWall)
         #expect(
-            try await store.editRecipe(for: destinationID)
+            try await store.windowReads.editRecipe(for: destinationID)
                 == StoredEditRecipe(recipe: EditRecipe(exposure: 1), revision: 1)
         )
     }
@@ -599,7 +599,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.metadataSourceMTimeSeconds == 1000)
         #expect(!asset.needsEnrichment(.products))
 
-        let details = try await store.mediaTileDetails(for: [id])
+        let details = try await store.windowReads.mediaTileDetails(for: [id])
         let detail = try #require(details[id])
         #expect(detail.thumbnailUnavailable)
         #expect(detail.thumbnailPath == nil)
@@ -712,7 +712,7 @@ private struct EnrichedCardImport {
             updatedAt: Date()
         )
         try await store.beginImportOperation(operation)
-        return try await store.settleImportedAsset(
+        return try await store.backgroundReads.settleImportedAsset(
             operation: operation,
             byteSize: scannedSize,
             contentModifiedAt: sourceModifiedAt,
@@ -867,7 +867,7 @@ private func expectVideoMetadataPersisted(
     #expect(persisted.metadata?.durationSeconds == 187.25)
 
     let id = MediaAssetID(libraryRootPath: rootPath, relativePath: relativePath)
-    let queried = try #require(try await store.metadata(for: id))
+    let queried = try #require(try await store.windowReads.metadata(for: id))
     #expect(queried.cameraModel == "Cam")
     #expect(queried.pixelWidth == 4000)
     #expect(queried.durationSeconds == 187.25)

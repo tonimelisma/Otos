@@ -188,7 +188,7 @@ actor PhotoSearchIndex {
         self.compactionFloor = compactionFloor
         self.store = store
         self.textReader = textReader
-        self.readTexts = readTexts ?? { [store] ids in try await store.currentSearchTexts(for: ids) }
+        self.readTexts = readTexts ?? { [store] ids in try await store.backgroundReads.currentSearchTexts(for: ids) }
         self.backoff = backoff
         nextRetry = backoff.first
         self.bundle = bundle
@@ -457,7 +457,7 @@ actor PhotoSearchIndex {
         }
         var allowed: Set<MediaAssetID>?
         if let facts {
-            allowed = try await store.searchFactMatches(facts)
+            allowed = try await store.windowReads.searchFactMatches(facts)
         }
         OtosLog.catalog.noticeOperation("search.match", phase: "done", fields: [
             "scope": "\(scope.count)",
@@ -664,7 +664,7 @@ actor PhotoSearchIndex {
         if !loaded, try await load() == .rebuilt {
             return
         }
-        let current = try await store.currentSearchEmbeddingIDs()
+        let current = try await store.backgroundReads.currentSearchEmbeddingIDs()
         guard let vectors = memory.vectors else { return }
         let gone = vectors.rowOf.keys.filter { id in
             current.readRoots.contains(id.libraryRootPath)
@@ -672,7 +672,7 @@ actor PhotoSearchIndex {
                 : !current.catalogedRoots.contains(id.libraryRootPath)
         }
         let missing = current.ids.filter { vectors.rowOf[$0] == nil }
-        let added = missing.isEmpty ? [] : try await store.currentSearchEmbeddings(for: Set(missing))
+        let added = missing.isEmpty ? [] : try await store.backgroundReads.currentSearchEmbeddings(for: Set(missing))
         guard !gone.isEmpty || !added.isEmpty else { return }
         if !added.isEmpty {
             // The floor is asked before the catalog counts the slots, never after (`admits(rows:)`).
@@ -689,7 +689,7 @@ actor PhotoSearchIndex {
     /// and one memory lacks is appended. Reads what the rows named, never the library.
     private func reconcile(_ rows: Set<MediaAssetID>) async throws {
         guard !rows.isEmpty, memory.vectors != nil else { return }
-        let current = try await store.currentSearchEmbeddings(for: rows)
+        let current = try await store.backgroundReads.currentSearchEmbeddings(for: rows)
         guard let vectors = memory.vectors else { return }
         let currentIDs = Set(current.map(\.id))
         let gone = rows.filter { vectors.rowOf[$0] != nil && !currentIDs.contains($0) }
@@ -725,7 +725,7 @@ actor PhotoSearchIndex {
             invalid = .short
         } else {
             do {
-                guard let state = try await store.searchVectorFileState() else { throw SearchVectorFileInvalid.missing }
+                guard let state = try await store.backgroundReads.searchVectorFileState() else { throw SearchVectorFileInvalid.missing }
                 stateMs = DiagnosticsTiming.milliseconds(since: start)
                 let opening = ContinuousClock.now
                 let opened = try await Self.open(directory: vectorDirectory, state: state, availableBytes: availableBytes)
@@ -775,10 +775,10 @@ actor PhotoSearchIndex {
     private func rebuild() async throws {
         let file = try SearchVectorFile.create(directory: vectorDirectory, id: UUID(), availableBytes: availableBytes)
         do {
-            let current = try await store.currentSearchEmbeddingIDs()
+            let current = try await store.backgroundReads.currentSearchEmbeddingIDs()
             var cursor: AssetKeyCursor?
             repeat {
-                let page = try await store.searchEmbeddingRows(after: cursor, limit: Self.loadPageSize)
+                let page = try await store.backgroundReads.searchEmbeddingRows(after: cursor, limit: Self.loadPageSize)
                 try await file.append(page.candidates.filter { current.ids.contains($0.id) })
                 cursor = page.next
             } while cursor != nil
@@ -874,7 +874,7 @@ actor PhotoSearchIndex {
             logEmbedded(embedded, unread: unread.count, since: start)
         }
         if !rows.isEmpty {
-            let owed = try await store.searchEmbeddingCandidates(for: rows)
+            let owed = try await store.backgroundReads.searchEmbeddingCandidates(for: rows)
             var at = 0
             while at < owed.count, !Task.isCancelled {
                 let page = Array(owed[at ..< min(at + pageSize, owed.count)])
@@ -890,7 +890,7 @@ actor PhotoSearchIndex {
             if requested != answering {
                 return unread.isEmpty
             }
-            let page = try await store.searchEmbeddingCandidates(after: embeddingWalk.cursor, limit: pageSize)
+            let page = try await store.backgroundReads.searchEmbeddingCandidates(after: embeddingWalk.cursor, limit: pageSize)
             let owed = page.candidates.filter { !unread.contains($0.id) }
             if !owed.isEmpty {
                 guard let written = try await embed(owed, unread: &unread) else {
@@ -944,12 +944,12 @@ actor PhotoSearchIndex {
     /// while they are awaited (`matches`) reads the memory its revision names, and the removal,
     /// the additions and the revision move in one step.
     private func reconcileTexts() async throws {
-        let current = try await store.currentSearchTextIDs()
+        let current = try await store.backgroundReads.currentSearchTextIDs()
         guard let read = textsRead else {
             var loading: [MediaAssetID: String] = [:]
             var cursor: AssetKeyCursor?
             repeat {
-                let page = try await store.searchTextRows(after: cursor, limit: Self.loadPageSize)
+                let page = try await store.backgroundReads.searchTextRows(after: cursor, limit: Self.loadPageSize)
                 for row in page.candidates where !row.text.isEmpty && current.ids.contains(row.id) {
                     loading[row.id] = SearchTextReading.folded(row.text)
                 }
@@ -1019,7 +1019,7 @@ actor PhotoSearchIndex {
             }
         }
         if !rows.isEmpty {
-            let owed = try await store.searchTextCandidates(for: rows)
+            let owed = try await store.backgroundReads.searchTextCandidates(for: rows)
             var at = 0
             while at < owed.count, !Task.isCancelled {
                 let page = Array(owed[at ..< min(at + Self.textPageSize, owed.count)])
@@ -1039,7 +1039,7 @@ actor PhotoSearchIndex {
                 return tally.unread.isEmpty
             }
             first = false
-            let page = try await store.searchTextCandidates(after: textWalk.cursor, limit: Self.textPageSize)
+            let page = try await store.backgroundReads.searchTextCandidates(after: textWalk.cursor, limit: Self.textPageSize)
             try await readPreviews(page.candidates, tally: &tally)
             textWalk.advance(to: page.next)
             if tally.sessionEnded {

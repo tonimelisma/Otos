@@ -30,8 +30,8 @@ struct MediaImportRecovery {
         let operations: [ActiveFileOperation]
         let erases: [ActiveSourceEraseOperation]
         do {
-            operations = try await store.activeImportOperations()
-            erases = try await store.activeSourceEraseOperations()
+            operations = try await store.backgroundReads.activeImportOperations()
+            erases = try await store.backgroundReads.activeSourceEraseOperations()
         } catch {
             OtosLog.catalog.errorOperation("mediaOperation.recover", phase: "journalUnreadable", fields: [
                 "error": String(describing: error),
@@ -220,7 +220,7 @@ struct MediaImportRecovery {
         switch await ownership(of: final, for: operation) {
         case let .proven(byteSize, modifiedAt):
             do {
-                try await store.settleImportedAsset(
+                try await store.backgroundReads.settleImportedAsset(
                     operation: operation,
                     byteSize: byteSize,
                     contentModifiedAt: modifiedAt,

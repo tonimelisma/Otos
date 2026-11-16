@@ -37,7 +37,7 @@ struct LibraryReorganizationRunnerTests {
         #expect(fixture.exists("2023/03/a.jpg"))
         #expect(!fixture.exists("a.jpg"))
         #expect(fixture.exists("b.jpg"))
-        #expect(try await fixture.store.activeReorganizationComponents().isEmpty)
+        #expect(try await fixture.store.backgroundReads.activeReorganizationComponents().isEmpty)
         let ordered = try await fixture.orderedAssets()
         #expect(Set(ordered.ids.map(\.relativePath.rawValue)) == ["2023/03/a.jpg", "b.jpg"])
         #expect(ordered.pendingIdentityRemaps.flatMap(\.remaps) == [
@@ -104,7 +104,7 @@ struct LibraryReorganizationRunnerTests {
 
         try await LibraryReorganizationRunner.recoverJournal(store: fixture.store)
 
-        #expect(try await fixture.store.activeReorganizationComponents().isEmpty)
+        #expect(try await fixture.store.backgroundReads.activeReorganizationComponents().isEmpty)
         let finals = Set(component.members.map(\.finalRelativePath.rawValue))
         for final in finals {
             #expect(fixture.exists(final))
@@ -144,7 +144,7 @@ struct LibraryReorganizationRunnerTests {
 
         try await LibraryReorganizationRunner.recoverJournal(store: relaunched)
 
-        #expect(try await relaunched.activeReorganizationComponents().isEmpty)
+        #expect(try await relaunched.backgroundReads.activeReorganizationComponents().isEmpty)
         #expect(await relaunched.hasNamespaceMutationLease(for: fixture.rootPath) == false)
         await relaunched.shutdown()
     }
@@ -176,7 +176,7 @@ struct LibraryReorganizationRunnerTests {
             !state.isScanning && state.testAssets.contains { $0.id == new }
         }
 
-        let assets = try await relaunched.mediaAssets(for: [moved, new])
+        let assets = try await relaunched.windowReads.mediaAssets(for: [moved, new])
         #expect(assets[moved]?.mediaChoice == .liked)
         #expect(assets[new]?.mediaChoice == .notRated)
         await relaunched.shutdown()
@@ -235,14 +235,14 @@ private struct RunnerFixture {
     }
 
     func orderedAssets() async throws -> CatalogOrderedAssets {
-        try await store.orderedAssetIDs(
+        try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia),
             availableLibraryPaths: [rootPath]
         )
     }
 
     func readyPlan() async throws -> ReorganizationPlan {
-        let media = try #require(await store.planningMedia(for: rootPath))
+        let media = try #require(await store.windowReads.planningMedia(for: rootPath))
         let revision = try #require(await store.planRevision(for: rootPath))
         var preferences = ImportPreferences.default
         preferences.destinationFolderPolicy = .yearMonth
@@ -272,7 +272,7 @@ private struct RunnerFixture {
     }
 
     func memberFacts() async throws -> [MediaRelativePath: (byteSize: Int64, contentModifiedAt: Date)] {
-        let media = try #require(await store.planningMedia(for: rootPath))
+        let media = try #require(await store.windowReads.planningMedia(for: rootPath))
         var facts: [MediaRelativePath: (byteSize: Int64, contentModifiedAt: Date)] = [:]
         for item in media {
             facts[item.relativePath] = try (#require(item.byteSize), #require(item.contentModifiedAt))

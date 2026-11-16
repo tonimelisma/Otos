@@ -39,7 +39,7 @@ struct CatalogProjectionOrderingTests {
                 && state.libraries.allSatisfy { $0.activity == .idle }
         })
 
-        let asset = try #require(try await store.mediaAssets(for: [id])[id])
+        let asset = try #require(try await store.windowReads.mediaAssets(for: [id])[id])
         let sourceMTime = try #require(asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) })
         let enrichment = EnrichmentResult(
             id: id,

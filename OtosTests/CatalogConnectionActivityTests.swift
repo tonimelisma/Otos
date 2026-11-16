@@ -135,7 +135,7 @@ struct CatalogConnectionActivityTests {
         #expect(reads.count == 3)
         #expect(reads.longest <= reads.total)
         #expect(use.busy["main.reader"] == use.holds.filter { $0.role == "main.reader" }.reduce(.zero) { $0 + $1.total })
-        #expect(CatalogConnectionActivity.role(of: "interactive.reader.2") == "interactive.reader")
+        #expect(CatalogConnectionActivity.role(of: "main.reader.7") == "main.reader")
         #expect(CatalogConnectionActivity.role(of: "main.writer") == "main.writer")
         try pool.close()
     }

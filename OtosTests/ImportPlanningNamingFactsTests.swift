@@ -49,7 +49,7 @@ struct ImportPlanningNamingFactsTests {
 
         let policy = ImportPolicy.from(.default)
         func snapshotFacts() async throws -> PlanningFileFacts? {
-            try await store.importPlanningSnapshot(
+            try await store.windowReads.importPlanningSnapshot(
                 source: cardPath,
                 destination: destinationPath,
                 policy: policy,
@@ -150,7 +150,7 @@ struct ImportPlanningNamingFactsTests {
 
         let policy = ImportPolicy.from(.default)
         let facts = try await waitForValue(every: .milliseconds(25)) {
-            try await store.importPlanningSnapshot(
+            try await store.windowReads.importPlanningSnapshot(
                 source: cardPath,
                 destination: destinationPath,
                 policy: policy,
@@ -180,7 +180,7 @@ struct ImportPlanningNamingFactsTests {
         #expect(applied == .applied(count: 1))
 
         let afterEnrichment = try #require(
-            try await store.importPlanningSnapshot(
+            try await store.windowReads.importPlanningSnapshot(
                 source: cardPath,
                 destination: destinationPath,
                 policy: policy,

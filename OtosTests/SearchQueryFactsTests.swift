@@ -213,9 +213,9 @@ struct SearchQueryFactsTests {
         let captured = try #require(asset.captureLocalTime?.presentationDate() ?? asset.createdAt)
         let around = SearchDateSpan(start: captured.addingTimeInterval(-60), end: captured.addingTimeInterval(60))
         let before = SearchDateSpan(start: captured.addingTimeInterval(-7200), end: captured.addingTimeInterval(-3600))
-        #expect(try await store.searchFactMatches(SearchFactFilter(dateSpan: around)) == [asset.id])
-        #expect(try await store.searchFactMatches(SearchFactFilter(dateSpan: before)).isEmpty)
-        #expect(try await store.namedPeople().isEmpty)
+        #expect(try await store.windowReads.searchFactMatches(SearchFactFilter(dateSpan: around)) == [asset.id])
+        #expect(try await store.windowReads.searchFactMatches(SearchFactFilter(dateSpan: before)).isEmpty)
+        #expect(try await store.windowReads.namedPeople().isEmpty)
         await store.shutdown()
     }
 }

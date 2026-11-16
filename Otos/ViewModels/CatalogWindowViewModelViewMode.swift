@@ -70,7 +70,7 @@ extension CatalogWindowViewModel {
             guard let kind = focusedAssetKind, kind != .video else { return }
             let motion: MediaAssetID?
             do {
-                motion = try await store.livePhotoMotion(of: id)
+                motion = try await store.windowReads.livePhotoMotion(of: id)
             } catch {
                 // Not known to be a Live Photo, so nothing offers to play it; the next
                 // focus change reads again.

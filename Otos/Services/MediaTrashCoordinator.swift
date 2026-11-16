@@ -91,8 +91,8 @@ actor MediaTrashCoordinator {
 
         static func live(_ store: CatalogStore) -> StoreReads {
             StoreReads(
-                pendingItems: { try await store.pendingTrashItems() },
-                trashItems: { try await store.mediaTrashItems(for: $0) }
+                pendingItems: { try await store.windowReads.pendingTrashItems() },
+                trashItems: { try await store.windowReads.mediaTrashItems(for: $0) }
             )
         }
     }
@@ -951,7 +951,7 @@ actor MediaTrashCoordinator {
             return false
         }
         // Shown again under the same lease that put the files back; the row kept everything.
-        let restored = await store.restoreTrashedItem(TrashedItem(item: item, members: returned))
+        let restored = await store.windowReads.restoreTrashedItem(TrashedItem(item: item, members: returned))
         _ = await store.releaseNamespaceMutationLease(lease)
         if !restored {
             OtosLog.catalog.errorOperation("mediaTrash.undo", phase: "catalogRestoreFailed", fields: [

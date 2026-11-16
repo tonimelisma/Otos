@@ -55,7 +55,7 @@ struct CaptureLocalTimeTests {
         let rootPath = try #require(await store.currentLibraries().first { $0.kind == .library }?.path)
         for file in files {
             let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: file.name))
-            let asset = try #require(try await store.mediaAssets(for: [id])[id])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id])[id])
             _ = await store.applyEnrichmentBatch([
                 EnrichmentResult(
                     id: id,
@@ -81,16 +81,16 @@ struct CaptureLocalTimeTests {
             ("later.jpg", [Self.wall(2024, 4, 26, 9, 0)]),
         ], in: temp)
         let available: Set<LibraryRootPath> = [rootPath]
-        let grid = try await store.orderedAssetIDs(
+        let grid = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia, sort: .dateNewest),
             availableLibraryPaths: available
         )
-        let onThisDay = try await store.orderedAssetIDs(
+        let onThisDay = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(CalendarDay(year: 2026, month: 4, day: 25))),
             availableLibraryPaths: available
         )
         let floating = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "floating.jpg"))
-        let asset = try #require(try await store.mediaAssets(for: [floating])[floating])
+        let asset = try #require(try await store.windowReads.mediaAssets(for: [floating])[floating])
         await store.shutdown()
 
         #expect(grid.ids.map(\.relativePath.rawValue) == ["later.jpg", "floating.jpg"])
@@ -113,15 +113,15 @@ struct CaptureLocalTimeTests {
             ("sydney.heic", [Self.wall(2025, 11, 10, 8, 0, offsetHours: 11)]),
         ], in: temp)
         let available: Set<LibraryRootPath> = [rootPath]
-        let grid = try await store.orderedAssetIDs(
+        let grid = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia, sort: .dateOldest),
             availableLibraryPaths: available
         )
-        let ninth = try await store.orderedAssetIDs(
+        let ninth = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(CalendarDay(year: 2026, month: 11, day: 9))),
             availableLibraryPaths: available
         )
-        let tenth = try await store.orderedAssetIDs(
+        let tenth = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(CalendarDay(year: 2026, month: 11, day: 10))),
             availableLibraryPaths: available
         )

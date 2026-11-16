@@ -203,7 +203,7 @@ extension DuplicatesProjection {
         defer { OtosSignpost.performance.endInterval("DuplicatesBuild", signpost) }
         let start = ContinuousClock.now
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: libraries)
-        let duplicates = try await store.duplicateCopies(availableLibraryPaths: availableLibraryPaths)
+        let duplicates = try await store.backgroundReads.duplicateCopies(availableLibraryPaths: availableLibraryPaths)
         let identical = DuplicateGroupPolicy.groups(
             copies: duplicates.copies, keptPairs: duplicates.keptPairs, reach: duplicates.reach
         )
@@ -211,7 +211,7 @@ extension DuplicatesProjection {
 
         let candidatesStart = ContinuousClock.now
         let inputs = try await SamePhotoMemory.Inputs(
-            candidates: store.samePhotoCandidates(availableLibraryPaths: availableLibraryPaths),
+            candidates: store.backgroundReads.samePhotoCandidates(availableLibraryPaths: availableLibraryPaths),
             excluded: Set(identical.flatMap(\.copies).map(\.id)),
             reach: duplicates.reach
         )
@@ -244,7 +244,7 @@ extension DuplicatesProjection {
                 }
             }
             if !owed.isEmpty {
-                let fresh = try await store.samePhotoEvidence(for: owed)
+                let fresh = try await store.backgroundReads.samePhotoEvidence(for: owed)
                 evidenceRead = owed.count
                 for (id, evidence) in fresh {
                     if let stamp = stamps[id] {
@@ -259,7 +259,7 @@ extension DuplicatesProjection {
 
         let copiesStart = ContinuousClock.now
         let memberIDs = next.members.ids
-        let copies = memberIDs.isEmpty ? [:] : try await store.samePhotoCopies(for: memberIDs)
+        let copies = memberIDs.isEmpty ? [:] : try await store.backgroundReads.samePhotoCopies(for: memberIDs)
         let samePhoto = SamePhotoPolicy.groups(next.members, copies: copies, keptPairs: duplicates.keptPairs)
         let copiesMs = DiagnosticsTiming.milliseconds(since: copiesStart)
 

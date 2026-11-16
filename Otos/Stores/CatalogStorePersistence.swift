@@ -61,7 +61,7 @@ extension CatalogStore {
         walByteLimit: Int64 = CatalogStore.defaultWALByteBudget
     ) -> Configuration {
         var configuration = Configuration()
-        configuration.maximumReaderCount = 4
+        configuration.maximumReaderCount = CatalogStore.readerCount
         configuration.prepareDatabase { db in
             try db.execute(sql: "PRAGMA synchronous = NORMAL")
             try db.execute(sql: "PRAGMA cache_size = -32768")
@@ -73,18 +73,6 @@ extension CatalogStore {
             }
             activity.attach(to: db, pool: pool)
         }
-        return configuration
-    }
-
-    /// The interactive readers' configuration (`CatalogStore.interactiveReader`): a second,
-    /// read-only pool on the same file, opened after the writer has migrated it, with the
-    /// main pool's cache settings. Two readers: the reads a user waits on with something on
-    /// screen (the visible tiles' details, the inspector's item) are a few milliseconds each,
-    /// and nothing else uses them.
-    static func interactiveReaderConfiguration(activity: CatalogConnectionActivity) -> Configuration {
-        var configuration = fileBackedDatabaseConfiguration(activity: activity, pool: .interactive)
-        configuration.readonly = true
-        configuration.maximumReaderCount = 2
         return configuration
     }
 
@@ -121,6 +109,8 @@ extension CatalogStore {
         _ dbWriter: any DatabaseWriter,
         step: @escaping @Sendable (_ step: Int, _ of: Int) -> Void
     ) throws -> MigrationRun {
+        // The open's migrations, before any lane exists.
+        // swiftlint:disable:next read_outside_lane
         let applied = try dbWriter.read { db in
             try migrator.appliedIdentifiers(db)
         }
@@ -659,6 +649,8 @@ extension CatalogStore {
         availableBytes: (URL) -> Int64? = FreeSpaceFloor.availableBytes(onVolumeOf:),
         willCompact: () -> Void
     ) throws -> CompactionOutcome {
+        // The open's compaction, before any lane exists.
+        // swiftlint:disable:next read_outside_lane
         let counts = try dbWriter.read { db in
             try ["page_count", "freelist_count", "page_size"].map { pragma in
                 try Int64.fetchOne(db, sql: "PRAGMA \(pragma)") ?? 0
@@ -679,6 +671,7 @@ extension CatalogStore {
             try db.execute(sql: "VACUUM")
             try db.checkpoint(.truncate)
         }
+        // swiftlint:disable:next read_outside_lane
         let after = try dbWriter.read { db in try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0 }
         return .compacted(
             milliseconds: DiagnosticsTiming.milliseconds(since: start),
@@ -2465,9 +2458,14 @@ extension DatabaseReader {
     /// a read that waited writes (`CatalogConnectionActivity`); it defaults to the calling
     /// function. `askedAt` is when the caller asked, which is earlier than this call when the
     /// caller first waited for the Store.
+    ///
+    /// `freed` runs on the connection's queue as the body ends, or as the pool hands over the
+    /// connection to a read cancelled while it waited: exactly once, as the connection goes
+    /// back, whatever the caller's task does next (`CatalogLaneReader`).
     nonisolated func readFreeingConnection<T: Sendable>(
         operation: String = #function,
         askedAt: ContinuousClock.Instant = .now,
+        freed: (@Sendable () -> Void)? = nil,
         _ body: @escaping @Sendable (Database) throws -> T
     ) async throws -> T {
         let called = ContinuousClock.now
@@ -2478,6 +2476,7 @@ extension DatabaseReader {
             try await withCheckedThrowingContinuation { continuation in
                 resumption.install(continuation, unlessCancelled: interruption)
                 asyncRead { connection in
+                    defer { freed?() }
                     resumption.resume(with: Result {
                         let db = try connection.get()
                         try interruption.begin(db)
@@ -2700,10 +2699,8 @@ final nonisolated class ReaderLockWait: Sendable {
 /// after a read (`lastResumed`): a Store holding its actor after a read shows there.
 final nonisolated class CatalogConnectionActivity: Sendable {
     enum Pool: String, Sendable {
-        /// The writer and the main readers (`CatalogStore.dbWriter`).
+        /// The writer and its readers (`CatalogStore.dbWriter`).
         case main
-        /// The reads a user waits on with something on screen (`CatalogStore.interactiveReader`).
-        case interactive
     }
 
     /// A wait this long or longer writes the stall line. time: measurement — a threshold on a
@@ -2756,7 +2753,7 @@ final nonisolated class CatalogConnectionActivity: Sendable {
 
     /// What one kind of connection spent on one named operation since launch.
     struct Hold: Equatable, Sendable {
-        /// `main.reader`, `main.writer`, `interactive.reader`: the pool and role, not the
+        /// `main.reader`, `main.writer`: the pool and role, not the
         /// connection's number, so the readers of one pool add up.
         let role: String
         let operation: String
@@ -2833,7 +2830,7 @@ final nonisolated class CatalogConnectionActivity: Sendable {
         }, context)
     }
 
-    /// `main.writer` or `interactive.reader.2`: the pool, then GRDB's name for the connection.
+    /// `main.writer` or `main.reader.2`: the pool, then GRDB's name for the connection.
     private static func connectionName(_ db: Database, pool: Pool) -> String {
         let role = db.description.components(separatedBy: "DatabasePool.").last ?? db.description
         return "\(pool.rawValue).\(role)"
@@ -3207,9 +3204,12 @@ nonisolated struct CatalogStoreUse: Equatable, Sendable {
 
     let connections: CatalogConnectionActivity.Use
     let changes: CatalogChangeTally.Counts
+    /// The background admission's turns since launch (`CatalogReadAdmission`).
+    var backgroundReads = CatalogReadAdmission.Use()
 
     /// `busyMs=main.reader:1234,main.writer:56`, `holds=role:operation:totalMs:count:longestMs,…`,
-    /// `changes=12`, `changeFacts=detail:10,images:3`.
+    /// `changes=12`, `changeFacts=detail:10,images:3`, and the background admission's
+    /// `backgroundReads`, `backgroundReadsWaited`, `backgroundWaitMs`, `backgroundLongestWaitMs`.
     var fields: [String: String] {
         let busy = connections.busy.sorted { $0.key < $1.key }
             .map { "\($0.key):\(DiagnosticsTiming.milliseconds($0.value))" }
@@ -3223,6 +3223,10 @@ nonisolated struct CatalogStoreUse: Equatable, Sendable {
             "transactions": "\(connections.holds.reduce(0) { $0 + $1.count })",
             "changes": "\(changes.notifications)",
             "changeFacts": facts.isEmpty ? "none" : facts.joined(separator: ","),
+            "backgroundReads": "\(backgroundReads.admitted)",
+            "backgroundReadsWaited": "\(backgroundReads.waited)",
+            "backgroundWaitMs": "\(DiagnosticsTiming.milliseconds(backgroundReads.totalWait))",
+            "backgroundLongestWaitMs": "\(DiagnosticsTiming.milliseconds(backgroundReads.longestWait))",
         ]
     }
 }

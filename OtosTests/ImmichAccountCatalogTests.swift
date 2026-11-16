@@ -46,7 +46,7 @@ struct ImmichAccountCatalogTests {
 
     private func allMedia(_ store: CatalogStore) async throws -> [MediaAssetID] {
         let available = await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
-        return try await store.orderedAssetIDs(
+        return try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia), availableLibraryPaths: available
         ).ids
     }
@@ -87,7 +87,7 @@ struct ImmichAccountCatalogTests {
                 contentHash: .empty
             ),
         ])
-        let places = try await store.orderedAssetIDs(
+        let places = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .places, sort: .dateNewest), availableLibraryPaths: [rootPath]
         )
         #expect(places.ids == [located])
@@ -110,8 +110,8 @@ struct ImmichAccountCatalogTests {
         try await list(["IMG_1.JPG"], into: rootPath, store: store)
 
         let digest = try #require(ContentDigest(data: Data(repeating: 1, count: ContentDigest.byteCount)))
-        let libraryMedia = try #require(await store.planningMedia(for: library))
-        let media = try libraryMedia + #require(await store.planningMedia(for: rootPath))
+        let libraryMedia = try #require(await store.windowReads.planningMedia(for: library))
+        let media = try libraryMedia + #require(await store.windowReads.planningMedia(for: rootPath))
         for facts in media {
             _ = try await store.applyContentHash(ContentHashResult(
                 id: facts.id,
@@ -124,9 +124,9 @@ struct ImmichAccountCatalogTests {
         let available = await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
         // A library and an account are two libraries: their copies are duplicates only while
         // Duplicates compares across libraries.
-        #expect(try await store.duplicateCopies(availableLibraryPaths: available).copies.isEmpty)
+        #expect(try await store.backgroundReads.duplicateCopies(availableLibraryPaths: available).copies.isEmpty)
         await store.setDuplicatesReach(.acrossLibraries)
-        let copies = try await store.duplicateCopies(availableLibraryPaths: available).copies
+        let copies = try await store.backgroundReads.duplicateCopies(availableLibraryPaths: available).copies
         #expect(Set(copies.map(\.copy.id.libraryRootPath)) == [library, rootPath])
         // ADR 0046 §8: the account's copy is never moved to the Trash, and its asset folder
         // is no folder of the user's.
@@ -163,23 +163,23 @@ struct ImmichAccountCatalogTests {
             )])
         }
         func signRead() async throws -> Int {
-            let candidates = try await store.renderSignatureCandidates(limit: 10).candidates
+            let candidates = try await store.backgroundReads.renderSignatureCandidates(limit: 10).candidates
             return try await store.applyRenderSignatures(candidates.map {
                 RenderSignatureResult(id: $0.id, source: $0.source, signature: signature)
             })
         }
         func drawnBy() async throws -> [EnrichedRendering.Origin] {
-            try await store.samePhotoCandidates(availableLibraryPaths: [rootPath]).map(\.drawnBy)
+            try await store.backgroundReads.samePhotoCandidates(availableLibraryPaths: [rootPath]).map(\.drawnBy)
         }
 
         await applySourceImages(size: 42)
         #expect(try await signRead() == 1)
         #expect(try await drawnBy() == [.source])
-        #expect(try await store.renderSignatureCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await store.backgroundReads.renderSignatureCandidates(limit: 10).candidates.isEmpty)
 
         try await list(["IMG_1.JPG"], into: rootPath, store: store, byteSize: 43)
         await applySourceImages(size: 43)
-        #expect(try await store.renderSignatureCandidates(limit: 10).candidates.map(\.id) == [still])
+        #expect(try await store.backgroundReads.renderSignatureCandidates(limit: 10).candidates.map(\.id) == [still])
         #expect(try await signRead() == 1)
 
         _ = await store.applyEnrichmentBatch([EnrichmentResult(
@@ -190,7 +190,7 @@ struct ImmichAccountCatalogTests {
             sourceMTimeSeconds: 1_700_000_000,
             contentHash: nil
         )])
-        #expect(try await store.renderSignatureCandidates(limit: 10).candidates.map(\.id) == [still])
+        #expect(try await store.backgroundReads.renderSignatureCandidates(limit: 10).candidates.map(\.id) == [still])
         #expect(try await signRead() == 1)
         #expect(try await drawnBy() == [.otos])
         await store.shutdown()
@@ -237,12 +237,12 @@ struct ImmichAccountCatalogTests {
         let signature = try #require(RenderSignature(
             differenceHash: 7, gray: [UInt8](repeating: 90, count: RenderSignature.grayEdge * RenderSignature.grayEdge)
         ))
-        let owed = try await store.renderSignatureCandidates(limit: 10).candidates
+        let owed = try await store.backgroundReads.renderSignatureCandidates(limit: 10).candidates
         #expect(Set(owed.map(\.id)) == [uploaded, external])
         #expect(try await store.applyRenderSignatures(owed.map {
             RenderSignatureResult(id: $0.id, source: $0.source, signature: signature)
         }) == 2)
-        #expect(try await store.samePhotoCandidates(availableLibraryPaths: [rootPath]).map(\.id) == [uploaded])
+        #expect(try await store.backgroundReads.samePhotoCandidates(availableLibraryPaths: [rootPath]).map(\.id) == [uploaded])
 
         // A record arriving for the asset Duplicates never compares asks it for no build; one
         // for the still it compares does.
@@ -424,7 +424,7 @@ extension ImmichAccountCatalogTests {
         let newPath = try CatalogPath.normalizedDirectoryPath(for: own.sessionRoot(in: .remote, identity: identity))
         let roots = await relaunched.currentLibraries().filter { $0.kind == .immichAccount }
         let newID = id("IMG_1.JPG", in: newPath)
-        let asset = try await relaunched.mediaAssets(for: [newID])[newID]
+        let asset = try await relaunched.windowReads.mediaAssets(for: [newID])[newID]
         let shown = try await allMedia(relaunched)
         await relaunched.shutdown()
 

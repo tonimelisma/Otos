@@ -247,7 +247,7 @@ struct CatalogStoreTests {
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
         let ids = scanned.testAssets.map(\.id).sorted { $0.relativePath.rawValue < $1.relativePath.rawValue }
         #expect(ids.count == 2)
-        #expect(try await store.mediaAssets(for: ids).values.allSatisfy { $0.mediaChoice == .notRated })
+        #expect(try await store.windowReads.mediaAssets(for: ids).values.allSatisfy { $0.mediaChoice == .notRated })
 
         let firstWrite = try await store.setMediaChoice(.liked, for: ids)
         #expect(firstWrite.existingCount == 2)
@@ -255,11 +255,11 @@ struct CatalogStoreTests {
         let repeatedWrite = try await store.setMediaChoice(.liked, for: ids)
         #expect(repeatedWrite.accepted)
         #expect(repeatedWrite.changedCount == 0)
-        #expect(try await store.mediaAssets(for: ids).values.allSatisfy { $0.mediaChoice == .liked })
+        #expect(try await store.windowReads.mediaAssets(for: ids).values.allSatisfy { $0.mediaChoice == .liked })
 
         let reloadedStore = makeTestStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
-        let reloaded = try await reloadedStore.mediaAssets(for: ids)
+        let reloaded = try await reloadedStore.windowReads.mediaAssets(for: ids)
         #expect(reloaded.values.allSatisfy { $0.mediaChoice == .liked })
     }
 
@@ -306,7 +306,7 @@ struct CatalogStoreTests {
             updatedAt: Date(timeIntervalSince1970: 1_700_000_001)
         )
         try await store.beginImportOperation(operation)
-        _ = try await store.settleImportedAsset(
+        _ = try await store.backgroundReads.settleImportedAsset(
             operation: operation,
             byteSize: 4,
             contentModifiedAt: operation.destinationModifiedAt ?? operation.sourceModifiedAt,
@@ -317,7 +317,7 @@ struct CatalogStoreTests {
             libraryRootPath: destinationPath,
             relativePath: MediaRelativePath(rawValue: "imported.jpg")
         )
-        #expect(try await store.mediaAssets(for: [destinationID])[destinationID]?.mediaChoice == .liked)
+        #expect(try await store.windowReads.mediaAssets(for: [destinationID])[destinationID]?.mediaChoice == .liked)
     }
 
     /// ARC-056: an import onto a case-sensitive root keys the copy by that volume's name

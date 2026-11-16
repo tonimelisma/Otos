@@ -107,8 +107,8 @@ struct CameraCatalogSyncTests {
         }
 
         func paths(_ rootPath: LibraryRootPath) async throws -> [String] {
-            let ids = try await store.orderedAssetIDs(for: .library(rootPath), availableLibraryPaths: [rootPath])
-            let assets = try await store.mediaAssets(for: ids)
+            let ids = try await store.windowReads.orderedAssetIDs(for: .library(rootPath), availableLibraryPaths: [rootPath])
+            let assets = try await store.windowReads.mediaAssets(for: ids)
             return ids.compactMap { assets[$0]?.relativePath.rawValue }.sorted()
         }
 

@@ -32,17 +32,17 @@ struct PreviewFaceReaderTests {
         await account.applySourceImages(for: "IMG_1.JPG", size: 42)
         await account.applySourceImages(for: "CLIP.MOV", size: 42)
 
-        let first = try await account.store.previewFaceCandidates(limit: 10).candidates
+        let first = try await account.store.backgroundReads.previewFaceCandidates(limit: 10).candidates
         #expect(first.map(\.id) == [account.id("IMG_1.JPG")])
         #expect(try await account.store.applyPreviewFaces(first.map {
             PreviewFaceResult(candidate: $0, faces: EnrichedFaces(faces: [FaceEnrichmentTests.face(seed: 1)], analysisRevision: 1))
         }) == 1)
-        #expect(try await account.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
-        #expect(try await account.store.faces(of: account.id("IMG_1.JPG")) == [FaceEnrichmentTests.face(seed: 1)])
+        #expect(try await account.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await account.store.windowReads.faces(of: account.id("IMG_1.JPG")) == [FaceEnrichmentTests.face(seed: 1)])
 
         try await account.list([("IMG_1.JPG", "public.jpeg", 43)])
         await account.applySourceImages(for: "IMG_1.JPG", size: 43)
-        #expect(try await account.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [account.id("IMG_1.JPG")])
+        #expect(try await account.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.map(\.id) == [account.id("IMG_1.JPG")])
         await account.store.shutdown()
     }
 
@@ -51,7 +51,7 @@ struct PreviewFaceReaderTests {
         let account = try await ImmichAccount.make(in: makeTestDirectory())
         try await account.list([("IMG_1.JPG", "public.jpeg", 42)])
         await account.applySourceImages(for: "IMG_1.JPG", size: 42)
-        let stale = try await account.store.previewFaceCandidates(limit: 10).candidates
+        let stale = try await account.store.backgroundReads.previewFaceCandidates(limit: 10).candidates
 
         try await account.list([("IMG_1.JPG", "public.jpeg", 43)])
         await account.applySourceImages(for: "IMG_1.JPG", size: 43)
@@ -81,10 +81,10 @@ struct PreviewFaceReaderTests {
         )
 
         await reader.start()
-        try await waitUntil { try await account.store.faces(of: account.id("IMG_1.JPG")) == [face] }
+        try await waitUntil { try await account.store.windowReads.faces(of: account.id("IMG_1.JPG")) == [face] }
         await reader.shutdown()
 
-        #expect(try await account.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await account.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.isEmpty)
         #expect(analysed.value == 1)
         await account.store.shutdown()
     }
@@ -95,21 +95,21 @@ struct PreviewFaceReaderTests {
     @Test func aLibraryStillOwesFacesFromItsPreviewOnce() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "clip.mov"])
         let still = library.id("a.jpg")
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.isEmpty)
         // The video is not the preview reader's; enrichment owes its faces (ENR-031).
-        #expect(try await library.store.peopleGallery(availableLibraryPaths: [library.rootPath])?.unchecked == MediaCount(photos: 1, videos: 1))
+        #expect(try await library.store.windowReads.peopleGallery(availableLibraryPaths: [library.rootPath])?.unchecked == MediaCount(photos: 1, videos: 1))
 
         try await Self.render(still, in: library, editRevision: 0)
-        let first = try await library.store.previewFaceCandidates(limit: 10).candidates
+        let first = try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates
         #expect(first.map(\.id) == [still])
         #expect(first.first?.recipe == .neutral)
         #expect(try await library.store.applyPreviewFaces(first.map { PreviewFaceResult(candidate: $0, faces: .noneFound) }) == 1)
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
-        #expect(try await library.store.peopleGallery(availableLibraryPaths: [library.rootPath])?.unchecked == MediaCount(videos: 1))
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await library.store.windowReads.peopleGallery(availableLibraryPaths: [library.rootPath])?.unchecked == MediaCount(videos: 1))
 
         let saved = try #require(try await library.store.setEditRecipe(Self.leftHalf, for: still).saved)
         try await Self.render(still, in: library, editRevision: saved.revision)
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.isEmpty)
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.isEmpty)
         await library.store.shutdown()
     }
 
@@ -121,17 +121,17 @@ struct PreviewFaceReaderTests {
         let still = library.id("a.jpg")
         try await Self.render(still, in: library, editRevision: 0)
         let saved = try #require(try await library.store.setEditRecipe(Self.leftHalf, for: still).saved)
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.recipe) == [.neutral])
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.map(\.recipe) == [.neutral])
 
         try await Self.render(still, in: library, editRevision: saved.revision)
-        let edited = try await library.store.previewFaceCandidates(limit: 10).candidates
+        let edited = try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates
         #expect(edited.map(\.recipe) == [Self.leftHalf])
         #expect(edited.map(\.renderedRevision) == [saved.revision])
 
         let newer = try #require(try await library.store.setEditRecipe(EditRecipe(quarterTurns: 1), for: still).saved)
         try await Self.render(still, in: library, editRevision: newer.revision)
         #expect(try await library.store.applyPreviewFaces(edited.map { PreviewFaceResult(candidate: $0, faces: .noneFound) }) == 0)
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.recipe) == [EditRecipe(quarterTurns: 1)])
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.map(\.recipe) == [EditRecipe(quarterTurns: 1)])
         await library.store.shutdown()
     }
 
@@ -145,7 +145,7 @@ struct PreviewFaceReaderTests {
         #expect(try await library.readFaces([library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.6)])]) == 1)
         let unedited = FacePreview(name: "preview-a.jpg.heic", recipe: .neutral)
         func tile() async throws -> FaceTile? {
-            try await library.store.photoFaces(of: [still], landedThrough: 0).face(face)?.tile
+            try await library.store.windowReads.photoFaces(of: [still], landedThrough: 0).face(face)?.tile
         }
         #expect(try await tile()?.preview == unedited)
 
@@ -216,13 +216,13 @@ struct PreviewFaceReaderTests {
         )
 
         await reader.start()
-        try await waitUntil { try await library.store.faces(of: library.id("b.jpg")) == [face] }
+        try await waitUntil { try await library.store.windowReads.faces(of: library.id("b.jpg")) == [face] }
         // A new rendering rings the reader: c is read, a is not tried again.
         try await Self.render(library.id("c.jpg"), in: library, editRevision: 0, preview: "preview-c.jpg")
-        try await waitUntil { try await library.store.faces(of: library.id("c.jpg")) == [face] }
+        try await waitUntil { try await library.store.windowReads.faces(of: library.id("c.jpg")) == [face] }
         await reader.shutdown()
         #expect(analysed.value == 3)
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
         await library.store.shutdown()
     }
 
@@ -251,7 +251,7 @@ struct PreviewFaceReaderTests {
         await reader.start()
         try await waitUntil { await reader.drains >= 1 }
         await reader.shutdown()
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg"), library.id("b.jpg")])
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg"), library.id("b.jpg")])
         #expect(analysed.value == 0)
         await library.store.shutdown()
     }
@@ -287,7 +287,7 @@ struct PreviewFaceReaderTests {
         try await waitUntil { await reader.drains > before }
         await reader.shutdown()
         #expect(analysed.value == 1)
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.count == 3)
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.count == 3)
         await library.store.shutdown()
     }
 
@@ -313,7 +313,7 @@ struct PreviewFaceReaderTests {
         async let first: Void = reader.start()
         async let second: Void = reader.start()
         _ = await (first, second)
-        try await waitUntil { try await library.store.faces(of: library.id("a.jpg")) == [face] }
+        try await waitUntil { try await library.store.windowReads.faces(of: library.id("a.jpg")) == [face] }
         try await waitUntil { await reader.drains >= 1 }
         await reader.shutdown()
         #expect(analysed.value == 1)
@@ -369,7 +369,7 @@ struct PreviewFaceReaderTests {
         editRevision: Int64,
         preview: String = "preview.heic"
     ) async throws {
-        let asset = try #require(try await library.store.mediaAssets(for: [id])[id])
+        let asset = try #require(try await library.store.windowReads.mediaAssets(for: [id])[id])
         _ = await library.store.applyEnrichmentBatch([EnrichmentResult(
             id: id,
             metadata: AssetMetadata(),

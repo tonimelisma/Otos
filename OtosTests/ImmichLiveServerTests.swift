@@ -83,10 +83,10 @@ struct ImmichLiveServerTests {
             try await expectRangedMetadataRead(
                 store: store, rootPath: rootPath, client: client, token: login.accessToken
             )
-            let ids = try await store.orderedAssetIDs(
+            let ids = try await store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .library(rootPath)), availableLibraryPaths: [rootPath]
             ).ids
-            listed = try await Array(store.mediaAssets(for: ids).values)
+            listed = try await Array(store.windowReads.mediaAssets(for: ids).values)
             await store.shutdown()
         } catch {
             try await client.logout(token: login.accessToken)
@@ -116,11 +116,11 @@ struct ImmichLiveServerTests {
         client: ImmichClient,
         token: String
     ) async throws {
-        let first = try #require(try await store.orderedAssetIDs(
+        let first = try #require(try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .library(rootPath)), availableLibraryPaths: [rootPath]
         ).ids.first)
-        let size = try #require(try await store.mediaAssets(for: [first])[first]?.byteSize)
-        let assetID = try #require(try await store.sourceItemID(for: first))
+        let size = try #require(try await store.windowReads.mediaAssets(for: [first])[first]?.byteSize)
+        let assetID = try #require(try await store.backgroundReads.sourceItemID(for: first))
         // The server's own facts for one asset decode as the sync reported them.
         let detail = try await client.asset(id: assetID, token: token)
         #expect(detail.id == assetID)
@@ -175,7 +175,7 @@ struct ImmichLiveServerTests {
                 volumeCapacity: ampleVolumeCapacity
             )
             _ = await sync.pass()
-            let rows = try await store.sourceItemRows([stillID, motionID], in: rootPath)
+            let rows = try await store.backgroundReads.sourceItemRows([stillID, motionID], in: rootPath)
             #expect(rows[stillID]?.relativePath.rawValue == "\(stillID)/\(still.lastPathComponent)")
             #expect(rows[motionID]?.relativePath.rawValue == "\(stillID)/\(movie.lastPathComponent)")
             await store.shutdown()

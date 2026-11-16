@@ -1134,7 +1134,7 @@ struct EnrichmentCoordinatorTests {
             relativePath: MediaRelativePath(rawValue: "card.jpg")
         )
         try await waitUntil {
-            let card = try await store.mediaAssets(for: [cardID])[cardID]
+            let card = try await store.windowReads.mediaAssets(for: [cardID])[cardID]
             return card?.hashStale == false && card?.renderingStale == false
         }
         await coordinator.shutdown()

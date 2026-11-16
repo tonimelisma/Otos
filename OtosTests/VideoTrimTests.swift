@@ -48,7 +48,7 @@ struct VideoTrimTests {
         let result = try await store.setEditRecipe(EditRecipe(trimStart: 0.5), for: id)
 
         #expect(result.isVideo)
-        let detail = try await store.mediaTileDetails(for: [id])[id]
+        let detail = try await store.windowReads.mediaTileDetails(for: [id])[id]
         #expect(detail?.renderedRevision == result.saved?.revision)
         await store.shutdown()
     }

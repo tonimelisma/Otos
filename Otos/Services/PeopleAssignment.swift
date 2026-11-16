@@ -174,7 +174,7 @@ actor PeopleAssignment {
         let signpost = OtosSignpost.performance.beginInterval("PeopleAssignment")
         defer { OtosSignpost.performance.endInterval("PeopleAssignment", signpost) }
         let start = ContinuousClock.now
-        let read = try await store.peopleSnapshot()
+        let read = try await store.backgroundReads.peopleSnapshot()
         let readMs = DiagnosticsTiming.milliseconds(since: start)
         try Task.checkCancellation()
         // Synchronous from here to the next await: the read kept is the one ranked against.
@@ -183,7 +183,7 @@ actor PeopleAssignment {
         let (inputs, galleryFacts) = await Self.derive(read)
         let galleryRows = try await store.writePeopleGalleryFacts(galleryFacts, stored: read.galleryFacts)
         if settled == nil {
-            let stored = try await store.settledPeopleAssignment()
+            let stored = try await store.backgroundReads.settledPeopleAssignment()
             settled = settled ?? stored.map(AssignmentInputs.init(digest:))
         }
         guard inputs != settled else {
@@ -233,7 +233,7 @@ actor PeopleAssignment {
     private func syncVectors(for read: PeopleSnapshot) async throws {
         var malformed: [Int64] = []
         while true {
-            let page = try await store.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
+            let page = try await store.backgroundReads.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
             let owed = vectors.owed
             let fresh = page.filter { $0.vector > owed }
             vectors.add(fresh)
@@ -442,7 +442,7 @@ actor PeopleGallery {
 
     @concurrent
     private static func read(store: CatalogStore, libraries: [CatalogLibraryState]) async throws -> CatalogPeopleState? {
-        try await store.peopleGallery(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
+        try await store.windowReads.peopleGallery(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
             .map { CatalogPeopleState(gallery: $0) }
     }
 }

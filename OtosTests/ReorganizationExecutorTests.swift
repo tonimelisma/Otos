@@ -105,7 +105,7 @@ struct ActiveReorganizationJournalTests {
             ]
         )
         try await store.prepareReorganizationComponent(component)
-        let loaded = try await store.activeReorganizationComponents()
+        let loaded = try await store.backgroundReads.activeReorganizationComponents()
         #expect(loaded.count == 1)
         #expect(loaded.first?.componentKey == component.componentKey)
         #expect(loaded.first?.members.count == 1)
@@ -122,7 +122,7 @@ struct ActiveReorganizationJournalTests {
             key: component.componentKey,
             nextStepIndex: 1
         )
-        let after = try await store.activeReorganizationComponents()
+        let after = try await store.backgroundReads.activeReorganizationComponents()
         #expect(after.first?.phase == .filesystemComplete)
         #expect(after.first?.members.first?.currentRelativePath.rawValue == "b.jpg")
         #expect(after.first?.steps.first?.phase == .didMove)
@@ -218,9 +218,9 @@ struct ReorganizationSettlementTests {
         )
         try await store.prepareReorganizationComponent(component)
 
-        try await store.settleReorganizationComponent(key: key)
+        try await store.backgroundReads.settleReorganizationComponent(key: key)
         let bID = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "b.jpg"))
-        let ordered = try await store.orderedAssetIDs(
+        let ordered = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia),
             availableLibraryPaths: [rootPath]
         )
@@ -230,12 +230,12 @@ struct ReorganizationSettlementTests {
             CatalogIdentityRemap(oldID: aID, newID: bID),
             CatalogIdentityRemap(oldID: bID, newID: aID),
         ])
-        #expect(try await store.activeReorganizationComponents().isEmpty)
+        #expect(try await store.backgroundReads.activeReorganizationComponents().isEmpty)
 
         let state = try await catalogStoreTestState(store)
         let paths = Set(state.testAssets.map(\.relativePath.rawValue))
         #expect(paths == ["a.jpg", "b.jpg"])
-        let remapped = try await store.mediaAssets(for: [
+        let remapped = try await store.windowReads.mediaAssets(for: [
             MediaAssetID(
                 libraryRootPath: rootPath,
                 relativePath: MediaRelativePath(rawValue: "b.jpg")
@@ -244,7 +244,7 @@ struct ReorganizationSettlementTests {
         #expect(remapped.values.first?.mediaChoice == .liked)
 
         try await store.acknowledgeIdentityRemaps([batch.id])
-        let afterAcknowledgement = try await store.orderedAssetIDs(
+        let afterAcknowledgement = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia),
             availableLibraryPaths: [rootPath]
         )
@@ -332,7 +332,7 @@ struct ReorganizationExecutorMoveTests {
         let outcome = await ReorganizationExecutor.executeComponent(component, rootURL: fixture.root, store: fixture.store)
 
         #expect(outcome == .filesystemComplete)
-        let journal = try #require(try await fixture.store.activeReorganizationComponents().first)
+        let journal = try #require(try await fixture.store.backgroundReads.activeReorganizationComponents().first)
         #expect(journal.phase == .filesystemComplete)
         #expect(journal.steps.map(\.phase) == [.didMove])
         #expect(journal.members.map(\.currentRelativePath.rawValue) == ["new.jpg"])
@@ -357,7 +357,7 @@ struct ReorganizationExecutorMoveTests {
         #expect(outcome == .stopped(.destinationTaken(MediaRelativePath(rawValue: "taken.jpg"))))
         #expect(fixture.exists("2024/a.jpg"))
 
-        let journal = try #require(try await fixture.store.activeReorganizationComponents().first)
+        let journal = try #require(try await fixture.store.backgroundReads.activeReorganizationComponents().first)
         let rollback = await ReorganizationExecutor.rollBackComponent(journal, rootURL: fixture.root, store: fixture.store)
 
         #expect(rollback == .restored)
@@ -365,7 +365,7 @@ struct ReorganizationExecutorMoveTests {
         #expect(fixture.exists("b.jpg"))
         #expect(!fixture.exists("2024"))
         #expect(try Data(contentsOf: fixture.root.appending(path: "taken.jpg")) == Data("foreign".utf8))
-        #expect(try await fixture.store.activeReorganizationComponents().isEmpty)
+        #expect(try await fixture.store.backgroundReads.activeReorganizationComponents().isEmpty)
         await fixture.store.shutdown()
     }
 
@@ -383,11 +383,11 @@ struct ReorganizationExecutorMoveTests {
         // Something else takes the original name before the rollback runs.
         try Data("newcomer".utf8).write(to: fixture.root.appending(path: "a.jpg"))
 
-        let journal = try #require(try await fixture.store.activeReorganizationComponents().first)
+        let journal = try #require(try await fixture.store.backgroundReads.activeReorganizationComponents().first)
         let rollback = await ReorganizationExecutor.rollBackComponent(journal, rootURL: fixture.root, store: fixture.store)
 
         #expect(rollback == .stuck(.destinationTaken(MediaRelativePath(rawValue: "a.jpg"))))
-        #expect(try await fixture.store.activeReorganizationComponents().map(\.phase) == [.blocked])
+        #expect(try await fixture.store.backgroundReads.activeReorganizationComponents().map(\.phase) == [.blocked])
         #expect(fixture.exists("b.jpg"))
         #expect(try Data(contentsOf: fixture.root.appending(path: "a.jpg")) == Data("newcomer".utf8))
         await fixture.store.shutdown()

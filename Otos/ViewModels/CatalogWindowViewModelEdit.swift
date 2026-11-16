@@ -850,7 +850,7 @@ nonisolated struct EditPipeline: Sendable {
             return nil
         }
         do {
-            guard try await store.editRecipe(for: id)?.revision == saved.revision else {
+            guard try await store.windowReads.editRecipe(for: id)?.revision == saved.revision else {
                 OtosLog.rendering.debugOperation("render.editProducts", phase: "superseded", fields: [
                     "id": id.relativePath.rawValue, "revision": "\(saved.revision)",
                 ])

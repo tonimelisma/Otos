@@ -133,9 +133,9 @@ struct RemoteRangeEnrichmentTests {
         await coordinator.start()
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: path)
         try await waitUntil {
-            await (try? store.mediaAssets(for: [id])[id]?.metadataSourceSize) == Int64(data.count)
+            await (try? store.windowReads.mediaAssets(for: [id])[id]?.metadataSourceSize) == Int64(data.count)
         }
-        let asset = try #require(try await store.mediaAssets(for: [id])[id])
+        let asset = try #require(try await store.windowReads.mediaAssets(for: [id])[id])
         #expect(asset.captureLocalTime != nil)
         #expect(asset.renderedSourceSize == nil)
         // A few ranges, not the file: the read-through cache's chunks.

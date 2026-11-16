@@ -29,7 +29,7 @@ struct PeopleStoreTests {
         _ = try await library.store.perform(.setFavorite(sam, true))
         _ = try await library.store.perform(.setHidden(ian, true))
 
-        let facts = try await library.store.peopleSnapshot()
+        let facts = try await library.store.backgroundReads.peopleSnapshot()
         let byID = Dictionary(uniqueKeysWithValues: facts.faces.map { ($0.id, $0) })
         #expect(byID[a0]?.assignment == .user(sam))
         #expect(byID[a1]?.assignment == .held)
@@ -41,12 +41,12 @@ struct PeopleStoreTests {
         #expect(facts.people.map(\.isFavorite) == [true, false])
         #expect(facts.people.map(\.isHidden) == [false, true])
         #expect(facts.people.last?.birthday?.seconds == PersonBirthday("2022-11-03")?.seconds)
-        let photoFaces = try await library.store.photoFaces(of: [library.id("a.jpg")], landedThrough: 0)
+        let photoFaces = try await library.store.windowReads.photoFaces(of: [library.id("a.jpg")], landedThrough: 0)
         // Ian is hidden: the photo's faces show the faces of people not hidden, and the
         // unidentified one.
         #expect(photoFaces.ownFaces(of: library.id("a.jpg")).map(\.id) == [a0, a1])
         #expect(photoFaces.face(a1)?.tile.box == Self.face(x: 0.6).box)
-        #expect(try await library.store.namedPeople().map(\.id) == [sam])
+        #expect(try await library.store.windowReads.namedPeople().map(\.id) == [sam])
         await library.store.shutdown()
     }
 
@@ -65,7 +65,7 @@ struct PeopleStoreTests {
         }
         try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: faces[0], person: .existing(sam))]))
         _ = try await library.store.perform(.move([faces[1]], to: sam))
-        let snapshot = try await library.store.peopleSnapshot()
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         #expect(snapshot.faces.map(\.assignment) == [.open, .user(sam)])
         await #expect(throws: PeopleRuleViolation.personAlreadyInPhoto) {
             _ = try await library.store.perform(.move([faces[0]], to: sam))
@@ -102,7 +102,7 @@ struct PeopleStoreTests {
         try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [.init(face: b, person: .existing(tyler))]))
         // The scanned files carry no capture date, so no face predates any birthday yet.
         _ = try await library.store.perform(.edit(tyler, name: "Tyler", birthday: PersonBirthday("2025")))
-        #expect(try await library.store.peopleSnapshot().people.first?.birthday?.seconds == PersonBirthday("2025-01-01")?.seconds)
+        #expect(try await library.store.backgroundReads.peopleSnapshot().people.first?.birthday?.seconds == PersonBirthday("2025-01-01")?.seconds)
         await library.store.shutdown()
     }
 
@@ -126,7 +126,7 @@ struct PeopleStoreTests {
             .init(face: old[2], person: .existing(ian)), .init(face: guessed, person: .existing(ian)),
         ]))
         _ = try await library.store.perform(.makeKeyPhoto(guessed, of: ian))
-        #expect(try await library.store.peopleSnapshot().faces.first { $0.id == guessed }?.assignment == .user(ian))
+        #expect(try await library.store.backgroundReads.peopleSnapshot().faces.first { $0.id == guessed }?.assignment == .user(ian))
 
         // The new reading finds the faces in another order, shifted a little.
         try await library.readFaces([
@@ -134,7 +134,7 @@ struct PeopleStoreTests {
             library.result(for: "b.jpg", faces: [Self.face(x: 0.31)]),
         ])
 
-        let snapshot = try await library.store.peopleSnapshot()
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         let byIndex = Dictionary(uniqueKeysWithValues: snapshot.faces.filter { $0.id.asset == library.id("a.jpg") }.map { ($0.id.index, $0) })
         #expect(byIndex[2]?.assignment == .user(sam))
         #expect(byIndex[1]?.assignment == .held)
@@ -196,19 +196,19 @@ struct PeopleStoreTests {
             try db.execute(sql: "DELETE FROM face_embedding WHERE relative_path = 'a.jpg' AND face_index = 1")
         }
 
-        let snapshot = try await library.store.peopleSnapshot()
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         #expect(snapshot.faces.map(\.id.asset) == [library.id("b.jpg")])
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
 
         try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)])])
-        #expect(try await library.store.peopleSnapshot().faces.count == 3)
+        #expect(try await library.store.backgroundReads.peopleSnapshot().faces.count == 3)
 
         try await database.write { db in
             try db.execute(sql: "UPDATE face_embedding SET embedding = x'00' WHERE relative_path = 'b.jpg'")
         }
         let state = try await PeopleAssignment.settle(store: library.store, libraries: #require(await library.store.loadedLibraries()))
         #expect(state.hasFaces, "the gallery shows what is stored")
-        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("b.jpg")])
+        #expect(try await library.store.backgroundReads.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("b.jpg")])
         await library.store.shutdown()
     }
 
@@ -224,13 +224,13 @@ struct PeopleStoreTests {
         let early = FaceID(asset: library.id("a.jpg"), index: 0)
         let late = FaceID(asset: library.id("b.jpg"), index: 0)
         try await library.store.applyAssignment(FaceAssignmentPlan(newPeople: [[early]]))
-        let found = try #require(try await library.store.peopleSnapshot().people.first?.id)
+        let found = try #require(try await library.store.backgroundReads.peopleSnapshot().people.first?.id)
         let sam = try #require(try await library.store.perform(.moveToNewPerson([late], name: "Sam")).person)
         _ = try await library.store.perform(.edit(sam, name: "Sam", birthday: PersonBirthday("2015")))
 
         _ = try await library.store.perform(.merge(found, into: sam))
 
-        let snapshot = try await library.store.peopleSnapshot()
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         #expect(snapshot.faces.first { $0.id == early }?.assignment == .open)
         #expect(snapshot.faces.first { $0.id == late }?.assignment == .user(sam))
         await library.store.shutdown()
@@ -256,7 +256,7 @@ struct PeopleStoreTests {
 
         _ = try await library.store.perform(.merge(named, into: found))
 
-        let snapshot = try await library.store.peopleSnapshot()
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         #expect(snapshot.people.map(\.id) == [found])
         #expect(snapshot.people.first?.name == "Sam")
         #expect(snapshot.people.first?.isFavorite == true)
@@ -264,7 +264,7 @@ struct PeopleStoreTests {
 
         // A face the merged person was said not to be is not the merged person either.
         _ = try await library.store.perform(.removeName([b0]))
-        #expect(try await library.store.peopleSnapshot().faces.first { $0.id == b0 }?.rejected == [found])
+        #expect(try await library.store.backgroundReads.peopleSnapshot().faces.first { $0.id == b0 }?.rejected == [found])
 
         let other = try #require(try await library.store.perform(.moveToNewPerson([a1], name: "Ian")).person)
         await #expect(throws: PeopleRuleViolation.bothIn(MediaCount(photos: 1))) {
@@ -286,10 +286,10 @@ struct PeopleStoreTests {
         _ = try await library.store.perform(.move([b], to: sam))
         _ = try await library.store.perform(.makeKeyPhoto(a, of: sam))
         _ = try await library.store.perform(.makeKeyPhoto(b, of: sam))
-        #expect(try await library.store.peopleSnapshot().keyPhotos == [sam: b])
+        #expect(try await library.store.backgroundReads.peopleSnapshot().keyPhotos == [sam: b])
 
         _ = try await library.store.perform(.removeName([b]))
-        #expect(try await library.store.peopleSnapshot().keyPhotos.isEmpty)
+        #expect(try await library.store.backgroundReads.peopleSnapshot().keyPhotos.isEmpty)
         await #expect(throws: PeopleRuleViolation.unknownFace) {
             _ = try await library.store.perform(.makeKeyPhoto(b, of: sam))
         }
@@ -312,7 +312,7 @@ struct PeopleStoreTests {
         _ = try await library.store.perform(.makeKeyPhoto(b0, of: ian))
 
         func state() async throws -> PeopleSnapshot {
-            let snapshot = try await library.store.peopleSnapshot()
+            let snapshot = try await library.store.backgroundReads.peopleSnapshot()
             return PeopleSnapshot(faces: snapshot.faces, people: snapshot.people, keyPhotos: snapshot.keyPhotos)
         }
         let before = try await state()
@@ -350,7 +350,7 @@ struct PeopleStoreTests {
         plan.likeness = [a: 0.75]
         // The new person, its two seeds and the likeness.
         #expect(try await library.store.applyAssignment(plan) == 4)
-        let found = try #require(try await library.store.peopleSnapshot().people.last?.id)
+        let found = try #require(try await library.store.backgroundReads.peopleSnapshot().people.last?.id)
         _ = try await library.store.perform(.move([a, b], to: ian))
 
         // Planned before the move: neither guess lands, and Otos's person, with no face left
@@ -359,7 +359,7 @@ struct PeopleStoreTests {
             .init(face: a, person: .existing(found)), .init(face: b, person: nil),
         ], emptied: [found])) == 1)
 
-        let snapshot = try await library.store.peopleSnapshot()
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         #expect(snapshot.faces.map(\.assignment) == [.user(ian), .user(ian)])
         #expect(snapshot.likeness == [a: 0.75])
         #expect(snapshot.people.map(\.id) == [ian])
@@ -381,7 +381,7 @@ struct PeopleStoreTests {
         var seeding = FaceAssignmentPlan()
         seeding.newPeople = [[a, b]]
         try await library.store.applyAssignment(seeding)
-        let found = try #require(try await library.store.peopleSnapshot().people.last?.id)
+        let found = try #require(try await library.store.backgroundReads.peopleSnapshot().people.last?.id)
         let ian = try #require(try await library.store.perform(.moveToNewPerson([b], name: "Ian")).person)
 
         // Planned before the move: a is released, b keeps the user's word, and the person
@@ -390,7 +390,7 @@ struct PeopleStoreTests {
             emptied: [found], lapsedSeeds: [a: found, b: found]
         )) == 2)
 
-        let snapshot = try await library.store.peopleSnapshot()
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         #expect(snapshot.faces.map(\.assignment) == [.open, .user(ian)])
         #expect(snapshot.people.map(\.id) == [ian])
         await library.store.shutdown()
@@ -416,7 +416,7 @@ struct PeopleStoreTests {
 
         #expect(try await library.store.applyAssignment(plan) == 0)
 
-        let snapshot = try await library.store.peopleSnapshot()
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         #expect(snapshot.people.map(\.id) == [sam])
         #expect(snapshot.faces.map(\.assignment) == [.user(sam), .user(sam), .open])
         await library.store.shutdown()
@@ -462,7 +462,7 @@ struct PeopleStoreTests {
         func photos(
             _ filter: MediaFilter = .all, in scope: SidebarSelection? = nil, sort: MediaSortOrder = .filenameAscending
         ) async throws -> [String] {
-            try await library.store.orderedAssetIDs(
+            try await library.store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: scope ?? .library(library.rootPath), filter: filter, sort: sort),
                 availableLibraryPaths: [library.rootPath]
             ).ids.map(\.relativePath.rawValue)
@@ -617,12 +617,12 @@ struct PeopleStoreTests {
         }
         let paths = CatalogWindowPolicy.availablePaths(from: libraries)
         // The parts of one pass, each alone, kept alive as a pass keeps them.
-        let snapshot = try await phase("snapshot") { try await store.peopleSnapshot() }
+        let snapshot = try await phase("snapshot") { try await store.backgroundReads.peopleSnapshot() }
         let galleryFacts = await phase("galleryFacts") { snapshot.computedGalleryFacts }
         var vectors = FaceVectors()
         try await phase("vectors") {
             while true {
-                let page = try await store.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
+                let page = try await store.backgroundReads.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
                 vectors.add(page)
                 if page.count < FaceVectors.pageSize {
                     break
@@ -636,13 +636,13 @@ struct PeopleStoreTests {
         _ = try await phase("firstAssignment") { try await PeopleAssignment.settle(store: store, libraries: libraries) }
         _ = try await phase("settledLaunch") { try await PeopleAssignment.settle(store: store, libraries: libraries) }
         // The gallery's own read, as the window makes it on a visit.
-        _ = try await phase("galleryRead") { try await store.peopleGallery(availableLibraryPaths: paths) }
+        _ = try await phase("galleryRead") { try await store.windowReads.peopleGallery(availableLibraryPaths: paths) }
         // Its parts, each alone: the people with their covers, the anchors, the unchecked tally.
         let reader = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         _ = try await phase("galleryPeople") { try await reader.read { try Row.fetchAll($0, sql: PeopleGallerySQL.people).count } }
         _ = try await phase("galleryAnchors") { try await reader.read { try Row.fetchAll($0, sql: PeopleGallerySQL.anchors).count } }
         _ = try await phase("galleryHasFaces") { try await reader.read { try Bool.fetchOne($0, sql: PeopleGallerySQL.hasFaces) } }
-        _ = try await phase("galleryUnchecked") { try await store.uncheckedForFaces(availableLibraryPaths: paths) }
+        _ = try await phase("galleryUnchecked") { try await store.backgroundReads.uncheckedForFaces(availableLibraryPaths: paths) }
         try reader.close()
         // One face read again: a new vector row for it, as a new reading writes.
         let writer = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
@@ -692,16 +692,16 @@ struct PeopleStoreTests {
     @Test func aVectorWrittenAfterTheSnapshotIsKept() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
         try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
-        let snapshot = try await library.store.peopleSnapshot()
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
         #expect(snapshot.vectorHorizon == snapshot.faces.first?.vector)
         // A reading lands between the snapshot's read and the vectors' read.
         try await library.readFaces([library.result(for: "b.jpg", faces: [Self.face(x: 0.3)])])
         var vectors = FaceVectors()
-        try await vectors.add(library.store.faceEmbeddings(after: 0, limit: FaceVectors.pageSize))
+        try await vectors.add(library.store.backgroundReads.faceEmbeddings(after: 0, limit: FaceVectors.pageSize))
         #expect(vectors.count == 2)
         vectors.keep(snapshot.vectors, through: snapshot.vectorHorizon)
         #expect(vectors.count == 2, "the newer reading stays")
-        let next = try await library.store.peopleSnapshot()
+        let next = try await library.store.backgroundReads.peopleSnapshot()
         #expect(next.faces.allSatisfy { vectors.vector($0.vector) != nil })
         await library.store.shutdown()
     }
@@ -721,7 +721,7 @@ struct PeopleStoreTests {
         var plan = FaceAssignmentPlan()
         plan.newPeople = [[a, b]]
         #expect(try await library.store.applyAssignment(plan) == 0)
-        #expect(try await library.store.peopleSnapshot().people.map(\.name) == ["Sam", "Ian"])
+        #expect(try await library.store.backgroundReads.peopleSnapshot().people.map(\.name) == ["Sam", "Ian"])
         await library.store.shutdown()
     }
 
@@ -734,7 +734,7 @@ struct PeopleStoreTests {
         try await library.readFaces([library.result(for: "0.jpg", faces: [Self.face(x: 0.1)])])
         var changes = await library.store.changeNotifications().makeAsyncIterator()
         func date(_ name: String, _ seconds: Double) async throws {
-            let asset = try #require(try await library.store.mediaAssets(for: [library.id(name)])[library.id(name)])
+            let asset = try #require(try await library.store.windowReads.mediaAssets(for: [library.id(name)])[library.id(name)])
             _ = await library.store.applyEnrichmentBatch([EnrichmentResult(
                 id: library.id(name),
                 metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: seconds))]),
@@ -792,7 +792,7 @@ struct PeopleStoreTests {
         let libraries = try #require(await library.store.loadedLibraries())
         var present = names
         for step in 0 ..< 40 {
-            let snapshot = try await library.store.peopleSnapshot()
+            let snapshot = try await library.store.backgroundReads.peopleSnapshot()
             let faces = snapshot.faces.map(\.id)
             let people = snapshot.people.map(\.id)
             switch random.next() % 9 {
@@ -831,8 +831,8 @@ struct PeopleStoreTests {
                 _ = try await waitForCatalogStoreState(library.store) { !$0.isScanning && Set($0.testAssets.map(\.relativePath.rawValue)) == left }
             }
             try await owner.settle()
-            let truth = try await library.store.peopleSnapshot()
-            let gallery = try #require(try await library.store.peopleGallery(availableLibraryPaths: [library.rootPath]))
+            let truth = try await library.store.backgroundReads.peopleSnapshot()
+            let gallery = try #require(try await library.store.windowReads.peopleGallery(availableLibraryPaths: [library.rootPath]))
             let computed = truth.computedGalleryFacts
             #expect(gallery.people.allSatisfy { $0.facts != nil }, "step \(step)")
             #expect(Dictionary(uniqueKeysWithValues: gallery.people.compactMap { person in person.facts.map { (person.id, $0) } }) == computed, "step \(step)")

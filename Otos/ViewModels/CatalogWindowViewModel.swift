@@ -1689,7 +1689,7 @@ extension CatalogWindowViewModel {
             derivedFilesTask = Task(priority: .background) { [catalogStore, loadAdmission] in
                 do {
                     try await loadAdmission.run(.derivedFolder) {
-                        try await catalogStore.reconcileDerivedFilesIfOwed()
+                        try await catalogStore.backgroundReads.reconcileDerivedFilesIfOwed()
                     }
                 } catch is CancellationError {
                     // Refused at teardown: the next launch looks again.

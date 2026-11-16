@@ -21,8 +21,8 @@ struct LivePhotoTests {
             #expect(try await library.visible() == ["a/IMG_1.HEIC", "a/IMG_2.JPG"])
             #expect(try await library.visibleCount() == 2)
             #expect(try await library.visible(kinds: [.video]).isEmpty)
-            #expect(try await library.store.livePhotoMotion(of: library.id("a/IMG_1.HEIC")) == library.id("a/IMG_1.MOV"))
-            #expect(try await library.store.livePhotoMotion(of: library.id("a/IMG_2.JPG")) == nil)
+            #expect(try await library.store.windowReads.livePhotoMotion(of: library.id("a/IMG_1.HEIC")) == library.id("a/IMG_1.MOV"))
+            #expect(try await library.store.windowReads.livePhotoMotion(of: library.id("a/IMG_2.JPG")) == nil)
         }
     }
 
@@ -80,7 +80,7 @@ struct LivePhotoTests {
             try await library.enrich("IMG_7.HEIC", kind: .image, contentIdentifier: identifier)
             try await library.enrich("IMG_7.MOV", kind: .video, contentIdentifier: identifier)
 
-            let items = try await library.store.mediaTrashItems(for: [library.id("IMG_7.HEIC")])
+            let items = try await library.store.windowReads.mediaTrashItems(for: [library.id("IMG_7.HEIC")])
 
             let members = try #require(items.first).members
             #expect(members.map(\.relativePath.rawValue).sorted() == ["IMG_7.HEIC", "IMG_7.MOV"])
@@ -96,7 +96,7 @@ struct LivePhotoTests {
             try await library.enrich("IMG_8.HEIC", kind: .image, contentIdentifier: identifier)
             try await library.enrich("MOTION_8.MOV", kind: .video, contentIdentifier: identifier)
 
-            let facts = try #require(await library.store.planningMedia(for: library.rootPath))
+            let facts = try #require(await library.store.windowReads.planningMedia(for: library.rootPath))
             let motion = try #require(facts.first { $0.relativePath.rawValue == "MOTION_8.MOV" })
             #expect(motion.livePhotoStillPath?.rawValue == "IMG_8.HEIC")
 
@@ -173,12 +173,12 @@ struct LivePhotoTests {
                 filter: MediaFilter(kinds: kinds)
             )
             return try await Set(
-                store.orderedAssetIDs(for: descriptor, availableLibraryPaths: [rootPath]).ids.map(\.relativePath.rawValue)
+                store.windowReads.orderedAssetIDs(for: descriptor, availableLibraryPaths: [rootPath]).ids.map(\.relativePath.rawValue)
             )
         }
 
         func visibleCount() async throws -> Int {
-            try await store.visibleAssetCount(for: .library(rootPath), availableLibraryPaths: [rootPath])
+            try await store.windowReads.visibleAssetCount(for: .library(rootPath), availableLibraryPaths: [rootPath])
         }
     }
 

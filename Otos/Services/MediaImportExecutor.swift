@@ -362,7 +362,7 @@ actor MediaImportExecutor {
         // run's outcome stands on what the run itself observed.
         let batchIntegrityMismatch: Bool
         do {
-            let storedBatchCount = try await store.importBatchAssetCount(batch)
+            let storedBatchCount = try await store.backgroundReads.importBatchAssetCount(batch)
             batchIntegrityMismatch = storedBatchCount != entryTotals.publishedCount
             OtosLog.catalog.notice(
                 "op=mediaOperation.batch phase=verified run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public) skippedPreexisting=\(plan.totals.skipCount, privacy: .public) skippedForeign=\(entryTotals.skippedForeignCount, privacy: .public) failed=\(entryTotals.failedCount, privacy: .public) blocked=\(plan.totals.blockedCount, privacy: .public)"
@@ -716,7 +716,7 @@ actor MediaImportExecutor {
             heldContent = []
         } else {
             do {
-                heldContent = try await store.librariesHoldContent(matchedDigests)
+                heldContent = try await store.backgroundReads.librariesHoldContent(matchedDigests)
             } catch {
                 OtosLog.mediaIO.errorOperation("import.erase", phase: "contentRecheckFailed", fields: [
                     "run": context.runID,
@@ -1695,7 +1695,7 @@ actor MediaImportExecutor {
         let companions = Self.publishCompanions(request)
         let products: ImportProductsResult
         do {
-            products = try await request.store.settleImportedAsset(
+            products = try await request.store.backgroundReads.settleImportedAsset(
                 operation: operation,
                 byteSize: settledByteSize,
                 contentModifiedAt: settledModified,

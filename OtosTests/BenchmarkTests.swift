@@ -134,7 +134,7 @@ struct BenchmarkTests {
         // On This Day's publication (ADR 0049) on the day a year after the fixture's, where
         // earlier years hold the day, and on a day a month after it, where none does and the
         // read falls back to earlier months: the scope's match, order and anniversaries.
-        let allMedia = try await store.orderedAssetIDs(
+        let allMedia = try await store.windowReads.orderedAssetIDs(
             for: .default,
             availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries)
         )
@@ -233,7 +233,7 @@ struct BenchmarkTests {
         // Its pure pairing step alone: every still without capture metadata tested against
         // its aspect bucket.
         let paths = CatalogWindowPolicy.availablePaths(from: libraries)
-        let candidates = try await store.samePhotoCandidates(availableLibraryPaths: paths)
+        let candidates = try await store.backgroundReads.samePhotoCandidates(availableLibraryPaths: paths)
         try await Benchmark.measure("duplicates.samePhotoPairs") {
             #expect(!SamePhotoPolicy.candidatePairs(candidates, excluding: [], reach: .acrossLibraries).isEmpty)
         }
@@ -244,7 +244,7 @@ struct BenchmarkTests {
         // builds the gallery and finds assignment's inputs unchanged.
         try await Self.addFaces(to: store, faces: 10000, people: 20, confirmedEach: 50)
         try await Benchmark.measure("people.snapshot.10k", iterations: 3) {
-            let snapshot = try await store.peopleSnapshot()
+            let snapshot = try await store.backgroundReads.peopleSnapshot()
             #expect(snapshot.faces.count == 10000)
         }
         let people = PeopleAssignment(store: store)
@@ -254,7 +254,7 @@ struct BenchmarkTests {
         }
         // The window's read of the gallery, which People's first paint waits for.
         try await Benchmark.measure("people.gallery.10k", iterations: 3) {
-            let gallery = try await store.peopleGallery(availableLibraryPaths: paths)
+            let gallery = try await store.windowReads.peopleGallery(availableLibraryPaths: paths)
             #expect((gallery?.people.count ?? 0) >= 20)
         }
 
@@ -371,7 +371,7 @@ struct BenchmarkTests {
             try await store.applySourceListingChanges(measured, scan: scan)
         }
         await store.endSourceListing(scan: scan)
-        let kept = try await store.sourceItemRows(["asset-010000", "asset-019999"], in: rootPath)
+        let kept = try await store.backgroundReads.sourceItemRows(["asset-010000", "asset-019999"], in: rootPath)
         #expect(kept.count == 2)
         await store.shutdown()
     }
@@ -443,24 +443,24 @@ struct BenchmarkTests {
         }
         await store.endSourceListing(scan: scan)
         try await store.recordMirror(account: account, library: library, serverPrefix: prefix)
-        let first = try await store.pairMirroredCopies(account: account)
+        let first = try await store.backgroundReads.pairMirroredCopies(account: account)
         #expect(first == count)
 
         try await Benchmark.measure("immich.mirror.pass.of16k") {
-            let paired = try await store.pairMirroredCopies(account: account)
+            let paired = try await store.backgroundReads.pairMirroredCopies(account: account)
             #expect(paired == 0)
         }
         // All Media over 16,000 photos of two copies each (ADR 0054): with both roots the
         // stored best copy decides every row; with the library away each account copy asks
         // the digest index whether a better copy is reachable.
         try await Benchmark.measure("copies.order.allMedia.of16k") {
-            let ids = try await store.orderedAssetIDs(
+            let ids = try await store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .allMedia), availableLibraryPaths: [library, account]
             ).ids
             #expect(ids.count == count)
         }
         try await Benchmark.measure("copies.order.libraryAway.of16k") {
-            let ids = try await store.orderedAssetIDs(
+            let ids = try await store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .allMedia), availableLibraryPaths: [account]
             ).ids
             #expect(ids.count == count)

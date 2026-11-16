@@ -171,7 +171,7 @@ actor ImmichCatalogSync {
     private func pairMirrors() async {
         let probes: [MirrorGateway.Probe]
         do {
-            probes = try await store.mirrorProbes(account: rootPath)
+            probes = try await store.backgroundReads.mirrorProbes(account: rootPath)
         } catch {
             OtosLog.catalog.errorOperation("immich.mirror", phase: "probeFailed", fields: [
                 "rootPath": rootPath.rawValue, "error": String(describing: error),
@@ -184,7 +184,7 @@ actor ImmichCatalogSync {
         do {
             // A write walk over every mirrored library: one heavy load at a time.
             _ = try await admission.run(.immichMirror) {
-                try await store.pairMirroredCopies(account: rootPath)
+                try await store.backgroundReads.pairMirroredCopies(account: rootPath)
             }
         } catch is CancellationError {
             return
@@ -242,7 +242,7 @@ actor ImmichCatalogSync {
     private func syncListing(answered: inout Answered) async -> ImmichSyncPassOutcome {
         let owed: SourceResyncDebt?
         do {
-            owed = try await store.sourceResyncOwed(rootPath: rootPath)
+            owed = try await store.backgroundReads.sourceResyncOwed(rootPath: rootPath)
         } catch {
             OtosLog.catalog.errorOperation("catalog.immich.sync", phase: "resyncReadFailed", fields: [
                 "rootPath": rootPath.rawValue, "error": String(describing: error),
@@ -428,7 +428,7 @@ actor ImmichCatalogSync {
         // already has in its still's folder, hidden as its still is. One the catalog does
         // not hold there yet is listed when its still is.
         let alone = Set(batch.motionLines.keys).subtracting(batch.linkedMotions)
-        let existing = try await store.sourceItemRows(alone, in: rootPath)
+        let existing = try await store.backgroundReads.sourceItemRows(alone, in: rootPath)
         let changes = batch.changes(motions: motions, existingMotions: existing)
         if !changes.isEmpty {
             try await store.applySourceListingChanges(changes, scan: scan)
@@ -628,7 +628,7 @@ actor ImmichCatalogSync {
         while true {
             let page: [SourceProductCandidate]
             do {
-                page = try await store.sourceProductCandidates(
+                page = try await store.backgroundReads.sourceProductCandidates(
                     rootPath: rootPath, after: cursor, limit: Self.productPageSize
                 )
             } catch {

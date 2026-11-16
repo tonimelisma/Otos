@@ -17,8 +17,8 @@ struct DerivedFileLifecycleTests {
         let directory = library.directory
         let id = library.id
         // A new catalog's counters are unknown until its first census.
-        #expect(try await store.derivedFolderCounters() == nil)
-        let first = try #require(try await store.reconcileDerivedFilesIfOwed())
+        #expect(try await store.backgroundReads.derivedFolderCounters() == nil)
+        let first = try #require(try await store.backgroundReads.reconcileDerivedFilesIfOwed())
         #expect(first.reason == "countersUnknown")
         try await expectCountersMatchCensus(directory, store)
 
@@ -64,7 +64,7 @@ struct DerivedFileLifecycleTests {
         let directory = library.directory
         let id = library.id
         var store = library.store
-        _ = try await store.reconcileDerivedFilesIfOwed()
+        _ = try await store.backgroundReads.reconcileDerivedFilesIfOwed()
         try await render([id("a.jpg"), id("c.jpg")], store: store, directory: directory)
         try library.delete("c.jpg")
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
@@ -73,7 +73,7 @@ struct DerivedFileLifecycleTests {
 
         // A clean relaunch reads the counters and lists nothing.
         store = try await library.relaunch()
-        guard case .counted = try #require(try await store.reconcileDerivedFilesIfOwed()) else {
+        guard case .counted = try #require(try await store.backgroundReads.reconcileDerivedFilesIfOwed()) else {
             Issue.record("a clean relaunch reconciled")
             return
         }
@@ -91,7 +91,7 @@ struct DerivedFileLifecycleTests {
         await store.shutdown()
 
         store = try await library.relaunch()
-        let outcome = try #require(try await store.reconcileDerivedFilesIfOwed())
+        let outcome = try #require(try await store.backgroundReads.reconcileDerivedFilesIfOwed())
         #expect(outcome.reason == "uncleanExit")
         #expect(outcome.removed?.files[.thumbnail] == 2)
         #expect(outcome.removed?.files[.preview] == 2)
@@ -104,7 +104,7 @@ struct DerivedFileLifecycleTests {
 
         // One reconciliation: the next clean launch lists nothing.
         store = try await library.relaunch()
-        guard case .counted = try #require(try await store.reconcileDerivedFilesIfOwed()) else {
+        guard case .counted = try #require(try await store.backgroundReads.reconcileDerivedFilesIfOwed()) else {
             Issue.record("a launch after a reconciliation and a clean quit reconciled again")
             return
         }
@@ -117,7 +117,7 @@ struct DerivedFileLifecycleTests {
         let library = try await GeneratedLibrary.make((0 ..< 6).map { "p\($0).jpg" })
         let store = library.store
         let directory = library.directory
-        _ = try await store.reconcileDerivedFilesIfOwed()
+        _ = try await store.backgroundReads.reconcileDerivedFilesIfOwed()
         var random = SeededRandom(seed: 0x0715)
         var next = 6
         for _ in 0 ..< 24 {
@@ -167,7 +167,7 @@ struct DerivedFileLifecycleTests {
         let directory = library.directory
         let id = library.id
         var store = library.store
-        _ = try await store.reconcileDerivedFilesIfOwed()
+        _ = try await store.backgroundReads.reconcileDerivedFilesIfOwed()
         try await render([id("a.jpg"), id("b.jpg")], store: store, directory: directory)
         let namedBefore = try await named(store)
         let folder = try #require(store.derivedFolder)
@@ -188,7 +188,7 @@ struct DerivedFileLifecycleTests {
         await store.shutdown()
 
         store = try await library.relaunch()
-        let outcome = try #require(try await store.reconcileDerivedFilesIfOwed())
+        let outcome = try #require(try await store.backgroundReads.reconcileDerivedFilesIfOwed())
         #expect(outcome.reason == "uncleanExit")
         #expect(outcome.removed?.files[.thumbnail] == 1)
         #expect(try listed(directory) == namedBefore)
@@ -206,7 +206,7 @@ struct DerivedFileLifecycleTests {
         let library = try await GeneratedLibrary.make(["a.jpg", "b.jpg"])
         let store = library.store
         let directory = library.directory
-        _ = try await store.reconcileDerivedFilesIfOwed()
+        _ = try await store.backgroundReads.reconcileDerivedFilesIfOwed()
         try await render([library.id("a.jpg"), library.id("b.jpg")], store: store, directory: directory)
         let newRoot = LibraryRootPath(rawValue: library.rootPath.rawValue + "-renamed")
         let moves = ["a.jpg", "b.jpg"].flatMap { name -> [(old: String, new: String)] in
@@ -223,7 +223,7 @@ struct DerivedFileLifecycleTests {
             try folder.journalRenames(moves, db: db)
         }
         try journal.close()
-        try await store.applyPendingDerivedRenames()
+        try await store.applyPendingDerivedRenames(lane: store.backgroundReads.lane)
         #expect(try listed(directory) == Set(moves.map(\.new)))
         try await expectCountersMatchCensus(directory, store)
         await store.shutdown()
@@ -254,7 +254,7 @@ struct DerivedFileLifecycleTests {
 
     /// Renders `ids`: a staged thumbnail and preview each, applied as enrichment applies them.
     private func render(_ ids: [MediaAssetID], store: CatalogStore, directory: URL) async throws {
-        let assets = try await store.mediaAssets(for: ids)
+        let assets = try await store.windowReads.mediaAssets(for: ids)
         let image = try tinyImage()
         var results: [EnrichmentResult] = []
         for id in ids {
@@ -284,7 +284,7 @@ struct DerivedFileLifecycleTests {
 
     private func expectCountersMatchCensus(_ directory: URL, _ store: CatalogStore) async throws {
         let census = try DerivedFileReconciliation.Census(DerivedFileReconciliation.list(directory)).normalized
-        #expect(try await store.derivedFolderCounters() == census)
+        #expect(try await store.backgroundReads.derivedFolderCounters() == census)
     }
 
     /// The derived folder's top-level files (staging is a running write's).
@@ -295,7 +295,7 @@ struct DerivedFileLifecycleTests {
     /// Every derived name the rows hold.
     private func named(_ store: CatalogStore) async throws -> Set<String> {
         let ids = try await catalogStoreTestState(store).testAssets.map(\.id)
-        let details = try await store.mediaTileDetails(for: ids)
+        let details = try await store.windowReads.mediaTileDetails(for: ids)
         return Set(details.values.flatMap { [$0.thumbnailPath, $0.previewPath].compactMap(\.self) })
     }
 

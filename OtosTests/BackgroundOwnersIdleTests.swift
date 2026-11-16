@@ -10,7 +10,8 @@ import Testing
 /// held, PR #809).
 ///
 /// Every owner runs on a generated catalog of the owner's shape (`RunningBackgroundOwners`) until a
-/// whole window passes with no change and no write, and then one more window is measured,
+/// whole window passes with no change, no write and no owner still walking what it owes, and
+/// then one more window is measured,
 /// with an Immich sync's mirror pass in it as a sync would run one. What each owner did in it
 /// is read from the Store's own use (`CatalogStore.use()`: transactions by connection role and
 /// operation, change notifications by kind), so a failure names the operation.
@@ -38,8 +39,8 @@ struct BackgroundOwnersIdleTests {
         let owners = try RunningBackgroundOwners(store: store, thumbnails: directory.appending(path: "Thumbnails", directoryHint: .isDirectory))
         await owners.start(store: store)
         // An account's sync probes for its mirrors and pairs them once a pass.
-        _ = try await store.mirrorProbes(account: catalog.account)
-        _ = try await store.pairMirroredCopies(account: catalog.account)
+        _ = try await store.backgroundReads.mirrorProbes(account: catalog.account)
+        _ = try await store.backgroundReads.pairMirroredCopies(account: catalog.account)
 
         var settledAfter: Int?
         var lastWindow = IdleUse(from: store.use(), to: store.use())
@@ -48,14 +49,18 @@ struct BackgroundOwnersIdleTests {
             // time: measurement — one window of the settle (`window`).
             try await Task.sleep(for: Self.window)
             lastWindow = IdleUse(from: before, to: store.use())
-            if lastWindow.changes == 0, lastWindow.writes.isEmpty {
+            // Settled is the idle period's own bar: an owner still draining its backlog reads
+            // more than `readsPerOperation` in a window, and an owner whose reads wait behind it
+            // for a background turn has not yet written what it owes.
+            let walking = lastWindow.reads.filter { $0.value > Self.readsPerOperation }
+            if lastWindow.changes == 0, lastWindow.writes.isEmpty, walking.isEmpty {
                 settledAfter = windowIndex
                 break
             }
         }
 
         let before = store.use()
-        _ = try await store.pairMirroredCopies(account: catalog.account)
+        _ = try await store.backgroundReads.pairMirroredCopies(account: catalog.account)
         // time: measurement — the idle period (`idle`).
         try await Task.sleep(for: Self.idle)
         let idle = IdleUse(from: before, to: store.use())

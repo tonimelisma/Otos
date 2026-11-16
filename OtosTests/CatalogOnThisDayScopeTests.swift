@@ -50,7 +50,7 @@ struct CatalogOnThisDayScopeTests {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
         }
         for (name, instant) in captured {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id(name)])[id(name)])
             _ = await store.applyEnrichmentBatch([
                 EnrichmentResult(
                     id: id(name),
@@ -66,17 +66,17 @@ struct CatalogOnThisDayScopeTests {
         let scope = SidebarSelection.onThisDay(Self.today)
 
         // The user's sort is by name; the scope plays newest first regardless.
-        let ordered = try await store.orderedAssetIDs(
+        let ordered = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: scope, sort: .filenameAscending),
             availableLibraryPaths: available
         )
-        let videos = try await store.orderedAssetIDs(
+        let videos = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: scope, filter: MediaFilter(kinds: [.video])),
             availableLibraryPaths: available
         )
-        let count = try await store.visibleAssetCount(for: scope, availableLibraryPaths: available)
-        let cataloged = try await store.catalogedAssetCount(for: scope)
-        let anotherDay = try await store.orderedAssetIDs(
+        let count = try await store.windowReads.visibleAssetCount(for: scope, availableLibraryPaths: available)
+        let cataloged = try await store.windowReads.catalogedAssetCount(for: scope)
+        let anotherDay = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(CalendarDay(year: 2026, month: 6, day: 1))),
             availableLibraryPaths: available
         )
@@ -129,7 +129,7 @@ struct CatalogOnThisDayScopeTests {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
         }
         for (name, instant) in captured {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id(name)])[id(name)])
             _ = await store.applyEnrichmentBatch([
                 EnrichmentResult(
                     id: id(name),
@@ -146,23 +146,23 @@ struct CatalogOnThisDayScopeTests {
         let december = CalendarDay(year: 2026, month: 12, day: 9)
         let videos = MediaFilter(kinds: [.video])
 
-        let yearsOrdered = try await store.orderedAssetIDs(
+        let yearsOrdered = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: november),
             availableLibraryPaths: available
         )
-        let yearsVideos = try await store.orderedAssetIDs(
+        let yearsVideos = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: november, filter: videos),
             availableLibraryPaths: available
         )
-        let monthsOrdered = try await store.orderedAssetIDs(
+        let monthsOrdered = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(december)),
             availableLibraryPaths: available
         )
-        let monthsVideos = try await store.orderedAssetIDs(
+        let monthsVideos = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(december), filter: videos),
             availableLibraryPaths: available
         )
-        let monthsCount = try await store.visibleAssetCount(for: .onThisDay(december), availableLibraryPaths: available)
+        let monthsCount = try await store.windowReads.visibleAssetCount(for: .onThisDay(december), availableLibraryPaths: available)
         await store.shutdown()
 
         // 9 November 2025 is a year before 9 November 2026: years, and only years.
@@ -213,7 +213,7 @@ struct CatalogOnThisDayScopeTests {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
         }
         for (name, instant) in captured {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id(name)])[id(name)])
             _ = await store.applyEnrichmentBatch([
                 EnrichmentResult(
                     id: id(name),
@@ -227,7 +227,7 @@ struct CatalogOnThisDayScopeTests {
         }
         _ = try await store.setMediaChoice(.liked, for: [id("2023-morning.jpg")])
         _ = try await store.setMediaChoice(.disliked, for: [id("2022-disliked.jpg")])
-        let screen = try #require(try await store.searchEmbeddingCandidates(limit: 10).candidates.first { $0.id == id("2023-screen.png") })
+        let screen = try #require(try await store.backgroundReads.searchEmbeddingCandidates(limit: 10).candidates.first { $0.id == id("2023-screen.png") })
         var changes = await store.changeNotifications().makeAsyncIterator()
         let vector = [Float](repeating: 0, count: SearchEmbedding.dimensions)
         let written = try await store.applySearchEmbeddings([
@@ -237,7 +237,7 @@ struct CatalogOnThisDayScopeTests {
         // The label takes the photo out of On This Day, so the scope is read again.
         #expect(await changes.next() == .changed([.searchContent, .searchReadings]))
 
-        let ordered = try await store.orderedAssetIDs(
+        let ordered = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(Self.today)),
             availableLibraryPaths: [rootPath]
         )
@@ -274,7 +274,7 @@ struct CatalogOnThisDayScopeTests {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
         }
         func render(_ name: String, thumbnail: String, instant: Date) async throws {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id(name)])[id(name)])
             _ = await store.applyEnrichmentBatch([
                 EnrichmentResult(
                     id: id(name),
@@ -291,7 +291,7 @@ struct CatalogOnThisDayScopeTests {
         }
         let vector = [Float](repeating: 0, count: SearchEmbedding.dimensions)
         let labels = ["rerendered.png": ["screenshot"], "document.png": ["document"], "screen.png": ["screenshot"], "photo.jpg": ["people"]]
-        let candidates = try await store.searchEmbeddingCandidates(limit: 10).candidates.filter { labels[$0.id.relativePath.rawValue] != nil }
+        let candidates = try await store.backgroundReads.searchEmbeddingCandidates(limit: 10).candidates.filter { labels[$0.id.relativePath.rawValue] != nil }
         #expect(candidates.count == labels.count)
         let written = try await store.applySearchEmbeddings(candidates.map { candidate in
             SearchEmbeddingResult(
@@ -302,7 +302,7 @@ struct CatalogOnThisDayScopeTests {
         #expect(written.count == labels.count)
         let descriptor = CatalogQueryDescriptor(scope: .onThisDay(Self.today))
         func onThisDay() async throws -> [MediaAssetID] {
-            try await store.orderedAssetIDs(for: descriptor, availableLibraryPaths: [rootPath]).ids
+            try await store.windowReads.orderedAssetIDs(for: descriptor, availableLibraryPaths: [rootPath]).ids
         }
         #expect(try await onThisDay() == [id("unread.jpg"), id("photo.jpg")])
 
@@ -320,7 +320,7 @@ struct CatalogOnThisDayScopeTests {
         try #require(try await onThisDay() == [id("rerendered.png"), id("unread.jpg"), id("photo.jpg")])
 
         // The new picture read as a screenshot leaves again, and that write is a change.
-        let reread = try #require(try await store.searchEmbeddingCandidates(limit: 10).candidates.first { $0.id == id("rerendered.png") })
+        let reread = try #require(try await store.backgroundReads.searchEmbeddingCandidates(limit: 10).candidates.first { $0.id == id("rerendered.png") })
         changes = await store.changeNotifications().makeAsyncIterator()
         _ = try await store.applySearchEmbeddings([
             SearchEmbeddingResult(id: reread.id, source: reread.source, embedding: vector, confidentLabels: ["screenshot"]),
@@ -356,7 +356,7 @@ struct CatalogOnThisDayScopeTests {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
         }
         for (name, kind, instant) in captured {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id(name)])[id(name)])
             _ = await store.applyEnrichmentBatch([
                 EnrichmentResult(
                     id: id(name),
@@ -371,7 +371,7 @@ struct CatalogOnThisDayScopeTests {
         }
         _ = try await store.setMediaChoice(.disliked, for: [id("DSC1.JPG"), id("DSC2.ARW")])
 
-        let ordered = try await store.orderedAssetIDs(
+        let ordered = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(Self.today)),
             availableLibraryPaths: [rootPath]
         )
@@ -407,7 +407,7 @@ struct CatalogOnThisDayScopeTests {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
         }
         for (name, kind, instant) in captured {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id(name)])[id(name)])
             _ = await store.applyEnrichmentBatch([
                 EnrichmentResult(
                     id: id(name),
@@ -424,12 +424,12 @@ struct CatalogOnThisDayScopeTests {
         let scope = SidebarSelection.onThisDay(Self.today)
         let available: Set<LibraryRootPath> = [rootPath]
 
-        let disliked = try await store.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: available)
-        let dislikedCount = try await store.visibleAssetCount(for: scope, availableLibraryPaths: available)
-        let dislikedCataloged = try await store.catalogedAssetCount(for: scope)
+        let disliked = try await store.windowReads.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: available)
+        let dislikedCount = try await store.windowReads.visibleAssetCount(for: scope, availableLibraryPaths: available)
+        let dislikedCataloged = try await store.windowReads.catalogedAssetCount(for: scope)
 
         _ = try await store.setMediaChoice(.liked, for: [id("DSC1.JPG")])
-        let liked = try await store.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: available)
+        let liked = try await store.windowReads.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: available)
         await store.shutdown()
 
         // The months' match: the 9th of October, not an empty 2023. The pair's 9 November
@@ -475,7 +475,7 @@ struct CatalogOnThisDayScopeTests {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: name))
         }
         for (name, kind, instant) in captured {
-            let asset = try #require(try await store.mediaAssets(for: [id(name)])[id(name)])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id(name)])[id(name)])
             _ = await store.applyEnrichmentBatch([
                 EnrichmentResult(
                     id: id(name),
@@ -491,12 +491,12 @@ struct CatalogOnThisDayScopeTests {
         _ = try await store.setMediaChoice(.disliked, for: [id("DSC1.JPG")])
         let scope = SidebarSelection.onThisDay(Self.today)
         let rawOnly = MediaFilter(kinds: [.raw])
-        let filtered = try await store.orderedAssetIDs(
+        let filtered = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: scope, filter: rawOnly), availableLibraryPaths: [rootPath]
         )
-        let unfiltered = try await store.visibleAssetCount(for: scope, availableLibraryPaths: [rootPath])
-        let cataloged = try await store.catalogedAssetCount(for: scope)
-        let filteredCount = try await store.visibleAssetCount(for: scope, filter: rawOnly, availableLibraryPaths: [rootPath])
+        let unfiltered = try await store.windowReads.visibleAssetCount(for: scope, availableLibraryPaths: [rootPath])
+        let cataloged = try await store.windowReads.catalogedAssetCount(for: scope)
+        let filteredCount = try await store.windowReads.visibleAssetCount(for: scope, filter: rawOnly, availableLibraryPaths: [rootPath])
         await store.shutdown()
 
         #expect(filtered.ids.isEmpty)

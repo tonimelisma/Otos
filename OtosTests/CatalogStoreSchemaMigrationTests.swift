@@ -1509,11 +1509,11 @@ struct CatalogStoreSchemaMigrationTests {
             ]
         )
 
-        let batches = try await store.importBatches(counting: .every)
+        let batches = try await store.windowReads.importBatches(counting: .every)
         #expect(batches.map(\.batchID) == [newer, older])
         #expect(batches.map(\.photoCount) == [2, 1])
 
-        let newerIDs = try await store.assetIDs(inImportBatch: newer)
+        let newerIDs = try await store.windowReads.assetIDs(inImportBatch: newer)
         #expect(Set(newerIDs.map(\.relativePath.rawValue)) == ["b.jpg", "c.jpg"])
     }
 
@@ -1560,7 +1560,7 @@ struct CatalogStoreSchemaMigrationTests {
         ])
         #expect(outcome == .applied(count: 1))
 
-        let wall = try await store.captureWall(for: id)
+        let wall = try await store.windowReads.captureWall(for: id)
         #expect(wall?.compact == 20_260_710_153_000)
         #expect(wall?.precision == "localWithOffset")
     }

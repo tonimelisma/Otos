@@ -35,24 +35,24 @@ struct CatalogBatchScopeTests {
         let available: Set<LibraryRootPath> = [rootPath]
         let batchScope = SidebarSelection.importBatch(Self.batch)
 
-        let batchIDs = try await store.orderedAssetIDs(
+        let batchIDs = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: batchScope),
             availableLibraryPaths: available
         ).ids
-        let hiddenByFilter = try await store.orderedAssetIDs(
+        let hiddenByFilter = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: batchScope, filter: Self.heifOnly),
             availableLibraryPaths: available
         ).ids
-        let batchVisibleCount = try await store.visibleAssetCount(
+        let batchVisibleCount = try await store.windowReads.visibleAssetCount(
             for: batchScope,
             availableLibraryPaths: available
         )
-        let batchCatalogedCount = try await store.catalogedAssetCount(for: batchScope)
-        let libraryCatalogedCount = try await store.catalogedAssetCount(for: .library(rootPath))
+        let batchCatalogedCount = try await store.windowReads.catalogedAssetCount(for: batchScope)
+        let libraryCatalogedCount = try await store.windowReads.catalogedAssetCount(for: .library(rootPath))
         // The options are the shown row's: the batch offers its clips' type alone, the
         // library every type it holds.
-        let batchOptions = try await store.filterOptions(for: batchScope, availableLibraryPaths: available, placeNameLanguages: [])
-        let options = try await store.filterOptions(for: .library(rootPath), availableLibraryPaths: available, placeNameLanguages: [])
+        let batchOptions = try await store.windowReads.filterOptions(for: batchScope, availableLibraryPaths: available, placeNameLanguages: [])
+        let options = try await store.windowReads.filterOptions(for: .library(rootPath), availableLibraryPaths: available, placeNameLanguages: [])
         await store.shutdown()
 
         #expect(Set(batchIDs.map(\.relativePath.rawValue)) == ["clip-one.mp4", "clip-two.mp4"])

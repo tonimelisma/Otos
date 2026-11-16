@@ -86,7 +86,7 @@ struct ProjectionEnrichmentScaleTests {
 
         let baselineOrderQueries = await projection.orderQueryCount
         let ids = try #require(settled.last?.mediaGrid.orderedAssetIDs)
-        let assetsByID = try await store.mediaAssets(for: ids)
+        let assetsByID = try await store.windowReads.mediaAssets(for: ids)
 
         // A storm of small detail-only batches — effective ordering/scope facts
         // unchanged — against a real on-disk database under WAL write pressure.

@@ -12,7 +12,7 @@ struct CatalogStoreEditRecipeTests {
     @Test func savingARecipeIncrementsItsRevisionAndReportsTheOneItReplaced() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
-            #expect(try await library.store.editRecipe(for: id) == nil)
+            #expect(try await library.store.windowReads.editRecipe(for: id) == nil)
 
             let first = try await library.store.setEditRecipe(EditRecipe(exposure: 1), for: id)
             #expect(first.exists)
@@ -29,7 +29,7 @@ struct CatalogStoreEditRecipeTests {
             #expect(unchanged.exists)
             #expect(unchanged.saved == nil)
             #expect(
-                try await library.store.editRecipe(for: id)
+                try await library.store.windowReads.editRecipe(for: id)
                     == StoredEditRecipe(recipe: EditRecipe(exposure: 1, contrast: 20), revision: 2)
             )
         }
@@ -67,7 +67,7 @@ struct CatalogStoreEditRecipeTests {
             let result = try await library.store.setEditRecipe(.neutral, for: library.ids[0])
             #expect(result.exists)
             #expect(result.saved == nil)
-            #expect(try await library.store.editRecipe(for: library.ids[0]) == nil)
+            #expect(try await library.store.windowReads.editRecipe(for: library.ids[0]) == nil)
         }
     }
 
@@ -82,7 +82,7 @@ struct CatalogStoreEditRecipeTests {
             )
 
             #expect(applied)
-            let detail = try #require(try await library.store.mediaTileDetails(for: [id])[id])
+            let detail = try #require(try await library.store.windowReads.mediaTileDetails(for: [id])[id])
             #expect(detail.renderedRevision == 1)
             #expect(detail.editRecipe == EditRecipe(exposure: 1))
             let thumbnail = try #require(detail.thumbnailPath)
@@ -107,7 +107,7 @@ struct CatalogStoreEditRecipeTests {
                     atPath: library.thumbnailDirectory.appending(path: staged.stagedRelativePath).path
                 ))
             }
-            let detail = try #require(try await library.store.mediaTileDetails(for: [id])[id])
+            let detail = try #require(try await library.store.windowReads.mediaTileDetails(for: [id])[id])
             #expect(detail.renderedRevision == 0)
         }
     }
@@ -147,7 +147,7 @@ struct CatalogStoreEditRecipeTests {
 
             #expect(await library.store.applyEnrichmentBatch([enriched(editRevision: 0)]) == .applied(count: 0))
             #expect(await library.store.applyEnrichmentBatch([enriched(editRevision: 1)]) == .applied(count: 1))
-            #expect(try await library.store.mediaTileDetails(for: [id])[id]?.renderedRevision == 1)
+            #expect(try await library.store.windowReads.mediaTileDetails(for: [id])[id]?.renderedRevision == 1)
         }
     }
 

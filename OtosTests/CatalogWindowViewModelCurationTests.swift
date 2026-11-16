@@ -22,7 +22,7 @@ struct CatalogWindowViewModelCurationTests {
             model.submitMediaChoice(.disliked, origin: .keyboard)
 
             try await waitUntil { model.hasSettledMediaChoices }
-            let choice = try await library.store.mediaAssets(for: library.ids)[library.ids[0]]?.mediaChoice
+            let choice = try await library.store.windowReads.mediaAssets(for: library.ids)[library.ids[0]]?.mediaChoice
             #expect(choice == .disliked)
             #expect(model.gridSelection.selection == [library.ids[0]])
         }
@@ -41,7 +41,7 @@ struct CatalogWindowViewModelCurationTests {
 
             try await waitUntil { model.hasSettledMediaChoices }
             #expect(model.gridSelection.selection == [library.ids[1]])
-            let choice = try await library.store.mediaAssets(for: library.ids)[library.ids[0]]?.mediaChoice
+            let choice = try await library.store.windowReads.mediaAssets(for: library.ids)[library.ids[0]]?.mediaChoice
             #expect(choice == .notRated)
         }
     }
@@ -58,7 +58,7 @@ struct CatalogWindowViewModelCurationTests {
             model.submitMediaChoice(.liked, origin: .keyboard)
 
             try await waitUntil { model.hasSettledMediaChoices }
-            let choice = try await library.store.mediaAssets(for: library.ids)[library.ids[1]]?.mediaChoice
+            let choice = try await library.store.windowReads.mediaAssets(for: library.ids)[library.ids[1]]?.mediaChoice
             #expect(choice == .liked)
             #expect(model.gridSelection.selection == [library.ids[1]])
         }

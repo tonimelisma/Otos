@@ -26,7 +26,7 @@ struct CatalogStoreDayBucketTests {
         let olderDate = Date(timeIntervalSince1970: 1_700_000_000)
         let newerDate = Date(timeIntervalSince1970: 1_700_300_000) // ~3.5 days later, distinct day bucket
         for (id, date) in [(olderID, olderDate), (newerID, newerDate)] {
-            let asset = try #require(try await store.mediaAssets(for: [id])[id])
+            let asset = try #require(try await store.windowReads.mediaAssets(for: [id])[id])
             let enrichment = EnrichmentResult(
                 id: id,
                 metadata: .absoluteCapture(instant: date),
@@ -39,11 +39,11 @@ struct CatalogStoreDayBucketTests {
         }
 
         let available: Set<LibraryRootPath> = [rootPath]
-        let byDate = try await store.orderedAssetIDs(
+        let byDate = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia, sort: .dateNewest),
             availableLibraryPaths: available
         )
-        let byName = try await store.orderedAssetIDs(
+        let byName = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia, sort: .filenameAscending),
             availableLibraryPaths: available
         )

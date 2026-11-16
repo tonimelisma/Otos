@@ -50,7 +50,7 @@ actor LibraryReorganizationRunner {
     /// (or was stuck rolling back) resumes its rollback. Every resolved component
     /// releases its lease; a component still stuck keeps the root under it.
     nonisolated static func recoverJournal(store: CatalogStore) async throws {
-        let components = try await store.activeReorganizationComponents()
+        let components = try await store.backgroundReads.activeReorganizationComponents()
         for component in components {
             let root = component.libraryRootPath
             let lease: RootNamespaceMutationLease
@@ -93,7 +93,7 @@ actor LibraryReorganizationRunner {
                 : await ReorganizationExecutor.executeComponent(component, rootURL: rootURL, store: store)
             if case .filesystemComplete = forward {
                 do {
-                    try await store.settleReorganizationComponent(key: component.componentKey)
+                    try await store.backgroundReads.settleReorganizationComponent(key: component.componentKey)
                     return true
                 } catch {
                     OtosLog.catalog.errorOperation("reorganization.settle", phase: "failed", fields: [
@@ -113,7 +113,7 @@ actor LibraryReorganizationRunner {
     private nonisolated static func rollBack(_ key: ReorganizationComponentKey, store: CatalogStore) async -> Bool {
         let current: ActiveReorganizationComponent?
         do {
-            current = try await store.activeReorganizationComponents().first { $0.componentKey == key }
+            current = try await store.backgroundReads.activeReorganizationComponents().first { $0.componentKey == key }
         } catch {
             OtosLog.catalog.errorOperation("reorganization.rollback", phase: "journalUnreadable", fields: [
                 "key": key.rawValue,
@@ -216,7 +216,7 @@ actor LibraryReorganizationRunner {
             switch await ReorganizationExecutor.executeComponent(journal, rootURL: rootURL, store: store) {
             case .filesystemComplete:
                 do {
-                    try await store.settleReorganizationComponent(key: journal.componentKey)
+                    try await store.backgroundReads.settleReorganizationComponent(key: journal.componentKey)
                     relocatedCount += journal.members.count(where: { $0.kind == .media })
                     continue
                 } catch {
@@ -277,7 +277,7 @@ actor LibraryReorganizationRunner {
     private func memberFacts(
         libraryRoot: LibraryRootPath
     ) async -> [MediaRelativePath: (byteSize: Int64, contentModifiedAt: Date)]? {
-        guard let media = await store.planningMedia(for: libraryRoot) else {
+        guard let media = await store.backgroundReads.planningMedia(for: libraryRoot) else {
             return nil
         }
         var factsByPath: [MediaRelativePath: (byteSize: Int64, contentModifiedAt: Date)] = [:]
@@ -300,7 +300,7 @@ actor LibraryReorganizationRunner {
     }
 
     private func buildReadyPlan(libraryRoot: LibraryRootPath) async -> BuildResult {
-        guard let media = await store.planningMedia(for: libraryRoot),
+        guard let media = await store.backgroundReads.planningMedia(for: libraryRoot),
               let revision = await store.planRevision(for: libraryRoot)
         else {
             return .unavailable(.catalogUnreadable)
