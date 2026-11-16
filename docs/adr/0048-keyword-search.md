@@ -271,6 +271,16 @@ against 77.3, 85 in English for both), and every asset has one.
 - **A scope searched again** is not hashed again: the index keeps the last scope as slots
   until the scope or its memory moves. On the owner's library, hashing 165,000 assets twice a
   query was about 180 ms of each match.
+- **One way memory changes:** the mapped file and the text readings live in
+  `SearchIndexMemory`, whose every method moves the revision in the same synchronous step as
+  its change: replacing the file (a load, a build, a compaction, a file let go), an append the
+  file takes, a slot that dies, a reading. A held file takes an append or loses a slot only
+  through it, so slots kept for a scope at a revision are always slots of the file that
+  answers at that revision. An append is written to the disk before memory takes it, and a
+  compacted file is taken only while memory still holds the file it was copied from as it was
+  copied. Rejected: keying the kept scope on the file's identity and slot count as well, which
+  guards that one cache but leaves an answer's revision unmoved by a change, so a projection
+  holding the answer would not ask again.
 - **Text matching** runs the typed and the English words once when they are the same words.
 - **Answers:** `CatalogProjection` hands it the query's encoding, its facts resolved for the
   pass's now, and the scope's assets, and shows the matches. The index's `changes` stream

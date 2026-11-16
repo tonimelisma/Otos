@@ -24,9 +24,10 @@ struct PhotoSearchIndexTests {
         let assets: [MediaAsset]
     }
 
-    /// A library of two stills whose stored thumbnails are a red and a blue picture, and with
-    /// `broken`, a third, the newest, whose stored thumbnail does not decode.
-    private func makeCatalog(broken: Bool = false, onDisk: Bool = false) async throws -> Catalog {
+    /// A library of two stills whose stored thumbnails are a red and a blue picture, with
+    /// `broken`, a third, the newest, whose stored thumbnail does not decode, and with `green`, a
+    /// still whose thumbnail is a green picture.
+    private func makeCatalog(broken: Bool = false, green: Bool = false, onDisk: Bool = false) async throws -> Catalog {
         let temp = try makeTestDirectory()
         let library = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let thumbnails = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
@@ -40,7 +41,11 @@ struct PhotoSearchIndexTests {
             try writeCatalogStoreFile(library.appending(path: "broken.jpg"), contents: "jpeg broken")
             try Data("not an image".utf8).write(to: thumbnails.appending(path: "broken-thumb.jpg"))
         }
-        let count = broken ? 3 : 2
+        if green {
+            try writeCatalogStoreFile(library.appending(path: "green.jpg"), contents: "jpeg green")
+            try Self.writeJPEG(SearchModelTests.solid(red: 0, green: 1, blue: 0), to: thumbnails.appending(path: "green-thumb.jpg"))
+        }
+        let count = 2 + (broken ? 1 : 0) + (green ? 1 : 0)
         let store = makeTestStore(
             location: onDisk ? .databaseFile(Self.database(in: temp)) : .inMemory,
             scanCadence: .milliseconds(10),
@@ -287,6 +292,88 @@ struct PhotoSearchIndexTests {
         #expect(await index.vectorFileSlots?.slots == slotsBefore + 1)
         #expect(try await store.currentSearchEmbeddings(for: [catalog.red]).count == 1)
         await index.shutdown()
+    }
+
+    /// Counts the namings of a vector file and holds the one a test chose at `gate`.
+    private final class Namings: Sendable {
+        private let count = Mutex(0)
+        let gate = ArrivalGate()
+        private let holding: Int
+
+        /// Holds the `holding`th naming of a file (not of none).
+        init(holding: Int) {
+            self.holding = holding
+        }
+
+        func naming(_ state: SearchVectorFileState?) async {
+            guard state != nil else { return }
+            let naming = count.withLock {
+                $0 += 1
+                return $0
+            }
+            if naming == holding {
+                await gate.arrive()
+            }
+        }
+    }
+
+    /// ADR 0032 rule 1: a compaction writes the live slots into a new file while memory keeps
+    /// answering from the old one, and memory takes the new file in one step with its revision.
+    /// A query answered while the compaction awaits the catalog's naming of the new file reads
+    /// the old file's slots; the next query over the same scope is answered from the new file's
+    /// slots, never from the old file's slot numbers read against the new file's rows, which
+    /// would credit one photo's score to another or run past the smaller file's end.
+    @Test func aQueryAfterACompactionReadsTheNewFilesSlots() async throws {
+        let catalog = try await makeCatalog(green: true)
+        let store = catalog.store
+        // Red, blue and green in that order, one a page: slots 0, 1 and 2.
+        let captures = ["red.jpg": 2_000_000_000.0, "blue.jpg": 1_900_000_000.0, "green.jpg": 1_800_000_000.0]
+        for asset in catalog.assets {
+            let name = asset.id.relativePath.rawValue
+            try await enrich(
+                store, asset, thumbnail: name.replacingOccurrences(of: ".jpg", with: "-thumb.jpg"),
+                captured: Date(timeIntervalSince1970: #require(captures[name]))
+            )
+        }
+        let namings = Namings(holding: 2)
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), pageSize: 1, cutoff: .none,
+            backoff: (.seconds(86400), .seconds(86400)),
+            nameVectorFile: { state in
+                await namings.naming(state)
+                try await store.setSearchVectorFileState(state)
+            },
+            compactionFloor: 1
+        )
+        await index.start()
+        try await waitUntil {
+            let embedded = await index.embeddedCount
+            let answered = await index.answeredEveryRequest
+            return embedded == 3 && answered
+        }
+        let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "a picture")
+        #expect(try await index.matches(query, facts: nil, among: [catalog.blue]).scores.map { Set($0.keys) } == [catalog.blue])
+
+        // Red's thumbnail changes to one that does not decode: its slot dies, a third of the
+        // slots, and the compaction that follows writes blue and green into slots 0 and 1.
+        let red = try #require(catalog.assets.first { $0.id == catalog.red })
+        try Data("not an image".utf8).write(to: catalog.thumbnails.appending(path: "red-thumb-2.jpg"))
+        try await enrich(store, red, thumbnail: "red-thumb-2.jpg", captured: Date(timeIntervalSince1970: 2_000_000_000))
+        await namings.gate.waitForArrivals(1)
+
+        let during = try await index.matches(query, facts: nil, among: [catalog.blue])
+        #expect(during.scores.map { Set($0.keys) } == [catalog.blue])
+        let passes = await index.passesFinished
+        await namings.gate.open()
+        try await waitUntil { await index.passesFinished > passes }
+        #expect(await index.vectorFileSlots?.slots == 2)
+
+        let after = try await index.matches(query, facts: nil, among: [catalog.blue])
+        #expect(after.indexRevision != during.indexRevision)
+        #expect(after.scores.map { Set($0.keys) } == [catalog.blue])
+        await index.shutdown()
+        await store.shutdown()
     }
 
     /// A thumbnail that does not decode is no reading: nothing is recorded, it stays owed, and

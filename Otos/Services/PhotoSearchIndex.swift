@@ -75,7 +75,8 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///   reader for the reading process, `SearchTextReader`) ends the pass's reading: every still
 ///   not read stays owed, and the retry after the backoff reads them in a new session.
 ///
-/// `revision` moves whenever memory gains or loses an embedding or a text reading, and every
+/// `revision` moves whenever memory gains or loses an embedding or a text reading, in the same
+/// synchronous step as the change (`SearchIndexMemory`, the only way memory changes), and every
 /// answer carries the revision it was computed at: the same query over the same scope and
 /// facts at the same revision is the same answer, so a projection holding one need not ask
 /// again (`CatalogProjectionReads.Search`). `changes` yields after it moves, so a projection
@@ -84,6 +85,7 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 /// and returns once it is gone; the still whose reading it cut short stays owed.
 actor PhotoSearchIndex {
     typealias ReadTexts = @Sendable (Set<MediaAssetID>) async throws -> [MediaAssetID: String]
+    typealias NameVectorFile = @Sendable (SearchVectorFileState?) async throws -> Void
 
     private let store: CatalogStore
     private let thumbnailDirectory: URL?
@@ -95,28 +97,34 @@ actor PhotoSearchIndex {
 
     /// Where the vector file lives (`CatalogStore.searchIndexDirectory`).
     private let vectorDirectory: URL
-    /// Every embedding memory holds (`SearchVectorFile`); nil until the first pass has opened
-    /// or built the file.
-    private var vectors: SearchVectorFile?
+    /// Every embedding and text reading memory holds, and the revision that names them
+    /// (`SearchIndexMemory`); changed only through `changeMemory`. Its file is nil until the
+    /// first pass has opened or built one.
+    private var memory = SearchIndexMemory()
     /// The last scope a query was answered among, as rows: one hash per asset when the scope
     /// or memory changes, none while the same scope is searched again.
     private var scoped: ScopedRows?
     private var vocabulary: SearchLabelVocabulary?
-    /// Every non-empty text reading, by asset, folded once for matching
-    /// (`SearchTextReading.folded`).
-    private var texts: [MediaAssetID: String] = [:]
     /// Every current reading memory has taken in, empty ones included: what a reconcile
     /// compares with the catalog's current readings, so a reading with no text is not read
     /// again each pass. Nil until the first text reconcile has read them all.
     private var textsRead: Set<MediaAssetID>?
-    /// Moves with every change to the embeddings and readings in memory (`announce()`), in the
-    /// same step as the change: what an answer is computed from. Never reset, so an equal
-    /// revision means the same memory.
-    private(set) var revision: UInt64 = 0
+    /// Moves with every change to the embeddings and readings in memory, in the same step as
+    /// the change (`SearchIndexMemory`): what an answer is computed from. Never reset, so an
+    /// equal revision means the same memory.
+    var revision: UInt64 {
+        memory.revision
+    }
+
     private let textReader: SearchTextReader
     /// Reads the current text readings of the ids memory lacks: the Store's, unless a test
     /// suspends the read to answer a query at that await.
     private let readTexts: ReadTexts
+    /// Names the vector file in the catalog: the Store's, unless a test suspends a naming to
+    /// answer a query at that await.
+    private let nameVectorFile: NameVectorFile
+    /// Dead slots a compaction waits for (`compactIfOwed`).
+    private let compactionFloor: Int
     private let bundle: Bundle
     /// Runs a build of the vector file one heavy load at a time with the other owners'
     /// (`LoadAdmission`).
@@ -163,9 +171,13 @@ actor PhotoSearchIndex {
         queries: SearchQueryReader? = nil,
         textReader: SearchTextReader = SearchTextReader(),
         readTexts: ReadTexts? = nil,
+        nameVectorFile: NameVectorFile? = nil,
+        compactionFloor: Int = PhotoSearchIndex.compactionFloor,
         admission: LoadAdmission = LoadAdmission(isOpen: true)
     ) {
         self.admission = admission
+        self.nameVectorFile = nameVectorFile ?? { [store] state in try await store.setSearchVectorFileState(state) }
+        self.compactionFloor = compactionFloor
         self.store = store
         self.textReader = textReader
         self.readTexts = readTexts ?? { [store] ids in try await store.currentSearchTexts(for: ids) }
@@ -295,6 +307,7 @@ actor PhotoSearchIndex {
         let start = ContinuousClock.now
         let vocabulary = encoding.embedding == nil ? nil : labelVocabulary()
         let computedAt = revision
+        let vectors = memory.vectors
         let rows = scopedRows(scope)
         var matched: [MediaAssetID: Float]?
         var named: [String] = []
@@ -323,7 +336,7 @@ actor PhotoSearchIndex {
             let typed = SearchTextQuery(encoding.text), english = SearchTextQuery(encoding.pictureText)
             let englishDiffers = english != typed
             let rowOf = vectors?.rowOf
-            for (id, folded) in texts
+            for (id, folded) in memory.texts
                 where (typed.matches(folded: folded) || (englishDiffers && english.matches(folded: folded)))
                 && rows.contains(id, rowOf: rowOf)
             {
@@ -361,9 +374,9 @@ actor PhotoSearchIndex {
         }
         var rows: [Int32] = []
         rows.reserveCapacity(scope.count)
-        var member = [Bool](repeating: false, count: vectors?.slots ?? 0)
+        var member = [Bool](repeating: false, count: memory.vectors?.slots ?? 0)
         var unrowed: Set<MediaAssetID> = []
-        let rowOf = vectors?.rowOf ?? [:]
+        let rowOf = memory.vectors?.rowOf ?? [:]
         for id in scope {
             if let row = rowOf[id] {
                 rows.append(row)
@@ -424,12 +437,12 @@ actor PhotoSearchIndex {
 
     /// The embeddings in memory: what a test waits on.
     var embeddedCount: Int {
-        vectors?.live ?? 0
+        memory.vectors?.live ?? 0
     }
 
     /// The vector file memory maps, and its slots, dead ones included: what a test inspects.
     var vectorFileSlots: (id: UUID, slots: Int)? {
-        vectors.map { ($0.id, $0.slots) }
+        memory.vectors.map { ($0.id, $0.slots) }
     }
 
     /// How the first pass came by the vector file: what a test waits on.
@@ -537,8 +550,8 @@ actor PhotoSearchIndex {
         if !loaded, try await load() == .rebuilt {
             return
         }
-        guard let vectors else { return }
         let current = try await store.currentSearchEmbeddingIDs()
+        guard let vectors = memory.vectors else { return }
         let gone = vectors.rowOf.keys.filter { id in
             current.readRoots.contains(id.libraryRootPath)
                 ? !current.ids.contains(id)
@@ -547,12 +560,10 @@ actor PhotoSearchIndex {
         let missing = current.ids.filter { vectors.rowOf[$0] == nil }
         let added = missing.isEmpty ? [] : try await store.currentSearchEmbeddings(for: Set(missing))
         guard !gone.isEmpty || !added.isEmpty else { return }
-        vectors.remove(gone)
         if !added.isEmpty {
             try await store.addSearchVectorSlots(added.count)
-            try await append(added, to: vectors)
         }
-        announce()
+        try await commit(added, to: vectors, removing: gone)
         await compactIfOwed()
     }
 
@@ -561,18 +572,17 @@ actor PhotoSearchIndex {
     /// whose embedding is no longer current (its asset left, moved, or got a new thumbnail) goes,
     /// and one memory lacks is appended. Reads what the rows named, never the library.
     private func reconcile(_ rows: Set<MediaAssetID>) async throws {
-        guard let vectors, !rows.isEmpty else { return }
+        guard !rows.isEmpty, memory.vectors != nil else { return }
         let current = try await store.currentSearchEmbeddings(for: rows)
+        guard let vectors = memory.vectors else { return }
         let currentIDs = Set(current.map(\.id))
         let gone = rows.filter { vectors.rowOf[$0] != nil && !currentIDs.contains($0) }
         let added = current.filter { vectors.rowOf[$0.id] == nil }
         guard !gone.isEmpty || !added.isEmpty else { return }
-        vectors.remove(gone)
         if !added.isEmpty {
             try await store.addSearchVectorSlots(added.count)
-            try await append(added, to: vectors)
         }
-        announce()
+        try await commit(added, to: vectors, removing: Array(gone))
         await compactIfOwed()
     }
 
@@ -587,11 +597,12 @@ actor PhotoSearchIndex {
             guard let state = try await store.searchVectorFileState() else { throw SearchVectorFileInvalid.missing }
             stateMs = DiagnosticsTiming.milliseconds(since: start)
             let opening = ContinuousClock.now
-            vectors = try await Self.open(directory: vectorDirectory, state: state)
+            let opened = try await Self.open(directory: vectorDirectory, state: state)
+            changeMemory { $0.replaceVectors(with: opened) }
             openMs = DiagnosticsTiming.milliseconds(since: opening)
         } catch let invalid as SearchVectorFileInvalid {
             OtosLog.thumbnails.noticeOperation("search.vectors", phase: "rebuilding", fields: ["reason": invalid.reason])
-            vectors = nil
+            changeMemory { $0.replaceVectors(with: nil) }
             // A build reads every stored vector: one heavy load at a time with the other
             // owners'. Opening a current file reads none and waits for no one.
             try await admission.run(.searchIndex) {
@@ -601,14 +612,13 @@ actor PhotoSearchIndex {
         }
         loaded = true
         loadedFrom = source
-        let slots = vectors?.slots ?? 0
+        let slots = memory.vectors?.slots ?? 0
         let mappedMB = SearchVectorFormat.vectorsLength(slots: slots) / 1_048_576
         OtosLog.thumbnails.noticeOperation("search.index", phase: "loaded", fields: [
             "count": "\(embeddedCount)", "slots": "\(slots)", "mappedMB": "\(mappedMB)", "from": "\(source)",
             "stateMs": "\(stateMs)", "openMs": "\(openMs)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
         ResourceCheckpoint.record("searchIndexLoaded", fields: ["mappedMB": "\(mappedMB)", "from": "\(source)"])
-        announce()
         return source
     }
 
@@ -624,7 +634,7 @@ actor PhotoSearchIndex {
     /// names the file once every byte is on the disk, and memory takes it then. Other files in
     /// the folder are removed. Paid once a model revision, or when a file was lost or cut short.
     private func rebuild() async throws {
-        try await store.setSearchVectorFileState(nil)
+        try await nameVectorFile(nil)
         SearchVectorFile.removeOthers(in: vectorDirectory, keeping: nil)
         let file = try SearchVectorFile.create(directory: vectorDirectory, id: UUID())
         let current = try await store.currentSearchEmbeddingIDs()
@@ -635,8 +645,10 @@ actor PhotoSearchIndex {
             cursor = page.next
         } while cursor != nil
         try await SearchVectorFile.synchronize(file.descriptors)
-        try await store.setSearchVectorFileState(SearchVectorFileState(id: file.id, slots: file.slots))
-        vectors = file
+        try await nameVectorFile(SearchVectorFileState(id: file.id, slots: file.slots))
+        changeMemory {
+            $0.replaceVectors(with: file)
+        }
     }
 
     /// Embeddings a build page reads: measured 32–90 ms a page of 2,000 on the owner's catalog
@@ -644,17 +656,24 @@ actor PhotoSearchIndex {
     /// long.
     static let loadPageSize = 2000
 
-    /// Appends rows the catalog has just committed slots for. A file that cannot take them is
+    /// Appends rows the catalog has just committed slots for to `file`, the one memory holds,
+    /// and lets `gone` go: the bytes are written first, and memory takes the append and the
+    /// removal in one step with its revision (`SearchIndexMemory.changeVectors`), so a query
+    /// during the write answers from the slots memory had. A file that cannot take them is
     /// short of the catalog's count, so it is no longer current: memory lets it go and the next
     /// pass builds a new one.
-    private func append(_ rows: [StoredSearchEmbeddingRow], to file: SearchVectorFile) async throws {
+    private func commit(_ rows: [StoredSearchEmbeddingRow], to file: SearchVectorFile, removing gone: [MediaAssetID] = []) async throws {
         do {
-            try await file.append(rows)
+            let pending = rows.isEmpty ? nil : try file.encode(rows)
+            if let pending {
+                try await file.write(pending)
+            }
+            try changeMemory { try $0.changeVectors(of: file, taking: pending, removing: gone) }
         } catch {
             OtosLog.thumbnails.errorOperation("search.vectors", phase: "appendFailed", fields: [
                 "error": String(describing: error), "rows": "\(rows.count)",
             ])
-            vectors = nil
+            changeMemory { $0.replaceVectors(with: nil) }
             loaded = false
             throw error
         }
@@ -663,17 +682,26 @@ actor PhotoSearchIndex {
     /// Writes the live slots into a new file once dead ones are a quarter of the live and at
     /// least `compactionFloor`: dead slots cost each query their product and the disk their
     /// bytes. The catalog names the new file once its bytes are on the disk; until then the old
-    /// one is current, so a crash at any point leaves one the catalog names. A compaction that
-    /// fails keeps the old file and is logged.
+    /// one is current, so a crash at any point leaves one the catalog names. Memory takes the
+    /// new file, with its revision, only while it still holds the old one as it was copied; one
+    /// that changed meanwhile is let go, and the next pass loads what the catalog names. A
+    /// compaction that fails keeps the old file and is logged.
     private func compactIfOwed() async {
-        guard let old = vectors, old.dead >= Self.compactionFloor, old.dead * 4 >= old.live else { return }
+        guard let old = memory.vectors, old.dead >= compactionFloor, old.dead * 4 >= old.live else { return }
         let start = ContinuousClock.now
+        let copied = (slots: old.slots, live: old.live)
         do {
             let file = try SearchVectorFile.create(directory: vectorDirectory, id: UUID())
             try await file.appendLive(of: old)
             try await SearchVectorFile.synchronize(file.descriptors)
-            try await store.setSearchVectorFileState(SearchVectorFileState(id: file.id, slots: file.slots))
-            vectors = file
+            try await nameVectorFile(SearchVectorFileState(id: file.id, slots: file.slots))
+            guard memory.vectors === old, old.slots == copied.slots, old.live == copied.live else {
+                OtosLog.thumbnails.errorOperation("search.vectors", phase: "compactSuperseded", fields: ["slots": "\(file.slots)"])
+                changeMemory { $0.replaceVectors(with: nil) }
+                loaded = false
+                return
+            }
+            changeMemory { $0.replaceVectors(with: file) }
             SearchVectorFile.removeOthers(in: vectorDirectory, keeping: file.id)
             OtosLog.thumbnails.noticeOperation("search.vectors", phase: "compacted", fields: [
                 "dead": "\(old.dead)", "slots": "\(file.slots)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
@@ -741,7 +769,7 @@ actor PhotoSearchIndex {
         guard let results = await embedder.embed(owed, thumbnailDirectory: thumbnailDirectory) else {
             return nil
         }
-        guard let file = vectors, file.admits(rows: results.count) else {
+        guard let file = memory.vectors, file.admits(rows: results.count) else {
             OtosLog.thumbnails.noticeOperation("search.vectors", phase: "floorReached", fields: [
                 "rows": "\(results.count)",
             ])
@@ -750,8 +778,7 @@ actor PhotoSearchIndex {
         let written = try await store.applySearchEmbeddings(results)
         unread.formUnion(Set(owed.map(\.id)).subtracting(written.map(\.id)))
         if !written.isEmpty {
-            try await append(written.map(StoredSearchEmbeddingRow.init(result:)), to: file)
-            announce()
+            try await commit(written.map(StoredSearchEmbeddingRow.init(result:)), to: file)
         }
         return written.count
     }
@@ -786,9 +813,10 @@ actor PhotoSearchIndex {
                 }
                 cursor = page.next
             } while cursor != nil
-            texts = loading
+            changeMemory {
+                $0.replaceTexts(loading)
+            }
             textsRead = current.ids
-            announce()
             return
         }
         let gone = read.filter { id in
@@ -799,14 +827,15 @@ actor PhotoSearchIndex {
         let missing = current.ids.subtracting(read)
         guard !gone.isEmpty || !missing.isEmpty else { return }
         let added = missing.isEmpty ? [:] : try await readTexts(missing)
+        var changes: [MediaAssetID: String?] = [:]
         for id in gone {
-            texts.removeValue(forKey: id)
+            changes[id] = .some(nil)
         }
         for (id, text) in added {
-            texts[id] = SearchTextReading.folded(text)
+            changes[id] = SearchTextReading.folded(text)
         }
+        changeMemory { $0.changeTexts(changes) }
         textsRead = read.subtracting(gone).union(missing)
-        announce()
     }
 
     /// Brings the text readings of `rows` in line with the catalog's, by key (`readTexts`): a
@@ -815,22 +844,17 @@ actor PhotoSearchIndex {
     private func reconcileTexts(_ rows: Set<MediaAssetID>) async throws {
         guard !rows.isEmpty, textsRead != nil else { return }
         let current = try await readTexts(rows)
-        var moved = false
+        var changes: [MediaAssetID: String?] = [:]
         for id in rows {
             let folded = current[id].map(SearchTextReading.folded)
-            if texts[id] != folded {
-                texts[id] = folded
-                moved = true
-            }
+            changes[id] = .some(folded)
             if folded != nil {
                 textsRead?.insert(id)
             } else {
                 textsRead?.remove(id)
             }
         }
-        if moved {
-            announce()
-        }
+        changeMemory { $0.changeTexts(changes) }
     }
 
     /// Reads owed previews for text after every embedding is made: a photo is searchable by
@@ -908,22 +932,28 @@ actor PhotoSearchIndex {
         }
         let written = results.isEmpty ? [] : try await store.applySearchTexts(results)
         tally.unread.formUnion(Set(candidates.map(\.id)).subtracting(written.map(\.id)))
+        var changes: [MediaAssetID: String?] = [:]
         for result in written {
-            texts[result.id] = result.lines.isEmpty ? nil : SearchTextReading.folded(SearchTextReading.searchable(result.lines))
+            changes[result.id] = .some(result.lines.isEmpty ? nil : SearchTextReading.folded(SearchTextReading.searchable(result.lines)))
             textsRead?.insert(result.id)
             tally.withText += result.lines.isEmpty ? 0 : 1
         }
-        if !written.isEmpty {
-            announce()
-        }
+        changeMemory { $0.changeTexts(changes) }
         tally.read += written.count
     }
 
-    private func announce() {
-        revision &+= 1
-        for continuation in changeContinuations.values {
-            continuation.yield()
+    /// The one way memory changes: `change` changes it, moving its revision in the same step
+    /// (`SearchIndexMemory`), and `changes` yields when the revision moved.
+    private func changeMemory(_ change: (inout SearchIndexMemory) throws -> Void) rethrows {
+        let before = memory.revision
+        defer {
+            if memory.revision != before {
+                for continuation in changeContinuations.values {
+                    continuation.yield()
+                }
+            }
         }
+        try change(&memory)
     }
 
     private func removeChangeContinuation(_ id: UUID) {

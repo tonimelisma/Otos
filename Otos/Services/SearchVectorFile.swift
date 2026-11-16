@@ -28,9 +28,13 @@ import Foundation
 /// asset supersedes an earlier one; a slot whose asset left memory is dead until compaction
 /// writes the live slots into a new file the catalog then names.
 ///
-/// One owner: the `PhotoSearchIndex` actor holds the open file and is its only writer. Bytes
-/// reach the disk through `write(_:to:at:)`, off the actor; the mapping is replaced after each
-/// append, on the actor, so no read of it runs while it is remapped.
+/// One owner: the `PhotoSearchIndex` actor holds the open file and is its only writer. An
+/// append is encoded against the file as it stands (`encode`), its bytes reach the disk off the
+/// actor (`write`), and the file takes it in one synchronous step that checks it was encoded
+/// against the file as it still stands and maps the new length before it lets the old go. The
+/// file memory holds (`SearchIndexMemory`) takes an append or loses a slot only through
+/// `SearchIndexMemory`, which moves the index's revision in that same step; `append` and
+/// `appendLive` are for a file being built, which memory does not hold yet.
 final nonisolated class SearchVectorFile {
     let id: UUID
     let directory: URL
@@ -42,6 +46,8 @@ final nonisolated class SearchVectorFile {
     private let keysDescriptor: Int32
     private var vectorMap: SearchVectorMapping?
     private var keysMap: SearchVectorMapping?
+    /// Whether `SearchIndexMemory` holds this file: then only it changes the file's slots.
+    fileprivate(set) var held = false
 
     var slots: Int {
         keys.slotIDs.count
@@ -172,20 +178,35 @@ final nonisolated class SearchVectorFile {
 
     // MARK: Appending
 
-    /// Appends `rows` as the next slots, in order: the vectors as Float16, the keys with any
-    /// root or label name not numbered yet. The free-space floor (ADR 0027) is asked first.
-    /// The bytes are written off the actor, the vectors ordered to the disk before the keys
-    /// that name them (`F_BARRIERFSYNC`); memory takes them only once both are written.
-    func append(_ rows: [StoredSearchEmbeddingRow]) async throws {
-        guard !rows.isEmpty else { return }
-        let vectorBytes = try SearchVectorFormat.halves(of: rows)
-        var next = keys
-        let keyBytes = try next.encode(rows.map { (id: $0.id, labels: SearchVectorKeys.labels(fromText: $0.labels)) })
-        try await write(vectors: vectorBytes, keys: keyBytes, next: next)
+    /// `rows` as the next slots, in order, encoded against the file as it stands: the vectors
+    /// as Float16, the keys with any root or label name not numbered yet. Nothing changes until
+    /// the append is written (`write`) and taken.
+    func encode(_ rows: [StoredSearchEmbeddingRow]) throws -> SearchVectorAppend {
+        try encode(
+            vectors: SearchVectorFormat.halves(of: rows),
+            entries: rows.map { (id: $0.id, labels: SearchVectorKeys.labels(fromText: $0.labels)) }
+        )
     }
 
-    /// Appends the live slots of `old`, in their order, `batch` at a time: what compaction writes.
+    private func encode(vectors: Data, entries: [(id: MediaAssetID, labels: [(name: String, confidence: Float)])]) throws -> SearchVectorAppend {
+        var next = keys
+        let keyBytes = try next.encode(entries)
+        return SearchVectorAppend(file: id, fromSlots: slots, fromKeysLength: keys.length, vectorBytes: vectors, keyBytes: keyBytes, next: next)
+    }
+
+    /// Appends `rows` as the next slots of a file being built: encoded, written and taken.
+    func append(_ rows: [StoredSearchEmbeddingRow]) async throws {
+        precondition(!held, "a file memory holds takes appends through SearchIndexMemory")
+        guard !rows.isEmpty else { return }
+        let pending = try encode(rows)
+        try await write(pending)
+        try take(pending)
+    }
+
+    /// Appends the live slots of `old`, in their order, `batch` at a time, to a file being
+    /// built: what compaction writes.
     func appendLive(of old: SearchVectorFile, batch: Int = 4096) async throws {
+        precondition(!held, "a file memory holds takes appends through SearchIndexMemory")
         let live = old.rowOf.values.sorted()
         var start = 0
         while start < live.count {
@@ -198,9 +219,9 @@ final nonisolated class SearchVectorFile {
                 vectorBytes.append(old.vectorBytes(slot: Int(slot)))
                 entries.append((old.keys.slotIDs[Int(slot)], old.labels(slot: Int(slot))))
             }
-            var next = keys
-            let keyBytes = try next.encode(entries)
-            try await write(vectors: vectorBytes, keys: keyBytes, next: next)
+            let pending = try encode(vectors: vectorBytes, entries: entries)
+            try await write(pending)
+            try take(pending)
         }
     }
 
@@ -215,23 +236,49 @@ final nonisolated class SearchVectorFile {
     /// A generous slot record: path, root number and about eighteen labels.
     static let estimatedKeyBytes = 512
 
-    private func write(vectors vectorBytes: Data, keys keyBytes: Data, next: SearchVectorKeys) async throws {
-        let needed = Int64(vectorBytes.count + keyBytes.count)
+    /// Writes `pending`'s bytes past the file's end, off the actor: the vectors ordered to the
+    /// disk before the keys that name them (`F_BARRIERFSYNC`). The free-space floor (ADR 0027)
+    /// is asked first. Changes nothing the file answers from: a read of it during the write
+    /// reads the slots it had, and the file takes the append afterwards (`take`).
+    func write(_ pending: SearchVectorAppend) async throws {
+        guard pending.file == id, pending.fromSlots == slots, pending.fromKeysLength == keys.length else {
+            throw SearchVectorFileInvalid.stale
+        }
+        let needed = Int64(pending.vectorBytes.count + pending.keyBytes.count)
         guard FreeSpaceFloor.admits(needed, available: FreeSpaceFloor.availableBytes(onVolumeOf: directory)) else {
             throw SearchVectorFileInvalid.floorReached
         }
-        try await Self.write(vectorBytes, to: vectorsDescriptor, at: SearchVectorFormat.vectorsLength(slots: slots))
-        try await Self.write(keyBytes, to: keysDescriptor, at: keys.length)
-        let first = slots
-        keys = next
-        for slot in first ..< next.slotIDs.count {
-            rowOf[next.slotIDs[slot]] = Int32(slot)
-        }
-        try remap()
+        try await Self.write(pending.vectorBytes, to: vectorsDescriptor, at: SearchVectorFormat.vectorsLength(slots: pending.fromSlots))
+        try await Self.write(pending.keyBytes, to: keysDescriptor, at: pending.fromKeysLength)
     }
 
-    /// Takes `ids` out of memory: their slots are dead until compaction.
-    func remove(_ ids: some Sequence<MediaAssetID>) {
+    /// Takes a written append in one step: throws, changing nothing, when it was not encoded
+    /// against the file as it stands or its new length does not map; the new mappings are made
+    /// before the old ones go.
+    fileprivate func take(_ pending: SearchVectorAppend) throws {
+        guard pending.file == id, pending.fromSlots == slots, pending.fromKeysLength == keys.length else {
+            throw SearchVectorFileInvalid.stale
+        }
+        let vectors = try SearchVectorMapping.map(vectorsDescriptor, length: SearchVectorFormat.vectorsLength(slots: pending.next.slotIDs.count))
+        let keyMapping: SearchVectorMapping?
+        do {
+            keyMapping = try SearchVectorMapping.map(keysDescriptor, length: pending.next.length)
+        } catch {
+            vectors?.unmap()
+            throw error
+        }
+        vectorMap?.unmap()
+        keysMap?.unmap()
+        vectorMap = vectors
+        keysMap = keyMapping
+        keys = pending.next
+        for slot in pending.fromSlots ..< pending.next.slotIDs.count {
+            rowOf[pending.next.slotIDs[slot]] = Int32(slot)
+        }
+    }
+
+    /// Takes `ids` out of the file's live slots: their slots are dead until compaction.
+    fileprivate func forget(_ ids: some Sequence<MediaAssetID>) {
         for id in ids {
             rowOf.removeValue(forKey: id)
         }
@@ -395,6 +442,8 @@ nonisolated enum SearchVectorFileInvalid: Error, Equatable {
     case short
     /// The free-space floor would be crossed (ADR 0027).
     case floorReached
+    /// An append encoded against a file that has changed since, or one memory no longer holds.
+    case stale
     /// A system call failed, with its `errno`.
     case io(Int32)
 
@@ -405,7 +454,73 @@ nonisolated enum SearchVectorFileInvalid: Error, Equatable {
         case .revision: "revision"
         case .short: "short"
         case .floorReached: "floorReached"
+        case .stale: "stale"
         case let .io(code): "io:\(code)"
+        }
+    }
+}
+
+/// An append encoded against one file at one length (`SearchVectorFile.encode`): written off
+/// the actor, then taken by the file only while it still stands where the append was encoded.
+nonisolated struct SearchVectorAppend: Sendable {
+    let file: UUID
+    let fromSlots: Int
+    let fromKeysLength: Int
+    let vectorBytes: Data
+    let keyBytes: Data
+    let next: SearchVectorKeys
+}
+
+/// What the search index answers a query from (`PhotoSearchIndex`): the vector file it maps,
+/// the text readings, and the revision that names them. Every change to them is a method here,
+/// and each moves `revision` in the same synchronous step, so an equal revision is the same
+/// memory: slots read at one revision (`PhotoSearchIndex.ScopedRows`) are slots of the file
+/// that answers at it. A file memory holds gains or loses slots only here, because only this
+/// file can make it take an append or forget an asset.
+nonisolated struct SearchIndexMemory {
+    private(set) var vectors: SearchVectorFile?
+    /// Every non-empty text reading, by asset, folded once for matching.
+    private(set) var texts: [MediaAssetID: String] = [:]
+    /// Never reset, so an equal revision means the same memory.
+    private(set) var revision: UInt64 = 0
+
+    /// Memory maps `file` from here on, or nothing: a file loaded, built or compacted, or one
+    /// let go.
+    mutating func replaceVectors(with file: SearchVectorFile?) {
+        vectors?.held = false
+        file?.held = true
+        vectors = file
+        revision &+= 1
+    }
+
+    /// `file`, the one memory holds, takes `pending` (already written, `SearchVectorFile.write`)
+    /// and lets `gone` go. Throws, changing nothing, when memory holds another file or the
+    /// append was encoded against this one as it no longer stands.
+    mutating func changeVectors(of file: SearchVectorFile, taking pending: SearchVectorAppend?, removing gone: some Sequence<MediaAssetID>) throws {
+        guard let vectors, vectors === file else { throw SearchVectorFileInvalid.stale }
+        if let pending {
+            try vectors.take(pending)
+        }
+        vectors.forget(gone)
+        revision &+= 1
+    }
+
+    /// Every reading memory holds, replaced: the first text reconcile.
+    mutating func replaceTexts(_ texts: [MediaAssetID: String]) {
+        self.texts = texts
+        revision &+= 1
+    }
+
+    /// Each asset's reading set to its folded text, or removed for nil; the revision moves when
+    /// any differs from what memory held.
+    mutating func changeTexts(_ changes: [MediaAssetID: String?]) {
+        var moved = false
+        for (id, text) in changes where texts[id] != text {
+            texts[id] = text
+            moved = true
+        }
+        if moved {
+            revision &+= 1
         }
     }
 }

@@ -81,7 +81,9 @@ struct SearchVectorFileTests {
         try await file.append(again)
         #expect(file.rowOf[Self.id(3, root: LibraryRootPath(rawValue: "/other/"))] == 10)
         #expect(file.live == 10 && file.dead == 1)
-        file.remove([first[5].id])
+        var memory = SearchIndexMemory()
+        memory.replaceVectors(with: file)
+        try memory.changeVectors(of: file, taking: nil, removing: [first[5].id])
         #expect(file.live == 9 && file.dead == 2)
 
         let compacted = try SearchVectorFile.create(directory: directory, id: UUID())
