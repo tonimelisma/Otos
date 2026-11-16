@@ -207,7 +207,7 @@ where real data matters. No benchmarks. Throwaway code on branches, not merged.
 
 | | Question | Experiment | It changes the plan if |
 | --- | --- | --- | --- |
-| P0 | Does the stall reproduce without the owner's Mac? | The reproduction test and baseline (in progress) | it does not reproduce: every later number is suspect |
+| P0 | Does the stall reproduce without the owner's Mac? | The reproduction test and baseline (`StallReproductionTests`, `2026-11-16-stall-reproduction-baseline.md`) | it does not reproduce: every later number is suspect |
 | P1 | S2, S1: what does each of G, A and A+B buy? | On the reproduction: (G) window reads on connections background cannot use, cursors, statistics; (A) a ledger for two products; then measure window waits and background rows visited per pass under each | G meets acceptance (plan shrinks) or A does not (plan is wrong) |
 | P2 | S3, S4: can a ledger be kept correct, and which shape? | Implement trigger-maintained ledger for the embedding (simple inputs) and the description (five-table inputs); differential test against the scan predicate under random mutations; measure write overhead, backfill time, and a revision-bump rebuild; compare with the in-memory work list (S4a) and status-row (S4c) shapes | drift is found, or write overhead is material, or a simpler shape matches it |
 | P3 | S5, S6, S7: where is the split line, and what does moving cost? | Classify every query that joins a derived table; move `search_embedding` to a second file on the generated catalog; time the move and the `VACUUM`, measure disk headroom needed; test the crash and orphan cases | the window's queries need a moved table, or the move cannot be made safe and resumable |
@@ -218,3 +218,13 @@ where real data matters. No benchmarks. Throwaway code on branches, not merged.
 
 *To be written as P0 to P5 report: what held, what broke, and whether the recommendation
 stands.*
+
+**P0 — it reproduces.** On a generated catalog of the owner's shape and backlog (2.27 GB),
+with every background owner started as the window starts them, window reads waited
+1.0–1.5 s for a main-pool connection with `lockMs`, `storeMs` and `snapshotMs` near 0,
+behind `readSearchEmbeddings` (8.8 s), `peopleSnapshot`, `samePhotoCandidates`,
+`photoDescriptionCandidates`, `renderSignatureCandidates` and `mirrorProbes`: his
+mechanism and holders at about a tenth of his magnitude. Six candidate reads visit the whole
+library per pass (164,766–984,811 rows to return 0–24). The acceptance above is
+`StallReproductionTests.windowReadsAreAnsweredWhileEveryBackgroundOwnerRuns`, a known issue
+until a design passes it (`docs/research/2026-11-16-stall-reproduction-baseline.md`).
