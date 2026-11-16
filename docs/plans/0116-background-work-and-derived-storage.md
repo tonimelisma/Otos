@@ -1,8 +1,11 @@
-# Plan 0116: background work that costs what it owes, and derived data out of the catalog
+# Plan 0116: background work that costs what it owes
 
-Status: **proposed, under due diligence** (2026-11-16). Nothing in this plan is built. The
-owner asked for the plan written down, its soft spots named, and experiments run on the risky
-assumptions before any of it is accepted. Section 7 is filled in as the experiments report.
+Status: **revised after due diligence, awaiting the owner's decision** (2026-11-16). Nothing
+in this plan is built. The first version recommended a work ledger, derived data in separate
+files and search vectors as a mapped file (options A, B, C below). Five pieces of due
+diligence (section 6) rejected A and B as written and narrowed C; section 4 is the plan that
+survived. The evidence is in `docs/research/2026-11-16-plan-0116-due-diligence.md` and
+`docs/research/2026-11-16-stall-reproduction-baseline.md`.
 
 ## 1. The defect
 
@@ -65,7 +68,7 @@ migration running (installed build 487baebd, 2026-11-15 21:56):
    qualify, because the predicate includes "has no content hash" and cloud-only files cannot
    be hashed without a download the app does not make in the background.
 
-### 2.3 Outside research (sources in `docs/research/2026-11-16-…`, written with section 7)
+### 2.3 Outside research (sources in `docs/research/2026-11-16-plan-0116-due-diligence.md`)
 
 - SQLite: readers and writers do not block each other; a long read transaction holds back
   checkpoints and lets the WAL grow; each database file has its own WAL and write lock; a
@@ -90,141 +93,122 @@ migration running (installed build 487baebd, 2026-11-15 21:56):
 | F | Scheduling rules: background priority, one class at a time, statistics | priority inversion, blind plans | alone it leaves the scans |
 | G | One file, more pools and indexes | the window's waits | each feature adds another scan and index; second pool stays unsupported |
 
-## 4. The recommended plan
+## 4. The plan that survived
 
-A, then B, then C inside B's search store, with F's rules written into ADR 0002/0032 as they
-apply. Not D. E only if the on-device model still stalls the app after the rest, measured.
+The holders in section 2.1 are slow because of how their queries and wakes are written, not
+because the storage has the wrong shape. Every stage below keeps one catalog file, atomic
+commits and the foreign-key cascades that carry derived rows with their asset (ADR 0008).
 
-**Stage A: the work ledger.**
-- One table (working name `owed_work(product, library_root_id, relative_path, …)`) or one
-  status row per asset; which of the two is experiment P1's question.
-- Maintained in the same transaction as any change to a product's inputs. Triggers are the
-  candidate mechanism, so that no writer needs to know who consumes what (ADR 0009's rule).
-- Each owner reads its next N by index seek with a cursor, in bounded read transactions, and
-  wakes on its own ledger's change, not on every Store change.
-- "Owed and doable now" is distinct from "owed, but only once the file is local".
-- A rebuild path derives the ledger from the source stamps, which stay the truth.
-- `ANALYZE`/`PRAGMA optimize` on a stated occasion.
+**Stage 1: every background read costs what it owes.**
+- Each candidate read walks an index, per root, with a keyset cursor (`root = ? AND path > ?`;
+  a cursor over `root IN (…)` seeks only on the root and re-walks it). No whole-set sort.
+- One drain is one walk. Today a drain re-runs the candidate query for every page of 8 to 128.
+- Covering indexes on the derived tables' `(library_root_id, relative_path, source)` and on the
+  asset columns each product's stamp reads; a partial index for render signatures, whose stamp
+  is already in the row. About nine indexes, about 170 MB, about 13 s to build (measured on a
+  generated catalog; the migration states its cost per ADR 0002).
+- Pinned with `INDEXED BY` and plan tests: even after `ANALYZE` the planner left the covering
+  index for the wide table.
+- The mirror probe's join order is pinned (`CROSS JOIN`): over 75 s to 0.16 s on the owner's
+  catalog. Metadata refresh takes root ids, not a join to `library_root`.
 
-**Stage B: stores by lifecycle.**
-- The catalog keeps what is authoritative and what the window's queries read: assets,
-  authored overlay, the metadata the window sorts and filters on, face *assignment*.
-- A search store (embeddings, text, descriptions), a face-embedding store, and render
-  signatures out of the asset row. One pool per file. Background stores at background QoS.
-- The second same-file pool is retired; the window has the catalog's readers to itself.
-- A derived row whose stamp does not match its asset reads as stale, as it does today; that
-  is what makes a torn cross-file commit harmless. Deletion reaches the other files
-  explicitly.
+**Stage 2: an owner wakes on what it reads.**
+- `RenderSignatureRefresher`, `PreviewFaceReader`, `PlaceNameReader` and `PhotoSearchIndex`
+  get the `inputs` set `PhotoDescriptionWriter` and `PeopleAssignment` already have. No owner
+  is rung by its own writes.
+- The per-page `searchEmbeddingCandidates(limit: 1)` becomes a revision counter (ADR 0032
+  rule 2). The search index stops ringing the description owner on every text page.
 
-**Stage C: vectors as a mapped file.** The search matrix is the file. No load at launch, no
-second copy in the heap.
+**Stage 3: a window read never queues behind background reads.**
+- Everything the window needs for a click or a paint (order, stacks, filter options, import
+  batches, counts, tile detail, inspector) reads on connections background owners cannot be
+  handed, enforced by the type of reader each owner holds.
+- Background reads are admitted with a cap before they enter GRDB's pool, whose queue is
+  first-in first-out, and run on a pool at lower QoS. Task priority alone changes nothing:
+  GRDB's reader queues run at user-initiated whatever asks.
+- The truncating checkpoint's barrier must not stall the window behind a long reader.
 
-**Acceptance.** Click to paint under one second at any time, including the first minute after
-launch, on the owner's catalog (read-only launch) and in the reproduction test of section 6.
-Each background pass visits rows in proportion to what it owes.
+**Stage 4: the search index loads once, in pages.**
+- The reconcile's currency check reads the `(key, source)` index: 317k pages to 6.9k, 6.9 s
+  cold to 0.04 s. Today it re-reads the whole 680 MB table every wake.
+- The first load streams key, vector and labels in bounded pages straight into the matrix,
+  with labels parsed when needed (about 2 s of the load is label parsing).
 
-## 5. Soft spots, risks and unknowns
+**Stage 5: the window's own reads.** All Media's first visit costs about 5 s with no waiting:
+stack candidates 0.9 to 2.5 s, the order read, the collapse and a 190 ms equality. Small
+scopes are 16 to 29 ms once the wait is gone. This is its own item, and nothing in stages 1
+to 4 changes it. People's full re-read of every face embedding per rebuild is re-measured
+after stages 1 and 2.
 
-Ordered by how much each could change the plan.
+**Stage 6, the owner's choice: slimmer tables in the same file, and one compaction.**
+- `render_gray` (1 KB a row) and the face embedding (2 KB a row) move to their own tables
+  with cascades. The asset table goes from 1.0 to 3.0 rows a page; `face` from 403 MB to
+  18 MB.
+- One `VACUUM` at a stated moment. The owner's asset table is 1.2 % sequential on disk; on a
+  synthetic table that made a cold scan 7 times slower. Estimated 45 to 60 s and about 3.4 GB
+  of temporary disk on the owner's file (not measured on it). It cannot run inside `open`.
+- The catalog would go from 2.56 GB to about 1.0 GB. If `sort_key` and its two indexes prove
+  unused (grep and plans say so; not proven), about 0.7 GB.
+- This helps background scans, migrations and backup size. It does not help clicks: the
+  window's reads use indexes and never touch the wide rows.
 
-**S1. Is A sufficient without B?** If the scans go, the connections may simply be free. B is
-the largest and riskiest stage; if A alone meets acceptance, B is justified only by catalog
-size, migration time and memory, and should be argued on those. *Unknown until measured.*
+**Stage 7, later and only if measured need remains: search vectors as a mapped file.**
+Proven feasible on the owner's real vectors (section 6, P4): half precision, append-only,
+6 MB of footprint against 491 MB, searchable 0.2 s after launch. Its case is memory. It is
+worth building if, after stages 1 to 5, memory pressure still stalls the app (the unexplained
+whole-process pause around the first on-device model request, S12).
 
-**S2. Is G (a correct pool rule plus cursors and indexes) enough without A?** I called it the
-patch option. That is a judgment, not a measurement. If a window-only pool plus keyset paging
-meets acceptance, the honest plan is smaller. *Unknown until measured.*
+**Not doing, and why.**
+- A trigger-maintained ledger (A). It can be kept correct, but costs 28 triggers, a 4.7 times
+  slower enrichment write, 0.8 to 4.7 s holds of the single writer on a person rename or a
+  language switch, and a migration at every revision bump. Stage 1 removes about 95 % of the
+  pages with no new state. Revisit at about ten times the library.
+- Separate files (B). Measured hazards: a new file at an old path appears in the old person's
+  view; 60 of 150 crashes leave two files out of step even under one `ATTACH` transaction;
+  cascades and renames stop following. Nothing measured needs it.
+- `ANALYZE` / `PRAGMA optimize`. It changes plans across a catalog the code pins on purpose.
+- A read model for the window (D) and a global scheduler.
 
-**S3. Can a ledger be kept correct?** Staleness today is `source IS NOT identity(asset)`,
-where identity is a string built from several asset columns plus a revision constant in code.
-A description's source also depends on the photo's faces, the people's names, place names,
-its text reading and its embedding. A trigger-maintained ledger must fire on every one of
-those inputs across five tables, and a code-side revision bump invalidates every row at once.
-Risks: a missed input (silent staleness, the worst kind), write amplification on enrichment's
-hot path, and a ledger rebuild at each revision bump that is itself a library-sized write.
-*This is the plan's largest correctness risk.*
+**Acceptance.**
+- `StallReproductionTests.windowReadsAreAnsweredWhileEveryBackgroundOwnerRuns` passes with
+  its `withKnownIssue` removed: window reads within 250 ms of their quiet time, no stall line,
+  every background read visiting at most four rows per row returned.
+- On the owner's catalog, by a read-only launch: no `op=catalog.store.stall` line in the first
+  three minutes, and a small scope painting in under one second at any time.
+- All Media's first visit has its own target, set when stage 5 is measured.
 
-**S4. Is a persistent ledger even the right shape?** Alternatives not yet weighed: (a) owners
-are told which assets changed (the Store's change notifications carry ids) and keep an
-in-memory work list, with one catch-up walk per launch at background priority; (b) each
-owner remembers the fact revisions at which it last finished a full walk and re-walks only
-when its inputs moved; (c) Immich's shape, a status row per asset with a timestamp per
-product and a partial index per product. *Each trades durability and complexity differently.*
+**Order and reversibility.** Stages 1 to 4 are separate, individually revertible PRs, each
+with plan tests and one check run. Stage 1's indexes are one migration, measured first. Stage
+6 is the only one-way step and needs the owner's go.
 
-**S5. Cross-store queries.** The person scope and People filter join `face` to `media_asset`
-inside the window's order read; Places joins `asset_metadata`; search facts join metadata and
-faces; the description owner joins four derived tables. If a table moves, each such query
-needs a new home. With `ATTACH`, the attached file shares the connection and so the pool,
-which gives back the independence B is for. *The split line may not be where I drew it.*
+## 5. Soft spots that remain
 
-**S6. Cross-file consistency.** No atomic commit across WAL files. Enumerate and test: crash
-between catalog and store commit in each direction; an asset deleted while its derived rows
-survive (orphans, and a later asset at the same path inheriting them); a store file deleted
-or older than the catalog (restore from backup); ADR 0008's rule that overlay is purged in
-full on proven deletion.
+- **The first All Media visit** (stage 5) has no design yet.
+- **The whole-process pause around the first on-device model request** is unexplained. This
+  plan does not address it unless stage 7 turns out to.
+- **Index write cost.** Stage 1's indexes add 26 % to an enrichment flush (34 to 43 ms),
+  measured on one connection with a warm cache, not under concurrent readers.
+- **Scale.** A narrow walk is about 1.3 s cold at 167k assets when little is owed. At ten
+  times the library a ledger starts to pay.
+- **Two pools on one file** stays outside GRDB's written guidance. Measured cross-pool waits
+  were at most 228 ms; the known cost is a truncating checkpoint returning busy and retrying.
+- **The reproduction is a tenth of the owner's magnitude.** It lacks OneDrive latency, the
+  models, memory pressure and a cold file. The owner's catalog, read-only, is the final check.
+- **Half precision was tested on single-word text queries and image queries,** not on real
+  translated multi-word queries or judged recall.
+- **A defect found on the way, independent of this plan:** On This Day's exclusion reads
+  `search_embedding.confident_labels` with no stamp check, so a new file at an old path is
+  wrongly excluded.
 
-**S7. The one-time moves.** Relocating ~1.1 GB and shrinking the catalog needs `VACUUM` or a
-rebuild: time on a cold 2.5 GB file, twice the disk space while it runs (the owner's disk has
-been at 96 to 98 % full), and a window where a crash must not lose anything. The owner sat
-through 43 s of silent migration on 2026-11-15; a move of this size cannot run inside
-`open`.
+## 6. Due diligence, and what each piece found
 
-**S8. Mapped vectors.** Unknown: half precision's effect on search ranking; update and delete
-semantics (append, tombstone, compact); whether Accelerate over mapped memory is as fast as
-the heap matrix; behaviour under memory pressure (page-ins on the search path); the crash
-window between file and id table. ADR 0048 chose the in-memory matrix deliberately.
+| | Question | Result |
+| --- | --- | --- |
+| P0 | Does the stall reproduce without the owner's Mac? | Yes, at about a tenth of the magnitude; merged as the acceptance test (#798). |
+| P2 | Can a ledger be kept correct, and which shape? | It holds (0 drift in 8,000 random operations, 24 of 28 triggers proven load-bearing) and is not the smallest correct design. Indexes plus keyset cursors remove about 95 % of the pages. |
+| P3 | Where is the split line, and what does moving cost? | Drop separate files. Split tables inside the file and compact once. |
+| P4 | Do mapped vectors work? | Yes at half precision, append-only; most of the 33 s is table layout and contention, not storage. |
+| P5 | Independent critique | Rejected A, B and C as the next step; proposed stages 1 to 5. Its two strongest numbers were re-run and confirmed for one (the mirror probe). |
 
-**S9. Wake discipline.** Changing "wake on every change" to "wake on my ledger" must not
-lose a wake (an owed item that nobody processes). ADR 0032's request counters exist for this;
-the ledger's doorbell must use them.
-
-**S10. Priorities.** Background QoS on the stores creates inversions where the user waits on
-background output (opening a photo whose preview is owed; a typed search needing an
-embedding). Each such path needs an explicit escalation.
-
-**S11. The window's own reads.** `orderedAssetIDs` 4.2 s and `filterOptions` 6.3 s are the
-window's, not background's. Part of that was waiting; part is a 167k-row read. Neither A nor
-B changes them. Holding (#774) covers returns, not first visits.
-
-**S12. What the plan does not explain.** The 2026-11-15 19:54 launch showed the whole process
-going quiet for 10 s around the first on-device model request. That may be memory pressure
-unrelated to connections. If it is, this plan does not fix it (option E might).
-
-**S13. Size of change.** Three stages touch the Store, every background owner, the schema and
-six ADRs. Regression risk is real in a week where fast parallel work already introduced
-defects. Each stage must be independently shippable and reversible.
-
-**S14. The repo's own rule.** "Do not add caches, pools, background pipelines, generalized
-abstractions, split schemas, or scale machinery … before measurement or a verified
-requirement proves the simple path insufficient." Section 2 is the measurement for A. It is
-not yet a measurement that B and C are needed (see S1).
-
-## 6. Due diligence
-
-Experiments measure inside ordinary tests on a generated catalog shaped like the owner's
-(section 2's sizes, widths, root split and backlog), and read-only on the owner's catalog
-where real data matters. No benchmarks. Throwaway code on branches, not merged.
-
-| | Question | Experiment | It changes the plan if |
-| --- | --- | --- | --- |
-| P0 | Does the stall reproduce without the owner's Mac? | The reproduction test and baseline (`StallReproductionTests`, `2026-11-16-stall-reproduction-baseline.md`) | it does not reproduce: every later number is suspect |
-| P1 | S2, S1: what does each of G, A and A+B buy? | On the reproduction: (G) window reads on connections background cannot use, cursors, statistics; (A) a ledger for two products; then measure window waits and background rows visited per pass under each | G meets acceptance (plan shrinks) or A does not (plan is wrong) |
-| P2 | S3, S4: can a ledger be kept correct, and which shape? | Implement trigger-maintained ledger for the embedding (simple inputs) and the description (five-table inputs); differential test against the scan predicate under random mutations; measure write overhead, backfill time, and a revision-bump rebuild; compare with the in-memory work list (S4a) and status-row (S4c) shapes | drift is found, or write overhead is material, or a simpler shape matches it |
-| P3 | S5, S6, S7: where is the split line, and what does moving cost? | Classify every query that joins a derived table; move `search_embedding` to a second file on the generated catalog; time the move and the `VACUUM`, measure disk headroom needed; test the crash and orphan cases | the window's queries need a moved table, or the move cannot be made safe and resumable |
-| P4 | S8: do mapped vectors work? | Read-only on the owner's real embeddings: rank agreement of half against full precision for sample queries; brute-force time over mapped memory with Accelerate; a format with append, delete and crash recovery, fuzzed | ranking changes visibly, or it is slower, or the format cannot be made crash-safe simply |
-| P5 | The plan as a whole | An independent reviewer reads this plan and the code and argues against it: missing options, wrong assumptions, a smaller correct design | it finds one |
-
-## 7. Findings
-
-*To be written as P0 to P5 report: what held, what broke, and whether the recommendation
-stands.*
-
-**P0 — it reproduces.** On a generated catalog of the owner's shape and backlog (2.27 GB),
-with every background owner started as the window starts them, window reads waited
-1.0–1.5 s for a main-pool connection with `lockMs`, `storeMs` and `snapshotMs` near 0,
-behind `readSearchEmbeddings` (8.8 s), `peopleSnapshot`, `samePhotoCandidates`,
-`photoDescriptionCandidates`, `renderSignatureCandidates` and `mirrorProbes`: his
-mechanism and holders at about a tenth of his magnitude. Six candidate reads visit the whole
-library per pass (164,766–984,811 rows to return 0–24). The acceptance above is
-`StallReproductionTests.windowReadsAreAnsweredWhileEveryBackgroundOwnerRuns`, a known issue
-until a design passes it (`docs/research/2026-11-16-stall-reproduction-baseline.md`).
+P1 (measuring G, A and A+B side by side on the reproduction) was not run: P2 and P5 answered
+its question from measurements on the owner's catalog and a generated one.

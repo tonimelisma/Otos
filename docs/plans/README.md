@@ -3,10 +3,12 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-Plan 0116 (`0116-background-work-and-derived-storage.md`) is **proposed and under due
-diligence**, opened 2026-11-16: background work that costs what it owes (a work ledger),
-derived data out of the catalog file, and search vectors as a mapped file. Nothing in it is
-built; its section 5 lists the soft spots and section 6 the experiments that decide it.
+Plan 0116 (`0116-background-work-and-derived-storage.md`) is **revised after due diligence
+and awaiting the owner's decision**, opened 2026-11-16: every background read costs what it
+owes (indexes and keyset cursors), owners wake on what they read, window reads never queue
+behind background reads, the search index loads once in pages, and the window's own first
+All Media read. A work ledger and separate store files were proposed first and rejected by
+measurement (`docs/research/2026-11-16-plan-0116-due-diligence.md`). Nothing in it is built.
 
 Plan 0115 (stacks: RAW+JPEG pairs and bursts as one photo) is complete in six increments
 and was removed at closure. It opened 2026-11-13 from the survey
