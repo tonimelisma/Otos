@@ -174,8 +174,8 @@ the Store's name for it to `CatalogConnectionActivity` through its SQLite trace,
 that waited a second or more writes `op=catalog.store.stall` as its body starts: its wait
 split at the instant its connection began it, and, on `op=catalog.store.stall.holders`
 parts beside it, what every other connection was running or ended during the wait
-(`docs/research/2026-11-15-startup-read-stalls.md`). A truncating checkpoint (below) can find one of its short
-reads in flight; the checkpoint then fails, is logged, and the next bulk write retries it.
+(`docs/research/2026-11-15-startup-read-stalls.md`). The WAL's checkpoint (below) never
+waits for either pool's reads.
 Raising the shared pool's reader count was rejected: background work fans out to fill any
 count.
 Do not add a second cache
@@ -190,17 +190,29 @@ a 147k-asset Immich first sync, 357 MB in a 100k-row listing probe whose log sta
 25 MB with no reader (`docs/research/2026-11-12-listing-batch-cost.md`). After every
 bulk write (a scan batch, a device- or source-listing batch, an enrichment batch) Store
 reads the WAL file's size: a log SQLite keeps resetting is reused from its start, so
-its file stays near one write's pages, and only a starved one keeps growing. The read is logged only when the file grew past the largest size logged since the last truncation (`op=catalog.database.wal phase=grew`): a reused log's file keeps its size, so a line per batch (586 in 20 minutes at 57 MB, under the budget) said nothing new. Past
+its file stays near one write's pages, and only a starved one keeps growing. The read is logged only when the file grew past the largest size logged since the last checkpoint (`op=catalog.database.wal phase=grew`): a reused log's file keeps its size, so a line per batch (586 in 20 minutes at 57 MB, under the budget) said nothing new. Past
 `CatalogStore.defaultWALByteBudget` (64 MiB, about two and a half times the unstarved
-high-water mark) Store truncates the log behind GRDB's barrier, which waits for the
-reads in flight and holds new ones until the log is empty. The barrier is GRDB's callback form, so the wait blocks GRDB's queue rather than
-a cooperative thread. A failed checkpoint is logged and the next bulk write retries.
-Rejected: a passive checkpoint after every bulk write to read the log's frame count
-(it backfills pages SQLite otherwise batches, every batch); a periodic
-checkpoint (time standing in for the log's own size, ADR 0033);
-raising `wal_autocheckpoint` (a passive checkpoint still cannot reset a log readers
-hold); `journal_size_limit` alone (it applies only at a reset, which starvation
-prevents).
+high-water mark) Store runs a passive checkpoint on the writer (`op=catalog.database.wal
+phase=checkpointed`). It copies into the database every frame no reader still needs, and it
+neither waits for a reader nor holds one up: a read in flight keeps its snapshot and the
+frames it pins. Once every frame is copied and the readers of older snapshots have finished,
+the next write restarts the log from its start, and its commit truncates the file to the
+writer's `journal_size_limit`, which is the same budget (or to that commit's own frames, if
+more). The file therefore peaks at the
+budget plus what is written during the longest read in flight, and returns to the budget
+after it. On a generated catalog of the owner's size, with a 20 s background read in flight,
+a truncating checkpoint behind GRDB's barrier held every main-pool read for 20,055 ms; the
+passive checkpoint took 3 ms and nothing waited, and with 17–25 s readers during heavy
+writes the file peaked at 226–230 MB and returned to 64 MiB (plan 0116 bet 5's proof of
+concept). A failed checkpoint is logged and the next bulk write retries.
+Rejected: a truncating checkpoint behind GRDB's barrier (it waits for every read in
+flight and holds every new one until it ends: the window stalls for as long as the longest
+background read); pausing background reads, then truncating (no smaller file than the
+passive form once the log restarts, and it adds a wait); a passive checkpoint after every
+bulk write, under the budget too (it copies pages SQLite otherwise batches, every batch); a
+periodic checkpoint (time standing in for the log's own size, ADR 0033);
+`journal_size_limit` alone (it applies only when the log restarts, which needs every frame
+copied first).
 
 ### Schema Migrations At Launch
 

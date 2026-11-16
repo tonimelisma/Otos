@@ -862,48 +862,6 @@ struct ImmichCatalogSyncTests {
         await store.shutdown()
     }
 
-    /// A bulk write leaves the WAL file no larger than the Store's budget: past it, the
-    /// Store checkpoints the log empty before the write returns.
-    @Test func aListingBatchLeavesTheWALWithinItsBudget() async throws {
-        for budget in [CatalogStore.defaultWALByteBudget, 0] {
-            let temp = try makeTestDirectory()
-            let file = temp.appending(path: "Catalog.sqlite")
-            let wal = file.path(percentEncoded: false) + "-wal"
-            func walBytes() throws -> Int {
-                try #require(FileManager.default.attributesOfItem(atPath: wal)[.size] as? Int)
-            }
-            let store = makeTestStore(location: .databaseFile(file), walByteBudget: budget, stagingContainers: StagingContainers(base: temp))
-            try await store.start(scansSavedLibraries: false)
-            let rootPath = try await store.addImmichAccount(
-                server: Self.server, userID: "user-1", displayName: "Family"
-            )
-            let scan = try await store.beginSourceListing(rootPath: rootPath)
-            let items = (0 ..< 200).map { index in
-                SourceListedItem(
-                    file: ScannedMediaFile(
-                        relativePath: MediaRelativePath(rawValue: "asset-\(index)/IMG.JPG"),
-                        name: "IMG.JPG",
-                        contentTypeIdentifier: "public.jpeg",
-                        byteSize: 10,
-                        createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-                        contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
-                    ),
-                    sourceItemID: "asset-\(index)",
-                    isHiddenBySource: false,
-                    sourceHasProducts: true
-                )
-            }
-            try await store.applySourceListingChanges(SourceListingChanges(listed: items), scan: scan)
-            if budget == 0 {
-                #expect(try walBytes() == 0)
-            } else {
-                #expect(try walBytes() > 0)
-            }
-            await store.endSourceListing(scan: scan)
-            await store.shutdown()
-        }
-    }
-
     // MARK: - Live Photos (ADR 0046 §2)
 
     private static func motion(_ id: String, name: String = "IMG_1.MOV") -> ImmichSyncEvent {

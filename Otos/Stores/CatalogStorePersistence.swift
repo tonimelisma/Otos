@@ -52,10 +52,13 @@ extension CatalogStore {
     /// WAL mode by default; the explicit cache/mmap pragmas make the current
     /// architecture decision visible at the one storage-construction point. Every connection
     /// reports what it is doing to `activity`, for a read that waits
-    /// (`CatalogConnectionActivity`).
+    /// (`CatalogConnectionActivity`). The writer caps the WAL file at `walByteLimit`: SQLite
+    /// truncates the file to it at the first commit after it restarts the log
+    /// (`journal_size_limit`), which a passive checkpoint makes possible (`boundWAL`).
     static func fileBackedDatabaseConfiguration(
         activity: CatalogConnectionActivity,
-        pool: CatalogConnectionActivity.Pool = .main
+        pool: CatalogConnectionActivity.Pool = .main,
+        walByteLimit: Int64 = CatalogStore.defaultWALByteBudget
     ) -> Configuration {
         var configuration = Configuration()
         configuration.maximumReaderCount = 4
@@ -65,6 +68,8 @@ extension CatalogStore {
             try db.execute(sql: "PRAGMA mmap_size = 268435456")
             if db.configuration.readonly {
                 ReaderLockWait.install(on: db)
+            } else {
+                try db.execute(sql: "PRAGMA journal_size_limit = \(walByteLimit)")
             }
             activity.attach(to: db, pool: pool)
         }

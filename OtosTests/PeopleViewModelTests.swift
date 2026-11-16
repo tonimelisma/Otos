@@ -427,6 +427,52 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    /// An act's result shows from its submission even while another heavy load holds the
+    /// window's admission (ADR 0055): the name is on the face and in the store before the load
+    /// ends; only the People pass the write asks for waits its turn, and once the load ends it
+    /// publishes a state that covers the act.
+    @Test func anActShowsAtOnceWhileAHeavyLoadRuns() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory())
+        let admission = LoadAdmission()
+        let model = CatalogWindowViewModel(
+            catalogStore: fixture.store,
+            loadAdmission: admission,
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
+            trashFiles: .refusing
+        )
+        model.start()
+        // People's first pass and the duplicates build have run: nothing holds a turn.
+        try await waitUntil {
+            let snapshot = admission.snapshot
+            return snapshot.isOpen && snapshot.running == nil && snapshot.waiting.isEmpty
+                && model.peopleState.people.contains { $0.id == fixture.sam }
+        }
+        let held = ArrivalGate()
+        let load = Task {
+            try await admission.run(.searchIndex) { await held.arrive() }
+        }
+        await held.waitForArrivals(1)
+
+        model.nameFaces([fixture.stranger], as: fixture.sam)
+        #expect(model.peopleState.faces(of: fixture.stranger.asset).first { $0.id == fixture.stranger }?.person == fixture.sam)
+        try await Self.waitForStore(fixture.store) { try await fixture.assignment(of: fixture.stranger) == .user(fixture.sam) }
+        try await waitUntil { admission.snapshot.waiting.contains { $0.load == .people } }
+        #expect(admission.snapshot.running?.load == .searchIndex)
+        #expect(model.peopleState.faces(of: fixture.stranger.asset).first { $0.id == fixture.stranger }?.person == fixture.sam)
+
+        await held.open()
+        try await load.value
+        try await waitUntil {
+            model.peopleState.faces(of: fixture.stranger.asset).first { $0.id == fixture.stranger }?.person == fixture.sam
+                && admission.snapshot.running == nil && admission.snapshot.waiting.isEmpty
+        }
+        await fixture.store.shutdown()
+    }
+
     /// Assign to ▸ Ian on the unidentified face: the undo item names the act and the photos
     /// it changed; undo writes the face back as it was, redo gives it to him again.
     @Test func undoAndRedoAnAct() async throws {

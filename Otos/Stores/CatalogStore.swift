@@ -672,18 +672,19 @@ actor CatalogStore {
     /// preference, which the window's owner hands over before the catalog starts and on
     /// every change (`setDuplicatesReach`).
     private(set) var duplicatesReach: DuplicatesReach = .withinEachLibrary
-    /// Bytes the WAL file may reach before a bulk write empties it (64 MiB). A
-    /// write-ahead log is reset only at an instant no reader is using it, so while readers
-    /// overlap one another back to back — the window, enrichment and the derived owners
-    /// during a listing — SQLite's own checkpoint can never reset it and the file grows
-    /// without end (257 MB in the installed app, 250–357 MB in the listing probe,
+    /// Bytes the WAL file may reach before a bulk write checkpoints it, and the size SQLite
+    /// truncates it to when it restarts the log (64 MiB). While readers overlap one another
+    /// back to back — the window, enrichment and the derived owners during a listing —
+    /// SQLite's own checkpoint fell behind and the file grew without end (257 MB in the
+    /// installed app, 250–357 MB in the listing probe,
     /// `docs/research/2026-11-12-listing-batch-cost.md`). A log SQLite resets stays near
     /// one batch's pages: 26 MB at its largest in the same probe with no reader.
     static let defaultWALByteBudget: Int64 = 64 * 1024 * 1024
 
-    /// The WAL file size past which a bulk write empties the log (`boundWAL`).
+    /// The WAL file size past which a bulk write checkpoints the log, and the writer's
+    /// `journal_size_limit` (`boundWAL`).
     private let walByteBudget: Int64
-    /// The largest WAL file size a sample has logged since the last truncation. A log
+    /// The largest WAL file size a sample has logged since the last checkpoint. A log
     /// SQLite keeps resetting is reused from its start and its file keeps its size, so a
     /// sample says something only when the file grew (`boundWAL`).
     private var walLoggedHighWater: Int64 = 0
@@ -6317,6 +6318,16 @@ extension CatalogStore {
             URL.temporaryDirectory.appending(path: "OtosHandOff", directoryHint: .isDirectory)
         }
     }
+
+    /// Holds one of the main pool's readers on its snapshot until `hold` returns, as a long
+    /// background read does (a People snapshot, a duplicates build): what a test stands one
+    /// in with, to show what such a read holds up and what it does not (ARC-063).
+    func holdBackgroundRead(_ hold: @escaping @Sendable () -> Void) async throws {
+        try await database().readFreeingConnection { db in
+            _ = try Int.fetchOne(db, sql: "SELECT count(*) FROM library_root")
+            hold()
+        }
+    }
 }
 
 private extension CatalogStore {
@@ -6500,7 +6511,7 @@ private extension CatalogStore {
             return try DatabaseOpenResult(
                 dbWriter: DatabasePool(
                     path: databaseURL.path(percentEncoded: false),
-                    configuration: Self.fileBackedDatabaseConfiguration(activity: connectionActivity)
+                    configuration: Self.fileBackedDatabaseConfiguration(activity: connectionActivity, walByteLimit: walByteBudget)
                 ),
                 storageKind: "application",
                 openedFileURL: databaseURL
@@ -6513,7 +6524,7 @@ private extension CatalogStore {
             return try DatabaseOpenResult(
                 dbWriter: DatabasePool(
                     path: url.path(percentEncoded: false),
-                    configuration: Self.fileBackedDatabaseConfiguration(activity: connectionActivity)
+                    configuration: Self.fileBackedDatabaseConfiguration(activity: connectionActivity, walByteLimit: walByteBudget)
                 ),
                 storageKind: "file",
                 openedFileURL: url
@@ -7531,11 +7542,14 @@ private extension CatalogStore {
     /// Keeps the WAL bounded after a bulk write. A log SQLite keeps resetting is reused
     /// from its start and its file stays near one write's pages; a starved one only
     /// grows, so the file's size is the fact that says so, and reading it costs a `stat`.
-    /// Past `walByteBudget`, a truncating checkpoint behind GRDB's barrier empties the
-    /// log: the barrier waits for the reads in flight and holds new ones until it is
-    /// done, and its callback form runs on GRDB's own queue, so the wait never blocks a
-    /// cooperative thread. A failed checkpoint is logged and leaves the log as it was;
-    /// the next bulk write tries again.
+    /// Past `walByteBudget`, a passive checkpoint on the writer copies every frame no reader
+    /// still needs into the database. It waits for no reader and holds none: a read in flight
+    /// keeps its snapshot, and the frames it pins stay in the log. Once the frames are all
+    /// copied and the last reader of the old snapshot has finished, the next write restarts
+    /// the log from its start, and its commit truncates the file to `walByteBudget`
+    /// (`journal_size_limit`, set on the writer), or to its own frames if they are more. So the file peaks at the budget plus what is
+    /// written during the longest read in flight, and returns to the budget after it. A failed
+    /// checkpoint is logged and leaves the log as it was; the next bulk write tries again.
     private func boundWAL(reason: String) async {
         guard databaseFileURL != nil, let walBytes = walFileSizeBytes() else {
             return
@@ -7555,18 +7569,17 @@ private extension CatalogStore {
         do {
             let dbWriter = try database()
             let start = ContinuousClock.now
-            let checkpoint: (walFrameCount: Int, checkpointedFrameCount: Int) = try await withCheckedThrowingContinuation { continuation in
-                dbWriter.asyncBarrierWriteWithoutTransaction { database in
-                    continuation.resume(with: Result { try database.get().checkpoint(.truncate) })
-                }
+            let checkpoint = try await dbWriter.writeWithoutTransaction { db in
+                try db.checkpoint(.passive)
             }
             walLoggedHighWater = 0
-            OtosLog.catalog.noticeOperation("catalog.database.wal", phase: "truncated", fields: [
+            OtosLog.catalog.noticeOperation("catalog.database.wal", phase: "checkpointed", fields: [
                 "reason": reason,
                 "walBytesBefore": "\(walBytes)",
                 "walBytes": "\(walFileSizeBytes() ?? -1)",
                 "walFrames": "\(checkpoint.walFrameCount)",
-                "barrierMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+                "copiedFrames": "\(checkpoint.checkpointedFrameCount)",
+                "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
             ])
         } catch {
             OtosLog.catalog.errorOperation("catalog.database.wal", phase: "checkpointFailed", fields: [
