@@ -328,6 +328,69 @@ struct BrowserPlaceTests {
         }
     }
 
+    /// DES-121: while the catalog opens past the first frame, the window says what the open
+    /// is doing and the sidebar shows the rows that stand for the libraries the open read;
+    /// within the first frame it shows nothing, and once loaded the rows follow the catalog.
+    @Test func whileTheCatalogOpensTheWindowSaysWhatItIsDoing() throws {
+        let domain = PreferencesDomain.suite(UUID().uuidString)
+        let batch = SidebarSelection.importBatch(ImportBatchID(unixMilliseconds: 1_763_200_000_000))
+        BrowserPlace(descriptor: CatalogQueryDescriptor(scope: batch), viewMode: .grid, focus: nil, selection: [])
+            .save(to: domain.makeDefaults())
+        let model = makeViewModel(domain)
+        model.applyCatalogOpening(CatalogOpening(phase: .updating(step: 1, of: 2), memberRootCount: 2))
+
+        // No frame yet: nothing is claimed, and the pane waits with no indicator.
+        #expect(model.detailPane.content == .waiting(showsIndicator: false))
+        #expect(model.catalogOpeningPresentation == nil)
+        #expect(!model.showsAllMediaRow)
+        #expect(!model.showsPlacesRow)
+
+        model.waitingFramePresented()
+        #expect(model.detailPane.content == .waiting(showsIndicator: true))
+        let updating = try #require(model.catalogOpeningPresentation)
+        #expect(updating.title == "Updating catalog\u{2026}")
+        #expect(updating.detail == "Step 1 of 2")
+        #expect(model.showsAllMediaRow)
+        #expect(model.showsPlacesRow)
+        #expect(model.showsPeopleRow)
+        #expect(model.onThisDayRowDay != nil)
+        #expect(!model.showsDuplicatesRow, "the groups are the catalog's, not the open's")
+
+        // A click while it opens waits for its own frame; the rows stay.
+        model.selectSidebar(.places)
+        #expect(model.detailPane == CatalogDetailPane(surface: .placesMap, content: .waiting(showsIndicator: false)))
+        #expect(model.showsPlacesRow)
+        model.waitingFramePresented()
+        #expect(model.detailPane.content == .waiting(showsIndicator: true))
+
+        model.applyCatalogOpening(CatalogOpening(phase: .opening, memberRootCount: 2))
+        #expect(model.catalogOpeningPresentation?.title == "Opening catalog\u{2026}")
+        #expect(model.catalogOpeningPresentation?.detail == "")
+
+        var loaded = loadedState(descriptor: CatalogQueryDescriptor(scope: .places), ids: [])
+        loaded.queryGeneration = model.queryGeneration
+        model.applyState(loaded)
+        #expect(model.catalogOpeningPresentation == nil)
+        #expect(!model.showsAllMediaRow, "one library: the rows follow the loaded catalog")
+        #expect(model.showsPlacesRow)
+    }
+
+    /// An open of one library shows no All Media row; one of none shows no fixed row; a single
+    /// update names no step.
+    @Test func theOpeningRowsAreTheLibrariesTheOpenRead() {
+        for (roots, allMedia, places) in [(0, false, false), (1, false, true), (3, true, true)] {
+            let model = makeViewModel(PreferencesDomain.suite(UUID().uuidString))
+            model.applyCatalogOpening(CatalogOpening(phase: .updating(step: 1, of: 1), memberRootCount: roots))
+            model.waitingFramePresented()
+            #expect(model.showsAllMediaRow == allMedia)
+            #expect(model.showsPlacesRow == places)
+            #expect(model.catalogOpeningPresentation?.detail == "")
+        }
+        let failed = CatalogOpeningPresentation(opening: CatalogOpening(), failed: true)
+        #expect(failed.title == "Couldn\u{2019}t open the catalog")
+        #expect(failed.isFailed)
+    }
+
     /// Until the groups are first built nothing about duplicates is known: a selected
     /// Duplicates row shows without a count, and there is nothing to move.
     @Test func duplicatesNotYetBuiltClaimNoCount() {

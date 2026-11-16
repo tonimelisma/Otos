@@ -10,7 +10,16 @@ nonisolated enum SidebarSelectionPolicy {
     /// Whether the "All Media" aggregate row/selection should exist.
     /// True iff there are 2+ fixed libraries. All Media never includes removables.
     static func showsAllMedia(libraries: [CatalogLibraryState]) -> Bool {
-        fixedLibraries(in: libraries).count >= 2
+        showsAllMedia(fixedLibraryCount: fixedLibraryCount(libraries: libraries))
+    }
+
+    static func showsAllMedia(fixedLibraryCount: Int) -> Bool {
+        fixedLibraryCount >= 2
+    }
+
+    /// How many of `libraries` All Media is made of.
+    static func fixedLibraryCount(libraries: [CatalogLibraryState]) -> Int {
+        fixedLibraries(in: libraries).count
     }
 
     /// Whether the Places row exists: as soon as there is one fixed library to map, and
@@ -18,7 +27,11 @@ nonisolated enum SidebarSelectionPolicy {
     /// sidebar does not reflow as enrichment finds coordinates (ADR 0040). Places never
     /// includes removables, like All Media.
     static func showsPlaces(libraries: [CatalogLibraryState]) -> Bool {
-        !fixedLibraries(in: libraries).isEmpty
+        showsPlaces(fixedLibraryCount: fixedLibraryCount(libraries: libraries))
+    }
+
+    static func showsPlaces(fixedLibraryCount: Int) -> Bool {
+        fixedLibraryCount > 0
     }
 
     /// Selection at launch or when no explicit user sidebar choice is in effect.

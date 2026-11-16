@@ -1807,6 +1807,34 @@ nonisolated struct LibraryRemovalNotice: Equatable, Sendable {
     let waitingFor: RootNamespaceMutationOwner
 }
 
+/// What the catalog's open is doing, reported by the Store as it opens the file
+/// (`CatalogStore.openings`) and shown by the window while it waits (DES-121, APP-090).
+nonisolated struct CatalogOpening: Equatable, Sendable {
+    nonisolated enum Phase: Equatable, Sendable {
+        /// The file is opening, or its load is reading what the window shows first.
+        case opening
+        /// Schema update `step` of the `of` this open applies is running.
+        case updating(step: Int, of: Int)
+    }
+
+    var phase: Phase = .opening
+
+    var diagnosticDescription: String {
+        let roots = memberRootCount.map { "\($0)" } ?? "unknown"
+        switch phase {
+        case .opening:
+            return "opening,roots:\(roots)"
+        case let .updating(step, total):
+            return "updating:\(step)/\(total),roots:\(roots)"
+        }
+    }
+
+    /// How many libraries and accounts the catalog holds — the roots All Media is made of
+    /// (`LibraryRootKind.isMemberOfAllMedia`) — read before any update runs, so the sidebar
+    /// rows that stand for them can show while the catalog updates. Nil until read.
+    var memberRootCount: Int?
+}
+
 /// Result of the pre-migration catalog schema compatibility check.
 nonisolated enum CatalogSchemaCompatibility: Equatable, Sendable {
     /// Empty database or a known partial/current schema that additive migrations can advance.

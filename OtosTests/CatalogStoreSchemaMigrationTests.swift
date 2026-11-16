@@ -2,6 +2,7 @@ import Foundation
 import GRDB
 import MediaMetadata
 @testable import OtosKit
+import Synchronization
 import Testing
 
 struct CaptureWallClockTests {
@@ -101,6 +102,95 @@ struct CaptureWallClockTests {
 
 @Suite(.testDirectory)
 struct CatalogStoreSchemaMigrationTests {
+    /// The open applies a catalog's pending migrations one at a time, saying which of how
+    /// many runs before each starts, and applies nothing to a current catalog (DES-121).
+    @Test func pendingMigrationsRunOneAtATimeAndSayWhichOfHowMany() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.captureDayMigrationIdentifier)
+
+        let steps = StepLog()
+        let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
+            steps.record("\(step)/\(total)")
+        }
+        #expect(steps.recorded == ["1/2", "2/2"])
+        #expect(run.applied == 2)
+        let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
+        #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
+
+        let again = StepLog()
+        let rerun = try CatalogStore.applyPendingMigrations(queue) { step, total in
+            again.record("\(step)/\(total)")
+        }
+        #expect(again.recorded.isEmpty)
+        #expect(rerun.applied == 0)
+    }
+
+    /// A history with a gap — a later migration recorded and an earlier one not, as a
+    /// catalog a branch's build migrated can hold — has what is missing applied.
+    @Test func aGapInTheHistoryIsFilled() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.captureDayMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "DROP INDEX \(AnniversaryMatch.indexName)")
+            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN capture_month")
+            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN capture_day")
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: [CatalogSchema.captureDayMigrationIdentifier]
+            )
+            try db.execute(
+                sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
+                arguments: [CatalogSchema.photoCopiesMigrationIdentifier]
+            )
+        }
+        let steps = StepLog()
+        let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
+            steps.record("\(step)/\(total)")
+        }
+        #expect(steps.recorded == ["1/2", "2/2"])
+        #expect(run.applied == 2)
+    }
+
+    private final class StepLog: Sendable {
+        private let steps = Mutex<[String]>([])
+
+        var recorded: [String] {
+            steps.withLock { $0 }
+        }
+
+        func record(_ step: String) {
+            steps.withLock { $0.append(step) }
+        }
+    }
+
+    /// The open reports the libraries and accounts it holds, read before any migration runs,
+    /// and finishes its reports when the catalog has opened (DES-121).
+    @Test func theOpenReportsTheLibrariesItHoldsBeforeUpdating() async throws {
+        let databaseURL = try makeTestDirectory().appending(path: "catalog.sqlite")
+        do {
+            let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+            try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.captureDayMigrationIdentifier)
+            try await queue.write { db in
+                try db.execute(sql: """
+                INSERT INTO library_root (id, path, kind) VALUES
+                    (1, '/Missing/Pictures', 'library'), (2, '/Missing/Archive', 'library'),
+                    (3, '/Volumes/CARD', 'removableVolume')
+                """)
+            }
+            try queue.close()
+        }
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+
+        var reports: [CatalogOpening] = []
+        for await opening in store.openings {
+            reports.append(opening)
+        }
+        #expect(reports == [CatalogOpening(phase: .opening, memberRootCount: 2)], "the newest report, then the end")
+        let newCatalogRoots = try await DatabaseQueue().read { db in try CatalogStore.memberRootCount(db) }
+        #expect(newCatalogRoots == 0, "a new catalog holds none")
+    }
+
     /// ARC-043: a catalog whose migration history this build does not know — one a newer
     /// Otos wrote, or one from before the schema baseline — is refused unopened, and
     /// nothing in it or beside it is erased.

@@ -79,261 +79,392 @@ extension CatalogStore {
         migrator.migrations
     }
 
+    /// How many of the catalog's roots are libraries or accounts. Read before any
+    /// migration, with SQL every schema version answers: `library_root.kind` has held the
+    /// same values since the baseline. A new catalog has no table yet and holds none.
+    static func memberRootCount(_ db: Database) throws -> Int {
+        guard try db.tableExists("library_root") else {
+            return 0
+        }
+        return try String.fetchAll(db, sql: "SELECT kind FROM library_root")
+            .count { LibraryRootKind(rawValue: $0)?.isMemberOfAllMedia == true }
+    }
+
+    /// What one open's migrations cost, for `op=catalog.start`'s finish line.
+    struct MigrationRun: Equatable {
+        let applied: Int
+        let milliseconds: Int
+    }
+
+    /// Applies the migrations this catalog has not applied, in registration order, in one
+    /// pass of the migrator, which runs and commits each in its own transaction. Each is
+    /// logged with what it cost (`op=catalog.migration`), from its start to the next one's,
+    /// which is after its commit, and `step` says which of how many runs as each starts. The
+    /// pending set is known before the first runs: the registrations less the identifiers the
+    /// catalog records. `step` is called on the database's queue.
+    static func applyPendingMigrations(
+        _ dbWriter: any DatabaseWriter,
+        step: @escaping @Sendable (_ step: Int, _ of: Int) -> Void
+    ) throws -> MigrationRun {
+        let applied = try dbWriter.read { db in
+            try migrator.appliedIdentifiers(db)
+        }
+        let pending = knownMigrationIdentifiers.filter { !applied.contains($0) }
+        guard !pending.isEmpty else {
+            return MigrationRun(applied: 0, milliseconds: 0)
+        }
+        let start = ContinuousClock.now
+        let steps = MigrationSteps(pending: pending, step: step)
+        do {
+            try migrator(observing: steps).migrate(dbWriter)
+        } catch {
+            steps.failed(error)
+            throw error
+        }
+        steps.finished()
+        return MigrationRun(applied: pending.count, milliseconds: DiagnosticsTiming.milliseconds(since: start))
+    }
+
+    /// Times and logs the migrations of one pass as the migrator starts each.
+    final nonisolated class MigrationSteps: Sendable {
+        private struct Running {
+            let identifier: String
+            let step: Int
+            let start: ContinuousClock.Instant
+        }
+
+        private let pending: [String]
+        private let step: @Sendable (Int, Int) -> Void
+        private let running = Mutex<Running?>(nil)
+
+        init(pending: [String], step: @escaping @Sendable (Int, Int) -> Void) {
+            self.pending = pending
+            self.step = step
+        }
+
+        func began(_ identifier: String) {
+            let index = (pending.firstIndex(of: identifier) ?? pending.count) + 1
+            let previous = running.withLock { running in
+                defer { running = Running(identifier: identifier, step: index, start: .now) }
+                return running
+            }
+            if let previous {
+                log(finished: previous)
+            }
+            OtosLog.persistence.noticeOperation("catalog.migration", phase: "start", fields: [
+                "id": identifier, "step": "\(index)", "of": "\(pending.count)",
+            ])
+            step(index, pending.count)
+        }
+
+        func finished() {
+            let last = running.withLock { running in
+                defer { running = nil }
+                return running
+            }
+            if let last {
+                log(finished: last)
+            }
+        }
+
+        func failed(_ error: any Error) {
+            guard let failed = running.withLock({ $0 }) else {
+                return
+            }
+            OtosLog.persistence.errorOperation("catalog.migration", phase: "failed", fields: [
+                "id": failed.identifier, "step": "\(failed.step)", "of": "\(pending.count)",
+                "ms": "\(DiagnosticsTiming.milliseconds(since: failed.start))",
+                "error": String(describing: error),
+            ])
+        }
+
+        private func log(finished migration: Running) {
+            OtosLog.persistence.noticeOperation("catalog.migration", phase: "finish", fields: [
+                "id": migration.identifier, "step": "\(migration.step)", "of": "\(pending.count)",
+                "ms": "\(DiagnosticsTiming.milliseconds(since: migration.start))",
+            ])
+        }
+    }
+
     /// One baseline migration creates the schema (`CatalogSchema`); later changes are
     /// additive migrations registered after it. Import history and other non-rebuildable
     /// overlay forbid destructive schema reset, and a catalog whose history this build
     /// does not know refuses to open (ADR 0010).
+    ///
+    /// Every migration runs with foreign keys enforced as its statements run
+    /// (`foreignKeyChecks: .immediate`), so nothing is left to verify when it ends. GRDB's
+    /// default instead turns enforcement off and then runs `PRAGMA foreign_key_check`, which
+    /// reads every table that holds a foreign key — on an owner-shaped catalog nearly the
+    /// whole file, 0.6–8.8 s per migration (`docs/research/2026-11-15-catalog-open-cost.md`).
+    /// No migration here rebuilds a table, deletes a row another table refers to, or changes
+    /// a referenced key, so no foreign-key action fires and no constraint is tested that the
+    /// final check would have caught: the outcome is the default's, without the read. A
+    /// migration that has to rebuild a table (SQLite's twelve-step `ALTER TABLE`) needs
+    /// enforcement off and registers its own `.deferred` check (ADR 0002).
     static var migrator: DatabaseMigrator {
+        migrator(observing: nil)
+    }
+
+    /// The migrator, telling `steps` as each migration starts. One flat registration per
+    /// migration; the count is the migrations' loops, not branching here.
+    // swiftlint:disable:next cyclomatic_complexity
+    static func migrator(observing steps: MigrationSteps?) -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
-        migrator.registerMigration(CatalogSchema.baselineMigrationIdentifier) { db in
+        func register(_ identifier: String, migrate: @escaping @Sendable (Database) throws -> Void) {
+            migrator.registerMigration(identifier, foreignKeyChecks: .immediate) { db in
+                steps?.began(identifier)
+                try migrate(db)
+            }
+        }
+        register(CatalogSchema.baselineMigrationIdentifier) { db in
             for statement in CatalogSchema.baselineStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.fileIdentifierMigrationIdentifier) { db in
+        register(CatalogSchema.fileIdentifierMigrationIdentifier) { db in
             for statement in CatalogSchema.fileIdentifierStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.previewPathMigrationIdentifier) { db in
+        register(CatalogSchema.previewPathMigrationIdentifier) { db in
             for statement in CatalogSchema.previewPathStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.editRecipeMigrationIdentifier) { db in
+        register(CatalogSchema.editRecipeMigrationIdentifier) { db in
             for statement in CatalogSchema.editRecipeStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.heifOrientationMigrationIdentifier) { db in
+        register(CatalogSchema.heifOrientationMigrationIdentifier) { db in
             for statement in CatalogSchema.heifOrientationStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.extractionRevisionMigrationIdentifier) { db in
+        register(CatalogSchema.extractionRevisionMigrationIdentifier) { db in
             for statement in CatalogSchema.extractionRevisionStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.familyRevisionMigrationIdentifier) { db in
+        register(CatalogSchema.familyRevisionMigrationIdentifier) { db in
             try CatalogSchema.migrateToFamilyRevisionsAndFileTypeNames(db)
         }
-        migrator.registerMigration(CatalogSchema.captureInstantMigrationIdentifier) { db in
+        register(CatalogSchema.captureInstantMigrationIdentifier) { db in
             try CatalogSchema.migrateToCaptureInstant(db)
         }
-        migrator.registerMigration(CatalogSchema.contentIdentifierMigrationIdentifier) { db in
+        register(CatalogSchema.contentIdentifierMigrationIdentifier) { db in
             for statement in CatalogSchema.contentIdentifierStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.trashPathMigrationIdentifier) { db in
+        register(CatalogSchema.trashPathMigrationIdentifier) { db in
             for statement in CatalogSchema.trashPathStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.duplicatesMigrationIdentifier) { db in
+        register(CatalogSchema.duplicatesMigrationIdentifier) { db in
             for statement in CatalogSchema.duplicatesStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.renderSignatureMigrationIdentifier) { db in
+        register(CatalogSchema.renderSignatureMigrationIdentifier) { db in
             for statement in CatalogSchema.renderSignatureStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.productStampsMigrationIdentifier) { db in
+        register(CatalogSchema.productStampsMigrationIdentifier) { db in
             for statement in CatalogSchema.productStampsStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.awaitingPresenceMigrationIdentifier) { db in
+        register(CatalogSchema.awaitingPresenceMigrationIdentifier) { db in
             for statement in CatalogSchema.awaitingPresenceStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.remoteBaseURLMigrationIdentifier) { db in
+        register(CatalogSchema.remoteBaseURLMigrationIdentifier) { db in
             for statement in CatalogSchema.remoteBaseURLStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.hiddenBySourceMigrationIdentifier) { db in
+        register(CatalogSchema.hiddenBySourceMigrationIdentifier) { db in
             for statement in CatalogSchema.hiddenBySourceStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.sourceProductsMigrationIdentifier) { db in
+        register(CatalogSchema.sourceProductsMigrationIdentifier) { db in
             for statement in CatalogSchema.sourceProductsStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.facesMigrationIdentifier) { db in
+        register(CatalogSchema.facesMigrationIdentifier) { db in
             for statement in CatalogSchema.facesStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.peopleMigrationIdentifier) { db in
+        register(CatalogSchema.peopleMigrationIdentifier) { db in
             for statement in CatalogSchema.peopleStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.sourceItemIDMigrationIdentifier) { db in
+        register(CatalogSchema.sourceItemIDMigrationIdentifier) { db in
             for statement in CatalogSchema.sourceItemIDStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.searchEmbeddingsMigrationIdentifier) { db in
+        register(CatalogSchema.searchEmbeddingsMigrationIdentifier) { db in
             for statement in CatalogSchema.searchEmbeddingsStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.searchTextMigrationIdentifier) { db in
+        register(CatalogSchema.searchTextMigrationIdentifier) { db in
             for statement in CatalogSchema.searchTextStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.captureLocalTimeMigrationIdentifier) { db in
+        register(CatalogSchema.captureLocalTimeMigrationIdentifier) { db in
             try CatalogSchema.migrateToCaptureLocalTime(db)
         }
-        migrator.registerMigration(CatalogSchema.rawFacesMigrationIdentifier) { db in
+        register(CatalogSchema.rawFacesMigrationIdentifier) { db in
             for statement in CatalogSchema.rawFacesStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.decodeVerdictMigrationIdentifier) { db in
+        register(CatalogSchema.decodeVerdictMigrationIdentifier) { db in
             for statement in CatalogSchema.decodeVerdictStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.autoTaggedPeopleMigrationIdentifier) { db in
+        register(CatalogSchema.autoTaggedPeopleMigrationIdentifier) { db in
             for statement in CatalogSchema.autoTaggedPeopleStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.placeNamesMigrationIdentifier) { db in
+        register(CatalogSchema.placeNamesMigrationIdentifier) { db in
             for statement in CatalogSchema.placeNamesStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.keyPhotoMigrationIdentifier) { db in
+        register(CatalogSchema.keyPhotoMigrationIdentifier) { db in
             for statement in CatalogSchema.keyPhotoStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.personAdmissionMigrationIdentifier) { db in
+        register(CatalogSchema.personAdmissionMigrationIdentifier) { db in
             for statement in CatalogSchema.personAdmissionStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.facesFromPreviewMigrationIdentifier) { db in
+        register(CatalogSchema.facesFromPreviewMigrationIdentifier) { db in
             for statement in CatalogSchema.facesFromPreviewStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.inThisPhotoMigrationIdentifier) { db in
+        register(CatalogSchema.inThisPhotoMigrationIdentifier) { db in
             for statement in CatalogSchema.inThisPhotoStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.stackKeyMigrationIdentifier) { db in
+        register(CatalogSchema.stackKeyMigrationIdentifier) { db in
             for statement in CatalogSchema.stackKeyStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.stackCandidateIndexMigrationIdentifier) { db in
+        register(CatalogSchema.stackCandidateIndexMigrationIdentifier) { db in
             for statement in CatalogSchema.stackCandidateIndexStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.lastSyncedMigrationIdentifier) { db in
+        register(CatalogSchema.lastSyncedMigrationIdentifier) { db in
             for statement in CatalogSchema.lastSyncedStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.videoFacesMigrationIdentifier) { db in
+        register(CatalogSchema.videoFacesMigrationIdentifier) { db in
             for statement in CatalogSchema.videoFacesStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.pathKeysMigrationIdentifier) { db in
+        register(CatalogSchema.pathKeysMigrationIdentifier) { db in
             try CatalogSchema.recomputePathKeys(db: db)
         }
-        migrator.registerMigration(CatalogSchema.burstMigrationIdentifier) { db in
+        register(CatalogSchema.burstMigrationIdentifier) { db in
             for statement in CatalogSchema.burstStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.leftOutIndexMigrationIdentifier) { db in
+        register(CatalogSchema.leftOutIndexMigrationIdentifier) { db in
             for statement in CatalogSchema.leftOutIndexStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.sourceProductsAbsentMigrationIdentifier) { db in
+        register(CatalogSchema.sourceProductsAbsentMigrationIdentifier) { db in
             for statement in CatalogSchema.sourceProductsAbsentStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.accountVideoFacesMigrationIdentifier) { db in
+        register(CatalogSchema.accountVideoFacesMigrationIdentifier) { db in
             for statement in CatalogSchema.accountVideoFacesStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.resyncOwedMigrationIdentifier) { db in
+        register(CatalogSchema.resyncOwedMigrationIdentifier) { db in
             for statement in CatalogSchema.resyncOwedStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.continuousFrameMigrationIdentifier) { db in
+        register(CatalogSchema.continuousFrameMigrationIdentifier) { db in
             for statement in CatalogSchema.continuousFrameStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.placeCellMigrationIdentifier) { db in
+        register(CatalogSchema.placeCellMigrationIdentifier) { db in
             for statement in CatalogSchema.placeCellStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.undecodableIndexMigrationIdentifier) { db in
+        register(CatalogSchema.undecodableIndexMigrationIdentifier) { db in
             for statement in CatalogSchema.undecodableIndexStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.placeNameLanguageMigrationIdentifier) { db in
+        register(CatalogSchema.placeNameLanguageMigrationIdentifier) { db in
             try CatalogSchema.convertPlaceNameLanguages(db: db)
         }
-        migrator.registerMigration(CatalogSchema.cameraBurstsRemovedMigrationIdentifier) { db in
+        register(CatalogSchema.cameraBurstsRemovedMigrationIdentifier) { db in
             for statement in CatalogSchema.cameraBurstsRemovedStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.facesReadSourceMigrationIdentifier) { db in
+        register(CatalogSchema.facesReadSourceMigrationIdentifier) { db in
             for statement in CatalogSchema.facesReadSourceStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.canonicalBirthdayMigrationIdentifier) { db in
+        register(CatalogSchema.canonicalBirthdayMigrationIdentifier) { db in
             try CatalogSchema.canonicalizeBirthdays(db)
         }
-        migrator.registerMigration(CatalogSchema.keyPhotoIsUsersWordMigrationIdentifier) { db in
+        register(CatalogSchema.keyPhotoIsUsersWordMigrationIdentifier) { db in
             for statement in CatalogSchema.keyPhotoIsUsersWordStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.facesOwedIndexesMigrationIdentifier) { db in
+        register(CatalogSchema.facesOwedIndexesMigrationIdentifier) { db in
             for statement in CatalogSchema.facesOwedIndexesStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.unreadThumbnailsMigrationIdentifier) { db in
+        register(CatalogSchema.unreadThumbnailsMigrationIdentifier) { db in
             for statement in CatalogSchema.unreadThumbnailsStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.leftOutIndexDroppedMigrationIdentifier) { db in
+        register(CatalogSchema.leftOutIndexDroppedMigrationIdentifier) { db in
             for statement in CatalogSchema.leftOutIndexDroppedStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.unreadTextPreviewsMigrationIdentifier) { db in
+        register(CatalogSchema.unreadTextPreviewsMigrationIdentifier) { db in
             for statement in CatalogSchema.unreadTextPreviewsStatements {
                 try db.execute(sql: statement)
             }
@@ -341,55 +472,55 @@ extension CatalogStore {
                 "readings": "\(db.changesCount)",
             ])
         }
-        migrator.registerMigration(CatalogSchema.facePersonPhotoIndexMigrationIdentifier) { db in
+        register(CatalogSchema.facePersonPhotoIndexMigrationIdentifier) { db in
             for statement in CatalogSchema.facePersonPhotoIndexStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.windowReadIndexesMigrationIdentifier) { db in
+        register(CatalogSchema.windowReadIndexesMigrationIdentifier) { db in
             for statement in CatalogSchema.windowReadIndexesStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.wholeSecondCaptureLocalMigrationIdentifier) { db in
+        register(CatalogSchema.wholeSecondCaptureLocalMigrationIdentifier) { db in
             try CatalogSchema.migrateToWholeSecondCaptureLocal(db)
         }
-        migrator.registerMigration(CatalogSchema.assignedFacePhotoIndexMigrationIdentifier) { db in
+        register(CatalogSchema.assignedFacePhotoIndexMigrationIdentifier) { db in
             for statement in CatalogSchema.assignedFacePhotoIndexStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.photoDescriptionMigrationIdentifier) { db in
+        register(CatalogSchema.photoDescriptionMigrationIdentifier) { db in
             for statement in CatalogSchema.photoDescriptionStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.stackCandidatePathMigrationIdentifier) { db in
+        register(CatalogSchema.stackCandidatePathMigrationIdentifier) { db in
             for statement in CatalogSchema.stackCandidatePathStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.copiesMigrationIdentifier) { db in
+        register(CatalogSchema.copiesMigrationIdentifier) { db in
             for statement in CatalogSchema.copiesStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.mirrorsMigrationIdentifier) { db in
+        register(CatalogSchema.mirrorsMigrationIdentifier) { db in
             for statement in CatalogSchema.mirrorsStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.captureDayMigrationIdentifier) { db in
+        register(CatalogSchema.captureDayMigrationIdentifier) { db in
             for statement in CatalogSchema.captureDayStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.locationIndexMigrationIdentifier) { db in
+        register(CatalogSchema.locationIndexMigrationIdentifier) { db in
             for statement in CatalogSchema.locationIndexStatements {
                 try db.execute(sql: statement)
             }
         }
-        migrator.registerMigration(CatalogSchema.photoCopiesMigrationIdentifier) { db in
+        register(CatalogSchema.photoCopiesMigrationIdentifier) { db in
             for statement in CatalogSchema.photoCopiesStatements {
                 try db.execute(sql: statement)
             }

@@ -189,6 +189,49 @@ raising `wal_autocheckpoint` (a passive checkpoint still cannot reset a log read
 hold); `journal_size_limit` alone (it applies only at a reset, which starvation
 prevents).
 
+### Schema Migrations At Launch
+
+The catalog opens, and migrates, before the window can show any of it: on the owner's 2.5 GB
+catalog the first launches after new migrations took 22–43 s against 9–86 ms for one with
+none, and the log said nothing about the wait
+(`docs/research/2026-11-15-catalog-open-cost.md`). So:
+
+- **The open explains itself.** Store applies pending migrations one at a time, in
+  registration order (`CatalogStore.applyPendingMigrations`), each between
+  `op=catalog.migration phase=start` and `phase=finish … ms=` lines that name it and its step;
+  `op=catalog.database.open` times every other step (`poolMs`, `schemaMs` — where SQLite
+  recovers a log the last process left, `walBytesAtOpen` — `rootsMs`, `migrationsMs`,
+  `thumbnailsMs`, `readerMs`), and `op=catalog.start`'s finish line carries `migrations` and
+  `migrationsMs`. The open runs no integrity check, `optimize`, `ANALYZE` or checkpoint.
+- **The window says what the open is doing** (DES-121): Store reports the step and the
+  libraries the catalog holds (`CatalogStore.openings`, newest value, one consumer), read
+  before any migration with SQL every schema version answers.
+- **A migration enforces foreign keys as it runs** (`foreignKeyChecks: .immediate`, every
+  registration). GRDB's default turns enforcement off and then runs `PRAGMA foreign_key_check`,
+  which reads every table that declares a foreign key — nearly the whole file, 0.6–1.5 s warm
+  and 8.8 s cold per migration on the owner-shaped catalog — to find violations a migration
+  that writes no key cannot cause. No registered migration rebuilds a table, deletes a row
+  another table refers to or changes a referenced key, so with enforcement on no foreign-key
+  action fires and the outcome is the default's. A future migration that must rebuild a table
+  (SQLite's twelve-step `ALTER TABLE`) registers `.deferred` and says so.
+- **A migration costs only what its outcome needs.** It rebuilds only an index whose
+  definition changes (each rebuild is a full scan and sort of its table, one per index), and
+  writes rows while the indexes it changes are dropped, so each is built once over the written
+  rows rather than maintained for every write. An applied migration's body changes only when
+  its outcome — schema text, row contents, object order — stays identical: GRDB knows a
+  migration by its name, and a catalog that applied it never runs it again.
+- **A migration's PR states its cost** — milliseconds and WAL bytes — measured on a generated
+  catalog of the owner's shape (about 167,000 assets, 2 GB: the research note's recipe), and
+  what in its outcome needs that time when it is more than a second.
+
+Rejected: building indexes after launch, off the open (a deferred-index mechanism). Otos's
+reads name their indexes (`INDEXED BY`), so a read before the build would fail, or need a
+second, slower text for every read that falls back to the 544 MB table while the index builds;
+and the build holds the one writer for the same seconds, so a Like or a Move to Trash would
+wait behind it with nothing on screen to say why. The wait is cheaper made once, measured,
+and shown. Rejected: one foreign-key check after all pending migrations (GRDB offers none, and
+enforcement as the statements run already covers what it would verify).
+
 ### macOS Scan Input
 
 The filesystem scanner uses `FileManager` URL enumeration with this requested

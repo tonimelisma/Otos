@@ -1767,11 +1767,10 @@ nonisolated enum CatalogSchema {
             """,
         ]
         statements += photoTestedIndexes.map { "DROP INDEX \($0.name)" }
-        statements += photoTestedIndexes.map { index in
-            "CREATE INDEX \(index.name) ON media_asset(\(index.columns), \(photoTestedColumns))"
-        }
         // Only the rows that change are written: the shown copy is v60's triggers' and stays,
-        // so only a copy is written, once, for `has_copies`.
+        // so only a copy is written, once, for `has_copies`. Written while the tested indexes
+        // are dropped, so each is built once over the written rows instead of updated for
+        // every one: an index holds what its table holds, whichever comes first.
         statements += [
             """
             UPDATE media_asset SET has_copies = 1
@@ -1784,6 +1783,11 @@ nonisolated enum CatalogSchema {
               )
             """,
             photoChoiceUnify(rows: "content_sha1 IS NOT NULL"),
+        ]
+        statements += photoTestedIndexes.map { index in
+            "CREATE INDEX \(index.name) ON media_asset(\(index.columns), \(photoTestedColumns))"
+        }
+        statements += [
             """
             CREATE TRIGGER media_asset_copy_inserted AFTER INSERT ON media_asset
             WHEN NEW.content_sha1 IS NOT NULL

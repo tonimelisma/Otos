@@ -475,6 +475,15 @@ actor CatalogStore {
     private let initialLoadDidRead: (@Sendable () async -> Void)?
     private let importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)?
     private var dbWriter: (any DatabaseWriter)?
+    /// What the open is doing, for the window while it waits (DES-121): one consumer, the
+    /// main window's view model, which reads the newest value. `nonisolated` so it can be
+    /// subscribed while the open holds this actor. Finished when the open ends.
+    nonisolated let openings: AsyncStream<CatalogOpening>
+    private nonisolated let openingContinuation: AsyncStream<CatalogOpening>.Continuation
+    /// The newest value yielded to `openings`.
+    private var reportedOpening = CatalogOpening()
+    /// What this process's open spent on migrations, for `op=catalog.start`.
+    private var migrationRun: MigrationRun?
     /// Readers no background read can occupy, for the reads a user is waiting on with
     /// something on screen: the visible tiles' details (ADR 0002). The main pool's four
     /// readers are held for seconds at a time by the window's order, the filter's options,
@@ -603,6 +612,7 @@ actor CatalogStore {
         stagingContainers: StagingContainers? = nil
     ) {
         self.walByteBudget = walByteBudget
+        (openings, openingContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
         self.stagingContainers = stagingContainers ?? Self.stagingContainers(for: location)
         self.location = location
         self.scanner = scanner
@@ -3689,6 +3699,8 @@ extension CatalogStore {
         started = true
         var fields = phases.fields
         fields["roots"] = "\(normalizedRoots.count)"
+        fields["migrations"] = migrationRun.map { "\($0.applied)" } ?? "unknown"
+        fields["migrationsMs"] = migrationRun.map { "\($0.milliseconds)" } ?? "unknown"
         OtosLog.catalog.noticeOperation("catalog.start", phase: "finish", fields: fields)
         notifyCatalogChanged(.changed(.all))
     }
@@ -5870,12 +5882,40 @@ private extension CatalogStore {
         defer {
             OtosSignpost.persistence.endInterval("CatalogOpenDatabase", state)
         }
+        do {
+            let dbWriter = try openAndMigrateDatabase()
+            // The load's own reads follow; the window says the catalog is opening until
+            // its first state arrives.
+            reportedOpening.phase = .opening
+            openingContinuation.yield(reportedOpening)
+            openingContinuation.finish()
+            return dbWriter
+        } catch {
+            // The window learns of a failed load from `start()` itself, which also fails
+            // when a read after the open does.
+            openingContinuation.finish()
+            throw error
+        }
+    }
 
+    /// Opens the file, refuses a schema this build does not know, reports the roots the
+    /// sidebar's fixed rows stand for, applies pending migrations one at a time, and opens
+    /// the interactive readers. Every step is timed into `op=catalog.database.open`, so its
+    /// `ms` is explained by the fields beside it; each migration has its own line
+    /// (`op=catalog.migration`). SQLite recovers a write-ahead log left by the last process
+    /// on the first read (`schemaMs`); nothing here checkpoints, checks integrity or
+    /// analyzes, so no other step reads the whole file.
+    private func openAndMigrateDatabase() throws -> any DatabaseWriter {
+        var timer = LoadPhaseTimer()
         let openResult = try openDatabaseWriter()
         let dbWriter = openResult.dbWriter
+        timer.lap("poolMs")
+        // The log the last process left, which SQLite recovers on the first read.
+        let walBytesAtOpen = Self.walFileSizeBytes(of: openResult.openedFileURL)
         let compatibility = try dbWriter.read { db in
             try Self.catalogSchemaCompatibility(db)
         }
+        timer.lap("schemaMs")
         guard compatibility.isSupported else {
             OtosLog.persistence.error(
                 "Catalog schema refused problem=\(compatibility.errorDescription, privacy: .public)"
@@ -5885,8 +5925,20 @@ private extension CatalogStore {
             )
             throw CatalogStoreError.unsupportedCatalogSchema(compatibility)
         }
-        try Self.migrator.migrate(dbWriter)
+        reportedOpening.memberRootCount = try dbWriter.read { db in
+            try Self.memberRootCount(db)
+        }
+        openingContinuation.yield(reportedOpening)
+        timer.lap("rootsMs")
+        let roots = reportedOpening.memberRootCount
+        let continuation = openingContinuation
+        let migrations = try Self.applyPendingMigrations(dbWriter) { step, total in
+            continuation.yield(CatalogOpening(phase: .updating(step: step, of: total), memberRootCount: roots))
+        }
+        migrationRun = migrations
+        timer.lap("migrationsMs")
         performThumbnailStoreStartupMaintenance()
+        timer.lap("thumbnailsMs")
         self.dbWriter = dbWriter
         databaseFileURL = openResult.openedFileURL
         if let fileURL = openResult.openedFileURL {
@@ -5895,7 +5947,11 @@ private extension CatalogStore {
                 configuration: Self.interactiveReaderConfiguration()
             )
         }
-        recordDatabaseOpenDiagnostics(dbWriter: dbWriter, storageKind: openResult.storageKind)
+        timer.lap("readerMs")
+        var fields = timer.fields
+        fields["migrations"] = "\(migrations.applied)"
+        fields["walBytesAtOpen"] = walBytesAtOpen.map { "\($0)" } ?? "unknown"
+        recordDatabaseOpenDiagnostics(dbWriter: dbWriter, storageKind: openResult.storageKind, fields: fields)
         OtosLog.persistence.info(
             "Catalog database opened storage=\(openResult.storageKind, privacy: .public)"
         )
@@ -5957,7 +6013,11 @@ private extension CatalogStore {
         )
     }
 
-    private func recordDatabaseOpenDiagnostics(dbWriter: any DatabaseWriter, storageKind: String) {
+    private func recordDatabaseOpenDiagnostics(
+        dbWriter: any DatabaseWriter,
+        storageKind: String,
+        fields openFields: [String: String]
+    ) {
         let synchronousValue = (try? dbWriter.read { db in
             try Int.fetchOne(db, sql: "PRAGMA synchronous") ?? -1
         }) ?? -1
@@ -5971,11 +6031,11 @@ private extension CatalogStore {
         recordDiagnostic(
             operation: "catalog.database.open",
             phase: "finish",
-            fields: [
+            fields: openFields.merging([
                 "storage": storageKind,
                 "synchronous": synchronousLabel,
                 "synchronousValue": "\(synchronousValue)",
-            ]
+            ]) { _, pragma in pragma }
         )
     }
 
@@ -6988,10 +7048,16 @@ private extension CatalogStore {
     }
 
     private func walFileSizeBytes() -> Int64? {
-        guard let databaseFileURL else {
+        Self.walFileSizeBytes(of: databaseFileURL)
+    }
+
+    /// The size of the write-ahead log beside `file`: 0 when there is none, nil in memory
+    /// or when its size cannot be read.
+    static func walFileSizeBytes(of file: URL?) -> Int64? {
+        guard let file else {
             return nil
         }
-        let walPath = databaseFileURL.path(percentEncoded: false) + "-wal"
+        let walPath = file.path(percentEncoded: false) + "-wal"
         guard FileManager.default.fileExists(atPath: walPath) else {
             return 0
         }

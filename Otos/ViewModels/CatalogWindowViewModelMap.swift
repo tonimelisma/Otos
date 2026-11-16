@@ -32,7 +32,7 @@ extension CatalogWindowViewModel {
 
     /// The Places row, while a fixed library exists, once the catalog has loaded (APP-044).
     var showsPlacesRow: Bool {
-        state.isCatalogLoaded && SidebarSelectionPolicy.showsPlaces(libraries: state.libraries)
+        sidebarFixedLibraryCount.map(SidebarSelectionPolicy.showsPlaces(fixedLibraryCount:)) ?? false
     }
 
     /// Whether the picker shows the view mode selected: the map and On This Day are not view

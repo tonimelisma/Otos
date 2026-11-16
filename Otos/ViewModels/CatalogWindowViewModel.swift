@@ -585,6 +585,16 @@ final class CatalogWindowViewModel {
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
+    /// The one consumer of the Store's open reports (`CatalogStore.openings`).
+    @ObservationIgnored private var catalogOpeningTask: Task<Void, Never>?
+    /// What the catalog's open last reported (DES-121); read only before its load applies.
+    private(set) var catalogOpening = CatalogOpening()
+    /// The catalog's load failed: the window will never load this session.
+    private(set) var catalogLoadFailed = false
+    /// A frame was presented while the catalog had not loaded (`waitingFramePresented()`):
+    /// from then on the window says what the open is doing. Never cleared, so a click while
+    /// the catalog opens keeps the sidebar's rows; an open within the first frame shows none.
+    private(set) var catalogOpeningFramePresented = false
     @ObservationIgnored private var queryForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
     @ObservationIgnored var mediaChoiceForwardingTask: Task<Void, Never>?
@@ -986,6 +996,7 @@ final class CatalogWindowViewModel {
         mapClusterTask?.cancel()
         mapClusterContinuation?.finish()
         catalogStartupTask?.cancel()
+        catalogOpeningTask?.cancel()
         queryForwardingTask?.cancel()
         mutationForwardingTask?.cancel()
         mediaChoiceForwardingTask?.cancel()
@@ -1143,6 +1154,7 @@ extension CatalogWindowViewModel {
             store: store,
             initialRequest: initialRequest
         )
+        startCatalogOpening(store: store)
         startCatalog(store: store)
         startMediaTrash()
         startDuplicatesIntentConsumer()
@@ -1325,6 +1337,32 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// Reads what the Store's open reports until it ends. Weak across each wait, so the loop
+    /// keeps nothing alive; the stream finishes when the open does.
+    private func startCatalogOpening(store: CatalogStore) {
+        catalogOpeningTask = Task { [weak self, openings = store.openings] in
+            for await opening in openings {
+                guard let self else {
+                    break
+                }
+                applyCatalogOpening(opening)
+            }
+        }
+    }
+
+    /// The Store's newest open report (DES-121).
+    func applyCatalogOpening(_ opening: CatalogOpening) {
+        guard opening != catalogOpening else {
+            return
+        }
+        catalogOpening = opening
+        OtosLog.ui.noticeOperation("ui.catalogOpening", phase: "reported", fields: [
+            "vm": diagnosticID,
+            "opening": opening.diagnosticDescription,
+            "shown": "\(catalogOpeningFramePresented)",
+        ])
+    }
+
     private func startCatalog(store: CatalogStore) {
         catalogStartupTask = Task { [weak self, store] in
             do {
@@ -1348,6 +1386,7 @@ extension CatalogWindowViewModel {
                 OtosLog.catalog.error(
                     "op=catalog.start phase=error error=\(String(describing: error), privacy: .public)"
                 )
+                self?.catalogLoadFailed = true
                 return
             }
             // A reorganization the last process left journaled is finished here, once. Its
@@ -1820,7 +1859,9 @@ extension CatalogWindowViewModel {
     /// the People gallery's acts and the menu bar's person items, the map's stacks and Play
     /// Story.
     var showsSelectedScope: Bool {
-        state.resolvedSidebarSelection == queryDescriptor.scope
+        // Before the catalog loads no scope's state has been applied: the empty state's
+        // scope is a placeholder, so every scope waits (DES-121).
+        state.isCatalogLoaded && state.resolvedSidebarSelection == queryDescriptor.scope
     }
 
     /// What the detail pane draws (DES-118): the selected scope's surface from the click on,
@@ -1847,6 +1888,13 @@ extension CatalogWindowViewModel {
             return
         }
         waitingFramePresentedScope = scope
+        if !state.isCatalogLoaded, !catalogOpeningFramePresented {
+            catalogOpeningFramePresented = true
+            OtosLog.ui.noticeOperation("ui.catalogOpening", phase: "shown", fields: [
+                "vm": diagnosticID,
+                "opening": catalogOpening.diagnosticDescription,
+            ])
+        }
         OtosLog.ui.noticeOperation("ui.detailPane", phase: "indicator", fields: [
             "vm": diagnosticID,
             "scope": scope.diagnosticDescription,
@@ -1854,10 +1902,40 @@ extension CatalogWindowViewModel {
         ])
     }
 
-    /// The All Media row, while two or more fixed libraries exist. The sidebar draws no row
-    /// before the catalog has loaded: a lone row would read as the whole sidebar (APP-044).
+    /// The All Media row, while two or more fixed libraries exist. Before the catalog has
+    /// loaded the sidebar draws no row (APP-044) until a frame has shown the window waiting;
+    /// then the rows that stand for the libraries and accounts the open read before updating
+    /// show, and only those (DES-121).
     var showsAllMediaRow: Bool {
-        state.isCatalogLoaded && SidebarSelectionPolicy.showsAllMedia(libraries: state.libraries)
+        sidebarFixedLibraryCount.map(SidebarSelectionPolicy.showsAllMedia(fixedLibraryCount:)) ?? false
+    }
+
+    /// How many libraries and accounts the sidebar's fixed rows stand for: the loaded
+    /// catalog's, or while it opens, what the open read, once the window has shown it waiting.
+    /// Nil while nothing about them may be claimed.
+    var sidebarFixedLibraryCount: Int? {
+        if state.isCatalogLoaded {
+            return SidebarSelectionPolicy.fixedLibraryCount(libraries: state.libraries)
+        }
+        guard !catalogLoadFailed else {
+            return nil
+        }
+        return catalogOpeningStatus?.memberRootCount
+    }
+
+    /// The opening status the waiting pane draws (DES-121), nil when it draws none.
+    var catalogOpeningPresentation: CatalogOpeningPresentation? {
+        catalogOpeningStatus.map { CatalogOpeningPresentation(opening: $0, failed: catalogLoadFailed) }
+    }
+
+    /// What the window says while its catalog opens (DES-121): nil once it has loaded, and
+    /// until a frame has been presented without it, so an open the first frame outlasts is
+    /// the only one that shows anything.
+    var catalogOpeningStatus: CatalogOpening? {
+        guard !state.isCatalogLoaded, catalogOpeningFramePresented else {
+            return nil
+        }
+        return catalogOpening
     }
 
     func currentSelectionWasRemoved(in nextState: CatalogWindowState) -> Bool {

@@ -184,6 +184,14 @@ a third-party constraint (ADR 0039).
 - Persistence has one current owner with an explicit schema/version policy and safe
   handling of unsupported/future schemas. Rebuildable cache state is overlay, not a
   second source of media truth.
+- A schema migration runs at launch, before the window can show the catalog, on a
+  2.5 GB file (ADR 0002, "Schema Migrations At Launch"). It costs only what its outcome
+  needs: rebuild only an index whose definition changes, write rows before building the
+  indexes that hold them, and keep `foreignKeyChecks: .immediate` (a table rebuild
+  registers `.deferred` and says why). Its PR states its cost, milliseconds and WAL bytes,
+  measured on a generated catalog of the owner's shape
+  (`docs/research/2026-11-15-catalog-open-cost.md`). Never change an applied migration in a
+  way that changes its outcome.
 - Catalog UI ownership split: `CatalogStore` (actor) owns runtime catalog truth and
   emits cheap change notifications; `CatalogProjection` (actor) owns coalesced
   `CatalogWindowState` publication (background cadence, immediate wakeup on user

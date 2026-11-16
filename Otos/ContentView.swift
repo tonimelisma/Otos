@@ -582,6 +582,7 @@ struct ContentView: View {
                 bar: waitingBar,
                 title: viewModel.windowTitle,
                 showsIndicator: showsIndicator,
+                opening: viewModel.catalogOpeningPresentation,
                 framePresented: viewModel.waitingFramePresented
             )
         } else if viewModel.showsPeopleList {

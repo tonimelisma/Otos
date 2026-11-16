@@ -54,6 +54,69 @@ extension AppKitWindowTests {
             }
         }
 
+        /// DES-121 in a real window: while the catalog opens past the first frame, the
+        /// sidebar's fixed rows and the open's status under the one indicator, drawn in light
+        /// and dark into `build/DesignEvidence/catalog-opening/`, with the window's Tab stops.
+        @Test func theWindowWhileTheCatalogOpens() async throws {
+            let directory = SourceTree.root.appending(path: "build/DesignEvidence/catalog-opening", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let model = CatalogWindowViewModel(
+                    catalogStore: CatalogStore(location: .inMemory),
+                    enrichmentCoordinator: nil,
+                    startsStallMonitor: false,
+                    startsEnrichment: false,
+                    startsSourceMonitoring: false,
+                    preferencesDomain: .suite(UUID().uuidString),
+                    volumeCapacity: ampleVolumeCapacity,
+                    trashFiles: .refusing
+                )
+                let window = Self.window(showing: model, appearance: appearance)
+                defer { window.close() }
+                let suffix = appearance == .darkAqua ? "dark" : "light"
+
+                model.applyCatalogOpening(CatalogOpening(phase: .updating(step: 1, of: 2), memberRootCount: 2))
+                window.contentView?.layoutSubtreeIfNeeded()
+                #expect(Self.indicators(in: window).isEmpty, "nothing before a frame without the catalog")
+                try Self.draw(window, to: directory.appending(path: "before-frame-\(suffix).png"))
+
+                model.waitingFramePresented()
+                let indicators = try await waitForValue {
+                    window.contentView?.layoutSubtreeIfNeeded()
+                    let found = Self.indicators(in: window)
+                    return found.isEmpty ? nil : found
+                }
+                #expect(indicators.count == 1)
+                #expect(indicators.allSatisfy { $0.style == .spinning && $0.isIndeterminate })
+                try Self.draw(window, to: directory.appending(path: "updating-\(suffix).png"))
+                try Self.tabStops(in: window).joined(separator: "\n").write(
+                    to: directory.appending(path: "tab-\(suffix).txt"), atomically: true, encoding: .utf8
+                )
+
+                model.applyCatalogOpening(CatalogOpening(phase: .opening, memberRootCount: 2))
+                window.contentView?.layoutSubtreeIfNeeded()
+                try Self.draw(window, to: directory.appending(path: "opening-\(suffix).png"))
+            }
+        }
+
+        /// DES-053 for the open's status: one height whether it is opening, updating with a
+        /// step, or failed.
+        @Test func theOpeningStatusHoldsOneHeight() {
+            func height(_ presentation: CatalogOpeningPresentation) -> CGFloat {
+                let host = NSHostingView(rootView: CatalogOpeningStatusView(opening: presentation).frame(width: 400))
+                host.frame = NSRect(origin: .zero, size: host.fittingSize)
+                host.layoutSubtreeIfNeeded()
+                return host.fittingSize.height
+            }
+            let heights = [
+                CatalogOpeningPresentation(opening: CatalogOpening(), failed: false),
+                CatalogOpeningPresentation(opening: CatalogOpening(phase: .updating(step: 2, of: 3)), failed: false),
+                CatalogOpeningPresentation(opening: CatalogOpening(phase: .updating(step: 1, of: 1)), failed: false),
+                CatalogOpeningPresentation(opening: CatalogOpening(), failed: true),
+            ].map(height)
+            #expect(Set(heights).count == 1, "heights \(heights)")
+        }
+
         /// DES-053 and DES-018 across waiting and loaded: each bar is one height, and On This
         /// Day's day title holds its place whether or not its summary has arrived.
         @Test func everyWaitingBarHoldsTheLoadedBarsHeightAndTitle() throws {
