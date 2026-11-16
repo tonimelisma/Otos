@@ -205,11 +205,16 @@ actor EnrichmentCoordinator {
     /// both stand, another claim would find nothing again, so none is asked: an empty claim is
     /// still a write transaction, and an idle coordinator writes nothing (plan 0116).
     var exhaustedClaims: (revision: UInt64, videoFaces: VideoFacesAdmission)?
-    /// Bumped by every Store change that may have removed, moved or resized a demanded row,
-    /// and covered by the pass that asked the Store which of them it still offers (ADR 0032
-    /// rule 2): a demand ends when its row does, not when its transfer next fails.
-    var demandSourcesRequested: UInt64 = 0
-    var demandSourcesCovered: UInt64 = 0
+    /// What the next pass asks the Store of the demanded rows (`reconcileDemandSources`): the
+    /// rows a membership change named or a deadline brought back from parking, and, after a
+    /// change that named no rows, every active demand. A demand ends when its row does, not
+    /// when its transfer next fails. Parked rows are asked of when named or when they come
+    /// back, never all at once: a failing library can park every row.
+    var demandRowsToCheck: Set<MediaAssetID> = []
+    var activeDemandsToCheck = false
+    /// The roots the last pass found enrichable: parked demands are asked of a root's facts
+    /// only when this set changes.
+    var lastEnrichableRoots: Set<LibraryRootPath>?
 
     private var supervisor: Task<Void, Never>?
     private var changeConsumer: Task<Void, Never>?
@@ -551,27 +556,26 @@ extension EnrichmentCoordinator {
         if case let .changed(facts, rows) = change, facts.contains(.membership), schedule.hasDemands {
             switch rows {
             case .unnamed:
-                demandSourcesRequested &+= 1
-            case let .named(rows) where rows.ids.contains(where: schedule.hasDemand(for:)):
-                demandSourcesRequested &+= 1
-            case .named, .none:
+                activeDemandsToCheck = true
+            case let .named(rows):
+                demandRowsToCheck.formUnion(rows.ids.filter(schedule.hasDemand(for:)))
+            case .none:
                 break
             }
         }
         markDirtyAndSignal()
     }
 
-    /// Asks the Store which demanded rows it still offers when a change asked it, and ends
-    /// the demands of rows it no longer has (`EnrichmentSchedule.reconcile`). A failed read
-    /// leaves the question outstanding for the next pass.
+    /// Asks the Store which of the rows to check it still offers, and ends the demands of rows
+    /// it no longer has (`EnrichmentSchedule.reconcile`). A failed read leaves the rows to
+    /// check for the next pass.
     func reconcileDemandSources() async {
-        let requested = demandSourcesRequested
-        guard requested != demandSourcesCovered else {
-            return
-        }
-        let checked = schedule.demandedIDs
+        let checksActive = activeDemandsToCheck
+        let named = demandRowsToCheck
+        activeDemandsToCheck = false
+        demandRowsToCheck = []
+        let checked = Array(named.filter(schedule.hasDemand(for:)).union(checksActive ? schedule.activeIDs : []))
         guard !checked.isEmpty else {
-            demandSourcesCovered = requested
             return
         }
         let sources: [MediaAssetID: Int64?]
@@ -581,13 +585,14 @@ extension EnrichmentCoordinator {
             OtosLog.metadata.errorOperation("enrichment.demandSources", phase: "readFailed", fields: [
                 "count": "\(checked.count)", "error": String(describing: error),
             ])
+            activeDemandsToCheck = activeDemandsToCheck || checksActive
+            demandRowsToCheck.formUnion(named)
             return
         }
         guard !isShuttingDown else {
             return
         }
         let claims = schedule.reconcile(sources: sources, checked: checked)
-        demandSourcesCovered = requested
         OtosLog.metadata.noticeOperation("enrichment.demandSources", phase: "reconciled", fields: [
             "checked": "\(checked.count)", "gone": "\(checked.count - sources.count)",
         ])

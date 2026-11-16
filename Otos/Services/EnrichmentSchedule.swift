@@ -115,7 +115,16 @@ nonisolated struct EnrichmentSchedule: Sendable {
     }
 
     let retrySchedule: EnrichmentRetrySchedule
+    /// The active demands: in flight, outstanding, or held for a transfer slot. Every pass
+    /// reads these, so their count is bounded by the hand-off and the claim window.
     private(set) var materializations: [MediaAssetID: Materialization] = [:]
+    /// The demands parked until a deadline: waiting out the pacing after their in-window
+    /// retries, or the free-space recheck. A failing or full-disk library can park any number
+    /// of rows, so no pass reads them: they come back into `materializations`, a window's room
+    /// at a time, when their deadline passes (`unparkDue`), and the next wake is the earliest
+    /// of them (`parkedEarliest`).
+    private(set) var parked: [MediaAssetID: Materialization] = [:]
+    private(set) var parkedEarliest: ContinuousClock.Instant?
     private(set) var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     private(set) var readinessRechecks: [MediaAssetID: ContinuousClock.Instant] = [:]
     private(set) var writeRetryAt: ContinuousClock.Instant?
@@ -151,15 +160,44 @@ nonisolated struct EnrichmentSchedule: Sendable {
 
     /// The demands held until a slot frees, the floor lets them through, or their pacing ends.
     var heldCount: Int {
-        materializations.values.count(where: \.isHeld)
+        materializations.values.count(where: \.isHeld) + parked.count
+    }
+
+    /// The active demands that hold a Store claim and are not in flight: held for a slot, or
+    /// waiting for a slot or an in-window retry. Each is claimed work that has not started, so
+    /// it takes a place in the coordinator's claim window (`EnrichmentCoordinator.claimWindowLimit`).
+    /// Outside it, every pass would claim a window's more rows to hold, until every row of a
+    /// cloud-only library was held and each pass walked them all.
+    var claimedWaitingCount: Int {
+        materializations.values.count { $0.ownsStoreClaim && !$0.isInFlight }
     }
 
     var hasDemands: Bool {
-        !materializations.isEmpty
+        !materializations.isEmpty || !parked.isEmpty
     }
 
     func hasDemand(for id: MediaAssetID) -> Bool {
-        materializations[id] != nil
+        materializations[id] != nil || parked[id] != nil
+    }
+
+    /// Brings back up to `room` parked demands whose deadline is at or behind `now`, earliest
+    /// first, held for a transfer slot with their claim; returns their rows. The rest stay
+    /// parked, and the earliest deadline still ahead is the next wake.
+    mutating func unparkDue(now: ContinuousClock.Instant, room: Int) -> [MediaAssetID] {
+        guard room > 0, let earliest = parkedEarliest, earliest <= now else {
+            return []
+        }
+        let due = parked.filter { ($0.value.work.retryNotBefore ?? now) <= now }
+            .sorted { ($0.value.work.retryNotBefore ?? now) < ($1.value.work.retryNotBefore ?? now) }
+            .prefix(room)
+        for (id, record) in due {
+            parked[id] = nil
+            var active = record
+            active.hold = .transferSlot
+            materializations[id] = active
+        }
+        parkedEarliest = parked.values.compactMap(\.work.retryNotBefore).min()
+        return due.map(\.key)
     }
 
     func hasInFlightWork(under rootPath: LibraryRootPath) -> Bool {
@@ -188,17 +226,26 @@ nonisolated struct EnrichmentSchedule: Sendable {
         return held
     }
 
-    /// Every demanded row, in flight or not.
-    var demandedIDs: [MediaAssetID] {
+    /// The active demands' rows, in flight or not; parked rows are not among them.
+    var activeIDs: [MediaAssetID] {
         Array(materializations.keys)
+    }
+
+    /// Every claim the demands hold, parked ones included: what shutdown gives back.
+    var claimedIDs: [MediaAssetID] {
+        materializations.compactMap { $0.value.ownsStoreClaim ? $0.key : nil }
+            + parked.compactMap { $0.value.ownsStoreClaim ? $0.key : nil }
     }
 
     /// Ends the demands `ends` names: their row or their root is gone, or the root no longer
     /// lets enrichment read it. A demand not in flight is dropped; one in flight is marked
     /// withdrawn and ends when its transfer comes back (`finish`), so the slot it holds is
-    /// counted until then. Returns how many were dropped now, and those whose Store claim the
-    /// demand held, for the coordinator to give back.
+    /// counted until then. Parked demands are read only `includingParked`: a pass asks of the
+    /// active ones alone, and the parked ones when the fact could reach them (a root's change).
+    /// Returns how many were dropped now, and those whose Store claim the demand held, for the
+    /// coordinator to give back.
     mutating func withdraw(
+        includingParked: Bool = true,
         where ends: (MediaAssetID, Materialization) -> Bool
     ) -> (dropped: Int, claimsToRelease: [MediaAssetID]) {
         var dropped = 0
@@ -214,6 +261,19 @@ nonisolated struct EnrichmentSchedule: Sendable {
                 claims.append(id)
             }
         }
+        if includingParked {
+            let ending = parked.filter { ends($0.key, $0.value) }
+            for (id, record) in ending {
+                parked[id] = nil
+                dropped += 1
+                if record.ownsStoreClaim {
+                    claims.append(id)
+                }
+            }
+            if !ending.isEmpty {
+                parkedEarliest = parked.values.compactMap(\.work.retryNotBefore).min()
+            }
+        }
         return (dropped, claims)
     }
 
@@ -225,9 +285,34 @@ nonisolated struct EnrichmentSchedule: Sendable {
     /// after the read started is not in `checked` and is left alone. Returns the claims to
     /// give back.
     mutating func reconcile(sources: [MediaAssetID: Int64?], checked: [MediaAssetID]) -> [MediaAssetID] {
-        let checkedSet = Set(checked)
-        let withdrawn = withdraw { id, _ in checkedSet.contains(id) && sources[id] == nil }
+        var claims: [MediaAssetID] = []
+        var parkedChanged = false
+        for id in checked where sources[id] == nil {
+            if let record = materializations[id], !record.isWithdrawn {
+                if record.isInFlight {
+                    materializations[id]?.isWithdrawn = true
+                } else {
+                    materializations[id] = nil
+                    if record.ownsStoreClaim {
+                        claims.append(id)
+                    }
+                }
+            } else if let record = parked.removeValue(forKey: id) {
+                parkedChanged = true
+                if record.ownsStoreClaim {
+                    claims.append(id)
+                }
+            }
+        }
         for id in checked {
+            // A parked row whose source changed is due at once: other bytes, a fresh start.
+            if let size = sources[id], let record = parked[id], record.work.sourceSize != size {
+                parked[id] = nil
+                parkedChanged = true
+                var active = record
+                active.hold = .transferSlot
+                materializations[id] = active
+            }
             guard let size = sources[id], var record = materializations[id], !record.isWithdrawn,
                   record.work.sourceSize != size
             else {
@@ -251,7 +336,10 @@ nonisolated struct EnrichmentSchedule: Sendable {
             materializations[id] = record
             retryLedger[id] = nil
         }
-        return withdrawn.claimsToRelease
+        if parkedChanged {
+            parkedEarliest = parked.values.compactMap(\.work.retryNotBefore).min()
+        }
+        return claims
     }
 
     /// Picks the demands to hand to the materializer now and marks them in flight:
@@ -351,7 +439,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         return Settlement(disposition: .paced(entry), releasesStoreClaim: false)
     }
 
-    /// Holds a finished transfer's demand until `notBefore`, keeping whatever claim it held.
+    /// Parks a finished transfer's demand until `notBefore`, keeping whatever claim it held.
     private mutating func holdUntil(
         _ notBefore: ContinuousClock.Instant,
         _ work: DownloadWork,
@@ -359,7 +447,9 @@ nonisolated struct EnrichmentSchedule: Sendable {
         hold: Hold,
         record: Materialization
     ) {
-        materializations[work.id] = Materialization(
+        materializations[work.id] = nil
+        parkedEarliest = min(parkedEarliest ?? notBefore, notBefore)
+        parked[work.id] = Materialization(
             work: DownloadWork(
                 id: work.id,
                 url: work.url,
@@ -542,7 +632,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         let deadlines = downloads
             + retryLedger.values.map(\.notBefore)
             + readinessRechecks.values
-            + [writeRetryAt, videoFacesHeldUntil].compactMap(\.self)
+            + [writeRetryAt, videoFacesHeldUntil, parkedEarliest].compactMap(\.self)
         return deadlines.filter { $0 > now }.min()
     }
 

@@ -85,7 +85,10 @@ extension EnrichmentCoordinator {
             for _ in 0 ..< Self.maxReadinessRoutingPasses {
                 guard items.count < availableSlots else { break }
                 let currentReadyCapacity = max(availableSlots - items.count, 0)
-                let currentClaimCapacity = max(claimWindowLimit - readyClaims.count, 0)
+                // A demand waiting for a slot or a retry is claimed work not started, as a
+                // queued one is: it takes a place in the window, so a full hand-off stops the
+                // claims.
+                let currentClaimCapacity = claimWindowRoom
                 guard currentClaimCapacity > 0 else { break }
                 let claimLimit = min(max(claimBatchSize, currentReadyCapacity), currentClaimCapacity)
                 lastClaimLimit = claimLimit
@@ -288,6 +291,9 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return []
         }
+        // Parked demands whose deadline passed come back as the window has room, and are
+        // asked of the Store with the rest: a row deleted while it was parked ends here.
+        demandRowsToCheck.formUnion(schedule.unparkDue(now: now, room: claimWindowRoom))
         // A demand whose row went is ended before a transfer is spent on it.
         await reconcileDemandSources()
         guard !isShuttingDown else {
@@ -310,6 +316,12 @@ extension EnrichmentCoordinator {
             )
         }
         return selected
+    }
+
+    /// The claim window's free places: its limit less the claimed work not yet started,
+    /// queued enrichment and the demands waiting for a slot or a retry.
+    var claimWindowRoom: Int {
+        max(claimWindowLimit - readyClaims.count - schedule.claimedWaitingCount, 0)
     }
 
     func prioritizedEnrichmentIDs() -> [MediaAssetID] {
@@ -428,7 +440,10 @@ extension EnrichmentCoordinator {
                 }
             }
         }
-        let withdrawn = schedule.withdraw { id, record in
+        // Parked demands are asked only when the roots changed: no pass reads them.
+        let rootsChanged = lastEnrichableRoots != enrichableRoots
+        lastEnrichableRoots = enrichableRoots
+        let withdrawn = schedule.withdraw(includingParked: rootsChanged) { id, record in
             record.ownsStoreClaim && !enrichableRoots.contains(id.libraryRootPath)
         }
         for id in withdrawn.claimsToRelease {

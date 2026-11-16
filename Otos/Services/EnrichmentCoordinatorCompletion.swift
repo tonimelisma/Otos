@@ -281,9 +281,7 @@ extension EnrichmentCoordinator {
     }
 
     func releaseOutstandingClaimsForShutdown() async {
-        let materializationClaimIDs = schedule.materializations.compactMap { id, record in
-            record.ownsStoreClaim ? id : nil
-        }
+        let materializationClaimIDs = schedule.claimedIDs
         let ids = Set(readyClaims.compactMap { id, record in
             record.ownsStoreClaim ? id : nil
         }).union(materializationClaimIDs).union(pendingApplyClaimIDs)

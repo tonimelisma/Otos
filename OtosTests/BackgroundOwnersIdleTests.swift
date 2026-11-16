@@ -59,12 +59,18 @@ struct BackgroundOwnersIdleTests {
         // time: measurement — the idle period (`idle`).
         try await Task.sleep(for: Self.idle)
         let idle = IdleUse(from: before, to: store.use())
+        // Every original is dataless and no download succeeds, as on a cloud-only library: what
+        // enrichment holds stays within its claim window and hand-off however many rows wait,
+        // or every pass walks a growing set (ENR-009).
+        let demands = await owners.enrichment.schedule.materializations.count
+        let demandBound = await owners.enrichment.claimWindowLimit + owners.enrichment.handoffPolicy.globalOutstandingLimit
         await owners.shutdown()
         await store.shutdown()
         try IdleUse.write(
             "settledAfter=\(settledAfter.map(String.init) ?? "never") lastSettleWindow: \(lastWindow.summary)\nidle: \(idle.summary)\n"
         )
 
+        #expect(demands <= demandBound, "enrichment holds \(demands) demands, more than its window and hand-off (\(demandBound))")
         #expect(settledAfter != nil, "never a quiet window: \(lastWindow.summary)")
         #expect(idle.changes == 0, "\(idle.summary)")
         #expect(idle.writes.isEmpty, "\(idle.summary)")

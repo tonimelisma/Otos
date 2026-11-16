@@ -27,7 +27,8 @@ struct EnrichmentScheduleTests {
     }
 
     private func submitAll(_ schedule: inout EnrichmentSchedule, at now: ContinuousClock.Instant) -> [MediaAssetID] {
-        schedule.takeSubmissions(globalLimit: 16, backgroundPerRoot: 16, viewport: [], now: now).map(\.id)
+        _ = schedule.unparkDue(now: now, room: 16)
+        return schedule.takeSubmissions(globalLimit: 16, backgroundPerRoot: 16, viewport: [], now: now).map(\.id)
     }
 
     /// ENR-008: a cloud download held by the free-space floor spends no attempt and keeps its
@@ -44,7 +45,8 @@ struct EnrichmentScheduleTests {
         let recheck = start.advanced(by: EnrichmentRetrySchedule.production.spaceRecheck)
         let entry = EnrichmentCoordinator.RetryLedgerEntry(notBefore: recheck, attemptCount: 0, sourceSize: 100)
         #expect(settlement == EnrichmentSchedule.Settlement(disposition: .paced(entry), releasesStoreClaim: false))
-        #expect(schedule.materializations[row]?.isHeld == true)
+        #expect(schedule.parked[row]?.hold == .freeSpace, "parked: no pass reads it until its recheck")
+        #expect(schedule.materializations[row] == nil)
         #expect(schedule.outstandingCount == 0)
         #expect(schedule.heldCount == 1)
         #expect(schedule.retryLedger[row] == nil, "the hold is the demand's, not the ledger's")
@@ -113,6 +115,8 @@ struct EnrichmentScheduleTests {
         #expect(schedule.outstandingCount == 0)
         #expect(schedule.heldCount == 1)
         #expect(schedule.nextWake(after: now) == now.advanced(by: .seconds(900)))
+        #expect(schedule.unparkDue(now: now.advanced(by: .seconds(899)), room: 16).isEmpty)
+        #expect(schedule.unparkDue(now: now.advanced(by: .seconds(900)), room: 16) == [row])
         let afterPacing = schedule.takeSubmissions(
             globalLimit: 16, backgroundPerRoot: 2, viewport: [], now: now.advanced(by: .seconds(900))
         )

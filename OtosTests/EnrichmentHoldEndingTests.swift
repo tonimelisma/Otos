@@ -30,7 +30,7 @@ struct EnrichmentHoldEndingTests {
             Issue.record("expected the pacing hold, got \(settlement.disposition)")
             return schedule
         }
-        #expect(schedule.materializations[id]?.hold == .pacing)
+        #expect(schedule.parked[id]?.hold == .pacing)
         return schedule
     }
 
@@ -202,6 +202,49 @@ struct EnrichmentHoldEndingTests {
         #expect(await coordinator.schedule.outstandingCount == 1)
         #expect(await coordinator.schedule.materializations[reading.id]?.hold == .transferSlot)
         await coordinator.shutdown()
+    }
+
+    /// A cloud-only library: thousands of rows need their bytes and the hand-off has 16 slots,
+    /// none of which comes back. The rows held for a slot take places in the claim window, so
+    /// what the coordinator holds stays within the window and the hand-off however many rows
+    /// wait, and once the window is full a pass claims nothing more: its work does not grow
+    /// with the rows waiting.
+    @Test func heldDemandsStayWithinTheClaimWindowHoweverManyRowsWait() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Cloud", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let rows = 3000
+        let store = makeTestStore(
+            location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
+            scanner: fixedScanner((0 ..< rows).map { "IMG_\($0).JPG" })
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == rows }
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _, _, _ in .notMaterialized },
+            originalStatus: { _ in .dataless }
+        )
+        func claims() -> Int {
+            store.use().connections.holds.filter { $0.operation == "claimedEnrichmentCandidates" }.reduce(0) { $0 + $1.count }
+        }
+        let bound = await coordinator.claimWindowLimit + coordinator.handoffPolicy.globalOutstandingLimit
+
+        var claimsAfterFirstPasses = 0
+        for pass in 1 ... 20 {
+            // The transfers handed off never return: a pass runs as the loop's would.
+            _ = await coordinator.dequeueEnrichmentWork()
+            _ = await coordinator.dequeueMaterializationSubmissions()
+            let held = await coordinator.schedule.materializations.count
+            #expect(held <= bound, "pass \(pass) holds \(held) demands, more than the window and the hand-off (\(bound))")
+            if pass == 5 {
+                claimsAfterFirstPasses = claims()
+            }
+        }
+        #expect(claims() == claimsAfterFirstPasses, "a pass with the window full claims nothing")
+        await coordinator.shutdown()
+        await store.shutdown()
     }
 }
 
