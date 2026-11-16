@@ -239,20 +239,18 @@ struct BenchmarkTests {
         }
 
         // People at a family archive's scale (ADR 0047): 10,000 faces, 1,000 of them the
-        // user's across 20 people. `PeopleAssignment` runs a whole pass after every catalog
-        // change while previews are read for faces; the snapshot is its catalog read alone, and a
-        // settled pass reads, assigns, finds nothing to write and builds the gallery.
+        // user's across 20 people. `PeopleAssignment` runs a pass after every catalog change of
+        // a kind it reads; the snapshot is its catalog read alone, and a settled pass reads,
+        // builds the gallery and finds assignment's inputs unchanged.
         try await Self.addFaces(to: store, faces: 10000, people: 20, confirmedEach: 50)
         try await Benchmark.measure("people.snapshot.10k", iterations: 3) {
             let snapshot = try await store.peopleSnapshot(availableLibraryPaths: paths)
             #expect(snapshot.faces.count == 10000)
         }
-        _ = try await PeopleAssignment.settle(store: store, libraries: libraries)
+        let people = PeopleAssignment(store: store, builder: nil)
+        _ = try await people.settle(libraries: libraries)
         try await Benchmark.measure("people.pass.10k", iterations: 3) {
-            guard case let .publish(built, _, _) = try await PeopleAssignment.run(store: store, libraries: libraries) else {
-                Issue.record("a settled pass wrote")
-                return
-            }
+            let built = try await people.settle(libraries: libraries)
             #expect(built.people.count >= 20)
         }
 

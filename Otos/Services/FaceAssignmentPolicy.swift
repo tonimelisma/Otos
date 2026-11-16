@@ -194,6 +194,19 @@ nonisolated enum FaceAssignmentPolicy {
     /// people from the faces the time before left over, which ends a run that would not.
     static let maximumGroupings = 8
 
+    /// Raised whenever a rule changes what assignment gives for the same faces, so a catalog
+    /// settled by an earlier build assigns again (`AssignmentInputs`). The constants are
+    /// hashed beside it (`constants`), so changing one needs no raise.
+    static let revision = 1
+
+    /// Every value the rules read, for `AssignmentInputs`.
+    static var constants: [Double] {
+        [
+            Double(threshold), Double(margin), Double(groupLink), Double(groupLinks), window, adultAge,
+            Double(maximumGroupings), Double(FaceRecognisability.limit),
+        ]
+    }
+
     /// `photoOf` maps a file that is one of several of a photo — an identical copy (ADR
     /// 0054), a stack's file (ADR 0052) — to the file that stands for it: each file is read for
     /// its faces, so one person's faces in one photo are one face read twice, and a likeness

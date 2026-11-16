@@ -1452,11 +1452,12 @@ extension CatalogStore {
     }
 
     /// Everything People reads, in one transaction: each face with its photo's capture
-    /// instant, its tile, whose word its person is and the user's acts on it, the people, and
-    /// the stills in `availableLibraryPaths` whose faces are not yet read. Faces of libraries
-    /// no longer cataloged are left out. A photo with a face row no reading writes (an
-    /// embedding not of unit length, an assignment no case holds) is left out whole and owes
-    /// its faces again: its faces stamp is cleared, so it is read afresh, and it is logged.
+    /// instant, its tile, its vector's number, whose word its person is and the user's acts on
+    /// it, the people, and the stills in `availableLibraryPaths` whose faces are not yet read.
+    /// Never a vector: the face rows are narrow (v66), and `faceEmbeddings(after:limit:)` reads
+    /// vectors apart. Faces of libraries no longer cataloged are left out. A photo with a face
+    /// row no reading writes (no vector row, an assignment no case holds) is left out whole and
+    /// owes its faces again (`oweFacesAgain`).
     func peopleSnapshot(availableLibraryPaths: Set<LibraryRootPath> = []) async throws -> PeopleSnapshot {
         let pathsByRowID = roots.pathsByRowID
         let rowIDs = roots.rowIDSnapshot()
@@ -1469,7 +1470,7 @@ extension CatalogStore {
             for row in try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, face_index, person_id FROM face_rejection") {
                 rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
             }
-            var faces: [FaceFact] = []
+            var faces: [PeopleSnapshot.Face] = []
             var tiles: [FaceID: FaceTile] = [:]
             var likeness: [FaceID: Float] = [:]
             var keyPhotos: [PersonID: FaceID] = [:]
@@ -1501,9 +1502,9 @@ extension CatalogStore {
                 }
                 guard let rootPath = pathsByRowID[key.rootID], !malformed.contains(key.photo) else { continue }
                 let asset = MediaAssetID(libraryRootPath: rootPath, relativePath: key.path)
-                let data: Data? = row[PeopleFaceColumn.embedding.rawValue]
+                let vector: Int64? = row[PeopleFaceColumn.vector.rawValue]
                 let person: Int64? = row[PeopleFaceColumn.personID.rawValue]
-                guard let embedding = data.flatMap(FaceStorage.embedding(from:)),
+                guard let vector,
                       let assignment = try? FaceAssignmentColumn.assignment(
                           column: row[PeopleFaceColumn.assignment.rawValue], person: person
                       )
@@ -1513,10 +1514,10 @@ extension CatalogStore {
                 }
                 let id = FaceID(asset: asset, index: key.index)
                 let capture: Double? = row[PeopleFaceColumn.captureLocal.rawValue]
-                faces.append(FaceFact(
+                faces.append(PeopleSnapshot.Face(
                     id: id,
                     captureSeconds: capture,
-                    embedding: embedding,
+                    vector: vector,
                     assignment: assignment,
                     rejected: rejections[key] ?? []
                 ))
@@ -1560,12 +1561,9 @@ extension CatalogStore {
                 db,
                 sql: "SELECT id, name, birthday, is_hidden, is_favorite FROM person ORDER BY id"
             ).map(Self.person)
-            var stacks: [PhotoStack] = []
-            for (rowID, candidates) in try PhotoStackSQL.fetchCandidates(rootIDs: faceRootIDs, db: db).byRoot {
-                guard let rootPath = pathsByRowID[rowID] else { continue }
-                stacks += PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath)
-            }
-            let photoOf = PeopleSnapshot.photos(stackKeys: CatalogStacks(stacks).keyOfMember, copies: copies)
+            let stackRoots = pathsByRowID.filter { faceRootIDs.contains($0.key) }
+            let stacks = try PhotoStackSQL.build(rootPaths: stackRoots, db: db).stacks
+            let photoOf = PeopleSnapshot.photos(stackKeys: stacks.keyOfMember, copies: copies)
             // A malformed row's photo is left out whole: its other faces were read before the
             // bad row was reached.
             let left = { (id: FaceID) in
@@ -1584,34 +1582,38 @@ extension CatalogStore {
             return (snapshot, malformed)
         }
         if !malformed.isEmpty {
-            try await oweFacesAgain(malformed, pathsByRowID: pathsByRowID)
+            let photos = malformed.compactMap { photo in
+                pathsByRowID[photo.rootID].map { MediaAssetID(libraryRootPath: $0, relativePath: photo.path) }
+            }
+            try await oweFacesAgain(Set(photos))
         }
         return snapshot
     }
 
-    /// Clears the faces stamp of each photo holding a malformed face row, so it is read for its
-    /// faces again and the reading replaces the row (ADR 0047). Rings the change notifications
-    /// only when a stamp was cleared, so the People read that found the rows does not start
-    /// itself again.
-    private func oweFacesAgain(_ photos: Set<FaceRowKey.Photo>, pathsByRowID: [Int64: LibraryRootPath]) async throws {
-        let cleared = try await database().write { db -> Int in
-            var cleared = 0
-            for photo in photos {
-                try db.execute(
-                    sql: """
-                    UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL
-                    WHERE library_root_id = ? AND relative_path = ? AND faces_source_size IS NOT NULL
-                    """,
-                    arguments: [photo.rootID, photo.path.rawValue]
-                )
-                cleared += db.changesCount
-            }
-            return cleared
+    /// Clears the faces stamp of each photo holding a face row no reading writes — found by the
+    /// People read, or a vector whose bytes hold no embedding — so it is read for its faces
+    /// again and the reading replaces the row (ADR 0047). A background write, in pages
+    /// (`writeInPages`). Rings the change notifications only when a stamp was cleared, so the
+    /// People read that found the rows does not start itself again.
+    func oweFacesAgain(_ photos: Set<MediaAssetID>) async throws {
+        let rowIDs = roots.rowIDSnapshot()
+        let keys = photos.compactMap { photo in
+            rowIDs[photo.libraryRootPath].map { FaceRowKey.Photo(rootID: $0, path: photo.relativePath) }
+        }
+        let (cleared, _) = try await writeInPages(keys, state: 0) { photo, _, db in
+            try db.execute(
+                sql: """
+                UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL
+                WHERE library_root_id = ? AND relative_path = ? AND faces_source_size IS NOT NULL
+                """,
+                arguments: [photo.rootID, photo.path.rawValue]
+            )
+            return db.changesCount
         }
         for photo in photos {
             OtosLog.catalog.errorOperation("people.snapshot", phase: "malformedFaceRow", fields: [
-                "rootPath": pathsByRowID[photo.rootID]?.rawValue ?? "?",
-                "relativePath": photo.path.rawValue,
+                "rootPath": photo.libraryRootPath.rawValue,
+                "relativePath": photo.relativePath.rawValue,
                 "owedAgain": "\(cleared > 0)",
             ])
         }
@@ -1619,6 +1621,81 @@ extension CatalogStore {
         if cleared > 0 {
             notifyCatalogChanged(.changed([.faces, .detail]))
         }
+    }
+
+    /// The vectors numbered above `vector`, in number order, at most `limit` of them: one short
+    /// read of the vector table's primary key (`FaceEmbeddingSQL`). A row whose bytes are no
+    /// embedding (not 512 values of unit length) comes back without one.
+    func faceEmbeddings(after vector: Int64, limit: Int) async throws -> [FaceVectors.Read] {
+        try await database().readFreeingConnection { db in
+            try Row.fetchAll(
+                db.cachedStatement(sql: "SELECT id, embedding FROM face_embedding WHERE id > ? ORDER BY id LIMIT ?"),
+                arguments: [vector, limit]
+            ).map { row in
+                FaceVectors.Read(vector: row[0], embedding: FaceStorage.embedding(from: row[1]))
+            }
+        }
+    }
+
+    /// The hash of the assignment inputs whose assignment the catalog holds
+    /// (`AssignmentInputs`); nil before any assignment has settled.
+    func settledPeopleAssignment() async throws -> Data? {
+        try await database().readFreeingConnection { db in
+            try Data.fetchOne(db, sql: "SELECT inputs FROM \(CatalogSchema.settledPeopleAssignmentTable)")
+        }
+    }
+
+    /// Records that the catalog holds assignment's output on the inputs hashed as `digest`. No
+    /// change notification: nothing shown reads it.
+    func recordSettledPeopleAssignment(_ digest: Data) async throws {
+        _ = try await timedWrite(database()) { db in
+            try db.execute(
+                sql: """
+                INSERT INTO \(CatalogSchema.settledPeopleAssignmentTable) (id, inputs) VALUES (0, ?)
+                ON CONFLICT(id) DO UPDATE SET inputs = excluded.inputs
+                """,
+                arguments: [digest]
+            )
+        }
+    }
+
+    /// The most rows one background write transaction changes (`writeInPages`): a few
+    /// milliseconds of statements by key, so a write the user is waiting on — a Like, an act on
+    /// a face — waits for at most one page of background work, never for all of it.
+    static let backgroundWritePage = 256
+
+    /// Writes `items` a page of `backgroundWritePage` at a time, each page its own named, timed
+    /// transaction (`operation`), threading `state` from one page into the next. The one way a
+    /// background owner writes many rows: one transaction for all of them held the writer for
+    /// seconds while a Like queued behind it. Each item's write must stand on its own,
+    /// re-checking in SQL what it depends on, since another write can land between two pages.
+    /// Returns the rows the pages wrote and the state after the last.
+    func writeInPages<Item: Sendable, State: Sendable>(
+        _ items: [Item],
+        state: State,
+        operation: String = #function,
+        _ write: @escaping @Sendable (Item, inout State, Database) throws -> Int
+    ) async throws -> (rows: Int, state: State) {
+        let dbWriter = try database()
+        var rows = 0
+        var state = state
+        var start = 0
+        while start < items.count {
+            let page = Array(items[start ..< min(start + Self.backgroundWritePage, items.count)])
+            let pageState = state
+            let written = try await timedWrite(dbWriter, operation: operation) { db -> (rows: Int, state: State) in
+                var state = pageState
+                var rows = 0
+                for item in page {
+                    rows += try write(item, &state, db)
+                }
+                return (rows, state)
+            }
+            rows += written.value.rows
+            state = written.value.state
+            start += page.count
+        }
+        return (rows, state)
     }
 
     /// The stored image a face tile is cut from. A video's face: the image of its stored face
@@ -1769,109 +1846,68 @@ extension CatalogStore {
         return written
     }
 
-    /// Writes what one assignment changed (ADR 0047), in one transaction. A lapsed seed is
-    /// released only while it is still that person's seed, and a guess or a seed is written
-    /// only where the face is still Otos's to decide (none or a guess), so an act the user
-    /// made since the snapshot always wins; the next assignment sees it. A new person none of
-    /// whose seeds could still be written is not created, and its guesses wait for the next
-    /// assignment. A face whose library is no longer cataloged is skipped and counted.
-    /// Returns the rows written; zero means the catalog already held the plan.
+    /// One write of an assignment plan, in the order `applyAssignment` writes them.
+    private enum AssignmentWrite: Sendable {
+        case lapse(FaceRowKey, PersonID)
+        case createPerson(Int)
+        case seed(Int, FaceRowKey)
+        case keepIfSeeded(Int)
+        case guess(FaceRowKey, FaceAssignmentResult.Person?)
+        case likeness(FaceRowKey, Float?)
+        case emptied(PersonID)
+    }
+
+    /// What the pages of one plan carry from one to the next: each person the plan created,
+    /// by its place in `newPeople`, and how many of its seeds were written.
+    private struct AssignmentPages: Sendable {
+        var created: [Int: PersonID] = [:]
+        var seeded: [Int: Int] = [:]
+    }
+
+    /// Writes what one assignment changed (ADR 0047), a page at a time (`writeInPages`): the
+    /// lapsed seeds, then each new person with its seeds, the guesses, the likenesses and the
+    /// people emptied. Each write stands on its own: a lapsed seed is released only while it is
+    /// still that person's seed, and a guess or a seed is written only where the face is still
+    /// Otos's to decide (none or a guess), so an act the user made since the snapshot, or
+    /// between two pages, always wins; the next assignment sees it. A new person none of whose
+    /// seeds could still be written is deleted again, and its guesses wait for the next
+    /// assignment. A face whose library is no longer cataloged is skipped and counted. Returns
+    /// the rows written; zero means the catalog already held the plan.
     @discardableResult
     func applyAssignment(_ plan: FaceAssignmentPlan) async throws -> Int {
         guard !plan.isEmpty else { return 0 }
         let rowIDs = roots.rowIDSnapshot()
-        let (written, skipped) = try await database().write { db -> (Int, Int) in
-            var written = 0
-            var skipped = 0
-            var created: [Int: PersonID] = [:]
-            let guessable = "assignment IN \(FaceAssignmentColumn.sqlList { $0.isGuessable })"
-            let key = { (face: FaceID) -> FaceRowKey? in
-                guard let key = try? FaceRowKey(face, rowIDs: rowIDs) else {
-                    skipped += 1
-                    return nil
-                }
-                return key
+        let key = { (face: FaceID) in try? FaceRowKey(face, rowIDs: rowIDs) }
+        var writes: [AssignmentWrite] = []
+        var skipped = 0
+        func add(_ face: FaceID, _ write: (FaceRowKey) -> AssignmentWrite) {
+            if let key = key(face) {
+                writes.append(write(key))
+            } else {
+                skipped += 1
             }
-            for (face, person) in plan.lapsedSeeds {
-                guard let key = key(face) else { continue }
-                try db.execute(
-                    sql: """
-                    UPDATE face SET person_id = NULL, assignment = ?, is_key_photo = 0
-                    WHERE library_root_id = ? AND relative_path = ? AND face_index = ?
-                      AND assignment = ? AND person_id = ?
-                    """,
-                    arguments: [
-                        FaceAssignmentColumn.open.rawValue, key.rootID, key.path.rawValue, key.index,
-                        FaceAssignmentColumn.seed.rawValue, person.rawValue,
-                    ]
-                )
-                written += db.changesCount
+        }
+        for (face, person) in plan.lapsedSeeds {
+            add(face) { .lapse($0, person) }
+        }
+        for (index, seeds) in plan.newPeople.enumerated() {
+            writes.append(.createPerson(index))
+            for face in seeds {
+                add(face) { .seed(index, $0) }
             }
-            for (index, seeds) in plan.newPeople.enumerated() {
-                let person = try Self.insertPerson(name: nil, birthday: nil, db: db)
-                var seeded = 0
-                for face in seeds {
-                    guard let key = key(face) else { continue }
-                    try db.execute(
-                        sql: """
-                        UPDATE face SET person_id = ?, assignment = ?, is_key_photo = 0
-                        WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND is_not_face = 0 AND \(guessable)
-                        """,
-                        arguments: [person.rawValue, FaceAssignmentColumn.seed.rawValue, key.rootID, key.path.rawValue, key.index]
-                    )
-                    seeded += db.changesCount
-                }
-                if seeded > 0 {
-                    created[index] = person
-                    written += 1 + seeded
-                } else {
-                    try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [person.rawValue])
-                }
-            }
-            for guess in plan.guesses {
-                let person: PersonID?
-                switch guess.person {
-                case let .existing(id): person = id
-                case let .new(index):
-                    guard let id = created[index] else { continue }
-                    person = id
-                case nil: person = nil
-                }
-                guard let key = key(guess.face) else { continue }
-                try db.execute(
-                    sql: """
-                    UPDATE face SET person_id = ?, assignment = ?,
-                        is_key_photo = CASE WHEN person_id IS ? THEN is_key_photo ELSE 0 END
-                    WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND is_not_face = 0 AND \(guessable)
-                      AND (? IS NULL OR EXISTS (SELECT 1 FROM person WHERE id = ?))
-                    """,
-                    arguments: [
-                        person?.rawValue, (person == nil ? FaceAssignmentColumn.open : .model).rawValue, person?.rawValue,
-                        key.rootID, key.path.rawValue, key.index, person?.rawValue, person?.rawValue,
-                    ]
-                )
-                written += db.changesCount
-            }
-            for (face, likeness) in plan.likeness {
-                guard let key = key(face) else { continue }
-                try db.execute(
-                    sql: "UPDATE face SET likeness = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
-                    arguments: [likeness.map { Double($0) }, key.rootID, key.path.rawValue, key.index]
-                )
-                written += db.changesCount
-            }
-            for person in plan.emptied {
-                try db.execute(
-                    sql: """
-                    DELETE FROM person WHERE id = ? AND name IS NULL AND birthday IS NULL
-                      AND is_hidden = 0 AND is_favorite = 0
-                      AND NOT EXISTS (SELECT 1 FROM face WHERE person_id = ?)
-                    """,
-                    arguments: [person.rawValue, person.rawValue]
-                )
-                written += db.changesCount
-            }
-            return (written, skipped)
+            writes.append(.keepIfSeeded(index))
+        }
+        for guess in plan.guesses {
+            add(guess.face) { .guess($0, guess.person) }
+        }
+        for (face, likeness) in plan.likeness {
+            add(face) { .likeness($0, likeness) }
+        }
+        writes += plan.emptied.map(AssignmentWrite.emptied)
+        let pageCount = (writes.count + Self.backgroundWritePage - 1) / Self.backgroundWritePage
+        let skippedFaces = skipped
+        let (written, _) = try await writeInPages(writes, state: AssignmentPages()) { write, pages, db in
+            try Self.apply(write, pages: &pages, db: db)
         }
         if written > 0 {
             notifyCatalogChanged(.changed(.faces))
@@ -1879,9 +1915,89 @@ extension CatalogStore {
         OtosLog.catalog.debugOperation("people.applyAssignment", phase: "applied", fields: [
             "guesses": "\(plan.guesses.count)", "newPeople": "\(plan.newPeople.count)",
             "likeness": "\(plan.likeness.count)", "emptied": "\(plan.emptied.count)",
-            "lapsedSeeds": "\(plan.lapsedSeeds.count)", "rows": "\(written)", "skippedFaces": "\(skipped)",
+            "lapsedSeeds": "\(plan.lapsedSeeds.count)", "rows": "\(written)", "skippedFaces": "\(skippedFaces)",
+            "pages": "\(pageCount)",
         ])
         return written
+    }
+
+    /// One write of a plan; returns the rows it changed, counting a created person once, when
+    /// it keeps a seed.
+    private static func apply(_ write: AssignmentWrite, pages: inout AssignmentPages, db: Database) throws -> Int {
+        let guessable = "assignment IN \(FaceAssignmentColumn.sqlList { $0.isGuessable })"
+        switch write {
+        case let .lapse(key, person):
+            try db.execute(
+                sql: """
+                UPDATE face SET person_id = NULL, assignment = ?, is_key_photo = 0
+                WHERE library_root_id = ? AND relative_path = ? AND face_index = ?
+                  AND assignment = ? AND person_id = ?
+                """,
+                arguments: [
+                    FaceAssignmentColumn.open.rawValue, key.rootID, key.path.rawValue, key.index,
+                    FaceAssignmentColumn.seed.rawValue, person.rawValue,
+                ]
+            )
+            return db.changesCount
+        case let .createPerson(index):
+            pages.created[index] = try insertPerson(name: nil, birthday: nil, db: db)
+            return 0
+        case let .seed(index, key):
+            guard let person = pages.created[index] else { return 0 }
+            try db.execute(
+                sql: """
+                UPDATE face SET person_id = ?, assignment = ?, is_key_photo = 0
+                WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND is_not_face = 0 AND \(guessable)
+                """,
+                arguments: [person.rawValue, FaceAssignmentColumn.seed.rawValue, key.rootID, key.path.rawValue, key.index]
+            )
+            pages.seeded[index, default: 0] += db.changesCount
+            return db.changesCount
+        case let .keepIfSeeded(index):
+            guard let person = pages.created[index] else { return 0 }
+            guard pages.seeded[index, default: 0] == 0 else { return 1 }
+            pages.created[index] = nil
+            try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [person.rawValue])
+            return 0
+        case let .guess(key, target):
+            let person: PersonID?
+            switch target {
+            case let .existing(id): person = id
+            case let .new(index):
+                guard let id = pages.created[index] else { return 0 }
+                person = id
+            case nil: person = nil
+            }
+            try db.execute(
+                sql: """
+                UPDATE face SET person_id = ?, assignment = ?,
+                    is_key_photo = CASE WHEN person_id IS ? THEN is_key_photo ELSE 0 END
+                WHERE library_root_id = ? AND relative_path = ? AND face_index = ? AND is_not_face = 0 AND \(guessable)
+                  AND (? IS NULL OR EXISTS (SELECT 1 FROM person WHERE id = ?))
+                """,
+                arguments: [
+                    person?.rawValue, (person == nil ? FaceAssignmentColumn.open : .model).rawValue, person?.rawValue,
+                    key.rootID, key.path.rawValue, key.index, person?.rawValue, person?.rawValue,
+                ]
+            )
+            return db.changesCount
+        case let .likeness(key, likeness):
+            try db.execute(
+                sql: "UPDATE face SET likeness = ? WHERE library_root_id = ? AND relative_path = ? AND face_index = ?",
+                arguments: [likeness.map { Double($0) }, key.rootID, key.path.rawValue, key.index]
+            )
+            return db.changesCount
+        case let .emptied(person):
+            try db.execute(
+                sql: """
+                DELETE FROM person WHERE id = ? AND name IS NULL AND birthday IS NULL
+                  AND is_hidden = 0 AND is_favorite = 0
+                  AND NOT EXISTS (SELECT 1 FROM face WHERE person_id = ?)
+                """,
+                arguments: [person.rawValue, person.rawValue]
+            )
+            return db.changesCount
+        }
     }
 
     /// The one write path for what the user decides about faces and people (ADR 0047):

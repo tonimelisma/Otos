@@ -3,50 +3,58 @@ import OSLog
 
 /// People Assignment guide
 ///
-/// This actor owns who every face is (ADR 0047, `docs/design/people.md`): it gives each face
-/// its most likely person, writes Otos's guesses into the catalog, and publishes the People
-/// gallery and the tally of photos not yet checked. They are a fact about the whole catalog,
-/// not about what the window shows, so like the duplicate groups they have their own owner
-/// and their own loop: the window's publication never waits for an assignment, and a change
-/// of scope, filter or sort never starts one.
+/// This actor owns who every face is (ADR 0047, `docs/design/people.md`): it publishes the
+/// People gallery and the tally of photos not yet checked from what the catalog stores, gives
+/// each face its most likely person, and writes Otos's guesses back. They are a fact about the
+/// whole catalog, not about what the window shows, so like the duplicate groups they have
+/// their own owner and their own loop: the window's publication never waits for People, and a
+/// change of scope, filter or sort never starts a pass.
 ///
 /// `CatalogProjection` asks for a pass with `request()` after a publication that took up a
-/// catalog change of a kind a pass reads (`inputs`); every act on faces or people is one (`CatalogStore.perform(_:)`), and so
-/// is every enrichment batch that reads faces. A request only adds to `requested`; a pass
-/// records the value it started from and covers exactly that when it succeeds, so a request
-/// made while a pass runs is never lost and runs next (ADR 0032). One loop task runs every
-/// pass off a `bufferingNewest(1)` doorbell, so passes never overlap.
+/// catalog change of a kind People reads (`inputs`); every act on faces or people is one
+/// (`CatalogStore.perform(_:)`). A request only adds to `requested`; a pass records the value
+/// it started from and covers exactly that when it succeeds, so a request made while a pass
+/// runs is never lost and runs next (ADR 0032). One loop task runs every pass off a
+/// `bufferingNewest(1)` doorbell, so passes never overlap.
 ///
-/// A pass reads the catalog through the Store in one transaction, assigns off this actor
-/// (`@concurrent`, `FaceAssignmentPolicy`), and writes what changed (`applyAssignment`).
-/// Assignment is rebuilt from the user's word and the seeds alone, so run on its own output
-/// it changes nothing: a pass that wrote asks for one more, which reads what it wrote and
-/// publishes. A pass that wrote nothing publishes what it read. The store writes a guess only
-/// where the face is still Otos's to decide, so an act made while a pass runs always wins.
+/// A pass has two steps, the second only when owed:
+/// 1. **The gallery, from what is stored.** One read of every face's row, its tile and whose
+///    word its person is — never its vector — with the people, copies, stacks and tally
+///    (`CatalogStore.peopleSnapshot`). The gallery built from it is published at once, so
+///    People paints from the stored assignment and never waits for one.
+/// 2. **Assignment, only when its inputs moved.** What assignment reads of the snapshot is
+///    hashed (`AssignmentInputs`). The catalog keeps the hash of the last inputs whose
+///    assignment it holds (`CatalogStore.settledPeopleAssignment`): while the two are equal,
+///    the stored guesses are assignment's output on these inputs, and nothing runs.
+///    Otherwise the vectors owed are read (`FaceVectors`, held across passes), assignment runs
+///    off this actor, what it changes is written in short transactions, and the hash is
+///    recorded. A guess is not an input, so the pass after a write that only moved guesses
+///    finds the hash equal; a write that seeded a new person, released a seed or deleted an
+///    emptied person moved an input, and the next pass assigns once more and writes nothing.
 ///
-/// What a published pass read is kept (`snapshot`, `ranker`) to answer which people the
-/// faces of the selected photos could be (`candidates(for:)`) without another read.
+/// What a pass read is kept, without its tiles (`lastRead`), to answer which people the faces
+/// of the selected photos could be (`candidates(for:)`); the ranker is built from it and the
+/// vectors on the first such question, and again after either changes.
 ///
 /// Rows only added (`CatalogStoreChange.assetsAdded`) change who no face is: they carry no
-/// face yet. They change the tally alone, since every new still is one not yet checked, so
-/// `CatalogProjection` asks for that with `requestTally()`: a tally pass reads the count by
-/// itself and republishes the last state with it, and a full pass covers it too.
+/// face yet. They change the tally alone, so `CatalogProjection` asks for that with
+/// `requestTally()`: a tally pass reads the count by itself and republishes the last state
+/// with it, and a full pass covers it too.
 ///
-/// A failed pass publishes nothing and leaves its request outstanding for the next request
-/// to retry. `stop()` is teardown: it ends both streams, so the loop and the consumer end
-/// with them.
+/// A failed pass leaves its request outstanding for the next request to retry; what it
+/// published before failing stays published, since it is what the catalog holds. `stop()` is
+/// teardown: it ends both streams, so the loop and the consumer end with them.
 actor PeopleAssignment {
     typealias Builder = @Sendable (CatalogStore, [CatalogLibraryState]) async throws -> CatalogPeopleState
 
-    /// What a pass reads (`CatalogStore.peopleSnapshot`), so `CatalogProjection` asks for one
-    /// only when one of these moved: the faces, who they are and which photos are checked for
-    /// them; which rows are shown and which movies a Live Photo hides; the stacks a face's
-    /// photo stands for (kind, burst, capture date, choices and stack keys) and the copies it
-    /// is one of (ADR 0054); a face's capture date; and the image its tile is cut from. Render
-    /// signatures, the record's other facts, places, search readings and enrichment's own
-    /// stamps are not among them.
+    /// What the People snapshot reads (`CatalogStore.peopleSnapshot`), so `CatalogProjection`
+    /// asks for a pass only when one of these moved: the faces, who they are and which photos
+    /// are checked for them; which rows are shown and which movies a Live Photo hides; the
+    /// stacks a face's photo stands for and the copies it is one of (ADR 0052, 0054); a face's
+    /// capture date; and the image its tile is cut from. A pass that only rebuilds the gallery
+    /// costs one read: assignment runs only when what it reads moved.
     static let inputs: CatalogChangedFacts = [
-        .faces, .membership, .grouping, .kindAndFormat, .captureDate, .choices, .images, .copies,
+        .faces, .membership, .grouping, .kindAndFormat, .captureDate, .choices, .images, .copies, .stacks,
     ]
 
     /// Built states, each differing from the one before; only the newest matters. One
@@ -68,9 +76,14 @@ actor PeopleAssignment {
     private var tallyCovered: UInt64 = 0
     private var runningPasses = 0
     private var published: CatalogPeopleState?
-    /// What the last published pass read, for `candidates(for:)`.
-    private var snapshot: PeopleSnapshot?
-    private var ranker = FaceRanker.empty
+    /// What the last pass read, without its tiles, for `candidates(for:)`.
+    private var lastRead: PeopleSnapshot?
+    /// Every face's vector read so far; read on the first assignment or ranking that needs it.
+    private var vectors = FaceVectors()
+    /// The ranker over `lastRead` and `vectors`; nil until asked for, and after either changes.
+    private var ranker: FaceRanker?
+    /// The inputs whose assignment the catalog holds; read from the catalog by the first pass.
+    private var settled: AssignmentInputs?
     private var loopTask: Task<Void, Never>?
 
     /// True when every request has been covered by a successful pass and none is running.
@@ -122,71 +135,166 @@ actor PeopleAssignment {
         buildsContinuation.finish()
     }
 
-    /// The people each face of `photos` could be, from the last published pass: a hidden
-    /// person's face is not ranked, and a hidden person is never a candidate.
+    /// The people each face of `photos` could be, from the last pass's read: a hidden
+    /// person's face is not ranked, and a hidden person is never a candidate. The vectors owed
+    /// are read first; a failed read ranks nothing, and is logged.
     func candidates(for photos: [MediaAssetID]) async -> [FaceID: [FaceCandidate]] {
-        guard let snapshot, let published else {
+        guard let read = lastRead else {
             return [:]
         }
-        return await Self.candidates(for: photos, snapshot: snapshot, state: published, ranker: ranker)
+        do {
+            try await syncVectors(for: read)
+        } catch {
+            OtosLog.catalog.errorOperation("people.candidates", phase: "vectorsFailed", fields: [
+                "error": String(describing: error),
+            ])
+            return [:]
+        }
+        // The read and the state may have moved while the vectors were read: rank what is
+        // held now, from values taken in this synchronous step.
+        guard let current = lastRead, let state = published else {
+            return [:]
+        }
+        let ranker = ranker ?? Self.ranker(read: current, vectors: vectors, state: state)
+        self.ranker = ranker
+        return await Self.candidates(for: photos, read: current, vectors: vectors, state: state, ranker: ranker)
     }
 
     /// A full pass when one is owed, which reads the tally too; else a tally pass.
     private func pass() async {
         if requested != covered {
-            await assignmentPass()
+            await fullPass()
         } else if tallyRequested != tallyCovered {
             await tallyPass()
         }
     }
 
-    private func assignmentPass() async {
+    private func fullPass() async {
         runningPasses += 1
         defer { runningPasses -= 1 }
         let startedFrom = requested
         let tallyStartedFrom = tallyRequested
-        let outcome: Outcome
         do {
-            // Before the catalog's first load there is nothing to assign; the load is a
-            // catalog change, so a request follows it.
+            // Before the catalog's first load there is nothing to read; the load is a catalog
+            // change, so a request follows it.
             guard let libraries = await store.loadedLibraries() else {
                 return
             }
             if let builder {
-                outcome = try await .publish(builder(store, libraries), nil, .empty)
+                let built = try await builder(store, libraries)
+                try Task.checkCancellation()
+                publish(built, covers: startedFrom, tally: tallyStartedFrom)
             } else {
-                outcome = try await Self.run(store: store, libraries: libraries)
+                try await galleryThenAssignment(libraries: libraries, startedFrom: startedFrom, tallyStartedFrom: tallyStartedFrom)
             }
-            try Task.checkCancellation()
         } catch is CancellationError {
             return
         } catch {
-            OtosLog.catalog.errorOperation("people.assignment", phase: "failed", fields: [
+            OtosLog.catalog.errorOperation("people.pass", phase: "failed", fields: [
                 "error": String(describing: error),
             ])
             return
         }
-        // Synchronous from here: nothing interleaves between covering the request and
-        // publishing what covers it.
         covered = startedFrom
-        switch outcome {
-        case .publish(var built, let read, let ranker):
-            // What it publishes carries the tally it read, and the request it covers.
-            built.covers = startedFrom
-            tallyCovered = tallyStartedFrom
-            if let read {
-                snapshot = read
-                self.ranker = ranker
-            }
-            if built != published {
-                published = built
-                buildsContinuation.yield(built)
-            }
-        case .wrote:
-            // The next pass reads what this one wrote and publishes it.
-            requested &+= 1
-        }
         ringIfOwed()
+    }
+
+    /// Step 1, then step 2 when owed (see the guide). Returns whether assignment ran.
+    @discardableResult
+    private func galleryThenAssignment(
+        libraries: [CatalogLibraryState],
+        startedFrom: UInt64,
+        tallyStartedFrom: UInt64
+    ) async throws -> Bool {
+        let signpost = OtosSignpost.performance.beginInterval("PeopleAssignment")
+        defer { OtosSignpost.performance.endInterval("PeopleAssignment", signpost) }
+        let start = ContinuousClock.now
+        let read = try await store.peopleSnapshot(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
+        let readMs = DiagnosticsTiming.milliseconds(since: start)
+        let built = await Self.gallery(read)
+        try Task.checkCancellation()
+        // Synchronous from here to the publication: the read kept is the one published.
+        lastRead = read.withoutTiles
+        ranker = nil
+        publish(built, covers: startedFrom, tally: tallyStartedFrom)
+        let inputs = await Self.inputs(of: read)
+        if settled == nil {
+            let stored = try await store.settledPeopleAssignment()
+            settled = settled ?? stored.map(AssignmentInputs.init(digest:))
+        }
+        guard inputs != settled else {
+            OtosLog.catalog.debugOperation("people.pass", phase: "published", fields: [
+                "faces": "\(read.faces.count)", "people": "\(read.people.count)", "readMs": "\(readMs)", "assigned": "false",
+            ])
+            return false
+        }
+        let vectorsStart = ContinuousClock.now
+        try await syncVectors(for: read)
+        let vectorsMs = DiagnosticsTiming.milliseconds(since: vectorsStart)
+        let assignStart = ContinuousClock.now
+        let (plan, missing) = await Self.assign(read, vectors: vectors)
+        let assignMs = DiagnosticsTiming.milliseconds(since: assignStart)
+        try Task.checkCancellation()
+        let written = try await store.applyAssignment(plan)
+        // Inputs whose vectors were not all held are not settled: a face whose vector is
+        // missing was replaced by a write after the read, and the pass that write rings
+        // assigns again.
+        if missing == 0 {
+            try await store.recordSettledPeopleAssignment(inputs.digest)
+            settled = inputs
+        }
+        OtosLog.catalog.debugOperation("people.pass", phase: written > 0 ? "wrote" : "assigned", fields: [
+            "faces": "\(read.faces.count)",
+            "people": "\(read.people.count)",
+            "vectors": "\(vectors.count)",
+            "missingVectors": "\(missing)",
+            "guesses": "\(plan.guesses.count)",
+            "newPeople": "\(plan.newPeople.count)",
+            "rows": "\(written)",
+            "readMs": "\(readMs)",
+            "vectorsMs": "\(vectorsMs)",
+            "assignMs": "\(assignMs)",
+            "assigned": "true",
+        ])
+        return true
+    }
+
+    /// Publishes `built` with the request and tally it covers, when it differs from the last.
+    private func publish(_ built: CatalogPeopleState, covers: UInt64, tally: UInt64) {
+        var built = built
+        built.covers = covers
+        tallyCovered = tally
+        if built != published {
+            published = built
+            OtosLog.catalog.debugOperation("people.build", phase: "published", fields: [
+                "faces": "\(built.faceCount)", "people": "\(built.people.count)", "covers": "\(covers)",
+            ])
+            buildsContinuation.yield(built)
+        }
+    }
+
+    /// Reads the vectors `read` names that are not held, a page at a time, and forgets the
+    /// ones no face names any more. Each page is applied in synchronous code and only above
+    /// what is held then, so a ranking and a pass reading pages at once add each vector once.
+    /// A vector whose bytes hold no embedding leaves its face out of assignment, and its
+    /// photo owes its faces again, so a new reading replaces the row (ADR 0047).
+    private func syncVectors(for read: PeopleSnapshot) async throws {
+        var malformed: [Int64] = []
+        while true {
+            let page = try await store.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
+            let owed = vectors.owed
+            let fresh = page.filter { $0.vector > owed }
+            vectors.add(fresh)
+            malformed += fresh.filter { $0.embedding == nil }.map(\.vector)
+            ranker = nil
+            if page.count < FaceVectors.pageSize {
+                break
+            }
+        }
+        vectors.keep(read.vectors)
+        guard !malformed.isEmpty else { return }
+        let bad = Set(malformed)
+        try await store.oweFacesAgain(Set(read.faces.filter { bad.contains($0.vector) }.map(\.id.asset)))
     }
 
     /// Reads the unchecked tally alone and republishes the last state with it. Before any
@@ -236,56 +344,48 @@ actor PeopleAssignment {
             doorbell.yield()
         }
     }
-
-    enum Outcome {
-        /// The catalog holds the assignment: publish it, with what was read.
-        case publish(CatalogPeopleState, PeopleSnapshot?, FaceRanker)
-        /// The pass wrote; the next one publishes.
-        case wrote
-    }
 }
 
 extension PeopleAssignment {
-    /// One pass over the available fixed libraries: read, assign, write what changed.
-    /// Internal for the tests and benchmarks that run passes without the loop.
-    static func run(store: CatalogStore, libraries: [CatalogLibraryState]) async throws -> Outcome {
-        let signpost = OtosSignpost.performance.beginInterval("PeopleAssignment")
-        defer { OtosSignpost.performance.endInterval("PeopleAssignment", signpost) }
-        let start = ContinuousClock.now
-        let snapshot = try await store.peopleSnapshot(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
-        let readMs = DiagnosticsTiming.milliseconds(since: start)
-        let assignStart = ContinuousClock.now
-        let plan = await assign(snapshot)
-        let assignMs = DiagnosticsTiming.milliseconds(since: assignStart)
-        let written = try await store.applyAssignment(plan)
-        OtosLog.catalog.debugOperation("people.assignment", phase: written > 0 ? "wrote" : "settled", fields: [
-            "faces": "\(snapshot.faces.count)",
-            "people": "\(snapshot.people.count)",
-            "guesses": "\(plan.guesses.count)",
-            "newPeople": "\(plan.newPeople.count)",
-            "rows": "\(written)",
-            "readMs": "\(readMs)",
-            "assignMs": "\(assignMs)",
-        ])
-        guard written == 0 else {
-            return .wrote
+    /// Runs passes as the loop would after each write's change, until one assigns nothing,
+    /// and returns the gallery it published. Internal for the tests and benchmarks that run
+    /// passes without the loop.
+    func settle(libraries: [CatalogLibraryState]) async throws -> CatalogPeopleState {
+        while true {
+            requested &+= 1
+            let startedFrom = requested
+            let assigned = try await galleryThenAssignment(libraries: libraries, startedFrom: startedFrom, tallyStartedFrom: tallyRequested)
+            covered = startedFrom
+            if !assigned, let published {
+                return published
+            }
         }
-        let built = await derive(snapshot)
-        return .publish(built.state, snapshot, built.ranker)
     }
 
-    /// Assignment, off the actor.
+    /// The gallery, off the actor.
     @concurrent
-    private static func assign(_ snapshot: PeopleSnapshot) async -> FaceAssignmentPlan {
-        FaceAssignmentPlan.assignment(of: snapshot)
+    private static func gallery(_ read: PeopleSnapshot) async -> CatalogPeopleState {
+        PeopleStateBuilder.state(from: read)
     }
 
-    /// The gallery and the ranker, off the actor.
+    /// What assignment reads of `read`, hashed off the actor.
     @concurrent
-    private static func derive(_ snapshot: PeopleSnapshot) async -> (state: CatalogPeopleState, ranker: FaceRanker) {
-        let state = PeopleStateBuilder.state(from: snapshot)
-        let offered = Set(state.visiblePeople.map(\.id))
-        return (state, FaceRanker(faces: snapshot.faces, people: snapshot.personFacts, offered: offered))
+    private static func inputs(of read: PeopleSnapshot) async -> AssignmentInputs {
+        AssignmentInputs(read)
+    }
+
+    /// Assignment, off the actor, with how many faces had no vector held.
+    @concurrent
+    private static func assign(_ read: PeopleSnapshot, vectors: FaceVectors) async -> (FaceAssignmentPlan, missing: Int) {
+        let facts = read.facts(with: vectors)
+        // A malformed vector is held as such: its face is left out on purpose, not missing.
+        let missing = read.faces.count { vectors.embedding($0.vector) == nil && !vectors.malformed.contains($0.vector) }
+        return (FaceAssignmentPlan.assignment(of: read, facts: facts), missing)
+    }
+
+    /// The ranker over the faces of the people the gallery offers.
+    private static func ranker(read: PeopleSnapshot, vectors: FaceVectors, state: CatalogPeopleState) -> FaceRanker {
+        FaceRanker(faces: read.facts(with: vectors), people: read.personFacts, offered: Set(state.visiblePeople.map(\.id)))
     }
 
     /// The faces of the selected photos most likely to need ranking: at most this many faces
@@ -296,7 +396,8 @@ extension PeopleAssignment {
     @concurrent
     private static func candidates(
         for photos: [MediaAssetID],
-        snapshot: PeopleSnapshot,
+        read: PeopleSnapshot,
+        vectors: FaceVectors,
         state: CatalogPeopleState,
         ranker: FaceRanker
     ) async -> [FaceID: [FaceCandidate]] {
@@ -304,17 +405,17 @@ extension PeopleAssignment {
         // those are ranked too; each is ranked against the people of its own file.
         let wanted = Set(photos + photos.flatMap(state.copies(of:)))
         let hidden = Set(state.hiddenPeople.map(\.id))
-        let faces = snapshot.faces.filter { face in
+        let faces = read.faces.filter { face in
             wanted.contains(face.id.asset) && !(face.assignment.person.map(hidden.contains) ?? false)
         }
         var photoPeople: [MediaAssetID: Set<PersonID>] = [:]
-        for face in snapshot.faces where wanted.contains(face.id.asset) {
+        for face in read.faces where wanted.contains(face.id.asset) {
             if let person = face.assignment.person {
                 photoPeople[face.id.asset, default: []].insert(person)
             }
         }
         let ranked = faces.sorted { FaceAssignmentPolicy.pathOrder($0.id, $1.id) }.prefix(rankedFaceLimit)
-        return ranker.candidates(for: Array(ranked), photoPeople: photoPeople)
+        return ranker.candidates(for: ranked.compactMap { $0.fact(with: vectors) }, photoPeople: photoPeople)
     }
 }
 
@@ -425,5 +526,109 @@ nonisolated enum PeopleStateBuilder {
         default:
             FaceAssignmentPolicy.pathOrder(lhs.id, rhs.id)
         }
+    }
+}
+
+/// Face vectors guide
+///
+/// The face vectors People holds (ADR 0047): every stored face's embedding, read from the
+/// catalog once and afterwards only as new readings write them (`FaceEmbeddingSQL`), kept in
+/// fixed-size chunks of contiguous rows so an embedding handed out is a view into its chunk,
+/// never a copy.
+///
+/// - **Reading:** `owed` is the number above which the catalog may hold vectors this does not.
+///   `CatalogStore.faceEmbeddings(after:limit:)` reads them `pageSize` at a time, each page its
+///   own short read, and `add(_:)` appends a page. A reading's vector is never rewritten in
+///   place: a new reading writes a new row with a higher number, so nothing at or below
+///   `owed` changes.
+/// - **Forgetting:** `keep(_:)` drops every vector no stored face names. A dropped row's place
+///   stays empty until a compaction, which runs when a quarter of the rows are empty and
+///   rebuilds the chunks from the vectors kept.
+/// - **Copies:** a chunk is an array, and an embedding handed out keeps its chunk alive.
+///   Appending to a chunk a pass still reads copies that chunk alone, at most `chunkRows`
+///   vectors; a compaction copies every vector once.
+/// - **Malformed rows:** a vector whose bytes are no embedding is held as malformed, so its
+///   face is left out of assignment and its photo owes its faces again (`malformed`).
+nonisolated struct FaceVectors: Sendable {
+    /// One row of the vector table as read: its number, and its embedding, nil when its bytes
+    /// hold none.
+    nonisolated struct Read: Sendable, Equatable {
+        let vector: Int64
+        let embedding: FaceEmbedding?
+    }
+
+    /// Vectors per read: 4 MB of rows, one short read each.
+    static let pageSize = 2048
+    static let chunkRows = 4096
+    private static let dimensions = FaceEmbeddingModel.dimensions
+
+    private var chunks: [[Float]] = []
+    /// Each vector's chunk and row.
+    private var places: [Int64: Place] = [:]
+    private var emptyRows = 0
+    /// The vectors whose bytes hold no embedding.
+    private(set) var malformed: Set<Int64> = []
+    /// The largest vector number read; the catalog's rows above it are not held.
+    private(set) var owed: Int64 = 0
+
+    private struct Place: Sendable {
+        let chunk: Int
+        let row: Int
+    }
+
+    /// The vectors held.
+    var count: Int {
+        places.count
+    }
+
+    /// The face's embedding, a view into its chunk; nil when the vector is not held.
+    func embedding(_ vector: Int64) -> FaceEmbedding? {
+        guard let place = places[vector] else { return nil }
+        let start = place.row * Self.dimensions
+        return FaceEmbedding(view: chunks[place.chunk][start ..< start + Self.dimensions])
+    }
+
+    /// Appends the rows of a page read in number order above `owed`; rows at or below it are
+    /// already held and are passed over.
+    mutating func add(_ page: [Read]) {
+        for read in page where read.vector > owed {
+            owed = read.vector
+            guard let embedding = read.embedding else {
+                malformed.insert(read.vector)
+                continue
+            }
+            append(read.vector, embedding)
+        }
+    }
+
+    private mutating func append(_ vector: Int64, _ embedding: FaceEmbedding) {
+        if chunks.isEmpty || chunks[chunks.count - 1].count == Self.chunkRows * Self.dimensions {
+            var chunk: [Float] = []
+            chunk.reserveCapacity(Self.chunkRows * Self.dimensions)
+            chunks.append(chunk)
+        }
+        let chunk = chunks.count - 1
+        places[vector] = Place(chunk: chunk, row: chunks[chunk].count / Self.dimensions)
+        chunks[chunk].append(contentsOf: embedding.values)
+    }
+
+    /// Keeps only `vectors`, the ones stored faces name.
+    mutating func keep(_ vectors: Set<Int64>) {
+        let gone = places.keys.filter { !vectors.contains($0) }
+        for vector in gone {
+            places[vector] = nil
+        }
+        malformed.formIntersection(vectors)
+        emptyRows += gone.count
+        guard emptyRows * 4 > places.count + emptyRows else { return }
+        var compacted = FaceVectors()
+        for vector in places.keys.sorted() {
+            if let embedding = embedding(vector) {
+                compacted.append(vector, embedding)
+            }
+        }
+        compacted.malformed = malformed
+        compacted.owed = owed
+        self = compacted
     }
 }

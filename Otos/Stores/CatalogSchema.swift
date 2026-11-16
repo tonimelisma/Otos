@@ -2028,6 +2028,22 @@ nonisolated enum CatalogSchema {
         "CREATE INDEX \(SamePhotoSQL.metadataIndexName) ON asset_metadata(\(SamePhotoSQL.metadataIndexColumns))",
     ]
 
+    /// v68 the hash of the assignment inputs whose assignment the catalog holds (ADR 0047,
+    /// `AssignmentInputs`): one row, rewritten each time an assignment settles. While a pass's
+    /// inputs hash to it, the stored guesses are assignment's output, so a launch with nothing
+    /// changed assigns nothing. Not overlay: a missing or stale row only costs one assignment.
+    static let settledPeopleAssignmentMigrationIdentifier = "v68_settled_people_assignment"
+    static let settledPeopleAssignmentTable = "people_assignment_settled"
+
+    static let settledPeopleAssignmentStatements = [
+        """
+        CREATE TABLE \(settledPeopleAssignmentTable) (
+            id INTEGER PRIMARY KEY CHECK (id = 0),
+            inputs BLOB NOT NULL
+        )
+        """,
+    ]
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

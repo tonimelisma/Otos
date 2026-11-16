@@ -16,13 +16,13 @@ import Testing
 @Suite(.testDirectory, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v67's two same-photo indexes dropped and its record removed.
-    static let newest = CatalogSchema.samePhotoIndexesMigrationIdentifier
+    /// schema before it: v68's one-row table dropped and its record removed. They run with
+    /// foreign keys off, as a table rebuild's would need.
+    static let newest = CatalogSchema.settledPeopleAssignmentMigrationIdentifier
 
     static var schemaBeforeNewest: [String] {
         [
-            "DROP INDEX \(SamePhotoSQL.candidateIndexName)",
-            "DROP INDEX \(SamePhotoSQL.metadataIndexName)",
+            "DROP TABLE \(CatalogSchema.settledPeopleAssignmentTable)",
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }

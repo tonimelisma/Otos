@@ -559,6 +559,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.settledPeopleAssignmentMigrationIdentifier) { db in
+            for statement in CatalogSchema.settledPeopleAssignmentStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -2628,6 +2633,9 @@ final nonisolated class CatalogConnectionActivity: Sendable {
         var count: Int
         var total: Duration
         var longest: Duration
+        /// The most rows one of its transactions changed (SQLite's change count): what a
+        /// bound on background write transactions is held to (`writeInPages`).
+        var mostRows: Int = 0
     }
 
     /// Every transaction's time since launch, by role and operation (`op=catalog.store.use`):
@@ -2685,10 +2693,11 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             }
             let connection = Unmanaged<Connection>.fromOpaque(context).takeUnretainedValue()
             let inTransaction = sqlite3_get_autocommit(sqlite3_db_handle(OpaquePointer(statement))) == 0
+            let changes = sqlite3_total_changes64(sqlite3_db_handle(OpaquePointer(statement)))
             if mask == UInt32(SQLITE_TRACE_STMT) {
-                connection.statementStarted(sql: sql?.assumingMemoryBound(to: CChar.self), inTransaction: inTransaction)
+                connection.statementStarted(sql: sql?.assumingMemoryBound(to: CChar.self), inTransaction: inTransaction, changes: changes)
             } else if !inTransaction {
-                connection.transactionEnded()
+                connection.transactionEnded(changes: changes)
             }
             return 0
         }, context)
@@ -2710,7 +2719,7 @@ final nonisolated class CatalogConnectionActivity: Sendable {
     /// Adds one ended transaction to its role's and operation's totals. Called for every
     /// transaction, however short: a thousand 5 ms reads hold a connection as long as one
     /// 5 s read.
-    fileprivate func account(connection: String, operation: String?, duration: Duration) {
+    fileprivate func account(connection: String, operation: String?, duration: Duration, rows: Int) {
         let role = Self.role(of: connection)
         let operation = operation.map(Self.shortName) ?? "unnamed"
         let key = "\(role):\(operation)"
@@ -2719,6 +2728,7 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             hold.count += 1
             hold.total += duration
             hold.longest = max(hold.longest, duration)
+            hold.mostRows = max(hold.mostRows, rows)
             registry.holds[key] = hold
         }
     }
@@ -2900,6 +2910,8 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             /// The transaction's first statement other than its `BEGIN` and GRDB's pragmas.
             var statement: String?
             var operation: String?
+            /// SQLite's count of rows changed on the connection as the transaction began.
+            var changesAtStart: Int64 = 0
         }
 
         private let state = Mutex(State())
@@ -2948,13 +2960,14 @@ final nonisolated class CatalogConnectionActivity: Sendable {
 
         /// Runs for every statement every connection steps, the hundreds of one write
         /// included, so a statement's text is looked at only until its transaction has one.
-        fileprivate func statementStarted(sql: UnsafePointer<CChar>?, inTransaction: Bool) {
+        fileprivate func statementStarted(sql: UnsafePointer<CChar>?, inTransaction: Bool, changes: Int64) {
             let now = ContinuousClock.now
             state.withLock { state in
                 if !inTransaction {
                     state.transactionStart = now
                     state.statement = nil
                     state.operation = nil
+                    state.changesAtStart = changes
                 }
                 if state.statement == nil, let sql, Self.namesTheTransaction(sql) {
                     state.statement = Self.prefix(sql)
@@ -2962,9 +2975,11 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             }
         }
 
-        fileprivate func transactionEnded() {
+        fileprivate func transactionEnded(changes: Int64) {
             let now = ContinuousClock.now
+            var rows = 0
             let ended = state.withLock { state -> Transaction? in
+                rows = Int(changes - state.changesAtStart)
                 defer {
                     state.transactionStart = nil
                     state.statement = nil
@@ -2978,7 +2993,7 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             guard let ended else {
                 return
             }
-            activity.account(connection: name, operation: ended.operation, duration: ended.end - ended.start)
+            activity.account(connection: name, operation: ended.operation, duration: ended.end - ended.start, rows: rows)
             if ended.end - ended.start >= activity.keptTransactionMinimum {
                 activity.keep(ended)
             }

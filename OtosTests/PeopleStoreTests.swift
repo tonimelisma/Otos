@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import GRDB
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// Who each face is, as the catalog stores it (ADR 0047): the user's acts and the hard rules
@@ -172,8 +173,10 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
-    /// A face row no reading writes fails only its own photo: the People read leaves that
-    /// photo out, its faces are owed again, and a new reading replaces the row.
+    /// A face row no reading writes fails only its own photo. One with no vector row: the
+    /// People read leaves that photo out. One whose vector holds no embedding: People finds it
+    /// as it reads the vectors and leaves the face out of assignment. Either way the photo's
+    /// faces are owed again, and a new reading replaces the row.
     @Test func aMalformedFaceRowIsLeftOutAndReadAgain() async throws {
         let directory = try makeTestDirectory()
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(
@@ -185,7 +188,7 @@ struct PeopleStoreTests {
         ])
         let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
         try await database.write { db in
-            try db.execute(sql: "UPDATE face_embedding SET embedding = x'00' WHERE relative_path = 'a.jpg' AND face_index = 1")
+            try db.execute(sql: "DELETE FROM face_embedding WHERE relative_path = 'a.jpg' AND face_index = 1")
         }
 
         let snapshot = try await library.store.peopleSnapshot()
@@ -194,6 +197,13 @@ struct PeopleStoreTests {
 
         try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)])])
         #expect(try await library.store.peopleSnapshot().faces.count == 3)
+
+        try await database.write { db in
+            try db.execute(sql: "UPDATE face_embedding SET embedding = x'00' WHERE relative_path = 'b.jpg'")
+        }
+        let state = try await PeopleAssignment.settle(store: library.store, libraries: #require(await library.store.loadedLibraries()))
+        #expect(state.faceCount == 3, "the gallery shows what is stored")
+        #expect(try await library.store.previewFaceCandidates(limit: 10).candidates.map(\.id) == [library.id("b.jpg")])
         await library.store.shutdown()
     }
 
@@ -480,6 +490,154 @@ struct PeopleStoreTests {
         ]))
         #expect(await changes.next() == .changed(.faces))
         await library.store.shutdown()
+    }
+
+    /// A People pass writes in pages: on a library whose every face is owed a guess and a
+    /// likeness, no transaction of the pass changes more than `backgroundWritePage` rows, so a
+    /// write the user is waiting on never queues behind all of it. The guard over every People
+    /// write: a pass writing in one transaction again fails it.
+    @Test func noPeopleWriteTransactionChangesMoreThanAPage() async throws {
+        let count = 3 * CatalogStore.backgroundWritePage
+        let (library, databaseURL) = try await Self.lookalikes(count, in: makeTestDirectory())
+        await library.store.shutdown()
+        // A store opened on the catalog afresh counts only the pass's transactions.
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        let libraries = try #require(await store.loadedLibraries())
+        let state = try await PeopleAssignment.settle(store: store, libraries: libraries)
+        #expect(state.people.first?.media.total == count)
+        let writes = store.use().connections.holds.filter { $0.role == "main.writer" }
+        #expect(writes.contains { $0.operation == "applyAssignment" && $0.count >= 2 }, "\(writes)")
+        for write in writes {
+            #expect(write.mostRows <= CatalogStore.backgroundWritePage, "\(write.operation): \(write.mostRows) rows")
+        }
+        await store.shutdown()
+    }
+
+    /// People paints from what the catalog stores and assigns only when what assignment reads
+    /// moved: a pass on a catalog whose assignment settled — a launch with nothing changed —
+    /// publishes the stored guesses and reads no vector; ranking a photo's faces reads the
+    /// vectors then; a new face is assigned, and only the vectors above the ones held are read.
+    @Test func peoplePaintsWhatIsStoredAndAssignsOnlyWhenItsInputsMove() async throws {
+        let (library, databaseURL) = try await Self.lookalikes(4, in: makeTestDirectory(), extraFiles: ["new.jpg"])
+        let first = try await PeopleAssignment.settle(store: library.store, libraries: #require(await library.store.loadedLibraries()))
+        let sam = try #require(first.people.first?.id)
+        #expect(first.person(sam)?.media.total == 4)
+        await library.store.shutdown()
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        let libraries = try #require(await store.loadedLibraries())
+        func vectorReads() -> Int {
+            store.use().connections.holds.filter { $0.operation == "faceEmbeddings" }.reduce(0) { $0 + $1.count }
+        }
+        let people = PeopleAssignment(store: store, builder: nil)
+        let relaunched = try await people.settle(libraries: libraries)
+        #expect(relaunched.person(sam)?.media.total == 4)
+        #expect(vectorReads() == 0, "a settled catalog reads no vector")
+
+        let candidates = await people.candidates(for: [library.id("0.jpg")])
+        #expect(candidates.count == 1)
+        let afterRanking = vectorReads()
+        #expect(afterRanking >= 1)
+
+        let reopened = FaceEnrichmentTests.ScannedLibrary(
+            store: store, root: library.root, rootPath: library.rootPath, emit: library.emit, databaseURL: databaseURL
+        )
+        try await reopened.readFaces([reopened.result(for: "new.jpg", faces: [Self.lookalike(4)])])
+        let grown = try await people.settle(libraries: libraries)
+        #expect(grown.person(sam)?.media.total == 5)
+        #expect(vectorReads() == afterRanking + 1, "one page above the vectors held")
+        await store.shutdown()
+    }
+
+    /// What People costs at the owner's scale, on a generated catalog of his shape whose faces
+    /// carry real unit vectors, one direction per person: the first gallery's read, a first
+    /// pass that assigns, a settled pass after it, and the footprint the process reached
+    /// while they ran. On demand (`OTOS_SCALE_TEST=1`), since it writes a 2.3 GB file; a
+    /// measurement written to `build/people-cost/owner.txt`, not a benchmark.
+    @Test(.enabled(if: StallReproductionTests.ownerSize))
+    func peopleCostsOnTheOwnersShape() async throws {
+        let directory = try makeTestDirectory()
+        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
+        let queue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        try await queue.write { db in
+            let ids = try Row.fetchAll(db, sql: "SELECT e.id, f.person_id FROM face_embedding e JOIN face f USING (library_root_id, relative_path, face_index)")
+            let update = try db.makeStatement(sql: "UPDATE face_embedding SET embedding = ? WHERE id = ?")
+            var generator = SplitMix64(seed: 5)
+            for row in ids {
+                let person = Int((row[1] as Int64?) ?? 0)
+                var values = [Float](repeating: 0, count: FaceEmbeddingModel.dimensions)
+                values[person % values.count] = 1
+                values[(person / values.count + 7 * person) % values.count] += 0.5
+                for _ in 0 ..< 6 {
+                    values[Int(generator.next() % UInt64(values.count))] += 0.12
+                }
+                try update.execute(arguments: [FaceStorage.embeddingData(FaceEmbedding(normalizing: values)!), row[0] as Int64])
+            }
+        }
+        try queue.close()
+        let store = CatalogStore(location: .databaseFile(catalog.databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        let libraries = try #require(await store.loadedLibraries())
+        let before = ProcessResourceSample.current().footprintBytes
+        let peak = Mutex<UInt64>(before)
+        let sampler = Task.detached {
+            while !Task.isCancelled {
+                let footprint = ProcessResourceSample.current().footprintBytes
+                peak.withLock { $0 = max($0, footprint) }
+                // time: measurement — samples the footprint while the passes run; nothing waits on it.
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        let clock = ContinuousClock()
+        let readStart = clock.now
+        let snapshot = try await store.peopleSnapshot(availableLibraryPaths: CatalogWindowPolicy.availablePaths(from: libraries))
+        let galleryMs = DiagnosticsTiming.milliseconds(readStart.duration(to: clock.now))
+        let people = PeopleAssignment(store: store, builder: nil)
+        let assignStart = clock.now
+        _ = try await people.settle(libraries: libraries)
+        let assignedMs = DiagnosticsTiming.milliseconds(assignStart.duration(to: clock.now))
+        let settledStart = clock.now
+        _ = try await people.settle(libraries: libraries)
+        let settledMs = DiagnosticsTiming.milliseconds(settledStart.duration(to: clock.now))
+        sampler.cancel()
+        let after = ProcessResourceSample.current().footprintBytes
+        let mb = { (bytes: UInt64) in bytes / 1_048_576 }
+        let line = """
+        op=peopleCost faces=\(snapshot.faces.count) people=\(snapshot.people.count) snapshotMs=\(galleryMs) \
+        firstSettleMs=\(assignedMs) settledPassMs=\(settledMs) footprintBeforeMB=\(mb(before)) \
+        footprintPeakMB=\(mb(peak.withLock { $0 })) footprintAfterMB=\(mb(after))
+        """
+        let url = SourceTree.root.appending(path: "build/people-cost/owner.txt")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(line.utf8).write(to: url)
+        await store.shutdown()
+    }
+
+    /// `count` photos each holding one face like the others, the first on the user's word
+    /// Sam's, the rest not yet assigned, in a catalog file.
+    private static func lookalikes(
+        _ count: Int,
+        in directory: URL,
+        extraFiles: [String] = []
+    ) async throws -> (FaceEnrichmentTests.ScannedLibrary, URL) {
+        let databaseURL = directory.appending(path: "db/catalog.sqlite")
+        let names = (0 ..< count).map { "\($0).jpg" }
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: names + extraFiles, database: databaseURL)
+        try await library.readFaces(names.enumerated().map { library.result(for: $1, faces: [Self.lookalike($0)]) })
+        _ = try await library.store.perform(.moveToNewPerson([FaceID(asset: library.id("0.jpg"), index: 0)], name: "Sam"))
+        return (library, databaseURL)
+    }
+
+    /// A face like every other `lookalike`: one direction, nudged a little per face.
+    private static func lookalike(_ index: Int) -> DetectedFace {
+        let base = FaceEnrichmentTests.face(seed: 3)
+        var values = Array(base.embedding.values)
+        values[index % values.count] += 0.02
+        return DetectedFace(
+            box: base.box, landmarks: base.landmarks, quality: base.quality, embedding: FaceEmbedding(normalizing: values)!
+        )
     }
 
     static func face(x: Double) -> DetectedFace {

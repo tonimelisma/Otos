@@ -23,7 +23,7 @@ struct PeopleStateTests {
         unchecked: Int = 0
     ) -> PeopleSnapshot {
         PeopleSnapshot(
-            faces: faces,
+            facts: faces,
             tiles: Dictionary(uniqueKeysWithValues: faces.map {
                 ($0.id, FaceTile(
                     id: $0.id, box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2),

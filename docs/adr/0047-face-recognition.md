@@ -288,7 +288,7 @@ grouping had put with the right child.
   2026-11-12). From a cold start, ten moves left nothing wrong on the owner's
   labels.
 - **Settles on its own output:** assignment reads only the anchors, so run on what it wrote it
-  writes nothing. A pass that wrote is followed by one that publishes.
+  writes nothing; the hash of its inputs says when it need not run at all (Work and placement).
 - **A new reading** of the same source keeps the user's word: each act, and each seed, moves
   to the new face that matches it — a still's by box overlap, a video's by likeness, since a
   video's boxes belong to different frames — and a face with the user's word that the reading
@@ -312,9 +312,27 @@ grouping had put with the right child.
   sync fetches (ADR 0046 §7).
 - **Threads:** the preview is decoded off the reader, and Vision and the model run on
   `FaceAnalyzer`'s own queue, never on the main actor.
-- **Assignment:** `PeopleAssignment`'s loop, asked after every catalog change, reads every face
-  in one transaction, assigns off its actor, and writes a guess only where the face is still
-  Otos's to decide, so an act the user made meanwhile always wins.
+- **Assignment:** `PeopleAssignment`'s loop, asked after a catalog change of a kind People reads.
+  A pass reads every stored face's row, tile and whose word its person is, never its vector,
+  in one transaction, and publishes the gallery built from it at once: People paints from the
+  stored assignment and never waits for one. It then hashes what assignment reads (each face's
+  identity, vector number, capture time, rejections and anchor; each person's birthday and
+  whether the user said anything about them; which file stands for which photo; the policy's
+  constants and revision). The catalog keeps the hash of the inputs whose assignment it holds
+  (`people_assignment_settled`, v67); while the two are equal nothing is assigned, so a launch
+  with nothing changed, a new tile, a stack or copy that moves no face's photo, a renamed
+  person, all assign nothing. Otherwise the pass reads the vectors it does not hold — every
+  vector once per launch, then only the rows above the largest number it holds — assigns off
+  its actor, writes a guess only where the face is still Otos's to decide, so an act the user
+  made meanwhile always wins, in pages of at most 256 rows (`CatalogStore.writeInPages`), and
+  records the hash. A guess is assignment's output, never its input, so the pass after a write
+  that moved only guesses finds the hash equal; a write that seeded a person, released a seed or
+  forgot a person moved an input, and the pass after it assigns once more and writes nothing.
+  Rejected: re-reading every vector each pass (211 MB a pass on the owner's catalog, the
+  `peopleSnapshot` reader time), publishing only after assignment (48.8 s to the first People
+  paint, measured), a timestamp or change counter as the trigger (a fact kind is too coarse:
+  `captureDate` and `copies` fire on most enrichment flushes and moved no face), and holding
+  the hash in memory alone (every launch would assign once, reading every vector).
 - **People UI:** the People gallery, a person's photos as the leaf under it
   (`SidebarSelection.person`, so the sidebar keeps People highlighted and Back to People
   exists only there), the People filter, whose several people are photos of them together,

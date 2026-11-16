@@ -67,9 +67,11 @@ nonisolated struct FaceEmbeddingModel {
 /// Every face rule (ADR 0047) is a cosine, and assignment computes cosines as plain dot
 /// products over a matrix of these, so unit length is part of the type rather than a promise
 /// each producer keeps: the only ways to make one are to scale values to unit length or to
-/// read back stored values that still are.
+/// read back stored values that still are. Its values may be a view into a larger array:
+/// People holds every face's vector in a few contiguous chunks (`FaceVectors`), and a face's
+/// embedding is its rows there, not a copy.
 nonisolated struct FaceEmbedding: Sendable, Equatable {
-    let values: [Float]
+    let values: ArraySlice<Float>
 
     /// How far a stored embedding's squared length may sit from 1: every embedding in the
     /// owner's catalog is within 2.2e-7 of it, as float rounding leaves a scaled vector.
@@ -81,7 +83,7 @@ nonisolated struct FaceEmbedding: Sendable, Equatable {
         guard values.count == FaceEmbeddingModel.dimensions else { return nil }
         let length = vDSP.sumOfSquares(values).squareRoot()
         guard length.isFinite, length > 0 else { return nil }
-        self.values = vDSP.divide(values, length)
+        self.values = ArraySlice(vDSP.divide(values, length))
     }
 
     /// Values read back from the catalog, kept bit for bit so a face reads back equal to the
@@ -91,6 +93,11 @@ nonisolated struct FaceEmbedding: Sendable, Equatable {
         guard values.count == FaceEmbeddingModel.dimensions,
               abs(vDSP.sumOfSquares(values) - 1) < Self.storedTolerance
         else { return nil }
+        self.values = ArraySlice(values)
+    }
+
+    /// A view of an embedding already checked (`init(stored:)`) where it is held.
+    init(view values: ArraySlice<Float>) {
         self.values = values
     }
 

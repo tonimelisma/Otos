@@ -7,7 +7,7 @@ import GRDB
 /// `face_embedding` row (`FaceEmbeddingSQL`), `FaceEmbeddingModel.dimensions` values.
 nonisolated enum FaceStorage {
     static func embeddingData(_ embedding: FaceEmbedding) -> Data {
-        Float32Storage.data(embedding.values)
+        Float32Storage.data(Array(embedding.values))
     }
 
     /// Nil unless `data` holds exactly one embedding, still unit length.
@@ -339,7 +339,7 @@ nonisolated struct PreviewFacePage: Equatable, Sendable {
 /// The People snapshot's face columns, in `SELECT` order (`selectList`), so the snapshot
 /// reads each by position and the list and the reads cannot disagree.
 nonisolated enum PeopleFaceColumn: Int, CaseIterable {
-    case rootID, path, faceIndex, embedding, personID, assignment, likeness, isKeyPhoto
+    case rootID, path, faceIndex, vector, personID, assignment, likeness, isKeyPhoto
     case boxX, boxY, boxWidth, boxHeight
     case captureLocal, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown
     case faceFramesPath, frameIndex, isVideo
@@ -355,7 +355,7 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
         case .rootID: "f.library_root_id"
         case .path: "f.relative_path"
         case .faceIndex: "f.face_index"
-        case .embedding: "e.embedding"
+        case .vector: "e.id"
         case .personID: "f.person_id"
         case .assignment: "f.assignment"
         case .likeness: "f.likeness"

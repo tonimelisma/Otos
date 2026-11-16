@@ -1,4 +1,5 @@
 import CoreGraphics
+import CryptoKit
 import Foundation
 
 // People models (ADR 0047, `docs/design/people.md`)
@@ -50,7 +51,8 @@ nonisolated struct FacePreview: Hashable, Sendable {
     }
 }
 
-/// Everything People reads from the catalog, in one transaction.
+/// Everything People reads from the catalog, in one transaction: who the faces are and how
+/// their tiles show, never their vectors, which `FaceVectors` holds, read apart.
 nonisolated struct PeopleSnapshot: Sendable, Equatable {
     nonisolated struct Person: Sendable, Equatable {
         let id: PersonID
@@ -60,10 +62,31 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
         var isFavorite = false
     }
 
+    /// One stored face as assignment and the gallery read it: where it is, when its photo was
+    /// taken, the number of its vector's row (`FaceEmbeddingSQL`), and what the user decided.
+    nonisolated struct Face: Sendable, Equatable {
+        let id: FaceID
+        /// The photo's local capture time (`CaptureLocalTime.seconds`); nil without a date.
+        let captureSeconds: Double?
+        let vector: Int64
+        let assignment: FaceAssignment
+        /// People the user said this face is not (Remove Name).
+        let rejected: Set<PersonID>
+
+        /// The face as assignment compares it, with its vector; nil when the vector is not
+        /// held or holds no embedding.
+        func fact(with vectors: FaceVectors) -> FaceFact? {
+            vectors.embedding(vector).map {
+                FaceFact(id: id, captureSeconds: captureSeconds, embedding: $0, assignment: assignment, rejected: rejected)
+            }
+        }
+    }
+
     /// Every face of a photo still in the catalog and out of the Trash, in reading order;
     /// none the user marked as not a face.
-    let faces: [FaceFact]
-    let tiles: [FaceID: FaceTile]
+    private(set) var faces: [Face]
+    /// Each face's tile; none in a snapshot kept after its gallery was built (`withoutTiles`).
+    private(set) var tiles: [FaceID: FaceTile]
     /// In creation order.
     let people: [Person]
     /// Each face's stored likeness.
@@ -133,6 +156,110 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     var personFacts: [PersonFact] {
         people.map { PersonFact(id: $0.id, birthdaySeconds: $0.birthday?.seconds, isBare: isBare($0)) }
     }
+
+    /// The faces as assignment reads them, each with its vector; a face whose vector is not
+    /// held, or holds no embedding, is left out.
+    func facts(with vectors: FaceVectors) -> [FaceFact] {
+        faces.compactMap { $0.fact(with: vectors) }
+    }
+
+    /// The vector numbers the faces name.
+    var vectors: Set<Int64> {
+        Set(faces.map(\.vector))
+    }
+
+    /// This snapshot with only the faces among `ids`.
+    func keeping(_ ids: Set<FaceID>) -> PeopleSnapshot {
+        var kept = self
+        kept.faces = faces.filter { ids.contains($0.id) }
+        return kept
+    }
+
+    /// This snapshot without its tiles: what is kept once the gallery is built from it.
+    var withoutTiles: PeopleSnapshot {
+        var kept = self
+        kept.tiles = [:]
+        return kept
+    }
+}
+
+/// What assignment reads of a People snapshot, hashed (ADR 0047): equal inputs give an equal
+/// assignment, so a catalog whose stored guesses are assignment's output on these inputs owes
+/// none. The catalog keeps the hash it settled on (`CatalogStore.recordSettledPeopleAssignment`),
+/// so a launch with nothing changed assigns nothing.
+///
+/// It hashes every fact `FaceAssignmentPolicy.assign` reads, and only those: each face's
+/// identity, vector number (a new reading is a new number, so a changed embedding is a
+/// changed input), capture time, rejections and anchor (the user's word, a seed, held, or
+/// Otos's to decide: a guess's person is assignment's output, never its input); each person's
+/// id, birthday and whether the user said anything about them; which file stands for which
+/// photo; and the policy's constants with `FaceAssignmentPolicy.revision`, so a build that
+/// assigns differently assigns again. Names, covers, tiles and stored likenesses are not
+/// inputs.
+nonisolated struct AssignmentInputs: Equatable, Sendable {
+    let digest: Data
+
+    init(digest: Data) {
+        self.digest = digest
+    }
+
+    init(_ read: PeopleSnapshot) {
+        var hasher = SHA256()
+        func add(_ value: some FixedWidthInteger) {
+            withUnsafeBytes(of: Int64(value).littleEndian) { hasher.update(bufferPointer: $0) }
+        }
+        func add(_ value: Double?) {
+            withUnsafeBytes(of: (value?.bitPattern ?? UInt64.max).littleEndian) { hasher.update(bufferPointer: $0) }
+        }
+        func add(_ text: String) {
+            let bytes = Data(text.utf8)
+            add(bytes.count)
+            hasher.update(data: bytes)
+        }
+        func add(_ asset: MediaAssetID) {
+            add(asset.libraryRootPath.rawValue)
+            add(asset.relativePath.rawValue)
+        }
+        add(FaceAssignmentPolicy.revision)
+        for constant in FaceAssignmentPolicy.constants {
+            add(constant)
+        }
+        add(read.faces.count)
+        for face in read.faces {
+            add(face.id.asset)
+            add(face.id.index)
+            add(face.vector)
+            add(face.captureSeconds)
+            switch face.assignment {
+            case .open, .model: add(0)
+            case let .seed(person): add(1)
+                add(person.rawValue)
+            case let .user(person): add(2)
+                add(person.rawValue)
+            case .held: add(3)
+            }
+            add(face.rejected.count)
+            for person in face.rejected.sorted() {
+                add(person.rawValue)
+            }
+        }
+        let people = read.personFacts
+        add(people.count)
+        for person in people {
+            add(person.id.rawValue)
+            add(person.birthdaySeconds)
+            add(person.isBare ? 1 : 0)
+        }
+        let photoOf = read.photoOf.sorted {
+            ($0.key.relativePath.rawValue, $0.key.libraryRootPath.rawValue) < ($1.key.relativePath.rawValue, $1.key.libraryRootPath.rawValue)
+        }
+        add(photoOf.count)
+        for (file, photo) in photoOf {
+            add(file)
+            add(photo)
+        }
+        digest = Data(hasher.finalize())
+    }
 }
 
 /// What one assignment changes in the catalog: only what differs from the snapshot it was
@@ -179,11 +306,15 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
         }
     }
 
-    /// What one assignment of `snapshot` changes: the policy's result, as changes to it. The
-    /// one path from a snapshot to what `CatalogStore.applyAssignment` writes, which People and
-    /// the accuracy harness both take.
-    static func assignment(of snapshot: PeopleSnapshot) -> FaceAssignmentPlan {
-        changes(from: snapshot, to: FaceAssignmentPolicy.assign(faces: snapshot.faces, people: snapshot.personFacts, photoOf: snapshot.photoOf))
+    /// What one assignment of `snapshot`'s faces — `facts`, the same faces with their vectors —
+    /// changes: the policy's result, as changes to the snapshot. The one path from a snapshot
+    /// to what `CatalogStore.applyAssignment` writes, which People and the accuracy harness
+    /// both take.
+    /// A face of the snapshot missing from `facts` (its vector not yet read) is left as it is
+    /// stored: assignment did not see it, so the plan neither guesses nor clears it.
+    static func assignment(of snapshot: PeopleSnapshot, facts: [FaceFact]) -> FaceAssignmentPlan {
+        let seen = facts.count == snapshot.faces.count ? snapshot : snapshot.keeping(Set(facts.map(\.id)))
+        return changes(from: seen, to: FaceAssignmentPolicy.assign(faces: facts, people: snapshot.personFacts, photoOf: snapshot.photoOf))
     }
 
     /// The changes that take the snapshot to `result`.
