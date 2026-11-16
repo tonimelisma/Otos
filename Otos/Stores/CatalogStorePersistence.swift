@@ -564,6 +564,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.sortOrderTestedColumnsMigrationIdentifier) { db in
+            for statement in CatalogSchema.sortOrderTestedColumnsStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

@@ -2044,6 +2044,36 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// Schema v69: the name and size order indexes carry what the window's reads test a row
+    /// by (`photoTestedColumns`), as the date order indexes have since v55, so a walk of All
+    /// Media by name or size tests each row's visibility from its index entry instead of its
+    /// table row. On the owner's catalog the name order read 152,822 pages, 9.1 s with the
+    /// file's pages in the OS cache and 25.9 s in his tour, where the date order reads 3,578
+    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`). Each index is dropped and
+    /// made again with its own leading columns.
+    static let sortOrderTestedColumnsMigrationIdentifier = "v69_sort_order_tested_columns"
+
+    /// The name and size order indexes, by name and leading columns.
+    static let sortOrderIndexes: [(name: String, columns: String)] = [
+        ("idx_media_asset_name_global_asc", "name_sort_key ASC, library_root_id, relative_path"),
+        ("idx_media_asset_name_global_desc", "name_sort_key DESC, library_root_id, relative_path"),
+        ("idx_media_asset_name_root_asc", "library_root_id, name_sort_key ASC, relative_path"),
+        ("idx_media_asset_name_root_desc", "library_root_id, name_sort_key DESC, relative_path"),
+        ("idx_media_asset_size_global_asc", "(byte_size IS NULL), byte_size ASC, library_root_id, relative_path"),
+        ("idx_media_asset_size_global_desc", "(byte_size IS NULL), byte_size DESC, library_root_id, relative_path"),
+        ("idx_media_asset_size_root_asc", "library_root_id, (byte_size IS NULL), byte_size ASC, relative_path"),
+        ("idx_media_asset_size_root_desc", "library_root_id, (byte_size IS NULL), byte_size DESC, relative_path"),
+    ]
+
+    static var sortOrderTestedColumnsStatements: [String] {
+        sortOrderIndexes.flatMap { index in
+            [
+                "DROP INDEX \(index.name)",
+                "CREATE INDEX \(index.name) ON media_asset(\(index.columns), \(photoTestedColumns))",
+            ]
+        }
+    }
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

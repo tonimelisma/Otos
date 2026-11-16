@@ -441,6 +441,26 @@ struct PhotoSearchIndexTests {
         return ShownSearch(catalog: catalog, index: index, projection: projection, recorder: recorder, recording: recording)
     }
 
+    /// A search narrows the order after it is read, so typing another search and clearing it
+    /// read no order: the order read for the scope answers every search over it. On the
+    /// owner's catalog each search and its clear read the 164,762-row order again.
+    @Test func aSearchAndItsClearReadNoOrder() async throws {
+        let shown = try await showRedSearch()
+        let projection = shown.projection
+        let ordered = await projection.orderQueryCount
+
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "a blue picture")))
+        _ = await shown.recorder.waitForValues {
+            $0.last?.queryDescriptor.search?.text == "a blue picture" && $0.last?.searchPhase == .read
+        }
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia))
+        _ = await shown.recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
+        try await waitForProjectionQuiescence(projection)
+
+        #expect(await projection.orderQueryCount == ordered)
+        await shown.tearDown()
+    }
+
     /// A lap that takes up only a fact the search does not read — a choice the user made,
     /// which reads the order again — publishes from the answer it holds: the index is not
     /// asked to match again.

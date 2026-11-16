@@ -105,7 +105,10 @@ import batches (the sidebar's counts, `importBatchInputs`: rows shown, grouping,
 the place-name languages (`placeNameLanguageInputs`: place names) and a shown search's
 answer; `CatalogProjectionReads` lists them and a pass logs which it reused (`reused=`) —
 with what the read was for
-(the resolved descriptor or sidebar row, the available roots, the place-name languages) and
+(the resolved descriptor or sidebar row, the available roots, the place-name languages; the order
+is for the descriptor without its search, which narrows the order after it is read, so a
+search, a change of it and its clear read no order — each read All Media's 164,762 rows again
+on the owner's catalog — and a scope's collapse is held apart from its last search's) and
 the revisions its pass started from (`CatalogProjectionReads`). A pass reuses an answer
 while what it was for is unchanged and no kind it depends on moved, and reads it again
 otherwise. The order depends on rows shown, capture dates, kinds, formats, grouping and

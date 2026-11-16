@@ -112,8 +112,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"])
-        #expect(run.applied == 6)
+        #expect(steps.recorded == ["1/7", "2/7", "3/7", "4/7", "5/7", "6/7", "7/7"])
+        #expect(run.applied == 7)
         let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
         #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
 
@@ -140,15 +140,15 @@ struct CatalogStoreSchemaMigrationTests {
             )
             try db.execute(
                 sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
-                arguments: [CatalogSchema.photoCopiesMigrationIdentifier]
+                arguments: [CatalogSchema.locationIndexMigrationIdentifier]
             )
         }
         let steps = StepLog()
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"])
-        #expect(run.applied == 6)
+        #expect(steps.recorded == ["1/7", "2/7", "3/7", "4/7", "5/7", "6/7", "7/7"])
+        #expect(run.applied == 7)
     }
 
     private final class StepLog: Sendable {
@@ -321,6 +321,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.faceEmbeddingTableMigrationIdentifier,
             CatalogSchema.samePhotoIndexesMigrationIdentifier,
             CatalogSchema.settledPeopleAssignmentMigrationIdentifier,
+            CatalogSchema.sortOrderTestedColumnsMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

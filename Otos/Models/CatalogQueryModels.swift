@@ -374,6 +374,14 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
         self.search = search
     }
 
+    /// This descriptor with no search: what the ordered-asset read is for, since a search
+    /// narrows the order after it is read (ADR 0048).
+    var unsearched: CatalogQueryDescriptor {
+        var descriptor = self
+        descriptor.search = nil
+        return descriptor
+    }
+
     /// Whether the grid groups by day (DES-069): under Date sort, unless a search orders it
     /// by relevance.
     var groupsByDay: Bool {

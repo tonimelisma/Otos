@@ -200,9 +200,10 @@ nonisolated struct CatalogProjectionReads: Sendable {
 
     /// Where a scope's order and collapse are held. All Media, the scope a return to the
     /// library lands on, keeps its own answers while the user is anywhere else; every other
-    /// scope shares one slot, the last one read. So at most two orders and two collapses are
-    /// held: All Media's (at owner scale about 165,000 IDs, some 20 MB with its collapse, most
-    /// of it shared with the published window while All Media is shown) and one more.
+    /// scope shares one slot, the last one read. So at most two orders and two unsearched
+    /// collapses are held: All Media's (at owner scale about 165,000 IDs, some 20 MB with its
+    /// collapse, most of it shared with the published window while All Media is shown) and one
+    /// more; a slot also holds its last search's collapse, as large as the search's matches.
     enum Slot: Hashable, Sendable {
         case allMedia
         case other
@@ -215,8 +216,22 @@ nonisolated struct CatalogProjectionReads: Sendable {
     /// The last order read in each slot.
     var orders: [Slot: Order] = [:]
     var filterOptions: FilterOptions?
-    /// The last collapse made in each slot.
-    var collapses: [Slot: Collapse] = [:]
+    /// The last collapse made in each slot, searched and not.
+    var collapses: [CollapseKey: Collapse] = [:]
+
+    /// Where a collapse is held: its scope's slot, and whether a search narrowed the order it
+    /// collapsed. A search's collapse is held beside the unsearched one, so clearing the
+    /// search shows the collapse the scope had (at owner scale 0.3–0.5 s to make again).
+    struct CollapseKey: Hashable, Sendable {
+        let slot: Slot
+        let searched: Bool
+
+        init(_ descriptor: CatalogQueryDescriptor) {
+            slot = Slot(descriptor.scope)
+            searched = descriptor.effectiveSearch != nil
+        }
+    }
+
     var stacks: Stacks?
     var importBatches: ImportBatches?
     var placeNameLanguages: PlaceNameLanguages?
@@ -244,12 +259,15 @@ nonisolated struct CatalogProjectionReads: Sendable {
     }
 
     /// The last order read for `descriptor` over `paths`, whether or not a fact it depends on
-    /// moved since: what a scope the user returns to shows while it is read again.
+    /// moved since: what a scope the user returns to shows while it is read again. A search is
+    /// applied after the order is read, from the index's answer, so the order read for the
+    /// descriptor without its search answers it: typing a search, changing it and clearing it
+    /// read no order (on the owner's catalog each read 164,762 rows again).
     func heldOrder(
         for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths paths: Set<LibraryRootPath>
     ) -> Order? {
-        guard let order = orders[Slot(descriptor.scope)], order.descriptor == descriptor,
+        guard let order = orders[Slot(descriptor.scope)], order.descriptor.unsearched == descriptor.unsearched,
               order.availableLibraryPaths == paths
         else {
             return nil

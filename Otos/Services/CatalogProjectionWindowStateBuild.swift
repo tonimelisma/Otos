@@ -191,7 +191,7 @@ extension CatalogProjection {
             }
         }
         let collapseStart = ContinuousClock.now
-        let collapseSlot = CatalogProjectionReads.Slot(resolvedDescriptor.scope)
+        let collapseSlot = CatalogProjectionReads.CollapseKey(resolvedDescriptor)
         let collapse = Self.collapseStacks(
             ordered.stacks,
             expanded: request.expandedStacks,

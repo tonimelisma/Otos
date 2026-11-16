@@ -344,7 +344,7 @@ actor CatalogProjection {
         guard let built = lastBuiltState, built.queryGeneration == queryRequest.generation else {
             return
         }
-        let slot = CatalogProjectionReads.Slot(built.queryDescriptor.scope)
+        let slot = CatalogProjectionReads.CollapseKey(built.queryDescriptor)
         guard let held = reads.collapses[slot],
               let expanded = Self.expanding(built, held: held, to: queryRequest.expandedStacks)
         else {
@@ -1012,7 +1012,7 @@ private extension CatalogProjection {
         // the user asked meanwhile: an expansion was shown while this pass read, and a
         // publication of the collapse it started from would take it back for a pass.
         var window = completed.state
-        let collapseSlot = CatalogProjectionReads.Slot(window.queryDescriptor.scope)
+        let collapseSlot = CatalogProjectionReads.CollapseKey(window.queryDescriptor)
         if queryRequest.generation == selectedRequest.generation,
            queryRequest.expandedStacks != selectedRequest.expandedStacks,
            let held = passReads.collapses[collapseSlot],

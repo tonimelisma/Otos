@@ -490,13 +490,18 @@ struct CatalogStoreQueryPlanTests {
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let tested: Set = ["pending_trash_batch_unix_ms", "awaiting_presence", "hidden_by_source", "best_kind", "content_identifier"]
         var orderQueries: [(String, SQLQuery)] = []
-        for (direction, suffix) in [(MediaSortDirection.descending, "desc"), (.ascending, "asc")] {
-            let descriptor = CatalogQueryDescriptor(scope: .allMedia, sort: MediaSortOrder(field: .bestDate, direction: direction))
-            for (name, roots) in [("root", [rootID1]), ("global", [rootID1, rootID2])] {
-                let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
-                    descriptor: descriptor, scope: CatalogScopePredicate(rootIDs: roots)
-                ))
-                orderQueries.append(("idx_media_asset_best_capture_\(name)_\(suffix)", query))
+        // Every sort the window offers (v66 for name and size): sorting All Media by name walked
+        // a name index of the key alone, 152,822 pages on the owner's catalog.
+        let sorts: [(MediaSortField, String)] = [(.bestDate, "best_capture"), (.name, "name"), (.size, "size")]
+        for (field, prefix) in sorts {
+            for (direction, suffix) in [(MediaSortDirection.descending, "desc"), (.ascending, "asc")] {
+                let descriptor = CatalogQueryDescriptor(scope: .allMedia, sort: MediaSortOrder(field: field, direction: direction))
+                for (name, roots) in [("root", [rootID1]), ("global", [rootID1, rootID2])] {
+                    let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                        descriptor: descriptor, scope: CatalogScopePredicate(rootIDs: roots)
+                    ))
+                    orderQueries.append(("idx_media_asset_\(prefix)_\(name)_\(suffix)", query))
+                }
             }
         }
         let orders = orderQueries
