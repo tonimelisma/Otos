@@ -227,6 +227,35 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
+    /// Identical copies share their kinds, formats and places, so which file is a copy offers
+    /// no other choice: All Media, which shows one copy of each, reads its order again for a
+    /// digest that makes two files copies, and never its options. On the owner's catalog 227 of
+    /// the 277 changes in four minutes named copies, and each read the options again.
+    @Test func aDigestThatMakesCopiesNeverReadsTheOptionsAgain() async throws {
+        let window = try await settledWindow()
+        defer { window.recording.cancel() }
+        // A second library, so All Media is its own row and not the one library's.
+        let archive = try makeTestDirectory().appending(path: "Archive", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+        try await window.store.addLibrary(url: archive)
+        _ = try await waitForCatalogStoreState(window.store) { !$0.isScanning && $0.libraries.count == 2 }
+        await window.projection.updateSidebarSelection(.allMedia)
+        _ = await window.recorder.waitForValues { $0.last?.resolvedSidebarSelection == .allMedia }
+        _ = try await waitForProjectionQuiescence(window.projection, recordedBy: window.recorder)
+        let before = await window.reads
+        let digest = try #require(ContentDigest(data: Data(repeating: 7, count: 20)))
+        let results = try window.ids.prefix(2).map { id in
+            try detailEnrichment(for: #require(window.assets[id]), contentHash: digest)
+        }
+        try await window.publish {
+            _ = await window.store.applyEnrichmentBatch(results)
+        }
+        let after = await window.reads
+        #expect(after.order == before.order + 1, "before=\(before) after=\(after)")
+        #expect(after.options == before.options, "before=\(before) after=\(after)")
+        await window.store.shutdown()
+    }
+
     /// A choice is a stack fact (ADR 0052) and what the choices filter selects by, so the order
     /// is read again; it offers no other type or place, so the options are not.
     @Test func aStackFactReadsTheOrderAgain() async throws {
@@ -387,7 +416,8 @@ struct ProjectionEnrichmentCoalescingTests {
 
     private func detailEnrichment(
         for asset: MediaAsset,
-        captureDate: Date? = nil
+        captureDate: Date? = nil,
+        contentHash: ContentDigest = .empty
     ) -> EnrichmentResult {
         EnrichmentResult(
             id: asset.id,
@@ -397,7 +427,7 @@ struct ProjectionEnrichmentCoalescingTests {
             thumbnailPath: nil,
             sourceSize: asset.byteSize,
             sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
-            contentHash: .empty
+            contentHash: contentHash
         )
     }
 }

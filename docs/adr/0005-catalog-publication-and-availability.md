@@ -111,8 +111,12 @@ while what it was for is unchanged and no kind it depends on moved, and reads it
 otherwise. The order depends on rows shown, capture dates, kinds, formats, grouping and
 choices always, and on locations and place names, faces, copies or On This Day's labels
 where the scope or the filter is by them (`CatalogChangedFacts.orderInputs(of:)`); the
-options depend on rows shown, kinds, formats, grouping, locations and place names
-(`filterOptionsInputs(of:)`); the collapse is a pure step over the scoped order, its stacks
+options depend on rows held, kinds, formats, grouping, locations and place names
+(`filterOptionsInputs(of:)`), never on which file is a copy: they are read with every copy
+of identical files, which share their kinds, formats and places, so a scope that shows one
+copy offers what it would offer with all, and a place's count, which only orders the places,
+counts each copy (227 of the 277 changes in the owner's four-minute tour named copies, and
+each read All Media's options again); the collapse is a pure step over the scoped order, its stacks
 and expansions. A shown search's answer is held the same way, keyed also by the search
 index's own revision, which only the index moves (ADR 0048); its Store fact matches depend
 on rows shown, capture dates, locations and faces (`searchFactInputs`). The filter's options are read beside the order, since neither depends on
@@ -173,10 +177,10 @@ exception to "one derivation in flight" is a build an intent superseded (below):
 still be ending its cancelled read while the next pass runs, and it publishes and keeps
 nothing.
 
-A user never waits for work answering what they left. A pass runs its build, and the
-filter's options it owes, in a task it waits on; an intent whose descriptor that work does
-not answer — another scope, filter, sort or search for a build; another sidebar row for the
-options — cancels it in the step that applies the intent. That work is unpublished and can
+A user never waits for work answering what they left. A pass runs its build in a task it
+waits on; an intent whose descriptor that build does not answer — another scope, filter,
+sort or search — cancels it in the step that applies the intent, and an intent for another
+sidebar row cancels the options read too. That work is unpublished and can
 never be published, because what it answers is no longer asked; GRDB interrupts its
 statement. The pass does not wait for the cancelled work to end: a cancelled read ends only
 when its statement, or its wait for a connection, does, and the next scope must not wait on
@@ -192,11 +196,18 @@ cancels the loop, and a torn-down pass publishes nothing. On the owner's catalog
 click waited 2–9 s for the All Media build it left, then 1.4 s on the main thread applying
 it (`docs/research/2026-11-14-scope-switch-and-background-laps.md`).
 
-The filter's options never hold the window back. A pass whose options are owed publishes
-the window with the last options read for the same row (none for a row not read yet: the
-popover lists every kind, and the types under each arrive with the read), then reads the
-options and republishes the window with them; it covers its request only once they are
-read. The People gallery shows people, not items: its window reads no order, stacks, search
+The filter's options never hold the window back, nor the pass after it. A pass whose options
+are owed publishes the window with the last options read for the same row (none for a row not
+read yet: the popover lists every kind, and the types under each arrive with the read), asks
+for the options and covers its request. The options are read as their own work, one read at
+a time, with their own revision counter: an ask while a read runs for other revisions is read
+when it ends, and a read's answer is kept and the window republished with it in the step the
+read ends in. An intent on the same row is built while they are read. Waiting for them was
+the larger part of the owner's slowest steps: a search, a clear and a sort each waited
+15–23 s for the options read of the pass before (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+A wide scope's places are read walking its date order index, each located row's cell found
+by its coordinate in the location index; starting from the named cells read every located
+row of the catalog through its table row (8.4 s against 0.57 s cold for All Media). The People gallery shows people, not items: its window reads no order, stacks, search
 or options, and says only what its libraries' state is
 (`CatalogWindowPolicy.peopleGalleryLibrariesState`).
 

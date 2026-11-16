@@ -2746,10 +2746,17 @@ extension CatalogStore {
         placeNameLanguages: Set<PlaceNameLanguage>
     ) async throws -> CatalogFilterOptions {
         let row = selection.sidebarRow
-        let scope = scopePredicate(selection: row, availableLibraryPaths: availableLibraryPaths)
-        guard !scope.selectsNothing else {
+        var rowScope = scopePredicate(selection: row, availableLibraryPaths: availableLibraryPaths)
+        guard !rowScope.selectsNothing else {
             return .empty
         }
+        // Identical copies share their bytes, so their kinds, formats and places: the options
+        // are the same with every copy as with the one shown (ADR 0054), and a place's count,
+        // which orders the places, counts each copy. So the options never depend on which file
+        // is a copy, a fact enrichment moves on almost every flush
+        // (`CatalogChangedFacts.filterOptionsInputs(of:)`).
+        rowScope.showsOneCopy = false
+        let scope = rowScope
         let language = placeNameLanguages.count == 1 ? placeNameLanguages.first : nil
         let dbWriter = try database()
         let timedOptions = try await timedRead(dbWriter) { db in

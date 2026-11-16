@@ -324,8 +324,8 @@ struct CatalogStoreQueryPlanTests {
 
     /// Place names (ADR 0051): the unnamed cells' read walks the place-cell index in its own
     /// order — no scan of every location, no temporary sort — and the filter options' read
-    /// starts from the named cells and reaches each located row through that index, not
-    /// from every row of the scope. SQLite generates each row's cell exactly as
+    /// walks the scope's date order, each located row's coordinate from the location index
+    /// by its key, never a table row of `asset_metadata`. SQLite generates each row's cell exactly as
     /// `PlaceCell.init` computes it, on the pole and the 180th meridian too. The launch's
     /// hand-back of undecodable stills seeks them by their index.
     @Test func placeCellAndUndecodableReadsAreIndexDriven() async throws {
@@ -383,8 +383,10 @@ struct CatalogStoreQueryPlanTests {
             #expect(!plan.contains("SCAN"))
             #expect(!usesTemporarySort(plan))
         }
-        #expect(optionsPlan.contains("SEARCH place_metadata USING INDEX idx_asset_metadata_place_cell"))
-        #expect(!optionsPlan.contains("SCAN media_asset"))
+        // The options' places walk the scope's date order and find each located row's cell by
+        // its coordinate (`theOptionsReadsOfEveryRowAreIndexDriven`).
+        #expect(optionsPlan.contains("SCAN media_asset USING INDEX idx_media_asset_best_capture_global_desc"), "\(optionsPlan)")
+        #expect(optionsPlan.contains("SEARCH place_metadata USING COVERING INDEX idx_asset_metadata_location"), "\(optionsPlan)")
         #expect(!optionsPlan.contains("SCAN place_metadata"))
         for undecodablePlan in undecodablePlans {
             #expect(undecodablePlan.contains("USING INDEX idx_media_asset_undecodable"))
@@ -504,7 +506,7 @@ struct CatalogStoreQueryPlanTests {
             ))
             var columns: [String: Set<String>] = [:]
             for index in orders.map(\.0) + ["idx_media_asset_stack_candidate", "idx_media_asset_import_batch"] {
-                columns[index] = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_index_info(?)", arguments: [index]))
+                columns[index] = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_index_info(?) WHERE name IS NOT NULL", arguments: [index]))
             }
             return try (
                 orders.map { name, query in try (name, explainPlan(db, query: query)) },
@@ -638,17 +640,38 @@ struct CatalogStoreQueryPlanTests {
             }
             return try (plans, explainPlan(db, sql: CatalogQueryGateway.placeNameLanguagesSQL))
         }
+        let tested: Set = ["pending_trash_batch_unix_ms", "awaiting_presence", "hidden_by_source", "best_kind", "content_identifier"]
+        let indexColumns = try await dbQueue.read { db in
+            var columns: [String: Set<String>] = [:]
+            for index in try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'media_asset'") {
+                columns[index] = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_index_info(?) WHERE name IS NOT NULL", arguments: [index]))
+            }
+            return columns
+        }
         for (name, plan) in plans {
             let lines = plan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-            for table in ["media_asset", "place_metadata", "asset_metadata", "search_embedding", "face"] {
+            for table in ["place_metadata", "asset_metadata", "search_embedding", "face"] {
                 #expect(!lines.contains { $0 == "SCAN \(table)" || $0.hasPrefix("SCAN \(table) ") }, "\(name): \(plan)")
             }
-            // A narrow scope's places start from its own rows instead: an import batch by its
-            // key (`keyedScopesSeekTheirOwnRowsInsteadOfWalkingTheOrder`), On This Day by its
-            // day and Duplicates by the digests it groups (`narrowScopesSeekTheirOwnRows`).
+            // A read may walk `media_asset` only through an index that tests each row's
+            // visibility without its table row (v55).
+            for line in lines where line == "SCAN media_asset" || line.hasPrefix("SCAN media_asset ") {
+                let index = line.split(separator: " ").last.map(String.init) ?? ""
+                #expect(tested.isSubset(of: indexColumns[index] ?? []), "\(name): \(plan)")
+            }
+            // Each located row's coordinate comes from the location index by its key, and its
+            // named cell by the cell of that coordinate: no table row of `asset_metadata`.
+            if name.hasSuffix(".places") {
+                #expect(plan.contains("SEARCH place_metadata USING COVERING INDEX idx_asset_metadata_location"), "\(name): \(plan)")
+                #expect(!plan.contains("idx_asset_metadata_place_cell"), "\(name): \(plan)")
+            }
+            // A wide scope's places walk its date order, as its order read does; a narrow
+            // scope's start from its own rows: an import batch by its key
+            // (`keyedScopesSeekTheirOwnRowsInsteadOfWalkingTheOrder`), On This Day by its day and
+            // Duplicates by the digests it groups (`narrowScopesSeekTheirOwnRows`).
             let narrow = ["importBatch", "onThisDay", "duplicates"]
             if name.hasSuffix(".places"), !narrow.contains(where: { name.hasPrefix($0) }) {
-                #expect(plan.contains("SEARCH place_metadata USING INDEX idx_asset_metadata_place_cell"), "\(name): \(plan)")
+                #expect(plan.contains("idx_media_asset_best_capture_"), "\(name): \(plan)")
             }
         }
         #expect(!languagesPlan.contains("media_asset") && !languagesPlan.contains("asset_metadata"))

@@ -81,17 +81,29 @@ nonisolated extension CatalogChangedFacts {
     static let searchFactInputs: CatalogChangedFacts = [.membership, .captureDate, .location, .faces]
 
     /// What the filter's options for the sidebar row `row` depend on: which rows the row
-    /// shows, their kinds and formats, and the places named for them.
+    /// holds, their kinds and formats, and the places named for them. Not which file is a
+    /// copy: the options are read with every copy (`CatalogStore.filterOptions`), and 227 of
+    /// the 277 changes of the owner's tour named copies
+    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
     static func filterOptionsInputs(of row: SidebarSelection) -> CatalogChangedFacts {
         var facts: CatalogChangedFacts = [.membership, .kindAndFormat, .grouping, .location, .placeNames]
-        facts.formUnion(scopeInputs(of: row))
+        facts.formUnion(rowInputs(of: row))
         return facts
     }
 
     /// What decides which rows a scope holds, beyond the rows themselves. A scope that shows
     /// one copy of identical copies (ADR 0054) depends on which files are copies.
     private static func scopeInputs(of scope: SidebarSelection) -> CatalogChangedFacts {
-        var facts: CatalogChangedFacts = switch scope {
+        var facts = rowInputs(of: scope)
+        if scope.showsOneCopy {
+            facts.insert(.copies)
+        }
+        return facts
+    }
+
+    /// What decides which rows a scope holds before one copy is chosen of identical copies.
+    private static func rowInputs(of scope: SidebarSelection) -> CatalogChangedFacts {
+        switch scope {
         case .allMedia, .library, .importBatch, .allImports:
             []
         case .places, .mapArea, .mapStack:
@@ -105,10 +117,6 @@ nonisolated extension CatalogChangedFacts {
         case .people, .person:
             .faces
         }
-        if scope.showsOneCopy {
-            facts.insert(.copies)
-        }
-        return facts
     }
 }
 
@@ -426,9 +434,9 @@ nonisolated enum CatalogProjectionBuild {
 }
 
 /// The filter's options a published window still owes: the row they are read for and what
-/// the read is keyed by (ADR 0005). The window never waits for them; the pass reads them
-/// after it publishes and republishes the window with them.
-nonisolated struct OwedFilterOptions: Sendable {
+/// the read is keyed by (ADR 0005). Neither the window nor the next pass waits for them: the
+/// pass asks for them after it publishes, and their own read republishes the window with them.
+nonisolated struct OwedFilterOptions: Equatable, Sendable {
     let row: SidebarSelection
     let availableLibraryPaths: Set<LibraryRootPath>
     let placeNameLanguages: Set<PlaceNameLanguage>

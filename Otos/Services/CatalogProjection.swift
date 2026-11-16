@@ -54,15 +54,20 @@ import OSLog
 /// grouping never hold back the sidebar or the grid, and a change of scope, filter or sort
 /// never rebuilds them, since neither depends on it.
 ///
-/// The filter's options never hold the window back. A pass that owes them publishes the
-/// window with the last options read for its row (none for a row not read yet), then reads
-/// them and republishes the window with them (`OwedFilterOptions`); it covers its request only
-/// once they are read.
+/// The filter's options never hold the window back, nor the pass after it. A pass that owes
+/// them publishes the window with the last options read for its row (none for a row not read
+/// yet), asks for them (`askFilterOptions`) and covers its request; the read runs as its own
+/// work (`optionsInFlight`), one at a time, with its own revision counter
+/// (`optionsRequested`, `optionsCovered`), and its answer is kept and republished in the step
+/// it ends in. An intent on the same row — a sort, a filter, a search — is built while the
+/// options are read; one for another row cancels the read, whose answer is then never kept.
+/// On the owner's catalog a search, a clear and a sort each waited 15–23 s for the options
+/// read of the pass before them (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
 ///
 /// What the user asked for is never queued behind work for what they left (ADR 0032). A
-/// pass's build, and its owed options read, run in a task the pass waits on (`inFlight`); an
-/// intent that changes what is shown — another scope, filter, sort or search — cancels that
-/// task when it is for the descriptor the user left. That work is not published and never can
+/// pass's build runs in a task the pass waits on (`inFlight`); an intent that changes what is
+/// shown — another scope, filter, sort or search — cancels that task when it is for the
+/// descriptor the user left. That work is not published and never can
 /// be, since what it answers is no longer asked; GRDB interrupts its statement. The pass does
 /// not wait for the cancelled work to end: it publishes nothing, covers nothing and rings the
 /// loop at once, which builds the new request next. A store change never supersedes anything: the build in
@@ -73,6 +78,7 @@ import OSLog
 actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async throws
         -> CatalogWindowState
+    typealias FilterOptionsReader = @Sendable (OwedFilterOptions) async throws -> CatalogFilterOptions
 
     /// How often background Store changes may publish: at most once a second. A rate
     /// limit standing on a measurement: each publication that reorders the grid costs
@@ -82,6 +88,8 @@ actor CatalogProjection {
     /// ring the doorbell directly and never wait for it.
     private let cadence: Duration
     let stateBuilder: WindowStateBuilder?
+    /// Tests replace the options read to hold it at its suspension; production reads the Store.
+    let filterOptionsReader: FilterOptionsReader?
     /// Tests replace the duplicates build to hold it at its suspension; production builds them.
     let duplicatesBuilder: DuplicatesProjection.Builder?
     /// Tests replace the People build to hold it at its suspension; production builds it.
@@ -162,14 +170,21 @@ actor CatalogProjection {
     /// Count of searches the index was asked to match rather than answered from the last
     /// answer (`CatalogProjectionReads.Search`).
     var searchMatchCount: UInt64 = 0
-    /// Count of passes whose build or owed read an intent superseded (`supersede()`).
+    /// Count of passes whose build an intent superseded (`supersede()`).
     private(set) var supersededCount: UInt64 = 0
-    /// The build or owed options read the loop is waiting on: what it is for, and how to
+    /// The build the loop is waiting on: what it is for, and how to
     /// cancel it when an intent leaves that descriptor.
     private var inFlight: InFlightWork?
     /// The work an intent cancelled, so its pass knows the error it ends with is that.
     private var supersededWork: UInt64?
     private var nextWorkID: UInt64 = 0
+    /// The options the newest pass that owed them asked for (`askFilterOptions`).
+    private var optionsAsked: OwedFilterOptions?
+    /// Bumped by every ask; `optionsCovered` is the ask the last kept read started from.
+    private var optionsRequested: UInt64 = 0
+    private var optionsCovered: UInt64 = 0
+    /// The options read running, which an intent for another row cancels.
+    private var optionsInFlight: FilterOptionsInFlight?
     /// The pass waiting on supersedable work, resumed when it ends or is superseded.
     private var workWaiter: WorkWaiter?
     /// The intent generation whose first pass published what the projection held
@@ -183,7 +198,7 @@ actor CatalogProjection {
     /// True when every request has been covered by a successful pass and no pass is
     /// running. Lets a test wait for settlement instead of guessing a sleep duration.
     var isQuiescent: Bool {
-        requested == covered && runningPasses == 0
+        requested == covered && runningPasses == 0 && optionsRequested == optionsCovered && optionsInFlight == nil
     }
 
     /// Whether the duplicates owner has built every request it was given. With `isQuiescent`,
@@ -209,12 +224,14 @@ actor CatalogProjection {
     init(
         cadence: Duration = .seconds(1),
         stateBuilder: WindowStateBuilder? = nil,
+        filterOptionsReader: FilterOptionsReader? = nil,
         duplicatesBuilder: DuplicatesProjection.Builder? = nil,
         peopleBuilder: PeopleAssignment.Builder? = nil,
         backgroundOwners: BackgroundOwners = .all
     ) {
         self.cadence = cadence
         self.stateBuilder = stateBuilder
+        self.filterOptionsReader = filterOptionsReader
         self.duplicatesBuilder = duplicatesBuilder
         self.peopleBuilder = peopleBuilder
         self.backgroundOwners = backgroundOwners
@@ -826,17 +843,18 @@ private extension CatalogProjection {
         requestPublication(ringNow: publishedBeforeCatalogLoad)
     }
 
-    /// Cancels the build or owed read in flight when it is for a descriptor other than the one
-    /// now asked for. Synchronous: it runs in the step that applies the intent, so no await
+    /// Cancels the build in flight when it is for a descriptor other than the one now asked
+    /// for, and the options read when it is for another row. Synchronous: it runs in the step that applies the intent, so no await
     /// separates the intent from the cancellation.
     private func supersede() {
+        supersedeFilterOptions()
         guard let inFlight, !inFlight.answers(queryRequest.descriptor) else {
             return
         }
         supersededWork = inFlight.id
         OtosLog.catalog.noticeOperation("projection.publish", phase: "superseded", fields: [
             "projection": diagnosticID,
-            "work": inFlight.kindName,
+            "work": "build",
             "left": inFlight.scope.diagnosticDescription,
             "asked": queryRequest.descriptor.scope.diagnosticDescription,
         ])
@@ -853,7 +871,7 @@ private extension CatalogProjection {
     /// because a cancelled read can only end when its statement or its wait for a connection
     /// does, and what the user asked for next must not wait on that.
     private func supersedable<Value: Sendable>(
-        _ kind: InFlightWork.Kind,
+        building descriptor: CatalogQueryDescriptor,
         _ work: @escaping @Sendable () async throws -> Value
     ) async throws -> Value {
         nextWorkID &+= 1
@@ -863,7 +881,7 @@ private extension CatalogProjection {
             await self?.workEnded(id)
             return try result.get()
         }
-        inFlight = InFlightWork(id: id, kind: kind, cancel: { task.cancel() })
+        inFlight = InFlightWork(id: id, descriptor: descriptor, cancel: { task.cancel() })
         defer {
             if inFlight?.id == id {
                 inFlight = nil
@@ -944,7 +962,7 @@ private extension CatalogProjection {
             // pass that did reads again, and nothing else answers from held reads.
             let answerFromHeld = lastPublishedState?.queryGeneration != selectedRequest.generation
                 && heldPublishedGeneration != selectedRequest.generation
-            let build = try await supersedable(.build(selectedRequest.descriptor)) {
+            let build = try await supersedable(building: selectedRequest.descriptor) {
                 try await self.buildWindowState(
                     store: store,
                     libraries: libraries,
@@ -1013,12 +1031,16 @@ private extension CatalogProjection {
         guard !Task.isCancelled else {
             return
         }
-        // The window is published, so the reads it was built from stand whatever the options
-        // read does.
+        // The window is published, so the reads it was built from stand. The options are not
+        // among them: their own read keeps them (`filterOptionsReadEnded`), and one that ended
+        // while this pass built is newer than the options this pass started from.
+        passReads.filterOptions = reads.filterOptions
         reads = passReads
+        if let owedOptions {
+            askFilterOptions(owedOptions, store: store)
+        }
         // What the window shows was held, and a fact it depends on moved since: the next pass
-        // reads it again, and takes up the options and the derived owners. This one covers
-        // nothing.
+        // reads it again, and takes up the derived owners. This one covers nothing.
         if completed.buildMetrics.reuse.held {
             heldPublishedGeneration = selectedRequest.generation
             OtosLog.catalog.noticeOperation("projection.publish", phase: "held", fields: [
@@ -1028,11 +1050,6 @@ private extension CatalogProjection {
             ])
             doorbell?.yield()
             return
-        }
-        if let owedOptions {
-            guard await readOwedFilterOptions(owedOptions, request: selectedRequest, store: store) else {
-                return
-            }
         }
         covered = startedFrom
         retireHolds(coveredFrom: startedFrom)
@@ -1064,22 +1081,70 @@ private extension CatalogProjection {
         }
     }
 
-    /// Reads the options the published window owes and republishes it with them. False when
-    /// the read was superseded, torn down or failed: the pass then covers nothing.
-    private func readOwedFilterOptions(
-        _ owed: OwedFilterOptions,
-        request: CatalogQueryRequest,
-        store: CatalogStore
-    ) async -> Bool {
-        let read: (options: CatalogFilterOptions, ms: Int)
-        do {
-            read = try await supersedable(.filterOptions(row: owed.row)) {
-                try await self.readFilterOptions(owed, store: store)
-            }
-            try Task.checkCancellation()
-        } catch {
-            endUnpublishedPass(error, request: request)
+    /// Asks for the options a published window owes. A read already running for exactly these
+    /// is the answer; otherwise the ask is counted, and read once the read running ends, or now.
+    private func askFilterOptions(_ owed: OwedFilterOptions, store: CatalogStore) {
+        guard optionsInFlight?.owed != owed, !Self.answers(reads.filterOptions, owed) else {
+            return
+        }
+        optionsAsked = owed
+        optionsRequested &+= 1
+        startAskedFilterOptionsRead(store: store)
+    }
+
+    /// Whether `held` was read for exactly what `owed` asks: a read that ended while the pass
+    /// asking for it built.
+    private static func answers(_ held: CatalogProjectionReads.FilterOptions?, _ owed: OwedFilterOptions) -> Bool {
+        guard let held else {
             return false
+        }
+        return held.row == owed.row && held.availableLibraryPaths == owed.availableLibraryPaths
+            && held.placeNameLanguages == owed.placeNameLanguages && held.revisions == owed.revisions
+    }
+
+    /// Starts the read of the newest options asked, when one is owed and none is running.
+    /// Synchronous: the read is a task whose end is applied by `filterOptionsReadEnded`.
+    private func startAskedFilterOptionsRead(store: CatalogStore) {
+        guard optionsInFlight == nil, optionsRequested != optionsCovered, let owed = optionsAsked else {
+            return
+        }
+        nextWorkID &+= 1
+        let id = nextWorkID
+        let startedFrom = optionsRequested
+        let task = Task { [weak self] in
+            guard let self else { return }
+            let result = await Result { try await self.readFilterOptions(owed, store: store) }
+            await filterOptionsReadEnded(id: id, owed: owed, startedFrom: startedFrom, result: result, store: store)
+        }
+        optionsInFlight = FilterOptionsInFlight(id: id, owed: owed, cancel: { task.cancel() })
+    }
+
+    /// Keeps a read's options and republishes the window with them, then reads the newest
+    /// asked if they were asked again meanwhile. A read an intent or a teardown cancelled is
+    /// no longer the one in flight, and nothing of it is kept. A failed read keeps nothing
+    /// and leaves its ask outstanding: the next pass that owes them asks again (ADR 0032).
+    private func filterOptionsReadEnded(
+        id: UInt64,
+        owed: OwedFilterOptions,
+        startedFrom: UInt64,
+        result: Result<(options: CatalogFilterOptions, ms: Int), any Error>,
+        store: CatalogStore
+    ) {
+        guard optionsInFlight?.id == id else {
+            return
+        }
+        optionsInFlight = nil
+        let read: (options: CatalogFilterOptions, ms: Int)
+        switch result {
+        case let .success(value):
+            read = value
+        case let .failure(error):
+            OtosLog.catalog.errorOperation("projection.filterOptions", phase: "failed", fields: [
+                "projection": diagnosticID,
+                "row": owed.row.diagnosticDescription,
+                "error": String(describing: error),
+            ])
+            return
         }
         reads.filterOptions = CatalogProjectionReads.FilterOptions(
             row: owed.row,
@@ -1088,15 +1153,35 @@ private extension CatalogProjection {
             revisions: owed.revisions,
             answer: read.options
         )
+        optionsCovered = startedFrom
         let republished = publishFilterOptions(read.options, row: owed.row)
         OtosLog.catalog.noticeOperation("projection.filterOptions", phase: "read", fields: [
             "projection": diagnosticID,
-            "generation": "\(request.generation)",
             "row": owed.row.diagnosticDescription,
             "ms": "\(read.ms)",
             "republished": "\(republished)",
         ])
-        return true
+        startAskedFilterOptionsRead(store: store)
+    }
+
+    /// Cancels the options read and forgets the options asked when they are not for the row
+    /// now asked for: nothing shows them. Synchronous, in the step that applies the intent.
+    private func supersedeFilterOptions() {
+        let row = queryRequest.descriptor.scope.sidebarRow
+        if let optionsInFlight, optionsInFlight.owed.row != row {
+            OtosLog.catalog.noticeOperation("projection.publish", phase: "superseded", fields: [
+                "projection": diagnosticID,
+                "work": "filterOptions",
+                "left": optionsInFlight.owed.row.diagnosticDescription,
+                "asked": queryRequest.descriptor.scope.diagnosticDescription,
+            ])
+            optionsInFlight.cancel()
+            self.optionsInFlight = nil
+        }
+        if let optionsAsked, optionsAsked.row != row {
+            self.optionsAsked = nil
+            optionsCovered = optionsRequested
+        }
     }
 
     /// How a pass that published nothing ends: torn down, superseded by an intent (the loop
@@ -1297,48 +1382,37 @@ private extension CatalogProjection {
         inFlight = nil
         supersededWork = nil
         heldPublishedGeneration = nil
+        optionsInFlight?.cancel()
+        optionsInFlight = nil
+        optionsAsked = nil
+        optionsRequested = 0
+        optionsCovered = 0
     }
 }
 
-/// The work a pass waits on, for `CatalogProjection.supersede()`.
+/// The build a pass waits on, for `CatalogProjection.supersede()`: it answers only the
+/// descriptor it is for.
 private nonisolated struct InFlightWork {
-    enum Kind {
-        /// The window's build for this descriptor: it answers only this descriptor.
-        case build(CatalogQueryDescriptor)
-        /// The options of this sidebar row: they answer every descriptor shown under it, so a
-        /// filter or sort change on the row leaves them standing.
-        case filterOptions(row: SidebarSelection)
-    }
-
     let id: UInt64
-    let kind: Kind
+    let descriptor: CatalogQueryDescriptor
     let cancel: @Sendable () -> Void
 
-    /// Whether this work's answer is still asked for when the window asks for `descriptor`.
-    func answers(_ descriptor: CatalogQueryDescriptor) -> Bool {
-        switch kind {
-        case let .build(built):
-            built == descriptor
-        case let .filterOptions(row):
-            descriptor.scope.sidebarRow == row
-        }
+    /// Whether this build's answer is still asked for when the window asks for `descriptor`.
+    func answers(_ asked: CatalogQueryDescriptor) -> Bool {
+        descriptor == asked
     }
 
     var scope: SidebarSelection {
-        switch kind {
-        case let .build(descriptor):
-            descriptor.scope
-        case let .filterOptions(row):
-            row
-        }
+        descriptor.scope
     }
+}
 
-    var kindName: String {
-        switch kind {
-        case .build: "build"
-        case .filterOptions: "filterOptions"
-        }
-    }
+/// The options read running: the options it reads, and how to cancel it when an intent
+/// leaves their row (`CatalogProjection.supersedeFilterOptions()`).
+private nonisolated struct FilterOptionsInFlight {
+    let id: UInt64
+    let owed: OwedFilterOptions
+    let cancel: @Sendable () -> Void
 }
 
 /// The pass waiting on the supersedable work `id`.

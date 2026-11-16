@@ -252,19 +252,23 @@ extension CatalogProjection {
         return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: 0, reuse: reuse), reads, nil)
     }
 
-    /// Reads the options `owed` names. Run by the pass after the window it owes them to is
-    /// published.
+    /// Reads the options `owed` names: the read a pass asks for (`askFilterOptions`) after the
+    /// window it owes them to is published.
     func readFilterOptions(
         _ owed: OwedFilterOptions,
         store: CatalogStore
     ) async throws -> (options: CatalogFilterOptions, ms: Int) {
         filterOptionsQueryCount &+= 1
         let start = ContinuousClock.now
-        let options = try await store.filterOptions(
-            for: owed.row,
-            availableLibraryPaths: owed.availableLibraryPaths,
-            placeNameLanguages: owed.placeNameLanguages
-        )
+        let options = if let filterOptionsReader {
+            try await filterOptionsReader(owed)
+        } else {
+            try await store.filterOptions(
+                for: owed.row,
+                availableLibraryPaths: owed.availableLibraryPaths,
+                placeNameLanguages: owed.placeNameLanguages
+            )
+        }
         return (options, DiagnosticsTiming.milliseconds(since: start))
     }
 

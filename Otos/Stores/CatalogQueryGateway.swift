@@ -258,13 +258,17 @@ nonisolated enum CatalogQueryGateway {
         }
     }
 
-    /// The options' read. The join order is fixed (`CROSS JOIN`) by the scope's width, because
-    /// the planner cannot tell a wide scope from a keyed one. A wide scope starts from the named
-    /// cells: each country and town's cells, their located rows through
-    /// `idx_asset_metadata_place_cell`, and each row's scope by its key — work in the located
-    /// rows of named cells, not in every row of the scope. A narrow scope (`ScopeClause.Seek`)
-    /// starts from its own rows, each row's metadata and cell by key: walking every named cell
-    /// for an import batch's 210 rows read 21 s on the owner's catalog, its rows first 20 ms
+    /// The options' read: the scope's rows, each row's coordinate by its key from
+    /// `LocationIndexSQL`'s index, and each located row's named cell by the cell of that
+    /// coordinate (`PlaceCellSQL.cell`, the expression the stored cell columns are generated
+    /// by), so no table row of `asset_metadata` is read. The join order is fixed (`CROSS
+    /// JOIN`): the planner cannot tell a wide scope from a keyed one. A narrow scope
+    /// (`ScopeClause.Seek`) reaches its rows through its seek; a wide scope walks the scope's
+    /// date order index, which tests each row's visibility from the index alone. Starting from
+    /// the named cells instead read every located row of the catalog through its table row —
+    /// 168,765 pages, 8.4 s cold for All Media on the owner's catalog against 6,748 pages,
+    /// 0.57 s walking the order (`docs/research/2026-11-16-window-reads-owner-catalog.md`) —
+    /// and 21 s for an import batch of 210 rows
     /// (`docs/research/2026-11-15-keyed-scope-query-plans.md`).
     static func placeOptionsQuery(
         scope: CatalogScopePredicate,
@@ -274,27 +278,21 @@ nonisolated enum CatalogQueryGateway {
         guard let scopeClause = try scopeClause(scope, db: db) else {
             return nil
         }
-        let from = if let seekFrom = scopeClause.seekFrom {
-            """
-            FROM \(seekFrom)
-            CROSS JOIN asset_metadata AS place_metadata
-              ON place_metadata.library_root_id = media_asset.library_root_id
-              AND place_metadata.relative_path = media_asset.relative_path
-            CROSS JOIN place_cell
-              ON place_cell.cell_latitude = place_metadata.place_cell_latitude
-              AND place_cell.cell_longitude = place_metadata.place_cell_longitude
-            """
-        } else {
-            """
-            FROM place_cell
-            CROSS JOIN asset_metadata AS place_metadata
-              ON place_metadata.place_cell_latitude = place_cell.cell_latitude
-              AND place_metadata.place_cell_longitude = place_cell.cell_longitude
-            CROSS JOIN media_asset
-              ON media_asset.library_root_id = place_metadata.library_root_id
-              AND media_asset.relative_path = place_metadata.relative_path\(scopeClause.join)
-            """
-        }
+        let rows = scopeClause.seekFrom ?? """
+        media_asset INDEXED BY \(orderPlan(for: .defaultOrder, person: nil, rootLocal: scope.rootIDs.count == 1).indexName)\(
+            scopeClause.join
+        )
+        """
+        let from = """
+        FROM \(rows)
+        CROSS JOIN asset_metadata AS place_metadata INDEXED BY \(LocationIndexSQL.indexName)
+          ON place_metadata.library_root_id = media_asset.library_root_id
+          AND place_metadata.relative_path = media_asset.relative_path
+          AND \(LocationIndexSQL.locatedSQL(row: "place_metadata"))
+        CROSS JOIN place_cell
+          ON place_cell.cell_latitude = \(PlaceCellSQL.cell("place_metadata.primary_latitude", cells: PlaceCellSQL.latitudeCells))
+          AND place_cell.cell_longitude = \(PlaceCellSQL.cell("place_metadata.primary_longitude", cells: PlaceCellSQL.longitudeCells))
+        """
         return SQLQuery(
             sql: """
             SELECT place_cell.country, place_cell.town, COUNT(*) AS items
