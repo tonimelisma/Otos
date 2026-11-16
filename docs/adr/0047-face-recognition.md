@@ -293,8 +293,10 @@ grouping had put with the right child.
   bests a block of 512 faces and a chunk of 2,048 evidence faces at a time, the faces in capture
   order so the faces an evidence face reaches are at most two runs of the block, with one
   vectorised maximum per evidence face and run. What the kernel needs only while it runs —
-  its blocks, products and transposed columns — is mapped memory of its own (`ScratchBuffer`),
-  unmapped as it returns: on macOS 27 memory `malloc` frees stays in the footprint
+  its blocks, products and transposed columns, and grouping's links between faces, sorted
+  in place — is mapped memory of its own (`ScratchBuffer`), unmapped as it returns; a
+  person's run of faces is ordered by position, never through copies of every face with its
+  time: on macOS 27 memory `malloc` frees stays in the footprint
   (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). What it builds per face
   is a few flat arrays, never an allocation per face: the kept bests are lists threaded
   through four arrays (`Bests`), and the snapshot's faces are columns over one table of the

@@ -634,6 +634,31 @@ struct PeopleStoreTests {
         }
         let facts = await phase("facts") { snapshot.facts(with: vectors) }
         let plan = await phase("kernel") { FaceAssignmentPlan.assignment(of: snapshot, facts: facts) }
+        // The two steps whose working sets were the largest the pass freed: every face's links
+        // to the faces like it, and the ranker's runs of each person's faces. What each holds
+        // live at its most is what it can leave in the footprint.
+        let livePeak = Mutex(0)
+        let heapSampler = Task.detached {
+            while !Task.isCancelled {
+                let live = liveHeapBytes()
+                livePeak.withLock { $0 = max($0, live) }
+                // time: measurement — samples the live heap while a step runs; nothing waits on it.
+                try? await Task.sleep(for: .milliseconds(2))
+            }
+        }
+        defer { heapSampler.cancel() }
+        func liveGrowthMB(_ body: () -> Void) -> Int {
+            let before = liveHeapBytes()
+            livePeak.withLock { $0 = before }
+            body()
+            return (livePeak.withLock { max($0, liveHeapBytes()) } - before) / 1_048_576
+        }
+        let groupsMB = liveGrowthMB { _ = FaceAssignmentPolicy.unnamedGroups(facts) }
+        let offered = Set(snapshot.people.filter { !$0.isHidden }.map(\.id))
+        let rankerMB = liveGrowthMB { _ = FaceRanker(faces: facts, people: snapshot.personFacts, offered: offered) }
+        fields.append("groupsLiveMB=\(groupsMB) rankerLiveMB=\(rankerMB)")
+        #expect(groupsMB <= Self.groupsLiveBoundMB, "grouping held \(groupsMB) MB live")
+        #expect(rankerMB <= Self.rankerLiveBoundMB, "the ranker held \(rankerMB) MB live")
         fields.append("faces=\(snapshot.faces.count) people=\(galleryFacts.count) guesses=\(plan.guesses.count)")
         // The three passes the owner meets, each on a fresh owner.
         _ = try await phase("firstAssignment") { try await PeopleAssignment.settle(store: store, libraries: libraries) }
@@ -736,6 +761,15 @@ struct PeopleStoreTests {
     /// How far a People pass over held vectors may leave the footprint above where it found it,
     /// at the owner's scale: the allocator's own reuse slack, nothing a pass holds.
     static let strandedMarginMB: UInt64 = 48
+
+    /// What grouping 103k faces may hold live on the heap at once: its links are in a mapped
+    /// region (`ScratchBuffer`), so this is the groups' own sets. With the links on the heap,
+    /// an array of them and its sorted copy, it held 86 MB.
+    static let groupsLiveBoundMB = 48
+    /// What building the ranker over 103k faces may hold live beyond the runs it keeps: each
+    /// person's faces are ordered by position, never copied with their times. Ordered as
+    /// copies, it held 30 MB.
+    static let rankerLiveBoundMB = 24
 
     /// A vector written after a snapshot was read is a newer reading of some face, which the next
     /// snapshot names: forgetting the vectors a snapshot does not name keeps every vector above

@@ -357,7 +357,12 @@ nonisolated enum FaceAssignmentPolicy {
     /// one photo, keeping groups that span two or more days; each group in path order, the
     /// groups in path order of their first face.
     static func unnamedGroups(_ faces: [FaceFact]) -> [[FaceID]] {
-        var links: [(similarity: Float, a: Int, b: Int)] = []
+        // At most `groupLinks` per face, in a region of their own and sorted in place: at the
+        // owner's scale an array of them and its sorted copy were tens of megabytes of heap
+        // that stayed in the footprint after the pass (`ScratchBuffer`).
+        let links = ScratchBuffer<GroupLink>(count: faces.count * groupLinks)
+        defer { withExtendedLifetime(links) {} }
+        var linkCount = 0
         var scratch = [Float](repeating: 0, count: faces.count)
         BlockedSimilarity(rows: faces, columns: faces).forEachBlock { rows, values in
             for row in rows {
@@ -376,7 +381,8 @@ nonisolated enum FaceAssignmentPolicy {
                     let column = Int(index)
                     scratch[column] = -2
                     guard faces[row].id.asset != faces[column].id.asset else { continue }
-                    links.append((value, min(row, column), max(row, column)))
+                    links.base[linkCount] = GroupLink(similarity: value, a: Int32(min(row, column)), b: Int32(max(row, column)))
+                    linkCount += 1
                     kept += 1
                 }
             }
@@ -396,8 +402,10 @@ nonisolated enum FaceAssignmentPolicy {
             }
             return x
         }
-        for link in links.sorted(by: { ($0.similarity, $1.a, $1.b) > ($1.similarity, $0.a, $0.b) }) {
-            let a = find(link.a), b = find(link.b)
+        var found = UnsafeMutableBufferPointer(start: links.base, count: linkCount)
+        found.sort { ($0.similarity, $1.a, $1.b) > ($1.similarity, $0.a, $0.b) }
+        for link in found {
+            let a = find(Int(link.a)), b = find(Int(link.b))
             let (photosA, photosB) = (photos(a), photos(b))
             guard a != b, photosA.isDisjoint(with: photosB) else { continue }
             let (into, from) = photosA.count >= photosB.count ? (a, b) : (b, a)
@@ -417,6 +425,13 @@ nonisolated enum FaceAssignmentPolicy {
             .filter { members in Set(members.compactMap { day(faces[$0].captureSeconds) }).count >= 2 }
             .map { $0.map { faces[$0].id }.sorted(by: pathOrder) }
             .sorted { pathOrder($0[0], $1[0]) }
+    }
+
+    /// One link between two faces of different photos, `a` before `b`.
+    struct GroupLink: BitwiseCopyable {
+        let similarity: Float
+        let a: Int32
+        let b: Int32
     }
 
     /// Each face's best similarity to its person's faces within reach in their other photos:
@@ -851,12 +866,19 @@ nonisolated struct PersonRun: Sendable {
     let times: [Double]
 
     init(faces: [FaceFact], birthday: Double?, start: Int = 0) {
-        let dated = faces.compactMap { face in face.captureSeconds.map { (face: face, time: $0) } }
-            .sorted { ($0.time, $0.face.id.index) < ($1.time, $1.face.id.index) }
-        self.faces = dated.map(\.face) + faces.filter { $0.captureSeconds == nil }
+        // Ordered by position, so ordering copies no face: a person's run is the one copy of
+        // their faces it holds.
+        let dated = faces.indices.filter { faces[$0].captureSeconds != nil }.sorted { lhs, rhs in
+            (faces[lhs].captureSeconds!, faces[lhs].id.index) < (faces[rhs].captureSeconds!, faces[rhs].id.index)
+        }
+        var ordered: [FaceFact] = []
+        ordered.reserveCapacity(faces.count)
+        ordered.append(contentsOf: dated.lazy.map { faces[$0] })
+        ordered.append(contentsOf: faces.lazy.filter { $0.captureSeconds == nil })
+        self.faces = ordered
         self.birthday = birthday
         self.start = start
-        times = dated.map(\.time)
+        times = dated.map { faces[$0].captureSeconds! }
     }
 
     /// The best similarity of `face` to these faces within its reach, from its row of
@@ -952,13 +974,15 @@ nonisolated struct FaceRanker: Sendable {
     /// `offered` are the people the ranking may name; faces of anyone else are left out.
     init(faces: [FaceFact], people: [PersonFact], offered: Set<PersonID>) {
         let birthdays = PersonFact.birthdays(of: people)
-        var byPerson: [PersonID: [FaceFact]] = [:]
-        for face in faces where face.isRecognisable {
+        var byPerson: [PersonID: [Int32]] = [:]
+        for (index, face) in faces.enumerated() where face.isRecognisable {
             if let person = face.assignment.person, offered.contains(person) {
-                byPerson[person, default: []].append(face)
+                byPerson[person, default: []].append(Int32(index))
             }
         }
-        runs = byPerson.keys.sorted().map { person in (person, PersonRun(faces: byPerson[person]!, birthday: birthdays[person])) }
+        runs = byPerson.keys.sorted().map { person in
+            (person, PersonRun(faces: byPerson[person]!.map { faces[Int($0)] }, birthday: birthdays[person]))
+        }
         self.birthdays = birthdays
     }
 

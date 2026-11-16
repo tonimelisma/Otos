@@ -1,3 +1,4 @@
+import Darwin
 @testable import OtosKit
 
 extension PeopleAssignment {
@@ -107,4 +108,22 @@ extension PhotoFaces {
         }
         self.init(photos: files, own: own, copies: copies)
     }
+}
+
+/// The bytes every malloc zone of the process holds live now: what the heap's high-water is
+/// made of. On macOS 27 a freed block stays in the footprint until the allocator reuses it
+/// (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`), so the most a step
+/// holds live at once is what it can leave behind.
+nonisolated func liveHeapBytes() -> Int {
+    var zones: UnsafeMutablePointer<vm_address_t>?
+    var count: UInt32 = 0
+    guard malloc_get_all_zones(mach_task_self_, nil, &zones, &count) == KERN_SUCCESS, let zones else { return 0 }
+    var total = 0
+    for index in 0 ..< Int(count) {
+        guard let zone = UnsafeMutablePointer<malloc_zone_t>(bitPattern: zones[index]) else { continue }
+        var stats = malloc_statistics_t()
+        malloc_zone_statistics(zone, &stats)
+        total += stats.size_in_use
+    }
+    return total
 }
