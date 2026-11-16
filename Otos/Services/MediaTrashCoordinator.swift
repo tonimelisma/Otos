@@ -267,12 +267,14 @@ actor MediaTrashCoordinator {
     func start() {
         guard drainTask == nil, !isShuttingDown else { return }
         let wakes = wakeStream
+        let queue = queueLogID
         wakeContinuation.yield()
         drainTask = Task { [weak self] in
             for await _ in wakes {
                 guard let self else { return }
                 await drain()
             }
+            OtosLog.catalog.noticeOperation("mediaTrash.shutdown", phase: "drainEnded", fields: ["queue": queue])
         }
     }
 
@@ -280,22 +282,39 @@ actor MediaTrashCoordinator {
     /// work — `startDownload` from a pass, `scheduleWake` — refuse once it is set, so the
     /// downloads snapshotted here are every download there will ever be: a pass suspended
     /// in a read when this lands resumes into a stopped queue, not into a fresh download.
+    ///
+    /// Each await is logged before it is entered (`op=mediaTrash.shutdown`), so a shutdown that
+    /// never returns names the work it is parked behind.
     func shutdown() async {
         isShuttingDown = true
         wakeContinuation.finish()
         timerTask?.cancel()
         let inFlight = Array(downloads.values)
         inFlight.forEach { $0.cancel() }
+        logShutdown("awaitingDownloads", ["downloads": "\(inFlight.count)"])
         for task in inFlight {
             await task.value
         }
+        logShutdown("awaitingDrain", ["drain": drainTask == nil ? "none" : "started"])
         await drainTask?.value
+        logShutdown("ended", ["undoRequests": "\(undoRequests.count)"])
         let unanswered = undoRequests
         undoRequests.removeAll()
         for request in unanswered {
             request.continuation.resume(returning: UndoResult(failed: Array(request.ids)))
         }
         eventContinuation.finish()
+    }
+
+    /// `queue` tells apart the coordinators of one process (a test host runs many).
+    private func logShutdown(_ phase: String, _ fields: [String: String]) {
+        var fields = fields
+        fields["queue"] = queueLogID
+        OtosLog.catalog.noticeOperation("mediaTrash.shutdown", phase: phase, fields: fields)
+    }
+
+    private nonisolated var queueLogID: String {
+        String(UInt(bitPattern: ObjectIdentifier(self).hashValue), radix: 16)
     }
 
     /// New pending items exist, or something they wait on changed. Coalesced.
@@ -634,7 +653,10 @@ actor MediaTrashCoordinator {
     private func finishDownload(_ id: MediaAssetID, outcome: MaterializationOutcome, landedBytes: Int64) {
         downloads[id] = nil
         settleCommitment(of: id, landedBytes: landedBytes)
-        guard !isShuttingDown else { return }
+        guard !isShuttingDown else {
+            logShutdown("downloadEnded", ["outcome": outcome.diagnosticDescription])
+            return
+        }
         switch outcome {
         case .alreadyMaterialized, .materialized:
             attempts[id] = nil

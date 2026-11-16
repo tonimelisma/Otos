@@ -82,16 +82,19 @@ Each heartbeat line reads:
     op=check.heartbeat elapsed=MM:SS stage=<stage> tests=<count>
 
   • tests= climbing            → healthy, keep working, look again in 60 s
-  • tests= unchanged 3x        → HUNG. Do not wait it out.
-                                 xcrun swift-inspect dump-concurrency <xctest
-                                 pid> names the parked test and the await it
-                                 is parked in (it can take ~40 s).
+  • tests= unchanged 3x        → HUNG. Do not wait it out. This script then
+                                 prints op=check.hang lines: the test cases
+                                 in flight (inFlight, onThread), the main
+                                 thread's and each test thread's stack.
+                                 mayBeFinished tasks may have returned long
+                                 ago: a dump shows a held, finished task as
+                                 parked at its last await.
   • no heartbeat at all        → the script itself died; read the tail.
 
 A deadlock detector runs inside this script. It watches CPU *consumed* by the test
 host: a blocked process burns none while its wall clock advances, a slow one burns
 plenty. Only when CPU has not moved for OTOS_CHECK_STALL_SECONDS (default 420) does
-it sample the parked threads, dump the parked tests' async backtraces, kill its
+it report the host the same way, kill its
 children and exit non-zero. A quiet log is never enough — one long test can log
 nothing while working, and killing on silence is a timeout, not detection.
 
@@ -284,21 +287,63 @@ consumed_cpu() {
         }'
 }
 
-# The parked tests, by name, with the await each one is parked in. `sample` shows
-# OS threads, and a parked Swift-concurrency test owns none — it is a suspended
-# task on an idle pool, so the threads read as nothing. The task's async backtrace
-# is where the test function and its `waitUntil` appear, and swift-inspect reads it.
-# "Last test to report" is not this: under parallel execution it names whichever
+# What a stalled test host is doing, as `op=check.hang` lines. Two tools see two halves,
+# and each misleads alone:
+#
+# - `swift-inspect dump-concurrency` lists every task object still allocated, with the
+#   async backtrace of its last suspension. A task that has *finished* but is still held
+#   (a handle a leaked owner keeps, a `Task {}` a test stored) is listed the same way, with
+#   no mark that it finished, so its stale backtrace reads exactly like a parked one
+#   (docs/research/2026-11-16-finished-tasks-in-concurrency-dumps.md). Only tasks under
+#   Swift Testing's runner are reported as in flight (`inFlight`); every other task with
+#   OtosTests frames is reported as `mayBeFinished`.
+# - A test case blocked synchronously (a lock, a semaphore, a `sync` onto a queue) is a
+#   *running* task: the dump prints no backtrace for it, only its thread. `sample` holds
+#   that thread's stack, so the report prints it (`onThread`, `threadStack role=test`),
+#   and the main thread's (`role=main`), which every MainActor test waits on.
+#
+# "Last test to report" is neither: under parallel execution it names whichever
 # unrelated test happened to finish last.
 #
 # The bound below limits only the diagnostic, which runs against a host already
-# measured as parked; it never limits test work. It exists so a wedged inspector
+# measured as stalled; it never limits test work. It exists so a wedged inspector
 # cannot turn the stall report itself into the unbounded wait it is reporting on.
 INSPECT_SECONDS="${OTOS_CHECK_INSPECT_SECONDS:-180}"
-report_parked_tests() {
-  local pid="$1" dump inspect_pid waited=0
+
+# One thread's stack from a `sample` log: its frames in Otos code, then its innermost
+# frames, which name what it is blocked in. `want` is a decimal thread id, or `main`.
+print_sampled_thread() {
+  local sample_log="$1" want="$2" role="$3"
+  awk -v want="$want" -v role="$role" '
+    /^ +[0-9]+ Thread_[0-9]+/ {
+      if (inside) exit
+      if ((want == "main" && /com\.apple\.main-thread/) || (want != "main" && $0 ~ ("Thread_" want "[^0-9]"))) {
+        inside = 1; match($0, /Thread_[0-9]+/)
+        print "op=check.hang phase=threadStack role=" role " thread=" substr($0, RSTART + 7, RLENGTH - 7)
+      }
+      next
+    }
+    inside && (/^ *$/ || /^Total number/) { exit }
+    inside {
+      f = $0; sub(/^[ +!:|]*[0-9]+ /, "", f); sub(/  \[0x[0-9a-f]+\].*$/, "", f)
+      n++; frames[n] = f
+      if (f ~ /\(in Otos/) print "  " f
+    }
+    END {
+      if (!inside) { print "op=check.hang phase=threadStack role=" role " thread=" want " detail=notInSample"; exit }
+      print "  innermost:"
+      for (i = (n > 8 ? n - 7 : 1); i <= n; i++) print "    " frames[i]
+    }' "$sample_log"
+}
+
+report_hang() {
+  local pid="$1" reason="$2" stamp dump sample_log inspect_pid waited=0 threads thread
   mkdir -p "$ROOT_DIR/logs"
-  dump="$ROOT_DIR/logs/check-$(date -u +%Y%m%dT%H%M%SZ)-p$$-concurrency.log"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)-p$$"
+  dump="$ROOT_DIR/logs/check-$stamp-concurrency.log"
+  sample_log="$ROOT_DIR/logs/check-$stamp-sample.log"
+  echo "op=check.hang phase=report reason=$reason pid=$pid sample=$sample_log dump=$dump" >&2
+  sample "$pid" 2 -mayDie > "$sample_log" 2>/dev/null || true
   xcrun swift-inspect dump-concurrency "$pid" > "$dump" 2>&1 &
   inspect_pid=$!
   while kill -0 "$inspect_pid" 2>/dev/null && (( waited < INSPECT_SECONDS )); do
@@ -308,33 +353,58 @@ report_parked_tests() {
   done
   if kill -0 "$inspect_pid" 2>/dev/null; then
     kill -TERM "$inspect_pid" 2>/dev/null
-    echo "op=check.stall phase=inspect-incomplete pid=$pid waitedSeconds=$waited dump=$dump" >&2
+    echo "op=check.hang phase=inspectIncomplete pid=$pid waitedSeconds=$waited" >&2
   fi
   wait "$inspect_pid" 2>/dev/null
-  echo "--- parked tests in xctest $pid (OtosTests frames, innermost first; full dump: $dump) ---" >&2
-  # One `Task N:` heading per task that has OtosTests frames, then those frames.
-  # Thunks, partial applies and the macro-generated `$s…` entry points restate
-  # the test function they wrap, so they are dropped. A test case runs in a task-group
-  # child of Swift Testing's runner; a task a test spawned with `Task {}` does not, and
-  # the dump lists such a task while anything still references it, after its test has
-  # finished too. It once read as a second parked test beside the real one
-  # (docs/research/2026-11-15-a-card-left-waiting-for-metadata.md), so it is labelled.
-  awk '
-    /Task [0-9]+ - flags=/ {
-      match($0, /Task [0-9]+/); task = substr($0, RSTART, RLENGTH); shown = 0
-      kind = ($0 ~ /groupChildTask/) ? "test case" : "spawned by a test, not a test case"
-      next
+  # Top-level tasks are indented six spaces; a child is drawn under its parent as `--Task`.
+  # The top-level task running `Runner._runAllTests` holds every test case in flight.
+  # Thunks, partial applies and the macro-generated `$s…` entry points restate the test
+  # function they wrap, so they are dropped. Prints the hex ids of threads that run a test.
+  threads="$(awk '
+    function flush(   i, t) {
+      runner = (block ~ /Runner\._runAllTests/)
+      for (i = 1; i <= nlines; i++) {
+        t = lines[i]
+        if (t ~ /Task [0-9]+ - flags=/) {
+          match(t, /Task [0-9]+/); task = substr(t, RSTART + 5, RLENGTH - 5)
+          running = (t ~ /\|running/); shown = 0
+          continue
+        }
+        if (runner && running && t ~ /current task on thread 0x/) {
+          sub(/^.*current task on thread 0x/, "", t)
+          print "op=check.hang phase=onThread task=" task " thread=0x" t > "/dev/stderr"
+          print t; found = 1
+          continue
+        }
+        if (t ~ / in OtosTests$/ && t !~ /resume function:|thunk for|partial apply|implicit closure|\$s[0-9]/) {
+          sub(/^.*async backtrace: /, "", t); sub(/^[ \t|`+-]+/, "", t)
+          if (!shown) {
+            printf "op=check.hang phase=%s task=%s\n", (runner ? "inFlight" : "mayBeFinished"), task > "/dev/stderr"
+            shown = 1
+          }
+          print "  " t > "/dev/stderr"
+          if (runner) found = 1
+        }
+      }
+      nlines = 0; block = ""
     }
-    / in OtosTests$/ && !/resume function:|thunk for|partial apply|implicit closure|\$s[0-9]/ {
-      frame = $0; sub(/^.*async backtrace: /, "", frame); sub(/^[ \t]+/, "", frame)
-      if (!shown) { print task " (" kind "):"; shown = 1 }
-      print "  " frame; found = 1
-    }
+    /^ACTORS/ { flush(); done = 1; exit }
+    /^      Task [0-9]+ - flags=/ { flush() }
+    { lines[++nlines] = $0; block = block "\n" $0 }
     END {
-      # Parked with no test task means the host never reached our code — the
-      # pre-test stall in docs/research/2026-09-01-xctest-host-stalls-before-running-tests.md.
-      if (!found) print "none — no OtosTests task is parked; the host is stalled outside test code"
-    }' "$dump" >&2
+      if (!done) flush()
+      # No test case in flight means the host never reached our code — the pre-test
+      # stall in docs/research/2026-09-01-xctest-host-stalls-before-running-tests.md.
+      if (!found) print "op=check.hang phase=noTestInFlight" > "/dev/stderr"
+    }' "$dump")"
+  print_sampled_thread "$sample_log" main main >&2
+  for thread in $threads; do
+    print_sampled_thread "$sample_log" "$(( 16#$thread ))" test >&2
+  done
+  # Threads by the queue they run, so a cooperative pool whose every thread is held
+  # (`com.apple.root.<qos>-qos.cooperative` at its core count) shows as one line.
+  grep -oE "DispatchQueue_[0-9]+: [^ ]+" "$sample_log" | sed -E 's/^DispatchQueue_[0-9]+: //' \
+    | sort | uniq -c | sort -rn | awk '{ print "op=check.hang phase=threadsByQueue threads=" $1 " queue=" $2 }' >&2 || true
 }
 
 # script/test.sh prints this, then the log path, before xcodebuild starts.
@@ -343,6 +413,9 @@ TEST_LOG_ANNOUNCEMENT="Capturing test output to "
 # first failure, which reads like the hang the counter exists to reveal.
 TEST_FINISHED_PATTERN="' (passed|failed) on '"
 
+HANG_HEARTBEATS=3
+last_tests=""
+unchanged_heartbeats=0
 started_at="$(date +%s)"
 while :; do
   # time: schedule — the heartbeat a watcher reads; verify's own exit ends this wait at once
@@ -372,6 +445,23 @@ while :; do
   printf 'op=check.heartbeat elapsed=%02d:%02d stage=%s tests=%s cpuSeconds=%s\n' \
     $((elapsed / 60)) $((elapsed % 60)) "$stage" "$tests" "$cpu"
 
+  # tests= unchanged for HANG_HEARTBEATS heartbeats is what a watcher reads as hung. The
+  # host is reported then, once per count, without killing anything: a long test is not
+  # a hang, and the CPU rule below still decides that. The report is what the reader of
+  # this log needs at that moment, so nobody inspects the host by hand.
+  if [[ "$stage" == "testing" && "$tests" == "$last_tests" ]]; then
+    unchanged_heartbeats=$(( unchanged_heartbeats + 1 ))
+  else
+    unchanged_heartbeats=0
+    last_tests="$tests"
+  fi
+  if (( unchanged_heartbeats == HANG_HEARTBEATS )); then
+    echo "op=check.hang phase=suspected tests=$tests heartbeats=$unchanged_heartbeats cpuSeconds=$cpu" >&2
+    for xctest_pid in $(own_pids_matching "Xcode/Agents/xctest"); do
+      report_hang "$xctest_pid" testsUnchanged
+    done
+  fi
+
   # Consumed CPU is the liveness signal, but *rate* is the signal — not inequality.
   # A parked test host still burns a trickle: XCTWaiter polls while it waits, so its
   # CPU seconds keep ticking up by ones. Comparing against the previous sample let
@@ -388,21 +478,7 @@ while :; do
   elif [[ $(( $(date +%s) - last_cpu_change_at )) -ge "$STALL_SECONDS" ]]; then
     echo "op=check.stall phase=detected elapsed=$((elapsed / 60))m stage=$stage tests=$tests cpuSeconds=$cpu blockedFor=$(( ($(date +%s) - last_cpu_change_at) / 60 ))m" >&2
     for xctest_pid in $(own_pids_matching "Xcode/Agents/xctest"); do
-      # The excerpt is for reading here; the whole sample is kept because the thread
-      # that matters (the main thread draining MainActor jobs, or not) is often not
-      # among the matching lines.
-      mkdir -p "$ROOT_DIR/logs"
-      sample_log="$ROOT_DIR/logs/check-$(date -u +%Y%m%dT%H%M%SZ)-p$$-sample.log"
-      sample "$xctest_pid" 2 -mayDie > "$sample_log" 2>/dev/null || true
-      echo "--- parked threads of xctest $xctest_pid (full sample: $sample_log) ---" >&2
-      grep -m 25 -E "Otos|XCTWaiter|semaphore|Mutex|dispatch" "$sample_log" >&2 || true
-      # Threads by the queue they run, so a cooperative pool whose every thread is held
-      # (`com.apple.root.<qos>-qos.cooperative` at its core count) shows as one line, beside
-      # the parked tests below. The frames each holds are in the full sample.
-      echo "--- threads by queue in xctest $xctest_pid ---" >&2
-      grep -oE "DispatchQueue_[0-9]+: [^ ]+" "$sample_log" | sed -E 's/^DispatchQueue_[0-9]+: //' \
-        | sort | uniq -c | sort -rn >&2 || true
-      report_parked_tests "$xctest_pid"
+      report_hang "$xctest_pid" cpuStopped
     done
     echo "check: DEADLOCKED — consumed under ${MIN_CPU_SECONDS_PER_MINUTE} CPU-s/min for ${STALL_SECONDS}s while still running. Killed so this reports instead of hanging." >&2
     cleanup_children

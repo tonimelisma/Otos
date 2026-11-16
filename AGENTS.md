@@ -426,11 +426,22 @@ the newest few result bundles, so `test.sh` reads these from the run's bundle th
 it ends. Read them before rerunning anything. A failed `script/bench.sh` run prints the same
 lines, since a measured commit's checkout is removed with its log.
 
-A run at 3× normal is hung, not slow. Diagnose it rather than waiting it out:
-`xcrun swift-inspect dump-concurrency <xctest pid>` prints each parked task's async
-backtrace, which names the stuck test and the await it is parked in; `sample` shows
-only threads, and a parked Swift-concurrency test owns none. `check.sh`'s detector
-prints the OtosTests frames of that dump when it fires. Do not paper over a
+A run at 3× normal is hung, not slow. Diagnose it rather than waiting it out. When
+`tests=` holds for three heartbeats, `check.sh` reports the host as `op=check.hang`
+lines, and again when its CPU detector fires. Read those before inspecting by hand.
+Each tool shows half:
+- `xcrun swift-inspect dump-concurrency <xctest pid>` prints every task object still
+  allocated, each with the async backtrace of its last suspension. It does not mark a
+  task that has finished. A finished task that something still holds reads exactly like
+  a parked one, so only tasks under Swift Testing's runner are tests in flight
+  (`inFlight`). The rest are `mayBeFinished`
+  (docs/research/2026-11-16-finished-tasks-in-concurrency-dumps.md).
+- A test blocked synchronously (a lock, a semaphore, a `sync` call) is a *running* task:
+  the dump gives only its thread (`onThread`). `sample` gives that thread's stack and the
+  main thread's (`threadStack`). A test parked at an `await` owns no thread, so `sample`
+  cannot show it.
+
+Do not paper over a
 hang with a kill-timeout in shared tooling — a wall-clock limit destroys a
 legitimately slow run, and it hides the bug instead of surfacing it. **A suite that
 hangs has a defect; fix the defect.**

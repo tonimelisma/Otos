@@ -44,6 +44,15 @@ struct MediaTrashCoordinatorOwnershipTests {
         }
     }
 
+    /// How a hook the coordinator holds reaches that coordinator. The reference is weak: a
+    /// strong one closes a cycle (coordinator → hook → reference → coordinator) that keeps the
+    /// queue, its finished drain task and every task the hook made in the test host for the
+    /// rest of the run, where `swift-inspect dump-concurrency` lists them with the backtrace
+    /// of their last suspension, as if they were still parked.
+    private struct CoordinatorReference {
+        weak var coordinator: MediaTrashCoordinator?
+    }
+
     private struct Fixture {
         let store: CatalogStore
         let root: URL
@@ -139,9 +148,16 @@ struct MediaTrashCoordinatorOwnershipTests {
     /// pass then resumes holding a snapshot in which the item looks un-downloaded; it must not
     /// start a download that shutdown will never cancel or await.
     @Test func aPassSuspendedWhenShutdownLandsStartsNoDownloadThatOutlivesIt() async throws {
+        let released = try await passSuspendedWhenShutdownLands()
+        // Once the test lets go of the queue, nothing it made holds it: not its hooks, not the
+        // shutdown task a hook started.
+        #expect(released.coordinator == nil)
+    }
+
+    private func passSuspendedWhenShutdownLands() async throws -> CoordinatorReference {
         let fixture = try await Fixture.make(names: ["a.jpg"])
         let store = fixture.store
-        let box = Mutex<MediaTrashCoordinator?>(nil)
+        let box = Mutex(CoordinatorReference())
         let started = Mutex(0)
         let returned = Mutex(0)
         let startedAfterShutdown = Mutex(0)
@@ -156,7 +172,7 @@ struct MediaTrashCoordinatorOwnershipTests {
                     return isArmed
                 }
                 let items = try await store.pendingTrashItems()
-                if deliver, let coordinator = box.withLock({ $0 }) {
+                if deliver, let coordinator = box.withLock({ $0.coordinator }) {
                     shutdownBegun.withLock { $0 = true }
                     shutdownTask.withLock { $0 = Task { await coordinator.shutdown() } }
                     // Shutdown has cancelled the download and it has ended: the snapshot
@@ -185,7 +201,7 @@ struct MediaTrashCoordinatorOwnershipTests {
             retryPolicy: Self.retry,
             reads: reads
         )
-        box.withLock { $0 = coordinator }
+        box.withLock { $0.coordinator = coordinator }
         let stateLog = StateLog(coordinator)
         _ = try await store.markPendingTrash([fixture.ids[0]], batch: MediaTrashBatchID())
         await coordinator.start()
@@ -200,6 +216,7 @@ struct MediaTrashCoordinatorOwnershipTests {
 
         #expect(startedAfterShutdown.withLock { $0 } == 0)
         #expect(started.withLock { $0 } == returned.withLock { $0 })
+        return box.withLock { $0 }
     }
 
     /// The user takes an item back while a pass is partway through its snapshot: the pass
@@ -208,7 +225,7 @@ struct MediaTrashCoordinatorOwnershipTests {
     @Test func anItemTheUserTookBackDuringAPassIsNeverMoved() async throws {
         let fixture = try await Fixture.make(names: ["a.jpg", "b.jpg"])
         let log = Log()
-        let box = Mutex<MediaTrashCoordinator?>(nil)
+        let box = Mutex(CoordinatorReference())
         let handled = Mutex<[MediaAssetID]>([])
         let ids = fixture.ids
         let coordinator = MediaTrashCoordinator(
@@ -223,14 +240,14 @@ struct MediaTrashCoordinatorOwnershipTests {
                     return seen.count == 1
                 }
                 guard isFirst, let other = ids.first(where: { $0 != id }),
-                      let coordinator = box.withLock({ $0 })
+                      let coordinator = box.withLock({ $0.coordinator })
                 else {
                     return
                 }
                 await coordinator.restore([other])
             }
         )
-        box.withLock { $0 = coordinator }
+        box.withLock { $0.coordinator = coordinator }
         _ = try await fixture.store.markPendingTrash(fixture.ids, batch: MediaTrashBatchID())
         await coordinator.start()
 
