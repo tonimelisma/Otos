@@ -249,7 +249,9 @@ struct BenchmarkTests {
         }
         let people = PeopleAssignment(store: store)
         try await people.settle()
+        // A pass that reads every face, as one after a change that names no rows.
         try await Benchmark.measure("people.pass.10k", iterations: 3) {
+            await people.request()
             try await people.settle()
         }
         // The window's read of the gallery, which People's first paint waits for.

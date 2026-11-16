@@ -69,6 +69,9 @@ actor PeopleAssignment {
     private var ranker: FaceRanker?
     /// The inputs whose assignment the catalog holds; read from the catalog by the first pass.
     private var settled: AssignmentInputs?
+    /// The photos the changes asked for since the last read began, when every change named its
+    /// rows; nil when one did not, and the next pass reads every face.
+    private var owedRows: Set<MediaAssetID>? = []
     private var loopTask: Task<Void, Never>?
 
     /// True when every request has been covered by a successful pass and none is running.
@@ -101,11 +104,23 @@ actor PeopleAssignment {
         }
     }
 
-    /// The catalog may have changed: People is owed a pass.
-    func request() {
+    /// The catalog may have changed: People is owed a pass. `rows` are the photos the change
+    /// named, when it named them and touched only their faces or tiles
+    /// (`incrementalInputs`): the pass then reads only those photos' faces.
+    func request(rows: CatalogChangedRows = .unnamed) {
+        switch rows {
+        case .unnamed: owedRows = nil
+        case .none: break
+        case let .named(photos): owedRows?.formUnion(photos.ids)
+        }
         requested &+= 1
         doorbell.yield()
     }
+
+    /// The facts a change can name rows of and still be read by key: the faces of those
+    /// photos, and their dates, kinds and images (`.faceTiles`). Any other kind (which rows
+    /// exist, copies, stacks, choices) can move what other photos stand for, so it is read whole.
+    static let incrementalInputs: CatalogChangedFacts = [.faces, .faceTiles]
 
     /// Teardown, callable from anywhere: ends the loop.
     nonisolated func stop() {
@@ -155,8 +170,11 @@ actor PeopleAssignment {
                 try await readThenAssign()
             }
         } catch is CancellationError {
+            owedRows = nil
             return
         } catch {
+            // What the failed read was to cover is owed again, whole.
+            owedRows = nil
             OtosLog.catalog.errorOperation("people.pass", phase: "failed", fields: [
                 "error": String(describing: error),
             ])
@@ -174,8 +192,18 @@ actor PeopleAssignment {
         let signpost = OtosSignpost.performance.beginInterval("PeopleAssignment")
         defer { OtosSignpost.performance.endInterval("PeopleAssignment", signpost) }
         let start = ContinuousClock.now
-        let read = try await store.backgroundReads.peopleSnapshot()
+        // Taken in this synchronous step: a request during the read adds to the next pass's.
+        let rows = owedRows
+        owedRows = []
+        let read: PeopleSnapshot = if let held = lastRead, let rows {
+            try await held.replacing(rows, with: store.backgroundReads.peopleSnapshot(of: rows))
+        } else {
+            try await store.backgroundReads.peopleSnapshot()
+        }
         let readMs = DiagnosticsTiming.milliseconds(since: start)
+        OtosLog.catalog.debugOperation("people.read", phase: rows == nil || lastRead == nil ? "whole" : "byKey", fields: [
+            "photos": rows.map { "\($0.count)" } ?? "all", "ms": "\(readMs)",
+        ])
         try Task.checkCancellation()
         // Synchronous from here to the next await: the read kept is the one ranked against.
         lastRead = read
@@ -201,6 +229,10 @@ actor PeopleAssignment {
         let assignMs = DiagnosticsTiming.milliseconds(since: assignStart)
         try Task.checkCancellation()
         let written = try await store.applyAssignment(plan)
+        // The photos written are owed a read by key, which the write's own change also asks.
+        if written > 0 {
+            owedRows?.formUnion(plan.photos)
+        }
         // Inputs whose vectors were not all held are not settled: a face whose vector is
         // missing was replaced by a write after the read, and the pass that write rings
         // assigns again.
@@ -251,6 +283,11 @@ actor PeopleAssignment {
 }
 
 extension PeopleAssignment {
+    /// What the last pass read and holds. Internal for the tests that compare it with a whole read.
+    var heldRead: PeopleSnapshot? {
+        lastRead
+    }
+
     /// Runs passes as the loop would after each write's change, until one assigns nothing.
     /// Internal for the tests and benchmarks that run passes without the loop.
     func settle() async throws {

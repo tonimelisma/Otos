@@ -490,7 +490,8 @@ struct PeopleStoreTests {
         try await library.store.applyAssignment(FaceAssignmentPlan(guesses: [
             .init(face: FaceID(asset: library.id("a.jpg"), index: 0), person: .existing(sam)),
         ]))
-        #expect(await changes.next() == .changed(.faces))
+        // An assignment names the photos it wrote, so People reads only those again.
+        #expect(await changes.next() == .changed(.faces, rows: .rows([library.id("a.jpg")])))
         await library.store.shutdown()
     }
 
@@ -553,6 +554,8 @@ struct PeopleStoreTests {
             store: store, root: library.root, rootPath: library.rootPath, emit: library.emit, databaseURL: databaseURL
         )
         try await reopened.readFaces([reopened.result(for: "new.jpg", faces: [Self.lookalike(4)])])
+        // The reading's change names its photo, as the projection hands it on.
+        await people.request(rows: .rows([library.id("new.jpg")]))
         try await people.settle()
         #expect(try await store.gallery(libraries: libraries).person(sam)?.media.total == 5)
         #expect(try await vectorReads(reaching: afterRanking + 1) == afterRanking + 1, "one page above the vectors held")
@@ -660,13 +663,17 @@ struct PeopleStoreTests {
         // later pass leaves behind is what it strands.
         let owner = PeopleAssignment(store: store)
         try await owner.settle()
+        // Writes from outside the Store name no rows: each pass after one reads every face.
+        await owner.request()
         try await phase("heldSettledPass") { try await owner.settle() }
         try await readAgain()
+        await owner.request()
         try await phase("oneNewFace") { try await owner.settle() }
         // A birthday before every face moves an input and decides nothing: assignment runs whole.
         try await writer.write { db in
             try db.execute(sql: "UPDATE person SET birthday = '1900' WHERE id = (SELECT min(id) FROM person)")
         }
+        await owner.request()
         try await phase("fullAssignment") { try await owner.settle() }
         let line = "op=peopleCost " + fields.joined(separator: " ")
         let url = SourceTree.root.appending(path: "build/people-cost/owner.txt")
@@ -680,6 +687,50 @@ struct PeopleStoreTests {
         }
         try writer.close()
         await store.shutdown()
+    }
+
+    /// A pass costs what changed: once People holds a whole read, faces written for a few
+    /// photos — a change that names them — are read by key, those photos only, and the read
+    /// it holds then equals a whole read of the catalog. The guard: N photos' readings cost N
+    /// keyed reads and no whole read, whatever the library holds.
+    @Test func aPassForNamedPhotosReadsOnlyThosePhotos() async throws {
+        let names = (0 ..< 12).map { "\($0).jpg" }
+        let directory = try makeTestDirectory()
+        let databaseURL = directory.appending(path: "db/catalog.sqlite")
+        let scanned = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: names, database: databaseURL)
+        try await scanned.readFaces(names.prefix(8).enumerated().map { scanned.result(for: $1, faces: [Self.lookalike($0)]) })
+        await scanned.store.shutdown()
+        // A store opened on the catalog afresh, which counts its reads by operation.
+        let store = makeTestStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        let library = FaceEnrichmentTests.ScannedLibrary(
+            store: store, root: scanned.root, rootPath: scanned.rootPath, emit: scanned.emit, databaseURL: databaseURL
+        )
+        let owner = PeopleAssignment(store: library.store)
+        try await owner.settle()
+        func reads(_ operation: String) -> Int {
+            library.store.use().connections.holds.filter { $0.operation == operation }.reduce(0) { $0 + $1.count }
+        }
+        let whole = reads("peopleSnapshot")
+        let keyed = reads("peopleFaces")
+
+        let read = Array(names.suffix(4))
+        try await library.readFaces(read.enumerated().map { library.result(for: $1, faces: [Self.lookalike(8 + $0)]) })
+        await owner.request(rows: .rows(Set(read.map(library.id))))
+        try await owner.settle()
+
+        // Every pass after the readings read by key; a reading's change names its photos.
+        #expect(reads("peopleSnapshot") == whole, "no whole read")
+        // A read is counted as its transaction ends, which can be after its caller resumed.
+        try await waitUntil { reads("peopleFaces") > keyed }
+        let held = try #require(await owner.heldRead)
+        let truth = try await library.store.backgroundReads.peopleSnapshot()
+        #expect(held.faces == truth.faces)
+        #expect(held.photoOf == truth.photoOf)
+        #expect(held.people == truth.people)
+        #expect(held.likeness == truth.likeness)
+        #expect(AssignmentInputs(held) == AssignmentInputs(truth))
+        await library.store.shutdown()
     }
 
     /// How far a People pass over held vectors may leave the footprint above where it found it,
@@ -830,6 +881,8 @@ struct PeopleStoreTests {
                 let left = Set(present)
                 _ = try await waitForCatalogStoreState(library.store) { !$0.isScanning && Set($0.testAssets.map(\.relativePath.rawValue)) == left }
             }
+            // An act names no rows: the pass after it reads every face.
+            await owner.request()
             try await owner.settle()
             let truth = try await library.store.backgroundReads.peopleSnapshot()
             let gallery = try #require(try await library.store.windowReads.peopleGallery(availableLibraryPaths: [library.rootPath]))

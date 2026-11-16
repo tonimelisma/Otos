@@ -156,6 +156,10 @@ actor CatalogProjection {
     private var peopleRequested: UInt64 = 0
     /// The `peopleRequested` value last passed on to `peopleAssignment`.
     private var peopleForwarded: UInt64 = 0
+    /// The photos the changes People reads named since the last request passed on, when each
+    /// named its rows and touched only faces or tiles (`PeopleAssignment.incrementalInputs`);
+    /// nil when one did not.
+    private var peopleRows: Set<MediaAssetID>? = []
     /// Bumped by a new subscription, by every catalog change of a kind the People gallery
     /// reads (`PeopleGallery.inputs`) and by rows only added, each new still being one the
     /// gallery's tally counts as not yet checked.
@@ -867,6 +871,12 @@ private extension CatalogProjection {
             }
             if !change.facts.isDisjoint(with: PeopleAssignment.inputs) {
                 peopleRequested &+= 1
+                let incremental = change.facts.intersection(PeopleAssignment.inputs).isSubset(of: PeopleAssignment.incrementalInputs)
+                switch change.rows {
+                case let .named(rows) where incremental: peopleRows?.formUnion(rows.ids)
+                case .none where incremental: break
+                default: peopleRows = nil
+                }
             }
             if !change.facts.isDisjoint(with: PeopleGallery.inputs) {
                 galleryRequested &+= 1
@@ -1104,8 +1114,14 @@ private extension CatalogProjection {
         if asksDuplicates, let duplicatesProjection {
             await duplicatesProjection.request()
         }
+        // The rows are taken in this step, so a change while the request is handed on adds to
+        // the next one.
+        let rows = peopleRows
+        if asksPeople {
+            peopleRows = []
+        }
         if asksPeople, let peopleAssignment {
-            await peopleAssignment.request()
+            await peopleAssignment.request(rows: rows.map(CatalogChangedRows.rows) ?? .unnamed)
         }
         if asksGallery, let peopleGallery {
             await peopleGallery.request()
@@ -1391,6 +1407,7 @@ private extension CatalogProjection {
         duplicatesForwarded = 0
         peopleRequested = 0
         peopleForwarded = 0
+        peopleRows = []
         galleryRequested = 0
         galleryForwarded = 0
         changeTask?.cancel()

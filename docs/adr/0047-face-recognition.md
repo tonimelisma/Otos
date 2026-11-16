@@ -332,7 +332,15 @@ grouping had put with the right child.
 - **Assignment:** `PeopleAssignment`'s loop, asked after a catalog change of a kind assignment
   reads. A pass reads every stored face's row and whose word its person is, never its vector
   nor its tile, in one transaction (the snapshot, assignment's alone), and writes each
-  person's gallery facts that moved (below). It then hashes what assignment reads (each face's
+  person's gallery facts that moved (below). A pass costs what changed: the first pass of a
+  launch, and a pass after a change that names no rows or touches more than faces and their
+  photos' dates, kinds and images (`PeopleAssignment.incrementalInputs`), reads every face;
+  any other reads only the faces of the photos the changes named, each by key
+  (`CatalogStore.peopleSnapshot(of:)`, logged as `peopleFaces`), with the people, their facts
+  and the key photos whole, and lays them over the read it holds in the order a whole read
+  gives (`PeopleSnapshot.replacing`), so the hash below is a whole read's. A reading and
+  assignment's own writes name their photos. Measured before: 20 whole reads, 136 s of
+  reader time, in one session of 152 metadata changes. It then hashes what assignment reads (each face's
   identity, vector number, capture time, rejections and anchor; each person's birthday and
   whether the user said anything about them; which file stands for which photo; the policy's
   constants and revision). The catalog keeps the hash of the inputs whose assignment it holds

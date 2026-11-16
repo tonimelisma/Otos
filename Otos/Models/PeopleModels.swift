@@ -217,6 +217,66 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// The present identical copies (ADR 0054) of each photo one of whose files holds a face,
     /// each group in the order copies are shown in (`ranked`).
     var copies: [[MediaAssetID]] = []
+    /// Each cataloged root's row ID, as the read found them: the faces' order is by root row,
+    /// path and place, as the catalog's own order gives them.
+    var rootOrder: [LibraryRootPath: Int64] = [:]
+
+    /// Whether the photo `lhs` comes before `rhs` in the faces' order: by root row, then by
+    /// path as SQLite's binary collation compares it (the bytes of its UTF-8).
+    static func isBefore(_ lhs: (rootID: Int64, path: MediaRelativePath), _ rhs: (rootID: Int64, path: MediaRelativePath)) -> Bool {
+        if lhs.rootID != rhs.rootID {
+            return lhs.rootID < rhs.rootID
+        }
+        return lhs.path.rawValue.utf8.lexicographicallyPrecedes(rhs.path.rawValue.utf8)
+    }
+
+    /// This snapshot with the faces of `photos` replaced by `partial`'s, a read of only those
+    /// photos (`CatalogStore.peopleSnapshot(of:)`): their faces, likenesses, copies and the
+    /// files their stacks and copies stand for; and the people, their stored gallery facts, the
+    /// key photos and the vector horizon, which `partial` read whole. The faces stay in the
+    /// order a whole read gives them, so the hash of what assignment reads is the one a whole
+    /// read would give (`AssignmentInputs`).
+    func replacing(_ photos: Set<MediaAssetID>, with partial: PeopleSnapshot) -> PeopleSnapshot {
+        let order = partial.rootOrder
+        func key(_ face: Face) -> (rootID: Int64, path: MediaRelativePath, index: Int) {
+            (order[face.id.asset.libraryRootPath] ?? .max, face.id.asset.relativePath, face.id.index)
+        }
+        func before(_ lhs: Face, _ rhs: Face) -> Bool {
+            let (left, right) = (key(lhs), key(rhs))
+            if left.rootID == right.rootID, left.path == right.path {
+                return left.index < right.index
+            }
+            return Self.isBefore((left.rootID, left.path), (right.rootID, right.path))
+        }
+        var merged = PeopleFaces()
+        var kept = faces.lazy.filter { !photos.contains($0.id.asset) }.makeIterator()
+        var read = partial.faces.makeIterator()
+        var nextKept = kept.next()
+        var nextRead = read.next()
+        while nextKept != nil || nextRead != nil {
+            if let face = nextKept, nextRead.map({ before(face, $0) }) ?? true {
+                merged.append(face)
+                nextKept = kept.next()
+            } else if let face = nextRead {
+                merged.append(face)
+                nextRead = read.next()
+            }
+        }
+        merged.finish()
+        var next = PeopleSnapshot(
+            faces: merged,
+            people: partial.people,
+            likeness: likeness.filter { !photos.contains($0.key.asset) }.merging(partial.likeness) { _, new in new },
+            keyPhotos: partial.keyPhotos,
+            galleryFacts: partial.galleryFacts,
+            photoOf: photoOf.filter { !photos.contains($0.key) && partial.photoOf[$0.key] == nil }
+                .merging(partial.photoOf) { _, new in new },
+            copies: copies.filter { photos.isDisjoint(with: $0) } + partial.copies,
+            rootOrder: order
+        )
+        next.vectorHorizon = partial.vectorHorizon
+        return next
+    }
 
     /// One present identical copy of a photo with a face, with what ranks it among its copies.
     nonisolated struct Copy: Sendable {
@@ -442,6 +502,15 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
 
     var isEmpty: Bool {
         guesses.isEmpty && newPeople.isEmpty && likeness.isEmpty && emptied.isEmpty && lapsedSeeds.isEmpty
+    }
+
+    /// The photos whose faces the plan writes.
+    var photos: Set<MediaAssetID> {
+        var photos = Set(guesses.map(\.face.asset))
+        photos.formUnion(newPeople.joined().map(\.asset))
+        photos.formUnion(likeness.keys.map(\.asset))
+        photos.formUnion(lapsedSeeds.keys.map(\.asset))
+        return photos
     }
 
     /// How far a likeness must move to be a change. Accelerate's matrix product rounds

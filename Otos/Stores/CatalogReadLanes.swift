@@ -402,8 +402,8 @@ extension CatalogReads where Lane == BackgroundLane {
         try await store.uncheckedForFaces(availableLibraryPaths: availableLibraryPaths, lane: lane)
     }
 
-    func peopleSnapshot() async throws -> PeopleSnapshot {
-        try await store.peopleSnapshot(lane: lane)
+    func peopleSnapshot(of photos: Set<MediaAssetID>? = nil) async throws -> PeopleSnapshot {
+        try await store.peopleSnapshot(of: photos, lane: lane)
     }
 
     func faceEmbeddings(after vector: Int64, limit: Int) async throws -> [FaceVectors.Read] {
