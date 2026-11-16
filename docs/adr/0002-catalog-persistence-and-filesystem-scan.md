@@ -169,7 +169,11 @@ tile's read queued behind it (`docs/research/2026-11-15-shared-reader-waits.md`)
 wait on SQLite's locks through a busy handler of the Store's own (`ReaderLockWait`, with
 GRDB's ten-second limit), so a read's log line tells the wait for a lock (`lockMs`) from
 the wait for a connection, and a detail read's line carries the wait for the Store itself
-(`storeMs`). A truncating checkpoint (below) can find one of its short
+(`storeMs`). Every connection of both pools reports its transaction, first statement and
+the Store's name for it to `CatalogConnectionActivity` through its SQLite trace, and a read
+that waited a second or more writes `op=catalog.store.stall` as its body starts: its wait
+split at the instant its connection began it, and what every other connection was running
+or ended during the wait (`docs/research/2026-11-15-startup-read-stalls.md`). A truncating checkpoint (below) can find one of its short
 reads in flight; the checkpoint then fails, is logged, and the next bulk write retries it.
 Raising the shared pool's reader count was rejected: background work fans out to fill any
 count.

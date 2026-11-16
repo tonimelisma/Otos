@@ -50,8 +50,13 @@ extension CatalogStore {
     /// File-backed catalogs use a pool so Store-owned reads can eventually run
     /// concurrently with scan/enrichment writes. GRDB puts `DatabasePool` files in
     /// WAL mode by default; the explicit cache/mmap pragmas make the current
-    /// architecture decision visible at the one storage-construction point.
-    static func fileBackedDatabaseConfiguration() -> Configuration {
+    /// architecture decision visible at the one storage-construction point. Every connection
+    /// reports what it is doing to `activity`, for a read that waits
+    /// (`CatalogConnectionActivity`).
+    static func fileBackedDatabaseConfiguration(
+        activity: CatalogConnectionActivity,
+        pool: CatalogConnectionActivity.Pool = .main
+    ) -> Configuration {
         var configuration = Configuration()
         configuration.maximumReaderCount = 4
         configuration.prepareDatabase { db in
@@ -61,6 +66,7 @@ extension CatalogStore {
             if db.configuration.readonly {
                 ReaderLockWait.install(on: db)
             }
+            activity.attach(to: db, pool: pool)
         }
         return configuration
     }
@@ -70,8 +76,8 @@ extension CatalogStore {
     /// main pool's cache settings. Two readers: the reads a user waits on with something on
     /// screen (the visible tiles' details, the inspector's item) are a few milliseconds each,
     /// and nothing else uses them.
-    static func interactiveReaderConfiguration() -> Configuration {
-        var configuration = fileBackedDatabaseConfiguration()
+    static func interactiveReaderConfiguration(activity: CatalogConnectionActivity) -> Configuration {
+        var configuration = fileBackedDatabaseConfiguration(activity: activity, pool: .interactive)
         configuration.readonly = true
         configuration.maximumReaderCount = 2
         return configuration
@@ -2292,12 +2298,21 @@ extension DatabaseReader {
     /// lands while no statement runs. A read cancelled while it still waits for a connection
     /// throws at once: its caller does not wait out the reads ahead of it, and when the pool
     /// reaches it, it gives the connection straight back without running its body.
+    ///
+    /// `operation` names the read on its connection while the body runs, for the stall line
+    /// a read that waited writes (`CatalogConnectionActivity`); it defaults to the calling
+    /// function. `askedAt` is when the caller asked, which is earlier than this call when the
+    /// caller first waited for the Store.
     nonisolated func readFreeingConnection<T: Sendable>(
+        operation: String = #function,
+        askedAt: ContinuousClock.Instant = .now,
         _ body: @escaping @Sendable (Database) throws -> T
     ) async throws -> T {
+        let called = ContinuousClock.now
         let interruption = ReadInterruption()
         let resumption = ReadResumption<T>()
-        return try await withTaskCancellationHandler {
+        let reached = Mutex<CatalogConnectionActivity?>(nil)
+        let value = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 resumption.install(continuation, unlessCancelled: interruption)
                 asyncRead { connection in
@@ -2305,6 +2320,15 @@ extension DatabaseReader {
                         let db = try connection.get()
                         try interruption.begin(db)
                         defer { interruption.end(db) }
+                        if let connection = CatalogConnectionActivity.Connection.attached(to: db) {
+                            reached.withLock { $0 = connection.activity }
+                            connection.began(
+                                operation: operation,
+                                askedAt: askedAt,
+                                calledAt: called,
+                                lockMs: ReaderLockWait.waitMs(from: db, askedAt: called)
+                            )
+                        }
                         do {
                             return try body(db)
                         } catch {
@@ -2320,6 +2344,8 @@ extension DatabaseReader {
             interruption.cancel()
             resumption.resume(with: .failure(CancellationError()))
         }
+        reached.withLock { $0 }?.callerResumed(operation: operation)
+        return value
     }
 }
 
@@ -2451,6 +2477,14 @@ final nonisolated class ReaderLockWait: Sendable {
         return DiagnosticsTiming.milliseconds(since: first)
     }
 
+    /// What `takeWaitMs` would answer, leaving the instant for the read's own line.
+    static func waitMs(from db: Database, askedAt asked: ContinuousClock.Instant) -> Int {
+        guard let wait = attached(to: db), let first = wait.waits.withLock(\.firstBusy), first >= asked else {
+            return 0
+        }
+        return DiagnosticsTiming.milliseconds(since: first)
+    }
+
     static func clear(on db: Database) {
         attached(to: db)?.waits.withLock { $0 = Waits() }
     }
@@ -2480,5 +2514,390 @@ final nonisolated class ReaderLockWait: Sendable {
         // time: backoff — SQLite's own pause between asking for a lock again.
         sqlite3_sleep(delay)
         return true
+    }
+}
+
+// MARK: - What every connection is doing, for a read that waited
+
+/// Every connection the Store's pools open and what each is doing, so a read that waited a
+/// second or more names what held it. Visible tiles' reads and the window's reads on the
+/// other pool waited 5–10 s together on the owner's launch and were released within 50 ms of
+/// each other while the writer kept committing, and no probe rebuilt it
+/// (`docs/research/2026-11-15-startup-read-stalls.md`): the next such wait has to say what was
+/// running at the time.
+///
+/// Each connection's SQLite trace notes when its transaction began and its first statement
+/// (`Connection`), and the Store names what a read or a timed write is for (`began`,
+/// `named`). The waiter writes the line itself, as its body starts: it knows it has waited,
+/// so nothing polls (ADR 0033). `op=catalog.store.stall` carries the wait split at the
+/// instant the connection's queue began the read (`connectionMs` before it: no free
+/// connection, or no thread for its queue; `snapshotMs` after it: SQLite's read lock, of
+/// which `lockMs` is the part its busy handler saw), every other connection that is in a
+/// transaction (`running`), every transaction of 50 ms or more that ended during the wait
+/// (`endedDuringWait`), the idle connections, and the operation whose caller last resumed
+/// after a read (`lastResumed`): a Store holding its actor after a read shows there.
+final nonisolated class CatalogConnectionActivity: Sendable {
+    enum Pool: String, Sendable {
+        /// The writer and the main readers (`CatalogStore.dbWriter`).
+        case main
+        /// The reads a user waits on with something on screen (`CatalogStore.interactiveReader`).
+        case interactive
+    }
+
+    /// A wait this long or longer writes the stall line. time: measurement — a threshold on a
+    /// wait the read has already measured; nothing waits on it.
+    static let defaultStallThreshold: Duration = .seconds(1)
+    /// A transaction shorter than this is not kept for a later stall line: it cannot be what
+    /// held a read for a second.
+    static let defaultKeptTransactionMinimum: Duration = .milliseconds(50)
+    /// The ended transactions kept, newest last.
+    static let keptTransactionLimit = 32
+
+    /// One connection in a stall line: what it was in, for how long, for what.
+    struct Holder: Equatable, Sendable {
+        let connection: String
+        /// The transaction's age when the waiter reached its body, or, for one that ended
+        /// during the wait, how long it was held.
+        let milliseconds: Int
+        /// How long before the waiter reached its body a transaction ended; nil while it runs.
+        let endedAgoMs: Int?
+        let operation: String?
+        let statement: String?
+    }
+
+    /// What a read that waited reports as its body starts.
+    struct Stall: Equatable, Sendable {
+        let stallID: Int
+        let operation: String
+        let connection: String
+        let storeMs: Int
+        let waitMs: Int
+        /// Asked → the connection's queue began the read; nil when the begin was not seen.
+        let connectionMs: Int?
+        /// The queue began the read → its body: SQLite's read lock and snapshot.
+        let snapshotMs: Int?
+        let lockMs: Int
+        let running: [Holder]
+        let endedDuringWait: [Holder]
+        let idle: [String]
+        let lastResumed: String?
+        let lastResumedAgoMs: Int?
+    }
+
+    fileprivate struct Transaction: Sendable {
+        let connection: String
+        let operation: String?
+        let statement: String?
+        let start: ContinuousClock.Instant
+        let end: ContinuousClock.Instant
+    }
+
+    private struct Registry {
+        var connections: [ObjectIdentifier: Connection] = [:]
+        var ended: [Transaction] = []
+        var lastResumed: (operation: String, at: ContinuousClock.Instant)?
+        var stallCount = 0
+    }
+
+    private let registry = Mutex(Registry())
+    fileprivate let stallThreshold: Duration
+    fileprivate let keptTransactionMinimum: Duration
+    private let reportStall: @Sendable (Stall) -> Void
+
+    /// `report` receives each stall; by default it writes `op=catalog.store.stall`.
+    init(
+        stallThreshold: Duration = CatalogConnectionActivity.defaultStallThreshold,
+        keptTransactionMinimum: Duration = CatalogConnectionActivity.defaultKeptTransactionMinimum,
+        report: @escaping @Sendable (Stall) -> Void = CatalogConnectionActivity.log
+    ) {
+        self.stallThreshold = stallThreshold
+        self.keptTransactionMinimum = keptTransactionMinimum
+        reportStall = report
+    }
+
+    /// Attaches a record to `db` and traces its statements. Called once per connection as it
+    /// opens (`fileBackedDatabaseConfiguration`); the record leaves the registry as SQLite
+    /// closes the connection.
+    func attach(to db: Database, pool: Pool) {
+        let connection = Connection(name: Self.connectionName(db, pool: pool), activity: self)
+        registry.withLock { $0.connections[ObjectIdentifier(connection)] = connection }
+        let context = Unmanaged.passRetained(connection).toOpaque()
+        sqlite3_set_clientdata(db.sqliteConnection, Connection.clientDataName, context) { context in
+            guard let context else {
+                return
+            }
+            let connection = Unmanaged<Connection>.fromOpaque(context).takeRetainedValue()
+            connection.activity.registry.withLock { _ = $0.connections.removeValue(forKey: ObjectIdentifier(connection)) }
+        }
+        sqlite3_trace_v2(db.sqliteConnection, UInt32(SQLITE_TRACE_STMT | SQLITE_TRACE_PROFILE), { mask, context, statement, sql in
+            guard let context, let statement else {
+                return 0
+            }
+            let connection = Unmanaged<Connection>.fromOpaque(context).takeUnretainedValue()
+            let inTransaction = sqlite3_get_autocommit(sqlite3_db_handle(OpaquePointer(statement))) == 0
+            if mask == UInt32(SQLITE_TRACE_STMT) {
+                connection.statementStarted(sql: sql?.assumingMemoryBound(to: CChar.self), inTransaction: inTransaction)
+            } else if !inTransaction {
+                connection.transactionEnded()
+            }
+            return 0
+        }, context)
+    }
+
+    /// `main.writer` or `interactive.reader.2`: the pool, then GRDB's name for the connection.
+    private static func connectionName(_ db: Database, pool: Pool) -> String {
+        let role = db.description.components(separatedBy: "DatabasePool.").last ?? db.description
+        return "\(pool.rawValue).\(role)"
+    }
+
+    /// A read's caller has resumed after its body: the last one is what a Store holding its
+    /// actor after a read is most likely still doing.
+    func callerResumed(operation: String) {
+        let now = ContinuousClock.now
+        registry.withLock { $0.lastResumed = (Self.shortName(operation), now) }
+    }
+
+    fileprivate func keep(_ transaction: Transaction) {
+        registry.withLock { registry in
+            registry.ended.append(transaction)
+            if registry.ended.count > Self.keptTransactionLimit {
+                registry.ended.removeFirst(registry.ended.count - Self.keptTransactionLimit)
+            }
+        }
+    }
+
+    /// `mediaTileDetails` for `mediaTileDetails(for:)`: the calling function, without its labels.
+    static func shortName(_ operation: String) -> String {
+        operation.split(separator: "(", maxSplits: 1).first.map(String.init) ?? operation
+    }
+
+    /// A read on `waiter`, asked at `askedAt`, called into its pool at `calledAt`, whose
+    /// connection's queue began it at `transactionStart`, has reached its body at `entered`.
+    fileprivate func reportStall(
+        waiter: String,
+        operation: String,
+        askedAt: ContinuousClock.Instant,
+        calledAt: ContinuousClock.Instant,
+        transactionStart: ContinuousClock.Instant?,
+        entered now: ContinuousClock.Instant,
+        lockMs: Int
+    ) {
+        let (connections, ended, lastResumed, stallID) = registry.withLock { registry in
+            registry.stallCount += 1
+            return (
+                Array(registry.connections.values),
+                registry.ended.filter { $0.end >= askedAt },
+                registry.lastResumed,
+                registry.stallCount
+            )
+        }
+        var running: [Holder] = []
+        var idle: [String] = []
+        for snapshot in connections.map(\.snapshot).sorted(by: { $0.name < $1.name }) where snapshot.name != waiter {
+            guard let start = snapshot.transactionStart else {
+                idle.append(snapshot.name)
+                continue
+            }
+            running.append(Holder(
+                connection: snapshot.name,
+                milliseconds: DiagnosticsTiming.milliseconds(from: start, to: now),
+                endedAgoMs: nil,
+                operation: snapshot.operation.map(Self.shortName),
+                statement: snapshot.statement
+            ))
+        }
+        let endedDuringWait = ended.map {
+            Holder(
+                connection: $0.connection,
+                milliseconds: DiagnosticsTiming.milliseconds(from: $0.start, to: $0.end),
+                endedAgoMs: DiagnosticsTiming.milliseconds(from: $0.end, to: now),
+                operation: $0.operation.map(Self.shortName),
+                statement: $0.statement
+            )
+        }
+        reportStall(Stall(
+            stallID: stallID,
+            operation: Self.shortName(operation),
+            connection: waiter,
+            storeMs: DiagnosticsTiming.milliseconds(from: askedAt, to: calledAt),
+            waitMs: DiagnosticsTiming.milliseconds(from: calledAt, to: now),
+            connectionMs: transactionStart.map { DiagnosticsTiming.milliseconds(from: calledAt, to: $0) },
+            snapshotMs: transactionStart.map { DiagnosticsTiming.milliseconds(from: $0, to: now) },
+            lockMs: lockMs,
+            running: running,
+            endedDuringWait: endedDuringWait,
+            idle: idle,
+            lastResumed: lastResumed?.operation,
+            lastResumedAgoMs: lastResumed.map { DiagnosticsTiming.milliseconds(from: $0.at, to: now) }
+        ))
+    }
+
+    /// Writes `op=catalog.store.stall`. Each holder is `connection:timing:operation:statement`,
+    /// the statement's spaces made `_` and its commas `;`, so the line keeps one value per key.
+    @Sendable static func log(_ stall: Stall) {
+        func describe(_ holders: [Holder]) -> String {
+            guard !holders.isEmpty else {
+                return "none"
+            }
+            return holders.map { holder in
+                let timing = holder.endedAgoMs.map { "held\(holder.milliseconds)ms-endedAgo\($0)ms" } ?? "txn\(holder.milliseconds)ms"
+                let statement = (holder.statement ?? "none").replacingOccurrences(of: " ", with: "_")
+                    .replacingOccurrences(of: ",", with: ";")
+                return "\(holder.connection):\(timing):\(holder.operation ?? "unnamed"):\(statement)"
+            }.joined(separator: ",")
+        }
+        OtosLog.catalog.noticeOperation("catalog.store.stall", phase: "waited", fields: [
+            "stallID": "\(stall.stallID)",
+            "operation": stall.operation,
+            "connection": stall.connection,
+            "storeMs": "\(stall.storeMs)",
+            "waitMs": "\(stall.waitMs)",
+            "connectionMs": stall.connectionMs.map { "\($0)" } ?? "unknown",
+            "snapshotMs": stall.snapshotMs.map { "\($0)" } ?? "unknown",
+            "lockMs": "\(stall.lockMs)",
+            "running": describe(stall.running),
+            "endedDuringWait": describe(stall.endedDuringWait),
+            "idle": stall.idle.isEmpty ? "none" : stall.idle.joined(separator: ","),
+            "lastResumed": stall.lastResumed ?? "none",
+            "lastResumedAgoMs": stall.lastResumedAgoMs.map { "\($0)" } ?? "none",
+        ])
+    }
+
+    /// One connection's record: its transaction, the transaction's first statement, and what
+    /// the Store named it for. Written on the connection's own queue (its trace and its
+    /// bodies), read by a stall line from another.
+    final nonisolated class Connection: Sendable {
+        fileprivate static let clientDataName = "net.melisma.Otos.connectionActivity"
+        /// The statement text kept for a line, at most this many characters.
+        private static let statementPrefixLength = 96
+
+        let name: String
+        let activity: CatalogConnectionActivity
+
+        fileprivate struct Snapshot {
+            let name: String
+            let transactionStart: ContinuousClock.Instant?
+            let statement: String?
+            let operation: String?
+        }
+
+        private struct State {
+            /// When the connection's current transaction began: its `BEGIN`, or a statement
+            /// run outside one.
+            var transactionStart: ContinuousClock.Instant?
+            /// The transaction's first statement other than its `BEGIN` and GRDB's pragmas.
+            var statement: String?
+            var operation: String?
+        }
+
+        private let state = Mutex(State())
+
+        fileprivate init(name: String, activity: CatalogConnectionActivity) {
+            self.name = name
+            self.activity = activity
+        }
+
+        static func attached(to db: Database) -> Connection? {
+            sqlite3_get_clientdata(db.sqliteConnection, clientDataName).map {
+                Unmanaged<Connection>.fromOpaque($0).takeUnretainedValue()
+            }
+        }
+
+        fileprivate var snapshot: Snapshot {
+            state.withLock { Snapshot(name: name, transactionStart: $0.transactionStart, statement: $0.statement, operation: $0.operation) }
+        }
+
+        /// A read's body is starting on this connection: names the transaction, and writes the
+        /// stall line when the read waited `stallThreshold` or longer since it was asked.
+        func began(operation: String, askedAt: ContinuousClock.Instant, calledAt: ContinuousClock.Instant, lockMs: Int) {
+            let entered = ContinuousClock.now
+            let transactionStart = state.withLock { state in
+                state.operation = operation
+                return state.transactionStart
+            }
+            guard entered - askedAt >= activity.stallThreshold else {
+                return
+            }
+            activity.reportStall(
+                waiter: name,
+                operation: operation,
+                askedAt: askedAt,
+                calledAt: calledAt,
+                transactionStart: transactionStart,
+                entered: entered,
+                lockMs: lockMs
+            )
+        }
+
+        /// Names the transaction this connection is in, for a write.
+        func named(operation: String) {
+            state.withLock { $0.operation = operation }
+        }
+
+        fileprivate func statementStarted(sql: UnsafePointer<CChar>?, inTransaction: Bool) {
+            let now = ContinuousClock.now
+            let names = sql.map(Self.namesTheTransaction) ?? false
+            state.withLock { state in
+                if !inTransaction {
+                    state.transactionStart = now
+                    state.statement = nil
+                    state.operation = nil
+                }
+                if state.statement == nil, names, let sql {
+                    state.statement = Self.prefix(sql)
+                }
+            }
+        }
+
+        fileprivate func transactionEnded() {
+            let now = ContinuousClock.now
+            let ended = state.withLock { state -> Transaction? in
+                defer {
+                    state.transactionStart = nil
+                    state.statement = nil
+                    state.operation = nil
+                }
+                guard let start = state.transactionStart, now - start >= activity.keptTransactionMinimum else {
+                    return nil
+                }
+                return Transaction(connection: name, operation: state.operation, statement: state.statement, start: start, end: now)
+            }
+            if let ended {
+                activity.keep(ended)
+            }
+        }
+
+        /// Whether a statement says what its transaction is for: not the transaction's own
+        /// `BEGIN`, `COMMIT` or savepoints, not the pragmas GRDB runs as a read starts, and not
+        /// the comment SQLite reports as a trigger starts.
+        private static func namesTheTransaction(_ sql: UnsafePointer<CChar>) -> Bool {
+            let skipped = ["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE", "PRAGMA", "--"]
+            return !skipped.contains { strncasecmp(sql, $0, strlen($0)) == 0 }
+        }
+
+        /// The statement's first characters, each run of whitespace made one space.
+        private static func prefix(_ sql: UnsafePointer<CChar>) -> String {
+            var bytes: [UInt8] = []
+            bytes.reserveCapacity(statementPrefixLength)
+            var pendingSpace = false
+            var index = 0
+            while bytes.count < statementPrefixLength {
+                let byte = UInt8(bitPattern: sql[index])
+                if byte == 0 {
+                    break
+                }
+                index += 1
+                if byte == 0x20 || byte == 0x0A || byte == 0x09 || byte == 0x0D {
+                    pendingSpace = !bytes.isEmpty
+                    continue
+                }
+                if pendingSpace {
+                    bytes.append(0x20)
+                    pendingSpace = false
+                }
+                bytes.append(byte)
+            }
+            return String(decoding: bytes, as: UTF8.self)
+        }
     }
 }

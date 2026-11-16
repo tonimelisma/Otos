@@ -495,6 +495,10 @@ actor CatalogStore {
     /// tile's detail read waited 2.5–4.5 s for one with 0 ms of its own work. Nil for an
     /// in-memory catalog, whose one connection serves every read.
     private var interactiveReader: (any DatabaseReader)?
+    /// What each of the catalog file's connections is doing, for the line a read that waited
+    /// writes (`op=catalog.store.stall`). Both pools report to it; an in-memory catalog's one
+    /// connection does not.
+    private nonisolated let connectionActivity = CatalogConnectionActivity()
     private var databaseFileURL: URL?
     private var started = false
     private var startupTask: Task<Void, Error>?
@@ -2461,7 +2465,7 @@ extension CatalogStore {
         // The inspector's read of the selected item: a read a user waits on with something on
         // screen, so it uses the interactive readers.
         let reader = try interactiveDatabase()
-        let timedAssets = try await timedRead(reader) { db in
+        let timedAssets = try await timedRead(reader, askedAt: askedAt) { db in
             try CatalogQueryGateway.fetchStoredAssets(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogStoreAssetsQuery", signpost)
@@ -2503,7 +2507,7 @@ extension CatalogStore {
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreTileDetailQuery")
         let rootIDsBeforeRead = roots.rowIDSnapshot()
         let reader = try interactiveDatabase()
-        let timedDetails = try await timedRead(reader) { db in
+        let timedDetails = try await timedRead(reader, askedAt: askedAt) { db in
             try CatalogQueryGateway.fetchStoredTileDetails(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogStoreTileDetailQuery", signpost)
@@ -5871,13 +5875,17 @@ private extension CatalogStore {
         return interactiveReader ?? dbWriter
     }
 
+    /// `operation` names the read for a stall line (`CatalogConnectionActivity`); `askedAt`
+    /// is when its caller asked, before it reached the Store.
     private func timedRead<Value: Sendable>(
         _ dbWriter: any DatabaseReader,
+        operation: String = #function,
+        askedAt: ContinuousClock.Instant = .now,
         _ body: @Sendable @escaping (Database) throws -> Value
     ) async throws -> DatabaseTimedValue<Value> {
         let priority = Task.currentPriority
         let start = ContinuousClock.now
-        let (timed, left) = try await dbWriter.readFreeingConnection { db in
+        let (timed, left) = try await dbWriter.readFreeingConnection(operation: operation, askedAt: askedAt) { db in
             let entered = ContinuousClock.now
             let lockMs = ReaderLockWait.takeWaitMs(from: db, askedAt: start)
             let value = try body(db)
@@ -5898,14 +5906,18 @@ private extension CatalogStore {
         return resumed
     }
 
+    /// `operation` names the write on the writer's connection for a stall line
+    /// (`CatalogConnectionActivity`).
     private func timedWrite<Value: Sendable>(
         _ dbWriter: any DatabaseWriter,
+        operation: String = #function,
         _ body: @Sendable @escaping (Database) throws -> Value
     ) async throws -> DatabaseTimedValue<Value> {
         let priority = Task.currentPriority
         let start = ContinuousClock.now
         let (timed, left) = try await dbWriter.write { db in
             let entered = ContinuousClock.now
+            CatalogConnectionActivity.Connection.attached(to: db)?.named(operation: operation)
             let value = try body(db)
             let left = ContinuousClock.now
             return (
@@ -5998,7 +6010,7 @@ private extension CatalogStore {
         if let fileURL = openResult.openedFileURL {
             interactiveReader = try DatabasePool(
                 path: fileURL.path(percentEncoded: false),
-                configuration: Self.interactiveReaderConfiguration()
+                configuration: Self.interactiveReaderConfiguration(activity: connectionActivity)
             )
         }
         timer.lap("readerMs")
@@ -6025,7 +6037,7 @@ private extension CatalogStore {
             return try DatabaseOpenResult(
                 dbWriter: DatabasePool(
                     path: databaseURL.path(percentEncoded: false),
-                    configuration: Self.fileBackedDatabaseConfiguration()
+                    configuration: Self.fileBackedDatabaseConfiguration(activity: connectionActivity)
                 ),
                 storageKind: "application",
                 openedFileURL: databaseURL
@@ -6038,7 +6050,7 @@ private extension CatalogStore {
             return try DatabaseOpenResult(
                 dbWriter: DatabasePool(
                     path: url.path(percentEncoded: false),
-                    configuration: Self.fileBackedDatabaseConfiguration()
+                    configuration: Self.fileBackedDatabaseConfiguration(activity: connectionActivity)
                 ),
                 storageKind: "file",
                 openedFileURL: url
