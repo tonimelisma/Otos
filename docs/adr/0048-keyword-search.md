@@ -48,7 +48,13 @@ model reached 68%, and a multilingual text encoder distilled into CLIP's space r
 1. **Recognise the language.** `NLLanguageRecognizer` is constrained to English plus the
    languages Apple Translation offers, read once. A query never states its language.
    Constrained recognition scored 75.0 against 77.1 when the true language was given;
-   unconstrained scored 74.4.
+   unconstrained scored 74.4. A word or two is weak evidence of a language: in the f192041a
+   tour "sky" was recognised as Italian and translated, 4.1 s with Translation cold. So text
+   in the Latin script that English spelling (`NSSpellChecker`, English alone) accepts is
+   read as English and not translated. On the judged queries in 17 languages English rose
+   from 83 to 85, because 13 of its 52 queries had been recognised as another language. The
+   other languages moved from 75.0 to 74.9: Dutch 77 → 73 ("kind", "See"), Swedish, Polish and
+   Turkish up 1 to 2.
 2. **Translate to English** on the device (`TranslationSession(installedSource:target:)`: no
    network, no UI) when that language's pack is installed — asked for that language alone and
    remembered once installed (16 ms, against 0.67 s for asking about every language). This is
@@ -87,7 +93,21 @@ The projection publishes which of three states the shown query is in
 - **Being read** (`reading`): the pass builds nothing and republishes the last state as it
   is, marked as searching, so the window keeps what it shows and its subtitle says
   `Searching…`. Nothing is covered: the reader's report that the reading ended rings the
-  projection, and that pass builds the answer. There is no deadline: the reader knows when a
+  projection, and that pass builds the answer.
+  - **A first reading.** A query whose full reading waits on Translation or Maps is first
+    read as typed (`SearchQueryEncoder.firstReading`, about 40 ms: SigLIP 2's multilingual
+    tower, its facts from the typed text, no place looked up). The window shows that
+    reading's matches, still marked as searching (`SearchQueryStatus.refining`), and the full
+    reading replaces them when it ends. So the first result never waits on Translation
+    (0.35 s warm, 4 s cold) or on Maps.
+  - **Its cost:** as typed, the judged queries scored recall@10 85 in English and 65.4 in
+    the other languages, against 74.9 for the full reading. The two share 39% of their top 10
+    for a translated query, so the grid changes when the full reading lands. Tiles in both
+    stay where the order keeps them.
+  - **No empty grid between the readings:** a first reading that matches nothing shows
+    nothing new, and the window keeps what it showed until the full reading ends.
+  - A query whose full reading asks neither Translation nor Maps (English, a glossed
+    language, a language with no installed pack) has no first reading and is shown once. There is no deadline: the reader knows when a
   reading ends, so time never stands in for that report (ADR 0033), however long Translation
   or Maps take. A reading takes about 40 ms in English and 0.35 s translated. Ending the
   search publishes at once; a scope, filter or catalog change under the same query waits

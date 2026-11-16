@@ -422,13 +422,16 @@ nonisolated enum CatalogSearchOutcome: Equatable {
     /// The query was read and narrowed the scope to its matches. `stillReadingCount`: items
     /// whose thumbnails search has not read yet, counted only when nothing matched.
     case read(unsearchedScopeCount: Int, stillReadingCount: Int)
+    /// The query's first reading narrowed the scope to its matches while the full reading is
+    /// read (`SearchQueryStatus.refining`): shown, and still searching.
+    case refining(unsearchedScopeCount: Int)
     /// The query could not be read: the scope shows none of its items rather than all of
     /// them unsearched.
     case failed(unsearchedScopeCount: Int)
 
     var unsearchedScopeCount: Int {
         switch self {
-        case let .read(count, _), let .failed(count):
+        case let .read(count, _), let .refining(count), let .failed(count):
             count
         }
     }
@@ -436,6 +439,7 @@ nonisolated enum CatalogSearchOutcome: Equatable {
     var phase: CatalogSearchPhase {
         switch self {
         case .read: .read
+        case .refining: .reading
         case .failed: .failed
         }
     }

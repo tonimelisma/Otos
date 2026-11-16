@@ -290,6 +290,20 @@ nonisolated enum CatalogWindowPolicy {
         return fixedLibraries.isEmpty || fixedLibraries.contains(where: \.isAvailable) ? nil : .noAvailableMedia
     }
 
+    /// What an empty search says (ADR 0048): no results, or that the search could not be made.
+    /// A first reading that matched nothing is never shown — the window keeps what it showed
+    /// until the full reading ends — so it says nothing yet.
+    private static func searchEmptyState(_ search: CatalogSearchOutcome, text: String) -> CatalogMediaEmptyState? {
+        switch search {
+        case let .read(_, stillReading):
+            .noSearchResults(text, stillReading: stillReading)
+        case .refining:
+            nil
+        case .failed:
+            .searchFailed(text)
+        }
+    }
+
     /// What the window says about an empty scope, and nil when the scope holds items: a
     /// scope with items has no empty state to draw.
     static func mediaEmptyState(
@@ -302,12 +316,7 @@ nonisolated enum CatalogWindowPolicy {
     ) -> CatalogMediaEmptyState? {
         guard selectedAssetCount == 0 else { return nil }
         if let search, let text = descriptor.search?.text, search.unsearchedScopeCount > 0 {
-            switch search {
-            case let .read(_, stillReading):
-                return .noSearchResults(text, stillReading: stillReading)
-            case .failed:
-                return .searchFailed(text)
-            }
+            return searchEmptyState(search, text: text)
         }
         if descriptor.filter.isActive, unfilteredVisibleAssetCount > 0 {
             return .noFilterMatches

@@ -177,7 +177,7 @@ actor PhotoSearchIndex {
         self.vectorDirectory = vectorDirectory
         embedder = SearchImageEmbedder(bundle: bundle)
         let encoder = SearchQueryEncoder(bundle: bundle)
-        self.queries = queries ?? SearchQueryReader { try await encoder.encode($0) }
+        self.queries = queries ?? SearchQueryReader(first: { try await encoder.firstReading($0) }) { try await encoder.encode($0) }
         self.pageSize = pageSize
     }
 

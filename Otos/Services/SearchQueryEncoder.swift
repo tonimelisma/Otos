@@ -137,9 +137,28 @@ actor SearchQueryEncoder {
     /// recognition favours. `request.people`: the people the user has named, matched in the
     /// typed text before anything translates it, because translation mangles names.
     func encode(_ request: SearchQueryRequest) async throws -> SearchQueryEncoding {
+        try await read(request, asTyped: false).encoding
+    }
+
+    /// The query read as typed, with neither Translation nor Maps asked: what the window shows
+    /// while the full reading (`encode`) waits on them. Nil when the full reading asks neither,
+    /// so it is as quick and there is nothing to show first. Measured on the judged queries in
+    /// 17 languages (`docs/research/2026-11-16-search-vector-file.md`): as typed, recall@10 85
+    /// in English and 65.4 in the other languages, against 85 and 74.9 for the full reading, and
+    /// the two share 39% of their top 10 for a translated query.
+    func firstReading(_ request: SearchQueryRequest) async throws -> SearchQueryEncoding? {
+        guard request.label == nil else { return nil }
+        let first = try await read(request, asTyped: true)
+        return first.skipped ? first.encoding : nil
+    }
+
+    /// One reading of `request`. With `asTyped`, the step that would translate the query reads
+    /// it as typed instead and no place is looked up; `skipped` says whether either was skipped.
+    private func read(_ request: SearchQueryRequest, asTyped: Bool) async throws -> (encoding: SearchQueryEncoding, skipped: Bool) {
         if let label = request.label {
-            return try englishEncoding(of: SceneLabelNames.englishName(label), shown: request.text)
+            return try (englishEncoding(of: SceneLabelNames.englishName(label), shown: request.text), false)
         }
+        var skipped = false
         let text = request.text, preferred = request.languages
         let start = ContinuousClock.now
         let (named, typedRest) = Self.takePeople(request.people, from: text)
@@ -174,6 +193,15 @@ actor SearchQueryEncoder {
                 Self.recognize(rest, among: candidates, preferring: preferred.map(NLLanguage.init(rawValue:))),
                 preferring: preferred, untranslatable: untranslatable
             )
+            // A word or two is weak evidence of a language ("sky" was recognised as Italian):
+            // Latin-script text English spelling accepts is read as English, not translated.
+            // On the judged queries English rose from 83 to 85 and the other languages moved
+            // from 75.0 to 74.9.
+            if let recognised = language, recognised != .english, candidates[recognised] != nil,
+               await Self.readsAsEnglish(rest)
+            {
+                language = .english
+            }
             if language == .english, try await mayBeGlossed(rest, in: untranslatable) {
                 // The recogniser chooses only among languages Translation offers, so a word
                 // nothing recognises ("lennuk", airplane) is often called English.
@@ -183,9 +211,15 @@ actor SearchQueryEncoder {
             } else if language == .english {
                 modelText = rest
             } else if let language, let source = candidates[language], await isInstalled(language, source) {
-                modelText = try await translation(of: rest, from: source)
-                reading = .translated
-                writer = .translation(source: rest, language: source.minimalIdentifier)
+                if asTyped {
+                    skipped = true
+                    reading = .asTyped
+                    modelText = rest
+                } else {
+                    modelText = try await translation(of: rest, from: source)
+                    reading = .translated
+                    writer = .translation(source: rest, language: source.minimalIdentifier)
+                }
             } else {
                 reading = .asTyped
                 modelText = rest
@@ -196,7 +230,10 @@ actor SearchQueryEncoder {
         let mayBeUnrecognised = reading != .translated && !untranslatable.isEmpty
         var parse = SearchQueryParser.parse(modelText, places: mayBeUnrecognised ? .capitalised : .tagged, writtenBy: writer)
         var place: SearchPlace?
-        if let name = parse.placeName {
+        if let name = parse.placeName, asTyped, places[name] == nil {
+            skipped = true
+            parse = SearchQueryParser.parse(modelText, places: .notRead, writtenBy: writer)
+        } else if let name = parse.placeName {
             place = await locate(name)
             if place == nil {
                 parse = SearchQueryParser.parse(modelText, places: .notRead, writtenBy: writer)
@@ -228,9 +265,10 @@ actor SearchQueryEncoder {
             "place": "\(facts.place != nil)",
             "people": "\(facts.people.count)",
             "picture": "\(embedding != nil)",
+            "first": "\(asTyped)",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
-        return encoding
+        return (encoding, skipped)
     }
 
     /// `english` read as English, with no facts: what a scene-label chip searches for (its
@@ -308,6 +346,13 @@ actor SearchQueryEncoder {
             }
         }
         return false
+    }
+
+    /// Whether `text` is in the Latin script and English spelling accepts every word of it.
+    static func readsAsEnglish(_ text: String) async -> Bool {
+        let letters = text.unicodeScalars.filter(\.properties.isAlphabetic)
+        guard !letters.isEmpty, letters.allSatisfy({ $0.value < 0x250 }) else { return false }
+        return await !misspellsEnglish(text)
     }
 
     /// English spelling alone: unified checking (`requestCheckingOfString`) identifies the

@@ -96,7 +96,33 @@ iterator, 2.4 µs a 55-byte path; they now hash each string's contiguous UTF-8 a
 the root's own fingerprint (`PathFingerprint`). The v70 migration took 2 ms and wrote 41,232
 WAL bytes (`CatalogMigrationCostTests`).
 
-## 6. Not measured here
+## 6. A query's first reading (the encode's 4.1 s)
+
+The tour's many-results query, an English word, was recognised as Italian and translated:
+`search.encode ms=4104 reading=translated`, Translation cold. Measured on the bake-off's judged
+queries, 52 queries in 17 languages, against the app's image embeddings. The tools and
+judgments are in the bake-off folder, outside the repository; the scorer is its
+`score_appquery.py`.
+
+| Reading | English | Other 16 languages, mean |
+| --- | --- | --- |
+| As typed, SigLIP 2's multilingual tower | 85 | 65.4 |
+| The app's reading (recognise, translate when installed) | 83 | 75.0 |
+| The same, with Latin text English spelling accepts read as English | 85 | 74.9 |
+
+- 13 of the 52 English queries were recognised as another language. Their top 10 matched the
+  as-typed one at 92%.
+- For a translated non-English query, the as-typed and translated top 10 share 39% (Finnish
+  26%, Japanese 24%, French 55%).
+- The spelling gate moved Dutch from 77 to 73 ("kind met rode hoed", "See"); Swedish, Polish
+  and Turkish rose 1 to 2 points.
+
+The design that follows (ADR 0048):
+- Spelling gate: an English-spelled query is read as English, at once.
+- Any other query that waits on Translation or Maps shows its as-typed reading first, still
+  searching, and the full reading replaces it.
+
+## 7. Not measured here
 
 - The footprint and load time on the owner's library: the next tour.
 - Query time with the pages evicted.

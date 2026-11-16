@@ -184,6 +184,20 @@ extension CatalogProjection {
                 reads.search = matches.made
                 reuse.search = matches.reused
                 try await applySearch(search, matches: matches.made.matches, to: &unsearched, store: store)
+            case let .refining(encoding):
+                // A first reading shows its matches while the full one is read, still marked as
+                // searching; one that matches nothing shows nothing new, so the grid never
+                // empties between the two readings.
+                let matches = try await searchMatches(
+                    encoding, among: unsearched.scopedAssetIDs, previous: previous, revisions: revisions
+                )
+                reads.search = matches.made
+                reuse.search = matches.reused
+                try await applySearch(search, matches: matches.made.matches, to: &unsearched, store: store)
+                guard !unsearched.scopedAssetIDs.isEmpty else {
+                    return .queryBeingRead
+                }
+                unsearched.search = .refining(unsearchedScopeCount: unsearched.search?.unsearchedScopeCount ?? 0)
             case .failed:
                 Self.failSearch(in: &unsearched)
             case .reading:

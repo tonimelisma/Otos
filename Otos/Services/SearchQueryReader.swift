@@ -6,6 +6,10 @@ nonisolated enum SearchQueryStatus: Sendable, Equatable {
     /// Being read: the window keeps what it shows and says it is searching, until the reader
     /// reports that the reading ended.
     case reading
+    /// A first reading, as typed (`SearchQueryEncoder.firstReading`), while the full one —
+    /// Translation, Maps — is read: the window shows its matches and says it is still
+    /// searching, until the full reading replaces it.
+    case refining(SearchQueryEncoding)
     case read(SearchQueryEncoding)
     /// The last reading failed. It is read again on its backoff; until one succeeds the window
     /// says the search could not be made, and never shows the scope unsearched.
@@ -26,6 +30,11 @@ nonisolated enum SearchQueryStatus: Sendable, Equatable {
 ///   another is read waits for it, then is read; the one between is never read.
 /// - **The answer** is kept for the query it read, and only that query's status reports it,
 ///   so a result for text since replaced is never shown.
+/// - **A first reading.** A query whose full reading waits on Translation or Apple Maps is
+///   first read as typed (`firstReading`, about 40 ms: the multilingual text tower), and that
+///   reading is reported (`refining`) before the full one is asked for, so the first result
+///   never waits on them; the full reading replaces it when it ends. A query whose full reading
+///   is as quick has no first reading and is reported once.
 /// - **No deadline.** A reading reports when it ends, so a query is `reading` until it does,
 ///   however long Translation or Maps take; no timer stands in for that report (ADR 0033).
 /// - **A failed reading** is an error, not a fact (ADR 0032 rule 4): it is reported `failed`,
@@ -36,14 +45,18 @@ nonisolated enum SearchQueryStatus: Sendable, Equatable {
 /// actor weakly and end with it.
 actor SearchQueryReader {
     typealias Encode = @Sendable (SearchQueryRequest) async throws -> SearchQueryEncoding
+    /// The reading as typed, or nil when the full reading needs nothing slower.
+    typealias FirstReading = @Sendable (SearchQueryRequest) async throws -> SearchQueryEncoding?
 
     private let encode: Encode
+    private let first: FirstReading?
     private let backoff: (first: Duration, last: Duration)
 
     /// The query asked for last; nil while nothing is searched.
     private var wanted: SearchQueryRequest?
-    /// The last reading that ended: its query and encoding, nil for a reading that failed.
-    private var answer: (request: SearchQueryRequest, encoding: SearchQueryEncoding?)?
+    /// The last reading that ended: its query and encoding, nil for a reading that failed, and
+    /// whether it is the full reading or the first one, which a full one replaces.
+    private var answer: (request: SearchQueryRequest, encoding: SearchQueryEncoding?, full: Bool)?
     /// A failed reading's retry came due.
     private var retryDue = false
     private var nextRetry: Duration
@@ -57,17 +70,20 @@ actor SearchQueryReader {
 
     init(
         backoff: (first: Duration, last: Duration) = (.seconds(2), .seconds(60)),
+        first: FirstReading? = nil,
         encode: @escaping Encode
     ) {
         self.backoff = backoff
         nextRetry = backoff.first
+        self.first = first
         self.encode = encode
     }
 
     /// What the window can show for `request` now; a query not held is asked to be read.
     func status(for request: SearchQueryRequest) -> SearchQueryStatus {
         if let answer, answer.request == request {
-            return answer.encoding.map(SearchQueryStatus.read) ?? .failed
+            guard let encoding = answer.encoding else { return .failed }
+            return answer.full ? .read(encoding) : .refining(encoding)
         }
         if wanted != request {
             want(request)
@@ -136,10 +152,17 @@ actor SearchQueryReader {
     /// when its retry is due.
     private func readWanted() async {
         guard let request = wanted else { return }
-        if let answer, answer.request == request, answer.encoding != nil || !retryDue {
+        if let answer, answer.request == request, answer.full, answer.encoding != nil || !retryDue {
             return
         }
         retryDue = false
+        if answer?.request != request, let first {
+            await readFirst(request, with: first)
+            guard !Task.isCancelled, wanted == request else {
+                ring?.yield()
+                return
+            }
+        }
         let encoding: SearchQueryEncoding?
         do {
             encoding = try await encode(request)
@@ -153,7 +176,7 @@ actor SearchQueryReader {
             encoding = nil
         }
         guard !Task.isCancelled else { return }
-        answer = (request, encoding)
+        answer = (request, encoding, true)
         readingsEnded += 1
         if encoding == nil, wanted == request {
             scheduleRetry()
@@ -165,6 +188,25 @@ actor SearchQueryReader {
             ring?.yield()
         }
     }
+
+    /// Reads `request` as typed and reports it when there is a first reading. One that fails is
+    /// logged and leaves the full reading to answer: it is no answer the window shows.
+    private func readFirst(_ request: SearchQueryRequest, with first: FirstReading) async {
+        do {
+            guard let encoding = try await first(request), !Task.isCancelled else { return }
+            answer = (request, encoding, false)
+            firstReadings += 1
+            announce()
+        } catch {
+            let failure = error as NSError
+            OtosLog.catalog.errorOperation("search.query", phase: "firstReadFailed", fields: [
+                "domain": failure.domain, "code": "\(failure.code)", "error": String(describing: error),
+            ])
+        }
+    }
+
+    /// First readings reported: what a test counts.
+    private(set) var firstReadings = 0
 
     /// One retry at a time; each waits twice as long as the last, up to `backoff.last`.
     private func scheduleRetry() {

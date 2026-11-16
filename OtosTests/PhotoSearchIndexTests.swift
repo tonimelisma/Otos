@@ -673,6 +673,69 @@ struct PhotoSearchIndexTests {
     /// delivered while it is held publishes nothing else, never the scope unsearched; ending
     /// the search publishes the whole scope at once; and the answer goes out when the reading
     /// ends.
+    /// ADR 0048: a query whose full reading waits on Translation shows its reading as typed at
+    /// once, still searching, and the full reading replaces it when it ends: two publications,
+    /// in that order, and never an empty grid between them. An English query, which has no
+    /// first reading, publishes its matches once.
+    @Test func aTranslatedQueryShowsItsFirstReadingThenItsFullOne() async throws {
+        let catalog = try await makeCatalog()
+        let bundle = Bundle(for: CatalogWindowViewModel.self)
+        let encoder = SearchQueryEncoder(bundle: bundle)
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        // "järvi" stands for a query Translation reads: as typed it finds the blue picture, and
+        // its full reading, held until the test opens the gate, the red one.
+        let reader = SearchQueryReader(first: { request in
+            request.text == "järvi" ? try await encoder.englishEncoding(of: "a blue picture", shown: request.text) : nil
+        }) { request in
+            guard request.text == "järvi" else { return try await encoder.englishEncoding(of: request.text) }
+            for await _ in gate {
+                break
+            }
+            return try await encoder.englishEncoding(of: "a red picture", shown: request.text)
+        }
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader
+        )
+        let changes = await index.changes()
+        await index.start()
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        let projection = CatalogProjection(cadence: .milliseconds(10))
+        await projection.attachSearchIndex(index)
+        let stream = await projection.states(store: catalog.store, initialDescriptor: .default)
+        let recorder = AsyncValueRecorder<CatalogWindowState>()
+        let recording = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer { recording.cancel() }
+        let red = catalog.red, blue = catalog.blue
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
+
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "järvi")))
+        let firstShown = await recorder.waitForValues {
+            $0.last?.mediaGrid.orderedAssetIDs == [blue] && $0.last?.searchPhase == .reading
+        }
+        open.yield()
+        let fullShown = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [red] && $0.last?.searchPhase == .read }
+        for state in fullShown[firstShown.count - 1 ..< fullShown.count] {
+            #expect(!state.mediaGrid.orderedAssetIDs.isEmpty, "the grid emptied between the two readings")
+        }
+        #expect(await reader.firstReadings == 1)
+
+        let before = await recorder.count()
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "a blue picture")))
+        let english = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [blue] && $0.last?.searchPhase == .read }
+        let shown = english[before...].filter { $0.mediaGrid.orderedAssetIDs == [blue] }
+        #expect(shown.allSatisfy { $0.searchPhase == .read })
+        #expect(await reader.firstReadings == 1)
+        await index.shutdown()
+        await catalog.store.shutdown()
+    }
+
     @Test func aQueryBeingReadKeepsWhatTheWindowShowsAndSaysSo() async throws {
         let catalog = try await makeCatalog()
         let bundle = Bundle(for: CatalogWindowViewModel.self)

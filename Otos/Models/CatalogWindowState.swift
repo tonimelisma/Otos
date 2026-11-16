@@ -84,8 +84,10 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
 /// Where a shown search's query stands (ADR 0048, DES-108). Projection publishes it; the
 /// window renders it and derives nothing.
 nonisolated enum CatalogSearchPhase: Equatable {
-    /// The query is being read: the state is the last one shown, kept, and the window says
-    /// it is searching. Nothing ends this but the reader's report that the reading ended.
+    /// The query is being read: the state is the last one shown, kept, or the matches of the
+    /// query's first reading, as typed, while its full reading waits on Translation or Maps;
+    /// the window says it is searching. Nothing ends this but the reader's report that the
+    /// full reading ended.
     case reading
     /// Read: the grid holds the matches, or `noSearchResults` when none matched.
     case read

@@ -105,6 +105,50 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    /// A query whose full reading waits on Translation is first reported as typed and then
+    /// as read, in that order; one with no first reading (English) is reported once, read.
+    @Test func aQueryWithAFirstReadingIsReportedTwiceInOrderAndOneWithoutOnce() async throws {
+        let held = HeldReading()
+        let first: SearchQueryReader.FirstReading = { request in
+            request.text == "järvi" ? SearchQueryReaderTests.encoding("järvi as typed") : nil
+        }
+        let reader = SearchQueryReader(first: first) { try await held.read($0) }
+        let lake = SearchQueryRequest(text: "järvi")
+        let readings = await reader.readings()
+        #expect(await reader.status(for: lake) == .reading)
+        for await _ in readings where await reader.status(for: lake) == .refining(Self.encoding("järvi as typed")) {
+            break
+        }
+        // The full reading is in flight, held: the first reading is what is reported.
+        try await waitUntil { await held.started == ["järvi"] }
+        #expect(await reader.status(for: lake) == .refining(Self.encoding("järvi as typed")))
+        await held.release("järvi")
+        for await _ in readings where await reader.status(for: lake) == .read(Self.encoding("järvi")) {
+            break
+        }
+        #expect(await reader.firstReadings == 1)
+
+        let dog = SearchQueryRequest(text: "dog")
+        await held.release("dog")
+        var reported: [SearchQueryStatus] = await [reader.status(for: dog)]
+        for await _ in readings {
+            let status = await reader.status(for: dog)
+            reported.append(status)
+            if status == .read(Self.encoding("dog")) {
+                break
+            }
+        }
+        #expect(!reported.contains {
+            if case .refining = $0 {
+                true
+            } else {
+                false
+            }
+        })
+        #expect(await reader.firstReadings == 1)
+        await reader.shutdown()
+    }
+
     /// Once nothing is searched, a query typed again is read again: a language pack installed
     /// meanwhile counts.
     @Test func aForgottenQueryIsReadAgain() async throws {
