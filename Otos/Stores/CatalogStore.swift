@@ -3249,6 +3249,31 @@ extension CatalogStore {
         }
     }
 
+    /// The cells of `ids` with no name in `language`, by key: the only cells a write that
+    /// named its rows can have left unnamed (`PlaceNameReader`), read without walking every
+    /// located record.
+    func unnamedPlaceCells(language: PlaceNameLanguage, of ids: Set<MediaAssetID>) async throws -> [PlaceCell] {
+        let rootIDs = roots.rowIDSnapshot()
+        let byRoot = Dictionary(grouping: ids, by: \.libraryRootPath).compactMap { path, rows in
+            rootIDs[path].map { (rootID: $0, paths: rows.map(\.relativePath.rawValue)) }
+        }
+        guard !byRoot.isEmpty else {
+            return []
+        }
+        return try await database().readFreeingConnection { db in
+            var cells: Set<PlaceCell> = []
+            for root in byRoot {
+                let arguments: [any DatabaseValueConvertible] = [root.rootID] + root.paths + [language.identifier]
+                try cells.formUnion(Row.fetchAll(
+                    db,
+                    sql: CatalogQueryGateway.unnamedPlaceCellsOfRowsSQL(count: root.paths.count),
+                    arguments: StatementArguments(arguments)
+                ).map { PlaceCell(latitude: $0["place_cell_latitude"], longitude: $0["place_cell_longitude"]) })
+            }
+            return cells.sorted { ($0.latitude, $0.longitude) < ($1.latitude, $1.longitude) }
+        }
+    }
+
     /// Stores what Maps named each cell in `language`. Only an answer reaches here, never a
     /// failed naming (`PlaceNameReader`), so a stored name is only ever replaced by another
     /// answer. A catalog change: the Places filter offers what was named.

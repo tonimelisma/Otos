@@ -676,8 +676,14 @@ actor ImmichCatalogSync {
         tally: inout ProductTally
     ) async -> ProductPassOutcome? {
         var page = ProductPage()
+        // The volume's figure is read once a page and each image counted against it through a
+        // ledger (ADR 0027): the figure is CacheDelete's, about 15 ms of CPU a read, and a read
+        // an image was one a megabyte.
+        var ledger = FreeSpaceLedger()
+        var reported = await Self.reportedCapacity(of: directory, volumeCapacity)
         for candidate in candidates {
-            guard await Self.admitsProducts(onVolumeOf: directory, volumeCapacity) else {
+            defer { reported = nil }
+            guard ledger.admit(Self.productBytes, reported: reported) else {
                 if let failed = await applyProducts(page, tally: &tally) {
                     return failed
                 }
@@ -743,13 +749,14 @@ actor ImmichCatalogSync {
         return nil
     }
 
-    /// The free-space floor every background download keeps (ADR 0027), with a megabyte
-    /// for the images about to be written.
+    /// What one asset's images are counted as against the free-space floor every background
+    /// download keeps (ADR 0027).
+    private static let productBytes: Int64 = 1_000_000
+
+    /// The images' volume's free space, read off the actor: CacheDelete answers it over XPC.
     @concurrent
-    private static func admitsProducts(
-        onVolumeOf directory: URL, _ volumeCapacity: VolumeCapacityReader
-    ) async -> Bool {
-        FreeSpaceFloor.admits(1_000_000, available: volumeCapacity(directory))
+    private static func reportedCapacity(of directory: URL, _ volumeCapacity: VolumeCapacityReader) async -> Int64? {
+        volumeCapacity(directory)
     }
 
     /// Decodes the server's preview and stages Otos's products from it, off the actor: a

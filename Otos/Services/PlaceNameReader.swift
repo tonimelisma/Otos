@@ -115,10 +115,27 @@ actor PlaceNameReader {
         wakes += 1
     }
 
-    /// Whether `change` rings: a change of a kind a drain reads.
+    /// What the next drain owes: every unnamed cell (at start, after a change that names no
+    /// rows, a new language, or a failed keyed read), or only the cells of the rows the
+    /// changes since named. A change of a located record's cell can leave only that record's
+    /// cell unnamed, so a write that names its rows is answered by a keyed read of their cells,
+    /// never a walk of every located record: an enrichment flush names its rows, and on the
+    /// owner's catalog the walk ran once per flush (152 runs, 6.6 s, in one tour).
+    private var owesFullDrain = true
+    private var owedRows: Set<MediaAssetID> = []
+
+    /// Whether `change` rings: a change of a kind a drain reads, naming rows or not.
     private func heard(_ change: CatalogStoreChange, inputs: CatalogChangedFacts) -> Bool {
         changesHeard += 1
         guard change.touches(inputs) else { return false }
+        switch change.rows {
+        case .unnamed:
+            owesFullDrain = true
+        case let .named(rows):
+            owedRows.formUnion(rows.ids)
+        case .none:
+            return false
+        }
         wakes += 1
         return true
     }
@@ -167,10 +184,24 @@ actor PlaceNameReader {
         loop = nil
     }
 
-    /// Names every unnamed cell, a page at a time in cell order, until a pass names them all.
+    /// Names what is owed: every unnamed cell, a page at a time in cell order, until a pass
+    /// names them all; or, when only named rows changed, the unnamed cells of those rows. A
+    /// read or write that fails leaves what it owed owed, and is logged.
     func drain() async {
         let locale = locale()
         let language = PlaceNameLanguage(locale)
+        let full = owesFullDrain || keptLanguage != language
+        let rows = owedRows
+        owesFullDrain = false
+        owedRows = []
+        if full {
+            await drainEveryCell(language: language, locale: locale)
+        } else {
+            await drainCells(of: rows, language: language, locale: locale)
+        }
+    }
+
+    private func drainEveryCell(language: PlaceNameLanguage, locale: Locale) async {
         if keptLanguage != language {
             do {
                 let forgotten = try await store.forgetPlaceNames(notIn: language)
@@ -182,6 +213,7 @@ actor PlaceNameReader {
                 }
             } catch {
                 OtosLog.metadata.errorOperation("place.names", phase: "forgetFailed", fields: ["error": String(describing: error)])
+                owesFullDrain = true
                 return
             }
         }
@@ -195,6 +227,7 @@ actor PlaceNameReader {
                 page = try await store.unnamedPlaceCells(language: language, after: after, limit: pageSize)
             } catch {
                 OtosLog.metadata.errorOperation("place.names", phase: "readFailed", fields: ["error": String(describing: error)])
+                owesFullDrain = true
                 return
             }
             guard let last = page.last else {
@@ -205,45 +238,97 @@ actor PlaceNameReader {
                 passLeftCells = false
                 continue
             }
-            var names: [PlaceCell: PlaceNames] = [:]
-            var cancelled = false
-            for cell in page {
-                do {
-                    names[cell] = try await namer.name(cell.center, locale)
-                    backoff = Self.firstBackoff
-                } catch {
-                    let nsError = error as NSError
-                    OtosLog.metadata.noticeOperation("place.names", phase: "backoff", fields: [
-                        "seconds": "\(backoff.components.seconds)",
-                        "domain": nsError.domain, "code": "\(nsError.code)",
-                        "error": String(describing: error),
-                    ])
-                    passLeftCells = true
-                    do {
-                        // time: backoff — Maps failed to name a cell (throttled, unreachable, or
-                        // an error it does not explain); the next naming waits
-                        try await sleep(backoff)
-                    } catch {
-                        cancelled = true
-                        break
-                    }
-                    backoff = min(backoff * 2, Self.maximumBackoff)
-                }
-            }
-            do {
-                try await store.applyPlaceNames(names, language: language)
-            } catch {
-                OtosLog.metadata.errorOperation("place.names", phase: "writeFailed", fields: [
-                    "count": "\(names.count)", "error": String(describing: error),
-                ])
+            let naming = await name(page, locale: locale, backoff: &backoff)
+            passLeftCells = passLeftCells || naming.leftCells
+            guard await apply(naming.names, language: language) else {
+                owesFullDrain = true
                 return
             }
-            named += names.count
-            guard !cancelled else { break }
+            named += naming.names.count
+            guard !naming.cancelled else {
+                // A drain stopped mid-walk leaves cells unnamed: the next drain walks them all.
+                owesFullDrain = true
+                break
+            }
             after = last
         }
         if named > 0 {
             OtosLog.metadata.noticeOperation("place.names", phase: "named", fields: ["cells": "\(named)"])
+        }
+    }
+
+    /// Names the unnamed cells of `rows`. A cell Maps could not name, or a read or write that
+    /// failed, leaves a whole drain owed: the next pass walks every cell, as a pass that left
+    /// a cell unnamed does.
+    private func drainCells(of rows: Set<MediaAssetID>, language: PlaceNameLanguage, locale: Locale) async {
+        let cells: [PlaceCell]
+        do {
+            cells = try await store.unnamedPlaceCells(language: language, of: rows)
+        } catch {
+            OtosLog.metadata.errorOperation("place.names", phase: "readFailed", fields: ["error": String(describing: error)])
+            owedRows.formUnion(rows)
+            return
+        }
+        guard !cells.isEmpty else {
+            return
+        }
+        var backoff = Self.firstBackoff
+        let naming = await name(cells, locale: locale, backoff: &backoff)
+        guard await apply(naming.names, language: language), !naming.leftCells else {
+            owesFullDrain = true
+            if !naming.cancelled {
+                await drainEveryCell(language: language, locale: locale)
+            }
+            return
+        }
+        OtosLog.metadata.noticeOperation("place.names", phase: "named", fields: [
+            "cells": "\(naming.names.count)", "rows": "\(rows.count)",
+        ])
+    }
+
+    /// Asks Maps to name each cell, waiting out a doubling backoff after each failure.
+    private func name(
+        _ cells: [PlaceCell],
+        locale: Locale,
+        backoff: inout Duration
+    ) async -> (names: [PlaceCell: PlaceNames], leftCells: Bool, cancelled: Bool) {
+        var names: [PlaceCell: PlaceNames] = [:]
+        var leftCells = false
+        for cell in cells {
+            do {
+                names[cell] = try await namer.name(cell.center, locale)
+                backoff = Self.firstBackoff
+            } catch {
+                let nsError = error as NSError
+                OtosLog.metadata.noticeOperation("place.names", phase: "backoff", fields: [
+                    "seconds": "\(backoff.components.seconds)",
+                    "domain": nsError.domain, "code": "\(nsError.code)",
+                    "error": String(describing: error),
+                ])
+                leftCells = true
+                do {
+                    // time: backoff — Maps failed to name a cell (throttled, unreachable, or
+                    // an error it does not explain); the next naming waits
+                    try await sleep(backoff)
+                } catch {
+                    return (names, leftCells, true)
+                }
+                backoff = min(backoff * 2, Self.maximumBackoff)
+            }
+        }
+        return (names, leftCells, false)
+    }
+
+    /// Stores `names`; false, logged, when the write failed.
+    private func apply(_ names: [PlaceCell: PlaceNames], language: PlaceNameLanguage) async -> Bool {
+        do {
+            try await store.applyPlaceNames(names, language: language)
+            return true
+        } catch {
+            OtosLog.metadata.errorOperation("place.names", phase: "writeFailed", fields: [
+                "count": "\(names.count)", "error": String(describing: error),
+            ])
+            return false
         }
     }
 }

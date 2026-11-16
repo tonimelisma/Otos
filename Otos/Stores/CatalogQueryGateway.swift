@@ -334,6 +334,23 @@ nonisolated enum CatalogQueryGateway {
         """
     }
 
+    /// The cells of `count` rows of one root with no name in the language argued, by key;
+    /// binds the root, the paths, the language.
+    static func unnamedPlaceCellsOfRowsSQL(count: Int) -> String {
+        """
+        SELECT DISTINCT place_cell_latitude, place_cell_longitude FROM asset_metadata AS cells
+        WHERE library_root_id = ?
+          AND relative_path IN (\(Array(repeating: "?", count: count).joined(separator: ",")))
+          AND place_cell_latitude IS NOT NULL AND place_cell_longitude IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM place_cell
+            WHERE place_cell.cell_latitude = cells.place_cell_latitude
+              AND place_cell.cell_longitude = cells.place_cell_longitude
+              AND place_cell.language = ?
+          )
+        """
+    }
+
     static func distinctFilterableTypesQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
         guard let scopeClause = try scopeClause(scope, db: db) else {
             return nil

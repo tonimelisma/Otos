@@ -81,6 +81,48 @@ struct PlaceNamesTests {
         await library.store.shutdown()
     }
 
+    /// A write that names its rows wakes a read of those rows' cells alone, by key, never a
+    /// walk of every located record: an enrichment flush on the owner's catalog walked them all
+    /// (152 runs, 6.6 s, in one tour). A photo given a new place has only that cell named.
+    @Test func aChangeThatNamesItsRowsNamesOnlyTheirCells() async throws {
+        let directory = try makeTestDirectory()
+        let library = try await Self.library(in: directory, database: directory.appending(path: "catalog.sqlite"))
+        let asked = Asked()
+        let tampere = PlaceCoordinate(latitude: 61.5, longitude: 23.76)
+        let reader = PlaceNameReader(
+            store: library.store,
+            namer: PlaceNameReader.Namer { coordinate, _ in
+                await asked.add(coordinate)
+                return PlaceNames(country: "Suomi", town: nil)
+            },
+            locale: { Locale(identifier: "fi_FI") },
+            localeChanges: { AsyncStream { _ in } },
+            sleep: { _ in }
+        )
+        await reader.drain()
+        #expect(await asked.coordinates.count == 3)
+        await reader.start()
+        // The three cells' names go without a change the reader hears (its own kind of write):
+        // a walk of every located record would ask for all three again.
+        _ = try await library.store.forgetPlaceNames(notIn: PlaceNameLanguage(Locale(identifier: "en_US")))
+
+        let row = library.id("nowhere.jpg")
+        let asset = try #require(try await library.store.mediaAssets(for: [row])[row])
+        var metadata = AssetMetadata()
+        metadata.locations = [GeoRecord(source: "exifGPS", latitude: tampere.latitude, longitude: tampere.longitude, altitudeMeters: nil)]
+        _ = await library.store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: row, metadata: metadata, thumbnailPath: nil, sourceSize: asset.byteSize,
+                sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt), contentHash: .empty
+            ),
+        ])
+        try await waitUntil { await asked.count(of: PlaceCell(tampere)) == 1 }
+
+        await reader.shutdown()
+        #expect(await asked.coordinates.count == 4, "only the new cell is asked")
+        await library.store.shutdown()
+    }
+
     /// An error is not a fact (ADR 0032 rule 4): a naming that fails stores no names, so the
     /// cell stays unnamed, to be asked again, rather than stored as a place with none.
     @Test func aFailedNamingStoresNothing() async throws {
@@ -367,11 +409,11 @@ struct PlaceNamesTests {
 
     /// helsinki.jpg and harbour.jpg in one Helsinki cell, espoo.jpg and sydney.jpg, each
     /// located; nowhere.jpg not.
-    static func library(in directory: URL) async throws -> FaceEnrichmentTests.ScannedLibrary {
+    static func library(in directory: URL, database: URL? = nil) async throws -> FaceEnrichmentTests.ScannedLibrary {
         let files: [(String, PlaceCoordinate?)] = [
             ("helsinki.jpg", helsinki), ("harbour.jpg", helsinki), ("espoo.jpg", espoo), ("sydney.jpg", sydney), ("nowhere.jpg", nil),
         ]
-        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: files.map(\.0))
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: files.map(\.0), database: database)
         for (name, coordinate) in files {
             let asset = try #require(try await library.store.mediaAssets(for: [library.id(name)])[library.id(name)])
             var metadata = AssetMetadata()
