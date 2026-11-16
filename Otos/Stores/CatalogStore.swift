@@ -1210,9 +1210,6 @@ extension CatalogStore {
         let dbWriter = try database()
         let (snapshot, malformed) = try await dbWriter.readFreeingConnection { db -> (PeopleSnapshot, Set<FaceRowKey.Photo>) in
             var malformed: Set<FaceRowKey.Photo> = []
-            // The files with faces that are copies of one photo, by the digest they share.
-            var copyDigests: [MediaAssetID: Data] = [:]
-            var copiesByDigest: [Data: [PeopleSnapshot.Copy]] = [:]
             var rejections: [FaceRowKey: Set<PersonID>] = [:]
             for row in try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, face_index, person_id FROM face_rejection") {
                 rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
@@ -1280,13 +1277,19 @@ extension CatalogStore {
                     captureSeconds: capture,
                     isInVideo: (row[PeopleFaceColumn.isVideo.rawValue] as Int) != 0
                 )
-                if let digest = row[PeopleFaceColumn.copyDigest.rawValue] as Data?, copyDigests[asset] == nil {
-                    copyDigests[asset] = digest
-                    copiesByDigest[digest, default: []].append(PeopleSnapshot.Copy(
-                        asset: asset, rootID: key.rootID, isAccount: accountRowIDs.contains(key.rootID)
-                    ))
-                }
             }
+            // The present copies of each photo with a face, by the digest they share (ADR 0054).
+            var copiesByDigest: [Data: [PeopleSnapshot.Copy]] = [:]
+            for row in try Row.fetchAll(db, sql: PhotoFaceSQL.copiesOfPhotosWithFaces) {
+                let rootID: Int64 = row[1]
+                guard let rootPath = pathsByRowID[rootID] else { continue }
+                copiesByDigest[row[0] as Data, default: []].append(PeopleSnapshot.Copy(
+                    asset: MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: row[2])),
+                    rootID: rootID,
+                    isAccount: accountRowIDs.contains(rootID)
+                ))
+            }
+            let copies = copiesByDigest.values.filter { $0.count > 1 }
             let people = try Row.fetchAll(
                 db,
                 sql: "SELECT id, name, birthday, is_hidden, is_favorite FROM person ORDER BY id"
@@ -1296,10 +1299,7 @@ extension CatalogStore {
                 guard let rootPath = pathsByRowID[rowID] else { continue }
                 stacks += PhotoStackRule.stacks(candidates: candidates, libraryRootPath: rootPath)
             }
-            let photoOf = PeopleSnapshot.photos(
-                stackKeys: CatalogStacks(stacks).keyOfMember,
-                copies: Array(copiesByDigest.values)
-            )
+            let photoOf = PeopleSnapshot.photos(stackKeys: CatalogStacks(stacks).keyOfMember, copies: copies)
             // A malformed row's photo is left out whole: its other faces were read before the
             // bad row was reached.
             let left = { (id: FaceID) in
@@ -1312,6 +1312,7 @@ extension CatalogStore {
                 likeness: likeness.filter { left($0.key) },
                 keyPhotos: keyPhotos.filter { left($0.value) },
                 photoOf: photoOf,
+                copies: PeopleSnapshot.ranked(copies),
                 unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db)
             )
             return (snapshot, malformed)
@@ -1410,7 +1411,7 @@ extension CatalogStore {
         let row = try Row.fetchOne(
             db,
             sql: PreviewFaceSQL.uncheckedSQL(rootCount: rootIDs.count),
-            arguments: StatementArguments(rootIDs + rootIDs + rootIDs)
+            arguments: StatementArguments(Array(repeating: rootIDs, count: PreviewFaceSQL.uncheckedRootBindings).flatMap(\.self))
         )
         let owed: Int = row?[0] ?? 0
         let awaiting: Int = row?[1] ?? 0
@@ -6183,7 +6184,8 @@ private extension CatalogStore {
             durationSeconds: storedDetail.durationSeconds,
             renderedSourceSize: storedDetail.renderedSourceSize,
             renderedSourceMTimeSeconds: storedDetail.renderedSourceMTimeSeconds,
-            mediaChoice: storedDetail.mediaChoice
+            mediaChoice: storedDetail.mediaChoice,
+            copyDigest: storedDetail.copyDigest
         )
     }
 

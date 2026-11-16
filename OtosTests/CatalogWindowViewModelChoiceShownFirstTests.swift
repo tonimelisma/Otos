@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @testable import OtosKit
 import Testing
@@ -139,6 +140,68 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
             #expect(model.tileContentStore.content(for: id)?.detail.mediaChoice == .notRated)
             #expect(model.gridSelection.selection.isEmpty)
             #expect(model.mediaChoiceFailure == MediaChoiceFailure(count: 1))
+        }
+    }
+
+    /// Two identical copies of one photo in the window (ADR 0054: two files of one library
+    /// with the same bytes, as a library's own view shows them): a choice on one shows on
+    /// both in the step that applies it, as the catalog writes it on both, and a failed write
+    /// takes it off both.
+    @Test func aChoiceShowsOnEveryCopyTheWindowHoldsAndAFailureWithdrawsItFromEach() async throws {
+        try await withCatalogedLibrary(fileCount: 3) { library in
+            let held = HeldChoiceWrites(store: library.store, failing: [2])
+            let model = makeShownFirstModel(library, writer: held.writer)
+            defer { model.mediaChoiceForwardingTask?.cancel() }
+            // The first two are digested, and so copies; the third's digest is not read yet.
+            try await digest(library.ids.prefix(2), in: library)
+            let read = try await model.tileDetailReader.details(for: library.ids)
+            model.tileContentStore.mergeDetails(read)
+            let (target, copy, unread) = (library.ids[0], library.ids[1], library.ids[2])
+            #expect(read[target]?.copyDigest != nil && read[target]?.copyDigest == read[copy]?.copyDigest)
+            #expect(read[unread]?.copyDigest == nil)
+            _ = model.applyGridClick(hit: target, modifiers: [], orderedIDs: library.ids)
+
+            model.submitMediaChoice(.liked, origin: .keyboard)
+            #expect(model.tileContentStore.content(for: target)?.detail.mediaChoice == .liked)
+            #expect(model.tileContentStore.content(for: copy)?.detail.mediaChoice == .liked)
+            #expect(model.tileContentStore.content(for: unread)?.detail.mediaChoice == .notRated)
+            #expect(model.tileChoiceChange.ids == [target, copy])
+            try await waitUntil { await held.arrived == 1 }
+            #expect(try await library.store.mediaAssets(for: [copy])[copy]?.mediaChoice == .notRated, "the write is held")
+            #expect(try await model.tileDetailReader.detail(for: copy)?.mediaChoice == .liked)
+            await held.release()
+            try await waitUntil { model.hasSettledMediaChoices }
+            #expect(try await library.store.mediaAssets(for: [copy])[copy]?.mediaChoice == .liked)
+            // The first read of both that started after the landing retires the choice on each.
+            #expect(try await model.tileDetailReader.details(for: [target, copy]).values.map(\.mediaChoice) == [.liked, .liked])
+            #expect(model.mediaChoiceOverlay.isEmpty)
+
+            // The second write fails: both copies show what they showed before, and only the
+            // target the act named is selected and counted.
+            model.submitMediaChoice(.disliked, origin: .keyboard)
+            #expect(model.tileContentStore.content(for: copy)?.detail.mediaChoice == .disliked)
+            await held.release()
+            try await waitUntil { model.hasSettledMediaChoices }
+            #expect(model.tileContentStore.content(for: target)?.detail.mediaChoice == .liked)
+            #expect(model.tileContentStore.content(for: copy)?.detail.mediaChoice == .liked)
+            #expect(model.gridSelection.selection == [target])
+            #expect(model.mediaChoiceFailure == MediaChoiceFailure(count: 1))
+            #expect(model.mediaChoiceOverlay.isEmpty)
+        }
+    }
+
+    /// Reads each of `ids`' digest from its bytes, as enrichment would.
+    private func digest(_ ids: some Sequence<MediaAssetID>, in library: CatalogedLibrary) async throws {
+        let facts = try #require(await library.store.planningMedia(for: library.rootPath))
+        for id in ids {
+            let fact = try #require(facts.first { $0.id == id })
+            let bytes = try Data(contentsOf: library.root.appending(path: id.relativePath.rawValue))
+            _ = try await library.store.applyContentHash(ContentHashResult(
+                id: id,
+                contentHash: ContentDigest(bytes: Array(Insecure.SHA1.hash(data: bytes)))!,
+                sourceSize: fact.byteSize,
+                sourceMTimeSeconds: fact.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
+            ))
         }
     }
 

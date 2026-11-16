@@ -128,9 +128,26 @@ an account, a mirror pair included.
   own faces and, only for a row with `has_copies`, its present copies' faces through the digest
   index. A person's narrow scope seeks its faces' photos and their copies. A person's photo
   count counts each photo once (`PeopleSnapshot.photos`).
+- **Every copy shows the photo's people.** Info's People section and the photo menus list the
+  shown file's own faces, then each visible person named only on another present copy, with
+  that copy's face; its box is of that copy's pixels, so it is outlined only where that copy
+  shows, and an act on it acts on that copy (ADR 0047, `CatalogPeopleState.faces(of:)`).
+  The Person sheet's row shows each photo once, a likeness never compares a photo with its own
+  copy, and the unchecked tally counts a photo once (ADR 0047).
 - Edits stay on the copy they were made on.
-- Within one library, files with the same digest are one photo in the combined scopes (above)
-  and so share choices and faces; Duplicates still lists them within their library.
+- **Within one library**, two files with the same digest are one photo in the combined scopes:
+  All Media shows one tile, the first by path. The library's own view shows both files, and
+  Duplicates lists them as one identical group to clean up, within their library (ADR 0042).
+  A Like or Dislike on either is written on both, and each shows the other's named faces.
+  Duplicates' keeper rule therefore never meets two identical copies with different choices.
+
+**The window shows a held choice on every copy it holds** (APP-086). Each tile's detail carries
+the digest its copies share (`MediaTileDetail.copyDigest`, the trigger's own `isCopy` test), and
+a choice is held in `MediaChoiceOverlay` for the act's targets and every tile the tile store
+holds with the same digest, under the act's one command: they show it in the step that applies
+the act, a read retires it on each as on the target, and a failed write withdraws it from each.
+A copy the window does not hold yet is read from the catalog when it comes into view; read
+before the write lands, it shows the choice one pass later.
 
 **Info names where the other copies are.** The File section's `Copies` row lists the library
 or account of each other present copy, in the order copies are shown in. It reads `None` when
@@ -152,7 +169,8 @@ is never reported as none.
 | Showing the copy with the user's work (edited, liked) first | Liking or un-liking would swap which file the tile is, under the pointer. |
 | Keeping a choice on its copy and resolving the photo's choice in each read | Every read that tests a choice — the order under a Liked filter, counts, On This Day, the stacks, the tile badge, Info — would need a digest lookup per row; the order index cannot hold the digest, so it is the per-row table read that took 17–33 s. A conflict between copies would also be decided in each read. |
 | Propagating faces to every copy | Faces are read from each copy's own preview, by two pipelines that draw a photo differently (ADR 0042); there is no face-to-face correspondence to copy along, and a copy read later would need it again. |
-| Reading faces from one copy per photo | Changes face identity and its lifecycle, and the copy read would change with availability. Reported as double work instead. |
+| Reading faces from one copy per photo | The copies are not the same pixels: a library's file is read from Otos's 2560 px rendering, its Immich copy from a 1440 px short-edge preview drawn by libvips, which find different faces and boxes (ADR 0047). The face read from one copy cannot be outlined on the other's pixels, the copy read would change with availability, and the user's acts would have to be carried between readings of different pixels. |
+| Showing another copy's unidentified faces on the shown copy | They are the shown copy's own faces detected again from other pixels; listing both would show each unnamed face twice. |
 | A wall-clock time for each choice | Which act came last is a fact the catalog can hold as an order; a clock can step back (ADR 0033). |
 | Storing the shown copy per scope's reachable roots | Every mount or unmount would rewrite every copied row of the library (16,000 on the owner's catalog). |
 | Electing the shown copy in every read | The 17–33 s per-row read above. The stored best copy answers every row whose best copy is reachable. |
@@ -183,8 +201,9 @@ is never reported as none.
   digest index and the six indexes that carry the tested columns, recomputes every row with a
   digest, and gives each photo whose copies disagree one choice. Its cost on a generated
   owner-shaped catalog is in `docs/research/2026-11-15-photo-level-copies.md`.
-- Faces are still read from every copy, so a mirrored photo's faces are read and assigned
-  twice; the photo counts once.
+- Faces are read from every copy, so a mirrored photo's faces are read and assigned twice: on
+  the owner's shape, 16,000 more preview readings than photos, once each (the readings are
+  stamped and never repeat). The photo counts once in every count People shows.
 - A digest write recomputes its group in the same transaction, about 0.7 ms on the owner's
   catalog. It notifies `.copies`, which the combined scopes and People depend on, and
   `.choices` too when a copy that joined a photo took its choice (`choice_sequence.joins`).

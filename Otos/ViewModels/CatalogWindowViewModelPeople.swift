@@ -445,9 +445,9 @@ nonisolated extension CatalogPeopleState {
         hiddenPeople.contains { $0.name == name && $0.id != excluding }
     }
 
-    /// A face of the published People state.
+    /// A face of the published People state, on the file it was read from.
     func face(_ id: FaceID) -> PhotoFace? {
-        faces(of: id.asset).first { $0.id == id }
+        ownFaces(of: id.asset).first { $0.id == id }
     }
 }
 

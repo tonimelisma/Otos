@@ -231,8 +231,9 @@ faces are outlined wherever their photos show — the loupe, both compare panes,
 filmstrip tiles — whether or not the Info pane is open, in DES-061's 3 pt accent border,
 carried through the edit the picture shows (its crop and straighten); a tile still showing
 a placeholder draws none. A video's face is never outlined: its box belongs to the frame
-it was read in, not to what the video shows (owner decision, 2026-11-13). Closing the menu
-clears them.
+it was read in, not to what the video shows (owner decision, 2026-11-13). A face is outlined
+only on the copy it was read from: a person listed from another copy of the photo (below) has
+no outline on this one, since its box is of that copy's pixels. Closing the menu clears them.
 
 ### Info pane
 
@@ -247,6 +248,10 @@ The first section (DES-088), `People`:
   photo was checked and holds none, `Not Checked Yet` before; `—` while that is unknown, or
   when its only faces are a hidden person's. A photo checked while it is shown says so without
   being reselected.
+- **A photo's copies (ADR 0054):** a named face on any identical copy is the photo's. After the
+  photo's own faces come the visible people named only on another present copy, each with
+  that copy's face tile and acts, which act on that copy's face; another copy's unidentified
+  faces are not listed, being this photo's own detected again. The photo menus list the same.
 - **Several photos:** each visible person in them with `12 photos` (an unnamed person: every
   photo of them), and the unidentified faces with `5 photos` and the three people they most
   likely are as buttons, under the photo menu's rule: only when no photo holds more than one.
@@ -262,7 +267,7 @@ The first section (DES-088), `People`:
 | String | Level |
 | --- | --- |
 | Title: the name; `Name This Person` for a person without one; `Name This Face` / `Name These Faces` for `Someone Else…` | L1 |
-| `14 photos`: the photos Save changes, over a row of up to eight of the faces, newest first, so the user sees who is being named | L3 |
+| `14 photos`: the photos Save changes, over a row of up to eight of the faces, newest first and one per photo (a photo's identical copies and a stack's files are one photo), so the user sees who is being named | L3 |
 | `Name` (text field, suggesting the visible named people whose name holds what is typed), `Birthday`: a year field, then `Exact date` with a date picker, disabled, never removed, while unchecked (DES-053, DES-054). A year alone counts from 1 January. | L2 controls |
 | Footnote: `Faces from before this date are never given to Sam.` | L3 |
 
@@ -313,6 +318,10 @@ and redoing one keeps the rest to redo. The guesses that followed are rebuilt by
 
 ## Owner decisions
 
+- 2026-11-15 (copies): a named face belongs to the photo, not the copy; a face on any copy
+  counts for the photo. How a copy lists another copy's people (its own faces first, then the
+  people named only on another copy with that copy's face, no outline, no other copy's
+  unidentified faces) was decided by the agent under that rule and is the owner's to change.
 - 2026-11-12 (face menus): every act says who and how many: `Change to ▸` / `Assign to ▸`
   with the five likeliest people and `Someone Else…`; an unnamed person is named as a whole
   (`Name This Person ▸`, `New Name…`, with every photo of them counted), is corrected only

@@ -100,7 +100,10 @@ struct MediaChoiceCommand {
     }
 
     let write: Write
-    /// The overlay command holding what this write shows, and the items it holds them for.
+    /// The items the act names: what a failed write selects and counts.
+    let targets: [MediaAssetID]
+    /// The overlay command holding what this write shows, and the items it holds them for:
+    /// the targets and every identical copy of one the window holds (ADR 0054).
     let held: UInt64
     let heldIDs: [MediaAssetID]
     /// The act's record, for a user choice; its undo and redo carry it in `write`.
@@ -226,7 +229,7 @@ extension CatalogWindowViewModel {
         registerMediaChoiceUndo(record)
         advanceAfterChoice(from: ids.last)
         enqueueMediaChoice(MediaChoiceCommand(
-            write: .assign(assignments), held: held, heldIDs: ids, record: record, origin: origin
+            write: .assign(assignments), targets: ids, held: held.command, heldIDs: held.ids, record: record, origin: origin
         ))
         OtosLog.ui.notice(
             "op=mediaChoice.submit choice=\(choice.rawValue, privacy: .public) count=\(ids.count, privacy: .public) origin=\(origin.rawValue, privacy: .public)"
@@ -238,14 +241,39 @@ extension CatalogWindowViewModel {
         mediaChoiceOverlay.choice(for: id) ?? tileContentStore.content(for: id)?.detail.mediaChoice ?? .default
     }
 
-    /// Holds `assignments` until the catalog's word on them is read, and shows them now.
-    private func holdChoices(_ assignments: [MediaAssetID: MediaChoice]) -> UInt64 {
-        let held = mediaChoiceOverlay.submit(assignments, shown: shownChoice(for:))
-        showChoices(assignments)
+    /// Holds `assignments`, and each identical copy of their items the window holds, until
+    /// the catalog's word on them is read, and shows them now. Returns the overlay's command
+    /// and the items it holds.
+    private func holdChoices(_ assignments: [MediaAssetID: MediaChoice]) -> (command: UInt64, ids: [MediaAssetID]) {
+        let shown = withHeldCopies(assignments)
+        let held = mediaChoiceOverlay.submit(shown, shown: shownChoice(for:))
+        showChoices(shown)
         // Command: Projection takes a target out of a choice filter before it hears the
         // write landed.
-        projectionIntentContinuation.yield(.choose(assignments, request: held))
-        return held
+        projectionIntentContinuation.yield(.choose(shown, request: held))
+        return (held, Array(shown.keys))
+    }
+
+    /// `choices` with every identical copy (ADR 0054) of their items that the window holds
+    /// taking its copy's choice. The catalog writes a choice on every copy in the act's own
+    /// transaction (`media_asset_choice_made`), so the window shows it on each copy in the
+    /// step that applies the act, and a failed write withdraws it from each. The copies are
+    /// the tiles the tile store holds, each by the digest its detail read.
+    private func withHeldCopies(_ choices: [MediaAssetID: MediaChoice]) -> [MediaAssetID: MediaChoice] {
+        var byDigest: [ContentDigest: MediaChoice] = [:]
+        for (id, choice) in choices {
+            if let digest = tileContentStore.content(for: id)?.detail.copyDigest {
+                byDigest[digest] = choice
+            }
+        }
+        guard !byDigest.isEmpty else {
+            return choices
+        }
+        var expanded = choices
+        for (id, digest) in tileContentStore.copies(among: Set(byDigest.keys)) where expanded[id] == nil {
+            expanded[id] = byDigest[digest]
+        }
+        return expanded
     }
 
     /// Shows `choices` on every surface that draws them, in this step: the tiles in the tile
@@ -382,12 +410,13 @@ extension CatalogWindowViewModel {
             case let .restore(record, _): record
             }
             record.map(removeMediaChoiceUndo)
-            let shown = state.mediaGrid.orderedAssetIDs.filter(Set(command.heldIDs).contains)
+            let shown = state.mediaGrid.orderedAssetIDs.filter(Set(command.targets).contains)
             selectAssets(shown)
-            mediaChoiceFailure = MediaChoiceFailure(count: command.heldIDs.count)
+            mediaChoiceFailure = MediaChoiceFailure(count: command.targets.count)
             OtosLog.persistence.errorOperation("mediaChoice.persist", phase: "failed", fields: [
                 "origin": command.origin.rawValue,
-                "count": "\(command.heldIDs.count)",
+                "count": "\(command.targets.count)",
+                "held": "\(command.heldIDs.count)",
                 "error": String(describing: error),
             ])
         }
@@ -461,8 +490,9 @@ extension CatalogWindowViewModel {
         let held = holdChoices(shown)
         enqueueMediaChoice(MediaChoiceCommand(
             write: .restore(record, undoing: undoing),
-            held: held,
-            heldIDs: Array(shown.keys),
+            targets: Array(shown.keys),
+            held: held.command,
+            heldIDs: held.ids,
             record: nil,
             origin: undoing ? .undo : .redo
         ))

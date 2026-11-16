@@ -115,6 +115,134 @@ struct PhotoCopiesTests {
         }
     }
 
+    /// What a photo shows of its copies' faces (owner, 2026-11-15: a named face on any copy is
+    /// the photo's). The shown copy lists its own faces, then each person named only on another
+    /// copy, with that copy's face: its box is of that copy's pixels, so it is outlined only
+    /// where that copy shows, and an act on it acts on that copy. Another copy's unidentified
+    /// faces are not listed, a held act on the other copy's face shows on this one, two copies
+    /// selected list the face once, and the Person sheet's row shows the photo once.
+    @Test func aPhotoShowsThePeopleNamedOnItsCopiesWithTheirOwnFaces() {
+        typealias Fixture = FaceAssignmentPolicyTests
+        let shown = Fixture.face("IMG_1.JPG", toward: [0: 1], at: 0)
+        let named = Fixture.face("a/IMG_1.JPG", toward: [0: 1], at: 0, assignment: .user(Fixture.sam))
+        let unidentified = Fixture.face("a/IMG_1.JPG", index: 1, toward: [1: 1], at: 0)
+        let ian = Fixture.face("IMG_1.JPG", index: 1, toward: [2: 1], at: 0, assignment: .user(Fixture.ian))
+        let ianOnCopy = Fixture.face("a/IMG_1.JPG", index: 2, toward: [2: 1], at: 0, assignment: .model(Fixture.ian))
+        var snapshot = PeopleStateTests.snapshot([shown, ian, named, unidentified, ianOnCopy])
+        let (library, account) = (shown.id.asset, named.id.asset)
+        snapshot.copies = [[library, account]]
+        snapshot.photoOf = [account: library]
+        let state = PeopleStateBuilder.state(from: snapshot)
+
+        // Ian is on both: the library's own face. Sam is named only on the account's.
+        #expect(state.faces(of: library).map(\.id) == [shown.id, ian.id, named.id])
+        #expect(state.faces(of: library).last?.person == Fixture.sam)
+        #expect(state.faces(of: account).map(\.id) == [named.id, unidentified.id, ianOnCopy.id])
+        #expect(state.selectionFaces(for: [library, account]).faces.map(\.id)
+            == [shown.id, ian.id, named.id, unidentified.id, ianOnCopy.id])
+        #expect(state.face(named.id)?.id.asset == account, "the face is the account copy's")
+        #expect(state.person(Fixture.sam)?.media.total == 1)
+        #expect(state.person(Fixture.ian)?.media.total == 1)
+        #expect(state.person(Fixture.ian)?.newestFaces.count == 1, "one face per photo")
+
+        // `This Is Not Sam` held on the account's face: the library no longer lists her, and
+        // the face, unidentified now, is the account's own.
+        let held = state.overlaying(PeopleOverlayEffect(faces: [named.id: .person(nil)]))
+        #expect(held.faces(of: library).map(\.id) == [shown.id, ian.id])
+        #expect(held.faces(of: account).first?.person == nil)
+    }
+
+    /// The likeness that orders a person's photos (`Most Like First`) compares a face with the
+    /// person's faces in other photos only: a copy's face, read from another preview of the
+    /// same photo, is not evidence of how like the person the photo is.
+    @Test func aLikenessIsNeverToTheSamePhotosOtherCopy() {
+        typealias Fixture = FaceAssignmentPolicyTests
+        let shown = Fixture.face("IMG_1.JPG", toward: [0: 1, 1: 0.05], at: 0, assignment: .user(Fixture.sam))
+        let copy = Fixture.face("a/IMG_1.JPG", toward: [0: 1, 1: 0.05], at: 0, assignment: .user(Fixture.sam))
+        let other = Fixture.face("IMG_2.JPG", toward: [0: 1, 1: 1], at: Fixture.day, assignment: .user(Fixture.sam))
+        let faces = [shown, copy, other]
+        let separate = FaceAssignmentPolicy.assign(faces: faces, people: Fixture.people)
+        let onePhoto = FaceAssignmentPolicy.assign(faces: faces, people: Fixture.people, photoOf: [copy.id.asset: shown.id.asset])
+        #expect(separate.likeness[shown.id].map { $0 > 0.99 } == true, "counted twice, the photo is like itself")
+        let toOther = zip(shown.embedding.values, other.embedding.values).map(*).reduce(0, +)
+        #expect(onePhoto.likeness[shown.id].map { abs($0 - toOther) < 1e-4 } == true)
+        #expect(onePhoto.likeness[copy.id].map { abs($0 - toOther) < 1e-4 } == true)
+        #expect(onePhoto.likeness[other.id].map { abs($0 - toOther) < 1e-4 } == true)
+    }
+
+    /// A face named on one copy is the photo's on every copy, and stays the user's when the
+    /// other copy is read for its own faces (each copy is read from its own preview: a
+    /// library's Otos rendering, an account's Immich preview). The other copy shows the name
+    /// before it is read and after; once assignment gives its own face the person, it shows
+    /// that, and the person's photo is counted once. A photo whose two copies are both owed
+    /// faces is one photo not yet checked.
+    @Test func aNameOnOneCopySurvivesTheOtherCopysReading() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg"])
+        let (a, b) = (library.id("a.jpg"), library.id("b.jpg"))
+        let store = library.store
+        let libraries = await store.currentLibraries()
+        let paths = CatalogWindowPolicy.availablePaths(from: libraries)
+        // A digest of the same bytes, as enrichment would read for two identical files.
+        let sameBytes = try #require(ContentDigest(bytes: Array(repeating: 7, count: ContentDigest.byteCount)))
+        func digest(_ ids: [MediaAssetID]) async throws {
+            for (id, asset) in try await store.mediaAssets(for: ids) {
+                _ = try await store.applyContentHash(ContentHashResult(
+                    id: id, contentHash: sameBytes, sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt)
+                ))
+            }
+        }
+        #expect(try await store.uncheckedForFaces(availableLibraryPaths: paths) == MediaCount(photos: 3))
+        try await digest([a, b])
+        #expect(try await store.uncheckedForFaces(availableLibraryPaths: paths) == MediaCount(photos: 2))
+
+        try await library.readFaces([library.result(for: "b.jpg", faces: [PeopleStoreTests.face(x: 0.3)])])
+        try await digest([b])
+        let named = FaceID(asset: b, index: 0)
+        let sam = try #require(try await store.perform(.moveToNewPerson([named], name: "Sam")).person)
+        var state = try await PeopleStateBuilder.state(from: store.peopleSnapshot(availableLibraryPaths: paths))
+        #expect(state.faces(of: a).map(\.id) == [named], "a, not yet read, shows the name on b")
+        #expect(state.unchecked == MediaCount(photos: 2))
+
+        try await library.readFaces([library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.3)])])
+        try await digest([a])
+        let own = FaceID(asset: a, index: 0)
+        let snapshot = try await store.peopleSnapshot(availableLibraryPaths: paths)
+        #expect(snapshot.faces.first { $0.id == named }?.assignment == .user(sam), "the user's word survives")
+        state = PeopleStateBuilder.state(from: snapshot)
+        #expect(state.faces(of: a).map(\.id) == [own, named])
+
+        state = try await PeopleAssignment.settle(store: store, libraries: libraries)
+        #expect(state.faces(of: a).map(\.id) == [own])
+        #expect(state.faces(of: a).first?.person == sam)
+        #expect(state.person(sam)?.media.total == 1)
+        #expect(state.unchecked == MediaCount(photos: 1))
+        await store.shutdown()
+    }
+
+    /// The copies People resolves a photo's faces through are read from the faces' own photos
+    /// and the digest index: every present copy of each photo with a face, the copy with no
+    /// face of its own included, and nothing for a photo with no copy.
+    @Test func thePhotosCopiesAreReadThroughTheDigestIndex() async throws {
+        let dbQueue = try await Self.catalog { db in
+            try Self.face(person: 1, on: "a/IMG_0001.JPG", db: db)
+            try db.execute(sql: """
+            INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                              landmarks, quality, analysis_revision, embedding)
+            VALUES (1, 'IMG_0200.JPG', 0, 0.1, 0.1, 0.2, 0.2, x'00', 0.8, 1, x'00')
+            """)
+        }
+        let (rows, plan) = try await dbQueue.read { db in
+            try (
+                Row.fetchAll(db, sql: PhotoFaceSQL.copiesOfPhotosWithFaces).map { "\($0[1] as Int64):\($0[2] as String)" },
+                Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(PhotoFaceSQL.copiesOfPhotosWithFaces)").map { $0["detail"] as String }
+            )
+        }
+        #expect(Set(rows) == ["1:IMG_0001.JPG", "2:a/IMG_0001.JPG"])
+        #expect(plan.contains { $0.hasPrefix("SEARCH face_copy USING") && $0.contains(ContentDigestSQL.indexName) }, "\(plan)")
+        #expect(!plan.contains { $0.hasPrefix("SCAN face_copy") || $0.hasPrefix("SCAN face_photo") }, "\(plan)")
+    }
+
     // MARK: - Fixture
 
     private struct Read {

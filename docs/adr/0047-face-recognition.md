@@ -349,7 +349,40 @@ are still read from each copy's own preview and stay on that copy, and the user 
 the copy in front of them. A person's photos, People and the People filter find a photo by a
 face on any of its present copies (`PhotoFaceSQL`), and a person's photo count counts the photo
 once (`PeopleSnapshot.photos`), so a photo mirrored by an Immich account is not two photos of
-that person. Each copy's faces are still read, embedded and assigned on their own.
+that person.
+
+**Each copy is read for its own faces** (2026-11-15). Identical bytes are not identical
+pixels to the reader: a library file is read from Otos's 2560 px rendering (RAW9 or Image I/O,
+ADR 0035), its Immich copy from the server's 1440 px short-edge JPEG preview (libvips, ADR 0046
+§7). Resolution alone moves Vision's quality score by a median −0.014 and loses 39 % of the
+faces just above the 0.30 floor, and a RAW's development moves embeddings below 0.9 cosine
+(`docs/research/2026-11-12-faces-from-the-preview.md`), so the two readings find different
+face sets and boxes. A face stays on the copy whose pixels it was read from; nothing is copied
+between copies, and no copy's reading replaces another's, so no user act moves or is lost when a
+copy comes or goes.
+
+**Every surface resolves a photo's faces through one relation**, the copies `PhotoFaceSQL`
+finds a photo by (`PhotoFaceSQL.copiesOfPhotosWithFaces`, read into `PeopleSnapshot.copies`):
+- **A photo's faces** (Info's People section, the photo menus, `SelectionFaces`) are the shown
+  file's own faces, then, for each visible person a present copy holds and this file does not,
+  that copy's face, from the first copy in shown order (`CatalogPeopleState.faces(of:)`). Another
+  copy's unidentified faces are not listed: they are this file's own detections, read again
+  from other pixels. Several selected copies list a face once.
+- **A face's box belongs to its own copy's pixels**, so it is outlined only where that copy
+  shows (`outlinedFaceBoxes` is keyed by the face's file); a person named only on another copy
+  is listed with that copy's face tile and no outline on this one.
+- **An act acts on the face's own copy.** `This Is Not Sam` on a face listed from another copy
+  takes that copy's name, and the person leaves this copy's list unless its own face holds
+  them; naming this copy's own face is the way to give it the person.
+- **Nothing is counted twice:** a person's photo count and the Person sheet's row count and
+  show each photo once (`PeopleSnapshot.photoOf`, `PeopleStateBuilder.onePerPhoto`); a face's
+  likeness is to the person's faces in other photos only, never to its own photo's other copy
+  or stack file (`FaceAssignmentPolicy.assign(photoOf:)`); and the unchecked tally counts a
+  photo once while any present copy of it is unread (`PreviewFaceSQL.uncheckedSQL`). A
+  person is still at most once per file, so each copy's face can be the person.
+- Assignment reads each copy's faces on their own: the same face read twice is near-identical
+  (cosine ≥ 0.95), so a face named on one copy makes its twin's guess, and grouping, which
+  needs faces from two days, gains nothing from a twin of the same day.
 
 ### Licences and attribution
 

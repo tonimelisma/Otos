@@ -1151,7 +1151,7 @@ extension CatalogStoreQueryPlanTests {
                 ),
                 explainPlan(
                     db, sql: PreviewFaceSQL.uncheckedSQL(rootCount: 2),
-                    arguments: [rootID1, rootID2, rootID1, rootID2, rootID1, rootID2]
+                    arguments: StatementArguments(Array(repeating: [rootID1, rootID2], count: PreviewFaceSQL.uncheckedRootBindings).flatMap(\.self))
                 )
             )
         }
@@ -1162,5 +1162,9 @@ extension CatalogStoreQueryPlanTests {
             #expect(unchecked.contains("USING INDEX \(index)") || unchecked.contains("USING COVERING INDEX \(index)"), "\(unchecked)")
         }
         #expect(!unchecked.contains("SCAN media_asset"))
+        // A photo's copies (ADR 0054) are asked through the digest index, never a scan.
+        #expect(unchecked.contains("SEARCH copy USING INDEX \(ContentDigestSQL.indexName)")
+            || unchecked.contains("SEARCH copy USING COVERING INDEX \(ContentDigestSQL.indexName)"), "\(unchecked)")
+        #expect(!unchecked.contains("SCAN copy"), "\(unchecked)")
     }
 }

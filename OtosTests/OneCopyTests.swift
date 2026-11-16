@@ -18,19 +18,23 @@ struct OneCopyTests {
         let account: LibraryRootPath
     }
 
-    /// A library holding `IMG_1.JPG` ("same") and `IMG_2.JPG` ("other"), digested from their
-    /// bytes unless `digested` is false, and an Immich account.
-    private func fixture(digested: Bool = true) async throws -> Fixture {
+    /// A library holding `IMG_1.JPG` ("same") and `IMG_2.JPG` ("other"), and `twin` ("same")
+    /// when one is named, digested from their bytes unless `digested` is false, and an Immich
+    /// account.
+    private func fixture(digested: Bool = true, twin: String? = nil) async throws -> Fixture {
         let temp = try makeTestDirectory()
         let folder = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try writeCatalogStoreFile(folder.appending(path: "IMG_1.JPG"), contents: "same")
         try writeCatalogStoreFile(folder.appending(path: "IMG_2.JPG"), contents: "other")
+        if let twin {
+            try writeCatalogStoreFile(folder.appending(path: twin), contents: "same")
+        }
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: folder)
         let library = try CatalogPath.normalizedDirectoryPath(for: folder)
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == (twin == nil ? 2 : 3) }
         let account = try await store.addImmichAccount(server: Self.server, userID: "user-1", displayName: "Family")
         let fixture = Fixture(store: store, library: library, account: account)
         if digested {
@@ -257,6 +261,33 @@ struct OneCopyTests {
         // Deleting a copy leaves the photo's choice on the others.
         try await apply(SourceListingChanges(deletedSourceItems: ["a2"]), to: fixture.account, store: store)
         #expect(try await choices(of: [libraryCopy, first], store) == [.disliked, .disliked])
+        await store.shutdown()
+    }
+
+    /// Two files with the same bytes in one library (ADR 0054; ADR 0042): All Media shows one
+    /// of them, the first by path, as one photo; the library's own view shows both files;
+    /// Duplicates lists them as one group to clean up, within their library; and a Like on
+    /// either is the photo's, so both files hold it and the one All Media shows is Liked.
+    @Test func twoIdenticalFilesInOneLibraryAreOnePhotoAndTwoFilesToCleanUp() async throws {
+        let fixture = try await fixture(twin: "IMG_1 copy.JPG")
+        let store = fixture.store
+        let first = id("IMG_1 copy.JPG", in: fixture.library)
+        let second = id("IMG_1.JPG", in: fixture.library)
+        let other = id("IMG_2.JPG", in: fixture.library)
+        var liked = MediaFilter.all
+        liked.choices = [.liked]
+
+        #expect(try await ids(.allMedia, store) == [first, other])
+        #expect(try await ids(.library(fixture.library), store) == [first, second, other])
+        #expect(try await ids(.duplicates, store) == [first, second])
+        let copies = try await store.duplicateCopies(availableLibraryPaths: [fixture.library, fixture.account]).copies
+        #expect(Set(copies.map(\.copy.id)) == [first, second])
+        #expect(Set(copies.map(\.digest)).count == 1)
+
+        _ = try await store.setMediaChoices([second: .liked])
+        #expect(try await choices(of: [first, second, other], store) == [.liked, .liked, .notRated])
+        #expect(try await ids(.allMedia, store, filter: liked) == [first])
+        #expect(try await ids(.library(fixture.library), store, filter: liked) == [first, second])
         await store.shutdown()
     }
 

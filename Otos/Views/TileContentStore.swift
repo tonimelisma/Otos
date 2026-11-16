@@ -147,6 +147,18 @@ final class TileContentStore {
         return changes
     }
 
+    /// The held tiles that are identical copies (ADR 0054) with one of `digests`, each with
+    /// its digest: a walk of the entries held, which the scope bounds.
+    func copies(among digests: Set<ContentDigest>) -> [MediaAssetID: ContentDigest] {
+        var copies: [MediaAssetID: ContentDigest] = [:]
+        for (id, entry) in entries {
+            if let digest = entry.content.detail.copyDigest, digests.contains(digest) {
+                copies[id] = digest
+            }
+        }
+        return copies
+    }
+
     /// Shows `choice` on the tile of `id`, if one is held, without touching its image: a
     /// choice is not part of the image key. True when the tile's choice changed.
     @discardableResult

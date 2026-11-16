@@ -300,7 +300,9 @@ extension PeopleAssignment {
         state: CatalogPeopleState,
         ranker: FaceRanker
     ) async -> [FaceID: [FaceCandidate]] {
-        let wanted = Set(photos)
+        // A photo shows the named faces of its copies (`CatalogPeopleState.faces(of:)`), so
+        // those are ranked too; each is ranked against the people of its own file.
+        let wanted = Set(photos + photos.flatMap(state.copies(of:)))
         let hidden = Set(state.hiddenPeople.map(\.id))
         let faces = snapshot.faces.filter { face in
             wanted.contains(face.id.asset) && !(face.assignment.person.map(hidden.contains) ?? false)
@@ -350,6 +352,13 @@ nonisolated enum PeopleStateBuilder {
             }
             photoFaces[face.id.asset, default: []].append(PhotoFace(tile: tile, person: face.assignment.person))
         }
+        var copies: [MediaAssetID: [MediaAssetID]] = [:]
+        for group in snapshot.copies where group.count > 1 {
+            for file in group {
+                copies[file] = group.filter { $0 != file }
+            }
+        }
+        let photo = { (face: FaceTile) in snapshot.photoOf[face.id.asset] ?? face.id.asset }
         let people = snapshot.people.compactMap { person -> PersonSummary? in
             let own = (faces[person.id] ?? []).sorted(by: newestFirst)
             guard !own.isEmpty || !snapshot.isBare(person) else { return nil }
@@ -360,21 +369,27 @@ nonisolated enum PeopleStateBuilder {
                 birthday: person.birthday,
                 isHidden: person.isHidden,
                 isFavorite: person.isFavorite,
-                media: MediaCount(items: own.map { face in
-                    (snapshot.photoOf[face.id.asset] ?? face.id.asset, snapshot.tiles[face.id]?.isInVideo ?? false)
-                }),
+                media: MediaCount(items: own.map { face in (photo(face), face.isInVideo) }),
                 cover: keyPhoto ?? own.first,
                 userFaces: (userFaces[person.id] ?? []).sorted(by: newestFirst),
                 anchorMedia: anchorMedia[person.id] ?? [:],
-                newestFaces: Array(own.prefix(PersonSummary.newestFaceCount))
+                newestFaces: Array(onePerPhoto(own, photo: photo).prefix(PersonSummary.newestFaceCount))
             )
         }.sorted(by: galleryOrder)
         return CatalogPeopleState(
             people: people,
             photoFaces: photoFaces,
+            copies: copies,
             unchecked: snapshot.unchecked,
             faceCount: snapshot.faces.count
         )
+    }
+
+    /// `faces` with only the first face of each photo they are in: a photo's copies, and the
+    /// files of a stack, are one photo (`PeopleSnapshot.photoOf`), each read for its faces.
+    static func onePerPhoto(_ faces: [FaceTile], photo: (FaceTile) -> MediaAssetID) -> [FaceTile] {
+        var seen: Set<MediaAssetID> = []
+        return faces.filter { seen.insert(photo($0)).inserted }
     }
 
     static func galleryOrder(_ lhs: PersonSummary, _ rhs: PersonSummary) -> Bool {

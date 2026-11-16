@@ -74,33 +74,43 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// (`photos(stackKeys:copies:)`), so a person's photo count counts the photo once. A file
     /// absent from it stands for itself.
     var photoOf: [MediaAssetID: MediaAssetID] = [:]
+    /// The present identical copies (ADR 0054) of each photo one of whose files holds a face,
+    /// each group in the order copies are shown in (`ranked`): what a photo's faces are
+    /// resolved through, so every copy shows the photo's people (`CatalogPeopleState.faces(of:)`).
+    var copies: [[MediaAssetID]] = []
 
-    /// One identical copy of a photo with faces, with what ranks it among its copies.
+    /// One present identical copy of a photo with a face, with what ranks it among its copies.
     nonisolated struct Copy: Sendable {
         let asset: MediaAssetID
         let rootID: Int64
         let isAccount: Bool
     }
 
-    /// The file each file with faces stands for, where it is not itself:
-    /// - identical copies (ADR 0054) — each group of `copies` — are one photo, which the copy
-    ///   shown first among them stands for: a library's before an account's, then by root and
-    ///   path;
-    /// - the files of a stack (ADR 0052) — a RAW and its JPEG — are one photo, which the
-    ///   stack's key stands for, reached through the copy.
-    static func photos(stackKeys: [MediaAssetID: MediaAssetID], copies: [[Copy]]) -> [MediaAssetID: MediaAssetID] {
-        var photoOf = stackKeys
-        for group in copies where group.count > 1 {
-            let ranked = group.sorted { lhs, rhs in
+    /// Each group of copies in the order the shown copy is chosen by (ADR 0054): a library's
+    /// before an account's, then by root and path.
+    static func ranked(_ copies: [[Copy]]) -> [[MediaAssetID]] {
+        copies.map { group in
+            group.sorted { lhs, rhs in
                 if lhs.isAccount != rhs.isAccount {
                     return !lhs.isAccount
                 }
                 return (lhs.rootID, lhs.asset.relativePath.rawValue) < (rhs.rootID, rhs.asset.relativePath.rawValue)
-            }
-            let shown = ranked[0].asset
+            }.map(\.asset)
+        }
+    }
+
+    /// The file each file with faces stands for, where it is not itself:
+    /// - identical copies (ADR 0054) — each group of `copies` — are one photo, which the copy
+    ///   shown first among them stands for;
+    /// - the files of a stack (ADR 0052) — a RAW and its JPEG — are one photo, which the
+    ///   stack's key stands for, reached through the copy.
+    static func photos(stackKeys: [MediaAssetID: MediaAssetID], copies: [[Copy]]) -> [MediaAssetID: MediaAssetID] {
+        var photoOf = stackKeys
+        for ranked in ranked(copies) where ranked.count > 1 {
+            let shown = ranked[0]
             let photo = stackKeys[shown] ?? shown
             for copy in ranked.dropFirst() {
-                photoOf[copy.asset] = photo
+                photoOf[copy] = photo
             }
         }
         return photoOf
@@ -173,7 +183,7 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
     /// one path from a snapshot to what `CatalogStore.applyAssignment` writes, which People and
     /// the accuracy harness both take.
     static func assignment(of snapshot: PeopleSnapshot) -> FaceAssignmentPlan {
-        changes(from: snapshot, to: FaceAssignmentPolicy.assign(faces: snapshot.faces, people: snapshot.personFacts))
+        changes(from: snapshot, to: FaceAssignmentPolicy.assign(faces: snapshot.faces, people: snapshot.personFacts, photoOf: snapshot.photoOf))
     }
 
     /// The changes that take the snapshot to `result`.
@@ -234,8 +244,9 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     /// The photos and videos of the faces that define this person (the user's and the
     /// seeds), each with whether it is a video, which two people merged may not share.
     var anchorMedia: [MediaAssetID: Bool] = [:]
-    /// Up to `newestFaceCount` of the person's faces, whoever gave them, newest first: the
-    /// row the Person sheet shows.
+    /// Up to `newestFaceCount` of the person's faces, whoever gave them, newest first and one
+    /// per photo (a photo's copies and a stack's files are one photo): the row the Person
+    /// sheet shows.
     var newestFaces: [FaceTile] = []
 
     static let newestFaceCount = 8
@@ -335,10 +346,14 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     let visibleNames: [String]
     /// Each person's index in `people`.
     private let positions: [PersonID: Int]
-    /// Each photo's faces of visible people and unidentified faces, in reading order, as
+    /// Each file's own faces of visible people and unidentified faces, in reading order, as
     /// built: what the photo menus and the Info pane show, at once, read through
     /// `faces(of:)` so the acts the window holds (`faceOverrides`) are laid over them.
     private let photoFaces: [MediaAssetID: [PhotoFace]]
+    /// Each file that is one of a photo's present identical copies (ADR 0054), mapped to its
+    /// other copies in the order copies are shown in: a named face on any of them is the
+    /// photo's (`faces(of:)`).
+    private let copies: [MediaAssetID: [MediaAssetID]]
     /// What the window's held People acts do to single faces until People is built with them
     /// (`overlaying`): small, so a held act never copies `photoFaces`.
     private let faceOverrides: [FaceID: PhotoFaceOverride]
@@ -353,12 +368,13 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     init(
         people: [PersonSummary],
         photoFaces: [MediaAssetID: [PhotoFace]] = [:],
+        copies: [MediaAssetID: [MediaAssetID]] = [:],
         unchecked: MediaCount,
         faceCount: Int,
         covers: UInt64 = 0
     ) {
         self.init(
-            people: people, photoFaces: photoFaces, faceOverrides: [:],
+            people: people, photoFaces: photoFaces, copies: copies, faceOverrides: [:],
             unchecked: unchecked, faceCount: faceCount, covers: covers
         )
     }
@@ -366,6 +382,7 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     private init(
         people: [PersonSummary],
         photoFaces: [MediaAssetID: [PhotoFace]],
+        copies: [MediaAssetID: [MediaAssetID]],
         faceOverrides: [FaceID: PhotoFaceOverride],
         unchecked: MediaCount,
         faceCount: Int,
@@ -377,6 +394,7 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
         visibleNames = visiblePeople.compactMap(\.name)
         positions = Dictionary(uniqueKeysWithValues: people.enumerated().map { ($1.id, $0) })
         self.photoFaces = photoFaces
+        self.copies = copies
         self.faceOverrides = faceOverrides
         self.unchecked = unchecked
         self.faceCount = faceCount
@@ -387,13 +405,37 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.faceCount == rhs.faceCount && lhs.unchecked == rhs.unchecked && lhs.people == rhs.people
             && lhs.covers == rhs.covers && lhs.faceOverrides == rhs.faceOverrides && lhs.photoFaces == rhs.photoFaces
+            && lhs.copies == rhs.copies
     }
 
     static let empty = CatalogPeopleState(people: [], unchecked: MediaCount(), faceCount: 0)
 
-    /// The faces of `photo`, in reading order, with what held acts do to them.
+    /// The faces `photo` shows, with what held acts do to them: its own, in reading order,
+    /// then — a named face on any copy being the photo's (ADR 0054; owner, 2026-11-15) — the
+    /// face of each person a present copy holds and this file does not, from the first copy
+    /// in shown order that holds one. A face stays on the copy it was read from: its box is
+    /// of that copy's pixels, so it is outlined only where that copy shows, and an act on it
+    /// acts on that copy's face. Another copy's unidentified faces are not shown: they are
+    /// this file's own detections, read from another preview.
     func faces(of photo: MediaAssetID) -> [PhotoFace] {
-        let built = photoFaces[photo] ?? []
+        let own = ownFaces(of: photo)
+        guard let others = copies[photo] else {
+            return own
+        }
+        var named = Set(own.compactMap(\.person))
+        var borrowed: [PhotoFace] = []
+        for copy in others {
+            for face in ownFaces(of: copy) {
+                guard let person = face.person, named.insert(person).inserted else { continue }
+                borrowed.append(face)
+            }
+        }
+        return own + borrowed
+    }
+
+    /// The faces read from `file` itself, in reading order, with what held acts do to them.
+    func ownFaces(of file: MediaAssetID) -> [PhotoFace] {
+        let built = photoFaces[file] ?? []
         guard !faceOverrides.isEmpty else {
             return built
         }
@@ -406,9 +448,17 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
         }
     }
 
-    /// The faces of `photos`, in their order.
+    /// The other present copies of `file`, in the order copies are shown in; none for a file
+    /// that is no copy of a photo with a face.
+    func copies(of file: MediaAssetID) -> [MediaAssetID] {
+        copies[file] ?? []
+    }
+
+    /// The faces of `photos`, in their order, each once: two copies of one photo among them
+    /// show the same named face of the copy that holds it.
     func selectionFaces(for photos: [MediaAssetID]) -> SelectionFaces {
-        SelectionFaces(photos: photos, faces: photos.flatMap(faces(of:)))
+        var seen: Set<FaceID> = []
+        return SelectionFaces(photos: photos, faces: photos.flatMap(faces(of:)).filter { seen.insert($0.id).inserted })
     }
 
     /// This state with `effect` laid over it: the window's People acts the store has answered
@@ -428,7 +478,7 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
                 .sorted(by: PeopleStateBuilder.galleryOrder)
         }
         return CatalogPeopleState(
-            people: people, photoFaces: photoFaces, faceOverrides: faceOverrides,
+            people: people, photoFaces: photoFaces, copies: copies, faceOverrides: faceOverrides,
             unchecked: unchecked, faceCount: faceCount, covers: covers
         )
     }

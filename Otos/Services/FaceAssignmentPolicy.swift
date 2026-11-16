@@ -194,7 +194,15 @@ nonisolated enum FaceAssignmentPolicy {
     /// people from the faces the time before left over, which ends a run that would not.
     static let maximumGroupings = 8
 
-    static func assign(faces: [FaceFact], people: [PersonFact]) -> FaceAssignmentResult {
+    /// `photoOf` maps a file that is one of several of a photo — an identical copy (ADR
+    /// 0054), a stack's file (ADR 0052) — to the file that stands for it: each file is read for
+    /// its faces, so one person's faces in one photo are one face read twice, and a likeness
+    /// compares a face only with the person's faces in other photos.
+    static func assign(
+        faces: [FaceFact],
+        people: [PersonFact],
+        photoOf: [MediaAssetID: MediaAssetID] = [:]
+    ) -> FaceAssignmentResult {
         let lapsed = lapsedSeeds(faces, people: people)
         let usable = faces.map { lapsed.contains($0.id) ? $0.opened : $0 }
         let known = Set(people.map(\.id))
@@ -228,7 +236,7 @@ nonisolated enum FaceAssignmentPolicy {
         for (index, person) in fill.assigned where usable[index].assignment.isGuessable && !seeded.contains(usable[index].id) {
             result.guesses[usable[index].id] = person
         }
-        result.likeness = likeness(faces: usable, assigned: fill.assigned, birthdays: birthdays)
+        result.likeness = likeness(faces: usable, assigned: fill.assigned, birthdays: birthdays, photoOf: photoOf)
         return result
     }
 
@@ -317,16 +325,20 @@ nonisolated enum FaceAssignmentPolicy {
             .sorted { pathOrder($0[0], $1[0]) }
     }
 
-    /// Each face's best similarity to its person's other faces within reach.
+    /// Each face's best similarity to its person's faces within reach in their other photos:
+    /// one face per photo is compared with, the first of the photo's files in face order, and
+    /// a face is never compared with its own photo's.
     private static func likeness(
         faces: [FaceFact],
         assigned: [Int: FaceAssignmentResult.Person],
-        birthdays: [PersonID: Double]
+        birthdays: [PersonID: Double],
+        photoOf: [MediaAssetID: MediaAssetID]
     ) -> [FaceID: Float] {
         var byPerson: [FaceAssignmentResult.Person: [Int]] = [:]
         for (index, person) in assigned where faces[index].isRecognisable {
             byPerson[person, default: []].append(index)
         }
+        let photo = { (face: FaceFact) in photoOf[face.id.asset] ?? face.id.asset }
         var likeness: [FaceID: Float] = [:]
         for (person, members) in byPerson where members.count > 1 {
             let birthday: Double? = if case let .existing(id) = person {
@@ -334,13 +346,17 @@ nonisolated enum FaceAssignmentPolicy {
             } else {
                 nil
             }
-            let columns = PersonRun(faces: members.map { faces[$0] }, birthday: birthday)
-            BlockedSimilarity(rows: columns.faces, columns: columns.faces).forEachBlock { block, values in
+            let rows = members.sorted().map { faces[$0] }
+            var seen: Set<MediaAssetID> = []
+            let columns = PersonRun(faces: rows.filter { seen.insert(photo($0)).inserted }, birthday: birthday)
+            let columnOfPhoto = Dictionary(uniqueKeysWithValues: columns.faces.enumerated().map { (photo($1), $0) })
+            BlockedSimilarity(rows: rows, columns: columns.faces).forEachBlock { block, values in
                 values.withUnsafeBufferPointer { buffer in
                     for row in block {
                         let start = (row - block.lowerBound) * columns.faces.count
-                        if let best = columns.best(for: columns.faces[row], row: buffer, rowStart: start, skipping: row) {
-                            likeness[columns.faces[row].id] = best
+                        let face = rows[row]
+                        if let best = columns.best(for: face, row: buffer, rowStart: start, skipping: columnOfPhoto[photo(face)]) {
+                            likeness[face.id] = best
                         }
                     }
                 }

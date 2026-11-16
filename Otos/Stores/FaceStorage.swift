@@ -318,7 +318,7 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
     case rootID, path, faceIndex, embedding, personID, assignment, likeness, isKeyPhoto
     case boxX, boxY, boxWidth, boxHeight
     case captureLocal, previewPath, renderedRevision, editRecipeJSON, previewEditIsKnown
-    case faceFramesPath, frameIndex, isVideo, copyDigest
+    case faceFramesPath, frameIndex, isVideo
 
     /// The expression each column is read from, over `face f` joined to `media_asset m`.
     var sql: String {
@@ -343,8 +343,6 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
         case .faceFramesPath: "m.face_frames_path"
         case .frameIndex: "f.frame_index"
         case .isVideo: "m.best_kind = 'video'"
-        // The digest a photo's copies share (ADR 0054), for a file with a present copy.
-        case .copyDigest: "CASE WHEN m.has_copies = 1 THEN m.content_sha1 END"
         }
     }
 
@@ -415,29 +413,56 @@ nonisolated enum PreviewFaceSQL {
     /// the stills owed faces, the stills waiting for a preview, and the videos whose frames
     /// are unread, each counted from its own partial index, named: SQLite would otherwise seek
     /// every video through the stack candidates' index, and every still of a root through the
-    /// date order's, which carries the visibility columns these counts test (v55). Its
-    /// arguments are the roots, three times.
+    /// date order's, which carries the visibility columns these counts test (v55).
+    ///
+    /// A photo is counted once however many of its identical copies (ADR 0054) are unread:
+    /// each copy is read for its faces, and a photo is not yet checked while any present copy
+    /// in these roots is not. A row with a present copy (`has_copies`, on the row these counts
+    /// already read) is counted only when no copy ranked before it is unread too, asked
+    /// through the digest index; a row with no copy costs what it did. Its arguments are the
+    /// roots, six times.
     static func uncheckedSQL(rootCount: Int) -> String {
+        let roots = placeholders(rootCount)
         let visible = """
-        library_root_id IN (\(placeholders(rootCount)))
+        library_root_id IN (\(roots))
           AND pending_trash_batch_unix_ms IS NULL
           AND hidden_by_source = 0
           AND awaiting_presence = 0
         """
+        let readsVideoFaces = """
+        library_root_id IN (
+            SELECT id FROM library_root WHERE kind IN (\(LibraryRootKind.sqlLiteralList(\.readsVideoFaces)))
+        )
+        """
+        // Unqualified, each predicate is of the copy the subquery reads.
+        let firstUnread = { (unread: String) in
+            """
+            NOT (media_asset.has_copies = 1 AND EXISTS (
+                SELECT 1 FROM media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
+                WHERE \(CatalogSchema.isCopy("copy", of: "media_asset"))
+                  AND \(CatalogVisibilitySQL.isPresent("copy"))
+                  AND copy.library_root_id IN (\(roots))
+                  AND (\(CatalogSchema.copyRank("copy"))) < (\(CatalogSchema.copyRank("media_asset")))
+                  AND (\(unread))
+            ))
+            """
+        }
+        let stillUnread = firstUnread("(\(stillOwesFaces)) OR (\(stillAwaitsPreview))")
         return """
         SELECT
             (SELECT COUNT(*) FROM media_asset INDEXED BY \(CatalogSchema.stillOwesFacesIndexName)
-                WHERE \(visible) AND \(stillOwesFaces)),
+                WHERE \(visible) AND \(stillOwesFaces) AND \(stillUnread)),
             (SELECT COUNT(*) FROM media_asset INDEXED BY \(CatalogSchema.stillAwaitsPreviewIndexName)
-                WHERE \(visible) AND \(stillAwaitsPreview)),
+                WHERE \(visible) AND \(stillAwaitsPreview) AND \(stillUnread)),
             (SELECT COUNT(*) FROM media_asset INDEXED BY \(CatalogSchema.videoOwesFacesIndexName)
-                WHERE \(visible) AND \(videoOwesFaces)
-                AND library_root_id IN (
-                    SELECT id FROM library_root WHERE kind IN (\(LibraryRootKind.sqlLiteralList(\.readsVideoFaces)))
-                )
-                AND NOT \(LivePhotoSQL.isPairedMotion("media_asset")))
+                WHERE \(visible) AND \(videoOwesFaces) AND \(readsVideoFaces)
+                AND NOT \(LivePhotoSQL.isPairedMotion("media_asset"))
+                AND \(firstUnread("(\(videoOwesFaces)) AND \(readsVideoFaces)")))
         """
     }
+
+    /// How many times `uncheckedSQL` binds its roots.
+    static let uncheckedRootBindings = 6
 
     private static func placeholders(_ count: Int) -> String {
         Array(repeating: "?", count: count).joined(separator: ", ")
