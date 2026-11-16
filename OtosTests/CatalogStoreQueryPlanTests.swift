@@ -543,17 +543,8 @@ struct CatalogStoreQueryPlanTests {
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let roots: [DatabaseValue] = [rootID1.databaseValue, rootID2.databaseValue]
-        let order = "ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path LIMIT 16"
         let plans = try await dbQueue.read { db in
             try [
-                "owedEmbeddings": explainPlan(
-                    db, sql: "SELECT a.relative_path \(SearchEmbeddingStorage.owedFrom(rootCount: 2)) \(order)",
-                    arguments: StatementArguments(roots)
-                ),
-                "owedTexts": explainPlan(
-                    db, sql: "SELECT a.relative_path \(SearchTextStorage.owedFrom(rootCount: 2)) \(order)",
-                    arguments: StatementArguments(roots)
-                ),
                 "currentEmbeddings": explainPlan(
                     db, sql: SearchEmbeddingStorage.currentEmbeddingsSQL(rootCount: 2, vectors: false),
                     arguments: StatementArguments(roots)
@@ -577,7 +568,14 @@ struct CatalogStoreQueryPlanTests {
         try CatalogStore.migrator.migrate(dbQueue)
         let plans = try await dbQueue.read { db in
             try [
-                ("candidates", explainPlan(db, sql: PhotoDescriptionStorage.candidatesSQL(rootCount: 2), arguments: [1, 2, 16])),
+                ("candidates", explainPlan(
+                    db,
+                    sql: PhotoDescriptionStorage.candidatesSQL(
+                        rootCount: 2, position: "a.best_capture_local < ?",
+                        order: "ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path"
+                    ),
+                    arguments: [1, 2, 0.0, 16]
+                )),
                 ("faces", explainPlan(db, sql: PhotoDescriptionStorage.facesSQL, arguments: [1, "a.jpg"])),
                 ("readings", explainPlan(db, sql: PhotoDescriptionStorage.readingsSQL, arguments: [1, "a.jpg"])),
                 ("current", explainPlan(db, sql: PhotoDescriptionStorage.currentRowSQL, arguments: [1, "a.jpg"])),
@@ -1204,5 +1202,62 @@ extension CatalogStoreQueryPlanTests {
         #expect(unchecked.contains("SEARCH copy USING INDEX \(ContentDigestSQL.indexName)")
             || unchecked.contains("SEARCH copy USING COVERING INDEX \(ContentDigestSQL.indexName)"), "\(unchecked)")
         #expect(!unchecked.contains("SCAN copy"), "\(unchecked)")
+    }
+}
+
+extension CatalogStoreQueryPlanTests {
+    /// Plan 0116: every background owner's walk is a range of one index it names, in that
+    /// index's order, so a page never sorts and never restarts from the first row. A newest-first
+    /// walk's three phases each read a range of the window's date order index; a key walk seeks
+    /// one root and walks its paths; the metadata refresher's never reaches a root it does not
+    /// read.
+    @Test func everyCandidateWalkIsARangeOfItsNamedIndex() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        let byKey = "ORDER BY a.library_root_id, a.relative_path"
+        let newestFirst = "ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path"
+        let phases: [(position: String, order: String, arguments: StatementArguments)] = [
+            ("a.best_capture_local IS NOT NULL", newestFirst, []),
+            ("a.best_capture_local = ? AND (a.library_root_id, a.relative_path) > (?, ?)", byKey, [5.0, 1, "x"]),
+            ("a.best_capture_local < ?", newestFirst, [5.0]),
+            ("a.best_capture_local IS NULL AND (a.library_root_id, a.relative_path) > (?, ?)", byKey, [1, "x"]),
+        ]
+        let builders: [(String, @Sendable (String, String) -> String)] = [
+            ("embeddings", { SearchEmbeddingStorage.candidatesSQL(rootCount: 2, position: $0, order: $1) }),
+            ("texts", { SearchTextStorage.candidatesSQL(rootCount: 2, position: $0, order: $1) }),
+            ("descriptions", { PhotoDescriptionStorage.candidatesSQL(rootCount: 2, position: $0, order: $1) }),
+        ]
+        try await dbQueue.read { db in
+            for (name, sql) in builders {
+                for phase in phases {
+                    let plan = try explainPlan(db, sql: sql(phase.position, phase.order), arguments: [1, 2] + phase.arguments + [16])
+                    #expect(plan.contains("a USING INDEX \(CandidateWalk.captureIndex)"), "\(name): \(plan)")
+                    // A description's faces are joined in face order per still; the walk
+                    // itself never sorts.
+                    #expect(!plan.contains("TEMP B-TREE FOR ORDER BY"), "\(name): \(plan)")
+                }
+            }
+            for (name, sql) in [("renderSignatures", RenderSignatureSQL.candidatesSQL), ("metadataRefresh", CatalogStore.metadataRefreshCandidatesSQL)] {
+                let plan = try explainPlan(db, sql: sql, arguments: [1, "x", 16])
+                #expect(plan.contains("USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path>?)"), "\(name): \(plan)")
+                #expect(!usesTemporarySort(plan), "\(name): \(plan)")
+                #expect(!plan.contains("library_root USING") && !plan.contains("SCAN library_root"), "\(name): \(plan)")
+            }
+        }
+    }
+
+    /// ADR 0054, plan 0116: the mirror probe walks the library outer and seeks the account's
+    /// size index inner. The other order walked every account row (over 75 s on the owner's
+    /// catalog against 0.16 s), so the order itself is asserted, not only the index.
+    @Test func theMirrorProbeWalksTheLibraryAndSeeksTheAccount() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        let plan = try await dbQueue.read { db in
+            try explainPlan(db, sql: MirrorGateway.candidatesSQL, arguments: [2, 1])
+        }
+        let loops = plan.split(separator: "\n").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "|`- ")) }
+        #expect(loops.count == 2, "\(plan)")
+        #expect(loops.first?.hasPrefix("SEARCH library USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=?)") == true, "\(plan)")
+        #expect(loops.last?.hasPrefix("SEARCH asset USING INDEX idx_media_asset_size_root_asc") == true, "\(plan)")
     }
 }

@@ -4102,28 +4102,16 @@ extension CatalogStore {
         after cursor: MediaAssetID?,
         limit: Int
     ) async throws -> [MetadataRefreshCandidate] {
-        let rootsByID = Dictionary(uniqueKeysWithValues: roots.rowIDSnapshot().map { ($0.value, $0.key) })
+        let rootsByID = roots.pathsByRowID
+        let rootIDs = roots.values.filter(\.root.kind.isUserChosenFolder).map(\.rowID)
         let dbWriter = try database()
-        let cursorRootID = cursor.flatMap { roots.rowIDSnapshot()[$0.libraryRootPath] } ?? -1
-        let cursorPath = cursor?.relativePath.rawValue ?? ""
+        let after = cursor.flatMap { cursor in
+            roots[cursor.libraryRootPath].map { AssetKeyCursor(rootID: $0.rowID, relativePath: cursor.relativePath.rawValue) }
+        }
         return try await dbWriter.readFreeingConnection { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                SELECT a.library_root_id, a.relative_path, a.byte_size, a.metadata_source_mtime,
-                    (\(Self.predatesContentIdentifierSQL) AND m.camera_make = 'Apple') AS may_complete_live_photo
-                FROM media_asset a
-                JOIN asset_metadata m USING (library_root_id, relative_path)
-                JOIN library_root r ON r.id = a.library_root_id
-                WHERE r.kind IN (\(LibraryRootKind.sqlLiteralList(\.isUserChosenFolder)))
-                    AND COALESCE(m.extraction_revision, 0) < \(Self.currentExtractionRevisionSQL)
-                    AND NOT (\(EnrichmentClaimGateway.metadataStalenessSQLPredicate()))
-                    AND (a.library_root_id, a.relative_path) > (?, ?)
-                ORDER BY a.library_root_id, a.relative_path
-                LIMIT ?
-                """,
-                arguments: [cursorRootID, cursorPath, limit]
-            ).compactMap { row -> MetadataRefreshCandidate? in
+            try CandidateWalk.keyPage(
+                sql: Self.metadataRefreshCandidatesSQL, rootIDs: rootIDs, after: after, limit: limit, db: db
+            ).rows.compactMap { row -> MetadataRefreshCandidate? in
                 let rootID: Int64 = row["library_root_id"]
                 guard let rootPath = rootsByID[rootID] else { return nil }
                 return MetadataRefreshCandidate(
@@ -4138,6 +4126,21 @@ extension CatalogStore {
             }
         }
     }
+
+    /// One root's rows owed a metadata re-read, in path order after a path, through the asset
+    /// key (`CandidateWalk.keyPage`: binds the root, the path, the limit). The roots are
+    /// named, so the walk never reaches an account's rows to discard them.
+    nonisolated static let metadataRefreshCandidatesSQL = """
+    SELECT a.library_root_id, a.relative_path, a.byte_size, a.metadata_source_mtime,
+        (\(predatesContentIdentifierSQL) AND m.camera_make = 'Apple') AS may_complete_live_photo
+    FROM media_asset a INDEXED BY sqlite_autoindex_media_asset_1
+    CROSS JOIN asset_metadata m ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
+    WHERE a.library_root_id = ? AND a.relative_path > ?
+        AND COALESCE(m.extraction_revision, 0) < \(currentExtractionRevisionSQL)
+        AND NOT (\(EnrichmentClaimGateway.metadataStalenessSQLPredicate()))
+    ORDER BY a.relative_path
+    LIMIT ?
+    """
 
     /// A record read before MediaMetadata reported the content identifier (0.8.2), of a
     /// family that can carry one. v7 cleared every stored revision and v9 cleared these
@@ -8690,32 +8693,23 @@ extension CatalogStore {
 // MARK: - Same photo (ADR 0042)
 
 extension CatalogStore {
-    /// Visible stills in the fixed libraries whose thumbnail has no current render signature.
-    func renderSignatureCandidates(limit: Int) async throws -> [RenderSignatureCandidate] {
+    /// Visible stills in the fixed libraries whose thumbnail has no current render signature:
+    /// the page after `cursor` of one walk over each root's key (`CandidateWalk`).
+    func renderSignatureCandidates(
+        after cursor: AssetKeyCursor? = nil,
+        limit: Int
+    ) async throws -> CandidatePage<RenderSignatureCandidate, AssetKeyCursor> {
         let libraries = roots.values.filter { $0.root.kind.isMemberOfAllMedia && $0.availability == .available }
         guard !libraries.isEmpty else {
-            return []
+            return CandidatePage(candidates: [], next: nil)
         }
-        let rootIDs = libraries.map(\.rowID).sorted()
+        let rootIDs = libraries.map(\.rowID)
         let pathsByRowID = roots.pathsByRowID
-        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
         return try await database().readFreeingConnection { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                SELECT library_root_id, relative_path, thumbnail_path, \(StoredThumbnailSQL.identity("media_asset")) AS source
-                FROM media_asset
-                WHERE library_root_id IN (\(placeholders))
-                  AND thumbnail_path IS NOT NULL
-                  AND kind IN ('image', 'raw')
-                  AND pending_trash_batch_unix_ms IS NULL
-                  AND trash_path IS NULL
-                  AND render_signature_source IS NOT \(StoredThumbnailSQL.identity("media_asset"))
-                ORDER BY library_root_id, relative_path
-                LIMIT ?
-                """,
-                arguments: StatementArguments(rootIDs + [limit])
-            ).compactMap { row in
+            let (rows, next) = try CandidateWalk.keyPage(
+                sql: RenderSignatureSQL.candidatesSQL, rootIDs: rootIDs, after: cursor, limit: limit, db: db
+            )
+            let candidates = rows.compactMap { row -> RenderSignatureCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
                 return RenderSignatureCandidate(
                     id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"])),
@@ -8723,6 +8717,7 @@ extension CatalogStore {
                     source: row["source"]
                 )
             }
+            return CandidatePage(candidates: candidates, next: next)
         }
     }
 
@@ -8763,33 +8758,29 @@ extension CatalogStore {
     /// Assets whose stored thumbnail has no current search embedding (ADR 0048), newest
     /// capture first so the photos a person is likeliest to look for are searchable first.
     /// Every available root is read: search covers whatever scope is shown. A Live Photo's
-    /// movie is left out, because its still stands for the item. `excluding`: assets a pass
-    /// already tried and could not read, which it pages past.
-    func searchEmbeddingCandidates(limit: Int, excluding: Set<MediaAssetID> = []) async throws -> [SearchEmbeddingCandidate] {
+    /// movie is left out, because its still stands for the item. The page after `cursor` of one
+    /// newest-first walk (`CandidateWalk`).
+    func searchEmbeddingCandidates(
+        after cursor: CaptureOrderCursor? = nil,
+        limit: Int
+    ) async throws -> CandidatePage<SearchEmbeddingCandidate, CaptureOrderCursor> {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty else {
-            return []
+            return CandidatePage(candidates: [], next: nil)
         }
         let pathsByRowID = roots.pathsByRowID
         return try await database().readFreeingConnection { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                SELECT a.library_root_id, a.relative_path, a.thumbnail_path,
-                       \(SearchEmbeddingStorage.currentSource("a")) AS source
-                \(SearchEmbeddingStorage.owedFrom(rootCount: rootIDs.count))
-                ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path
-                LIMIT ?
-                """,
-                arguments: StatementArguments(rootIDs + [limit + excluding.count])
-            ).compactMap { row -> SearchEmbeddingCandidate? in
+            let (rows, next) = try CandidateWalk.capturePage(
+                row: "a", after: cursor, limit: limit, arguments: StatementArguments(rootIDs), db: db
+            ) { position, order in
+                SearchEmbeddingStorage.candidatesSQL(rootCount: rootIDs.count, position: position, order: order)
+            }
+            let candidates = rows.compactMap { row -> SearchEmbeddingCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
                 let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
-                guard !excluding.contains(id) else { return nil }
                 return SearchEmbeddingCandidate(id: id, thumbnailPath: row["thumbnail_path"], source: row["source"])
             }
-            .prefix(limit)
-            .map(\.self)
+            return CandidatePage(candidates: candidates, next: next)
         }
     }
 
@@ -8977,30 +8968,27 @@ extension CatalogStore {
         }
     }
 
-    /// Stills whose stored preview has no current text reading (ADR 0048), newest first, but
-    /// those in `excluding`, which a pass already tried and could not read.
-    func searchTextCandidates(limit: Int, excluding: Set<MediaAssetID> = []) async throws -> [SearchTextCandidate] {
+    /// Stills whose stored preview has no current text reading (ADR 0048): the page after
+    /// `cursor` of one newest-first walk (`CandidateWalk`).
+    func searchTextCandidates(
+        after cursor: CaptureOrderCursor? = nil,
+        limit: Int
+    ) async throws -> CandidatePage<SearchTextCandidate, CaptureOrderCursor> {
         let rootIDs = availableRootRowIDs()
-        guard !rootIDs.isEmpty else { return [] }
+        guard !rootIDs.isEmpty else { return CandidatePage(candidates: [], next: nil) }
         let pathsByRowID = roots.pathsByRowID
         return try await database().readFreeingConnection { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                SELECT a.library_root_id, a.relative_path, a.preview_path, \(SearchTextStorage.currentSource("a")) AS source
-                \(SearchTextStorage.owedFrom(rootCount: rootIDs.count))
-                ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path
-                LIMIT ?
-                """,
-                arguments: StatementArguments(rootIDs + [limit + excluding.count])
-            ).compactMap { row -> SearchTextCandidate? in
+            let (rows, next) = try CandidateWalk.capturePage(
+                row: "a", after: cursor, limit: limit, arguments: StatementArguments(rootIDs), db: db
+            ) { position, order in
+                SearchTextStorage.candidatesSQL(rootCount: rootIDs.count, position: position, order: order)
+            }
+            let candidates = rows.compactMap { row -> SearchTextCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
                 let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
-                guard !excluding.contains(id) else { return nil }
                 return SearchTextCandidate(id: id, previewPath: row["preview_path"], source: row["source"])
             }
-            .prefix(limit)
-            .map(\.self)
+            return CandidatePage(candidates: candidates, next: next)
         }
     }
 
@@ -9040,18 +9028,22 @@ extension CatalogStore {
     /// describe. Read from the roots whose stills are read for faces, since a still is
     /// described only once its faces are read. A row whose edit cannot be read is passed over
     /// and logged.
-    func photoDescriptionCandidates(limit: Int, excluding: Set<MediaAssetID> = []) async throws -> [PhotoDescriptionCandidate] {
+    func photoDescriptionCandidates(
+        after cursor: CaptureOrderCursor? = nil,
+        limit: Int,
+        excluding: Set<MediaAssetID> = []
+    ) async throws -> CandidatePage<PhotoDescriptionCandidate, CaptureOrderCursor> {
         let rootIDs = roots.values.filter(\.root.kind.readsFaces).map(\.rowID).sorted()
-        guard !rootIDs.isEmpty else { return [] }
+        guard !rootIDs.isEmpty else { return CandidatePage(candidates: [], next: nil) }
         let pathsByRowID = roots.pathsByRowID
         return try await database().readFreeingConnection { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: PhotoDescriptionStorage.candidatesSQL(rootCount: rootIDs.count),
-                arguments: StatementArguments(rootIDs + [limit + excluding.count])
-            )
+            let (rows, next) = try CandidateWalk.capturePage(
+                row: "a", after: cursor, limit: limit, arguments: StatementArguments(rootIDs), db: db
+            ) { position, order in
+                PhotoDescriptionStorage.candidatesSQL(rootCount: rootIDs.count, position: position, order: order)
+            }
             var candidates: [PhotoDescriptionCandidate] = []
-            for row in rows where candidates.count < limit {
+            for row in rows {
                 guard let root = pathsByRowID[row["library_root_id"]] else { continue }
                 let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
                 guard !excluding.contains(id) else { continue }
@@ -9074,7 +9066,7 @@ extension CatalogStore {
                     facts: Self.photoDescriptionFacts(db, key: key)
                 ))
             }
-            return candidates
+            return CandidatePage(candidates: candidates, next: next)
         }
     }
 
@@ -9216,11 +9208,28 @@ extension CatalogStore {
     /// The details of these stills, which are in proposed pairs: the copy a group lists,
     /// the render signature, and the capture facts kept in the metadata record. A still
     /// whose library is gone or that has no stored signature has no detail.
+    /// Read `samePhotoDetailBatch` stills a transaction, so a build proposing thousands of
+    /// pairs never holds a reader for all of them: each still's detail stands alone.
     func samePhotoDetails(for ids: [MediaAssetID]) async throws -> [MediaAssetID: SamePhotoDetail] {
         let libraries = Dictionary(uniqueKeysWithValues: roots.values.map {
             ($0.path, (rowID: $0.rowID, library: DuplicateLibrary($0.root)))
         })
-        return try await database().readFreeingConnection { db in
+        let dbWriter = try database()
+        var details: [MediaAssetID: SamePhotoDetail] = [:]
+        for batch in stride(from: 0, to: ids.count, by: Self.samePhotoDetailBatch).map({ ids[$0 ..< min($0 + Self.samePhotoDetailBatch, ids.count)] }) {
+            try await details.merge(Self.samePhotoDetails(of: batch, libraries: libraries, db: dbWriter)) { $1 }
+        }
+        return details
+    }
+
+    static let samePhotoDetailBatch = 256
+
+    private static func samePhotoDetails(
+        of ids: ArraySlice<MediaAssetID>,
+        libraries: [LibraryRootPath: (rowID: Int64, library: DuplicateLibrary)],
+        db dbWriter: any DatabaseWriter
+    ) async throws -> [MediaAssetID: SamePhotoDetail] {
+        try await dbWriter.readFreeingConnection(operation: "samePhotoDetails") { db in
             var details: [MediaAssetID: SamePhotoDetail] = [:]
             for id in ids {
                 guard let library = libraries[id.libraryRootPath],

@@ -20,9 +20,9 @@ nonisolated enum SearchTextStorage {
     }
 
     /// `FROM … WHERE …` over the stills owed a text reading in `rootCount` roots.
-    static func owedFrom(rootCount: Int) -> String {
+    static func owedFrom(rootCount: Int, indexedBy index: String? = nil) -> String {
         """
-        FROM media_asset AS a
+        FROM media_asset AS a\(index.map { " INDEXED BY \($0)" } ?? "")
         LEFT JOIN search_text AS t
             ON t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
@@ -30,6 +30,19 @@ nonisolated enum SearchTextStorage {
           AND a.pending_trash_batch_unix_ms IS NULL
           AND a.trash_path IS NULL
           AND t.source IS NOT \(currentSource("a"))
+        """
+    }
+
+    /// A page of the text reader's newest-first walk (`CandidateWalk.capturePage`) through the
+    /// window's date order index; the preview's stamp is read from the row.
+    static func candidatesSQL(rootCount: Int, position: String, order: String) -> String {
+        """
+        SELECT a.best_capture_local, a.library_root_id, a.relative_path, a.preview_path,
+               \(currentSource("a")) AS source
+        \(owedFrom(rootCount: rootCount, indexedBy: CandidateWalk.captureIndex))
+          AND \(position)
+        \(order)
+        LIMIT ?
         """
     }
 

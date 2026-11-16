@@ -47,10 +47,10 @@ struct StallReproductionTests {
         let shape = catalog.shape
         #expect(try await store.catalogedAssetCount(for: .allMedia) > 0)
         #expect(try await store.searchEmbeddingPendingCount() == shape.embeddingsOwed)
-        #expect(try await store.renderSignatureCandidates(limit: 1000).count == shape.renderSignaturesOwed)
-        #expect(try await store.searchTextCandidates(limit: shape.assets).count == shape.textsOwed)
+        #expect(try await store.renderSignatureCandidates(limit: 1000).candidates.count == shape.renderSignaturesOwed)
+        #expect(try await store.searchTextCandidates(limit: shape.assets).candidates.count == shape.textsOwed)
         #expect(try await store.metadataRefreshCandidates(after: nil, limit: shape.assets).count == shape.metadataStaleInLibraries)
-        #expect(try await !store.photoDescriptionCandidates(limit: 16).isEmpty)
+        #expect(try await !store.photoDescriptionCandidates(limit: 16).candidates.isEmpty)
         #expect(shape.unhashable > shape.assets / 2, "the account and most of a OneDrive library are never hashed")
         let probes = try await store.mirrorProbes(account: catalog.account)
         #expect(Set(probes.map(\.libraryRootPath)) == [catalog.pictures, catalog.archive])
@@ -85,7 +85,17 @@ struct StallReproductionTests {
         let unanswered = report.live.filter { !$0.answered }
         #expect(unanswered.isEmpty, "\(unanswered.count) window reads failed")
 
-        withKnownIssue("Open defect: background owners hold the main pool's readers and walk the whole library each pass") {
+        // A background read not named below visits rows in proportion to what it returns or
+        // asks for; that holds outside the known issue, so a regression of one fails.
+        for read in report.quiet where !read.isWindowRead && !StallReproduction.libraryVisitingReads.contains(read.name) {
+            #expect(
+                read.visitedRows <= Self.visitsPerOwedRow * max(read.returned, read.limit),
+                "\(read.name) visited \(read.visitedRows) rows to return \(read.returned)"
+            )
+        }
+        withKnownIssue(
+            "Open defect: background owners hold the main pool's readers; libraryVisitingReads still visit every row they read"
+        ) {
             for read in report.live {
                 let quiet = try #require(report.quietWindow["\(read.name)@\(read.scope)"])
                 #expect(
@@ -95,7 +105,7 @@ struct StallReproductionTests {
             }
             let waitedWindowReads = report.stalls.filter { StallReproduction.windowOperations.contains($0.operation) }
             #expect(waitedWindowReads.isEmpty, "\(waitedWindowReads.count) window reads waited a second or more")
-            for read in report.quiet where !read.isWindowRead {
+            for read in report.quiet where StallReproduction.libraryVisitingReads.contains(read.name) {
                 #expect(
                     read.visitedRows <= Self.visitsPerOwedRow * max(read.returned, read.limit),
                     "\(read.name) visited \(read.visitedRows) rows to return \(read.returned)"
@@ -111,6 +121,17 @@ enum StallReproduction {
     /// The reads the window issues for a scope change, by the name a stall line gives them.
     static let windowOperations: Set<String> = [
         "orderedAssetIDs", "filterOptions", "importBatches", "mediaTileDetails", "visibleAssetCount", "catalogedAssetCount",
+    ]
+    /// The background reads that still visit every row of the roots they read to find what
+    /// they owe, whatever they return: what is owed is decided by comparing a derived row's
+    /// source with its asset across two tables, or the read is a whole-set read by nature.
+    /// Each walk now runs once per drain rather than once per page (plan 0116 stage 1).
+    static let libraryVisitingReads: Set<String> = [
+        "searchEmbeddingCandidates", "searchEmbeddingCandidates.drain",
+        "searchTextCandidates",
+        "photoDescriptionCandidates",
+        "renderSignatureCandidates", "renderSignatureCandidates.drain",
+        "unnamedPlaceCells", "currentSearchTextIDs", "duplicateCopies", "peopleSnapshot", "mirrorProbes",
     ]
     static let scopeCount = 5
     /// The visible tiles a scope change reads the details of.
@@ -195,10 +216,21 @@ enum StallReproduction {
         }
 
         // The background owners' reads, each with its owner's page size.
-        try await replay("renderSignatureCandidates", limit: 128) { try await store.renderSignatureCandidates(limit: 128).count }
-        try await replay("searchEmbeddingCandidates", limit: 16) { try await store.searchEmbeddingCandidates(limit: 16).count }
-        try await replay("searchTextCandidates", limit: 8) { try await store.searchTextCandidates(limit: 8).count }
-        try await replay("photoDescriptionCandidates", limit: 16) { try await store.photoDescriptionCandidates(limit: 16).count }
+        try await replay("renderSignatureCandidates", limit: 128) { try await store.renderSignatureCandidates(limit: 128).candidates.count }
+        try await replay("searchEmbeddingCandidates", limit: 16) { try await store.searchEmbeddingCandidates(limit: 16).candidates.count }
+        try await replay("searchTextCandidates", limit: 8) { try await store.searchTextCandidates(limit: 8).candidates.count }
+        try await replay("photoDescriptionCandidates", limit: 16) { try await store.photoDescriptionCandidates(limit: 16).candidates.count }
+        // One drain is one walk (plan 0116): each owner's whole walk, page after page, as its
+        // drain asks for it.
+        try await replay("renderSignatureCandidates.drain", limit: 128) {
+            try await walk { try await store.renderSignatureCandidates(after: $0, limit: 128) }
+        }
+        try await replay("searchEmbeddingCandidates.drain", limit: 16) {
+            try await walk { try await store.searchEmbeddingCandidates(after: $0, limit: 16) }
+        }
+        try await replay("searchTextCandidates.drain", limit: 8) {
+            try await walk { try await store.searchTextCandidates(after: $0, limit: 8) }
+        }
         try await replay("previewFaceCandidates", limit: 32) { try await store.previewFaceCandidates(limit: 32).candidates.count }
         try await replay("metadataRefreshCandidates", limit: 64) {
             try await store.metadataRefreshCandidates(after: nil, limit: 64).count
@@ -233,6 +265,21 @@ enum StallReproduction {
             let visible = Array(ids.prefix(visibleTiles))
             try await replay("mediaTileDetails", limit: visible.count, scope: scope) { try await store.mediaTileDetails(for: visible).count }
         }
+    }
+
+    /// Every candidate of a walk, page after page from the first, as an owner's drain reads
+    /// them; returns how many it found.
+    private static func walk<Cursor>(
+        _ page: (Cursor?) async throws -> CandidatePage<some Any, Cursor>
+    ) async throws -> Int {
+        var found = 0
+        var cursor: Cursor?
+        repeat {
+            let next = try await page(cursor)
+            found += next.candidates.count
+            cursor = next.next
+        } while cursor != nil
+        return found
     }
 
     /// The scopes a click visits: All Media, each library and the account, and an import.

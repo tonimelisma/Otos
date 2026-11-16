@@ -163,7 +163,7 @@ struct ImmichAccountCatalogTests {
             )])
         }
         func signRead() async throws -> Int {
-            let candidates = try await store.renderSignatureCandidates(limit: 10)
+            let candidates = try await store.renderSignatureCandidates(limit: 10).candidates
             return try await store.applyRenderSignatures(candidates.map {
                 RenderSignatureResult(id: $0.id, source: $0.source, signature: signature)
             })
@@ -175,11 +175,11 @@ struct ImmichAccountCatalogTests {
         await applySourceImages(size: 42)
         #expect(try await signRead() == 1)
         #expect(try await drawnBy() == [.source])
-        #expect(try await store.renderSignatureCandidates(limit: 10).isEmpty)
+        #expect(try await store.renderSignatureCandidates(limit: 10).candidates.isEmpty)
 
         try await list(["IMG_1.JPG"], into: rootPath, store: store, byteSize: 43)
         await applySourceImages(size: 43)
-        #expect(try await store.renderSignatureCandidates(limit: 10).map(\.id) == [still])
+        #expect(try await store.renderSignatureCandidates(limit: 10).candidates.map(\.id) == [still])
         #expect(try await signRead() == 1)
 
         _ = await store.applyEnrichmentBatch([EnrichmentResult(
@@ -190,7 +190,7 @@ struct ImmichAccountCatalogTests {
             sourceMTimeSeconds: 1_700_000_000,
             contentHash: nil
         )])
-        #expect(try await store.renderSignatureCandidates(limit: 10).map(\.id) == [still])
+        #expect(try await store.renderSignatureCandidates(limit: 10).candidates.map(\.id) == [still])
         #expect(try await signRead() == 1)
         #expect(try await drawnBy() == [.otos])
         await store.shutdown()

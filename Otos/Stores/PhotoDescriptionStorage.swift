@@ -82,19 +82,21 @@ nonisolated enum PhotoDescriptionStorage {
             AND e.source = \(SearchEmbeddingStorage.currentSource("a")))
     """
 
-    /// The describable stills owed a description in `rootCount` roots (bound in order),
-    /// newest capture first; then the limit.
-    static func candidatesSQL(rootCount: Int) -> String {
+    /// A page of the describable stills owed a description in `rootCount` roots (bound in
+    /// order), from the newest-first walk's `position` in `order` (`CandidateWalk.capturePage`)
+    /// through the window's date order index; then the limit.
+    static func candidatesSQL(rootCount: Int, position: String, order: String) -> String {
         """
-        SELECT a.library_root_id, a.relative_path, a.preview_path, a.edit_recipe_json, a.rendered_revision,
-               \(currentSource("a")) AS source
-        FROM media_asset AS a
+        SELECT a.best_capture_local, a.library_root_id, a.relative_path, a.preview_path, a.edit_recipe_json,
+               a.rendered_revision, \(currentSource("a")) AS source
+        FROM media_asset AS a INDEXED BY \(CandidateWalk.captureIndex)
         LEFT JOIN photo_description AS d
             ON d.library_root_id = a.library_root_id AND d.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
+          AND \(position)
           AND \(describableStill)
           AND d.source IS NOT \(currentSource("a"))
-        ORDER BY a.best_capture_local DESC, a.library_root_id, a.relative_path
+        \(order)
         LIMIT ?
         """
     }

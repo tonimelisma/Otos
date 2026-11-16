@@ -105,7 +105,7 @@ struct PhotoSearchIndexTests {
             try Self.writeJPEG(SearchModelTests.solid(red: 0.5, green: 0.5, blue: 0.5), to: catalog.thumbnails.appending(path: "\(name)-preview.jpg"))
             try await enrich(catalog.store, asset, thumbnail: "\(name)-thumb.jpg", preview: "\(name)-preview.jpg")
         }
-        #expect(try await catalog.store.searchTextCandidates(limit: 10).count == 2)
+        #expect(try await catalog.store.searchTextCandidates(limit: 10).candidates.count == 2)
     }
 
     /// A text reading that loses Vision's reader for its session's process ends the pass's
@@ -121,7 +121,7 @@ struct PhotoSearchIndexTests {
             cutoff: .none, backoff: (.zero, .zero), textReader: reader
         )
         await index.start()
-        try await waitUntil { try await catalog.store.searchTextCandidates(limit: 10).isEmpty }
+        try await waitUntil { try await catalog.store.searchTextCandidates(limit: 10).candidates.isEmpty }
         #expect(lost.attempted == 3)
         #expect(await reader.sessionsStarted == 2)
         #expect(await index.retriesScheduled > 0)
@@ -140,7 +140,7 @@ struct PhotoSearchIndexTests {
             cutoff: .none, backoff: (.zero, .zero), textReader: SearchTextReader { RecognizingSession(once.recognize) }
         )
         await index.start()
-        try await waitUntil { try await catalog.store.searchTextCandidates(limit: 10).isEmpty }
+        try await waitUntil { try await catalog.store.searchTextCandidates(limit: 10).candidates.isEmpty }
         #expect(once.attempted == 3)
         #expect(await index.retriesScheduled > 0)
         await index.shutdown()
@@ -175,7 +175,7 @@ struct PhotoSearchIndexTests {
         await index.shutdown()
         #expect(kill(pid, 0) == -1 && errno == ESRCH)
         #expect(started.withLock { $0.count } == 1)
-        #expect(try await catalog.store.searchTextCandidates(limit: 10).count == 2)
+        #expect(try await catalog.store.searchTextCandidates(limit: 10).candidates.count == 2)
         await catalog.store.shutdown()
     }
 
@@ -190,7 +190,7 @@ struct PhotoSearchIndexTests {
     @Test func anEmbeddingIsWrittenOnlyForTheThumbnailItWasReadFrom() async throws {
         let catalog = try await makeCatalog()
         let store = catalog.store
-        let candidates = try await store.searchEmbeddingCandidates(limit: 10)
+        let candidates = try await store.searchEmbeddingCandidates(limit: 10).candidates
         #expect(Set(candidates.map(\.id)) == [catalog.red, catalog.blue])
         #expect(try await store.searchEmbeddingPendingCount() == 2)
         let red = try #require(candidates.first { $0.id == catalog.red })
@@ -201,7 +201,7 @@ struct PhotoSearchIndexTests {
         let written = try await store.applySearchEmbeddings([SearchEmbeddingResult(id: red.id, source: red.source, embedding: vector)])
         #expect(written.map(\.id) == [catalog.red])
 
-        #expect(try await store.searchEmbeddingCandidates(limit: 10).map(\.id) == [catalog.blue])
+        #expect(try await store.searchEmbeddingCandidates(limit: 10).candidates.map(\.id) == [catalog.blue])
         #expect(try await store.searchEmbeddingPendingCount() == 1)
         let current = try await store.currentSearchEmbeddings()
         #expect(current.map(\.id) == [catalog.red])
@@ -215,7 +215,7 @@ struct PhotoSearchIndexTests {
     @Test func aNewThumbnailMakesTheEmbeddingStale() async throws {
         let catalog = try await makeCatalog()
         let store = catalog.store
-        let red = try #require(try await store.searchEmbeddingCandidates(limit: 10).first { $0.id == catalog.red })
+        let red = try #require(try await store.searchEmbeddingCandidates(limit: 10).candidates.first { $0.id == catalog.red })
         _ = try await store.applySearchEmbeddings([
             SearchEmbeddingResult(id: red.id, source: red.source, embedding: [Float](repeating: 1, count: SearchEmbedding.dimensions)),
         ])
@@ -223,7 +223,7 @@ struct PhotoSearchIndexTests {
         try await enrich(store, asset, thumbnail: "red-thumb-2.jpg")
 
         #expect(try await store.currentSearchEmbeddings().isEmpty)
-        #expect(try await Set(store.searchEmbeddingCandidates(limit: 10).map(\.id)) == [catalog.red, catalog.blue])
+        #expect(try await Set(store.searchEmbeddingCandidates(limit: 10).candidates.map(\.id)) == [catalog.red, catalog.blue])
         await store.shutdown()
     }
 
@@ -233,8 +233,10 @@ struct PhotoSearchIndexTests {
         let catalog = try await makeCatalog(broken: true)
         let store = catalog.store
         let broken = try #require(catalog.assets.first { $0.id.relativePath.rawValue == "broken.jpg" })
-        #expect(try await store.searchEmbeddingCandidates(limit: 1).map(\.id) == [broken.id])
-        #expect(try await store.searchEmbeddingCandidates(limit: 1, excluding: [broken.id]).count == 1)
+        let first = try await store.searchEmbeddingCandidates(limit: 1)
+        #expect(first.candidates.map(\.id) == [broken.id])
+        let second = try await store.searchEmbeddingCandidates(after: first.next, limit: 1)
+        #expect(second.candidates.count == 1 && second.candidates.first?.id != broken.id)
 
         let index = PhotoSearchIndex(
             store: store, thumbnailDirectory: catalog.thumbnails, bundle: Bundle(for: CatalogWindowViewModel.self),
@@ -243,7 +245,7 @@ struct PhotoSearchIndexTests {
         await index.start()
         try await waitUntil { await index.retriesScheduled > 0 }
         #expect(await index.embeddedCount == 2)
-        #expect(try await store.searchEmbeddingCandidates(limit: 10).map(\.id) == [broken.id])
+        #expect(try await store.searchEmbeddingCandidates(limit: 10).candidates.map(\.id) == [broken.id])
         #expect(try await store.searchEmbeddingPendingCount() == 1)
         #expect(try await store.photoInfoOverlay(for: broken.id)?.sceneLabels == nil)
         await index.shutdown()
@@ -632,7 +634,7 @@ struct PhotoSearchIndexTests {
             sourceSize: blue.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(blue.contentModifiedAt), contentHash: nil,
             previewPath: "blue-preview.heic"
         )])
-        let candidate = try #require(try await store.searchTextCandidates(limit: 10).first { $0.id == catalog.blue })
+        let candidate = try #require(try await store.searchTextCandidates(limit: 10).candidates.first { $0.id == catalog.blue })
         _ = try await store.applySearchTexts([SearchTextResult(
             id: blue.id, source: candidate.source, lines: [RecognizedTextLine(text: "Proof of Insurance", confidence: 1)]
         )])
@@ -724,7 +726,7 @@ struct PhotoSearchIndexTests {
             sourceSize: asset.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt), contentHash: nil,
             previewPath: preview
         )])
-        let candidate = try #require(try await store.searchTextCandidates(limit: 10).first { $0.id == asset.id })
+        let candidate = try #require(try await store.searchTextCandidates(limit: 10).candidates.first { $0.id == asset.id })
         _ = try await store.applySearchTexts([SearchTextResult(
             id: asset.id, source: candidate.source, lines: [RecognizedTextLine(text: text, confidence: 1)]
         )])

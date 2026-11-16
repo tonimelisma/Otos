@@ -571,13 +571,24 @@ Failure modes:
 - The partition drifts from `needsEnrichment` truth; the cursor re-processes or
   skips after a rescan.
 
-Rejected: cursorless derivation is simpler and correct (ARC-022 precedent for
-deriving over maintaining). The current coordinator still derives candidates from
-Store truth, but it batches claimed rows into a small actor-local queue after
-measurement showed writer-queue pressure from many tiny claim transactions. That
-queue is not a maintained catalog partition: if the process exits, Store lease
-expiry is the recovery path. Revisit a durable partition only if the cursorless
-query itself is measured too costly at a real large library.
+Rejected: a durable partition. Deriving work from Store truth is simpler and correct
+(ARC-022 precedent for deriving over maintaining). The enrichment coordinator derives
+its claims from Store truth and batches claimed rows into a small actor-local queue
+after measurement showed writer-queue pressure from many tiny claim transactions. That
+queue is not a maintained catalog partition: if the process exits, Store lease expiry
+is the recovery path.
+
+The cursorless derivation was measured too costly for the derived products at the
+owner's library (plan 0116; `docs/research/2026-11-16-stall-reproduction-baseline.md`):
+the render signature, search embedding, text reading and description owners re-ran a
+whole-library candidate query for every page of 8 to 128 — about 3,200 full scans to
+drain 51,000 owed descriptions — and held the main pool's readers for 8 to 33 s. Those
+owners now keep an **in-memory walk cursor** (`CandidateWalk`): one drain is one walk,
+each row visited once, and a request made during a walk (ADR 0032 rule 2) restarts a
+newest-first walk from the top at its next page. The cursor is still not stored state:
+it lives only for one walk, the catalog stays the one truth, and a row made owed behind
+it is found by the walk the change that made it owed asks for. Enrichment claiming keeps
+its partial indexes and stays cursorless.
 
 ## Consequences
 

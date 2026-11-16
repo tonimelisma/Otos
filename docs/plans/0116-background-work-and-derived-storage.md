@@ -99,7 +99,11 @@ The holders in section 2.1 are slow because of how their queries and wakes are w
 because the storage has the wrong shape. Every stage below keeps one catalog file, atomic
 commits and the foreign-key cascades that carry derived rows with their asset (ADR 0008).
 
-**Stage 1: every background read costs what it owes.**
+**Stage 1: every background read costs what it owes.** Built in two parts. **1a, done:** one
+drain is one walk (`CandidateWalk`: a per-root key cursor, or a newest-first capture cursor
+that a request restarts from the top), the mirror probe's join order pinned, metadata refresh
+by root ids, same-photo details in bounded transactions, with existing indexes only. **1b, next:**
+the indexes below.
 - Each candidate read walks an index, per root, with a keyset cursor (`root = ? AND path > ?`;
   a cursor over `root IN (…)` seeks only on the root and re-walks it). No whole-set sort.
 - One drain is one walk. Today a drain re-runs the candidate query for every page of 8 to 128.

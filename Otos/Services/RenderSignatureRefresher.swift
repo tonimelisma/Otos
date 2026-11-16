@@ -62,37 +62,33 @@ actor RenderSignatureRefresher {
         loop = nil
     }
 
-    /// Signs every stale row, a page at a time, until none is left or the page made no
-    /// progress (a failed read is logged and waits for the next ring).
+    /// Signs every stale row in one walk (`CandidateWalk`), a page at a time; a failed read or
+    /// write is logged and waits for the next ring. A row whose thumbnail changed while it was
+    /// read is not written, and the change that made it stale rings the next walk.
     private func drain() async {
         var signed = 0
+        var cursor: AssetKeyCursor?
         while !Task.isCancelled {
-            let page: [RenderSignatureCandidate]
+            let page: CandidatePage<RenderSignatureCandidate, AssetKeyCursor>
             do {
-                page = try await store.renderSignatureCandidates(limit: pageSize)
+                page = try await store.renderSignatureCandidates(after: cursor, limit: pageSize)
             } catch {
                 OtosLog.thumbnails.errorOperation("renderSignature", phase: "readFailed", fields: [
                     "error": String(describing: error),
                 ])
                 return
             }
-            guard !page.isEmpty else { break }
-            let results = await Self.sign(page, thumbnailDirectory: thumbnailDirectory)
-            let written: Int
+            let results = await Self.sign(page.candidates, thumbnailDirectory: thumbnailDirectory)
             do {
-                written = try await store.applyRenderSignatures(results)
+                signed += results.isEmpty ? 0 : try await store.applyRenderSignatures(results)
             } catch {
                 OtosLog.thumbnails.errorOperation("renderSignature", phase: "writeFailed", fields: [
                     "count": "\(results.count)", "error": String(describing: error),
                 ])
                 return
             }
-            signed += written
-            // Every row of the page changed under us (re-rendered meanwhile): the next ring
-            // offers them again; looping now would read the same page forever.
-            if written == 0 {
-                break
-            }
+            guard let next = page.next else { break }
+            cursor = next
         }
         if signed > 0 {
             OtosLog.thumbnails.noticeOperation("renderSignature", phase: "signed", fields: ["count": "\(signed)"])

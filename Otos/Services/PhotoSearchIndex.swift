@@ -108,6 +108,9 @@ actor PhotoSearchIndex {
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
     private var ring: AsyncStream<Void>.Continuation?
+    /// Passes asked for and the one the last finished pass answered (ADR 0032 rule 2).
+    private var requested: UInt64 = 0
+    private var covered: UInt64 = 0
     private var retry: Task<Void, Never>?
     private let backoff: (first: Duration, last: Duration)
     private var nextRetry: Duration
@@ -148,21 +151,35 @@ actor PhotoSearchIndex {
         let changes = await store.changeNotifications()
         self.ring = ring
         ring.yield()
+        requested &+= 1
         forwarder = Task { [weak self] in
             // Rows that were only added have no thumbnail to embed and no embedding to
             // hold; the index hears them when enrichment renders them.
             for await change in changes where change != .assetsAdded {
-                guard self != nil else { break }
-                ring.yield()
+                guard let self else { break }
+                await request()
             }
             ring.finish()
         }
         loop = Task { [weak self] in
             for await _ in doorbell {
                 guard let self else { return }
-                await refresh()
+                await refreshIfRequested()
             }
         }
+    }
+
+    /// Asks for a pass (ADR 0032 rule 2). A pass under way answers it at its next page: an
+    /// embedding walk starts again from the newest asset, and a text walk ends, so the pass
+    /// that follows embeds what the change made owed before more previews are read.
+    private func request() {
+        requested &+= 1
+        ring?.yield()
+    }
+
+    private func refreshIfRequested() async {
+        guard requested != covered else { return }
+        await refresh()
     }
 
     /// Ends the loop and the text reader's child now: the window's teardown and a test's. A
@@ -289,11 +306,13 @@ actor PhotoSearchIndex {
 
     private func refresh() async {
         var settled = false
+        let answering = requested
         do {
             try await reconcile()
             let embedding = try await drain()
             try await reconcileTexts()
-            settled = try await drainTexts(unreadThumbnails: embedding.unread) && embedding.settled
+            settled = try await drainTexts() && embedding.settled
+            covered = answering
         } catch {
             OtosLog.thumbnails.errorOperation("search.index", phase: "failed", fields: [
                 "error": String(describing: error),
@@ -329,7 +348,7 @@ actor PhotoSearchIndex {
 
     private func retryFired() {
         retry = nil
-        ring?.yield()
+        request()
     }
 
     /// Brings memory in line with the catalog's current embeddings.
@@ -367,23 +386,33 @@ actor PhotoSearchIndex {
         var unread: Set<MediaAssetID> = []
         let start = ContinuousClock.now
         defer { logEmbedded(embedded, unread: unread.count, since: start) }
+        var walking = requested
+        var cursor: CaptureOrderCursor?
         while !Task.isCancelled {
-            let page = try await store.searchEmbeddingCandidates(limit: pageSize, excluding: unread)
-            guard !page.isEmpty else {
+            if requested != walking {
+                walking = requested
+                cursor = nil
+            }
+            let page = try await store.searchEmbeddingCandidates(after: cursor, limit: pageSize)
+            let owed = page.candidates.filter { !unread.contains($0.id) }
+            if !owed.isEmpty {
+                guard let results = await embedder.embed(owed, thumbnailDirectory: thumbnailDirectory) else {
+                    return (false, unread)
+                }
+                let written = try await store.applySearchEmbeddings(results)
+                unread.formUnion(Set(owed.map(\.id)).subtracting(written.map(\.id)))
+                let stored = written.map { StoredSearchEmbedding(id: $0.id, embedding: $0.embedding, labels: $0.labels) }
+                if !stored.isEmpty {
+                    remove(Set(stored.map(\.id)))
+                    insert(stored)
+                    announce()
+                }
+                embedded += written.count
+            }
+            guard let next = page.next else {
                 return (unread.isEmpty, unread)
             }
-            guard let results = await embedder.embed(page, thumbnailDirectory: thumbnailDirectory) else {
-                return (false, unread)
-            }
-            let written = try await store.applySearchEmbeddings(results)
-            unread.formUnion(Set(page.map(\.id)).subtracting(written.map(\.id)))
-            let stored = written.map { StoredSearchEmbedding(id: $0.id, embedding: $0.embedding, labels: $0.labels) }
-            if !stored.isEmpty {
-                remove(Set(stored.map(\.id)))
-                insert(stored)
-                announce()
-            }
-            embedded += written.count
+            cursor = next
         }
         return (false, unread)
     }
@@ -417,36 +446,37 @@ actor PhotoSearchIndex {
         announce()
     }
 
-    /// Reads every owed preview for text, a page at a time, after every embedding is made: a
-    /// photo is searchable by picture first, and a reading costs far more. A preview whose
-    /// reading failed is paged past for the rest of the pass. Settled when none is left, or
-    /// when it stops for new embeddings (whose thumbnail's change rang already);
-    /// `unreadThumbnails`, the thumbnails the embedding pass could not read, are no new ones.
-    /// Not settled when the session reading it ends (`SearchTextReader`): what it read before
-    /// is written, every other still stays owed, and the retry after the backoff reads them in
-    /// a new session.
-    private func drainTexts(unreadThumbnails: Set<MediaAssetID>) async throws -> Bool {
+    /// Reads every owed preview for text in one newest-first walk, a page at a time, after
+    /// every embedding is made: a photo is searchable by picture first, and a reading costs far
+    /// more. A preview whose reading failed is passed by and stays owed. Settled when the walk
+    /// ends with none unread, or when it stops at a page because a change asked for a new pass
+    /// (`requested`), which embeds what the change made owed first. Not settled when the
+    /// session reading it ends (`SearchTextReader`): what it read before is written, every
+    /// other still stays owed, and the retry after the backoff reads them in a new session.
+    private func drainTexts() async throws -> Bool {
         var read = 0, withText = 0
         var unread: Set<MediaAssetID> = []
         var settled = false
         var sessionEnded = false
         let start = ContinuousClock.now
+        let walking = requested
+        var cursor: CaptureOrderCursor?
         while !Task.isCancelled {
-            let page = try await store.searchTextCandidates(limit: 8, excluding: unread)
-            guard !page.isEmpty else {
-                settled = unread.isEmpty
-                break
-            }
+            let page = try await store.searchTextCandidates(after: cursor, limit: 8)
             let results: [SearchTextResult]
-            switch await textReader.read(page, directory: thumbnailDirectory) {
-            case let .read(page):
-                results = page
-            case let .sessionEnded(before):
-                results = before
-                sessionEnded = true
+            if page.candidates.isEmpty {
+                results = []
+            } else {
+                switch await textReader.read(page.candidates, directory: thumbnailDirectory) {
+                case let .read(page):
+                    results = page
+                case let .sessionEnded(before):
+                    results = before
+                    sessionEnded = true
+                }
             }
-            let written = try await store.applySearchTexts(results)
-            unread.formUnion(Set(page.map(\.id)).subtracting(written.map(\.id)))
+            let written = results.isEmpty ? [] : try await store.applySearchTexts(results)
+            unread.formUnion(Set(page.candidates.map(\.id)).subtracting(written.map(\.id)))
             for result in written {
                 texts[result.id] = result.lines.isEmpty ? nil : SearchTextReading.folded(SearchTextReading.searchable(result.lines))
                 withText += result.lines.isEmpty ? 0 : 1
@@ -458,12 +488,17 @@ actor PhotoSearchIndex {
             if sessionEnded {
                 break
             }
-            // New embeddings come first: a thumbnail written meanwhile is embedded before more
-            // previews are read.
-            if try await !store.searchEmbeddingCandidates(limit: 1, excluding: unreadThumbnails).isEmpty {
+            guard let next = page.next else {
+                settled = unread.isEmpty
+                break
+            }
+            // A change since the pass began comes first: the next pass embeds what it made owed
+            // before more previews are read.
+            if requested != walking {
                 settled = true
                 break
             }
+            cursor = next
         }
         if read > 0 || !unread.isEmpty {
             OtosLog.thumbnails.noticeOperation("search.text", phase: "read", fields: [

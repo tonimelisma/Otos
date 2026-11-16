@@ -227,7 +227,7 @@ struct CatalogOnThisDayScopeTests {
         }
         _ = try await store.setMediaChoice(.liked, for: [id("2023-morning.jpg")])
         _ = try await store.setMediaChoice(.disliked, for: [id("2022-disliked.jpg")])
-        let screen = try #require(try await store.searchEmbeddingCandidates(limit: 10).first { $0.id == id("2023-screen.png") })
+        let screen = try #require(try await store.searchEmbeddingCandidates(limit: 10).candidates.first { $0.id == id("2023-screen.png") })
         var changes = await store.changeNotifications().makeAsyncIterator()
         let vector = [Float](repeating: 0, count: SearchEmbedding.dimensions)
         let written = try await store.applySearchEmbeddings([
@@ -291,7 +291,7 @@ struct CatalogOnThisDayScopeTests {
         }
         let vector = [Float](repeating: 0, count: SearchEmbedding.dimensions)
         let labels = ["rerendered.png": ["screenshot"], "document.png": ["document"], "screen.png": ["screenshot"], "photo.jpg": ["people"]]
-        let candidates = try await store.searchEmbeddingCandidates(limit: 10).filter { labels[$0.id.relativePath.rawValue] != nil }
+        let candidates = try await store.searchEmbeddingCandidates(limit: 10).candidates.filter { labels[$0.id.relativePath.rawValue] != nil }
         #expect(candidates.count == labels.count)
         let written = try await store.applySearchEmbeddings(candidates.map { candidate in
             SearchEmbeddingResult(
@@ -320,7 +320,7 @@ struct CatalogOnThisDayScopeTests {
         try #require(try await onThisDay() == [id("rerendered.png"), id("unread.jpg"), id("photo.jpg")])
 
         // The new picture read as a screenshot leaves again, and that write is a change.
-        let reread = try #require(try await store.searchEmbeddingCandidates(limit: 10).first { $0.id == id("rerendered.png") })
+        let reread = try #require(try await store.searchEmbeddingCandidates(limit: 10).candidates.first { $0.id == id("rerendered.png") })
         changes = await store.changeNotifications().makeAsyncIterator()
         _ = try await store.applySearchEmbeddings([
             SearchEmbeddingResult(id: reread.id, source: reread.source, embedding: vector, confidentLabels: ["screenshot"]),

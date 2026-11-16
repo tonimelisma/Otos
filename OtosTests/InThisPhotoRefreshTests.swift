@@ -27,7 +27,7 @@ struct InThisPhotoRefreshTests {
             try await waitUntil { model.photoInfo?.id == id }
             #expect(model.photoInfo?.recognized?.labels == nil)
 
-            let candidate = try #require(try await library.store.searchEmbeddingCandidates(limit: 10).first)
+            let candidate = try #require(try await library.store.searchEmbeddingCandidates(limit: 10).candidates.first)
             _ = try await library.store.applySearchEmbeddings([SearchEmbeddingResult(
                 id: id, source: candidate.source, embedding: [Float](repeating: 1, count: SearchEmbedding.dimensions),
                 labels: ["pool": 0.88], confidentLabels: ["pool"]

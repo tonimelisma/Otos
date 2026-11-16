@@ -315,12 +315,12 @@ struct SearchReadingTests {
             sourceSize: asset.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt), contentHash: nil,
             previewPath: "sign-preview.heic"
         )])
-        let candidate = try #require(try await store.searchTextCandidates(limit: 10).first)
+        let candidate = try #require(try await store.searchTextCandidates(limit: 10).candidates.first)
         #expect(candidate.previewPath == "sign-preview.heic")
         let open = [RecognizedTextLine(text: "OPEN", confidence: 1), RecognizedTextLine(text: "0p3n", confidence: 0.3)]
         #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: "stale", lines: open)]).isEmpty)
         #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: candidate.source, lines: open)]).count == 1)
-        #expect(try await store.searchTextCandidates(limit: 10).isEmpty)
+        #expect(try await store.searchTextCandidates(limit: 10).candidates.isEmpty)
         #expect(try await store.currentSearchTextIDs() == [asset.id])
         #expect(try await store.currentSearchTexts(for: [asset.id]) == [asset.id: "OPEN\n0p3n"])
         #expect(try await store.photoInfoOverlay(for: asset.id)?.textLines == ["OPEN"])
@@ -348,7 +348,7 @@ struct SearchReadingTests {
         }
         await enrich(thumbnail: "pool-thumb.jpg")
         #expect(try await store.photoInfoOverlay(for: asset.id)?.sceneLabels == nil)
-        let candidate = try #require(try await store.searchEmbeddingCandidates(limit: 10).first)
+        let candidate = try #require(try await store.searchEmbeddingCandidates(limit: 10).candidates.first)
         _ = try await store.applySearchEmbeddings([SearchEmbeddingResult(
             id: asset.id, source: candidate.source, embedding: [Float](repeating: 1, count: SearchEmbedding.dimensions),
             labels: ["water": 0.88, "pool": 0.88, "horse": 0.07], confidentLabels: ["pool", "water"]

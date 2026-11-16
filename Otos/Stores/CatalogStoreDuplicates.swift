@@ -250,6 +250,24 @@ nonisolated enum StoredThumbnailSQL {
     }
 }
 
+/// The render signature refresher's walk (ADR 0042): one root's stills whose thumbnail has no
+/// current signature, in path order after a path, through the asset key
+/// (`CandidateWalk.keyPage`; binds the root, the path, the limit).
+nonisolated enum RenderSignatureSQL {
+    static let candidatesSQL = """
+    SELECT library_root_id, relative_path, thumbnail_path, \(StoredThumbnailSQL.identity("media_asset")) AS source
+    FROM media_asset INDEXED BY sqlite_autoindex_media_asset_1
+    WHERE library_root_id = ? AND relative_path > ?
+      AND thumbnail_path IS NOT NULL
+      AND kind IN ('image', 'raw')
+      AND pending_trash_batch_unix_ms IS NULL
+      AND trash_path IS NULL
+      AND render_signature_source IS NOT \(StoredThumbnailSQL.identity("media_asset"))
+    ORDER BY relative_path
+    LIMIT ?
+    """
+}
+
 /// A still whose thumbnail has no current render signature.
 nonisolated struct RenderSignatureCandidate: Equatable, Sendable {
     let id: MediaAssetID

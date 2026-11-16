@@ -259,7 +259,7 @@ struct SamePhotoTests {
             contentHash: nil
         )])
 
-        let candidates = try await store.renderSignatureCandidates(limit: 10)
+        let candidates = try await store.renderSignatureCandidates(limit: 10).candidates
         let candidate = try #require(candidates.first)
         #expect(candidates.map(\.id) == [id])
 
@@ -271,7 +271,7 @@ struct SamePhotoTests {
         #expect(try await store.applyRenderSignatures([
             RenderSignatureResult(id: id, source: candidate.source, signature: signature),
         ]) == 1)
-        #expect(try await store.renderSignatureCandidates(limit: 10).isEmpty)
+        #expect(try await store.renderSignatureCandidates(limit: 10).candidates.isEmpty)
 
         // The still is offered for pairing by its column facts, and its detail carries the
         // signature and the copy a group would list.

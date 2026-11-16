@@ -258,3 +258,121 @@ nonisolated struct CatalogScopePredicate: Equatable {
 
     static let nothing = CatalogScopePredicate(rootIDs: [])
 }
+
+// MARK: - Candidate walks (plan 0116)
+
+/// The last row a walk over the asset key read; the next page starts after it.
+nonisolated struct AssetKeyCursor: Equatable, Sendable {
+    let rootID: Int64
+    let relativePath: String
+}
+
+/// The last row a newest-first walk read, in the capture order's own terms
+/// (`best_capture_local DESC, library_root_id, relative_path`).
+nonisolated struct CaptureOrderCursor: Equatable, Sendable {
+    let captureLocal: Double?
+    let rootID: Int64
+    let relativePath: String
+}
+
+/// One page of a candidate walk, and where the next page starts: nil when this page read
+/// the walk's last row. A page can hold fewer candidates than it read rows (a row the
+/// caller passes over), and none, while the walk goes on.
+nonisolated struct CandidatePage<Candidate: Sendable, Cursor: Sendable>: Sendable {
+    let candidates: [Candidate]
+    let next: Cursor?
+}
+
+extension CandidatePage: Equatable where Candidate: Equatable, Cursor: Equatable {}
+
+/// How a background owner finds what it owes (plan 0116 stage 1): **one drain is one walk**.
+/// The owner keeps the cursor of the walk it is in and asks for the page after it, so a drain
+/// visits each row once rather than starting from the first row for every page. A row that
+/// becomes owed behind the cursor is found by the next walk, which the change that made it
+/// owed starts (ADR 0032: the change rings the owner's doorbell).
+///
+/// - A key walk visits each root on its own seek, `library_root_id = ? AND relative_path > ?`:
+///   a row-value cursor over `library_root_id IN (…)` seeks only on the root and walks it from
+///   its first row again (`docs/research/2026-11-16-plan-0116-due-diligence.md` §3).
+/// - A capture walk reads the capture order newest first, as the window's date order does,
+///   through its index, in three phases: the rows tied at the cursor's capture time after its
+///   key, then every older capture time, then the rows with none (SQLite orders NULL last when
+///   descending). Each phase is a range of the index, so no page sorts.
+nonisolated enum CandidateWalk {
+    /// The index a capture walk reads: the window's newest-first date order over every root.
+    static let captureIndex = "idx_media_asset_best_capture_global_desc"
+
+    /// Reads at most `limit` rows from `after` on, one root at a time, in `rootIDs`'s order.
+    /// `sql` binds, in order: the root, the path its rows start after, then `arguments`, then
+    /// the limit; it selects `relative_path`.
+    static func keyPage(
+        sql: String,
+        rootIDs: [Int64],
+        after cursor: AssetKeyCursor?,
+        limit: Int,
+        arguments: StatementArguments = StatementArguments(),
+        db: Database
+    ) throws -> (rows: [Row], next: AssetKeyCursor?) {
+        var rows: [Row] = []
+        for rootID in rootIDs.sorted() where rootID >= (cursor?.rootID ?? Int64.min) {
+            let after = cursor?.rootID == rootID ? cursor?.relativePath ?? "" : ""
+            let page = try Row.fetchAll(
+                db,
+                sql: sql,
+                arguments: [rootID, after] + arguments + [limit - rows.count]
+            )
+            rows += page
+            if rows.count == limit, let last = page.last {
+                return (rows, AssetKeyCursor(rootID: rootID, relativePath: last["relative_path"]))
+            }
+        }
+        return (rows, nil)
+    }
+
+    /// Reads at most `limit` rows from `after` on, newest capture first. `sql` builds the
+    /// statement from the phase's position term over `row` and its `ORDER BY`; it binds
+    /// `arguments` first, then the position's, then the limit, and selects
+    /// `best_capture_local`, `library_root_id` and `relative_path` of `row`.
+    static func capturePage(
+        row: String,
+        after cursor: CaptureOrderCursor?,
+        limit: Int,
+        arguments: StatementArguments,
+        db: Database,
+        sql: (_ position: String, _ order: String) -> String
+    ) throws -> (rows: [Row], next: CaptureOrderCursor?) {
+        let key = "(\(row).library_root_id, \(row).relative_path) > (?, ?)"
+        let byKey = "ORDER BY \(row).library_root_id, \(row).relative_path"
+        let newestFirst = "ORDER BY \(row).best_capture_local DESC, \(row).library_root_id, \(row).relative_path"
+        let undated = "\(row).best_capture_local IS NULL AND \(key)"
+        let phases: [(position: String, order: String, arguments: StatementArguments)] = switch cursor {
+        case nil:
+            [
+                ("\(row).best_capture_local IS NOT NULL", newestFirst, []),
+                (undated, byKey, [Int64.min, ""]),
+            ]
+        case let cursor? where cursor.captureLocal == nil:
+            [(undated, byKey, [cursor.rootID, cursor.relativePath])]
+        case let cursor?:
+            [
+                ("\(row).best_capture_local = ? AND \(key)", byKey, [cursor.captureLocal, cursor.rootID, cursor.relativePath]),
+                ("\(row).best_capture_local < ?", newestFirst, [cursor.captureLocal]),
+                (undated, byKey, [Int64.min, ""]),
+            ]
+        }
+        var rows: [Row] = []
+        for phase in phases {
+            rows += try Row.fetchAll(
+                db,
+                sql: sql(phase.position, phase.order),
+                arguments: arguments + phase.arguments + [limit - rows.count]
+            )
+            if rows.count == limit, let last = rows.last {
+                return (rows, CaptureOrderCursor(
+                    captureLocal: last["best_capture_local"], rootID: last["library_root_id"], relativePath: last["relative_path"]
+                ))
+            }
+        }
+        return (rows, nil)
+    }
+}

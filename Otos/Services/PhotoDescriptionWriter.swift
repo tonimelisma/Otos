@@ -22,11 +22,11 @@ import ImageIO
 ///
 /// One loop, woken by a doorbell (ADR 0032 rule 3) that three sources ring: the Store's change
 /// notifications of a fact a description is written from (`inputs`), search's index each time
-/// it reads text (which the Store does not announce), and the retry wake. Each wake drains every
-/// owed still a page at a time. Finding the owed stills reads every still's row — about 1.3 s of
-/// CPU on the owner's 57,040 stills, as the text reader's own query costs
-/// (`docs/research/2026-11-14-foundation-models-for-media.md` §7) — so a page is long enough
-/// for that read to be a few percent of the model's time. Requests run one at
+/// it reads text (which the Store does not announce), and the retry wake. Each ring is a request
+/// (ADR 0032 rule 2), and a request is answered by one walk over the owed stills, newest first,
+/// a page at a time (`CandidateWalk`): a walk visits each still once, and a request made while
+/// it runs restarts it from the newest still at its next page, so an import's photos are not
+/// left behind a long backlog. Requests run one at
 /// a time: the model takes one photo at a time, and a second request would only wait in it. The
 /// forwarder and the loop hold this actor weakly and end with it. `changes()` rings after
 /// descriptions are written, which the Info pane and On This Day's titles read again on.
@@ -42,6 +42,10 @@ actor PhotoDescriptionWriter {
     private var failedUntil: [MediaAssetID: ContinuousClock.Instant] = [:]
     /// When requests may be made again after the model was unavailable or busy.
     private var modelNotBefore: ContinuousClock.Instant?
+    /// Walks asked for and the one the last finished walk answered (ADR 0032 rule 2); a test
+    /// waits on `requested` to deliver an event while a walk is under way.
+    private(set) var requested: UInt64 = 0
+    private var covered: UInt64 = 0
     private var doorbell: AsyncStream<Void>.Continuation?
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
@@ -86,19 +90,20 @@ actor PhotoDescriptionWriter {
         forwarder = Task { [weak self, store, searchIndex] in
             let changes = await store.changeNotifications()
             let texts = await searchIndex?.changes()
-            ring.yield()
+            await self?.request()
             await withDiscardingTaskGroup { group in
                 if let texts {
-                    group.addTask {
+                    group.addTask { [weak self] in
                         for await _ in texts {
-                            ring.yield()
+                            guard let self else { break }
+                            await request()
                         }
                     }
                 }
                 for await change in changes {
-                    guard self != nil else { break }
+                    guard let self else { break }
                     if !change.facts.isDisjoint(with: Self.inputs) {
-                        ring.yield()
+                        await self.request()
                     }
                 }
                 group.cancelAll()
@@ -108,9 +113,22 @@ actor PhotoDescriptionWriter {
         loop = Task { [weak self] in
             for await _ in bell {
                 guard let self else { return }
-                await drain()
+                await drainIfRequested()
             }
         }
+    }
+
+    /// Asks for a walk from the newest still (ADR 0032 rule 2): a walk under way starts again
+    /// from the top at its next page, so a still made owed now — an import's newest photo — is
+    /// described before the rest of a long backlog.
+    private func request() {
+        requested &+= 1
+        doorbell?.yield()
+    }
+
+    private func drainIfRequested() async {
+        guard requested != covered else { return }
+        await drain()
     }
 
     /// Ends the loop now — a test's teardown; in the app, the loops end with the actor.
@@ -150,6 +168,8 @@ actor PhotoDescriptionWriter {
         defer { drains += 1 }
         let now = ContinuousClock.now
         if let notBefore = modelNotBefore, notBefore > now {
+            // The wake asks again when the model may answer.
+            covered = requested
             armWake(after: now)
             return
         }
@@ -157,19 +177,28 @@ actor PhotoDescriptionWriter {
         failedUntil = failedUntil.filter { $0.value > now }
         var written = 0, declined = 0, failed = 0
         var stopped = false
+        // The request the walk answers; a newer one restarts it from the newest still. A walk
+        // that fails covers nothing, so the next ring walks again.
+        var walking = requested
+        var cursor: CaptureOrderCursor?
         while !Task.isCancelled, !stopped {
-            let page: [PhotoDescriptionCandidate]
+            if requested != walking {
+                walking = requested
+                cursor = nil
+            }
+            let page: CandidatePage<PhotoDescriptionCandidate, CaptureOrderCursor>
             do {
-                page = try await store.photoDescriptionCandidates(limit: pageSize, excluding: Set(failedUntil.keys))
+                page = try await store.photoDescriptionCandidates(
+                    after: cursor, limit: pageSize, excluding: Set(failedUntil.keys)
+                )
             } catch {
                 OtosLog.metadata.errorOperation("description", phase: "readFailed", fields: [
                     "error": String(describing: error),
                 ])
                 break
             }
-            guard !page.isEmpty else { break }
             var results: [PhotoDescriptionResult] = []
-            for candidate in page where !stopped {
+            for candidate in page.candidates where !stopped {
                 let start = ContinuousClock.now
                 switch await read(candidate) {
                 case let .written(text):
@@ -195,7 +224,7 @@ actor PhotoDescriptionWriter {
                 }
             }
             do {
-                if try await !store.applyPhotoDescriptions(results).isEmpty {
+                if !results.isEmpty, try await !store.applyPhotoDescriptions(results).isEmpty {
                     announce()
                 }
             } catch {
@@ -204,6 +233,12 @@ actor PhotoDescriptionWriter {
                 ])
                 break
             }
+            // A model that stopped answering ends the walk; its wake asks for the next one.
+            guard let next = page.next, !stopped else {
+                covered = walking
+                break
+            }
+            cursor = next
         }
         armWake(after: ContinuousClock.now)
         if written > 0 || declined > 0 || failed > 0 || stopped {
@@ -229,8 +264,7 @@ actor PhotoDescriptionWriter {
         }
         guard wake?.at != due else { return }
         wake?.task.cancel()
-        let ring = doorbell
-        wake = (Task {
+        wake = (Task { [weak self] in
             do {
                 // time: backoff — a failed request, an unavailable model and a busy one report
                 // nothing when they would succeed.
@@ -238,7 +272,7 @@ actor PhotoDescriptionWriter {
             } catch {
                 return
             }
-            ring?.yield()
+            await self?.request()
         }, due)
     }
 

@@ -31,9 +31,9 @@ nonisolated enum SearchEmbeddingStorage {
     /// `FROM … WHERE …` over the assets owed an embedding in `rootCount` roots (bound in
     /// order): a stored thumbnail whose current embedding is missing, not waiting for or in
     /// the Trash, and not a Live Photo's movie, whose still stands for the item.
-    static func owedFrom(rootCount: Int) -> String {
+    static func owedFrom(rootCount: Int, indexedBy index: String? = nil) -> String {
         """
-        FROM media_asset AS a
+        FROM media_asset AS a\(index.map { " INDEXED BY \($0)" } ?? "")
         LEFT JOIN search_embedding AS e
             ON e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
         WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
@@ -42,6 +42,20 @@ nonisolated enum SearchEmbeddingStorage {
           AND a.trash_path IS NULL
           AND NOT \(LivePhotoSQL.isPairedMotion("a"))
           AND e.source IS NOT \(currentSource("a"))
+        """
+    }
+
+    /// A page of the embedding owner's newest-first walk (`CandidateWalk.capturePage`) through
+    /// the window's date order index, which holds the order, the root and what makes a row
+    /// shown; the thumbnail's stamp is read from the row.
+    static func candidatesSQL(rootCount: Int, position: String, order: String) -> String {
+        """
+        SELECT a.best_capture_local, a.library_root_id, a.relative_path, a.thumbnail_path,
+               \(currentSource("a")) AS source
+        \(owedFrom(rootCount: rootCount, indexedBy: CandidateWalk.captureIndex))
+          AND \(position)
+        \(order)
+        LIMIT ?
         """
     }
 

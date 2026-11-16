@@ -41,11 +41,14 @@ nonisolated enum MirrorGateway {
 
     /// Library files of a root (second argument) with an external asset of an account (first)
     /// of the same name, size and whole-second mtime: each library row probes the account's
-    /// size index.
+    /// size index. The join order is pinned (`CROSS JOIN`, the library outer): with no
+    /// statistics SQLite chose the account as the outer loop, walking its 147,064 rows to
+    /// probe the library, over 75 s on the owner's catalog against 0.16 s this way round
+    /// (`docs/research/2026-11-16-plan-0116-due-diligence.md` §2).
     static let candidatesSQL = """
     SELECT library.relative_path, asset.source_item_id, asset.source_path_sha1
-    FROM media_asset AS library
-    JOIN media_asset AS asset INDEXED BY idx_media_asset_size_root_asc
+    FROM media_asset AS library INDEXED BY sqlite_autoindex_media_asset_1
+    CROSS JOIN media_asset AS asset INDEXED BY idx_media_asset_size_root_asc
       ON asset.library_root_id = ?
      AND (asset.byte_size IS NULL) = 0
      AND asset.byte_size = library.byte_size
