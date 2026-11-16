@@ -1885,51 +1885,151 @@ nonisolated enum CatalogSchema {
     ///   no read takes, go.
     static let owedWorkIndexesMigrationIdentifier = "v65_owed_work_indexes"
 
-    /// v65's owed render signature condition, over the string signature stamp v71 removed.
-    static let v65RenderSignatureOwedPredicate = """
-    thumbnail_path IS NOT NULL
-      AND kind IN ('image', 'raw')
-      AND pending_trash_batch_unix_ms IS NULL
-      AND trash_path IS NULL
-      AND render_signature_source IS NOT \(StoredThumbnailSQL.unqualifiedIdentity)
-    """
-
-    static var owedWorkIndexesStatements: [String] {
-        let claims: [(name: String, global: Bool, claim: EnrichmentClaim)] = [
-            (EnrichmentClaimGateway.broadGlobalIndexName, true, .products),
-            (EnrichmentClaimGateway.broadRootIndexName, false, .products),
-            (EnrichmentClaimGateway.libraryGlobalIndexName, true, .library),
-            (EnrichmentClaimGateway.libraryRootIndexName, false, .library),
-        ]
-        return [
-            "DROP INDEX idx_media_asset_order_global",
-            "DROP INDEX idx_media_asset_order_root",
-            "CREATE INDEX \(SearchEmbeddingStorage.sourceIndexName) ON search_embedding(library_root_id, relative_path, source)",
-            "CREATE INDEX \(SearchTextStorage.sourceIndexName) ON search_text(library_root_id, relative_path, source)",
-            "CREATE INDEX \(PhotoDescriptionStorage.sourceIndexName) ON photo_description(library_root_id, relative_path, source)",
-            """
-            CREATE INDEX \(ProductStampSQL.indexName)
-            ON media_asset(best_capture_local DESC, library_root_id, relative_path, \(ProductStampSQL.columns))
-            """,
-            """
-            CREATE INDEX \(RenderSignatureSQL.owedIndexName) ON media_asset(library_root_id, relative_path)
-            WHERE \(v65RenderSignatureOwedPredicate)
-            """,
-            """
-            CREATE INDEX \(SourceProductsSQL.owedIndexName) ON media_asset(library_root_id, relative_path)
-            WHERE \(SourceProductsSQL.owedPredicate)
-            """,
-        ] + claims.flatMap { index in
-            [
-                "DROP INDEX \(index.name)",
-                claimIndex(
-                    index.name, global: index.global,
-                    predicate: "(\(EnrichmentClaimGateway.stalenessSQLPredicate(index.claim))) AND \(EnrichmentClaimGateway.unlistedRows)",
-                    orderColumn: "best_capture_local"
-                ),
-            ]
-        }
-    }
+    /// Literal, as v65 built it: an applied migration's outcome never changes (ADR 0002), so
+    /// no constant a later change could edit is read here.
+    static let owedWorkIndexesStatements: [String] = [
+        "DROP INDEX idx_media_asset_order_global",
+        "DROP INDEX idx_media_asset_order_root",
+        """
+        CREATE INDEX idx_search_embedding_source ON search_embedding(library_root_id, relative_path, source)
+        """,
+        """
+        CREATE INDEX idx_search_text_source ON search_text(library_root_id, relative_path, source)
+        """,
+        """
+        CREATE INDEX idx_photo_description_source ON photo_description(library_root_id, relative_path, \
+        source)
+        """,
+        """
+        CREATE INDEX idx_media_asset_product_stamps
+        ON media_asset(best_capture_local DESC, library_root_id, relative_path, \
+        pending_trash_batch_unix_ms, trash_path, kind, best_kind, content_identifier, parent_path, \
+        thumbnail_path, preview_path, rendered_revision, rendered_source_size, rendered_source_mtime, \
+        source_products_size, source_products_mtime, faces_source_size, faces_source_mtime, edit_revision)
+        """,
+        """
+        CREATE INDEX idx_media_asset_render_signature_owed ON media_asset(library_root_id, relative_path)
+        WHERE thumbnail_path IS NOT NULL
+          AND kind IN ('image', 'raw')
+          AND pending_trash_batch_unix_ms IS NULL
+          AND trash_path IS NULL
+          AND render_signature_source IS NOT (thumbnail_path || '|' || rendered_revision || '|'
+            || IFNULL(rendered_source_size, '') || '|' || IFNULL(rendered_source_mtime, '')
+            || CASE WHEN (rendered_source_size IS NULL AND source_products_size IS NOT NULL)
+                THEN '|source|' || source_products_size || '|' || IFNULL(source_products_mtime, '')
+                ELSE '' END)
+        """,
+        """
+        CREATE INDEX idx_media_asset_source_products_owed ON media_asset(library_root_id, relative_path)
+        WHERE source_item_id IS NOT NULL
+          AND hidden_by_source = 0
+          AND byte_size IS NOT NULL
+          AND (edit_revision = 0 AND rendered_source_size IS NULL)
+          AND source_products_absent = 0
+          AND (
+              source_products_size IS NOT byte_size
+              OR source_products_mtime IS NOT CAST(content_modified_at_unix AS INTEGER)
+          )
+        """,
+        "DROP INDEX idx_media_asset_needs_enrichment_global",
+        """
+        CREATE INDEX idx_media_asset_needs_enrichment_global
+        ON media_asset(best_capture_local DESC, library_root_id, relative_path)
+        WHERE (metadata_source_size IS NULL
+           OR metadata_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(metadata_source_mtime, -1)
+           OR rendered_source_size IS NULL
+           OR rendered_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(rendered_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(rendered_source_mtime, -1)
+           OR content_sha1 IS NULL
+           OR length(content_sha1) <> 20
+           OR content_hash_source_size IS NULL
+           OR content_hash_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(content_hash_source_mtime, -1)) AND source_item_id IS NULL
+        """,
+        "DROP INDEX idx_media_asset_needs_enrichment_root",
+        """
+        CREATE INDEX idx_media_asset_needs_enrichment_root
+        ON media_asset(library_root_id, best_capture_local DESC, relative_path)
+        WHERE (metadata_source_size IS NULL
+           OR metadata_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(metadata_source_mtime, -1)
+           OR rendered_source_size IS NULL
+           OR rendered_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(rendered_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(rendered_source_mtime, -1)
+           OR content_sha1 IS NULL
+           OR length(content_sha1) <> 20
+           OR content_hash_source_size IS NULL
+           OR content_hash_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(content_hash_source_mtime, -1)) AND source_item_id IS NULL
+        """,
+        "DROP INDEX idx_media_asset_needs_enrichment_global_library",
+        """
+        CREATE INDEX idx_media_asset_needs_enrichment_global_library
+        ON media_asset(best_capture_local DESC, library_root_id, relative_path)
+        WHERE (metadata_source_size IS NULL
+           OR metadata_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(metadata_source_mtime, -1)
+           OR rendered_source_size IS NULL
+           OR rendered_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(rendered_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(rendered_source_mtime, -1)
+           OR content_sha1 IS NULL
+           OR length(content_sha1) <> 20
+           OR content_hash_source_size IS NULL
+           OR content_hash_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(content_hash_source_mtime, -1)
+           OR (best_kind = 'video' AND (faces_source_size IS NULL
+           OR faces_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(faces_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(faces_source_mtime, -1)))) AND source_item_id IS NULL
+        """,
+        "DROP INDEX idx_media_asset_needs_enrichment_root_library",
+        """
+        CREATE INDEX idx_media_asset_needs_enrichment_root_library
+        ON media_asset(library_root_id, best_capture_local DESC, relative_path)
+        WHERE (metadata_source_size IS NULL
+           OR metadata_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(metadata_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(metadata_source_mtime, -1)
+           OR rendered_source_size IS NULL
+           OR rendered_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(rendered_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(rendered_source_mtime, -1)
+           OR content_sha1 IS NULL
+           OR length(content_sha1) <> 20
+           OR content_hash_source_size IS NULL
+           OR content_hash_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(content_hash_source_mtime, -1)
+           OR (best_kind = 'video' AND (faces_source_size IS NULL
+           OR faces_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(faces_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(faces_source_mtime, -1)))) AND source_item_id IS NULL
+        """,
+    ]
 
     /// v66 a face's embedding moves out of its row into `face_embedding` (ADR 0047, Storage).
     /// A face row was 2.1 KB, its 2,048-byte embedding most of it, so one row filled a page
@@ -2029,30 +2129,30 @@ nonisolated enum CatalogSchema {
     /// assets the rule now leaves out; 15,737 remain.
     static let samePhotoIndexesMigrationIdentifier = "v67_same_photo_indexes"
 
-    /// v67's candidate condition and columns, over the string signature stamp v71 removed.
-    static let v67SamePhotoCandidatePredicate = """
-    kind IN ('image', 'raw')
-      AND pending_trash_batch_unix_ms IS NULL
-      AND trash_path IS NULL
-      AND hidden_by_source = 0
-      AND source_path_sha1 IS NULL
-      AND render_dhash IS NOT NULL
-      AND render_signature_source = \(StoredThumbnailSQL.unqualifiedIdentity)
-    """
-
-    static let v67SamePhotoCandidateIndexColumns = """
-    library_root_id, relative_path, kind, capture_instant_unix, render_dhash, render_signature_source, \
-    thumbnail_path, rendered_revision, rendered_source_size, rendered_source_mtime, source_products_size, \
-    source_products_mtime, metadata_source_size, metadata_source_mtime, pending_trash_batch_unix_ms, trash_path, \
-    hidden_by_source, source_path_sha1
-    """
-
+    /// Literal, as v67 built it (ADR 0002: an applied migration's outcome never changes).
     static let samePhotoIndexesStatements: [String] = [
         """
-        CREATE INDEX \(SamePhotoSQL.candidateIndexName) ON media_asset(\(v67SamePhotoCandidateIndexColumns))
-        WHERE \(v67SamePhotoCandidatePredicate)
+        CREATE INDEX idx_media_asset_same_photo_candidate ON media_asset(library_root_id, relative_path, \
+        kind, capture_instant_unix, render_dhash, render_signature_source, thumbnail_path, \
+        rendered_revision, rendered_source_size, rendered_source_mtime, source_products_size, \
+        source_products_mtime, metadata_source_size, metadata_source_mtime, pending_trash_batch_unix_ms, \
+        trash_path, hidden_by_source, source_path_sha1)
+        WHERE kind IN ('image', 'raw')
+          AND pending_trash_batch_unix_ms IS NULL
+          AND trash_path IS NULL
+          AND hidden_by_source = 0
+          AND source_path_sha1 IS NULL
+          AND render_dhash IS NOT NULL
+          AND render_signature_source = (thumbnail_path || '|' || rendered_revision || '|'
+            || IFNULL(rendered_source_size, '') || '|' || IFNULL(rendered_source_mtime, '')
+            || CASE WHEN (rendered_source_size IS NULL AND source_products_size IS NOT NULL)
+                THEN '|source|' || source_products_size || '|' || IFNULL(source_products_mtime, '')
+                ELSE '' END)
         """,
-        "CREATE INDEX \(SamePhotoSQL.metadataIndexName) ON asset_metadata(\(SamePhotoSQL.metadataIndexColumns))",
+        """
+        CREATE INDEX idx_asset_metadata_same_photo ON asset_metadata(library_root_id, relative_path, \
+        pixel_width, pixel_height, orientation, camera_model, serial_number, extraction_revision)
+        """,
     ]
 
     /// v68 the hash of the assignment inputs whose assignment the catalog holds (ADR 0047,
@@ -2080,26 +2180,57 @@ nonisolated enum CatalogSchema {
     /// made again with its own leading columns.
     static let sortOrderTestedColumnsMigrationIdentifier = "v69_sort_order_tested_columns"
 
-    /// The name and size order indexes, by name and leading columns.
-    static let sortOrderIndexes: [(name: String, columns: String)] = [
-        ("idx_media_asset_name_global_asc", "name_sort_key ASC, library_root_id, relative_path"),
-        ("idx_media_asset_name_global_desc", "name_sort_key DESC, library_root_id, relative_path"),
-        ("idx_media_asset_name_root_asc", "library_root_id, name_sort_key ASC, relative_path"),
-        ("idx_media_asset_name_root_desc", "library_root_id, name_sort_key DESC, relative_path"),
-        ("idx_media_asset_size_global_asc", "(byte_size IS NULL), byte_size ASC, library_root_id, relative_path"),
-        ("idx_media_asset_size_global_desc", "(byte_size IS NULL), byte_size DESC, library_root_id, relative_path"),
-        ("idx_media_asset_size_root_asc", "library_root_id, (byte_size IS NULL), byte_size ASC, relative_path"),
-        ("idx_media_asset_size_root_desc", "library_root_id, (byte_size IS NULL), byte_size DESC, relative_path"),
+    /// Literal, as v69 built it (ADR 0002: an applied migration's outcome never changes).
+    static let sortOrderTestedColumnsStatements: [String] = [
+        "DROP INDEX idx_media_asset_name_global_asc",
+        """
+        CREATE INDEX idx_media_asset_name_global_asc ON media_asset(name_sort_key ASC, library_root_id, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies)
+        """,
+        "DROP INDEX idx_media_asset_name_global_desc",
+        """
+        CREATE INDEX idx_media_asset_name_global_desc ON media_asset(name_sort_key DESC, library_root_id, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies)
+        """,
+        "DROP INDEX idx_media_asset_name_root_asc",
+        """
+        CREATE INDEX idx_media_asset_name_root_asc ON media_asset(library_root_id, name_sort_key ASC, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies)
+        """,
+        "DROP INDEX idx_media_asset_name_root_desc",
+        """
+        CREATE INDEX idx_media_asset_name_root_desc ON media_asset(library_root_id, name_sort_key DESC, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies)
+        """,
+        "DROP INDEX idx_media_asset_size_global_asc",
+        """
+        CREATE INDEX idx_media_asset_size_global_asc ON media_asset((byte_size IS NULL), byte_size ASC, \
+        library_root_id, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+        best_kind, content_identifier, shown_copy_root_id, has_copies)
+        """,
+        "DROP INDEX idx_media_asset_size_global_desc",
+        """
+        CREATE INDEX idx_media_asset_size_global_desc ON media_asset((byte_size IS NULL), byte_size DESC, \
+        library_root_id, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+        best_kind, content_identifier, shown_copy_root_id, has_copies)
+        """,
+        "DROP INDEX idx_media_asset_size_root_asc",
+        """
+        CREATE INDEX idx_media_asset_size_root_asc ON media_asset(library_root_id, (byte_size IS NULL), \
+        byte_size ASC, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+        best_kind, content_identifier, shown_copy_root_id, has_copies)
+        """,
+        "DROP INDEX idx_media_asset_size_root_desc",
+        """
+        CREATE INDEX idx_media_asset_size_root_desc ON media_asset(library_root_id, (byte_size IS NULL), \
+        byte_size DESC, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+        best_kind, content_identifier, shown_copy_root_id, has_copies)
+        """,
     ]
-
-    static var sortOrderTestedColumnsStatements: [String] {
-        sortOrderIndexes.flatMap { index in
-            [
-                "DROP INDEX \(index.name)",
-                "CREATE INDEX \(index.name) ON media_asset(\(index.columns), \(photoTestedColumns))",
-            ]
-        }
-    }
 
     /// v70: which search vector file the catalog's embeddings are mapped from, and how many of
     /// its slots they commit (ADR 0048, "The index"). One row, or none while no file is built.

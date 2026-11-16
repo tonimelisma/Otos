@@ -250,7 +250,14 @@ none, and the log said nothing about the wait
   writes rows while the indexes it changes are dropped, so each is built once over the written
   rows rather than maintained for every write. An applied migration's body changes only when
   its outcome — schema text, row contents, object order — stays identical: GRDB knows a
-  migration by its name, and a catalog that applied it never runs it again.
+  migration by its name, and a catalog that applied it never runs it again. So a migration
+  holds its SQL as literal text, never a Swift constant a later change could edit: an edited
+  constant would build other indexes in a new catalog than in an upgraded one, and a partial
+  index whose condition no longer matches its query fails that query at prepare
+  (`INDEXED BY`). `CatalogMigrationFreezeTests` runs every migration on an empty catalog and
+  compares the indexes each builds with the text frozen for it
+  (`OtosTests/Fixtures/Catalog/migration-indexes.json`, where a new migration adds its own
+  entry), and prepares each partial index a query names against that query's predicate.
 - **The open compacts a file a tenth free.** SQLite reuses a dropped table's pages but
   never returns them, and `VACUUM` cannot run inside a migration's transaction, so after the
   migrations the open rewrites the file (`CatalogStore.compactIfOwed`) when at least a tenth
