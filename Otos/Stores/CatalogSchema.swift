@@ -2011,6 +2011,23 @@ nonisolated enum CatalogSchema {
         ]
     }
 
+    /// v67: the same-photo rule's candidate read touches no wide row (ADR 0042, plan 0116
+    /// bet 3). `idx_media_asset_same_photo_candidate` holds exactly the stills the rule
+    /// compares (`SamePhotoSQL.candidatePredicate`) with every column the read names, and
+    /// `idx_asset_metadata_same_photo` the record columns pairs are proposed from. On the
+    /// owner's catalog the read walked every row of every root, 545 MB of asset rows and the
+    /// 190 MB record table, for 144,410 stills, 128,671 of them an Immich external library's
+    /// assets the rule now leaves out; 15,737 remain.
+    static let samePhotoIndexesMigrationIdentifier = "v67_same_photo_indexes"
+
+    static let samePhotoIndexesStatements: [String] = [
+        """
+        CREATE INDEX \(SamePhotoSQL.candidateIndexName) ON media_asset(\(SamePhotoSQL.candidateIndexColumns))
+        WHERE \(SamePhotoSQL.candidatePredicate)
+        """,
+        "CREATE INDEX \(SamePhotoSQL.metadataIndexName) ON asset_metadata(\(SamePhotoSQL.metadataIndexColumns))",
+    ]
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

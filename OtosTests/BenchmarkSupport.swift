@@ -162,20 +162,22 @@ struct BenchmarkLibrary {
         let isStripped: Bool
     }
 
-    static func make(in directory: URL) async throws -> BenchmarkLibrary {
+    /// The library of `count` stills (`stillCount` for the benchmarks; a test of the build's
+    /// own behavior takes fewer).
+    static func make(in directory: URL, stills count: Int = stillCount) async throws -> BenchmarkLibrary {
         let rootURL = directory.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let store = CatalogStore(
             location: .databaseFile(directory.appending(path: "db/catalog.sqlite")),
-            scanner: scanner()
+            scanner: scanner(count: count)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         let scanned = try await waitForCatalogStoreState(store) {
-            !$0.isScanning && $0.testAssets.count == stillCount
+            !$0.isScanning && $0.testAssets.count == count
         }
         let assets = scanned.testAssets.sorted { $0.id.relativePath.rawValue < $1.id.relativePath.rawValue }
-        let stills = try generatedStills()
+        let stills = try generatedStills(count: count)
 
         let results = zip(assets, stills).enumerated().map { index, pair in
             let (asset, still) = pair
@@ -200,7 +202,7 @@ struct BenchmarkLibrary {
         }
 
         let indexByID = Dictionary(uniqueKeysWithValues: assets.enumerated().map { ($1.id, $0) })
-        let signatures = try await store.renderSignatureCandidates(limit: stillCount).candidates.map { candidate in
+        let signatures = try await store.renderSignatureCandidates(limit: count).candidates.map { candidate in
             let still = try stills[#require(indexByID[candidate.id])]
             return RenderSignatureResult(
                 id: candidate.id,
@@ -208,7 +210,7 @@ struct BenchmarkLibrary {
                 signature: RenderSignature(differenceHash: still.hash, gray: still.gray)
             )
         }
-        #expect(try await store.applyRenderSignatures(signatures) == stillCount)
+        #expect(try await store.applyRenderSignatures(signatures) == count)
         let libraries = try #require(await store.loadedLibraries())
         return BenchmarkLibrary(store: store, libraries: libraries)
     }
@@ -216,10 +218,10 @@ struct BenchmarkLibrary {
     /// One in forty stills is an identical copy of the one before it; one in eleven is a
     /// version of it — the same shape, a hash a few bits away and a render a few levels
     /// away; one in nine has no capture metadata. The rest are unrelated pictures.
-    private static func generatedStills() throws -> [Still] {
+    private static func generatedStills(count: Int) throws -> [Still] {
         var random = SplitMix64(seed: 0x0705)
         var stills: [Still] = []
-        for index in 0 ..< stillCount {
+        for index in 0 ..< count {
             let previous = stills.last
             let isStripped = index % 9 == 0
             let digest = if index % 40 == 1, let previous {
@@ -258,9 +260,9 @@ struct BenchmarkLibrary {
     }
 
     /// Files with distinct paths and dates; their bytes are never read.
-    private static func scanner() -> CatalogScanner {
+    private static func scanner(count: Int) -> CatalogScanner {
         CatalogScanner { _, _, batchHandler in
-            let files = (0 ..< stillCount).map { index in
+            let files = (0 ..< count).map { index in
                 ScannedMediaFile(
                     relativePath: MediaRelativePath(rawValue: String(format: "IMG_%06d.jpg", index)),
                     name: String(format: "IMG_%06d.jpg", index),

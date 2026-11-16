@@ -254,7 +254,8 @@ enum StallReproduction {
             involved = candidates.prefix(visibleTiles).map(\.id)
             return candidates.count
         }
-        try await replay("samePhotoDetails", limit: involved.count) { try await store.samePhotoDetails(for: involved).count }
+        try await replay("samePhotoEvidence", limit: involved.count) { try await store.samePhotoEvidence(for: involved).count }
+        try await replay("samePhotoCopies", limit: involved.count) { try await store.samePhotoCopies(for: involved).count }
         try await replay("duplicateCopies") { try await store.duplicateCopies(availableLibraryPaths: available).copies.count }
         try await replay("peopleSnapshot") { try await store.peopleSnapshot(availableLibraryPaths: available).faces.count }
         try await replay("mirrorProbes") { try await store.mirrorProbes(account: catalog.account).reduce(0) { $0 + $1.candidates.count } }

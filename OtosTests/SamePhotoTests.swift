@@ -47,7 +47,10 @@ struct SamePhotoTests {
                 cameraModel: instant == nil ? nil : model,
                 serialNumber: nil,
                 aspectRatio: 4.0 / 3.0,
-                differenceHash: hash
+                differenceHash: hash,
+                evidenceStamp: SamePhotoEvidenceStamp(
+                    signatureSource: path, recordSize: nil, recordMTime: nil, recordRevision: nil
+                )
             ),
             copy: DuplicateCopy(
                 id: id,
@@ -77,22 +80,17 @@ struct SamePhotoTests {
         _ stills: [Still],
         signatures: [String: [UInt8]]
     ) -> [DuplicateGroup] {
-        let details = Dictionary(uniqueKeysWithValues: stills.compactMap { still in
+        let evidence = Dictionary(uniqueKeysWithValues: stills.compactMap { still in
             signatures[still.candidate.id.relativePath.rawValue].flatMap { gray in
                 RenderSignature(differenceHash: still.candidate.differenceHash, gray: gray).map { signature in
-                    (
-                        still.candidate.id,
-                        SamePhotoDetail(
-                            copy: still.copy,
-                            signature: signature,
-                            fractionalSecondDigits: still.subsecond
-                        )
-                    )
+                    (still.candidate.id, SamePhotoEvidence(signature: signature, fractionalSecondDigits: still.subsecond))
                 }
             }
         })
         let pairs = SamePhotoPolicy.candidatePairs(stills.map(\.candidate), excluding: [], reach: .acrossLibraries)
-        return SamePhotoPolicy.groups(pairs: pairs, details: details)
+        let members = SamePhotoPolicy.members(pairs: pairs, evidence: evidence)
+        let copies = Dictionary(uniqueKeysWithValues: stills.map { ($0.candidate.id, $0.copy) })
+        return SamePhotoPolicy.groups(members, copies: copies)
     }
 
     /// The camera's own file is kept, even against a stripped copy with more pixels; among
@@ -273,16 +271,18 @@ struct SamePhotoTests {
         ]) == 1)
         #expect(try await store.renderSignatureCandidates(limit: 10).candidates.isEmpty)
 
-        // The still is offered for pairing by its column facts, and its detail carries the
-        // signature and the copy a group would list.
+        // The still is offered for pairing by its column facts and the stamp its evidence is
+        // read at; its evidence carries the signature, and its copy is the one a group lists.
         let paired = try await store.samePhotoCandidates(availableLibraryPaths: [id.libraryRootPath])
         #expect(paired.map(\.id) == [id])
         #expect(paired.first?.differenceHash == 42)
-        let detail = try #require(try await store.samePhotoDetails(for: [id])[id])
-        #expect(detail.signature == signature)
-        #expect(detail.copy.id == id)
-        #expect(detail.copy.libraryDisplayName == "Pictures")
-        #expect(detail.copy.byteSize == scanned.testAssets.first?.byteSize)
+        #expect(paired.first?.evidenceStamp.signatureSource == candidate.source)
+        let evidence = try #require(try await store.samePhotoEvidence(for: [id])[id])
+        #expect(evidence.signature == signature)
+        let copy = try #require(try await store.samePhotoCopies(for: [id])[id])
+        #expect(copy.id == id)
+        #expect(copy.libraryDisplayName == "Pictures")
+        #expect(copy.byteSize == scanned.testAssets.first?.byteSize)
         await store.shutdown()
     }
 }

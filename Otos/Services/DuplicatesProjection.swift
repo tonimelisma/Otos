@@ -17,6 +17,15 @@ import OSLog
 /// through the Store, then compares pixels off this actor (`@concurrent`), so a `request()`
 /// never waits behind the comparison.
 ///
+/// A build costs what changed (plan 0116 bet 3). It reads the identical copies and the
+/// compared stills' column facts, both from indexes that hold only those rows, and leaves a
+/// `SamePhotoMemory` for the next: what it paired from, which stills that joined, and the
+/// evidence (render and sub-seconds) it read with the stamp each was read at. The next build
+/// pairs again only when the stills, the identical copies or the reach differ, and reads
+/// evidence only for a proposed still whose stamp moved. The copies a group lists are read
+/// every build, for its members alone. The memory is this owner's: only a pass replaces it,
+/// once its build succeeded, so a failed build leaves the last one.
+///
 /// A failed build publishes nothing and leaves its request outstanding for the next
 /// request to retry. `stop()` is teardown: it ends both streams, so the loop and the
 /// consumer end with them. Every build whose groups differ from the last published ones is
@@ -50,6 +59,8 @@ actor DuplicatesProjection {
     private var covered: UInt64 = 0
     private var runningPasses = 0
     private var published: CatalogDuplicatesState?
+    /// What the last successful build leaves the next one.
+    private var memory = SamePhotoMemory.empty
     private var loopTask: Task<Void, Never>?
 
     /// True when every request has been covered by a successful build and none is running.
@@ -111,7 +122,11 @@ actor DuplicatesProjection {
             if let builder {
                 built = try await builder(store, libraries)
             } else {
-                built = try await Self.build(store: store, libraries: libraries)
+                let result = try await Self.build(store: store, libraries: libraries, memory: memory)
+                try Task.checkCancellation()
+                // The only writer of `memory` is this loop's pass, one at a time.
+                memory = result.memory
+                built = result.state
             }
             try Task.checkCancellation()
         } catch is CancellationError {
@@ -135,11 +150,50 @@ actor DuplicatesProjection {
     }
 }
 
+/// What one build leaves the next (ADR 0042): the same-photo rule's inputs, the stills it
+/// joined from them, and the evidence read for each proposed still with the stamp it was read
+/// at. A build pairs again only when its inputs differ, and reads evidence only for a proposed
+/// still whose stamp moved.
+nonisolated struct SamePhotoMemory: Sendable {
+    /// What the rule pairs from: the compared stills, the copies an identical group already
+    /// holds, and the reach.
+    struct Inputs: Equatable, Sendable {
+        let candidates: [SamePhotoCandidate]
+        let excluded: Set<MediaAssetID>
+        let reach: DuplicatesReach
+    }
+
+    struct HeldEvidence: Sendable {
+        let stamp: SamePhotoEvidenceStamp
+        let evidence: SamePhotoEvidence
+    }
+
+    let pairedFrom: Inputs?
+    let members: SamePhotoMembers
+    let evidence: [MediaAssetID: HeldEvidence]
+
+    static let empty = SamePhotoMemory(pairedFrom: nil, members: .none, evidence: [:])
+}
+
 extension DuplicatesProjection {
+    /// A build's groups and what it leaves the next build.
+    struct Built: Sendable {
+        let state: CatalogDuplicatesState
+        let memory: SamePhotoMemory
+        /// Whether the build paired the stills again, rather than keeping what the memory held.
+        let paired: Bool
+        /// How many stills' evidence the build read, rather than kept.
+        let evidenceRead: Int
+    }
+
     /// Duplicate groups in the available fixed libraries — within each, or across them, as
     /// the Store's reach says: identical copies by digest, then versions of the same photo
-    /// among the rest.
-    static func build(store: CatalogStore, libraries: [CatalogLibraryState]) async throws -> CatalogDuplicatesState {
+    /// among the rest — built from what `memory` holds where its inputs still hold.
+    static func build(
+        store: CatalogStore,
+        libraries: [CatalogLibraryState],
+        memory: SamePhotoMemory = .empty
+    ) async throws -> Built {
         let signpost = OtosSignpost.performance.beginInterval("DuplicatesBuild")
         defer { OtosSignpost.performance.endInterval("DuplicatesBuild", signpost) }
         let start = ContinuousClock.now
@@ -151,20 +205,58 @@ extension DuplicatesProjection {
         let identicalMs = DiagnosticsTiming.milliseconds(since: start)
 
         let candidatesStart = ContinuousClock.now
-        let candidates = try await store.samePhotoCandidates(availableLibraryPaths: availableLibraryPaths)
-        let pairs = await proposePairs(
-            candidates, excluding: Set(identical.flatMap(\.copies).map(\.id)), reach: duplicates.reach
+        let inputs = try await SamePhotoMemory.Inputs(
+            candidates: store.samePhotoCandidates(availableLibraryPaths: availableLibraryPaths),
+            excluded: Set(identical.flatMap(\.copies).map(\.id)),
+            reach: duplicates.reach
         )
         let candidatesMs = DiagnosticsTiming.milliseconds(since: candidatesStart)
 
-        let detailsStart = ContinuousClock.now
-        let involved = Array(Set(pairs.flatMap { [$0.left.id, $0.right.id] }))
-        let details = pairs.isEmpty ? [:] : try await store.samePhotoDetails(for: involved)
-        let detailsMs = DiagnosticsTiming.milliseconds(since: detailsStart)
+        let pairingStart = ContinuousClock.now
+        let next: SamePhotoMemory
+        var pairCount: Int?
+        var evidenceRead = 0
+        var evidenceKept = 0
+        if inputs == memory.pairedFrom {
+            next = memory
+            evidenceKept = memory.evidence.count
+        } else {
+            let pairs = await proposePairs(inputs)
+            pairCount = pairs.count
+            let stamps = Dictionary(
+                inputs.candidates.map { ($0.id, $0.evidenceStamp) }, uniquingKeysWith: { first, _ in first }
+            )
+            let involved = Set(pairs.flatMap { [$0.left.id, $0.right.id] })
+            var held: [MediaAssetID: SamePhotoMemory.HeldEvidence] = [:]
+            var owed: [MediaAssetID] = []
+            for id in involved {
+                guard let stamp = stamps[id] else { continue }
+                if let kept = memory.evidence[id], kept.stamp == stamp {
+                    held[id] = kept
+                    evidenceKept += 1
+                } else {
+                    owed.append(id)
+                }
+            }
+            if !owed.isEmpty {
+                let fresh = try await store.samePhotoEvidence(for: owed)
+                evidenceRead = owed.count
+                for (id, evidence) in fresh {
+                    if let stamp = stamps[id] {
+                        held[id] = SamePhotoMemory.HeldEvidence(stamp: stamp, evidence: evidence)
+                    }
+                }
+            }
+            let members = await confirm(pairs, evidence: held.mapValues(\.evidence))
+            next = SamePhotoMemory(pairedFrom: inputs, members: members, evidence: held)
+        }
+        let pairingMs = DiagnosticsTiming.milliseconds(since: pairingStart)
 
-        let compareStart = ContinuousClock.now
-        let samePhoto = await samePhotoGroups(pairs: pairs, details: details, keptPairs: duplicates.keptPairs)
-        let compareMs = DiagnosticsTiming.milliseconds(since: compareStart)
+        let copiesStart = ContinuousClock.now
+        let memberIDs = next.members.ids
+        let copies = memberIDs.isEmpty ? [:] : try await store.samePhotoCopies(for: memberIDs)
+        let samePhoto = SamePhotoPolicy.groups(next.members, copies: copies, keptPairs: duplicates.keptPairs)
+        let copiesMs = DiagnosticsTiming.milliseconds(since: copiesStart)
 
         let groups = identical + samePhoto
         let state = CatalogDuplicatesState(groups: groups)
@@ -179,37 +271,34 @@ extension DuplicatesProjection {
             "choose": "\(state.layout.choose.count)",
             "different": "\(state.layout.different.count)",
             "folders": "\(state.layout.buckets.count)",
-            "stills": "\(candidates.count)",
-            "pairs": "\(pairs.count)",
-            "detailed": "\(details.count)",
+            "stills": "\(inputs.candidates.count)",
+            "pairing": pairCount == nil ? "held" : "paired",
+            "pairs": pairCount.map { "\($0)" } ?? "held",
+            "evidenceKept": "\(evidenceKept)",
+            "evidenceRead": "\(evidenceRead)",
+            "members": "\(memberIDs.count)",
             "identicalMs": "\(identicalMs)",
             "candidatesMs": "\(candidatesMs)",
-            "detailsMs": "\(detailsMs)",
-            "compareMs": "\(compareMs)",
+            "pairingMs": "\(pairingMs)",
+            "copiesMs": "\(copiesMs)",
             "totalMs": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
-        return state
+        return Built(state: state, memory: next, paired: pairCount != nil, evidenceRead: evidenceRead)
     }
 
     /// The column pass over every still, off the actor: a file without capture metadata is
     /// tested against its whole aspect bucket.
     @concurrent
-    private static func proposePairs(
-        _ candidates: [SamePhotoCandidate],
-        excluding excluded: Set<MediaAssetID>,
-        reach: DuplicatesReach
-    ) async -> [SamePhotoPair] {
-        SamePhotoPolicy.candidatePairs(candidates, excluding: excluded, reach: reach)
+    private static func proposePairs(_ inputs: SamePhotoMemory.Inputs) async -> [SamePhotoPair] {
+        SamePhotoPolicy.candidatePairs(inputs.candidates, excluding: inputs.excluded, reach: inputs.reach)
     }
 
-    /// Versions of the same photo from the proposed pairs, off the actor. A group the user
-    /// kept whole is set aside like an identical one.
+    /// The stills joined into versions of one photo from the proposed pairs, off the actor.
     @concurrent
-    private static func samePhotoGroups(
-        pairs: [SamePhotoPair],
-        details: [MediaAssetID: SamePhotoDetail],
-        keptPairs: Set<DuplicateKeptPair>
-    ) async -> [DuplicateGroup] {
-        SamePhotoPolicy.groups(pairs: pairs, details: details, keptPairs: keptPairs)
+    private static func confirm(
+        _ pairs: [SamePhotoPair],
+        evidence: [MediaAssetID: SamePhotoEvidence]
+    ) async -> SamePhotoMembers {
+        SamePhotoPolicy.members(pairs: pairs, evidence: evidence)
     }
 }

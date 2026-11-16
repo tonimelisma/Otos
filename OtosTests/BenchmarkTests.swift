@@ -216,9 +216,18 @@ struct BenchmarkTests {
 
         // A whole duplicates build, as `DuplicatesProjection` runs it after a catalog change.
         try await Benchmark.measure("duplicates.build") {
-            let built = try await DuplicatesProjection.build(store: store, libraries: libraries)
+            let built = try await DuplicatesProjection.build(store: store, libraries: libraries).state
             #expect(built.groups.contains { $0.id.isSamePhoto })
             #expect(built.groups.contains { !$0.id.isSamePhoto })
+        }
+
+        // The build after a catalog change that moved nothing it is built from: the stills
+        // and identical copies are read, the last build's pairing and evidence held.
+        let held = try await DuplicatesProjection.build(store: store, libraries: libraries).memory
+        try await Benchmark.measure("duplicates.build.unchanged") {
+            let built = try await DuplicatesProjection.build(store: store, libraries: libraries, memory: held)
+            #expect(!built.paired)
+            #expect(built.state.groups.contains { $0.id.isSamePhoto })
         }
 
         // Its pure pairing step alone: every still without capture metadata tested against

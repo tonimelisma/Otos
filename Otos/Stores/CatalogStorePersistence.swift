@@ -554,6 +554,11 @@ extension CatalogStore {
                 try db.checkForeignKeys(in: table)
             }
         }
+        register(CatalogSchema.samePhotoIndexesMigrationIdentifier) { db in
+            for statement in CatalogSchema.samePhotoIndexesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

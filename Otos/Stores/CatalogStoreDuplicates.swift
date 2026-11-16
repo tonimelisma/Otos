@@ -305,9 +305,106 @@ nonisolated struct RenderSignatureResult: Equatable, Sendable {
     let signature: RenderSignature?
 }
 
+/// The same-photo rule's reads (ADR 0042). A still is compared when it is visible, holds bytes
+/// of its own, and has a signature current for its thumbnail. An Immich external library's
+/// asset (`source_path_sha1` set) names a file on a disk the server reads — for a mirrored
+/// library, the very file Otos holds — so it is never a copy to keep in place of another
+/// (`DuplicatesGateway.countsAsCopy`), and pairing two of them would offer the server's view
+/// of one library's photos as a second set of groups.
+///
+/// `candidateIndexName` (v67) holds exactly the stills compared, with every column the
+/// candidate read tests or returns, and `metadataIndexName` the record's pairing columns, so
+/// the read touches no wide row: before, it read every row of every root to find them, 37 s
+/// cold on the owner's catalog.
+nonisolated enum SamePhotoSQL {
+    static let candidateIndexName = "idx_media_asset_same_photo_candidate"
+    static let metadataIndexName = "idx_asset_metadata_same_photo"
+
+    /// A still the rule compares, over `media_asset`'s own columns, unqualified: the condition
+    /// of `candidateIndexName`, which must survive the table being renamed.
+    static let candidatePredicate = """
+    kind IN ('image', 'raw')
+      AND pending_trash_batch_unix_ms IS NULL
+      AND trash_path IS NULL
+      AND hidden_by_source = 0
+      AND source_path_sha1 IS NULL
+      AND render_dhash IS NOT NULL
+      AND render_signature_source = \(StoredThumbnailSQL.unqualifiedIdentity)
+    """
+
+    /// Every `media_asset` column the candidate read names, in its condition or its result:
+    /// an index that lacks one is not covering, and SQLite reads the row.
+    static let candidateIndexColumns = """
+    library_root_id, relative_path, kind, capture_instant_unix, render_dhash, render_signature_source, \
+    thumbnail_path, rendered_revision, rendered_source_size, rendered_source_mtime, source_products_size, \
+    source_products_mtime, metadata_source_size, metadata_source_mtime, pending_trash_batch_unix_ms, trash_path, \
+    hidden_by_source, source_path_sha1
+    """
+
+    /// The record's columns pairs are proposed from, and the revision its evidence is
+    /// stamped with.
+    static let metadataIndexColumns = """
+    library_root_id, relative_path, pixel_width, pixel_height, orientation, camera_model, serial_number, \
+    extraction_revision
+    """
+
+    /// The compared stills of `rootCount` roots (bound in order), with their pairing facts and
+    /// the stamp their evidence is read at.
+    static func candidatesSQL(rootCount: Int) -> String {
+        let placeholders = Array(repeating: "?", count: rootCount).joined(separator: ", ")
+        return """
+        SELECT media_asset.library_root_id, media_asset.relative_path, kind, capture_instant_unix, render_dhash,
+               m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number,
+               (rendered_source_size IS NULL AND source_products_size IS NOT NULL),
+               render_signature_source, metadata_source_size, metadata_source_mtime, m.extraction_revision
+        FROM media_asset INDEXED BY \(candidateIndexName)
+        LEFT JOIN asset_metadata AS m INDEXED BY \(metadataIndexName)
+          ON m.library_root_id = media_asset.library_root_id AND m.relative_path = media_asset.relative_path
+        WHERE media_asset.library_root_id IN (\(placeholders))
+          AND \(candidatePredicate)
+        """
+    }
+
+    /// One still's evidence: its signature and its stored record. Binds the root and the path.
+    static let evidenceSQL = """
+    SELECT a.render_dhash, a.render_gray, m.metadata_extra_json
+    FROM media_asset a
+    LEFT JOIN asset_metadata m
+      ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
+    WHERE a.library_root_id = ? AND a.relative_path = ?
+    """
+
+    /// The copy a group lists for one still. Binds the root and the path.
+    static let copySQL = """
+    SELECT a.best_kind, a.best_capture_local, a.byte_size, a.created_at_unix, a.media_choice,
+           a.edit_recipe_json IS NOT NULL AS edited,
+           m.pixel_width, m.pixel_height, m.orientation,
+           EXISTS(
+               SELECT 1 FROM media_companion c
+               WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
+           ) AS has_companions
+    FROM media_asset a
+    LEFT JOIN asset_metadata m
+      ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
+    WHERE a.library_root_id = ? AND a.relative_path = ?
+    """
+}
+
+/// What a still's evidence is read from, as the candidate read finds it: its signature's
+/// thumbnail identity and its record's stamp and revision. Evidence read at one stamp is the
+/// evidence at that stamp — a signature is a function of its thumbnail, and a record of the
+/// bytes it was read from and the reader's revision — so a later build keeps it while the
+/// stamp holds and reads it again when the stamp moves.
+nonisolated struct SamePhotoEvidenceStamp: Hashable, Sendable {
+    let signatureSource: String
+    let recordSize: Int64?
+    let recordMTime: Int64?
+    let recordRevision: Int64?
+}
+
 /// One still the same-photo rule compares, with only the column facts pairs are proposed
-/// from. Everything else about it — the copy the list shows, the render, the record facts —
-/// is read only for the stills a proposed pair names (`SamePhotoDetail`).
+/// from. Everything else about it — the render and the record facts that confirm a pair, the
+/// copy a group lists — is read only for the stills a proposed pair or a group names.
 nonisolated struct SamePhotoCandidate: Equatable, Sendable {
     let id: MediaAssetID
     let isRaw: Bool
@@ -322,6 +419,8 @@ nonisolated struct SamePhotoCandidate: Equatable, Sendable {
     /// Display width over height, from stored geometry.
     let aspectRatio: Double?
     let differenceHash: UInt64
+    /// What the still's evidence is read from.
+    let evidenceStamp: SamePhotoEvidenceStamp
 
     /// Whether the file names its capture: an instant and a camera.
     var hasCaptureMetadata: Bool {
@@ -329,12 +428,9 @@ nonisolated struct SamePhotoCandidate: Equatable, Sendable {
     }
 }
 
-/// A still in a proposed pair: the copy a group lists, the grayscale render that confirms
-/// or rejects the pair, and the capture facts that live in its stored metadata record rather
-/// than in a column. Read only for these stills: building every still's copy and decoding
-/// every record was most of a build.
-nonisolated struct SamePhotoDetail: Equatable, Sendable {
-    let copy: DuplicateCopy
+/// What confirms or rejects a proposed pair for one still: the grayscale render and the
+/// sub-seconds that live in its stored record rather than in a column.
+nonisolated struct SamePhotoEvidence: Equatable, Sendable {
     let signature: RenderSignature
     let fractionalSecondDigits: String?
 }
@@ -350,39 +446,25 @@ nonisolated extension DuplicatesGateway {
         )
     }
 
-    /// Visible stills with a current render signature, as pairing facts. The read walks a
-    /// cursor rather than copying every row, because it covers every still in the libraries.
+    /// The compared stills, as pairing facts. The read walks a cursor rather than copying
+    /// every row, because it covers every compared still in the libraries.
     static func fetchSamePhotoCandidates(
         rootIDs: [Int64],
         pathsByRowID: [Int64: LibraryRootPath],
         db: Database
     ) throws -> [SamePhotoCandidate] {
-        let placeholders = Array(repeating: "?", count: rootIDs.count).joined(separator: ", ")
         let rows = try Row.fetchCursor(
             db,
-            sql: """
-            SELECT a.library_root_id, a.relative_path, a.kind, a.capture_instant_unix, a.render_dhash,
-                   m.pixel_width, m.pixel_height, m.orientation, m.camera_model, m.serial_number,
-                   \(StoredThumbnailSQL.isSourceDrawn("a"))
-            FROM media_asset a
-            LEFT JOIN asset_metadata m
-              ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
-            WHERE a.library_root_id IN (\(placeholders))
-              AND a.kind IN ('image', 'raw')
-              AND a.pending_trash_batch_unix_ms IS NULL
-              AND a.trash_path IS NULL
-              AND a.hidden_by_source = 0
-              AND a.render_dhash IS NOT NULL
-              AND a.render_signature_source = \(StoredThumbnailSQL.identity("a"))
-            """,
+            sql: SamePhotoSQL.candidatesSQL(rootCount: rootIDs.count),
             arguments: StatementArguments(rootIDs)
         )
-        // Columns by position: this read covers every still, and a lookup by name per column
-        // was a measurable share of a build (ADR 0043).
+        // Columns by position: this read covers every compared still, and a lookup by name
+        // per column was a measurable share of a build (ADR 0043).
         enum Column {
             static let rootID = 0, relativePath = 1, kind = 2, captureInstant = 3, renderHash = 4
             static let pixelWidth = 5, pixelHeight = 6, orientation = 7, cameraModel = 8, serialNumber = 9
-            static let isSourceDrawn = 10
+            static let isSourceDrawn = 10, signatureSource = 11, recordSize = 12, recordMTime = 13
+            static let recordRevision = 14
         }
         var candidates: [SamePhotoCandidate] = []
         while let row = try rows.next() {
@@ -408,51 +490,34 @@ nonisolated extension DuplicatesGateway {
                 cameraModel: row[Column.cameraModel],
                 serialNumber: row[Column.serialNumber],
                 aspectRatio: aspect,
-                differenceHash: UInt64(bitPattern: hash)
+                differenceHash: UInt64(bitPattern: hash),
+                evidenceStamp: SamePhotoEvidenceStamp(
+                    signatureSource: row[Column.signatureSource],
+                    recordSize: row[Column.recordSize],
+                    recordMTime: row[Column.recordMTime],
+                    recordRevision: row[Column.recordRevision]
+                )
             ))
         }
         return candidates
     }
 
-    /// The details of one still in a proposed pair, run once per still through a cached
-    /// statement. Nil when the still has no stored signature any more.
-    static func fetchSamePhotoDetail(
-        rootID: Int64,
-        id: MediaAssetID,
-        library: DuplicateLibrary,
-        db: Database
-    ) throws -> SamePhotoDetail? {
-        let statement = try db.cachedStatement(sql: """
-        SELECT a.best_kind, a.best_capture_local, a.byte_size, a.created_at_unix, a.media_choice,
-               a.edit_recipe_json IS NOT NULL AS edited, a.render_dhash, a.render_gray,
-               m.pixel_width, m.pixel_height, m.metadata_extra_json,
-               EXISTS(
-                   SELECT 1 FROM media_companion c
-                   WHERE c.library_root_id = a.library_root_id AND c.primary_relative_path = a.relative_path
-               ) AS has_companions,
-               m.orientation
-        FROM media_asset a
-        LEFT JOIN asset_metadata m
-          ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
-        WHERE a.library_root_id = ? AND a.relative_path = ?
-        """)
-        // Columns by position: this statement runs once per still in a proposed pair, and
-        // a lookup by name per column was a measurable share of a build (ADR 0043).
-        enum Column {
-            static let bestKind = 0, bestCapture = 1, byteSize = 2, createdAt = 3, mediaChoice = 4, edited = 5
-            static let renderHash = 6, renderGray = 7, pixelWidth = 8, pixelHeight = 9, metadataExtra = 10
-            static let hasCompanions = 11, orientation = 12
-        }
-        guard let row = try Row.fetchOne(statement, arguments: [rootID, id.relativePath.rawValue]),
-              let hash = row[Column.renderHash] as Int64?,
-              let gray = row[Column.renderGray] as Data?,
-              let signature = RenderSignature(differenceHash: UInt64(bitPattern: hash), gray: Array(gray))
+    /// One still's evidence, through a cached statement. Nil when the still has no stored
+    /// signature any more.
+    static func fetchSamePhotoEvidence(rootID: Int64, id: MediaAssetID, db: Database) throws -> SamePhotoEvidence? {
+        guard let row = try Row.fetchOne(
+            db.cachedStatement(sql: SamePhotoSQL.evidenceSQL),
+            arguments: [rootID, id.relativePath.rawValue]
+        ),
+            let hash = row[0] as Int64?,
+            let gray = row[1] as Data?,
+            let signature = RenderSignature(differenceHash: UInt64(bitPattern: hash), gray: Array(gray))
         else {
             return nil
         }
         // The stored record is the library's own report (ADR 0039); a record that does not
-        // decode leaves its two facts unknown, which the rule treats as unknown.
-        let metadata: AssetMetadata? = (row[Column.metadataExtra] as String?).flatMap { json in
+        // decode leaves its sub-seconds unknown, which the rule treats as unknown.
+        let metadata: AssetMetadata? = (row[2] as String?).flatMap { json in
             do {
                 return try CatalogStore.decodeMetadataExtraJSON(json)
             } catch {
@@ -463,27 +528,47 @@ nonisolated extension DuplicatesGateway {
             }
         }
         let original = metadata?.timestamps.first { $0.role == CaptureTimestamps.Role.original.rawValue }
+        return SamePhotoEvidence(signature: signature, fractionalSecondDigits: original?.fractionalSecondDigits)
+    }
+
+    /// The copy a group lists for one still, through a cached statement. Nil when the row is
+    /// gone.
+    static func fetchSamePhotoCopy(
+        rootID: Int64,
+        id: MediaAssetID,
+        library: DuplicateLibrary,
+        db: Database
+    ) throws -> DuplicateCopy? {
+        // Columns by position: this statement runs once per still in a group.
+        enum Column {
+            static let bestKind = 0, bestCapture = 1, byteSize = 2, createdAt = 3, mediaChoice = 4, edited = 5
+            static let pixelWidth = 6, pixelHeight = 7, orientation = 8, hasCompanions = 9
+        }
+        guard let row = try Row.fetchOne(
+            db.cachedStatement(sql: SamePhotoSQL.copySQL),
+            arguments: [rootID, id.relativePath.rawValue]
+        ) else {
+            return nil
+        }
         let mediaChoice: String? = row[Column.mediaChoice]
         let createdAt: Double? = row[Column.createdAt]
         let kind: String? = row[Column.bestKind]
         let captureLocal: Double? = row[Column.bestCapture]
-        let geometry = Self.upright(width: row[Column.pixelWidth], height: row[Column.pixelHeight], orientation: row[Column.orientation])
-        return SamePhotoDetail(
-            copy: DuplicateCopy(
-                id: id,
-                libraryDisplayName: library.displayName, libraryKind: library.kind,
-                kind: kind.flatMap(MediaKind.init(rawValue:)),
-                captureLocalTime: captureLocal.map(CaptureLocalTime.init(seconds:)),
-                byteSize: row[Column.byteSize],
-                createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
-                pixelWidth: geometry.displayPixelWidth,
-                pixelHeight: geometry.displayPixelHeight,
-                mediaChoice: mediaChoice.flatMap(MediaChoice.init(rawValue:)) ?? .default,
-                isEdited: row[Column.edited],
-                hasCompanions: row[Column.hasCompanions]
-            ),
-            signature: signature,
-            fractionalSecondDigits: original?.fractionalSecondDigits
+        let geometry = Self.upright(
+            width: row[Column.pixelWidth], height: row[Column.pixelHeight], orientation: row[Column.orientation]
+        )
+        return DuplicateCopy(
+            id: id,
+            libraryDisplayName: library.displayName, libraryKind: library.kind,
+            kind: kind.flatMap(MediaKind.init(rawValue:)),
+            captureLocalTime: captureLocal.map(CaptureLocalTime.init(seconds:)),
+            byteSize: row[Column.byteSize],
+            createdAt: createdAt.map(Date.init(timeIntervalSince1970:)),
+            pixelWidth: geometry.displayPixelWidth,
+            pixelHeight: geometry.displayPixelHeight,
+            mediaChoice: mediaChoice.flatMap(MediaChoice.init(rawValue:)) ?? .default,
+            isEdited: row[Column.edited],
+            hasCompanions: row[Column.hasCompanions]
         )
     }
 }

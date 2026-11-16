@@ -181,6 +181,9 @@ on two different choices; versions of one photo still can.
 | Offering a mirror pair one way only (keep the file) | The pair is one photo, not waste; a group of one file and its mirror has nothing to clean up. |
 | Keeping the reach in the window's query request | The Duplicates scopes and the build would each need it threaded through; the Store already answers what a duplicate is for both. |
 | A duplicate-group table with IDs | A second identity for facts the digests already state; it would go stale with every scan. |
+| Persisting the last build's groups or pairs so a launch reads nothing | A second copy of the catalog's truth, stale after any change made while the app was closed (plan 0116 rejects a persisted last answer); a launch's one narrow read costs what the compared stills are. |
+| A trigger-maintained log of the rows whose same-photo inputs changed | Proportional work per changed row, but a second copy of every column the reads name, kept by triggers on every enrichment write; the narrow read already costs what the compared stills are, and a stamp says which evidence moved. |
+| Keeping the copies a group lists with the evidence, by a stamp | A copy's facts (choice, edit, companions, sizes, dates) span many columns and a second table; a stamp over them would be a second list to keep right. They are read for the group's members alone, every build. |
 | Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). A library goes only when the user picks it in its folder rule. |
 | Let groups with authored work, or versions of the same photo, wait without a default | Nothing in the act's count until the user decides each group; competitors default every group (Photos, Lightroom web, PhotoSweeper, Mylio). Carrying the work makes a default safe (owner, 2026-11-01). |
 | One list of every group, newest first, with the folder rules in a block above it (2026-11-04 to 2026-11-14) | Date is a browsing order: the few groups that need a person sat among hundreds that need nobody, a rule sat a scroll away from what it decided, and identical copies drew the same picture twice with the one thing that differed, the name, in a tooltip. |
@@ -240,15 +243,34 @@ Other rules:
   Mac. The two pipelines draw one photo differently enough to break gate 2, so a pair is
   proposed only within one (`SamePhotoCandidate.drawnBy`).
 - Copies already in an identical group are left to that group.
+- An Immich external library's asset (`source_path_sha1` set) is never compared. It names a
+  file on a disk the server reads, which for a mirrored library is the very file Otos holds,
+  so it is never a copy to keep in place of another (the identical-copies rule above). Pairing
+  two of them offered the server's view of one library's photos as a second set of groups: on
+  the owner's catalog, 128,671 of the 144,410 stills compared were external assets, and most of
+  the 42,425 proposed pairs paired them with each other (2026-11-16).
 - Same-photo groups keep the camera original by the keeper rule above. Keep All Copies sets
   them aside by the same per-pair memory.
 - Candidates are blocked by kind, pipeline, display aspect and whole-second instant, so a library is
   never compared all against all. Pairs are proposed from column facts alone, read as
-  pairing facts only (`SamePhotoCandidate`). The copy a group lists, the grayscale
-  render and the sub-seconds — which live in the stored metadata record — are read only for the stills a proposed pair names
-  (`SamePhotoDetail`). Building every still's copy and decoding every record was most of
-  a build: on 2026-11-01 the owner's library had 14,201 stills, of which 2,462 were in a
-  proposed pair.
+  pairing facts only (`SamePhotoCandidate`), from two indexes that hold exactly the compared
+  stills and their record's pairing columns (`SamePhotoSQL`, v67), so the read touches no
+  wide row. It walked every row of every root before, 545 MB of asset rows and the 190 MB
+  record table: 37 s cold on the owner's catalog, five times in a four-minute session.
+- The evidence that confirms a pair — the grayscale render and the sub-seconds, which live in
+  the stored metadata record (`SamePhotoEvidence`) — is read only for the stills a proposed pair
+  names. The copy a group lists is read only for the stills a group holds, in every build,
+  because a choice, an edit or a companion changes a copy without moving what grouped it.
+- **A build costs what changed.** `DuplicatesProjection` keeps what its last build paired
+  from, which stills that joined, and each proposed still's evidence with the stamp it was read
+  at (`SamePhotoMemory`): the signature's thumbnail identity and the record's stamp and
+  extraction revision. Evidence read at one stamp is the evidence at that stamp, since a
+  signature is a function of its thumbnail and a record of its bytes and the reader's revision.
+  A build reads the identical copies and the compared stills, pairs again only when the stills,
+  the identical copies or the reach differ, and reads evidence only for a proposed still whose
+  stamp moved. A wake that moved nothing reads the two narrow sets and the groups' copies and
+  pairs nothing. The memory lives in the process: the first build after launch reads
+  everything once.
 - The build is written for the Debug build the app is installed as (ADR 0030), where every
   collection call costs. A still without capture metadata is tested against its aspect
   bucket in loops over unsafe buffers of hashes. Gate 3 collects each such file's edges in

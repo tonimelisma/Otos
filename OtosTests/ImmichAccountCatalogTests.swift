@@ -196,6 +196,56 @@ struct ImmichAccountCatalogTests {
         await store.shutdown()
     }
 
+    /// ADR 0042: an external library's asset names a file on a disk the server reads, so it
+    /// is never a version of a photo to keep in place of another; an uploaded asset, which
+    /// holds its own bytes, is compared.
+    @Test func anExternalLibrarysAssetIsNeverComparedAsAVersionOfAPhoto() async throws {
+        let store = try CatalogStore(
+            location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
+        )
+        try await store.start(scansSavedLibraries: false)
+        let rootPath = try await addAccount(store)
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        func item(_ asset: String, external: Bool) -> SourceListedItem {
+            SourceListedItem(
+                file: ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: "\(asset)/IMG_1.JPG"), name: "IMG_1.JPG",
+                    contentTypeIdentifier: "public.jpeg", byteSize: 42, createdAt: date, contentModifiedAt: date
+                ),
+                sourceItemID: asset, isHiddenBySource: false, sourceHasProducts: true,
+                sourceDigest: nil,
+                sourcePathChecksum: external ? ImmichPathChecksum(serverPath: "/mnt/photos/\(asset)/IMG_1.JPG") : nil
+            )
+        }
+        let scan = try await store.beginSourceListing(rootPath: rootPath)
+        try await store.applySourceListingChanges(
+            SourceListingChanges(listed: [item("uploaded", external: false), item("external", external: true)]), scan: scan
+        )
+        await store.endSourceListing(scan: scan)
+        let uploaded = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "uploaded/IMG_1.JPG"))
+        let external = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "external/IMG_1.JPG"))
+        _ = await store.applyEnrichmentBatch([uploaded, external].map { id in
+            EnrichmentResult(
+                id: id,
+                metadata: nil,
+                rendering: EnrichedRendering(thumbnailPath: "\(id.relativePath.rawValue).jpg", previewPath: "p.jpg", origin: .source),
+                sourceSize: 42,
+                sourceMTimeSeconds: 1_700_000_000,
+                contentHash: nil
+            )
+        })
+        let signature = try #require(RenderSignature(
+            differenceHash: 7, gray: [UInt8](repeating: 90, count: RenderSignature.grayEdge * RenderSignature.grayEdge)
+        ))
+        let owed = try await store.renderSignatureCandidates(limit: 10).candidates
+        #expect(Set(owed.map(\.id)) == [uploaded, external])
+        #expect(try await store.applyRenderSignatures(owed.map {
+            RenderSignatureResult(id: $0.id, source: $0.source, signature: signature)
+        }) == 2)
+        #expect(try await store.samePhotoCandidates(availableLibraryPaths: [rootPath]).map(\.id) == [uploaded])
+        await store.shutdown()
+    }
+
     /// ADR 0046 §6: a launch that reaches no server shows the account's rows from the
     /// catalog — nothing lists them again first.
     @Test func aRelaunchShowsTheAccountsRowsBeforeAnyServerAnswers() async throws {

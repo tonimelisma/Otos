@@ -9555,9 +9555,10 @@ extension CatalogStore {
         return found
     }
 
-    /// Visible stills with a current render signature, with the column facts the same-photo
-    /// rule proposes pairs from. Renders and record facts are read separately, only for the
-    /// stills a proposed pair names (`samePhotoDetails`).
+    /// The stills the same-photo rule compares (`SamePhotoSQL`), with the column facts it
+    /// proposes pairs from and the stamp their evidence is read at, from the indexes that hold
+    /// exactly those. Renders and record facts are read separately, only for the stills a
+    /// proposed pair names whose evidence is not held at that stamp (`samePhotoEvidence`).
     func samePhotoCandidates(availableLibraryPaths: Set<LibraryRootPath>) async throws -> [SamePhotoCandidate] {
         let libraries = roots.values.filter { $0.root.kind.isMemberOfAllMedia && availableLibraryPaths.contains($0.path) }
         guard !libraries.isEmpty else {
@@ -9570,46 +9571,57 @@ extension CatalogStore {
         }
     }
 
-    /// The details of these stills, which are in proposed pairs: the copy a group lists,
-    /// the render signature, and the capture facts kept in the metadata record. A still
-    /// whose library is gone or that has no stored signature has no detail.
-    /// Read `samePhotoDetailBatch` stills a transaction, so a build proposing thousands of
-    /// pairs never holds a reader for all of them: each still's detail stands alone.
-    func samePhotoDetails(for ids: [MediaAssetID]) async throws -> [MediaAssetID: SamePhotoDetail] {
+    /// The evidence of these stills, which are in proposed pairs: the render signature and
+    /// the sub-seconds kept in the metadata record. A still whose library is gone or that has
+    /// no stored signature has none. Read `samePhotoReadBatch` stills a transaction, so a build
+    /// proposing thousands of pairs never holds a reader for all of them.
+    func samePhotoEvidence(for ids: [MediaAssetID]) async throws -> [MediaAssetID: SamePhotoEvidence] {
+        let rowIDs = roots.rowIDSnapshot()
+        return try await samePhotoBatches(of: ids, operation: "samePhotoEvidence") { id, db in
+            guard let rowID = rowIDs[id.libraryRootPath] else {
+                return nil
+            }
+            return try DuplicatesGateway.fetchSamePhotoEvidence(rootID: rowID, id: id, db: db)
+        }
+    }
+
+    /// The copies a group lists for these stills, which are in confirmed groups. Read fresh
+    /// for every build: a choice, an edit or a companion changes a copy without moving the
+    /// evidence that grouped it.
+    func samePhotoCopies(for ids: [MediaAssetID]) async throws -> [MediaAssetID: DuplicateCopy] {
         let libraries = Dictionary(uniqueKeysWithValues: roots.values.map {
             ($0.path, (rowID: $0.rowID, library: DuplicateLibrary($0.root)))
         })
-        let dbWriter = try database()
-        var details: [MediaAssetID: SamePhotoDetail] = [:]
-        for batch in stride(from: 0, to: ids.count, by: Self.samePhotoDetailBatch).map({ ids[$0 ..< min($0 + Self.samePhotoDetailBatch, ids.count)] }) {
-            try await details.merge(Self.samePhotoDetails(of: batch, libraries: libraries, db: dbWriter)) { $1 }
+        return try await samePhotoBatches(of: ids, operation: "samePhotoCopies") { id, db in
+            guard let library = libraries[id.libraryRootPath] else {
+                return nil
+            }
+            return try DuplicatesGateway.fetchSamePhotoCopy(rootID: library.rowID, id: id, library: library.library, db: db)
         }
-        return details
     }
 
-    static let samePhotoDetailBatch = 256
+    static let samePhotoReadBatch = 256
 
-    private static func samePhotoDetails(
-        of ids: ArraySlice<MediaAssetID>,
-        libraries: [LibraryRootPath: (rowID: Int64, library: DuplicateLibrary)],
-        db dbWriter: any DatabaseWriter
-    ) async throws -> [MediaAssetID: SamePhotoDetail] {
-        try await dbWriter.readFreeingConnection(operation: "samePhotoDetails") { db in
-            var details: [MediaAssetID: SamePhotoDetail] = [:]
-            for id in ids {
-                guard let library = libraries[id.libraryRootPath],
-                      let detail = try DuplicatesGateway.fetchSamePhotoDetail(
-                          rootID: library.rowID,
-                          id: id,
-                          library: library.library,
-                          db: db
-                      )
-                else {
-                    continue
+    /// One point read per still, `samePhotoReadBatch` stills a transaction: each still's
+    /// answer stands alone.
+    private func samePhotoBatches<Value: Sendable>(
+        of ids: [MediaAssetID],
+        operation: String,
+        read: @escaping @Sendable (MediaAssetID, Database) throws -> Value?
+    ) async throws -> [MediaAssetID: Value] {
+        let dbWriter = try database()
+        var values: [MediaAssetID: Value] = [:]
+        for start in stride(from: 0, to: ids.count, by: Self.samePhotoReadBatch) {
+            let batch = Array(ids[start ..< min(start + Self.samePhotoReadBatch, ids.count)])
+            let read = try await dbWriter.readFreeingConnection(operation: operation) { db in
+                var values: [MediaAssetID: Value] = [:]
+                for id in batch {
+                    values[id] = try read(id, db)
                 }
-                details[id] = detail
+                return values
             }
-            return details
+            values.merge(read) { $1 }
         }
+        return values
     }
 }

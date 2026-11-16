@@ -1102,7 +1102,7 @@ nonisolated enum SamePhotoPolicy {
     /// The record half of gate 1: both records carry sub-seconds, and they are the same.
     /// Missing sub-seconds are unknown, not agreement: every frame of a same-second burst
     /// would otherwise pass, and 5 % of those are as pixel-close as true copies.
-    static func recordsProveOneCapture(_ left: SamePhotoDetail, _ right: SamePhotoDetail) -> Bool {
+    static func recordsProveOneCapture(_ left: SamePhotoEvidence, _ right: SamePhotoEvidence) -> Bool {
         guard let leftDigits = left.fractionalSecondDigits, let rightDigits = right.fractionalSecondDigits else {
             return false
         }
@@ -1114,22 +1114,25 @@ nonisolated enum SamePhotoPolicy {
         return first == second
     }
 
-    /// Groups from proposed pairs: the record half of gate 1 and gate 2 on every pair, gate 3
-    /// on every file without capture metadata, then copies joined through any confirmed pair.
-    static func groups(
+    /// The stills joined into versions of one photo, from proposed pairs and their evidence:
+    /// the record half of gate 1 and gate 2 on every pair, gate 3 on every file without
+    /// capture metadata, then stills joined through any confirmed pair. A pair whose evidence
+    /// is missing for either still is not confirmed.
+    static func members(
         pairs: [SamePhotoPair],
-        details: [MediaAssetID: SamePhotoDetail],
-        keptPairs: Set<DuplicateKeptPair> = []
-    ) -> [DuplicateGroup] {
+        evidence: [MediaAssetID: SamePhotoEvidence]
+    ) -> SamePhotoMembers {
         var confirmed: [(SamePhotoCandidate, SamePhotoCandidate, Double)] = []
         for pair in pairs {
-            guard let leftDetail = details[pair.left.id], let rightDetail = details[pair.right.id] else {
+            guard let leftEvidence = evidence[pair.left.id], let rightEvidence = evidence[pair.right.id] else {
                 continue
             }
-            if pair.left.hasCaptureMetadata, pair.right.hasCaptureMetadata, !recordsProveOneCapture(leftDetail, rightDetail) {
+            if pair.left.hasCaptureMetadata, pair.right.hasCaptureMetadata,
+               !recordsProveOneCapture(leftEvidence, rightEvidence)
+            {
                 continue
             }
-            let difference = leftDetail.signature.meanDifference(to: rightDetail.signature)
+            let difference = leftEvidence.signature.meanDifference(to: rightEvidence.signature)
             if difference < RenderSignature.confirmedMeanDifference {
                 confirmed.append((pair.left, pair.right, difference))
             }
@@ -1163,10 +1166,7 @@ nonisolated enum SamePhotoPolicy {
             }
             return current
         }
-        var copies: [MediaAssetID: DuplicateCopy] = [:]
         for (index, edge) in confirmed.enumerated() where !dropped.contains(index) {
-            copies[edge.0.id] = details[edge.0.id]?.copy
-            copies[edge.1.id] = details[edge.1.id]?.copy
             let left = root(edge.0.id)
             let right = root(edge.1.id)
             parent[left] = parent[left] ?? left
@@ -1175,15 +1175,33 @@ nonisolated enum SamePhotoPolicy {
                 parent[right] = left
             }
         }
-        let members = Dictionary(grouping: copies.keys, by: root)
+        let joined = Dictionary(grouping: parent.keys, by: root).values.filter { $0.count > 1 }
         let originals = Set(pairs.flatMap { [$0.left, $0.right] }.filter(\.hasCaptureMetadata).map(\.id))
-        return members.values.filter { $0.count > 1 }.map { ids in
-            let ordered = ids.sorted { $0.duplicateOrderKey < $1.duplicateOrderKey }
+        return SamePhotoMembers(
+            groups: joined.map { $0.sorted { $0.duplicateOrderKey < $1.duplicateOrderKey } }
+                .sorted { $0[0].duplicateOrderKey < $1[0].duplicateOrderKey },
+            originals: originals.intersection(joined.joined())
+        )
+    }
+
+    /// The groups the joined stills make, with the copies read for them; a still whose copy
+    /// is gone leaves its group, and a group left with one copy is none. A group the user kept
+    /// whole is set aside like an identical one.
+    static func groups(
+        _ members: SamePhotoMembers,
+        copies: [MediaAssetID: DuplicateCopy],
+        keptPairs: Set<DuplicateKeptPair> = []
+    ) -> [DuplicateGroup] {
+        members.groups.compactMap { ids in
+            let present = ids.filter { copies[$0] != nil }
+            guard present.count > 1 else {
+                return nil
+            }
             return DuplicateGroupPolicy.group(
-                id: .samePhoto(ordered),
-                copies: ordered.compactMap { copies[$0] },
+                id: .samePhoto(present),
+                copies: present.compactMap { copies[$0] },
                 keptPairs: keptPairs,
-                originals: originals.intersection(ordered)
+                originals: members.originals.intersection(present)
             )
         }
     }
@@ -1196,7 +1214,20 @@ nonisolated enum SamePhotoPolicy {
     }
 }
 
-/// Two stills the column facts propose as one capture, before their details are read.
+/// The stills the same-photo rule joined, each group in list order, and which of them name
+/// their capture (the camera originals the keeper rule prefers).
+nonisolated struct SamePhotoMembers: Equatable, Sendable {
+    let groups: [[MediaAssetID]]
+    let originals: Set<MediaAssetID>
+
+    static let none = SamePhotoMembers(groups: [], originals: [])
+
+    var ids: [MediaAssetID] {
+        groups.flatMap(\.self)
+    }
+}
+
+/// Two stills the column facts propose as one capture, before their evidence is read.
 nonisolated struct SamePhotoPair: Equatable, Sendable {
     let left: SamePhotoCandidate
     let right: SamePhotoCandidate
