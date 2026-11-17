@@ -10,30 +10,70 @@ import Testing
 ///
 /// Each case is a path a user waits for, or one that runs in the background at a size where
 /// its cost shows. Every case also checks that it did its work, so a broken fixture fails
-/// rather than measuring nothing.
+/// rather than measuring nothing. A scenario that holds a store, a projection or the grid
+/// is a static function of its `BenchmarkRun`: `BenchmarkScenarioTests` runs each one
+/// `checked`, small and unmeasured, in every check, so what it expects beyond its numbers
+/// cannot break unseen between daily runs.
 @Suite(.serialized, .testScope, .enabled(if: Benchmark.isEnabled))
 struct BenchmarkTests {
     @Test func catalogCases() async throws {
+        try await Self.catalogScenario(.measured)
+    }
+
+    @Test func stackCases() async throws {
+        try await Self.stackScenario(.measured)
+    }
+
+    @Test func immichListingCases() async throws {
+        try await Self.immichListingScenario(.measured)
+    }
+
+    @Test func immichMirrorCases() async throws {
+        try await Self.immichMirrorScenario(.measured)
+    }
+
+    @Test func gridCases() async throws {
+        try await Self.gridScenario(.measured)
+    }
+
+    @Test func hideCases() async throws {
+        try await Self.hideScenario(.measured)
+    }
+
+    @Test func shownFirstCases() async throws {
+        try await Self.shownFirstScenario(.measured)
+    }
+
+    @MainActor
+    @Test func windowApplyCases() async throws {
+        try await Self.windowApplyScenario(.measured)
+    }
+
+    @Test func windowPublishCases() async throws {
+        try await Self.windowPublishScenario(.measured)
+    }
+
+    static func catalogScenario(_ run: BenchmarkRun) async throws {
         let directory = try makeTestDirectory()
-        let library = try await BenchmarkLibrary.make(in: directory)
+        let stills = run.size(BenchmarkLibrary.stillCount, checked: 400)
+        let library = try await BenchmarkLibrary.make(in: directory, stills: stills)
         let store = library.store
         let libraries = library.libraries
 
         // The window's publication of All Media: the order query and the window state.
         let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
-        try await Benchmark.measure("projection.windowState.allMedia") {
+        try await run.measure("projection.windowState.allMedia") {
             guard case let .built(state, _, _, _) = try await projection.buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: request,
-                reads: .none,
-                revisions: CatalogFactRevisions()
+                reads: .none
             ) else {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
             }
-            #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
+            #expect(state.mediaGrid.orderedAssetIDs.count == stills)
         }
 
         // The pass an enrichment write that moved no fact the window reads costs: the order,
@@ -42,15 +82,14 @@ struct BenchmarkTests {
             store: store,
             libraries: libraries,
             request: request,
-            reads: .none,
-            revisions: CatalogFactRevisions()
+            reads: .none
         ) else {
             Issue.record("nothing is searched, and a first build owes its options")
             return
         }
         // The options a published window owes, read after it publishes (`OwedFilterOptions`).
         var options = CatalogFilterOptions.empty
-        try await Benchmark.measure("projection.filterOptions.allMedia") {
+        try await run.measure("projection.filterOptions.allMedia") {
             options = try await projection.readFilterOptions(owed, store: store).options ?? .empty
             #expect(!options.formatsByKind.isEmpty)
         }
@@ -63,7 +102,7 @@ struct BenchmarkTests {
         let moved = try await Set(store.windowReads.orderedAssetIDs(
             for: .default, availableLibraryPaths: owed.availableLibraryPaths
         ).ids.prefix(200))
-        try await Benchmark.measure("projection.filterOptions.allMedia.keyed200") {
+        try await run.measure("projection.filterOptions.allMedia.keyed200") {
             let read = try await projection.readFilterOptions(
                 owed, plan: .keyed(rows: moved, names: nil, patching: 0, capacity: tally.rowCount), store: store
             )
@@ -82,13 +121,12 @@ struct BenchmarkTests {
             revisions: owed.revisions,
             answer: options
         )
-        try await Benchmark.measure("projection.windowState.allMedia.heldReads") {
+        try await run.measure("projection.windowState.allMedia.heldReads") {
             guard case let .built(state, metrics, _, _) = try await projection.buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: request,
-                reads: lastReads,
-                revisions: CatalogFactRevisions()
+                reads: lastReads
             ) else {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
@@ -96,28 +134,28 @@ struct BenchmarkTests {
             #expect(metrics.reuse == CatalogProjectionReuse(
                 order: true, filterOptions: true, collapse: true, importBatches: true, placeNameLanguages: true
             ))
-            #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
+            #expect(state.mediaGrid.orderedAssetIDs.count == stills)
         }
 
         // The first paint of a return to All Media after a capture date moved elsewhere: the
         // held order, options and collapse, answered from although the date moved since; the
         // pass after it reads the order again (`projection.windowState.allMedia`).
-        var movedSince = CatalogFactRevisions()
-        movedSince.record([.captureDate, .stacks])
-        try await Benchmark.measure("projection.windowState.allMedia.returnHeld") {
+        var movedSince = CatalogChangeLog()
+        movedSince.record([.captureDate, .stacks], rows: .unnamed)
+        try await run.measure("projection.windowState.allMedia.returnHeld") {
             guard case let .built(state, metrics, _, _) = try await projection.buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: request,
                 reads: lastReads,
-                revisions: movedSince,
+                changes: movedSince,
                 answerFromHeld: true
             ) else {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
             }
             #expect(metrics.reuse.held && metrics.reuse.order && metrics.reuse.collapse)
-            #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkLibrary.stillCount)
+            #expect(state.mediaGrid.orderedAssetIDs.count == stills)
         }
 
         // Opening an import batch: a few hundred rows of the catalog, read by the batch's key
@@ -137,13 +175,12 @@ struct BenchmarkTests {
         }
         try stamp.close()
         let batchRequest = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: .importBatch(batch)), generation: 0)
-        try await Benchmark.measure("projection.windowState.importBatch") {
+        try await run.measure("projection.windowState.importBatch") {
             guard case let .built(state, _, _, _) = try await projection.buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: batchRequest,
-                reads: .none,
-                revisions: CatalogFactRevisions()
+                reads: .none
             ) else {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
@@ -164,13 +201,12 @@ struct BenchmarkTests {
             ("projection.windowState.onThisDay.months", Self.monthAfter(taken)),
         ] {
             let onThisDay = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: .onThisDay(day)), generation: 0)
-            try await Benchmark.measure(name) {
+            try await run.measure(name) {
                 guard case let .built(state, _, _, _) = try await projection.buildWindowState(
                     store: store,
                     libraries: libraries,
                     request: onThisDay,
-                    reads: .none,
-                    revisions: CatalogFactRevisions()
+                    reads: .none
                 ) else {
                     Issue.record("nothing is searched, so nothing waits on a reading")
                     return
@@ -194,19 +230,18 @@ struct BenchmarkTests {
             """) ?? 0
         }
         try located.close()
-        #expect(inArea > 200)
+        #expect(inArea > stills / 75)
         for (name, scope, expected) in [
-            ("projection.windowState.duplicates", SidebarSelection.duplicates, BenchmarkLibrary.stillCount / 40 * 2),
+            ("projection.windowState.duplicates", SidebarSelection.duplicates, stills / 40 * 2),
             ("projection.windowState.mapArea", .mapArea(area), inArea),
         ] {
             let narrow = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: scope), generation: 0)
-            try await Benchmark.measure(name) {
+            try await run.measure(name) {
                 guard case let .built(state, _, _, _) = try await projection.buildWindowState(
                     store: store,
                     libraries: libraries,
                     request: narrow,
-                    reads: .none,
-                    revisions: CatalogFactRevisions()
+                    reads: .none
                 ) else {
                     Issue.record("nothing is searched, so nothing waits on a reading")
                     return
@@ -218,24 +253,23 @@ struct BenchmarkTests {
         // Places' first paint: every located still's coordinate with its order, which the map
         // clusters (ADR 0040, `docs/research/2026-11-15-places-first-paint.md`).
         let places = CatalogQueryRequest(descriptor: CatalogQueryDescriptor(scope: .places), generation: 0)
-        try await Benchmark.measure("projection.windowState.places") {
+        try await run.measure("projection.windowState.places") {
             guard case let .built(state, _, _, _) = try await projection.buildWindowState(
                 store: store,
                 libraries: libraries,
                 request: places,
-                reads: .none,
-                revisions: CatalogFactRevisions()
+                reads: .none
             ) else {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
             }
             let located = state.map?.located.count ?? 0
-            #expect(located > BenchmarkLibrary.stillCount / 2)
+            #expect(located > stills / 2)
             #expect(located == state.mediaGrid.orderedAssetIDs.count)
         }
 
         // A whole duplicates build, as `DuplicatesProjection` runs it after a catalog change.
-        try await Benchmark.measure("duplicates.build") {
+        try await run.measure("duplicates.build") {
             let built = try await DuplicatesProjection.build(store: store, libraries: libraries).state
             #expect(built.groups.contains { $0.id.isSamePhoto })
             #expect(built.groups.contains { !$0.id.isSamePhoto })
@@ -244,7 +278,7 @@ struct BenchmarkTests {
         // The build after a catalog change that moved nothing it is built from: the stills
         // and identical copies are read, the last build's pairing and evidence held.
         let held = try await DuplicatesProjection.build(store: store, libraries: libraries).memory
-        try await Benchmark.measure("duplicates.build.unchanged") {
+        try await run.measure("duplicates.build.unchanged") {
             let built = try await DuplicatesProjection.build(store: store, libraries: libraries, memory: held)
             #expect(!built.paired)
             #expect(built.state.groups.contains { $0.id.isSamePhoto })
@@ -254,7 +288,7 @@ struct BenchmarkTests {
         // its aspect bucket.
         let paths = CatalogWindowPolicy.availablePaths(from: libraries)
         let candidates = try await store.backgroundReads.samePhotoCandidates(availableLibraryPaths: paths)
-        try await Benchmark.measure("duplicates.samePhotoPairs") {
+        try await run.measure("duplicates.samePhotoPairs") {
             #expect(!SamePhotoPolicy.candidatePairs(candidates, excluding: [], reach: .acrossLibraries).isEmpty)
         }
 
@@ -262,22 +296,24 @@ struct BenchmarkTests {
         // user's across 20 people. `PeopleAssignment` runs a pass after every catalog change of
         // a kind it reads; the snapshot is its catalog read alone, and a settled pass reads,
         // builds the gallery and finds assignment's inputs unchanged.
-        try await Self.addFaces(to: store, faces: 10000, people: 20, confirmedEach: 50)
-        try await Benchmark.measure("people.snapshot.10k", iterations: 3) {
+        let faces = run.size(10000, checked: 200)
+        let named = 20
+        try await addFaces(to: store, faces: faces, people: named, confirmedEach: run.size(50, checked: 5))
+        try await run.measure("people.snapshot.10k", iterations: 3) {
             let snapshot = try await store.backgroundReads.peopleSnapshot()
-            #expect(snapshot.faces.count == 10000)
+            #expect(snapshot.faces.count == faces)
         }
         let people = PeopleAssignment(store: store, vectorSpace: .ample)
         try await people.settle()
         // A pass that reads every face, as one after a change that names no rows.
-        try await Benchmark.measure("people.pass.10k", iterations: 3) {
+        try await run.measure("people.pass.10k", iterations: 3) {
             await people.request()
             try await people.settle()
         }
         // The window's read of the gallery, which People's first paint waits for.
-        try await Benchmark.measure("people.gallery.10k", iterations: 3) {
+        try await run.measure("people.gallery.10k", iterations: 3) {
             let gallery = try await store.windowReads.peopleGallery(availableLibraryPaths: paths)
-            #expect((gallery?.people.count ?? 0) >= 20)
+            #expect((gallery?.people.count ?? 0) >= named)
         }
 
         // What a faces write costs the window and the derived owners once it settles: the
@@ -300,7 +336,7 @@ struct BenchmarkTests {
         }
         try await settled()
         var added = 0
-        try await Benchmark.measure("projection.derived.afterFacesWrite", iterations: 3) {
+        try await run.measure("projection.derived.afterFacesWrite", iterations: 3) {
             added += 1
             let heard = await window.detailRefreshGeneration
             _ = try await store.perform(.moveToNewPerson([], name: "Benchmark \(added)"))
@@ -314,43 +350,66 @@ struct BenchmarkTests {
 
     /// The window's publication of a library of RAW+JPEG pairs (ADR 0052): the order read
     /// with its stack candidates, the stack rule and the collapse pass.
-    @Test func stackCases() async throws {
-        let library = try await BenchmarkPairLibrary.make(in: makeTestDirectory())
+    static func stackScenario(_ run: BenchmarkRun) async throws {
+        let library = try await BenchmarkPairLibrary.make(
+            in: makeTestDirectory(),
+            folders: run.size(BenchmarkPairLibrary.folderCount, checked: 30)
+        )
         let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
         var lastReads = CatalogProjectionReads.none
-        try await Benchmark.measure("projection.windowState.pairs") {
+        var shown: [MediaAssetID] = []
+        try await run.measure("projection.windowState.pairs") {
             guard case let .built(state, _, reads, _) = try await projection.buildWindowState(
                 store: library.store,
                 libraries: library.libraries,
                 request: request,
-                reads: .none,
-                revisions: CatalogFactRevisions()
+                reads: .none
             ) else {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
             }
             lastReads = reads
-            #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkPairLibrary.tileCount)
+            shown = state.mediaGrid.orderedAssetIDs
+            #expect(shown.count == library.tileCount)
         }
-        // What an enrichment batch that moved capture dates of rows no stack holds costs: the
-        // order read again over the stacks the last read built (`CatalogChangedFacts.stacks`).
-        var datesMoved = CatalogFactRevisions()
-        datesMoved.record(.captureDate)
-        try await Benchmark.measure("projection.windowState.pairs.heldStacks") {
+        // What a change that moved capture dates without naming its rows costs (a bulk
+        // rewrite; a batch past `CatalogChangeLog.rowCapacity` reads the same way): the order
+        // read again over the stacks the last read built, which no date moves
+        // (`CatalogChangedFacts.stackInputs`).
+        var datesMoved = CatalogChangeLog()
+        datesMoved.record(.captureDate, rows: .unnamed)
+        try await run.measure("projection.windowState.pairs.heldStacks") {
             guard case let .built(state, metrics, _, _) = try await projection.buildWindowState(
                 store: library.store,
                 libraries: library.libraries,
                 request: request,
                 reads: lastReads,
-                revisions: datesMoved
+                changes: datesMoved
             ) else {
                 Issue.record("nothing is searched, so nothing waits on a reading")
                 return
             }
-            #expect(metrics.reuse.stacks && !metrics.reuse.order)
-            #expect(state.mediaGrid.orderedAssetIDs.count == BenchmarkPairLibrary.tileCount)
+            #expect(metrics.reuse.stacks && !metrics.reuse.order && !metrics.reuse.keyed)
+            #expect(state.mediaGrid.orderedAssetIDs.count == library.tileCount)
         }
+        // An enrichment batch names the rows whose dates it moved: only those rows are read
+        // again, into the held order, and neither the order nor its stacks are read whole
+        // (ADR 0005, "Keyed re-reads").
+        var namedMoved = CatalogChangeLog()
+        namedMoved.record(.captureDate, rows: .rows(Set(shown.prefix(10))))
+        guard case let .built(state, metrics, _, _) = try await projection.buildWindowState(
+            store: library.store,
+            libraries: library.libraries,
+            request: request,
+            reads: lastReads,
+            changes: namedMoved
+        ) else {
+            Issue.record("nothing is searched, so nothing waits on a reading")
+            return
+        }
+        #expect(metrics.reuse.keyed && !metrics.reuse.order && !metrics.reuse.stacks)
+        #expect(state.mediaGrid.orderedAssetIDs == shown)
         await library.store.shutdown()
     }
 
@@ -358,8 +417,10 @@ struct BenchmarkTests {
     /// that already holds 20,000: each asset's folder is listed in full, so the batch looks up
     /// 500 folders' rows. The cost must not grow with the account, or a large library's
     /// first sync stalls its own stream.
-    @Test func immichListingCases() async throws {
+    static func immichListingScenario(_ run: BenchmarkRun) async throws {
         let temp = try makeTestDirectory()
+        let accountSize = run.size(20000, checked: 2000)
+        let batchSize = run.size(500, checked: 100)
         let store = makeTestStore(location: .databaseFile(temp.appending(path: "Catalog.sqlite")), stagingContainers: StagingContainers(base: temp))
         try await store.start(scansSavedLibraries: false)
         let rootPath = try await store.addImmichAccount(
@@ -385,15 +446,18 @@ struct BenchmarkTests {
             return SourceListingChanges(listed: items, completeFolders: items.map(\.sourceItemID))
         }
         let scan = try await store.beginSourceListing(rootPath: rootPath)
-        for start in stride(from: 0, to: 20000, by: 500) {
-            try await store.applySourceListingChanges(batch(start ..< start + 500), scan: scan)
+        for start in stride(from: 0, to: accountSize, by: batchSize) {
+            try await store.applySourceListingChanges(batch(start ..< start + batchSize), scan: scan)
         }
-        let measured = batch(10000 ..< 10500)
-        try await Benchmark.measure("immich.listing.batch500.of20k") {
+        let middle = accountSize / 2
+        let measured = batch(middle ..< middle + batchSize)
+        try await run.measure("immich.listing.batch500.of20k") {
             try await store.applySourceListingChanges(measured, scan: scan)
         }
         await store.endSourceListing(scan: scan)
-        let kept = try await store.backgroundReads.sourceItemRows(["asset-010000", "asset-019999"], in: rootPath)
+        let kept = try await store.backgroundReads.sourceItemRows(
+            [String(format: "asset-%06d", middle), String(format: "asset-%06d", accountSize - 1)], in: rootPath
+        )
         #expect(kept.count == 2)
         await store.shutdown()
     }
@@ -402,9 +466,9 @@ struct BenchmarkTests {
     /// account mirrors in full, shaped like the owner's Camera Roll and its Immich external
     /// library: every pass pairs every file again, so once all are paired a pass costs one
     /// read of the library's digests and one indexed probe per file, and writes nothing.
-    @Test func immichMirrorCases() async throws {
+    static func immichMirrorScenario(_ run: BenchmarkRun) async throws {
         let temp = try makeTestDirectory()
-        let count = 16000
+        let count = run.size(16000, checked: 1000)
         let base = Date(timeIntervalSince1970: 1_700_000_000)
         let path: @Sendable (Int) -> String = { index in
             String(format: "%04d/IMG_%05d.JPG", 2000 + index / 1000, index)
@@ -468,20 +532,20 @@ struct BenchmarkTests {
         let first = try await store.backgroundReads.pairMirroredCopies(account: account)
         #expect(first == count)
 
-        try await Benchmark.measure("immich.mirror.pass.of16k") {
+        try await run.measure("immich.mirror.pass.of16k") {
             let paired = try await store.backgroundReads.pairMirroredCopies(account: account)
             #expect(paired == 0)
         }
         // All Media over 16,000 photos of two copies each (ADR 0054): with both roots the
         // stored best copy decides every row; with the library away each account copy asks
         // the digest index whether a better copy is reachable.
-        try await Benchmark.measure("copies.order.allMedia.of16k") {
+        try await run.measure("copies.order.allMedia.of16k") {
             let ids = try await store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .allMedia), availableLibraryPaths: [library, account]
             ).ids
             #expect(ids.count == count)
         }
-        try await Benchmark.measure("copies.order.libraryAway.of16k") {
+        try await run.measure("copies.order.libraryAway.of16k") {
             let ids = try await store.windowReads.orderedAssetIDs(
                 for: CatalogQueryDescriptor(scope: .allMedia), availableLibraryPaths: [account]
             ).ids
@@ -552,48 +616,54 @@ struct BenchmarkTests {
     /// seconds. Then the whole apply at the owner's size through the controller in a window:
     /// the off-main build, `reloadData`, the layout resolve and the post-apply pass, which is
     /// what stands between a sidebar click and a painted grid.
-    @Test func gridCases() async throws {
-        let small = Self.dayGroupedGrid(prefix: "", photos: 15000, days: 1500)
-        try await Benchmark.measure("grid.structureBuild.days1500") {
+    static func gridScenario(_ run: BenchmarkRun) async throws {
+        let smallPhotos = run.size(15000, checked: 1500), smallDays = run.size(1500, checked: 150)
+        let small = dayGroupedGrid(prefix: "", photos: smallPhotos, days: smallDays)
+        try await run.measure("grid.structureBuild.days1500") {
             let built = await MediaGridViewController.buildStructure(for: small, descriptorChanged: true, previous: .empty)
-            #expect(built.structure.numberOfSections == 1500)
-            #expect(built.structure.orderedIDs.count == 15000)
+            #expect(built.structure.numberOfSections == smallDays)
+            #expect(built.structure.orderedIDs.count == smallPhotos)
         }
 
-        let owner = Self.dayGroupedGrid(prefix: "a/", photos: 158_000, days: 5000)
-        try await Benchmark.measure("grid.structureBuild.days5000") {
+        let photos = run.size(158_000, checked: 3000), days = run.size(5000, checked: 300)
+        let owner = dayGroupedGrid(prefix: "a/", photos: photos, days: days)
+        try await run.measure("grid.structureBuild.days5000") {
             let built = await MediaGridViewController.buildStructure(for: owner, descriptorChanged: true, previous: .empty)
-            #expect(built.structure.numberOfSections == 5000)
-            #expect(built.structure.orderedIDs.count == 158_000)
+            #expect(built.structure.numberOfSections == days)
+            #expect(built.structure.orderedIDs.count == photos)
         }
 
-        try await Self.measureOwnerScaleApply(
+        try await measureOwnerScaleApply(
+            run,
             owner,
-            other: Self.dayGroupedGrid(prefix: "b/", photos: 158_000, days: 5000)
+            other: dayGroupedGrid(prefix: "b/", photos: photos, days: days),
+            days: days
         )
 
         // The enrichment trickle at the owner's size: 200 photos learn a capture day far
         // from the one they were shown under, so each leaves its day for another. The pure
         // half (structure, policy and batch derivation, off the main actor), then the whole
         // apply through the controller in a window, where it is a `performBatchUpdates`.
-        let reordered = Self.withPhotosMovedBetweenDays(owner, moving: 200, days: 5000)
+        let moving = run.size(200, checked: 20)
+        let reordered = withPhotosMovedBetweenDays(owner, moving: moving, days: days)
         let ownerStructure = MediaGridStructure(grid: owner)
-        try await Benchmark.measure("grid.reorderBuild.days5000") {
+        try await run.measure("grid.reorderBuild.days5000") {
             let built = await MediaGridViewController.buildStructure(
                 for: reordered, descriptorChanged: false, previous: ownerStructure
             )
             #expect(built.summary.reorderOnly)
-            #expect(built.batchUpdates?.movedItems.count ?? 0 >= 200)
+            #expect(built.batchUpdates?.movedItems.count ?? 0 >= moving)
         }
-        try await Self.measureOwnerScaleReorder(owner, reordered: reordered)
+        try await measureOwnerScaleReorder(run, owner, reordered: reordered, days: days)
     }
 
     /// Move to Trash's visible half at the owner's size (DES-119): Projection takes 5 photos
     /// off the held window (`hidingItems`, off the main actor), and the grid applies their
     /// removal on the main thread. The apply alternates removal and return, as a Move to
     /// Trash and its undo do, so each iteration applies the same five.
-    @Test func hideCases() async throws {
-        let owner = Self.dayGroupedGrid(prefix: "a/", photos: 158_000, days: 5000)
+    static func hideScenario(_ run: BenchmarkRun) async throws {
+        let photos = run.size(158_000, checked: 3000), days = run.size(5000, checked: 300)
+        let owner = dayGroupedGrid(prefix: "a/", photos: photos, days: days)
         let window = CatalogWindowState(
             title: "All Media",
             libraries: [],
@@ -605,27 +675,29 @@ struct BenchmarkTests {
             deviceConnectionBanner: nil
         ).sharingUnchanged(with: nil)
         let ids = owner.orderedAssetIDs
-        let trashed = Set(stride(from: 1000, to: 158_000, by: 31000).map { ids[$0] })
-        try await Benchmark.measure("projection.hide.days5000") {
+        let trashed = Set(stride(
+            from: run.size(1000, checked: 20), to: photos, by: run.size(31000, checked: 600)
+        ).map { ids[$0] })
+        try await run.measure("projection.hide.days5000") {
             let hidden = window.hidingItems(trashed)
-            #expect(hidden.mediaGrid.orderedAssetIDs.count == 158_000 - trashed.count)
+            #expect(hidden.mediaGrid.orderedAssetIDs.count == photos - trashed.count)
         }
-        try await Self.measureOwnerScaleHide(owner, hidden: window.hidingItems(trashed).mediaGrid)
-        try await Self.measureOwnerScaleInsert(owner)
+        try await measureOwnerScaleHide(run, owner, hidden: window.hidingItems(trashed).mediaGrid)
+        try await measureOwnerScaleInsert(run, owner, days: days)
     }
 
     /// An import's arrival at the owner's size: ten new photos of a newer day land at the top
     /// of the grid, each publication a fresh order (no edit to follow), alternating with the
     /// order without them, so each iteration inserts or removes the same ten on screen.
     @MainActor
-    private static func measureOwnerScaleInsert(_ owner: CatalogMediaGridState) async throws {
+    private static func measureOwnerScaleInsert(_ run: BenchmarkRun, _ owner: CatalogMediaGridState, days: Int) async throws {
         let arrivals = (0 ..< 10).map { index in
             MediaAssetID(
                 libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
                 relativePath: MediaRelativePath(rawValue: "DCIM/new/IMG_\(index).HEIC")
             )
         }
-        let newDay = Optional(Date(timeIntervalSince1970: Double(5001) * 86400))
+        let newDay = Optional(Date(timeIntervalSince1970: Double(days + 1) * 86400))
         let arrived = CatalogMediaGridState(
             scope: owner.scope,
             orderedAssetIDs: arrivals + owner.orderedAssetIDs,
@@ -643,7 +715,7 @@ struct BenchmarkTests {
         controller.receive(without)
         try await awaitGridShows(controller, without)
         var next = arrived
-        try await Benchmark.measure("grid.insertApply.days5000.mainThread", counting: .mainThread) {
+        try await run.measure("grid.insertApply.days5000.mainThread", counting: .mainThread) {
             controller.receive(next)
             try await awaitGridShows(controller, next)
             controller.collectionView.layoutSubtreeIfNeeded()
@@ -652,7 +724,11 @@ struct BenchmarkTests {
     }
 
     @MainActor
-    private static func measureOwnerScaleHide(_ owner: CatalogMediaGridState, hidden: CatalogMediaGridState) async throws {
+    private static func measureOwnerScaleHide(
+        _ run: BenchmarkRun,
+        _ owner: CatalogMediaGridState,
+        hidden: CatalogMediaGridState
+    ) async throws {
         let controller = MediaGridViewController()
         _ = controller.view
         let window = orderedInTestWindow(width: 1200, height: 800, contentView: controller.view)
@@ -661,7 +737,7 @@ struct BenchmarkTests {
         controller.receive(owner)
         try await awaitGridShows(controller, owner)
         var next = hidden
-        try await Benchmark.measure("grid.hideApply.days5000.mainThread", counting: .mainThread) {
+        try await run.measure("grid.hideApply.days5000.mainThread", counting: .mainThread) {
             controller.receive(next)
             try await awaitGridShows(controller, next)
             controller.collectionView.layoutSubtreeIfNeeded()
@@ -673,8 +749,10 @@ struct BenchmarkTests {
     /// visible tiles reconfigures them in place on the main thread, never through a structural
     /// apply; an expansion re-collapses the held order off the main actor; a favourite lays
     /// over 2,000 people and re-sorts them by the builder's order.
-    @Test func shownFirstCases() async throws {
-        let owner = Self.dayGroupedGrid(prefix: "s/", photos: 158_000, days: 5000)
+    static func shownFirstScenario(_ run: BenchmarkRun) async throws {
+        let owner = dayGroupedGrid(
+            prefix: "s/", photos: run.size(158_000, checked: 3000), days: run.size(5000, checked: 300)
+        )
         let ids = owner.orderedAssetIDs
         // One RAW+JPEG pair every 100 photos: the RAW is the photo after its JPEG.
         let pairs = stride(from: 0, to: ids.count - 1, by: 100).map { index in
@@ -707,7 +785,7 @@ struct BenchmarkTests {
             deviceConnectionBanner: nil
         )
         let expanded: Set<PhotoStackID> = [pairs[pairs.count / 2].id]
-        try await Benchmark.measure("projection.expandHeld.days5000") {
+        try await run.measure("projection.expandHeld.days5000") {
             let shown = try #require(CatalogProjection.expanding(window, held: held, to: expanded))
             #expect(shown.state.mediaGrid.orderedAssetIDs.count == collapsed.ids.count + 1)
         }
@@ -725,8 +803,9 @@ struct BenchmarkTests {
             shownStates.append(next.state.mediaGrid)
             current = next
         }
-        try await Self.measureOwnerScaleExpand(window.mediaGrid, then: shownStates)
-        let people = (0 ..< 2000).map { index in
+        try await measureOwnerScaleExpand(run, window.mediaGrid, then: shownStates)
+        let peopleCount = run.size(2000, checked: 100)
+        let people = (0 ..< peopleCount).map { index in
             PersonSummary(
                 id: PersonID(rawValue: Int64(index)), name: "Person \(index)", birthday: nil, isHidden: false,
                 isFavorite: false, media: MediaCount(items: [(ids[index], false)]), cover: nil, userFaces: []
@@ -734,17 +813,19 @@ struct BenchmarkTests {
         }
         let state = CatalogPeopleState(people: people, unchecked: MediaCount(), hasFaces: true)
         var favourite = PeopleOverlayEffect()
-        favourite.people[PersonID(rawValue: 1999)] = PersonEdit(isFavorite: true)
-        try await Benchmark.measure("people.overlayFavourite.people2000") {
-            #expect(state.overlaying(favourite).people.first?.id == PersonID(rawValue: 1999))
+        let last = PersonID(rawValue: Int64(peopleCount - 1))
+        favourite.people[last] = PersonEdit(isFavorite: true)
+        try await run.measure("people.overlayFavourite.people2000") {
+            #expect(state.overlaying(favourite).people.first?.id == last)
         }
-        try await Self.measureOwnerScaleChoice(owner)
+        try await measureOwnerScaleChoice(run, owner)
     }
 
     /// A stack expanding and collapsing in the grid at the owner's size: `shown` holds the
     /// warm-up's grid and then one per measured iteration, each an edit of the one before.
     @MainActor
     private static func measureOwnerScaleExpand(
+        _ run: BenchmarkRun,
         _ collapsed: CatalogMediaGridState,
         then shown: [CatalogMediaGridState]
     ) async throws {
@@ -757,7 +838,7 @@ struct BenchmarkTests {
         controller.receive(collapsed)
         try await awaitGridShows(controller, collapsed)
         var next = shown.makeIterator()
-        try await Benchmark.measure("grid.expandApply.days5000.mainThread", counting: .mainThread) {
+        try await run.measure("grid.expandApply.days5000.mainThread", counting: .mainThread) {
             let upcoming = next.next()
             let grid = try #require(upcoming)
             controller.receive(grid)
@@ -767,7 +848,7 @@ struct BenchmarkTests {
     }
 
     @MainActor
-    private static func measureOwnerScaleChoice(_ owner: CatalogMediaGridState) async throws {
+    private static func measureOwnerScaleChoice(_ run: BenchmarkRun, _ owner: CatalogMediaGridState) async throws {
         let controller = MediaGridViewController()
         _ = controller.view
         let window = orderedInTestWindow(width: 1200, height: 800, contentView: controller.view)
@@ -782,7 +863,7 @@ struct BenchmarkTests {
         }
         var change = TileChoiceChange()
         var choice = MediaChoice.liked
-        try await Benchmark.measure("grid.choiceReconfigure.days5000.mainThread", counting: .mainThread) {
+        try await run.measure("grid.choiceReconfigure.days5000.mainThread", counting: .mainThread) {
             for id in chosen {
                 controller.tileContents.setMediaChoice(choice, for: id)
             }
@@ -798,8 +879,10 @@ struct BenchmarkTests {
     /// share a user can feel as a hang (the build runs off it).
     @MainActor
     private static func measureOwnerScaleReorder(
+        _ run: BenchmarkRun,
         _ owner: CatalogMediaGridState,
-        reordered: CatalogMediaGridState
+        reordered: CatalogMediaGridState,
+        days: Int
     ) async throws {
         let controller = MediaGridViewController()
         _ = controller.view
@@ -813,11 +896,11 @@ struct BenchmarkTests {
             ("grid.reorderApply.days5000", Benchmark.Counted.process),
             ("grid.reorderApply.days5000.mainThread", .mainThread),
         ] {
-            try await Benchmark.measure(name, counting: counted) {
+            try await run.measure(name, counting: counted) {
                 controller.receive(next)
                 try await awaitGridShows(controller, next)
                 controller.collectionView.layoutSubtreeIfNeeded()
-                #expect(controller.structure.numberOfSections == 5000)
+                #expect(controller.structure.numberOfSections == days)
                 next = next.orderedAssetIDs == owner.orderedAssetIDs ? reordered : owner
             }
         }
@@ -862,7 +945,7 @@ struct BenchmarkTests {
     /// values, as the projection builds every pass, and handed over as the projection
     /// publishes it (`published(_:after:)`).
     @MainActor
-    @Test func windowApplyCases() async throws {
+    static func windowApplyScenario(_ run: BenchmarkRun) async throws {
         let model = CatalogWindowViewModel(
             catalogStore: makeTestStore(location: .inMemory),
             enrichmentCoordinator: nil,
@@ -873,39 +956,40 @@ struct BenchmarkTests {
             volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing
         )
-        let ownerSize = 158_000
-        let first = Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 1)
+        let ownerSize = run.size(158_000, checked: 3000)
+        let dropped = run.size(1000, checked: 20)
+        let first = ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 1)
             .sharingUnchanged(with: nil)
-        let republished = Self.published(
-            Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 2),
+        let republished = published(
+            ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 2),
             after: first
         )
         model.applyState(first)
-        let selected = first.mediaGrid.orderedAssetIDs[5000]
+        let selected = first.mediaGrid.orderedAssetIDs[run.size(5000, checked: 100)]
         _ = model.applyGridClick(hit: selected, modifiers: [], orderedIDs: first.mediaGrid.orderedAssetIDs)
         var next = republished
-        try await Benchmark.measure("window.apply.republished.158k") {
+        try await run.measure("window.apply.republished.158k") {
             model.applyState(next)
             #expect(model.gridSelection.selection == [selected])
             next = next.mediaGrid.detailRefreshGeneration == 1 ? republished : first
         }
 
-        let lostOne = Self.published(
-            Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 3, dropping: 1000),
+        let lostOne = published(
+            ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 3, dropping: dropped),
             after: first
         )
         model.applyState(first)
         model.openLoupe(id: selected)
         next = lostOne
-        try await Benchmark.measure("window.apply.orderChanged.158k") {
+        try await run.measure("window.apply.orderChanged.158k") {
             model.applyState(next)
             #expect(model.focusedAssetID == selected)
             next = next.mediaGrid.detailRefreshGeneration == 1 ? lostOne : first
         }
         model.exitToGrid()
 
-        let other = Self.published(
-            Self.ownerWindowState(
+        let other = published(
+            ownerWindowState(
                 prefix: "b/",
                 photos: ownerSize,
                 scope: .library(LibraryRootPath(rawValue: "/Pictures/b/")),
@@ -915,7 +999,7 @@ struct BenchmarkTests {
         )
         model.applyState(first)
         next = other
-        try await Benchmark.measure("window.apply.scopeChanged.158k") {
+        try await run.measure("window.apply.scopeChanged.158k") {
             model.applyState(next)
             #expect(model.state.mediaGrid.orderedAssetIDs.count == ownerSize)
             next = next.mediaGrid.detailRefreshGeneration == 1 ? other : first
@@ -927,7 +1011,7 @@ struct BenchmarkTests {
         _ = gate.receive(first.mediaGrid)
         _ = gate.completeStructuralApply(applied: first.mediaGrid)
         next = republished
-        try await Benchmark.measure("grid.gate.republished.158k") {
+        try await run.measure("grid.gate.republished.158k") {
             let actions = gate.receive(next.mediaGrid)
             guard case .refreshVisible = actions.first else {
                 Issue.record("a republished order is a detail refresh, not \(actions)")
@@ -941,29 +1025,30 @@ struct BenchmarkTests {
     /// size: handing on an equal rebuilt content (the comparison of every identity, day and
     /// stack), and a new order (the comparison up to its first difference, and the position
     /// index it builds). Each iteration publishes a state built fresh, as a pass does.
-    @Test func windowPublishCases() async throws {
-        let ownerSize = 158_000
-        let first = Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 1)
+    static func windowPublishScenario(_ run: BenchmarkRun) async throws {
+        let ownerSize = run.size(158_000, checked: 3000)
+        let dropped = run.size(1000, checked: 20)
+        let first = ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 1)
             .sharingUnchanged(with: nil)
         // Published states are kept, so no iteration measures freeing one.
         var kept: [CatalogWindowState] = []
         var equal = (0 ..< 4).map { _ in
-            Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 2)
+            ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 2)
         }
-        try await Benchmark.measure("window.publish.republished.158k", iterations: 3) {
+        try await run.measure("window.publish.republished.158k", iterations: 3) {
             let published = equal.removeLast().sharingUnchanged(with: first)
             #expect(published.mediaGrid.sharesContent(with: first.mediaGrid))
             kept.append(published)
         }
         var changed = (0 ..< 4).map { _ in
-            Self.ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 3, dropping: 1000)
+            ownerWindowState(prefix: "a/", photos: ownerSize, scope: .allMedia, generation: 3, dropping: dropped)
         }
-        try await Benchmark.measure("window.publish.orderChanged.158k", iterations: 3) {
+        try await run.measure("window.publish.orderChanged.158k", iterations: 3) {
             let published = changed.removeLast().sharingUnchanged(with: first)
             #expect(!published.mediaGrid.sharesContent(with: first.mediaGrid))
             kept.append(published)
         }
-        #expect(kept.count == 8)
+        #expect(kept.count == run.size(8, checked: 2))
     }
 
     /// What the window receives for `next` published after `previous`.
@@ -1028,8 +1113,10 @@ struct BenchmarkTests {
     /// thread alone.
     @MainActor
     private static func measureOwnerScaleApply(
+        _ run: BenchmarkRun,
         _ owner: CatalogMediaGridState,
-        other: CatalogMediaGridState
+        other: CatalogMediaGridState,
+        days: Int
     ) async throws {
         let controller = MediaGridViewController()
         _ = controller.view
@@ -1041,11 +1128,11 @@ struct BenchmarkTests {
             ("grid.structuralApply.days5000", Benchmark.Counted.process),
             ("grid.structuralApply.days5000.mainThread", .mainThread),
         ] {
-            try await Benchmark.measure(name, counting: counted) {
+            try await run.measure(name, counting: counted) {
                 controller.receive(next)
                 try await awaitGridShows(controller, next)
                 controller.collectionView.layoutSubtreeIfNeeded()
-                #expect(controller.structure.numberOfSections == 5000)
+                #expect(controller.structure.numberOfSections == days)
                 next = next.orderedAssetIDs == owner.orderedAssetIDs ? other : owner
             }
         }

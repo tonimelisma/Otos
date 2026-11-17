@@ -133,6 +133,37 @@ enum Benchmark {
     }
 }
 
+/// How a benchmark scenario runs (ADR 0043). `measured` runs it at its benchmark size and
+/// measures each case, only when `script/bench.sh` asks. `checked` runs the same scenario
+/// once, at a small size, in every `script/check.sh`, measuring nothing: what a scenario
+/// expects beyond its numbers (a read reused, a path taken, a row count) then fails the
+/// change that breaks it, not the next daily run, which records nothing for a failed case.
+struct BenchmarkRun: Sendable {
+    let isMeasured: Bool
+
+    static let measured = BenchmarkRun(isMeasured: true)
+    static let checked = BenchmarkRun(isMeasured: false)
+
+    /// `measured` when the run measures, `checked` when it only checks.
+    func size(_ measured: Int, checked: Int) -> Int {
+        isMeasured ? measured : checked
+    }
+
+    /// Measures `body` as case `name` (`Benchmark.measure`), or runs it once when checked.
+    func measure(
+        _ name: String,
+        iterations: Int = 5,
+        counting counted: Benchmark.Counted = .process,
+        _ body: () async throws -> Void
+    ) async throws {
+        if isMeasured {
+            try await Benchmark.measure(name, iterations: iterations, counting: counted, body)
+        } else {
+            try await body()
+        }
+    }
+}
+
 /// A generated library for benchmarks, shaped like the owner's measured on 2026-11-01
 /// (`docs/research/2026-11-01-launch-first-frame-and-duplicates-cost.md`): about 15,000
 /// stills, one in nine without capture metadata, a few percent identical copies and a few
@@ -298,38 +329,41 @@ struct SplitMix64: RandomNumberGenerator {
 /// A generated library of RAW+JPEG pairs (ADR 0052), shaped like the owner's catalog on
 /// 2026-11-13: a few files in each of thousands of folders, a RAW in every folder. Each of
 /// 3,000 folders holds two pairs and one JPEG alone, so the window shows 9,000 tiles for
-/// 15,000 files.
+/// 15,000 files (a check of the scenario's own behavior takes fewer folders).
 struct BenchmarkPairLibrary {
     let store: CatalogStore
     let libraries: [CatalogLibraryState]
+    let folders: Int
 
     static let folderCount = 3000
-    static let fileCount = folderCount * 5
-    static let tileCount = folderCount * 3
 
-    static func make(in directory: URL) async throws -> BenchmarkPairLibrary {
+    var tileCount: Int {
+        folders * 3
+    }
+
+    static func make(in directory: URL, folders: Int = folderCount) async throws -> BenchmarkPairLibrary {
         let rootURL = directory.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let store = makeTestStore(
             location: .databaseFile(directory.appending(path: "db/catalog.sqlite")),
-            scanner: scanner()
+            scanner: scanner(folders: folders)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         _ = try await waitForCatalogStoreState(store) {
-            !$0.isScanning && $0.testAssets.count == fileCount
+            !$0.isScanning && $0.testAssets.count == folders * 5
         }
         let libraries = try #require(await store.loadedLibraries())
-        return BenchmarkPairLibrary(store: store, libraries: libraries)
+        return BenchmarkPairLibrary(store: store, libraries: libraries, folders: folders)
     }
 
     /// Files with distinct paths and dates; their bytes are never read.
-    private static func scanner() -> CatalogScanner {
+    private static func scanner(folders: Int) -> CatalogScanner {
         CatalogScanner { _, _, batchHandler in
             let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
             var files: [ScannedMediaFile] = []
-            files.reserveCapacity(fileCount)
-            for folder in 0 ..< folderCount {
+            files.reserveCapacity(folders * 5)
+            for folder in 0 ..< folders {
                 let names = ["DSC0.ARW", "DSC0.JPG", "DSC1.ARW", "DSC1.JPG", "DSC2.JPG"]
                 for (offset, name) in names.enumerated() {
                     let isRaw = name.hasSuffix(".ARW")

@@ -1291,7 +1291,6 @@ private extension CatalogProjection {
         let peopleStartedFrom = peopleRequested
         let galleryStartedFrom = galleryRequested
         let startedReads = reads
-        let startedRevisions = changeLog.revisions
         let startedChanges = changeLog
         let selectedRequest = queryRequest
         OtosLog.catalog.noticeOperation("projection.publish", phase: "start", fields: [
@@ -1333,7 +1332,6 @@ private extension CatalogProjection {
                     libraries: libraries,
                     request: selectedRequest,
                     reads: startedReads,
-                    revisions: startedRevisions,
                     changes: startedChanges,
                     answerFromHeld: answerFromHeld
                 )

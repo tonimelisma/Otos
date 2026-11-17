@@ -69,6 +69,16 @@ The tooling found:
   measures the same catalog.
 - **Each case checks that it did its work.** A broken fixture then fails instead of
   measuring nothing. No case asserts a time or instruction budget.
+- **Every check runs the scenarios too, small and unmeasured.** A scenario that holds a
+  store, a projection or the grid is a function of its `BenchmarkRun`:
+  `BenchmarkScenarioTests` runs each one `checked`, once, on a fixture a hundredth of its
+  benchmark size, measuring nothing. What a scenario expects beyond its numbers (a read
+  reused, the keyed path taken, a row count) then fails the change that breaks it.
+  Before, those expectations ran only in the daily run, which records nothing for a
+  failed case: a capture-date change handed to the window with no change-log entry took
+  the keyed path from #836 on, and the held-stacks case failed unseen until a daily run
+  hit it. Cases of pure functions and of the bundled models stay measured only; their
+  expectations are the work itself, which their own suites test.
 - **Results are recorded per commit, as git notes.** When the tree is clean,
   `script/bench.sh run` appends one JSON object per case to `refs/notes/benchmarks` on
   HEAD. Each object carries the machine model, macOS, Xcode and configuration. Notes

@@ -10,8 +10,10 @@ import OSLog
 /// the window would show as fact (MED-002).
 extension CatalogProjection {
     /// Builds the window state for `request`, answering each catalog read from `previous`
-    /// while it still holds (`CatalogProjectionReads`): `revisions` are the fact revisions
-    /// the pass started from, which a read made now records. Returns the reads the state was
+    /// while it still holds (`CatalogProjectionReads`). `changes` is the change log the pass
+    /// started from: its `revisions` are what a read made now records, and its entries name
+    /// the rows a keyed re-read reads again. The two come from one value so that a revision
+    /// that moved is always a change that names its rows (`CatalogChangeLog`). Returns the reads the state was
     /// built from, for the pass to keep once it publishes, and the filter's options when they
     /// are owed: the window never waits for them (`OwedFilterOptions`).
     ///
@@ -28,10 +30,10 @@ extension CatalogProjection {
         libraries unsortedLibraries: [CatalogLibraryState],
         request: CatalogQueryRequest,
         reads previous: CatalogProjectionReads,
-        revisions: CatalogFactRevisions,
         changes: CatalogChangeLog = CatalogChangeLog(),
         answerFromHeld: Bool = false
     ) async throws -> CatalogProjectionBuild {
+        let revisions = changes.revisions
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         var reads = previous
         var reuse = CatalogProjectionReuse()
