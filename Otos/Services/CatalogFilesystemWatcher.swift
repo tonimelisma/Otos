@@ -187,9 +187,10 @@ private final nonisolated class WatcherState: Sendable {
             release: nil,
             copyDescription: nil
         )
-        // `FullHistory`: a replay delivers every event of the history chunk holding `since`,
-        // even ones just before it, so none near an unclean exit is skipped; an event
-        // delivered twice is reconciled twice, which changes nothing.
+        // `FullHistory`: a stream from `since` delivers every event of the history chunk
+        // holding it, ones before it among them, so none after it is skipped by how the
+        // history is stored. The Store drops those at or before `since`, which the catalog
+        // already reflects (`RootChangeJournal.reflects(eventID:)`).
         let flags = FSEventStreamCreateFlags(
             kFSEventStreamCreateFlagFileEvents
                 | kFSEventStreamCreateFlagUseCFTypes

@@ -519,11 +519,20 @@ reflects, the identity of the volume's event database it belongs to
 - the root's inode differs (the folder was replaced) → walk (`rootChanged`);
 - the stored ID is ahead of `FSEventsGetCurrentEventId()` → walk (`noHistory`);
 - otherwise → the root's stream is created with `sinceWhen` = the stored ID and
-  `kFSEventStreamCreateFlagFullHistory` (a replay re-delivers the chunk holding that ID rather
-  than skip an event near an unclean exit; reconciling an event twice changes nothing).
+  `kFSEventStreamCreateFlagFullHistory`, so no event after that ID is skipped by how the history
+  is stored.
 
 A walking root's stream starts at the event ID probed just before the walk, so every change
-after the probe is either seen by the walk or delivered as an event. Replayed events go through
+after the probe is either seen by the walk or delivered as an event. `FullHistory` delivers the
+whole history chunk holding a stream's start ID, events before it among them (measured: a stream
+started at `FSEventsGetCurrentEventId()` over a folder written three seconds earlier delivered
+all 103 of its creation events, the folder's own first; without the flag, none,
+`docs/research/2026-11-17-fsevents-change-journal.md`). An event at or before the start ID is
+already reflected (behind the stored position, or behind the probe the walk started after), so
+it is counted and dropped (`RootChangeJournal.reflects(eventID:)`, `op=catalog.journal
+phase=historyDone alreadyReflected=N`); an ID of zero (`RootChanged`) names no position and is
+never dropped. Without that, the history that made a newly added folder (its root's creation
+event, which makes the whole root dirty) walked it a second time after its first walk. Replayed events go through
 the same classification and dirt as live ones (`Running-App Filesystem Watching` below): a file
 event reconciles that path, a directory or `MustScanSubDirs` event that subtree, and
 `UserDropped`, `KernelDropped`, `EventIdsWrapped`, `RootChanged`, `Mount`, `Unmount`, root-path

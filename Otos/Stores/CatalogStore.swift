@@ -8686,6 +8686,12 @@ private extension CatalogStore {
         let wasReplaying = journal.isReplaying
         journal.endHistory()
         changeJournals[root] = journal
+        // What the history held that the catalog already reflected, for a replay and for a
+        // walking root alike: the chunk `FullHistory` delivers from before the start.
+        OtosLog.catalog.noticeOperation("catalog.journal", phase: "historyDone", fields: [
+            "rootPath": root.rawValue, "mode": wasReplaying ? "replay" : "walk", "since": "\(journal.start)",
+            "alreadyReflected": "\(journal.reflectedEvents)",
+        ])
         if wasReplaying {
             lastSuccessfulFullRootScanAt[root] = .now
             if journal.replayedEvents == 0 {
@@ -8716,6 +8722,12 @@ private extension CatalogStore {
 
         guard let root = CatalogPath.owningRoot(for: event.path, among: roots.keys) else {
             recordFilesystemEventDrop(path: event.path, root: nil, reason: "outsideRoots")
+            return
+        }
+        // History the catalog already reflects (behind the stored position, or behind the
+        // probe a walk started after): `FullHistory` delivers it, and nothing reads it again.
+        if changeJournals[root]?.reflects(eventID: event.id) == true {
+            changeJournals[root]?.skipReflected()
             return
         }
         // Delivered, whatever is done with it: an event this pass drops leaves a walk owed

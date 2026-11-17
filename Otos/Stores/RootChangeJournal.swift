@@ -93,12 +93,17 @@ nonisolated struct RootChangeJournal: Equatable {
     let volumeUUID: String?
     /// What the catalog holds, or nil.
     private(set) var stored: FilesystemJournalPosition?
-    /// The highest event ID the stream has delivered for the root; it starts at the ID the
-    /// stream was started from.
+    /// The event ID the stream was started from: the stored position for a replay, the probe
+    /// taken before the walk for a walking root. Every event at or before it is already
+    /// reflected in the catalog (`reflects(eventID:)`).
+    let start: UInt64
+    /// The highest event ID the stream has delivered for the root; it starts at `start`.
     private(set) var delivered: UInt64
     /// The replay since `stored` has not ended yet: events delivered now are history.
     private(set) var isReplaying: Bool
     private(set) var replayedEvents = 0
+    /// Events the stream delivered at or before `start`, which the catalog already reflects.
+    private(set) var reflectedEvents = 0
     private(set) var historyDone: Bool
     /// Work only a completed full walk settles — a walk owed, an event dropped or not
     /// applied — counted as a revision (ADR 0032): `owed` advances when one appears, and a
@@ -110,7 +115,7 @@ nonisolated struct RootChangeJournal: Equatable {
 
     /// A stream started from `since` to replay the history after `stored`.
     static func replaying(from stored: FilesystemJournalPosition) -> RootChangeJournal {
-        RootChangeJournal(volumeUUID: stored.volumeUUID, stored: stored, delivered: stored.eventID, isReplaying: true, historyDone: false)
+        RootChangeJournal(volumeUUID: stored.volumeUUID, stored: stored, start: stored.eventID, isReplaying: true, historyDone: false)
     }
 
     /// A stream started from the probe's current ID, ahead of a walk that will cover
@@ -119,7 +124,7 @@ nonisolated struct RootChangeJournal: Equatable {
         var journal = RootChangeJournal(
             volumeUUID: probe.volumeUUID,
             stored: stored,
-            delivered: probe.currentEventID,
+            start: probe.currentEventID,
             isReplaying: false,
             historyDone: false
         )
@@ -130,20 +135,36 @@ nonisolated struct RootChangeJournal: Equatable {
     private init(
         volumeUUID: String?,
         stored: FilesystemJournalPosition?,
-        delivered: UInt64,
+        start: UInt64,
         isReplaying: Bool,
         historyDone: Bool
     ) {
         self.volumeUUID = volumeUUID
         self.stored = stored
-        self.delivered = delivered
+        self.start = start
+        delivered = start
         self.isReplaying = isReplaying
         self.historyDone = historyDone
     }
 
     /// The stream started from `since` when watched: nil watches from now.
     var streamStart: UInt64? {
-        volumeUUID == nil ? nil : delivered
+        volumeUUID == nil ? nil : start
+    }
+
+    /// Whether the catalog already reflects an event the stream delivered. A stream started
+    /// from an ID with `FullHistory` delivers the whole history chunk holding that ID, events
+    /// before it among them (`FSEvents.h`): for a replay those are behind the stored position,
+    /// and for a walking root behind the probe the walk started after, so the walk saw what
+    /// they did. Neither is read again. An ID of zero (`RootChanged`) names no position and is
+    /// never reflected; a stream watched from now (no history) delivers none before its start.
+    func reflects(eventID: UInt64) -> Bool {
+        volumeUUID != nil && eventID != 0 && eventID <= start
+    }
+
+    /// An event `reflects(eventID:)` said the catalog holds: counted, and nothing else.
+    mutating func skipReflected() {
+        reflectedEvents += 1
     }
 
     /// An event the stream delivered; an ID of zero (`RootChanged`) names no position.

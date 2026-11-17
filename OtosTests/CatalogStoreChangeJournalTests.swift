@@ -1,6 +1,7 @@
 import CoreServices
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// A launch walks a fixed library only when its volume's change journal cannot vouch for
@@ -230,10 +231,105 @@ struct CatalogStoreChangeJournalTests {
         #expect(await scans.all() == ["root"])
         #expect(await next.storedJournalPosition(for: library.path) == Self.position(400, volume: otherVolume))
     }
+
+    /// A library added now over a scripted journal standing at event 100, its first walk
+    /// suspended once entered; the root's files are `2026/11/a.jpg` and `2026/11/b.jpg`.
+    private struct AddedLibrary {
+        let store: CatalogStore
+        let journal: ScriptedCatalogFilesystemWatcher
+        let gate: WalkGate
+        let scans: ScanCalls
+        let path: LibraryRootPath
+
+        func eventPath(_ relativePath: String) -> String {
+            path.rawValue + "/" + relativePath
+        }
+    }
+
+    private func addLibraryWithASuspendedWalk() async throws -> AddedLibrary {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root.appending(path: "2026/11"), withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "2026/11/a.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: "2026/11/b.jpg"), contents: "jpeg")
+        let path = try CatalogPath.normalizedDirectoryPath(for: root)
+        let journal = ScriptedCatalogFilesystemWatcher()
+        journal.setProbe(Self.probe(currentEventID: 100), for: path)
+        let gate = WalkGate()
+        let scans = ScanCalls()
+        let store = makeTestStore(
+            location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
+            scanner: scans.counting(gate.scanner()),
+            filesystemWatcher: journal.watcher,
+            scanCadence: .milliseconds(10)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        await gate.untilEntered()
+        #expect(journal.watches() == [.init(root: path, since: 100)])
+        return AddedLibrary(store: store, journal: journal, gate: gate, scans: scans, path: path)
+    }
+
+    /// A newly added library's first walk leaves it current. A stream started from the probe
+    /// with `FullHistory` delivers the whole history chunk holding it, events older than the
+    /// probe among them: here the writes that made the library, the root folder's creation
+    /// first, which alone would make the whole root dirty. The walk started after the probe
+    /// saw what they did, so none is read again, and the walk's position is stored.
+    @Test func historyOlderThanAFirstWalkCausesNoReadAfterIt() async throws {
+        let added = try await addLibraryWithASuspendedWalk()
+        let directory = UInt32(kFSEventStreamEventFlagItemIsDir | kFSEventStreamEventFlagItemCreated)
+        let file = UInt32(kFSEventStreamEventFlagItemIsFile | kFSEventStreamEventFlagItemCreated)
+        added.journal.emit(FilesystemEvent(path: added.path.rawValue, flags: directory, id: 40))
+        added.journal.emit(FilesystemEvent(path: added.eventPath("2026"), flags: directory, id: 50))
+        added.journal.emit(FilesystemEvent(path: added.eventPath("2026/11/a.jpg"), flags: file, id: 60))
+        added.journal.emit(FilesystemEvent(path: added.eventPath("2026/11/b.jpg"), flags: file, id: 100))
+        added.journal.emitHistoryDone(added.path)
+        try await waitUntil { await added.store.handledFilesystemEventCount == 4 }
+        added.gate.release()
+        try await waitUntil { await added.store.isFilesystemQuiescent }
+        #expect(await added.scans.all() == ["root"])
+        #expect(try await catalogStoreTestState(added.store).testAssets.count == 2)
+        #expect(await added.store.storedJournalPosition(for: added.path) == Self.position(100))
+        await added.store.shutdown()
+    }
+
+    /// An event after the probe, delivered while the first walk is suspended, is applied
+    /// after it: exactly that path is read again, and nothing else. The walk it overtook
+    /// could not delete (ARC-041), so it settles nothing and no position is stored past it.
+    @Test func anEventDuringAFirstWalkRereadsExactlyThatPath() async throws {
+        let added = try await addLibraryWithASuspendedWalk()
+        let modified = UInt32(kFSEventStreamEventFlagItemIsFile | kFSEventStreamEventFlagItemModified)
+        added.journal.emit(FilesystemEvent(path: added.eventPath("2026/11/a.jpg"), flags: modified, id: 150))
+        added.journal.emitHistoryDone(added.path)
+        try await waitUntil { await added.store.handledFilesystemEventCount == 1 }
+        added.gate.release()
+        try await waitUntil { await added.store.isFilesystemQuiescent }
+        #expect(await added.scans.all() == ["root", "file:2026/11/a.jpg"])
+        #expect(await added.store.storedJournalPosition(for: added.path) == nil)
+        await added.store.shutdown()
+    }
+
+    /// A replay's `FullHistory` chunk holds events from before the stored position, which the
+    /// catalog already reflects: they read nothing, and the launch is a replay with no changes.
+    @Test func historyBeforeTheStoredPositionReadsNothing() async throws {
+        let library = try await makeLibrary()
+        let scans = ScanCalls()
+        let (store, journal) = try await relaunch(library, probe: Self.probe(currentEventID: 200), scans: scans)
+        let directory = UInt32(kFSEventStreamEventFlagItemIsDir | kFSEventStreamEventFlagItemCreated)
+        let removed = UInt32(kFSEventStreamEventFlagItemIsFile | kFSEventStreamEventFlagItemRemoved)
+        journal.emit(FilesystemEvent(path: library.path.rawValue, flags: directory, id: 60))
+        journal.emit(FilesystemEvent(path: library.eventPath("b.jpg"), flags: removed, id: 100))
+        journal.emitHistoryDone(library.path)
+        try await waitUntil { await store.isFilesystemQuiescent }
+        #expect(await store.handledFilesystemEventCount == 2)
+        #expect(await scans.all().isEmpty)
+        #expect(try await catalogStoreTestState(store).testAssets.count == 2)
+        #expect(await store.storedJournalPosition(for: library.path) == Self.position(100))
+    }
 }
 
 /// The scanner calls a Store made, in order: `root`, `subtree:<path>`, `file:<path>`.
-private actor ScanCalls {
+actor ScanCalls {
     private var calls: [String] = []
 
     func record(_ call: String) {
@@ -263,12 +359,14 @@ private actor ScanCalls {
 }
 
 /// A live scanner whose first full walk waits, after it is entered, until the test
-/// releases it: the walk's suspension, where a competing event is delivered.
+/// releases it: the walk's suspension, where a competing event is delivered. Later walks run
+/// at once.
 private final nonisolated class WalkGate: Sendable {
     private let entered: AsyncStream<Void>
     private let enter: AsyncStream<Void>.Continuation
     private let released: AsyncStream<Void>
     private let releaser: AsyncStream<Void>.Continuation
+    private let opened = Mutex(false)
 
     init() {
         (entered, enter) = AsyncStream<Void>.makeStream()
@@ -278,9 +376,15 @@ private final nonisolated class WalkGate: Sendable {
     func scanner() -> CatalogScanner {
         CatalogScanner(
             scanRoot: { [self] root, cadence, handler in
-                enter.yield()
-                for await _ in released {
-                    break
+                let first = opened.withLock { opened in
+                    defer { opened = true }
+                    return !opened
+                }
+                if first {
+                    enter.yield()
+                    for await _ in released {
+                        break
+                    }
                 }
                 return try await CatalogScanner.live.scanRoot(root, cadence, handler)
             }

@@ -82,10 +82,50 @@ struct CatalogFilesystemWatcherLiveTests {
         try await waitUntil { second.historyDone(path) }
     }
 
+    /// A folder made just before it is added, by another process, is current after its first
+    /// walk: its real `FullHistory` chunk, which holds the folder's own creation, is read by
+    /// nothing after the walk. The history is waited into the event database on a stream's
+    /// own delivery of it, and the walk's end on the position the Store stores.
+    @Test func aFolderMadeBeforeItIsAddedIsWalkedOnce() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Made", directoryHint: .isDirectory)
+        let parent = try CatalogPath.normalizedDirectoryPath(for: temp)
+        let recorded = WatcherEventRecorder()
+        let recorder = CatalogFilesystemWatcher.live()
+        recorder.start { recorded.record($0) }
+        recorder.watch(parent, nil)
+        try runFromAnotherProcess("/bin/mkdir", root.path)
+        try touchFromAnotherProcess(root.appending(path: "a.jpg"))
+        try await waitUntil { recorded.fileNames().contains("a.jpg") }
+        recorder.stop()
+
+        let path = try CatalogPath.normalizedDirectoryPath(for: root)
+        let probe = try #require(LiveFilesystemJournal.probe(path))
+        try #require(probe.volumeUUID != nil, "the test directory's volume keeps FSEvents history")
+        let scans = ScanCalls()
+        let store = makeTestStore(
+            location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
+            scanner: scans.counting(.live),
+            filesystemWatcher: .live(),
+            scanCadence: .milliseconds(10)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        try await waitUntil { await store.storedJournalPosition(for: path) != nil }
+        try await waitUntil { await store.isFilesystemQuiescent }
+        #expect(await scans.all() == ["root"])
+        #expect(try await catalogStoreTestState(store).testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
+        await store.shutdown()
+    }
+
     private func touchFromAnotherProcess(_ url: URL) throws {
+        try runFromAnotherProcess("/usr/bin/touch", url.path)
+    }
+
+    private func runFromAnotherProcess(_ executable: String, _ argument: String) throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/touch")
-        process.arguments = [url.path]
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = [argument]
         try process.run()
         process.waitUntilExit()
         try #require(process.terminationStatus == 0)

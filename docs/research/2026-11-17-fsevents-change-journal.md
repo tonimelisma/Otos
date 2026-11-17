@@ -81,12 +81,28 @@ locality is read on demand by `MaterializationCoordinator`, so neither needs a w
 every remote create, rename and delete the provider applies reaches FSEvents' history. One that
 did not would stay out of the catalog until the root's next walk.
 
+## `FullHistory` delivers events before the start ID
+
+Measured on this Mac (macOS 27): a folder with a subfolder and 50 files was written, and three
+seconds later a stream was started at `FSEventsGetCurrentEventId()` on it. With
+`kFSEventStreamCreateFlagFullHistory` it delivered 103 events, every one with an ID below the
+start, the folder's own creation (`ItemCreated | ItemIsDir` at the watched path) first, then
+`HistoryDone`; without the flag it delivered none. This is the header's "all the events in the
+first chunk of historical events that contains the sinceWhen id".
+
+So a stream started from an ID re-delivers part of what came before it. Seen on a 160,002-file
+sandbox library added a minute after it was written: the first walk (76–79 s) was followed by a
+second full walk with `reason=events` (20–22.5 s, no row written), made by the root folder's own
+creation event from that chunk. Events at or before the start ID are therefore dropped by ID:
+the catalog already reflects them (the stored position, or the walk that started after the
+probe).
+
 ## Conclusions
 
 - Store per fixed root `{volume event-database UUID, last applied event ID, root inode}`; replay
   since it at launch; walk only when the UUID, the inode or the ID's place in the stream says the
   journal cannot vouch, or when a replayed event says it lost track.
 - Start a walking root's stream at the ID probed before the walk, so the walk and the stream
-  together miss nothing.
+  together miss nothing, and drop what the stream delivers at or before its start ID.
 - Store a newer position only after every delivered event is applied and no walk is owed.
 - A network or read-only volume without a UUID keeps today's walk at every launch.
