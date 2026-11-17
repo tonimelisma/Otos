@@ -209,6 +209,45 @@ row id as the in-memory identity. `media_asset` has no `INTEGER PRIMARY KEY`, so
 id is handed to the next insert; a held ID would then name another file. Every consumer of a
 path would also need a Store read to get it.
 
+**One identity table for the process.** The table is process-wide (`MediaAssetIdentityTable.shared`),
+not any owner's state. An ID is made wherever a path is read: the Store's decoding on its read
+lanes, the scanner, file events, imports, reorganizations, Immich and camera syncs, view models,
+tests. The same pair must be the same ID across all of them, because equality and hashing compare
+only the place. A table owned by the Store and handed to whatever makes IDs would need a table at
+every one of those sites, many with no Store in reach. And two tables in one process, as every test
+that opens its own Store makes, would give one place two meanings: an ID from one would compare
+equal to an unrelated ID from the other. An ID that carried its table to tell them apart would no
+longer be 4 bytes. So the place is a value-level fact, like an interned string or a Swift type's
+metadata, and the table holds no owner's state. Rejected: a Store-owned table passed to the ID's
+makers, for the reasons above.
+
+- **Bound.** The table never frees. It holds one entry, about 110 bytes, for each distinct pair the
+  process ever names. That is the catalog's rows, plus each path a rename, a reorganization, an
+  import or a new Immich asset folder adds for the rest of the process: a reorganization of 165,000
+  files adds 165,000 entries, about 18 MB. Every `op=process.memory` sample logs its pairs and
+  bytes (`assetIdentities`, `assetIdentityMB`), so a long session's growth can be read from the log.
+- **Order without strings.** Each entry keeps its relative path's NFC form, which is the same bytes
+  for an ASCII or already-NFC path. `relativePathPrecedes` compares those bytes. Comparing them
+  gives exactly `String`'s `<` order, since `<` is the lexicographic order of the NFC scalars and
+  UTF-8 preserves that order. `pathPrecedes` and `relativePathThenRootOrder` add the root, and
+  `relativePathBytesPrecede` compares the raw bytes, which is SQLite's binary order. Each is one
+  acquisition of the table's lock and decodes no string, so no comparator or per-row loop
+  decodes a string from the table. Each comparison used to take the lock twice and allocate
+  two strings.
+- **One lock, never held for a rebuild in a session.** Every read and every comparison takes
+  the table's lock once, for a copy or one byte comparison, and waits at most behind another
+  caller's lookup or one new entry, because the index is sized at open (below). Rejected:
+  reading entries without a lock (they never change once published, but the reads go through
+  a raw pointer shared across threads, which ARC-042's gate forbids); and a second lock for
+  the index alone, which needs every place's key copied beside the index (about 5 MB of heap
+  on the owner's catalog) to probe without the entries, for a rebuild that sizing at open
+  already keeps out of the session.
+- **No rebuild in a session.** The catalog sizes the index when it opens (`reserve`), from its
+  rows plus a quarter, before its first read makes their IDs. Making IDs then never rebuilds the
+  index. Counted as slots moved in one rebuild: 262,144 unsized at 165,000 entries and 524,288
+  at 330,000, against none after sizing (`MediaAssetIdentityTableTests`). A session that names
+  more pairs than that doubles the index each time it fills half.
+
 **One copy of an order.** A read makes its own arrays, so two reads of one order are two
 copies. When an order read again, whole or by key,
 comes back equal to the order the slot holds, the projection keeps the held arrays — IDs,

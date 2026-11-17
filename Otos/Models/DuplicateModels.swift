@@ -36,7 +36,7 @@ nonisolated enum DuplicatesReach: Equatable, Sendable {
 nonisolated enum DuplicateGroupID: Hashable, Sendable {
     /// `library` is nil when the group's copies may span libraries.
     case identical(ContentDigest, library: LibraryRootPath?)
-    /// Members in `duplicateOrderKey` order.
+    /// Members in path order (`MediaAssetID.pathPrecedes`).
     case samePhoto([MediaAssetID])
 
     /// Versions of one photo are told apart by their pixels; identical copies, by where they
@@ -54,14 +54,6 @@ nonisolated enum DuplicateGroupID: Hashable, Sendable {
         case .identical: "identical"
         case .samePhoto: "samePhoto"
         }
-    }
-}
-
-extension MediaAssetID {
-    /// Total order for duplicate display and the keeper rule's last tiebreak: library
-    /// path, then path inside it.
-    nonisolated var duplicateOrderKey: String {
-        "\(libraryRootPath.rawValue)\u{0}\(relativePath.rawValue)"
     }
 }
 
@@ -306,10 +298,23 @@ nonisolated struct CatalogDuplicatesState: Equatable, Sendable {
         // One key per group and a sort of indices, so no group struct moves per comparison:
         // a comparator that re-derived the keys was a measurable share of a build.
         let dateKeys = groups.map { group in
-            (group.captureLocalTime.map { -$0.seconds } ?? .greatestFiniteMagnitude, group.copies.first?.id.duplicateOrderKey ?? "")
+            (date: group.captureLocalTime.map { -$0.seconds } ?? .greatestFiniteMagnitude, first: group.copies.first?.id)
+        }
+        /// Newest first, then by the first copy's path (`MediaAssetID.pathPrecedes`), a group
+        /// with no copy first.
+        func precedes(_ left: Int, _ right: Int) -> Bool {
+            let (lhs, rhs) = (dateKeys[left], dateKeys[right])
+            if lhs.date != rhs.date {
+                return lhs.date < rhs.date
+            }
+            switch (lhs.first, rhs.first) {
+            case let (leftFirst?, rightFirst?): return leftFirst.pathPrecedes(rightFirst)
+            case (nil, .some): return true
+            default: return false
+            }
         }
         func newestFirst(_ indices: [Int]) -> [DuplicateGroup] {
-            indices.sorted { dateKeys[$0] < dateKeys[$1] }.map { groups[$0] }
+            indices.sorted(by: precedes).map { groups[$0] }
         }
         var choose: [Int] = []
         var different: [Int] = []
@@ -325,8 +330,8 @@ nonisolated struct CatalogDuplicatesState: Equatable, Sendable {
         let buckets = byPlace.map { place, indices in
             DuplicateFolderBucket(
                 id: place,
-                groups: indices.sorted { left, right in
-                    sizes[left] != sizes[right] ? sizes[left] > sizes[right] : dateKeys[left] < dateKeys[right]
+                groups: indices.sorted { (left: Int, right: Int) -> Bool in
+                    sizes[left] != sizes[right] ? sizes[left] > sizes[right] : precedes(left, right)
                 }.map { groups[$0] }
             )
         }.sorted(by: Self.bucketPrecedes)
@@ -441,11 +446,10 @@ nonisolated enum DuplicateGroupPolicy {
         keptPairs: Set<DuplicateKeptPair>,
         originals: Set<MediaAssetID> = []
     ) -> DuplicateGroup {
-        let unorderedKeys = unordered.map(\.id.duplicateOrderKey)
-        let order = unordered.indices.sorted { unorderedKeys[$0] < unorderedKeys[$1] }
+        let order = unordered.indices.sorted { unordered[$0].id.pathPrecedes(unordered[$1].id) }
         let copies = order.map { unordered[$0] }
         let rule = KeeperRule(comparesPixels: id.isSamePhoto, originals: originals)
-        let facts = order.map { Facts(unordered[$0], orderKey: unorderedKeys[$0], rule: rule) }
+        let facts = order.map { Facts(unordered[$0], rule: rule) }
         let ids = copies.map(\.id)
 
         var keptTogether: Set<MediaAssetID> = []
@@ -544,7 +548,8 @@ nonisolated enum DuplicateGroupPolicy {
     /// A copy's ranking facts, derived once per group: scalars only, beside the copies
     /// array, so a comparison copies no strings.
     struct Facts {
-        let orderKey: String
+        /// The copy, for path order, which the identity table answers without a string.
+        let id: MediaAssetID
         let isOriginal: Bool
         /// Pixels and bytes when the rule ranks them, else zero on every copy.
         let pixels: Int
@@ -554,8 +559,8 @@ nonisolated enum DuplicateGroupPolicy {
         /// separates two copies the rows show as born at the same instant.
         let bornSecond: Double?
 
-        init(_ copy: DuplicateCopy, orderKey: String, rule: KeeperRule) {
-            self.orderKey = orderKey
+        init(_ copy: DuplicateCopy, rule: KeeperRule) {
+            id = copy.id
             isOriginal = rule.originals.contains(copy.id)
             pixels = rule.comparesPixels ? (copy.pixelWidth ?? 0) * (copy.pixelHeight ?? 0) : 0
             bytes = rule.comparesPixels ? copy.byteSize ?? 0 : 0
@@ -606,7 +611,7 @@ nonisolated enum DuplicateGroupPolicy {
         case (nil, .some):
             return (.earliestBirth, false)
         default:
-            return (.pathOrder, facts[left].orderKey < facts[right].orderKey)
+            return (.pathOrder, facts[left].id.pathPrecedes(facts[right].id))
         }
     }
 
@@ -670,7 +675,7 @@ nonisolated struct DuplicateKeptPair: Hashable, Sendable {
     let second: MediaAssetID
 
     init(_ left: MediaAssetID, _ right: MediaAssetID) {
-        if left.duplicateOrderKey <= right.duplicateOrderKey {
+        if !right.pathPrecedes(left) {
             first = left
             second = right
         } else {
@@ -1178,8 +1183,8 @@ nonisolated enum SamePhotoPolicy {
         let joined = Dictionary(grouping: parent.keys, by: root).values.filter { $0.count > 1 }
         let originals = Set(pairs.flatMap { [$0.left, $0.right] }.filter(\.hasCaptureMetadata).map(\.id))
         return SamePhotoMembers(
-            groups: joined.map { $0.sorted { $0.duplicateOrderKey < $1.duplicateOrderKey } }
-                .sorted { $0[0].duplicateOrderKey < $1[0].duplicateOrderKey },
+            groups: joined.map { $0.sorted { $0.pathPrecedes($1) } }
+                .sorted { $0[0].pathPrecedes($1[0]) },
             originals: originals.intersection(joined.joined())
         )
     }

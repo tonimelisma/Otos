@@ -526,7 +526,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         case (nil, .some):
             return false
         default:
-            return left.id.relativePath.rawValue < right.id.relativePath.rawValue
+            return left.id.relativePathPrecedes(right.id)
         }
     }
 

@@ -510,10 +510,11 @@ nonisolated enum FaceAssignmentPolicy {
         seconds.map { Int(($0 / 86400).rounded(.down)) }
     }
 
-    /// An order of faces that does not change while they exist: photo path, library, place.
+    /// An order of faces that does not change while they exist: photo path, library, place,
+    /// each as `String`'s `<` orders it, read from the identity table without a string.
     static func pathOrder(_ lhs: FaceID, _ rhs: FaceID) -> Bool {
-        (lhs.asset.relativePath.rawValue, lhs.asset.libraryRootPath.rawValue, lhs.index)
-            < (rhs.asset.relativePath.rawValue, rhs.asset.libraryRootPath.rawValue, rhs.index)
+        let order = lhs.asset == rhs.asset ? 0 : lhs.asset.relativePathThenRootOrder(rhs.asset)
+        return order != 0 ? order < 0 : lhs.index < rhs.index
     }
 }
 

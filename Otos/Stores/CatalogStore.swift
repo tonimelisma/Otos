@@ -1577,7 +1577,7 @@ extension CatalogStore {
         // The asked photos in the order a whole read gives them: by root row, then path.
         let asked = photos.map { photos in
             photos.compactMap { photo in rowIDs[photo.libraryRootPath].map { (rootID: $0, photo: photo) } }
-                .sorted { PeopleSnapshot.isBefore(($0.rootID, $0.photo.relativePath), ($1.rootID, $1.photo.relativePath)) }
+                .sorted { PeopleSnapshot.isBefore(($0.rootID, $0.photo), ($1.rootID, $1.photo)) }
         }
         // Stacks of every root read for faces, mounted or not: a stack does not change when its
         // volume is unmounted, so availability never moves which file stands for a photo.
@@ -4749,9 +4749,12 @@ extension CatalogStore {
         // left undone. The window waits on the load: its first grid follows it.
         derivedFolder?.openSession()
         try await applyPendingDerivedRenames(lane: windowReads.lane)
-        let loadedRoots = try await reader(for: windowReads.lane).readFreeingConnection { db in
-            try Self.fetchRoots(db)
+        let (loadedRoots, assetRows) = try await reader(for: windowReads.lane).readFreeingConnection { db in
+            try (Self.fetchRoots(db), Int.fetchOne(db, sql: "SELECT MAX(rowid) FROM media_asset") ?? 0)
         }
+        // Sized before the first read makes the rows' IDs, so the session never rebuilds the
+        // identity table's index under its lock while the window makes IDs (ADR 0005).
+        MediaAssetIdentityTable.shared.reserve(assetRows + assetRows / 4)
         phases.lap("rootsMs")
         try await clearAbandonedEnrichmentClaims(dbQueue)
         phases.lap("claimsMs")

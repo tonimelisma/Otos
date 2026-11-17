@@ -17,7 +17,8 @@ import SQLite3
 // thread and the lines stay in event order:
 //
 //   op=process.memory    footprint, its lifetime peak, resident size, SQLite's own heap,
-//                        and the system's free, compressed and swapped memory
+//                        the asset identity table's pairs and bytes, and the system's
+//                        free, compressed and swapped memory
 //   op=process.usage     CPU time, disk bytes read and written, and page-ins since launch:
 //                        a page-in is a fault the kernel served from disk, so a wait full
 //                        of them is the machine paging the process back in, not Otos's work
@@ -47,11 +48,16 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
     /// Faults served by reading a page from disk (`ri_pageins`), since launch: memory the
     /// system had pushed out under pressure, or a mapped file read for the first time.
     let pageIns: UInt64?
+    /// The asset pairs the process's identity table names and the bytes it holds for them
+    /// (`MediaAssetIdentityTable.usage`): it never frees, so a long session's growth shows here.
+    let assetIdentities: Int
+    let assetIdentityBytes: Int
 
     static func current() -> ProcessResourceSample {
         let task = taskVMInfo()
         let usage = rusage()
         let host = hostVMInfo()
+        let identities = MediaAssetIdentityTable.shared.usage
         return ProcessResourceSample(
             footprintBytes: task?.footprint ?? 0,
             peakFootprintBytes: usage?.peakFootprint,
@@ -63,7 +69,9 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
             cpuMilliseconds: usage?.cpuMilliseconds,
             diskBytesRead: usage?.diskRead,
             diskBytesWritten: usage?.diskWritten,
-            pageIns: usage?.pageIns
+            pageIns: usage?.pageIns,
+            assetIdentities: identities.pairs,
+            assetIdentityBytes: identities.bytes
         )
     }
 
@@ -159,6 +167,8 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
         fields["freeMB"] = systemFreeBytes.map(Self.megabytes) ?? "unknown"
         fields["compressorMB"] = systemCompressorBytes.map(Self.megabytes) ?? "unknown"
         fields["swapUsedMB"] = swapUsedBytes.map(Self.megabytes) ?? "unknown"
+        fields["assetIdentities"] = "\(assetIdentities)"
+        fields["assetIdentityMB"] = Self.megabytes(UInt64(assetIdentityBytes))
         return fields
     }
 

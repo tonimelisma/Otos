@@ -806,7 +806,7 @@ extension CatalogProjection {
         /// Beside one neighbour, an item taken while the next was still shown goes before it.
         func ordered(_ items: [TrashRemoval.Item]) -> [TrashRemoval.Item] {
             items.sorted { lhs, rhs in
-                lhs.successor == rhs.id || (rhs.successor != lhs.id && lhs.id.relativePath.rawValue < rhs.id.relativePath.rawValue)
+                lhs.successor == rhs.id || (rhs.successor != lhs.id && lhs.id.relativePathPrecedes(rhs.id))
             }
         }
         let hasDays = !content.dayBuckets.isEmpty

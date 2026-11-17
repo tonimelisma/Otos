@@ -215,12 +215,13 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     var rootOrder: [LibraryRootPath: Int64] = [:]
 
     /// Whether the photo `lhs` comes before `rhs` in the faces' order: by root row, then by
-    /// path as SQLite's binary collation compares it (the bytes of its UTF-8).
-    static func isBefore(_ lhs: (rootID: Int64, path: MediaRelativePath), _ rhs: (rootID: Int64, path: MediaRelativePath)) -> Bool {
+    /// path as SQLite's binary collation compares it (the bytes of its UTF-8), read from the
+    /// identity table without a string (`MediaAssetID.relativePathBytesPrecede`).
+    static func isBefore(_ lhs: (rootID: Int64, photo: MediaAssetID), _ rhs: (rootID: Int64, photo: MediaAssetID)) -> Bool {
         if lhs.rootID != rhs.rootID {
             return lhs.rootID < rhs.rootID
         }
-        return lhs.path.rawValue.utf8.lexicographicallyPrecedes(rhs.path.rawValue.utf8)
+        return lhs.photo.relativePathBytesPrecede(rhs.photo)
     }
 
     /// This snapshot with the faces of `photos` replaced by `partial`'s, a read of only those
@@ -231,15 +232,15 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// read would give (`AssignmentInputs`).
     func replacing(_ photos: Set<MediaAssetID>, with partial: PeopleSnapshot) -> PeopleSnapshot {
         let order = partial.rootOrder
-        func key(_ face: Face) -> (rootID: Int64, path: MediaRelativePath, index: Int) {
-            (order[face.id.asset.libraryRootPath] ?? .max, face.id.asset.relativePath, face.id.index)
-        }
         func before(_ lhs: Face, _ rhs: Face) -> Bool {
-            let (left, right) = (key(lhs), key(rhs))
-            if left.rootID == right.rootID, left.path == right.path {
-                return left.index < right.index
+            let left = (rootID: order[lhs.id.asset.libraryRootPath] ?? .max, photo: lhs.id.asset)
+            let right = (rootID: order[rhs.id.asset.libraryRootPath] ?? .max, photo: rhs.id.asset)
+            if left.rootID == right.rootID, !left.photo.relativePathBytesPrecede(right.photo),
+               !right.photo.relativePathBytesPrecede(left.photo)
+            {
+                return lhs.id.index < rhs.id.index
             }
-            return Self.isBefore((left.rootID, left.path), (right.rootID, right.path))
+            return Self.isBefore(left, right)
         }
         var merged = PeopleFaces()
         var kept = faces.lazy.filter { !photos.contains($0.id.asset) }.makeIterator()

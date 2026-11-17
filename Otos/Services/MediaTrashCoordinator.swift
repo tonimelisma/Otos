@@ -892,7 +892,7 @@ actor MediaTrashCoordinator {
         trashed[batch] = remaining.isEmpty ? nil : remaining
         let accounted = Set(outcome.restored + outcome.failed)
         // Items deleted immediately or vanished on disk have nothing to put back.
-        outcome.failed += ids.subtracting(accounted).sorted { $0.relativePath.rawValue < $1.relativePath.rawValue }
+        outcome.failed += ids.subtracting(accounted).sorted { $0.relativePathPrecedes($1) }
         OtosLog.catalog.noticeOperation("mediaTrash.undo", phase: "finish", fields: [
             "batch": "\(batch.unixMilliseconds)",
             "restored": "\(outcome.restored.count)",

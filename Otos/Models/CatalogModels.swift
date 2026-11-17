@@ -211,6 +211,10 @@ nonisolated extension MediaRelativePath {
 /// one place, so an ID is 4 bytes, compares and hashes as an integer, and an order of
 /// 165,000 IDs holds no string. The place is never persisted, logged or sent anywhere:
 /// what names the asset is still its two paths, read back from the table.
+///
+/// Ordering by path never makes a string: `relativePathPrecedes`, `pathPrecedes` and
+/// `relativePathThenRootOrder` compare the table's bytes under one lock acquisition, in exactly
+/// the order `String`'s `<` gives the paths.
 nonisolated struct MediaAssetID: Hashable, CustomReflectable {
     /// The pair's place in `MediaAssetIdentityTable.shared`, the same for equal pairs in this
     /// process and meaningless outside it.
@@ -224,6 +228,8 @@ nonisolated struct MediaAssetID: Hashable, CustomReflectable {
         MediaAssetIdentityTable.shared.root(at: place)
     }
 
+    /// A new string of the relative path, made from the table's bytes. A comparator or a
+    /// per-row loop asks `relativePathPrecedes` or `pathPrecedes` instead, which make none.
     var relativePath: MediaRelativePath {
         MediaAssetIdentityTable.shared.relativePath(at: place)
     }
@@ -232,6 +238,33 @@ nonisolated struct MediaAssetID: Hashable, CustomReflectable {
     /// persisted or logged as identity.
     var fingerprint: UInt64 {
         MediaAssetIdentityTable.shared.fingerprint(at: place)
+    }
+
+    /// Whether this ID's relative path sorts before `other`'s, as
+    /// `relativePath.rawValue < other.relativePath.rawValue` would answer, from the table's
+    /// bytes: one lock acquisition, no string.
+    func relativePathPrecedes(_ other: MediaAssetID) -> Bool {
+        MediaAssetIdentityTable.shared.relativePathPrecedes(place, other.place)
+    }
+
+    /// Whether this ID's relative path's UTF-8 sorts before `other`'s, byte by byte, as
+    /// SQLite's binary collation orders paths: one lock acquisition, no string.
+    func relativePathBytesPrecede(_ other: MediaAssetID) -> Bool {
+        MediaAssetIdentityTable.shared.relativePathBytesPrecede(place, other.place)
+    }
+
+    /// Whether this ID sorts before `other` by library root, then by relative path, each as
+    /// `String`'s `<` orders them: the total order of a duplicate group's copies and of the
+    /// keeper rule's last tiebreak.
+    func pathPrecedes(_ other: MediaAssetID) -> Bool {
+        MediaAssetIdentityTable.shared.pathOrder(place, other.place, rootFirst: true) < 0
+    }
+
+    /// The order of this ID and `other` by relative path, then by library root, each as
+    /// `String`'s `<` orders it: negative when this one comes first, zero when they compare
+    /// equal. One lock acquisition, no string.
+    func relativePathThenRootOrder(_ other: MediaAssetID) -> Int {
+        MediaAssetIdentityTable.shared.pathOrder(place, other.place, rootFirst: false)
     }
 
     /// The two paths, as the stored pair printed them: a test's message and a diagnostic
@@ -257,7 +290,7 @@ nonisolated struct MediaAssetID: Hashable, CustomReflectable {
     }
 }
 
-/// Media asset identity table guide
+/// Media asset identity table guide (ADR 0005, "One identity table for the process")
 ///
 /// Every `MediaAssetID` the process makes is a place in this one table, which holds each
 /// distinct (library root, relative path) pair once: the root as one of a few hundred
@@ -267,28 +300,44 @@ nonisolated struct MediaAssetID: Hashable, CustomReflectable {
 /// order no longer leaves its own copy of every path held by whoever keeps the order
 /// (`docs/research/2026-11-17-asset-identity-memory.md`).
 ///
+/// - **One table for the process.** IDs are made wherever a path is read — the Store's
+///   decoding, scans, file events, imports, Immich syncs, tests — and an ID from one must equal
+///   the same pair's ID from any other, so the place is a value-level fact, like an interned
+///   string, not any owner's state (ADR 0005).
 /// - **Equality is the bytes.** A pair is found by its root and its relative path's UTF-8,
 ///   byte for byte, as `MediaRelativePath` and `LibraryRootPath` compare (their fingerprints
 ///   are FNV-1a over the bytes, so two spellings are two paths there too).
+/// - **Order is `String`'s.** Each entry also keeps its relative path's NFC form (the same
+///   bytes when the path is already NFC, as every ASCII path is), and `relativePathPrecedes`
+///   compares those bytes: `String`'s `<` is the lexicographic order of the NFC form's
+///   scalars, which UTF-8 preserves, so the order is exactly the one sorting the decoded
+///   strings gave, canonically equivalent spellings comparing equal.
 /// - **Nothing in it dies.** A place, once made, names its pair for the rest of the process:
 ///   an ID held anywhere stays valid, and a pair seen again (a re-read, a rename back) is the
 ///   same place. It grows by one entry per distinct pair the process ever names — the
-///   catalog's rows, and the paths renames and imports add — about 110 bytes each.
+///   catalog's rows, and the paths renames, reorganizations, imports and new Immich asset
+///   folders add — about 110 bytes each (`usage`, logged in every `op=process.memory` sample).
 /// - **Not the malloc heap.** Entries and bytes live in mapped regions that are never freed,
 ///   so what the table keeps is never scattered among the freed blocks of the reads that
 ///   made its pairs: an intern table of `String`s kept every read's first string for each
 ///   path and raised the footprint by about 90 MB that way
-///   (`docs/research/2026-11-16-shared-path-strings.md`). The index is rebuilt into a new
-///   mapping when it fills, and the old one unmapped.
-/// - **Concurrency.** The table is one `Mutex`: finding or adding a pair and reading a place's
-///   paths each take it once, for a lookup and a copy. Equality and hashing never take it.
+///   (`docs/research/2026-11-16-shared-path-strings.md`).
+/// - **One lock, never held for a rebuild in a session.** Finding or adding a pair, reading a
+///   place's paths or fingerprint, and comparing two places' paths each take the lock once,
+///   for a lookup, a copy or a byte comparison. The index that finds a pair's place is sized at
+///   catalog open from the catalog's rows (`reserve(_:)`), so a session that names no more pairs
+///   than that never rebuilds it while it holds the lock; past that it doubles into a new
+///   mapping, and the old one is unmapped.
 /// - **Never persisted.** A place is this process's alone; the catalog's key is the pair.
 final nonisolated class MediaAssetIdentityTable: Sendable {
     static let shared = MediaAssetIdentityTable()
 
     private struct Entry {
         let bytes: UnsafePointer<UInt8>
+        /// The NFC form's bytes, `bytes` itself when the path is NFC already.
+        let orderBytes: UnsafePointer<UInt8>
         let count: UInt32
+        let orderCount: UInt32
         let root: UInt32
         let relativeFingerprint: UInt64
     }
@@ -312,6 +361,10 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
         var slotCapacity: Int
         var bytesNext: UnsafeMutablePointer<UInt8>?
         var bytesLeft = 0
+        var regions: [UnsafeMutableRawBufferPointer] = []
+        /// The most slots one rebuild of the index moved under the lock: the longest anyone
+        /// waited behind it.
+        var largestRebuild = 0
 
         init() {
             chunks = MediaAssetIdentityTable.map(MediaAssetIdentityTable.chunkLimit, of: UnsafeMutablePointer<Entry>?.self)
@@ -331,12 +384,30 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
 
     private let storage = Mutex(Storage())
 
+    init() {}
+
+    /// Only a table a test makes goes: the process's lives as long as the process.
+    deinit {
+        storage.withLock { storage in
+            for chunk in 0 ..< Self.chunkLimit {
+                guard let stored = storage.chunks[chunk] else { continue }
+                munmap(UnsafeMutableRawPointer(stored), Self.entriesPerChunk * MemoryLayout<Entry>.stride)
+            }
+            munmap(UnsafeMutableRawPointer(storage.chunks), Self.chunkLimit * MemoryLayout<UnsafeMutablePointer<Entry>?>.stride)
+            for region in storage.regions {
+                munmap(region.baseAddress, region.count)
+            }
+            munmap(UnsafeMutableRawPointer(storage.slots), storage.slotCapacity * MemoryLayout<UInt32>.stride)
+        }
+    }
+
     /// The place of the pair, made now if the process has not named it before.
     func place(of root: LibraryRootPath, _ relativePath: MediaRelativePath) -> UInt32 {
         let text = relativePath.rawValue
         let relativeFingerprint = relativePath.fingerprint
         let hash = PathFingerprint.mediaAsset(root: root.fingerprint, relative: relativeFingerprint)
         return storage.withLock { storage in
+            IdentityTableCounting.noteLock()
             // The bytes are read inside the lock, from the path's own string: nothing outside the
             // lock's region reaches the storage.
             var text = text
@@ -364,28 +435,51 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
                     storage.chunks[chunkIndex] = Self.map(Self.entriesPerChunk, of: Entry.self)
                 }
                 let bytes = Self.copy(utf8, into: &storage)
+                let order = Self.orderForm(of: utf8, bytes: bytes, into: &storage)
                 storage.chunks[chunkIndex]!.advanced(by: Int(place) & (Self.entriesPerChunk - 1)).initialize(to: Entry(
                     bytes: bytes,
+                    orderBytes: order.bytes,
                     count: UInt32(utf8.count),
+                    orderCount: order.count,
                     root: rootIndex,
                     relativeFingerprint: relativeFingerprint
                 ))
                 storage.slots[slot] = place + 1
                 storage.count = place + 1
                 if Int(storage.count) * 2 > storage.slotCapacity {
-                    Self.grow(&storage)
+                    Self.rebuild(&storage, capacity: storage.slotCapacity * 2)
                 }
                 return place
             }
         }
     }
 
+    /// Sizes the index for `count` pairs, so a session that names no more never rebuilds it.
+    /// The catalog calls it at open with its rows, before its first read makes their IDs.
+    func reserve(_ count: Int) {
+        storage.withLock { storage in
+            IdentityTableCounting.noteLock()
+            var capacity = storage.slotCapacity
+            while count * 2 > capacity {
+                capacity *= 2
+            }
+            if capacity > storage.slotCapacity {
+                Self.rebuild(&storage, capacity: capacity)
+            }
+        }
+    }
+
     func root(at place: UInt32) -> LibraryRootPath {
-        storage.withLock { $0.roots[Int($0.entry(at: place).root)] }
+        storage.withLock { storage in
+            IdentityTableCounting.noteLock()
+            return storage.roots[Int(storage.entry(at: place).root)]
+        }
     }
 
     func relativePath(at place: UInt32) -> MediaRelativePath {
-        storage.withLock { storage in
+        IdentityTableCounting.noteDecode()
+        return storage.withLock { storage in
+            IdentityTableCounting.noteLock()
             let entry = storage.entry(at: place)
             let text = String(decoding: UnsafeBufferPointer(start: entry.bytes, count: Int(entry.count)), as: UTF8.self)
             return MediaRelativePath(rawValue: text, fingerprint: entry.relativeFingerprint)
@@ -393,12 +487,81 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
     }
 
     func fingerprint(at place: UInt32) -> UInt64 {
-        storage.withLock { $0.hash(of: $0.entry(at: place)) }
+        storage.withLock { storage in
+            IdentityTableCounting.noteLock()
+            return storage.hash(of: storage.entry(at: place))
+        }
+    }
+
+    /// Whether the relative path at `place` sorts before the one at `other` by `String`'s `<`:
+    /// their NFC bytes compared under one lock acquisition, no string (see the guide).
+    func relativePathPrecedes(_ place: UInt32, _ other: UInt32) -> Bool {
+        guard place != other else { return false }
+        return storage.withLock { storage in
+            IdentityTableCounting.noteLock()
+            let left = storage.entry(at: place)
+            let right = storage.entry(at: other)
+            return Self.precedes(left.orderBytes, Int(left.orderCount), right.orderBytes, Int(right.orderCount))
+        }
+    }
+
+    /// Whether the relative path at `place` sorts before the one at `other` by its UTF-8
+    /// bytes, as SQLite's binary collation compares them.
+    func relativePathBytesPrecede(_ place: UInt32, _ other: UInt32) -> Bool {
+        guard place != other else { return false }
+        return storage.withLock { storage in
+            IdentityTableCounting.noteLock()
+            let left = storage.entry(at: place)
+            let right = storage.entry(at: other)
+            return Self.precedes(left.bytes, Int(left.count), right.bytes, Int(right.count))
+        }
+    }
+
+    /// The order of the pairs at `place` and `other` by library root and by relative path, each
+    /// as `String`'s `<` orders it, root first when `rootFirst`: negative when `place` comes
+    /// first, zero when they compare equal, from one lock acquisition and no string.
+    func pathOrder(_ place: UInt32, _ other: UInt32, rootFirst: Bool) -> Int {
+        guard place != other else { return 0 }
+        return storage.withLock { storage in
+            IdentityTableCounting.noteLock()
+            let left = storage.entry(at: place)
+            let right = storage.entry(at: other)
+            let relative = Self.precedes(left.orderBytes, Int(left.orderCount), right.orderBytes, Int(right.orderCount)) ? -1
+                : Self.precedes(right.orderBytes, Int(right.orderCount), left.orderBytes, Int(left.orderCount)) ? 1 : 0
+            var root = 0
+            if left.root != right.root {
+                let (leftRoot, rightRoot) = (storage.roots[Int(left.root)].rawValue, storage.roots[Int(right.root)].rawValue)
+                root = leftRoot < rightRoot ? -1 : rightRoot < leftRoot ? 1 : 0
+            }
+            return rootFirst ? (root != 0 ? root : relative) : (relative != 0 ? relative : root)
+        }
+    }
+
+    private static func precedes(_ left: UnsafePointer<UInt8>, _ leftCount: Int, _ right: UnsafePointer<UInt8>, _ rightCount: Int) -> Bool {
+        let shorter = min(leftCount, rightCount)
+        let compared = shorter == 0 ? 0 : memcmp(left, right, shorter)
+        return compared != 0 ? compared < 0 : leftCount < rightCount
     }
 
     /// The pairs the process has named.
     var count: Int {
         storage.withLock { Int($0.count) }
+    }
+
+    /// What the table holds, for `op=process.memory`: its pairs and the bytes its entries,
+    /// path bytes and index occupy.
+    var usage: (pairs: Int, bytes: Int) {
+        storage.withLock { storage in
+            let entries = Int(storage.count) * MemoryLayout<Entry>.stride
+            let regions = storage.regions.reduce(0) { $0 + $1.count }
+            return (Int(storage.count), entries + regions + storage.slotCapacity * MemoryLayout<UInt32>.stride)
+        }
+    }
+
+    /// The most slots one rebuild of the index has moved under the lock: what anyone could
+    /// wait behind. Internal for the test that bounds it.
+    var largestRebuild: Int {
+        storage.withLock { $0.largestRebuild }
     }
 
     private static func addRoot(_ root: LibraryRootPath, to storage: inout Storage) -> UInt32 {
@@ -412,8 +575,10 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
     private static func copy(_ utf8: UnsafeBufferPointer<UInt8>, into storage: inout Storage) -> UnsafePointer<UInt8> {
         if storage.bytesNext == nil || storage.bytesLeft < utf8.count {
             let size = max(byteRegionSize, utf8.count)
-            storage.bytesNext = map(size, of: UInt8.self)
+            let region = map(size, of: UInt8.self)
+            storage.bytesNext = region
             storage.bytesLeft = size
+            storage.regions.append(UnsafeMutableRawBufferPointer(start: region, count: size))
         }
         let destination = storage.bytesNext!
         if let source = utf8.baseAddress, !utf8.isEmpty {
@@ -424,9 +589,25 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
         return UnsafePointer(destination)
     }
 
-    /// Doubles the index into a new mapping and unmaps the old one.
-    private static func grow(_ storage: inout Storage) {
-        let capacity = storage.slotCapacity * 2
+    /// The NFC form of a path for ordering: `bytes` itself when the path is ASCII or already
+    /// NFC, else a copy of its NFC form's bytes.
+    private static func orderForm(
+        of utf8: UnsafeBufferPointer<UInt8>, bytes: UnsafePointer<UInt8>, into storage: inout Storage
+    ) -> (bytes: UnsafePointer<UInt8>, count: UInt32) {
+        guard utf8.contains(where: { $0 >= 0x80 }) else {
+            return (bytes, UInt32(utf8.count))
+        }
+        var composed = String(decoding: utf8, as: UTF8.self).precomposedStringWithCanonicalMapping
+        return composed.withUTF8 { nfc in
+            if nfc.elementsEqual(utf8) {
+                return (bytes, UInt32(utf8.count))
+            }
+            return (copy(nfc, into: &storage), UInt32(nfc.count))
+        }
+    }
+
+    /// Moves every place into an index of `capacity` slots and unmaps the old one.
+    private static func rebuild(_ storage: inout Storage, capacity: Int) {
         let slots = map(capacity, of: UInt32.self)
         for old in 0 ..< storage.slotCapacity {
             let stored = storage.slots[old]
@@ -437,6 +618,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
             }
             slots[slot] = stored
         }
+        storage.largestRebuild = max(storage.largestRebuild, storage.slotCapacity)
         munmap(UnsafeMutableRawPointer(storage.slots), storage.slotCapacity * MemoryLayout<UInt32>.stride)
         storage.slots = slots
         storage.slotCapacity = capacity
@@ -451,6 +633,47 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
             fatalError("op=assetIdentity.map phase=failed bytes=\(bytes) errno=\(errno)")
         }
         return region.bindMemory(to: Element.self, capacity: count)
+    }
+}
+
+/// Counts, on the calling thread alone, the identity table's lock acquisitions and the strings
+/// it decodes, so a test bounds what a sort or a screenful of tiles costs in them while other
+/// tests run beside it in the process. Outside a counting scope each note is one thread-local
+/// read.
+nonisolated enum IdentityTableCounting {
+    struct Counts: Equatable {
+        var lockAcquisitions = 0
+        var decodes = 0
+    }
+
+    private final class Box {
+        var counts = Counts()
+    }
+
+    private static let key: pthread_key_t = {
+        var key = pthread_key_t()
+        pthread_key_create(&key, nil)
+        return key
+    }()
+
+    /// Runs `body` on this thread and returns what it cost the table on this thread.
+    static func count<T>(_ body: () throws -> T) rethrows -> (T, Counts) {
+        let box = Box()
+        let previous = pthread_getspecific(key)
+        pthread_setspecific(key, Unmanaged.passUnretained(box).toOpaque())
+        defer { pthread_setspecific(key, previous) }
+        let result = try withExtendedLifetime(box) { try body() }
+        return (result, box.counts)
+    }
+
+    static func noteLock() {
+        guard let box = pthread_getspecific(key) else { return }
+        Unmanaged<Box>.fromOpaque(box).takeUnretainedValue().counts.lockAcquisitions += 1
+    }
+
+    static func noteDecode() {
+        guard let box = pthread_getspecific(key) else { return }
+        Unmanaged<Box>.fromOpaque(box).takeUnretainedValue().counts.decodes += 1
     }
 }
 
