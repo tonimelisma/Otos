@@ -54,6 +54,41 @@ struct SmokeTourTests {
         #expect(SmokeTour.Configuration(environment: [:]) == nil)
     }
 
+    /// A tour starts at the first grid unless it is asked to start settled, with a settle
+    /// deadline of its own.
+    @Test func aTourStartsAtLaunchUnlessAskedToStartSettled() throws {
+        let tour = [SmokeTour.tourVariable: "1"]
+        let launch = try #require(SmokeTour.Configuration(environment: tour))
+        #expect(launch.start == .launch)
+        let settled = try #require(SmokeTour.Configuration(environment: tour.merging([
+            SmokeTour.startVariable: "settled", SmokeTour.settleDeadlineVariable: "300",
+        ]) { $1 }))
+        #expect(settled.start == .settled)
+        #expect(settled.settleDeadline == .seconds(300))
+        #expect(SmokeTour.Configuration(environment: tour.merging([SmokeTour.startVariable: "later"]) { $1 })?.start == .launch)
+    }
+
+    /// An owner's status says what keeps it from quiescence: a pass running a long walk, a
+    /// request owed, a change not acted on, work in flight; with none of them it is quiescent.
+    @Test func anOwnersStatusNamesWhatKeepsItBusy() {
+        let activity = OwnerActivity(owner: "descriptions")
+        #expect(activity.status(holdsWork: false).isQuiescent)
+        let request = activity.request()
+        activity.beginPass()
+        activity.wrote(3)
+        let walking = activity.status(holdsWork: false)
+        #expect(!walking.isQuiescent)
+        #expect((walking.owedRequests, walking.runningPasses, walking.work.written) == (1, 1, 3))
+        #expect(walking.fields["runningPasses"] == "1" && walking.fields["owner"] == "descriptions")
+        activity.endPass(covering: request)
+        #expect(activity.status(holdsWork: false).isQuiescent)
+        #expect(!activity.status(holdsWork: true).isQuiescent)
+        activity.deliveries.recordDelivery()
+        #expect(activity.status(holdsWork: false).unactedChanges == 1)
+        activity.actedOnChange()
+        #expect(activity.status(holdsWork: false).isQuiescent)
+    }
+
     /// A tour reads the user's preferences and writes none: its domain is session-only over
     /// the user's own, and every other launch uses the user's own.
     @Test func aTourSessionsPreferencesAreSessionOnly() {

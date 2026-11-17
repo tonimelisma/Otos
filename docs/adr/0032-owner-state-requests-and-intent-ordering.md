@@ -113,7 +113,15 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    (`OwnerWork`: passes, reads, rows, rows written), so a test bounds what one round of its
    wake path costs without timing it. The window starts its owners through one value,
    `BackgroundOwnerSet`, which the idle guard runs too, and logs `op=owners.quiescent` when
-   they first all owe nothing.
+   they first all owe nothing. A walk over a long backlog is one pass from its first page to
+   its last (`PhotoDescriptionWriter.drain` describes every owed still before it returns), so
+   on a library with hours of descriptions or text to read that owner is never quiescent in a
+   session and `op=owners.quiescent` never comes; an armed `time:` wake does not count
+   against quiescence. So that is explained by a fact, every owner's bookkeeping is also
+   readable whatever it holds (`OwnerStatus`: requests owed, passes running, changes not
+   acted on, work in flight, wake, work done), and a tour logs it at its end
+   (`op=owners.status phase=sessionEnd`, one `op=owners.pending` line for each owner that is
+   not quiescent), which the scorecard prints under the launch.
 
    A request covers what the owner owes, not a fresh look. An owner that cannot make progress
    on a row now — a still paced after a failed read, a model that would not load — holds

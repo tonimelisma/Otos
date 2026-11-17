@@ -520,6 +520,11 @@ final class CatalogWindowViewModel {
     /// The newest act whose result reached the grid (`op=ui.actToResult phase=finish`), the
     /// fact a sandboxed tour's act step waits on.
     private(set) var lastActResult: ActResultReport?
+    /// How this launch's background work first settled, once it has: every background owner
+    /// quiescent (`op=owners.quiescent`), or the heavy loads the launch asked for all run
+    /// (`LoadAdmission.untilDrained()`), whichever came first. What a tour that starts like a
+    /// person's session waits on (`SmokeTour.Configuration.start`).
+    private(set) var launchSettlement: LaunchSettlement?
     /// Removable-volume and camera monitoring observe hardware attached to the host
     /// machine, so a `true` default would make behavior depend on whatever card or
     /// camera happens to be plugged in. Production starts them; tests that assert on
@@ -677,6 +682,12 @@ final class CatalogWindowViewModel {
     /// Starts the background owners (`BackgroundOwnerSet`) once the first grid has been
     /// applied, then waits for every one of them to owe nothing (`op=owners.quiescent`).
     @ObservationIgnored private var ownerStartTask: Task<Void, Never>?
+    /// Waits for the launch's heavy loads to have all run, and records it as the launch's
+    /// settlement unless the owners' quiescence came first.
+    @ObservationIgnored private var loadsDrainedTask: Task<Void, Never>?
+    /// The owners started at the first grid, kept so a session's end can report each one's
+    /// status (`ownerStatuses()`).
+    @ObservationIgnored private var backgroundOwnerSet: BackgroundOwnerSet?
     @ObservationIgnored var deviceStagingSweepTask: Task<Void, Never>?
     @ObservationIgnored var gridTelemetryTask: Task<Void, Never>?
     /// One owned pane-preview request (or downloading retry) per slot. Superseded
@@ -1119,6 +1130,7 @@ final class CatalogWindowViewModel {
         currentTargetChoiceTask?.cancel()
         viewportForwardingTask?.cancel()
         ownerStartTask?.cancel()
+        loadsDrainedTask?.cancel()
         // Before the owners are told to stop: a heavy load still waiting never starts.
         loadAdmission.shutdown()
         deviceStagingSweepTask?.cancel()
@@ -1382,10 +1394,20 @@ extension CatalogWindowViewModel {
             starts: backgroundOwners
         )
         let launchStartedAt = launchStartedAt ?? .now
+        backgroundOwnerSet = owners
+        loadsDrainedTask = Task(priority: .backgroundOwner) { [weak self, loadAdmission] in
+            do {
+                try await loadAdmission.untilDrained()
+            } catch {
+                // Cancelled at teardown, or the admission shut down first.
+                return
+            }
+            self?.settleLaunch(.loadsDrained)
+        }
         // The first grid follows the catalog's load, so each owner's first candidate query
         // sees persisted rows. `store.start()` is idempotent and shared: it returns the load
         // `startCatalog` ran, and a failed load starts no owner.
-        ownerStartTask = Task(priority: .backgroundOwner) { [owners, store = catalogStore] in
+        ownerStartTask = Task(priority: .backgroundOwner) { [weak self, owners, store = catalogStore] in
             do {
                 try await store.start()
             } catch {
@@ -1396,10 +1418,26 @@ extension CatalogWindowViewModel {
             do {
                 let facts = try await BackgroundOwnerQuiescence.untilQuiescent(owners.quiescentOwners(), store: store)
                 BackgroundOwnerQuiescence.log(facts, sinceLaunch: launchStartedAt)
+                self?.settleLaunch(.ownersQuiescent)
             } catch {
                 // Cancelled at teardown: the window closed before its owners settled.
             }
         }
+    }
+
+    /// Records how the launch first settled; a later settlement changes nothing.
+    private func settleLaunch(_ settlement: LaunchSettlement) {
+        guard launchSettlement == nil else { return }
+        launchSettlement = settlement
+    }
+
+    /// Every started background owner's status now, quiescent or not; empty before the owners
+    /// start or when none was started.
+    func ownerStatuses() async -> [OwnerStatus] {
+        guard let owners = backgroundOwnerSet else {
+            return []
+        }
+        return await BackgroundOwnerQuiescence.statuses(of: owners.quiescentOwners())
     }
 
     /// A scope's surface painted: published for whoever waits on a paint, and a checkpoint.

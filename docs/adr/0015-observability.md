@@ -151,8 +151,20 @@ real backlog. Three instruments see those:
   which tour step had just finished and which was running then.
   `--compare` reads a field an older saved scorecard lacks as unknown. `--tour` runs a tour and saves the scorecard
   under `build/scorecards/`. It passes the tour its idle length and step deadline, and
-  calls the tour stuck only after a silence longer than the longer of the two plus a
-  minute, so a long idle is never cut. `--optimized` with `--dev` first builds the dev app with the
+  calls the tour stuck only after a silence longer than the longest of them (and a settled
+  tour's settle deadline) plus a minute, so a long idle is never cut. A tour is one of two
+  kinds, and the scorecard says which (`kind=`): a `launch` tour takes its first step at the
+  first grid, under the launch's own load (the harsh sequence that found real defects), and
+  a `settled` tour (`--settled`, `OTOS_TOUR_START=settled`) first waits for the launch's
+  background work to settle as a person's session meets it: the window's
+  `launchSettlement`, set by whichever fact the app reports first, every owner quiescent
+  (`op=owners.quiescent`) or the heavy loads the launch asked for all run
+  (`LoadAdmission.untilDrained()`, the first release after the first grid that leaves none
+  running or waiting). It never waits a fixed time; its wait has a deadline (900 s by
+  default) and one that reaches it is `settled(deadline)`. `--compare` compares only a
+  session of the same kind and prints the mismatch otherwise; a saved scorecard older than
+  the kind is a launch tour's. Every tour ends by logging each owner's status, so a session
+  whose owners never all settled names them and what each owed, ran or held. `--optimized` with `--dev` first builds the dev app with the
   installed app's compiler settings (ADR 0030) into a DerivedData of its own, so a sandbox
   tour times the code the owner runs; `--ablation-matrix` tours with every owner off, each alone
   and none off, in one table. It is a report: it never fails a run and is not part of

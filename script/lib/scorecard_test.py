@@ -464,6 +464,73 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual((peak["afterStep"], peak["duringStep"]), (None, "1:scope/allMedia"))
 
 
+class SessionKindTests(unittest.TestCase):
+    """A launch tour's numbers are under the launch's own load; a settled tour's are what a
+    person's session meets. The scorecard labels which, and compares only like with like."""
+
+    LAUNCH = SESSION[:-1] + [line(46.6, "op=tour phase=finish outcome=finished")]
+
+    @staticmethod
+    def settled(by="loadsDrained"):
+        tour = [e for e in SESSION[:-1] if '"op=tour phase=config' not in e]
+        return tour + [
+            line(1.25, "op=tour phase=config ablated=none deadlineSeconds=120 idleSeconds=60 start=settled steps=full"),
+            line(1.4, f"op=tour phase=settled by={by} waitMs=41000"),
+            line(46.6, "op=tour phase=finish outcome=finished"),
+        ]
+
+    def test_each_kind_is_labelled(self):
+        report, _, text = run(self.settled())
+        self.assertEqual(report["sessionKind"], "settled")
+        self.assertIn("kind=settled", text.splitlines()[0])
+        self.assertIn("the tour waited 41000 ms for the launch to settle: by loadsDrained", text)
+        self.assertEqual(run(self.settled("deadline"))[0]["sessionKind"], "settled(deadline)")
+        # A config line without start is an older build's: it toured at launch.
+        self.assertEqual(run(self.LAUNCH)[0]["sessionKind"], "launch")
+
+    def compare_text(self, current, saved_report):
+        report, rows, _ = run(current)
+        out = io.StringIO()
+        compared = scorecard.compare(report, rows, {"report": saved_report, "verdicts": rows}, out)
+        return compared, out.getvalue()
+
+    def test_two_kinds_are_never_compared(self):
+        compared, text = self.compare_text(self.settled(), {"session": "OLD", "sessionKind": "launch"})
+        self.assertFalse(compared)
+        self.assertIn("NOT COMPARED WITH OLD: this session is settled, that one launch", text)
+        compared, text = self.compare_text(self.LAUNCH, {"session": "OLD", "sessionKind": "settled"})
+        self.assertFalse(compared)
+        # An older saved scorecard, from before settled tours, is a launch tour's.
+        compared, _ = self.compare_text(self.LAUNCH, {"session": "OLD"})
+        self.assertTrue(compared)
+        compared, _ = self.compare_text(self.settled(), {"session": "OLD"})
+        self.assertFalse(compared)
+        compared, text = self.compare_text(self.settled(), {"session": "OLD", "sessionKind": "settled"})
+        self.assertTrue(compared)
+        self.assertIn("COMPARED WITH OLD (both settled)", text)
+
+    def test_owners_never_quiescent_are_named_with_what_they_did(self):
+        lines = self.LAUNCH[:-1] + [
+            line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=descriptions,searchIndex quiescent=12"),
+            line(46.0, "op=owners.pending phase=sessionEnd holdsWork=false owedRequests=1 owner=descriptions passes=1 "
+                       "reads=12 rows=3000 runningPasses=1 unactedChanges=0 wake=none written=212"),
+            line(46.0, "op=owners.pending phase=sessionEnd holdsWork=true owedRequests=0 owner=searchIndex passes=3 "
+                       "reads=40 rows=900 runningPasses=0 unactedChanges=2 wake=backoff+500ms written=0"),
+            line(46.6, "op=tour phase=finish outcome=finished"),
+        ]
+        report, _, text = run(lines)
+        self.assertEqual([p["owner"] for p in report["ownersAtEnd"]["pending"]], ["descriptions", "searchIndex"])
+        self.assertIn("owners never quiescent: at sessionEnd 12 of 14 were", text)
+        self.assertIn("descriptions: running 1 pass (written 212 so far), owed 1 requests", text)
+        self.assertIn("searchIndex: 2 store changes not acted on, holding work in flight, wake backoff+500ms", text)
+        # A session with no status line says so, never a bare dash.
+        self.assertIn("owners never quiescent; which and why not measured (no op=owners.status line)", run(self.LAUNCH)[2])
+
+    def test_a_settled_tour_waits_out_its_settle_deadline_before_it_is_stuck(self):
+        self.assertEqual(scorecard.tour_silence_limit(60, 120, 900), 900 + scorecard.TOUR_SILENCE_MARGIN_SECONDS)
+        self.assertEqual(scorecard.tour_silence_limit(60, 120), scorecard.tour_silence_limit(60, 120, 0))
+
+
 class SandboxTrashTests(unittest.TestCase):
     """A sandbox library's teardown tests the account's Trash for each generated file by name
     (script/sandbox-library.sh check-trash). A folder stands in for the Trash here."""

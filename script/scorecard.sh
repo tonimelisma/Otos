@@ -28,9 +28,15 @@ usage:
   script/scorecard.sh --input <log.ndjson> [--dev] [--session <id>] [--json <out>] [--compare <saved.json>]
       A saved `log show --style ndjson` capture.
   script/scorecard.sh --tour [--dev [--optimized] [--home <dir>] [--seed <photos>]] [--ablate none|all|<owner>[,<owner>…]]
-                      [--steps full|scopes] [--idle <seconds>] [--deadline <seconds a step>] [--compare <saved.json>]
+                      [--steps full|scopes] [--idle <seconds>] [--deadline <seconds a step>]
+                      [--settled [--settle-deadline <seconds>]] [--compare <saved.json>]
       Launches the app with OTOS_TOUR=1, waits for it to finish its read-only tour and quit,
-      prints that session's scorecard and saves it under build/scorecards/.
+      prints that session's scorecard and saves it under build/scorecards/. A tour starts at
+      the first grid, under the launch's own load (a `launch` session). With --settled it
+      first waits for the launch's background work to settle, as a person's session meets
+      it: every owner quiescent, or the heavy loads the launch asked for all run, whichever
+      the app reports first (up to --settle-deadline, default 900 s; a `settled` session).
+      The scorecard labels each session's kind and --compare compares only like with like.
   script/scorecard.sh --ablation-matrix [--dev [--home <dir>] [--seed <photos>]]
       Short tours with every background owner off (the floor), with each owner alone
       running, and with none off; prints one table.
@@ -65,6 +71,8 @@ ABLATE="none"
 STEPS="full"
 IDLE=""
 DEADLINE=""
+SETTLED=0
+SETTLE_DEADLINE=900
 HOME_DIR=""
 SEED=""
 OPTIMIZED=0
@@ -82,6 +90,8 @@ while [[ $# -gt 0 ]]; do
     --ablate) ABLATE="${2:?}"; shift 2 ;;
     --steps) STEPS="${2:?}"; shift 2 ;;
     --idle) IDLE="${2:?}"; shift 2 ;;
+    --settled) SETTLED=1; shift ;;
+    --settle-deadline) SETTLE_DEADLINE="${2:?}"; shift 2 ;;
     --deadline) DEADLINE="${2:?}"; shift 2 ;;
     --home) HOME_DIR="${2:?}"; shift 2 ;;
     --seed) SEED="${2:?}"; shift 2 ;;
@@ -233,10 +243,18 @@ run_one_tour() {
     idle=0
     [[ "$steps" == full ]] && idle=60
   fi
+  # A settled tour first waits for the launch's background work to settle, up to its own
+  # deadline; a launch tour waits for nothing.
+  local start=launch settle=0
+  if [[ "$SETTLED" == 1 ]]; then
+    start=settled
+    settle="$SETTLE_DEADLINE"
+  fi
   local silence_limit
-  silence_limit="$(/usr/bin/python3 -I "$PARSER" --tour-silence-limit "$idle" "$deadline")"
+  silence_limit="$(/usr/bin/python3 -I "$PARSER" --tour-silence-limit "$idle" "$deadline" "$settle")"
   local env_args=(OTOS_TOUR=1 "OTOS_TOUR_ABLATE=$ablate" "OTOS_TOUR_STEPS=$steps"
-    "OTOS_TOUR_IDLE_SECONDS=$idle" "OTOS_TOUR_STEP_DEADLINE_SECONDS=$deadline")
+    "OTOS_TOUR_IDLE_SECONDS=$idle" "OTOS_TOUR_STEP_DEADLINE_SECONDS=$deadline"
+    "OTOS_TOUR_START=$start" "OTOS_TOUR_SETTLE_DEADLINE_SECONDS=$settle")
   [[ -n "$HOME_DIR" ]] && env_args+=("CFFIXED_USER_HOME=$HOME_DIR" "HOME=$HOME_DIR")
   [[ -n "$SANDBOX_LIBRARY" ]] && env_args+=("OTOS_SANDBOX_LIBRARY=$SANDBOX_LIBRARY")
   # The dev build's saved window state is the account's, not the sandbox home's (AppKit keeps
@@ -259,7 +277,7 @@ run_one_tour() {
   # margin: `tour_silence_limit` in scorecard.py) means the tour is stuck. time: deadline
   # Only this run's process: another Otos touring at the same time (another worktree's dev
   # build, or the installed app) logs the same lines under its own pid (`Otos[pid:tid]`).
-  local own_tour_line="\\[${TOUR_PID}:[^]]*\\].*op=tour (phase=(finish|step|config|failed|plan|restored|library))"
+  local own_tour_line="\\[${TOUR_PID}:[^]]*\\].*op=tour (phase=(finish|step|config|failed|plan|restored|library|settled))"
   while kill -0 "$TOUR_PID" 2>/dev/null; do
     if ! line="$(otos_log_stream_await "$own_tour_line" 10)"; then
       quiet=$((quiet + 10))

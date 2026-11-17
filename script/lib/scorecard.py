@@ -523,13 +523,15 @@ def peak_moment(start, samples, tour_steps):
     }
 
 
-def tour_silence_limit(idle_seconds, deadline_seconds):
+def tour_silence_limit(idle_seconds, deadline_seconds, settle_seconds=0):
     """How long a tour may go without a line before the script calls it stuck, in seconds.
-    The longest stretch a working tour is silent is its idle step (`idle_seconds`, one sleep)
-    or one step's wait for its fact (at most `deadline_seconds`, then the step reports
-    `outcome=deadline`), whichever is longer; the margin covers the untimed reads between a
-    step's waits and the launch before the first line. time: deadline"""
-    return max(int(idle_seconds), int(deadline_seconds)) + TOUR_SILENCE_MARGIN_SECONDS
+    The longest stretch a working tour is silent is its idle step (`idle_seconds`, one sleep),
+    one step's wait for its fact (at most `deadline_seconds`, then the step reports
+    `outcome=deadline`) or a settled tour's wait for the launch to settle (at most
+    `settle_seconds`, then `op=tour phase=settled by=deadline`), whichever is longest; the
+    margin covers the untimed reads between a step's waits and the launch before the first
+    line. time: deadline"""
+    return max(int(idle_seconds), int(deadline_seconds), int(settle_seconds)) + TOUR_SILENCE_MARGIN_SECONDS
 
 
 TOUR_SILENCE_MARGIN_SECONDS = 60
@@ -634,6 +636,7 @@ def tour(start, events):
         steps.append(step)
     config = first(events, "tour", "config")
     finish = first(events, "tour", "finish")
+    settled_line = first(events, "tour", "settled")
     idle = None
     idle_start, idle_end = idle_window(events)
     if idle_start and idle_end:
@@ -653,9 +656,60 @@ def tour(start, events):
     return {
         "config": {k: v for k, v in config.fields.items() if k not in ("op", "phase")} if config else None,
         "finished": finish.fields.get("outcome") if finish else None,
+        # A build older than the start field toured at launch: that was the only kind.
+        "start": (config.fields.get("start") or "launch") if config else None,
+        "settled": {"by": settled_line.fields.get("by"), "waitMs": settled_line.num("waitMs")} if settled_line else None,
         "steps": steps,
         "idle": idle,
     }
+
+
+def session_kind(toured):
+    """What kind of session a scorecard measured: `launch` (a tour from the first grid, under
+    the launch's own load), `settled` (a tour that first waited for the launch to settle; one
+    whose wait reached its deadline is `settled(deadline)`, still under load), or `untoured`."""
+    if toured["start"] is None:
+        return "untoured"
+    if toured["start"] != "settled":
+        return "launch"
+    by = (toured["settled"] or {}).get("by")
+    return "settled" if by in ("ownersQuiescent", "loadsDrained") else "settled(deadline)"
+
+
+def owners_at_end(events):
+    """The last `op=owners.status` and the `op=owners.pending` lines of the same moment: which
+    owners were not quiescent when the session ended, and what each owed, ran or held. None
+    when the session logged no status (a build older than these lines, or a session that did
+    not end through a tour's finish)."""
+    status = None
+    for event in of(events, "owners.status"):
+        status = event
+    if status is None:
+        return None
+    pending = [{k: v for k, v in e.fields.items() if k not in ("op", "phase")}
+               for e in of(events, "owners.pending", status.phase) if e.time >= status.time]
+    return {
+        "moment": status.phase,
+        "owners": status.num("owners"),
+        "quiescent": status.num("quiescent"),
+        "pending": pending,
+    }
+
+
+def describe_pending(owner):
+    """One owner that was not quiescent, in a few words: what it ran and owed."""
+    parts = []
+    if owner.get("runningPasses") not in (None, "0"):
+        parts.append(f"running {owner['runningPasses']} pass (written {owner.get('written', '-')} so far)")
+    if owner.get("owedRequests") not in (None, "0"):
+        parts.append(f"owed {owner['owedRequests']} requests")
+    if owner.get("unactedChanges") not in (None, "0"):
+        parts.append(f"{owner['unactedChanges']} store changes not acted on")
+    if owner.get("holdsWork") == "true":
+        parts.append("holding work in flight")
+    if owner.get("wake") not in (None, "none"):
+        parts.append(f"wake {owner['wake']}")
+    return f"{owner.get('owner')}: " + ", ".join(parts or ["not quiescent"])
 
 
 NOT_MEASURED_ALWAYS = [
@@ -687,6 +741,8 @@ def analyse(events, session_start):
         "memory": memory(start, events, toured["steps"], click_list),
         "resources": resources(events),
         "tour": toured,
+        "sessionKind": session_kind(toured),
+        "ownersAtEnd": owners_at_end(events),
         "acts": acts(events),
         "disk": disk(events),
     }
@@ -796,7 +852,8 @@ def fmt(value):
 
 def print_report(report, rows, out):
     w = out.write
-    w(f"op=scorecard session={report.get('session')} build={report.get('build')} pid={report.get('pid')} "
+    w(f"op=scorecard session={report.get('session')} kind={report.get('sessionKind', 'launch')} "
+      f"build={report.get('build')} pid={report.get('pid')} "
       f"durationS={report.get('durationS')} clicks={len(report['clicks'])} stalls={report['stalls']['count']} "
       f"peakFootprintMB={fmt(report['memory']['peakFootprintMB'])} "
       f"fails={sum(1 for r in rows if r['verdict'] == 'FAIL')}\n")
@@ -817,6 +874,18 @@ def print_report(report, rows, out):
           f"(migrations {fmt(launched['catalogMigrationsMs'])} ms), first grid {fmt(launched['firstGridMs'])} "
           f"(catalog {fmt(launched['firstGridCatalogMs'])}) in {launched['scopeKind']}, {fmt(launched['items'])} items, "
           f"owners quiescent {fmt(launched['ownersQuiescentMs'])}\n")
+        at_end = report.get("ownersAtEnd")
+        if launched["ownersQuiescentMs"] is None:
+            if at_end is None:
+                w("  owners never quiescent; which and why not measured (no op=owners.status line)\n")
+            else:
+                w(f"  owners never quiescent: at {at_end['moment']} {fmt(at_end['quiescent'])} of {fmt(at_end['owners'])} were; "
+                  f"the rest were busy:\n")
+                for owner in at_end["pending"]:
+                    w(f"    {describe_pending(owner)}\n")
+    settled = report["tour"].get("settled")
+    if settled:
+        w(f"  the tour waited {fmt(settled['waitMs'])} ms for the launch to settle: by {fmt(settled['by'])}\n")
     w("\nCLICK TO PAINT\n")
     for click in report["clicks"]:
         order = click.get("order", {})
@@ -930,8 +999,22 @@ def print_matrix(saved, labels, out):
 
 
 def compare(report, rows, saved, out):
+    """Deltas against a saved scorecard of the same kind of session. A launch session's numbers
+    are under the launch's load and a settled one's are not, so two kinds are never compared:
+    the mismatch is printed instead. A saved scorecard older than the kind field predates
+    settled tours: it is compared with a launch or untoured session, never a settled one."""
+    saved_report = saved.get("report", {})
+    kind = report.get("sessionKind", "launch")
+    saved_kind = saved_report.get("sessionKind")
+    if saved_kind is None and not kind.startswith("settled"):
+        saved_kind = kind
+    if kind != saved_kind:
+        out.write(f"\nNOT COMPARED WITH {saved_report.get('session')}: this session is {kind}, that one "
+                  f"{saved_kind or 'older than settled tours (a launch tour)'}; "
+                  f"compare a {kind} session with a {kind} one\n")
+        return False
     before = {r["label"]: r for r in saved.get("verdicts", [])}
-    out.write("\nCOMPARED WITH " + str(saved.get("report", {}).get("session")) + "\n")
+    out.write(f"\nCOMPARED WITH {saved_report.get('session')} (both {kind})\n")
     for row in rows:
         # A label or field the saved scorecard lacks (an older one) reads as unknown, never 0.
         old_row = before.get(row["label"]) or {}
@@ -939,11 +1022,14 @@ def compare(report, rows, saved, out):
         if old is None or row["value"] is None:
             delta = "-"
         else:
-            delta = f"{row['value'] - old:+d}"
+            # A rate (stalls per 10 minutes) is a float; every other value is whole.
+            change = row["value"] - old
+            delta = f"{change:+d}" if isinstance(change, int) else f"{change:+.1f}"
         paged = ""
         if old_row.get("pagedIn") is not None or row.get("pagedIn") is not None:
             paged = f"  pagedIn {fmt(old_row.get('pagedIn'))} → {fmt(row.get('pagedIn'))}"
         out.write(f"  {row['label'][:44]:44} {fmt(old):>9} → {fmt(row['value']):>9}  {delta}{paged}\n")
+    return True
 
 
 def main(argv=None):
@@ -958,14 +1044,17 @@ def main(argv=None):
     parser.add_argument("--compare", help="a saved scorecard JSON to print deltas against")
     parser.add_argument("--matrix", nargs="+", help="saved tour scorecards to print as one ablation table")
     parser.add_argument("--labels", help="the matrix rows' names, |-separated")
-    parser.add_argument("--tour-silence-limit", nargs=2, type=int, metavar=("IDLE", "DEADLINE"),
-                        help="print the seconds without a tour line after which a tour with this idle and step deadline is stuck")
+    parser.add_argument("--tour-silence-limit", nargs="+", type=int, metavar="SECONDS",
+                        help="IDLE DEADLINE [SETTLE]: print the seconds without a tour line after which a tour with this "
+                             "idle, step deadline and settle deadline is stuck")
     parser.add_argument("--trash-leftovers", nargs=2, metavar=("NAMES", "TRASH"),
                         help="test the Trash for each generated file name in NAMES; remove and report any found")
     args = parser.parse_args(argv)
     if args.trash_leftovers:
         return report_trash_leftovers(*args.trash_leftovers, sys.stdout)
     if args.tour_silence_limit:
+        if len(args.tour_silence_limit) not in (2, 3):
+            parser.error("--tour-silence-limit takes IDLE DEADLINE [SETTLE]")
         print(tour_silence_limit(*args.tour_silence_limit))
         return 0
     if args.matrix:

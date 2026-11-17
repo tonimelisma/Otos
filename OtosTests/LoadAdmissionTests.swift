@@ -123,6 +123,34 @@ struct LoadAdmissionMachineTests {
         #expect(machine.running == nil)
     }
 
+    /// The launch's loads have drained at the first release after the first grid that leaves
+    /// none running or waiting; an admission that opens with nothing asked has not drained,
+    /// and a load asked later does not undo it.
+    @Test func theLaunchsLoadsDrainAtTheReleaseThatLeavesNoneWaiting() {
+        var machine = LoadAdmissionMachine()
+        _ = machine.handle(.request(1, .people))
+        _ = machine.handle(.request(2, .duplicates))
+        _ = machine.handle(.open)
+        #expect(!machine.hasDrainedSinceOpen)
+        _ = machine.handle(.release(1))
+        #expect(!machine.hasDrainedSinceOpen)
+        _ = machine.handle(.release(2))
+        #expect(machine.hasDrainedSinceOpen)
+        _ = machine.handle(.request(3, .people))
+        #expect(machine.hasDrainedSinceOpen)
+
+        var empty = LoadAdmissionMachine()
+        _ = empty.handle(.open)
+        _ = empty.handle(.want(.people))
+        #expect(!empty.hasDrainedSinceOpen)
+        // A load the user waits on, released while a background one waits, is no drain.
+        var user = LoadAdmissionMachine(isOpen: true)
+        _ = user.handle(.requestForUser(1, .searchPrepare))
+        _ = user.handle(.request(2, .people))
+        _ = user.handle(.release(1))
+        #expect(!user.hasDrainedSinceOpen)
+    }
+
     @Test func aViewNeedsTheLoadItCannotAnswerWithout() {
         #expect(BackgroundLoad.needed(by: CatalogQueryDescriptor(scope: .people)) == .people)
         #expect(BackgroundLoad.needed(by: CatalogQueryDescriptor(scope: .duplicates)) == .duplicates)
@@ -135,6 +163,37 @@ struct LoadAdmissionMachineTests {
 
 @Suite(.testScope)
 struct LoadAdmissionTests {
+    /// A waiter for the drain is resumed in the release that drains the launch's loads, at
+    /// once when they have drained, and with `CancellationError` at shutdown.
+    @Test func aDrainWaiterIsResumedByTheReleaseThatDrains() async throws {
+        let admission = LoadAdmission()
+        let held = ArrivalGate()
+        let load = Task {
+            try await admission.run(.people) { await held.arrive() }
+        }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
+        let drained = Mutex(false)
+        let waiter = Task {
+            try await admission.untilDrained()
+            drained.withLock { $0 = true }
+        }
+        admission.open()
+        await held.waitForArrivals(1)
+        #expect(drained.withLock { $0 } == false)
+        await held.open()
+        try await load.value
+        try await waiter.value
+        #expect(drained.withLock { $0 })
+        // Drained already: answered at once.
+        try await admission.untilDrained()
+
+        let closed = LoadAdmission()
+        let never = Task { try await closed.untilDrained() }
+        // Registered before or after it, the waiter hears the shutdown.
+        closed.shutdown()
+        await #expect(throws: CancellationError.self) { try await never.value }
+    }
+
     @Test func twoLoadsNeverRunTogether() async throws {
         let admission = LoadAdmission(isOpen: true)
         let held = ArrivalGate()

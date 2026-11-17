@@ -97,6 +97,47 @@ nonisolated struct OwnerQuiescence: Equatable, Sendable {
     let work: OwnerWork
 }
 
+/// How a launch's background work first settled: every owner quiescent at one instant, or the
+/// heavy loads the launch asked for all run (`LoadAdmission.untilDrained()`). On a library
+/// with a long backlog (descriptions, text to read) the owners stay busy for hours, so the
+/// loads' drain is the settlement a person's session meets first.
+nonisolated enum LaunchSettlement: String, Sendable {
+    case ownersQuiescent
+    case loadsDrained
+}
+
+/// What an owner holds at one instant, quiescent or not: what a session that ends before its
+/// owners settle reports for each (`op=owners.status`), so "never quiescent" names the owner
+/// and what it was doing rather than a dash.
+nonisolated struct OwnerStatus: Equatable, Sendable {
+    let owner: String
+    /// Requests taken that no successful pass has answered yet.
+    let owedRequests: UInt64
+    /// Passes running now: a long walk (a backlog of descriptions or text to read) is one pass
+    /// from its first page to its last.
+    let runningPasses: Int
+    /// Store changes delivered to it that it has not acted on yet.
+    let unactedChanges: UInt64
+    /// Work in flight of its own beyond its passes (a claim being read, a transfer, an apply).
+    let holdsWork: Bool
+    let wake: OwnerWake?
+    let work: OwnerWork
+
+    var isQuiescent: Bool {
+        owedRequests == 0 && runningPasses == 0 && unactedChanges == 0 && !holdsWork
+    }
+
+    /// The log fields of one owner that is not quiescent.
+    var fields: [String: String] {
+        [
+            "owner": owner, "owedRequests": "\(owedRequests)", "runningPasses": "\(runningPasses)",
+            "unactedChanges": "\(unactedChanges)", "holdsWork": "\(holdsWork)",
+            "wake": wake.map(\.description) ?? "none", "passes": "\(work.passes)", "reads": "\(work.reads)",
+            "rows": "\(work.rows)", "written": "\(work.written)",
+        ]
+    }
+}
+
 /// The bookkeeping behind an owner's quiescence (see the guide). Used only on its owner's
 /// isolation.
 final nonisolated class OwnerActivity {
@@ -180,6 +221,20 @@ final nonisolated class OwnerActivity {
         return OwnerQuiescence(owner: owner, wake: wake, revision: requested &+ inputs &+ changesActedOn, work: work)
     }
 
+    /// What the owner holds now, quiescent or not.
+    func status(holdsWork: Bool) -> OwnerStatus {
+        let delivered = deliveries.delivered
+        return OwnerStatus(
+            owner: owner,
+            owedRequests: requested &- covered,
+            runningPasses: running,
+            unactedChanges: delivered > changesActedOn ? delivered - changesActedOn : 0,
+            holdsWork: holdsWork,
+            wake: wake,
+            work: work
+        )
+    }
+
     /// Resumes every waiter when the fact holds. The owner calls it after each step that can
     /// make it hold: a pass ends, a change is acted on, work in flight returns.
     func settle(holdsWork: Bool) {
@@ -220,6 +275,11 @@ extension QuiescentOwner {
     /// The fact now, or nil while the owner owes or runs something.
     var quiescence: OwnerQuiescence? {
         activity.quiescence(holdsWork: holdsWork)
+    }
+
+    /// What the owner holds now, quiescent or not.
+    var status: OwnerStatus {
+        activity.status(holdsWork: holdsWork)
     }
 
     /// Resumes the waiters when the fact now holds.
@@ -274,6 +334,29 @@ nonisolated enum BackgroundOwnerQuiescence {
             if second.map(\.revision) == first.map(\.revision), store.use().changes.notifications == changes {
                 return second
             }
+        }
+    }
+
+    /// Every owner's status now, read in turn.
+    static func statuses(of owners: [any QuiescentOwner]) async -> [OwnerStatus] {
+        var statuses: [OwnerStatus] = []
+        for owner in owners {
+            await statuses.append(owner.status)
+        }
+        return statuses
+    }
+
+    /// `op=owners.status`: at `moment` (a session's end), how many owners were quiescent, and
+    /// one `op=owners.pending` line for each that was not, with what it owed, ran and held. A
+    /// session that never reported `op=owners.quiescent` is explained by these lines.
+    static func logStatus(_ statuses: [OwnerStatus], moment: String) {
+        let pending = statuses.filter { !$0.isQuiescent }
+        OtosLog.performance.noticeOperation("owners.status", phase: moment, fields: [
+            "owners": "\(statuses.count)", "quiescent": "\(statuses.count - pending.count)",
+            "pending": pending.isEmpty ? "none" : pending.map(\.owner).joined(separator: ","),
+        ])
+        for status in pending {
+            OtosLog.performance.noticeOperation("owners.pending", phase: moment, fields: status.fields)
         }
     }
 

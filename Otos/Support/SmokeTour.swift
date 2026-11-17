@@ -143,6 +143,12 @@ extension PreferencesDomain {
         static let stepsVariable = "OTOS_TOUR_STEPS"
         static let idleVariable = "OTOS_TOUR_IDLE_SECONDS"
         static let deadlineVariable = "OTOS_TOUR_STEP_DEADLINE_SECONDS"
+        /// `launch` (default): the first step as soon as the first grid is in, under the
+        /// launch's own load. `settled`: once the launch's background work has settled
+        /// (`CatalogWindowViewModel.launchSettlement`), as a person's session meets it.
+        static let startVariable = "OTOS_TOUR_START"
+        /// The longest a settled tour waits for the settlement before it starts anyway.
+        static let settleDeadlineVariable = "OTOS_TOUR_SETTLE_DEADLINE_SECONDS"
         /// Fixed queries: a common word with many matches, a rarer one with few.
         static let manyResultsQuery = "sky"
         static let fewResultsQuery = "lighthouse"
@@ -164,6 +170,14 @@ extension PreferencesDomain {
             let unknownOwners: [String]
             let idle: Duration
             let stepDeadline: Duration
+            /// When the first step runs (`SmokeTour.startVariable`).
+            let start: Start
+            let settleDeadline: Duration
+
+            enum Start: String, Sendable {
+                case launch
+                case settled
+            }
 
             /// Nil unless `OTOS_TOUR=1`: without it nothing here, the owner list included, is read.
             init?(environment: [String: String]) {
@@ -176,6 +190,8 @@ extension PreferencesDomain {
                 steps = Steps(rawValue: environment[SmokeTour.stepsVariable] ?? "full") ?? .full
                 idle = .seconds(Int(environment[SmokeTour.idleVariable] ?? "") ?? (steps == .full ? 60 : 0))
                 stepDeadline = .seconds(Int(environment[SmokeTour.deadlineVariable] ?? "") ?? 120)
+                start = Start(rawValue: environment[SmokeTour.startVariable] ?? "launch") ?? .launch
+                settleDeadline = .seconds(Int(environment[SmokeTour.settleDeadlineVariable] ?? "") ?? 900)
             }
         }
 
@@ -464,12 +480,13 @@ extension PreferencesDomain {
                 "ablated": configuration.ablated.isEmpty ? "none" : configuration.ablated.map(\.rawValue).sorted().joined(separator: ","),
                 "idleSeconds": "\(configuration.idle.components.seconds)",
                 "deadlineSeconds": "\(configuration.stepDeadline.components.seconds)",
+                "start": configuration.start.rawValue,
             ]
             guard configuration.unknownOwners.isEmpty else {
                 OtosLog.performance.errorOperation("tour", phase: "failed", fields: fields.merging([
                     "reason": "unknownOwner", "unknown": configuration.unknownOwners.joined(separator: ","),
                 ]) { $1 })
-                finish(outcome: "failed")
+                await finish(outcome: "failed")
                 return
             }
             if configuration.ablated.isEmpty {
@@ -481,7 +498,7 @@ extension PreferencesDomain {
             // The first grid is the first state applied after the catalog's load.
             guard await until({ $0.state.isCatalogLoaded }), viewModel != nil else {
                 OtosLog.performance.errorOperation("tour", phase: "failed", fields: ["reason": "catalogNeverLoaded"])
-                finish(outcome: "failed")
+                await finish(outcome: "failed")
                 return
             }
             // A sandbox library this launch registers (`SandboxLibrary`) is toured once its
@@ -491,13 +508,16 @@ extension PreferencesDomain {
                     OtosLog.performance.errorOperation("tour", phase: "failed", fields: [
                         "reason": "sandboxLibraryNeverScanned", "rootPath": library.rawValue,
                     ])
-                    finish(outcome: "failed")
+                    await finish(outcome: "failed")
                     return
                 }
                 OtosLog.performance.noticeOperation("tour", phase: "library", fields: ["rootPath": library.rawValue])
             }
+            if configuration.start == .settled {
+                await waitForSettlement()
+            }
             guard let viewModel else {
-                finish(outcome: "failed")
+                await finish(outcome: "failed")
                 return
             }
             let place = WindowPlace(
@@ -521,10 +541,28 @@ extension PreferencesDomain {
                 await take(step, index: index + 1)
             }
             await restore(place)
-            finish(outcome: "finished")
+            await finish(outcome: "finished")
         }
 
-        private func finish(outcome: String) {
+        /// A settled tour's first step waits for the launch's background work to settle
+        /// (`launchSettlement`), up to the settle deadline; either way it says what it met
+        /// (`op=tour phase=settled by=ownersQuiescent|loadsDrained|deadline`), and the
+        /// scorecard labels the session by it.
+        private func waitForSettlement() async {
+            let started = ContinuousClock.now
+            let settled = await until(deadline: configuration.settleDeadline) { $0.launchSettlement != nil }
+            OtosLog.performance.noticeOperation("tour", phase: "settled", fields: [
+                "by": settled ? (viewModel?.launchSettlement?.rawValue ?? "windowGone") : "deadline",
+                "waitMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+            ])
+        }
+
+        /// Ends the tour: what every background owner still owed or ran at its end
+        /// (`op=owners.status phase=sessionEnd`), then the finish line, and the app quits.
+        private func finish(outcome: String) async {
+            if let viewModel {
+                await BackgroundOwnerQuiescence.logStatus(viewModel.ownerStatuses(), moment: "sessionEnd")
+            }
             OtosLog.performance.noticeOperation("tour", phase: "finish", fields: ["outcome": outcome])
             ResourceCheckpoint.record("tourFinish", storeUse: storeUse)
             ResourceCheckpoint.flush()
@@ -1082,9 +1120,12 @@ extension PreferencesDomain {
             ])
         }
 
-        /// Waits until `condition` holds for the window, or the step's deadline passes; false
-        /// at the deadline or once the window is gone.
-        private func until(_ condition: @escaping @MainActor (CatalogWindowViewModel) -> Bool) async -> Bool {
+        /// Waits until `condition` holds for the window, or `deadline` (a step's, unless named)
+        /// passes; false at the deadline or once the window is gone.
+        private func until(
+            deadline: Duration? = nil,
+            _ condition: @escaping @MainActor (CatalogWindowViewModel) -> Bool
+        ) async -> Bool {
             guard let viewModel else {
                 return false
             }
@@ -1094,7 +1135,7 @@ extension PreferencesDomain {
             let observed = Observations { @MainActor [weak viewModel] in
                 viewModel.map(condition)
             }
-            let deadline = configuration.stepDeadline
+            let deadline = deadline ?? configuration.stepDeadline
             // The first answer wins: the condition holding, or the deadline. Not a task group:
             // a group returns only once every child has, and a parked `Observations` iteration
             // does not end on cancellation until the window next changes, so a step whose fact
