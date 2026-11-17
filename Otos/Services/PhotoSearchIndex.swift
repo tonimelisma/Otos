@@ -226,9 +226,9 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// What asks for the first query to be readied, in the order asked (ADR 0032 rule 5).
     private enum Preparation {
         /// The user showed intent to search: now.
-        case now([MediaAssetID])
+        case now
         /// The window's first grid painted: when the admission grants it, last of the loads.
-        case admitted([MediaAssetID])
+        case admitted
     }
 
     private let preparations: AsyncStream<Preparation>
@@ -246,19 +246,22 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// Preparations made: what a test waits on.
     private(set) var preparationsMade = 0
 
-    /// The user showed intent to search `scope` (the search field took focus, Edit ▸ Find), so
-    /// the first query they type finds its cold work done (ADR 0048, "The first query"): the
-    /// text encoder starts loading (`SearchQueryReader.prepare`), the kernel is asked to read
-    /// the mapped vectors ahead (`SearchVectorFile.adviseWillNeed`), and `scope`'s slots are
-    /// read (`scopedRows`). Newest wins and nothing is published; a blur cancels nothing, and a
-    /// query that comes first is answered as it always is. Returns at once: the preparation is
-    /// this owner's loop's (ADR 0032 rule 5), so no caller waits on the encoder's load.
-    nonisolated func prepareForSearch(among scope: [MediaAssetID]) {
+    /// The user showed intent to search (the search field took focus, Edit ▸ Find), so the
+    /// first query they type finds its cold work done (ADR 0048, "The first query"): the text
+    /// encoder starts loading (`SearchQueryReader.prepare`) and the kernel is asked to read the
+    /// mapped vectors ahead (`SearchVectorFile.adviseWillNeed`). No scope is read ahead: a
+    /// query's scope is the projection's, its stacks' members included, so its slots are read
+    /// with its first match (`scopedRows`, milliseconds over the owner's 165,000 photos) and
+    /// reused by every later one while the scope and memory hold. Nothing is published; a blur
+    /// cancels nothing, and a query that comes first is answered as it always is. Returns at
+    /// once: the preparation is this owner's loop's (ADR 0032 rule 5), so no caller waits on
+    /// the encoder's load.
+    nonisolated func prepareForSearch() {
         preparationsAsked.record()
-        preparationsContinuation.yield(.now(scope))
+        preparationsContinuation.yield(.now)
     }
 
-    /// The window's first grid painted over `scope`: the same preparation, without waiting for
+    /// The window's first grid painted: the same preparation, without waiting for
     /// the user's intent, as the last of the heavy loads the admission grants
     /// (`BackgroundLoad.searchPrepare`, which runs behind every other), so the first query of a
     /// session is quick even when typed at once. The encoder loads inside that turn, so no other
@@ -267,9 +270,9 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// this one withdraws; a query typed while this one still waits loads the encoder at once
     /// as a load the user waits on (`SearchQueryReader`), so it never waits behind the queue.
     /// A shutdown while it waits starts nothing.
-    nonisolated func prepareWhenAdmitted(among scope: [MediaAssetID]) {
+    nonisolated func prepareWhenAdmitted() {
         preparationsAsked.record()
-        preparationsContinuation.yield(.admitted(scope))
+        preparationsContinuation.yield(.admitted)
     }
 
     private func startPreparing() {
@@ -290,17 +293,17 @@ actor PhotoSearchIndex: QuiescentOwner {
             settleQuiescence()
         }
         switch preparation {
-        case let .now(scope):
+        case .now:
             admittedPreparation?.cancel()
             admittedPreparation = nil
-            await prepare(among: scope, admitted: false)
-        case let .admitted(scope):
+            await prepare(admitted: false)
+        case .admitted:
             guard preparationsMade == 0, admittedPreparation == nil else { return }
             admittedPreparationRunning = true
             admittedPreparation = Task { [weak self, admission] in
                 do {
                     try await admission.run(.searchPrepare) {
-                        await self?.prepare(among: scope, admitted: true)
+                        await self?.prepare(admitted: true)
                     }
                 } catch {
                     // Withdrawn (the intent prepared first) or refused at shutdown: nothing ran.
@@ -324,7 +327,7 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// `admitted`: the caller holds the background admission, so the encoder loads inside that
     /// turn (`prepareWhileAdmitted`); otherwise the intent asks the reader, which admits the load
     /// for the user.
-    private func prepare(among scope: [MediaAssetID], admitted: Bool) async {
+    private func prepare(admitted: Bool) async {
         let start = ContinuousClock.now
         if admitted {
             await queries.prepareWhileAdmitted()
@@ -332,11 +335,9 @@ actor PhotoSearchIndex: QuiescentOwner {
             await queries.prepare()
         }
         memory.vectors?.adviseWillNeed()
-        let rows = scopedRows(scope)
         preparationsMade += 1
         OtosLog.catalog.noticeOperation("search.prepare", phase: "done", fields: [
-            "scope": "\(scope.count)", "searched": "\(rows.rows.count)", "scopeReused": "\(rows.reused)",
-            "mapped": "\(memory.vectors != nil)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+            "admitted": "\(admitted)", "mapped": "\(memory.vectors != nil)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
     }
 
@@ -639,8 +640,13 @@ actor PhotoSearchIndex: QuiescentOwner {
 
     /// One pass. The first, and one after a change that named no rows, reconciles the whole
     /// library and starts the backlog walks again from the newest; any other reconciles the
-    /// rows its changes named by key. A pass that fails owes what it took again. Returns the
-    /// request it answered, nil when it failed or was cancelled.
+    /// rows its changes named by key. Memory is brought in line before either backlog is read,
+    /// and in the order the answers need it: the vector file is opened (it reads no table), the
+    /// text readings are read in — all a query read without the text tower matches
+    /// (`SearchQueryPicture.unread`), so the first search of a session finds the words photos
+    /// show whatever the embedding backlog owes — then the embeddings are reconciled, or the
+    /// file built. A pass that fails owes what it took again. Returns the request it answered,
+    /// nil when it failed or was cancelled.
     private func refresh() async -> UInt64? {
         var settled = false
         var answered: UInt64?
@@ -651,18 +657,20 @@ actor PhotoSearchIndex: QuiescentOwner {
         namedRows = []
         do {
             if whole {
-                try await reconcile()
+                let owed = loaded ? nil : try await openVectors()
+                try await reconcileTexts()
+                if let owed {
+                    try await buildVectors(because: owed)
+                } else {
+                    try await reconcile()
+                }
                 embeddingWalk = BacklogWalk()
                 textWalk = BacklogWalk()
             } else {
                 try await reconcile(rows)
-            }
-            let embedding = try await drain(rows: whole ? [] : rows, answering: answering)
-            if whole {
-                try await reconcileTexts()
-            } else {
                 try await reconcileTexts(rows)
             }
+            let embedding = try await drain(rows: whole ? [] : rows, answering: answering)
             settled = try await drainTexts(rows: whole ? [] : rows, answering: answering) && embedding
             answered = answering
         } catch is CancellationError {
@@ -728,17 +736,14 @@ actor PhotoSearchIndex: QuiescentOwner {
         request()
     }
 
-    /// Brings memory in line with the catalog's current embeddings. On the first pass memory is
-    /// loaded (`load()`): a file built now is current, and the pass goes on; a file opened is
-    /// memory as the last session left it, and is reconciled like any pass. Which embeddings are
+    /// Brings memory in line with the catalog's current embeddings: a file opened
+    /// (`openVectors`) is memory as the last session left it, and is reconciled like any pass
+    /// (a file just built is current, and is not). Which embeddings are
     /// current is read from indexes alone (`CatalogStore.currentSearchEmbeddingIDs`), the ones
     /// memory lacks are sought by key and appended, and those no longer current go. A root not
     /// read now (a card out, a library offline) keeps its embeddings until it is back or
     /// forgotten. A file with many dead slots is then compacted.
     private func reconcile() async throws {
-        if !loaded, try await load() == .rebuilt {
-            return
-        }
         let current = try await store.backgroundReads.currentSearchEmbeddingIDs()
         guard let vectors = memory.vectors else { return }
         let gone = vectors.rowOf.keys.filter { id in
@@ -779,47 +784,50 @@ actor PhotoSearchIndex: QuiescentOwner {
         await compactIfOwed()
     }
 
-    /// The first load, and the one after a write to the file memory holds failed. The folder
-    /// is claimed first (`SearchVectorDirectoryClaim`): one writer at a time, whatever the
-    /// process. The file the catalog names is opened when it is current
+    /// The first load's opening, and the one after a write to the file memory holds failed.
+    /// The folder is claimed first (`SearchVectorDirectoryClaim`): one writer at a time,
+    /// whatever the process. The file the catalog names is opened when it is current
     /// (`SearchVectorFile.open`: off the actor, no table read, the vectors mapped not read),
-    /// and any other file in the folder — a compaction or build a crash cut short — is removed;
-    /// otherwise a new file is built while memory answers from what it holds. Returns how
-    /// memory came by it.
-    private func load() async throws -> LoadSource {
+    /// and any other file in the folder — a compaction or build a crash cut short — is removed.
+    /// Returns nil when memory holds the current file, else why a new one must be built
+    /// (`buildVectors`), which the pass does once the text readings are in.
+    private func openVectors() async throws -> SearchVectorFileInvalid? {
         let start = ContinuousClock.now
         if directoryClaim == nil {
             directoryClaim = try SearchVectorDirectoryClaim(directory: vectorDirectory)
         }
-        var source = LoadSource.file
-        var stateMs = 0, openMs = 0
-        var invalid: SearchVectorFileInvalid?
-        if memory.vectors != nil {
+        guard memory.vectors == nil else {
             // A write after a commit failed (`commit`): the catalog counts slots memory's file
             // never took.
-            invalid = .short
-        } else {
-            do {
-                guard let state = try await store.backgroundReads.searchVectorFileState() else { throw SearchVectorFileInvalid.missing }
-                stateMs = DiagnosticsTiming.milliseconds(since: start)
-                let opening = ContinuousClock.now
-                let opened = try await Self.open(directory: vectorDirectory, state: state, availableBytes: availableBytes)
-                changeMemory { $0.replaceVectors(with: opened) }
-                SearchVectorFile.removeOthers(in: vectorDirectory, keeping: state.id)
-                openMs = DiagnosticsTiming.milliseconds(since: opening)
-            } catch let reason as SearchVectorFileInvalid {
-                invalid = reason
-            }
+            return .short
         }
-        if let invalid {
-            OtosLog.thumbnails.noticeOperation("search.vectors", phase: "rebuilding", fields: ["reason": invalid.reason])
-            // A build reads every stored vector: one heavy load at a time with the other
-            // owners'. Opening a current file reads none and waits for no one.
-            try await admission.run(.searchIndex) {
-                try await rebuild()
-            }
-            source = .rebuilt
+        do {
+            guard let state = try await store.backgroundReads.searchVectorFileState() else { throw SearchVectorFileInvalid.missing }
+            let stateMs = DiagnosticsTiming.milliseconds(since: start)
+            let opening = ContinuousClock.now
+            let opened = try await Self.open(directory: vectorDirectory, state: state, availableBytes: availableBytes)
+            changeMemory { $0.replaceVectors(with: opened) }
+            SearchVectorFile.removeOthers(in: vectorDirectory, keeping: state.id)
+            vectorsLoaded(from: .file, start: start, stateMs: stateMs, openMs: DiagnosticsTiming.milliseconds(since: opening))
+            return nil
+        } catch let reason as SearchVectorFileInvalid {
+            return reason
         }
+    }
+
+    /// Builds the file `openVectors` found owed while memory answers from what it holds.
+    private func buildVectors(because invalid: SearchVectorFileInvalid) async throws {
+        let start = ContinuousClock.now
+        OtosLog.thumbnails.noticeOperation("search.vectors", phase: "rebuilding", fields: ["reason": invalid.reason])
+        // A build reads every stored vector: one heavy load at a time with the other
+        // owners'. Opening a current file reads none and waits for no one.
+        try await admission.run(.searchIndex) {
+            try await rebuild()
+        }
+        vectorsLoaded(from: .rebuilt, start: start, stateMs: 0, openMs: 0)
+    }
+
+    private func vectorsLoaded(from source: LoadSource, start: ContinuousClock.Instant, stateMs: Int, openMs: Int) {
         loaded = true
         loadedFrom = source
         let slots = memory.vectors?.slots ?? 0
@@ -829,7 +837,6 @@ actor PhotoSearchIndex: QuiescentOwner {
             "stateMs": "\(stateMs)", "openMs": "\(openMs)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
         ResourceCheckpoint.record("searchIndexLoaded", fields: ["mappedMB": "\(mappedMB)", "from": "\(source)"])
-        return source
     }
 
     @concurrent
@@ -1030,6 +1037,7 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// while they are awaited (`matches`) reads the memory its revision names, and the removal,
     /// the additions and the revision move in one step.
     private func reconcileTexts() async throws {
+        let start = ContinuousClock.now
         let current = try await store.backgroundReads.currentSearchTextIDs()
         guard let read = textsRead else {
             var loading: [MediaAssetID: String] = [:]
@@ -1045,6 +1053,9 @@ actor PhotoSearchIndex: QuiescentOwner {
                 $0.replaceTexts(loading)
             }
             textsRead = current.ids
+            OtosLog.thumbnails.noticeOperation("search.texts", phase: "loaded", fields: [
+                "count": "\(loading.count)", "current": "\(current.ids.count)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+            ])
             return
         }
         let gone = read.filter { id in

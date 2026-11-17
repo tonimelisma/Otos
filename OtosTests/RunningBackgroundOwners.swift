@@ -85,24 +85,21 @@ actor RunningBackgroundOwners {
     }
 
     /// Subscribes the projection as the window does, and at its first grid opens the admission,
-    /// readies the first search over that grid, starts the account's sync and starts every
+    /// readies the first search, starts the account's sync and starts every
     /// owner (`BackgroundOwnerSet.start`), as `CatalogWindowViewModel` does at
     /// `op=launch.firstGrid`. Returns once they are started; the metadata pass runs on.
     func start(store: CatalogStore) async {
         let states = await projection.states(store: store, initialDescriptor: .default)
-        let (firstGrid, gridPainted) = AsyncStream<[MediaAssetID]>.makeStream()
+        let (firstGrid, gridPainted) = AsyncStream<Void>.makeStream()
         projectionTask = Task {
             for await state in states where state.mediaEmptyState != .loadingCatalog {
-                gridPainted.yield(state.mediaGrid.orderedAssetIDs)
+                gridPainted.yield()
                 gridPainted.finish()
             }
         }
-        var grid: [MediaAssetID] = []
-        for await ids in firstGrid {
-            grid = ids
-        }
+        for await _ in firstGrid {}
         admission.open()
-        searchIndex.prepareWhenAdmitted(among: grid)
+        searchIndex.prepareWhenAdmitted()
         if let accountSync {
             syncTasks = [
                 Task { await accountSync.run() },

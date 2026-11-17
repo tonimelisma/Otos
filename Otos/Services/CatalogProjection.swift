@@ -1313,13 +1313,17 @@ private extension CatalogProjection {
             // A cancelled pass is a teardown: whatever it read is not the catalog.
             try Task.checkCancellation()
             guard case let .built(state, buildMetrics, builtReads, owed) = build else {
-                // Owed, not failed: the window keeps what it shows and says it is searching,
-                // and the reader's report that the reading ended rings the loop.
+                // Not failed: the window keeps what it shows and says it is searching. The pass
+                // covers what it took up, because the reader reports when the query's status
+                // changes (`readings()`, a request of its own), so the cadence does not ask it
+                // again every tick, nor match a words reading that matched nothing again.
                 OtosLog.catalog.noticeOperation("projection.publish", phase: "searchReading", fields: [
                     "projection": diagnosticID,
                     "generation": "\(selectedRequest.generation)",
                 ])
                 publishSearchReading()
+                covered = startedFrom
+                ringIfBehind()
                 return
             }
             passReads = builtReads

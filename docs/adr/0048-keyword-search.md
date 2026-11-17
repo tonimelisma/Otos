@@ -104,8 +104,14 @@ The projection publishes which state the shown query is in
     the first answer never waits on the load, which a fresh Core ML compile after an install
     stretched to 3 s (`docs/research/2026-11-16-first-search-while-the-encoder-loads.md`), and
     a query typed while it runs is read for its words at once too. With the tower ready there
-    is no words reading: the picture's answer comes as quickly. A query whose words match
-    nothing keeps what the window shows, still searching. Rejected: readying the tower ahead
+    is no words reading: the picture's answer comes as quickly. The words reading matches
+    only the text readings in memory, so the index's first pass reads them in before it
+    reconciles or builds its vectors (`PhotoSearchIndex.refresh`): on the owner's library
+    they otherwise landed after the first query of a tour, which then matched nothing. A query
+    whose words match nothing keeps what the window shows, still searching, and its pass
+    reads nothing more: not the count of photos search has not read, which only an empty
+    answer shows and which took 1.1 s there. A pass that ends with the query being read covers
+    its request, because the reader reports each change of status (`readings()`). Rejected: readying the tower ahead
     of People's and duplicates' loads (it delays People by the load's 0.4–3 s while the first
     answer no longer waits on it), and keeping Core ML's compiled program in Application
     Support (no public API places or loads it).
@@ -328,8 +334,13 @@ against 77.3, 85 in English for both), and every asset has one.
     - starts the encoder's load (`SearchQueryReader.prepare`, a request revision its reading
       loop covers before the next query, so a query typed meanwhile waits for that load
       rather than starting a second);
-    - asks the kernel to read the mapped vectors ahead (`MADV_WILLNEED`);
-    - reads the scope's slots, which the first query then reuses.
+    - asks the kernel to read the mapped vectors ahead (`MADV_WILLNEED`).
+    - It reads no scope ahead. A query is matched among the projection's scope, its stacks'
+      members included, which the window's grid does not hold: on the owner's library the
+      preparation read 159,130 slots and every query matched among 164,979, so it was never
+      reused. A query's slots are read with its first match, 7 ms over 164,979 photos on that
+      catalog, and reused while the scope and memory hold
+      (`docs/research/2026-11-16-first-search-words-answer.md`).
   - A blur cancels nothing, and a query with no intent before it is answered as before.
   - **The same preparation runs without the intent**, so the first query is quick even when
     it is typed at once, which is what the 1 s target is checked against. When the window's

@@ -1353,9 +1353,9 @@ extension CatalogWindowViewModel {
         guard startsEnrichment, ownerStartTask == nil, let coordinator = enrichmentCoordinator else {
             return
         }
-        // The first query is readied as the last of the heavy loads, over the scope the first
-        // grid shows; the search field's focus readies it at once if it comes first.
-        photoSearchIndex?.prepareWhenAdmitted(among: parts.mediaGrid.orderedAssetIDs)
+        // The first query is readied as the last of the heavy loads; the search field's focus
+        // readies it at once if it comes first.
+        photoSearchIndex?.prepareWhenAdmitted()
         // updateViewport is delivered newest-value; the coordinator is the single owner of
         // the priority hint, so this forwards verbatim with no main-actor work.
         viewportForwardingTask = Task { [coordinator, viewportStream, immichAccounts] in
@@ -1886,10 +1886,10 @@ extension CatalogWindowViewModel {
     /// The search field took focus — clicked, tabbed to, or Edit ▸ Find (`focusSearch`): the
     /// user is about to search what the window shows, so the index readies the first query
     /// (`PhotoSearchIndex.prepareForSearch`). Nothing is asked while a search is shown, whose
-    /// encoder and scope are ready already.
+    /// encoder is ready already.
     func searchFieldFocused() {
         guard queryDescriptor.search == nil else { return }
-        photoSearchIndex?.prepareForSearch(among: parts.mediaGrid.orderedAssetIDs)
+        photoSearchIndex?.prepareForSearch()
     }
 
     /// The window's title, the one every scope is named by: the person a person's photos

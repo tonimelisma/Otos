@@ -248,6 +248,9 @@ actor SearchQueryEncoder {
         // recognised: the recogniser takes it for a neighbour and translation garbles it. Its
         // month names, from Foundation, say the query is in it; the rest is then read as typed.
         var untranslatable: [String] = []
+        // The two steps of a reading that wait on other owners or load a model on first use:
+        // English spelling, on the main actor, and the tagger that finds a place's name.
+        var spellMs = 0
         for code in preferred where code != NLLanguage.english.rawValue {
             let language = NLLanguage(rawValue: code)
             if let source = candidates[language], await isInstalled(language, source) {
@@ -270,11 +273,13 @@ actor SearchQueryEncoder {
             // Latin-script text English spelling accepts is read as English, not translated.
             // On the judged queries English rose from 83 to 85 and the other languages moved
             // from 75.0 to 74.9.
+            let spelling = ContinuousClock.now
             if let recognised = language, recognised != .english, candidates[recognised] != nil,
                await Self.readsAsEnglish(rest)
             {
                 language = .english
             }
+            spellMs = DiagnosticsTiming.milliseconds(since: spelling)
             if language == .english, try await mayBeGlossed(rest, in: untranslatable) {
                 // The recogniser chooses only among languages Translation offers, so a word
                 // nothing recognises ("lennuk", airplane) is often called English.
@@ -301,7 +306,9 @@ actor SearchQueryEncoder {
         // A query not translated, from a user with a language nothing recognises, may be in
         // that language, where the English tagger finds no whole name.
         let mayBeUnrecognised = reading != .translated && !untranslatable.isEmpty
+        let parsing = ContinuousClock.now
         var parse = SearchQueryParser.parse(modelText, places: mayBeUnrecognised ? .capitalised : .tagged, writtenBy: writer)
+        let parseMs = DiagnosticsTiming.milliseconds(since: parsing)
         var place: SearchPlace?
         if let name = parse.placeName, asTyped, places[name] == nil {
             skipped = true
@@ -346,6 +353,8 @@ actor SearchQueryEncoder {
             "picture": "\(picture.diagnosticName)",
             "depth": "\(depth)",
             "first": "\(asTyped)",
+            "spellMs": "\(spellMs)",
+            "parseMs": "\(parseMs)",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
         return (encoding, skipped)

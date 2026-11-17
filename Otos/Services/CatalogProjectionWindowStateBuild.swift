@@ -205,21 +205,26 @@ extension CatalogProjection {
                 )
                 reads.search = matches.made
                 reuse.search = matches.reused
-                try await applySearch(search, matches: matches.made.matches, to: &unsearched, store: store)
+                let unsearchedCount = Self.narrow(&unsearched, to: matches.made.matches, order: search.order)
+                // Only an empty answer says how many photos search has not read yet.
+                unsearched.search = try await .read(
+                    unsearchedScopeCount: unsearchedCount,
+                    stillReadingCount: unsearched.scopedAssetIDs.isEmpty ? store.windowReads.searchEmbeddingPendingCount() : 0
+                )
             case let .refining(encoding):
                 // A first reading shows its matches while the full one is read, still marked as
                 // searching; one that matches nothing shows nothing new, so the grid never
-                // empties between the two readings.
+                // empties between the two readings, and reads nothing more: it is no answer.
                 let matches = try await searchMatches(
                     encoding, among: unsearched.scopedAssetIDs, previous: previous, revisions: revisions
                 )
                 reads.search = matches.made
                 reuse.search = matches.reused
-                try await applySearch(search, matches: matches.made.matches, to: &unsearched, store: store)
+                let unsearchedCount = Self.narrow(&unsearched, to: matches.made.matches, order: search.order)
                 guard !unsearched.scopedAssetIDs.isEmpty else {
                     return .queryBeingRead
                 }
-                unsearched.search = .refining(unsearchedScopeCount: unsearched.search?.unsearchedScopeCount ?? 0)
+                unsearched.search = .refining(unsearchedScopeCount: unsearchedCount)
             case .failed:
                 Self.failSearch(in: &unsearched)
             case .reading:
@@ -548,13 +553,13 @@ extension CatalogProjection {
         return (made, false)
     }
 
-    /// Narrows the scope to `matches` (ADR 0048), among the scope's own assets.
-    private func applySearch(
-        _ search: CatalogSearch,
-        matches: SearchMatches,
-        to facts: inout CatalogProjectionBuildFacts,
-        store: CatalogStore
-    ) async throws {
+    /// Narrows the scope to `matches` (ADR 0048), among the scope's own assets, and returns how
+    /// many the scope held before.
+    private static func narrow(
+        _ facts: inout CatalogProjectionBuildFacts,
+        to matches: SearchMatches,
+        order: CatalogSearch.Order
+    ) -> Int {
         let unsearched = facts.scopedAssetIDs.count
         let searched = CatalogWindowPolicy.searched(
             ids: facts.scopedAssetIDs,
@@ -562,15 +567,12 @@ extension CatalogProjection {
             coordinates: facts.scopedCoordinates,
             scores: matches.scores,
             allowed: matches.allowed,
-            order: search.order
+            order: order
         )
         facts.scopedAssetIDs = searched.ids
         facts.scopedDayBuckets = searched.dayBuckets
         facts.scopedCoordinates = searched.coordinates
-        facts.search = try await .read(
-            unsearchedScopeCount: unsearched,
-            stillReadingCount: searched.ids.isEmpty ? store.windowReads.searchEmbeddingPendingCount() : 0
-        )
+        return unsearched
     }
 
     static func resolvedDescriptor(
