@@ -68,18 +68,52 @@ nonisolated enum VideoFaceReader {
     static let truncatedAVIStatus = -12344
 
     /// A video's faces, one per person, with their frames staged under `finalRelativeName`.
-    /// No faces when the video has no video track. Throws when a frame could not be read or
-    /// analysed, so nothing is stamped and the video is read again.
+    /// No faces when the video has no video track. Throws when the duration or a frame could
+    /// not be read, or a frame not analysed: an unread frame is not a frame without faces (ADR
+    /// 0032), so a partial read is never stamped and the video is read again. The caller logs
+    /// what the read came to, once, with the error.
+    @concurrent
     static func read(
         _ asset: AVURLAsset,
         analyzeFaces: FaceAnalysisReader,
         framesRelativeName: String,
         in directory: URL
     ) async throws -> EnrichedVideoFaces {
-        let frames = try await Self.frames(of: asset)
+        guard try await !asset.loadTracks(withMediaType: .video).isEmpty else { return .noneFound }
+        let duration = try await asset.load(.duration)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        return try await read(
+            frame: { index in
+                try await generator.image(at: CMTimeMultiplyByFloat64(duration, multiplier: samples[index])).image
+            },
+            analyzeFaces: analyzeFaces, framesRelativeName: framesRelativeName, in: directory
+        )
+    }
+
+    /// The read over `frame`, which decodes the frame at `samples[index]`. One full-resolution
+    /// frame is held at a time: each is analysed before the next is decoded, and one in which
+    /// faces were found is kept only as it is staged, scaled to the preview's size
+    /// (`ThumbnailStore.scaled`, which staging then leaves as it is). An iPhone's 4K HDR frame
+    /// decodes to about 66 MB, and two videos read at once holding all six frames each added
+    /// 890 MB (`docs/research/2026-11-16-first-launch-footprint.md`).
+    static func read(
+        frame: (Int) async throws -> CGImage,
+        analyzeFaces: FaceAnalysisReader,
+        framesRelativeName: String,
+        in directory: URL
+    ) async throws -> EnrichedVideoFaces {
         var faces: [[DetectedFace]] = []
-        for frame in frames {
-            try await faces.append(analyzeFaces(frame).faces)
+        var shown: [Int: CGImage] = [:]
+        for index in samples.indices {
+            let decoded = try await frame(index)
+            let found = try await analyzeFaces(decoded).faces
+            faces.append(found)
+            if !found.isEmpty {
+                shown[index] = try ThumbnailStore.scaled(decoded, toLongEdge: ThumbnailStore.previewMaxPixelSize)
+            }
         }
         let kept = onePerPerson(faces)
         guard !kept.isEmpty else {
@@ -87,7 +121,7 @@ nonisolated enum VideoFaceReader {
         }
         let keptFrames = Array(Set(kept.map(\.frame))).sorted()
         let staged = try ThumbnailStore.stageFaceFrames(
-            keptFrames.map { frames[$0] }, finalRelativeName: framesRelativeName, in: directory
+            keptFrames.map { shown[$0]! }, finalRelativeName: framesRelativeName, in: directory
         )
         return EnrichedVideoFaces(
             faces: kept.map { pick in
@@ -96,25 +130,6 @@ nonisolated enum VideoFaceReader {
             analysisRevision: FaceAnalyzer.revision,
             frames: staged
         )
-    }
-
-    /// The frames at `samples`, in order; none for a video with no video track. Throws when
-    /// the duration or any frame cannot be read: an unread frame is not a frame without faces
-    /// (ADR 0032), so a partial read is never stamped. The caller logs what the read came to,
-    /// once, with the error.
-    @concurrent
-    static func frames(of asset: AVURLAsset) async throws -> [CGImage] {
-        guard try await !asset.loadTracks(withMediaType: .video).isEmpty else { return [] }
-        let duration = try await asset.load(.duration)
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = .zero
-        var frames: [CGImage] = []
-        for fraction in samples {
-            try await frames.append(generator.image(at: CMTimeMultiplyByFloat64(duration, multiplier: fraction)).image)
-        }
-        return frames
     }
 
     /// One face per person across `frames`, each frame's faces in reading order: the face and

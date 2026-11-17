@@ -91,6 +91,48 @@ struct VideoFaceTests {
         #expect(read == .noneFound)
     }
 
+    /// Plan 0116, peak footprint: one full-resolution frame is held at a time. Each frame is
+    /// analysed before the next is decoded, and none is decoded twice; a frame in which faces
+    /// were found is kept only at the preview's size, which is what is staged.
+    @Test func oneFullResolutionFrameIsHeldAtATime() async throws {
+        let directory = try makeTestDirectory()
+        let events = Mutex<[String]>([])
+        let alive = Mutex(0)
+        let mostAlive = Mutex(0)
+        let read = try await VideoFaceReader.read(
+            frame: { index in
+                events.withLock { $0.append("decode \(index)") }
+                let count = alive.withLock { $0 += 1
+                    return $0
+                }
+                mostAlive.withLock { $0 = max($0, count) }
+                return Self.image(width: 3840, height: 2160)
+            },
+            analyzeFaces: { _ in
+                let index = events.withLock { events in
+                    events.append("analyse")
+                    return events.count(where: { $0.hasPrefix("decode") }) - 1
+                }
+                alive.withLock { $0 -= 1 }
+                // A face in the second frame only.
+                return FaceAnalysis(
+                    faces: index == 1 ? [Self.face(person: 1, quality: 0.9)] : [],
+                    rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0
+                )
+            },
+            framesRelativeName: "clip.faces.heic",
+            in: directory
+        )
+        #expect(events.withLock { $0 } == VideoFaceReader.samples.indices.flatMap { ["decode \($0)", "analyse"] })
+        #expect(mostAlive.withLock { $0 } == 1)
+        let staged = try #require(read.frames)
+        let source = try #require(CGImageSourceCreateWithURL(
+            ThumbnailStore.url(for: staged.stagedRelativePath, in: directory) as CFURL, nil
+        ))
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        #expect(properties[kCGImagePropertyPixelWidth] as? Int == ThumbnailStore.previewMaxPixelSize)
+    }
+
     // MARK: - An Immich account's videos
 
     /// An account's video is read in byte ranges from its server, never downloaded whole:
@@ -351,13 +393,13 @@ struct VideoFaceTests {
         )
     }
 
-    static func image() -> CGImage {
+    static func image(width: Int = 64, height: Int = 36) -> CGImage {
         let context = CGContext(
-            data: nil, width: 64, height: 36, bitsPerComponent: 8, bytesPerRow: 0,
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
         )!
         context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: 64, height: 36))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         return context.makeImage()!
     }
 

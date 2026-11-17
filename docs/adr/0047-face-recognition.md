@@ -94,7 +94,10 @@ grouping had put with the right child.
   background and above the free-space floor (ADR 0027); a library's 1,939 videos are
   627 GB (owner decision, 2026-11-13). `VideoFaceReader` decodes the frames at 0, 10, 25,
   50, 75 and 90% upright at full resolution with no time tolerance, so a re-read finds the
-  same frames, and reads each with `FaceAnalyzer`.
+  same frames, and reads each with `FaceAnalyzer` before decoding the next: one
+  full-resolution frame is held at a time, and a frame that holds faces is kept only at the
+  preview's size it is staged at. An iPhone's 4K HDR frame is about 66 MB, and two videos
+  holding all six frames each added 890 MB (`docs/research/2026-11-16-first-launch-footprint.md`).
 - **A video AVFoundation cannot decode** is no failed read: its faces are stamped with none
   and the decoder that said so is stored, and it is read again once that decoder changes
   (ADR 0009, ENR-031). An Immich account's MKV videos are among them: AVFoundation does not
