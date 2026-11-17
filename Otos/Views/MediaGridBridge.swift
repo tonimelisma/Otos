@@ -208,6 +208,9 @@ final class MediaGridViewController: NSViewController {
     /// Cancels/restarts on each scroll tick; fires after the shared quiet
     /// threshold to release the mutation gate's scroll hold.
     private var scrollHoldQuietTask: Task<Void, Never>?
+    /// Between AppKit's will-start and did-end live-scroll notifications: the user is
+    /// scrolling by gesture or by the scroller.
+    private var liveScrolling = false
     /// Test/diagnostic read of the last scroll-driven detail query identity list.
     private(set) var lastDetailQueryIDs: [MediaAssetID] = []
     /// Last scroll-bounds notification time. Structural applies suppress move
@@ -350,8 +353,15 @@ final class MediaGridViewController: NSViewController {
         // with no maximum wait, so during a fling it does not fire until scrolling
         // stops. The day bar names what the user is looking at right now.
         updateDayBar()
-        mutationGate.beginScrollHold()
-        scheduleScrollHoldQuietRelease()
+        // Only the user's scrolling holds the grid's content still. A bounds change Otos
+        // makes itself (a structural apply keeping its anchor, a focus scroll to the
+        // selected tile, AppKit clamping after a layout) is no one scrolling, and a hold on
+        // it parked each act's result for the whole quiet threshold
+        // (docs/research/2026-11-17-acts-at-the-owners-library-size.md).
+        if MediaGridScrollInput.isUserScroll(liveScrolling: liveScrolling, handlingEvent: NSApp?.currentEvent?.type) {
+            mutationGate.beginScrollHold()
+            scheduleScrollHoldQuietRelease()
+        }
         // A trailing edge alone never fires while scrolling continues: each notification
         // cancels and reschedules it, and they arrive faster than its window for the
         // whole duration of a fling. `MediaGridScrollWorkCadence` records the measured
@@ -821,6 +831,28 @@ extension MediaGridViewController {
             name: NSView.boundsDidChangeNotification,
             object: clipView
         )
+        // AppKit brackets a gesture's scroll, its momentum included, and a scroller drag
+        // with these two; a wheel mouse sends neither, so its ticks are told by their event.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(liveScrollStarted),
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: scrollView
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(liveScrollEnded),
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: scrollView
+        )
+    }
+
+    @objc private func liveScrollStarted() {
+        liveScrolling = true
+    }
+
+    @objc private func liveScrollEnded() {
+        liveScrolling = false
     }
 
     /// The one executor for the gate's ordered action lists. Every gate method

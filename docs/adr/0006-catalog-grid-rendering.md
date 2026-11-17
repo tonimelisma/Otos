@@ -234,8 +234,14 @@ strip restore would scroll by the survivors' own travel), the group still runs t
 batch but sets `duration = 0` — mid-scroll move
 animations are invisible churn that feeds Core Animation commit pressure. Never downgrade to `reloadData` for that case;
 that is the teardown path. Separately, `MediaGridMutationGate`
-holds same-descriptor structural-apply *adoption* while scroll is live
-(`scrollHold`, released after the same 250 ms quiet threshold): enrichment
+holds same-descriptor structural-apply *adoption* while the user scrolls
+(`scrollHold`, released after the same 250 ms quiet threshold). Only the user's ticks begin
+it (`MediaGridScrollInput`): inside AppKit's live-scroll bracket (a gesture with its momentum,
+or the scroller) or while a scroll-wheel event is handled (a wheel mouse sends no bracket). A
+bounds change Otos makes itself (an apply keeping its anchor, a focus scroll, a clamp after a
+layout) holds nothing: at the owner's library size each Move to Trash's own anchor-keeping
+apply otherwise held the next act's result for the whole threshold
+(`docs/research/2026-11-17-acts-at-the-owners-library-size.md`). Enrichment
 reorders park newest-wins and apply once on quiet; descriptor-changed grids
 bypass the hold; zoom swaps are unaffected. AppKit's base layout supplies the
 attributes a batch animates between (a survivor from its old frame to its new one, an

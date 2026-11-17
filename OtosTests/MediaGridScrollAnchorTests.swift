@@ -45,6 +45,42 @@ struct MediaGridScrollAnchorTests {
         #expect(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []) == nil)
     }
 
+    /// A scroll Otos makes itself (an apply keeping its anchor, a focus scroll) is no one
+    /// scrolling: it holds nothing, so the next grid, an act's result among them, is taken
+    /// in at once instead of parking for the quiet threshold.
+    @Test func aScrollOtosMakesDoesNotHoldTheGrid() {
+        let controller = makeAnchorController(itemCount: 200)
+        controller.scrollTo(offset: 600)
+
+        #expect(!controller.mutationGate.scrollHold)
+        let ids = Array(controller.currentIDs.dropFirst())
+        let next = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
+        #expect(controller.mutationGate.receive(next) == [.apply(next, change: .unchanged)])
+    }
+
+    /// The user's scrolling (a gesture or the scroller, which AppKit brackets as a live
+    /// scroll) still holds the grid's content still until the scrolling is quiet.
+    @Test func theUsersLiveScrollHoldsTheGrid() {
+        let controller = makeAnchorController(itemCount: 200)
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: controller.scrollView)
+        controller.scrollTo(offset: 600)
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: controller.scrollView)
+
+        #expect(controller.mutationGate.scrollHold)
+        let ids = Array(controller.currentIDs.dropFirst())
+        let next = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
+        #expect(controller.mutationGate.receive(next) == [.pending(replacedExisting: false)])
+    }
+
+    /// A wheel mouse sends no live-scroll pair; its ticks are the user's by their event.
+    @Test func aTickIsTheUsersOnlyInALiveScrollOrAWheelEvent() {
+        #expect(MediaGridScrollInput.isUserScroll(liveScrolling: true, handlingEvent: nil))
+        #expect(MediaGridScrollInput.isUserScroll(liveScrolling: false, handlingEvent: .scrollWheel))
+        #expect(!MediaGridScrollInput.isUserScroll(liveScrolling: false, handlingEvent: nil))
+        #expect(!MediaGridScrollInput.isUserScroll(liveScrolling: false, handlingEvent: .keyDown))
+        #expect(!MediaGridScrollInput.isUserScroll(liveScrolling: false, handlingEvent: .leftMouseUp))
+    }
+
     /// A new scope starts at the top, and the anchor must not fight that.
     @Test func aNewScopeIsNotAnchored() {
         let controller = makeAnchorController(itemCount: 200)

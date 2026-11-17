@@ -1774,6 +1774,7 @@ private extension CatalogProjection {
         let hidden = hiddenItems(for: built.queryDescriptor)
         let putBacks = heldPutBacks
         let state: CatalogWindowState
+        let base: String
         if let last = lastPublishedState,
            let from = publishedFrom,
            from.builtRevision == builtRevision,
@@ -1784,11 +1785,23 @@ private extension CatalogProjection {
             // last publication, as a new hide is taken off it.
             state = puttingBack(last.hidingItems(hidden.subtracting(from.hidden)), hidden: hidden)
             state.mediaGrid.content.prepareIndex()
+            base = "publication"
         } else {
             state = puttingBack(built.hidingItems(hidden), hidden: hidden).sharingUnchanged(with: lastPublishedState)
+            base = "build"
         }
         publishedFrom = (builtRevision, hidden, putBacks)
-        if state != lastPublishedState {
+        let changed = state != lastPublishedState
+        // Which base the window's next order was taken from: off the last publication it is
+        // an edit of the order the grid shows; off the build it is one only when equal.
+        OtosLog.catalog.debugOperation("projection.republish", phase: "finish", fields: [
+            "projection": diagnosticID,
+            "base": base,
+            "hidden": "\(hidden.count)",
+            "changed": "\(changed)",
+            "editOfPublished": "\(lastPublishedState.map { state.mediaGrid.content.edit(from: $0.mediaGrid.content) != nil } ?? false)",
+        ])
+        if changed {
             yield(state)
         }
     }

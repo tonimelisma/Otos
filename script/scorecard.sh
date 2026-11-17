@@ -27,7 +27,8 @@ usage:
       The newest session of the installed app (--dev: the dev build) in the last hour.
   script/scorecard.sh --input <log.ndjson> [--dev] [--session <id>] [--json <out>] [--compare <saved.json>]
       A saved `log show --style ndjson` capture.
-  script/scorecard.sh --tour [--dev [--optimized] [--home <dir>] [--seed <photos>]] [--ablate none|all|<owner>[,<owner>…]]
+  script/scorecard.sh --tour [--dev [--optimized] [--home <dir>] [--seed <photos> [--seed-media camera|small]]]
+                      [--ablate none|all|<owner>[,<owner>…]]
                       [--steps full|scopes] [--idle <seconds>] [--deadline <seconds a step>]
                       [--settled [--settle-deadline <seconds>]] [--compare <saved.json>]
       Launches the app with OTOS_TOUR=1, waits for it to finish its read-only tour and quit,
@@ -37,7 +38,7 @@ usage:
       it: every owner quiescent, or the heavy loads the launch asked for all run, whichever
       the app reports first (up to --settle-deadline, default 900 s; a `settled` session).
       The scorecard labels each session's kind and --compare compares only like with like.
-  script/scorecard.sh --ablation-matrix [--dev [--home <dir>] [--seed <photos>]]
+  script/scorecard.sh --ablation-matrix [--dev [--home <dir>] [--seed <photos> [--seed-media camera|small]]]
       Short tours with every background owner off (the floor), with each owner alone
       running, and with none off; prints one table.
 
@@ -46,7 +47,9 @@ descriptions duplicates people immich. --home gives the dev build a sandbox home
 (CFFIXED_USER_HOME and HOME). --seed <photos> makes a fresh sandbox home (at --home, which
 must not exist, or under build/sandbox-homes/) with a library of that many generated photos
 on a volume of its own (script/sandbox-library.sh), has the app register it through its own
-Add Library intent, and removes all of it when the run ends, however it ends. The tour's act
+Add Library intent, and removes all of it when the run ends, however it ends. --seed-media
+small makes the library of the owner's size (--seed 160000) out of 64 x 64 JPEGs in a folder
+tree instead of camera-size photos (script/sandbox-library.sh --media). The tour's act
 steps (Move to Trash and Put Back among them) run only on such a library: on any other the
 app skips them (`trashOutsideSandbox`), because a sandbox home on the account's volume
 trashes into the account's own Trash. After every tour in a sandbox library the account's
@@ -75,6 +78,7 @@ SETTLED=0
 SETTLE_DEADLINE=900
 HOME_DIR=""
 SEED=""
+SEED_MEDIA=camera
 OPTIMIZED=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -95,6 +99,7 @@ while [[ $# -gt 0 ]]; do
     --deadline) DEADLINE="${2:?}"; shift 2 ;;
     --home) HOME_DIR="${2:?}"; shift 2 ;;
     --seed) SEED="${2:?}"; shift 2 ;;
+    --seed-media) SEED_MEDIA="${2:?}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -149,7 +154,7 @@ if [[ -n "$SEED" ]]; then
   [[ -n "$HOME_DIR" ]] || HOME_DIR="$ROOT_DIR/build/sandbox-homes/$(date -u +%Y%m%dT%H%M%SZ)-$$"
   mkdir -p "$(dirname "$HOME_DIR")"
   # Refuses, and makes nothing, when it cannot give the library a volume of its own.
-  "$SANDBOX_LIBRARY_SCRIPT" create --home "$HOME_DIR" --count "$SEED" >&2
+  "$SANDBOX_LIBRARY_SCRIPT" create --home "$HOME_DIR" --count "$SEED" --media "$SEED_MEDIA" >&2
   HOME_DIR="$(cd "$HOME_DIR" && pwd -P)"
   SANDBOX_OWNED=1
 fi

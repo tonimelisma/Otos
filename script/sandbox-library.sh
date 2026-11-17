@@ -33,11 +33,15 @@ LIBRARY_NAME="Photos"
 usage() {
   cat <<'EOF'
 usage:
-  script/sandbox-library.sh create --home <dir> --count <photos> [--videos <n>]
+  script/sandbox-library.sh create --home <dir> --count <photos> [--videos <n>] [--media camera|small]
       Makes <dir> (it must not exist), a sparse APFS image inside it mounted at
-      <dir>/TourLibrary without Finder seeing it, and <photos> generated photos (48/12 MP HEIC, 24/12 MP JPEG; some with
-      words, some skies, a few near-duplicates) and <n> short videos (default 2) in
-      <dir>/TourLibrary/Photos. Prints the environment the dev build needs.
+      <dir>/TourLibrary without Finder seeing it, and <photos> generated photos (some with
+      words, some skies, a few near-duplicates, some with GPS) and <n> short videos (default
+      2) in <dir>/TourLibrary/Photos. Prints the environment the dev build needs.
+      --media camera (the default): camera-size photos (48/12 MP HEIC, 24/12 MP JPEG) in one
+      folder, about 2 MB each. --media small: a library of the owner's size, 64 x 64 JPEGs of
+      a few KB in a year/month/ten-day folder tree, written in parallel (160,000 in a few
+      minutes, a few hundred MB).
   script/sandbox-library.sh check-trash --home <dir>
       Tests the account's own Trash for every file this home generated, by name; removes
       any it finds there and exits 1, loudly. Exits 0 only when none is there.
@@ -53,11 +57,13 @@ COMMAND="${1:-}"
 HOME_DIR=""
 COUNT=""
 VIDEOS=2
+MEDIA=camera
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --home) HOME_DIR="${2:?}"; shift 2 ;;
     --count) COUNT="${2:?}"; shift 2 ;;
     --videos) VIDEOS="${2:?}"; shift 2 ;;
+    --media) MEDIA="${2:?}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -81,6 +87,7 @@ create() {
   require_home
   [[ "$COUNT" =~ ^[0-9]+$ && "$COUNT" -gt 0 ]] || { echo "--count <photos> is required" >&2; exit 2; }
   [[ "$VIDEOS" =~ ^[0-9]+$ ]] || { echo "--videos takes a number" >&2; exit 2; }
+  [[ "$MEDIA" == camera || "$MEDIA" == small ]] || { echo "--media is camera or small" >&2; exit 2; }
   if [[ -e "$HOME_DIR" ]]; then
     echo "op=sandboxLibrary.create phase=refused reason=homeExists home=$HOME_DIR — a sandbox home is made fresh" >&2
     exit 1
@@ -107,8 +114,10 @@ create() {
     echo "library=$library"
   } > "$HOME_DIR/$MARKER"
   : > "$HOME_DIR/$FILES"
-  # Two megabytes a photo, with room; a sparse image takes only what is written.
+  # Room for every file (two megabytes a camera photo; a small one fills one 4 KB block, a
+  # sign with words a few, plus its folder's share); a sparse image takes only what is written.
   local size_mb=$(( COUNT * 2 + VIDEOS * 4 + 256 ))
+  [[ "$MEDIA" == small ]] && size_mb=$(( COUNT / 50 + VIDEOS * 4 + 256 ))
   mkdir -p "$mount"
   if ! /usr/bin/hdiutil create -quiet -type SPARSE -fs APFS -volname OtosTourLibrary -size "${size_mb}m" "$image" \
     || ! /usr/sbin/diskutil image attach --mountOptions nobrowse --mountPoint "$mount" "$image" >/dev/null; then
@@ -120,12 +129,14 @@ create() {
   mkdir -p "$library"
   local generator="$HOME_DIR/.otos-sandbox-library-media"
   /usr/bin/xcrun swiftc -O -suppress-warnings "$ROOT_DIR/script/sandbox-library-media.swift" -o "$generator"
-  echo "op=sandboxLibrary.create phase=generating photos=$COUNT videos=$VIDEOS library=$library" >&2
-  "$generator" "$library" "$prefix" "$COUNT" "$VIDEOS" >> "$HOME_DIR/$FILES"
+  echo "op=sandboxLibrary.create phase=generating photos=$COUNT videos=$VIDEOS media=$MEDIA library=$library" >&2
+  local started=$SECONDS
+  "$generator" "$library" "$prefix" "$COUNT" "$VIDEOS" "$MEDIA" >> "$HOME_DIR/$FILES"
   rm -f "$generator"
-  local made
+  local made library_kb
   made="$(/usr/bin/wc -l < "$HOME_DIR/$FILES" | tr -d ' ')"
-  echo "op=sandboxLibrary.create phase=finish home=$HOME_DIR library=$library files=$made prefix=$prefix"
+  library_kb="$(/usr/bin/du -sk "$library" | /usr/bin/awk '{print $1}')"
+  echo "op=sandboxLibrary.create phase=finish home=$HOME_DIR library=$library files=$made media=$MEDIA seconds=$((SECONDS - started)) libraryMB=$((library_kb / 1024)) prefix=$prefix"
   echo "env CFFIXED_USER_HOME=$HOME_DIR HOME=$HOME_DIR OTOS_SANDBOX_LIBRARY=$library"
 }
 

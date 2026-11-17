@@ -674,6 +674,7 @@ extension MediaGridViewController {
                 "inserted": "\(context.insertedCount)",
                 "removed": "\(context.removedCount)",
                 "reorderOnly": "\(context.reorderOnly)",
+                "followsEdit": "\(context.followsEdit)",
                 "largeApply": "\(context.largeApply)",
                 "animatingDifferences": "\(context.animatingDifferences)",
                 "animationSuppressed": "\(context.animationSuppressed)",

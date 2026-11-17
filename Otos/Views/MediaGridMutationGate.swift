@@ -124,7 +124,8 @@ final class MediaGridMutationGate {
     /// there is never a stale separate request to drain.
     private(set) var requestedColumnCount: Int
     private(set) var inFlight: InFlight = .none
-    /// True while scroll-bounds ticks are recent. Same-descriptor grids park;
+    /// True while the user's scroll ticks are recent (`MediaGridScrollInput`); a bounds
+    /// change Otos makes itself holds nothing. Same-descriptor grids park;
     /// descriptor-changed grids bypass. Cleared by `endScrollHold` after quiet.
     private(set) var scrollHold = false
     private var pendingGrid: CatalogMediaGridState?
@@ -175,7 +176,8 @@ final class MediaGridMutationGate {
         return [idleGridAction(grid)]
     }
 
-    /// Controller: call on every scroll-bounds tick. Parks same-descriptor adoption.
+    /// Controller: call on every scroll-bounds tick of the user's scrolling. Parks
+    /// same-descriptor adoption.
     func beginScrollHold() {
         scrollHold = true
     }

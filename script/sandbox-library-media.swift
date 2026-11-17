@@ -1,15 +1,22 @@
 #!/usr/bin/env xcrun swift
 // Generates the media of a sandbox library (script/sandbox-library.sh): N distinct photos and
 // a few short videos, all made here from code, so a tour or a survey has a library that is no
-// one's photos. The photos come from a person's cameras in turn (48 MP and 12 MP HEIC, 24 MP
-// and 12 MP JPEG), so a first launch decodes what a real library holds. Some carry rendered words (search's text reading finds them), some are
-// skies (the tour's "sky" query), a few have an exact copy or a re-encoded version beside them
-// (the Duplicates steps: ADR 0042 groups identical bytes, and versions of one capture whose
-// camera, instant and sub-seconds agree and whose pixels match), some carry GPS (Places) and some fall on today's day in past years (On
-// This Day). Every name starts with the run's prefix, so the script can find each file by
-// name wherever it went.
+// one's photos. Some carry rendered words (search's text reading finds them), some are skies
+// (the tour's "sky" query), a few have an exact copy or a re-encoded version beside them (the
+// Duplicates steps: ADR 0042 groups identical bytes, and versions of one capture whose camera,
+// instant and sub-seconds agree and whose pixels match), some carry GPS (Places) and some fall
+// on today's day in past years (On This Day). Every name starts with the run's prefix, so the
+// script can find each file by name wherever it went.
 //
-// usage: sandbox-library-media.swift <folder> <prefix> <photos> <videos>
+// Two sizes. `camera` photos come from a person's cameras in turn (48 MP and 12 MP HEIC, 24 MP
+// and 12 MP JPEG) in one folder, so a first launch decodes what a real library holds. `small`
+// is for a library of the owner's size (about 160,000 items): 64 × 64 JPEGs of a few KB, each
+// drawn from its own index, in a year / month / ten-day folder tree of a few hundred files a
+// folder, written in parallel; the features are a small share (one photo in 500 has words, at
+// 640 × 480 so text reading can read them; one in 500 has a copy and one a version; one in 50
+// has GPS), so every view has something in it without the library being mostly features.
+//
+// usage: sandbox-library-media.swift <folder> <prefix> <photos> <videos> [camera|small]
 // Prints one generated file name per line.
 
 import AVFoundation
@@ -44,10 +51,15 @@ struct Generator {
         (60.1699, 24.9384), (37.7749, -122.4194), (48.8566, 2.3522), (35.6762, 139.6503), (-33.8688, 151.2093),
     ]
 
+    enum Size: String {
+        case camera
+        case small
+    }
+
     let folder: URL
     let prefix: String
-    /// The cameras the photos come from, in turn: an iPhone's 48 MP and 12 MP HEIC, a camera's
-    /// 24 MP JPEG and a 12 MP JPEG, so a launch decodes what a person's library holds.
+    let size: Size
+    /// One photo's frame and encoding.
     struct Camera {
         let width: Int
         let height: Int
@@ -55,18 +67,53 @@ struct Generator {
         let ext: String
     }
 
+    /// The cameras `camera` photos come from, in turn: an iPhone's 48 MP and 12 MP HEIC, a
+    /// camera's 24 MP JPEG and a 12 MP JPEG, so a launch decodes what a person's library holds.
     static let cameras = [
         Camera(width: 8064, height: 6048, type: .heic, ext: "heic"),
         Camera(width: 4032, height: 3024, type: .heic, ext: "heic"),
         Camera(width: 6000, height: 4000, type: .jpeg, ext: "jpg"),
         Camera(width: 4032, height: 3024, type: .jpeg, ext: "jpg"),
     ]
+    static let smallFrame = Camera(width: 64, height: 64, type: .jpeg, ext: "jpg")
+    /// Large enough for text reading to read the words.
+    static let wordsFrame = Camera(width: 640, height: 480, type: .jpeg, ext: "jpg")
+
+    /// One in `stride` photos is a sign with words, two are skies; one in `stride` is followed
+    /// by an exact copy and one by a re-encoded version.
+    var stride: Int {
+        size == .camera ? 10 : 500
+    }
+
+    var duplicateStride: Int {
+        size == .camera ? 50 : 500
+    }
 
     func camera(_ index: Int) -> Camera {
-        Self.cameras[index % Self.cameras.count]
+        switch size {
+        case .camera: Self.cameras[index % Self.cameras.count]
+        case .small: index % stride == 0 ? Self.wordsFrame : Self.smallFrame
+        }
     }
 
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        return formatter
+    }()
+
+    /// The folder photo `index` is written to, relative to the library: none for `camera`; a
+    /// year / month / ten-day folder of its capture date for `small`, so a folder holds a few
+    /// hundred files as a person's does.
+    func subfolder(_ index: Int) -> String {
+        guard size == .small else { return "" }
+        let parts = Calendar(identifier: .gregorian).dateComponents([.year, .month, .day], from: captureDate(index))
+        let day = parts.day ?? 1
+        let range = day <= 10 ? "01-10" : day <= 20 ? "11-20" : "21-31"
+        return String(format: "%04d/%02d/%@", parts.year ?? 0, parts.month ?? 0, range)
+    }
 
     func name(_ index: Int, _ suffix: String = "", ext: String) -> String {
         String(format: "%@-%05d%@.%@", prefix, index, suffix, ext)
@@ -86,12 +133,12 @@ struct Generator {
         func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CGColor {
             CGColor(srgbRed: r, green: g, blue: b, alpha: 1)
         }
-        switch index % 10 {
+        switch index % stride {
         case 0:
             // Words on a sign: what search's text reading reads.
             context.setFillColor(color(0.96, 0.95, 0.9))
             context.fill(bounds)
-            let word = Self.words[(index / 10) % Self.words.count]
+            let word = Self.words[(index / stride) % Self.words.count]
             let font = CTFontCreateWithName("Helvetica-Bold" as CFString, 150 * unit, nil)
             let attributes: [NSAttributedString.Key: Any] = [
                 NSAttributedString.Key(kCTFontAttributeName as String): font,
@@ -132,27 +179,36 @@ struct Generator {
         return context.makeImage()!
     }
 
-    /// Capture date: spread over ten years, and every 37th on today's day in a past year.
+    /// When the generator started: every photo's date is drawn from it, so a photo's date and
+    /// folder agree however long the run takes.
+    let now = Date()
+
+    /// Capture date: spread over ten years (fifteen for `small`), and every 37th on today's day
+    /// in a past year.
     func captureDate(_ index: Int) -> Date {
         let calendar = Calendar(identifier: .gregorian)
-        let now = Date()
         if index % 37 == 5 {
             return calendar.date(byAdding: .year, value: -(1 + index % 9), to: now)!
         }
-        return now.addingTimeInterval(-Double(1 + index % 3650) * 86400 - Double(index % 86400))
+        let days = size == .camera ? 3650 : 5475
+        return now.addingTimeInterval(-Double(1 + index % days) * 86400 - Double(index % 86400))
+    }
+
+    /// The URL of a file named `fileName` for photo `index`, its folder made.
+    func url(_ index: Int, _ fileName: String) throws -> URL {
+        let directory = subfolder(index).isEmpty ? folder : folder.appending(path: subfolder(index), directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appending(path: fileName)
     }
 
     /// Writes photo `index`. A version (`suffix` non-empty, `quality` lower) is the same capture
     /// re-encoded: the same pixels and the same camera, instant and sub-seconds, other bytes.
     func writePhoto(_ index: Int, suffix: String = "", quality: Double = 0.8) throws -> String {
         let fileName = name(index, suffix, ext: camera(index).ext)
-        let url = folder.appending(path: fileName)
+        let url = try url(index, fileName)
         guard let destination = CGImageDestinationCreateWithURL(url as CFURL, camera(index).type.identifier as CFString, 1, nil) else {
             throw CocoaError(.fileWriteUnknown)
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
         var properties: [CFString: Any] = [
             kCGImageDestinationLossyCompressionQuality: quality,
             kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFMake: "Sandbox", kCGImagePropertyTIFFModel: "Camera \(index % Self.cameras.count)"],
@@ -161,8 +217,9 @@ struct Generator {
                 kCGImagePropertyExifSubsecTimeOriginal: String(format: "%03d", index % 1000),
             ],
         ]
-        if index % 5 == 3 {
-            let (lat, lon) = Self.places[(index / 5) % Self.places.count]
+        let gpsStride = size == .camera ? 5 : 50
+        if index % gpsStride == 3 {
+            let (lat, lon) = Self.places[(index / gpsStride) % Self.places.count]
             properties[kCGImagePropertyGPSDictionary] = [
                 kCGImagePropertyGPSLatitude: abs(lat), kCGImagePropertyGPSLatitudeRef: lat >= 0 ? "N" : "S",
                 kCGImagePropertyGPSLongitude: abs(lon), kCGImagePropertyGPSLongitudeRef: lon >= 0 ? "E" : "W",
@@ -228,30 +285,80 @@ struct Generator {
         }
         return fileName
     }
+
+    /// Writes the photos with indices in `range` (and the copy or version that follows some of
+    /// them) and returns their names in order. A range starts on a multiple of
+    /// `duplicateStride`, so a photo and its copy or version fall in the same range.
+    func writePhotos(_ range: Range<Int>, of photos: Int) throws -> [String] {
+        var names: [String] = []
+        var index = range.lowerBound
+        while index < range.upperBound {
+            let written = try writePhoto(index)
+            names.append(written)
+            // One photo in `duplicateStride` is followed by an exact copy of its file and one by
+            // a version of it re-encoded at a lower quality: an identical group and a same-photo
+            // group.
+            if index % duplicateStride == 3, index + 1 < photos {
+                let copy = name(index, "-copy", ext: camera(index).ext)
+                try FileManager.default.copyItem(at: url(index, written), to: url(index, copy))
+                names.append(copy)
+                index += 1
+            } else if index % duplicateStride == 7, index + 1 < photos {
+                names.append(try writePhoto(index, suffix: "-version", quality: 0.5))
+                index += 1
+            }
+            index += 1
+        }
+        return names
+    }
+}
+
+/// The names each range wrote, collected from the workers.
+final class Results: @unchecked Sendable {
+    private let lock = NSLock()
+    private var names: [[String]]
+    private var failure: Error?
+
+    init(count: Int) {
+        names = Array(repeating: [], count: count)
+    }
+
+    func set(_ chunk: Int, _ result: Result<[String], Error>) {
+        lock.withLock {
+            switch result {
+            case let .success(written): names[chunk] = written
+            case let .failure(error): failure = failure ?? error
+            }
+        }
+    }
+
+    func collected() throws -> [String] {
+        try lock.withLock {
+            if let failure { throw failure }
+            return names.flatMap(\.self)
+        }
+    }
 }
 
 let arguments = CommandLine.arguments
-guard arguments.count == 5, let photos = Int(arguments[3]), let videos = Int(arguments[4]), photos >= 0, videos >= 0 else {
-    FileHandle.standardError.write(Data("usage: sandbox-library-media.swift <folder> <prefix> <photos> <videos>\n".utf8))
+guard (5 ... 6).contains(arguments.count), let photos = Int(arguments[3]), let videos = Int(arguments[4]), photos >= 0, videos >= 0,
+      let size = Generator.Size(rawValue: arguments.count == 6 ? arguments[5] : "camera")
+else {
+    FileHandle.standardError.write(Data("usage: sandbox-library-media.swift <folder> <prefix> <photos> <videos> [camera|small]\n".utf8))
     exit(2)
 }
-let generator = Generator(folder: URL(fileURLWithPath: arguments[1], isDirectory: true), prefix: arguments[2])
-var index = 0
-while index < photos {
-    let written = try generator.writePhoto(index)
-    print(written)
-    // Of every 50 photos, one is followed by an exact copy of its file and one by a version of
-    // it re-encoded at a lower quality: an identical group and a same-photo group.
-    if index % 50 == 3, index + 1 < photos {
-        let copy = generator.name(index, "-copy", ext: generator.camera(index).ext)
-        try FileManager.default.copyItem(at: generator.folder.appending(path: written), to: generator.folder.appending(path: copy))
-        print(copy)
-        index += 1
-    } else if index % 50 == 7, index + 1 < photos {
-        print(try generator.writePhoto(index, suffix: "-version", quality: 0.5))
-        index += 1
-    }
-    index += 1
+let generator = Generator(folder: URL(fileURLWithPath: arguments[1], isDirectory: true), prefix: arguments[2], size: size)
+// Camera-size photos are written one at a time (a 48 MP frame alone holds about 200 MB);
+// small ones in parallel, a thousand to a range.
+let chunk = size == .camera ? max(photos, 1) : 1000
+let chunks = (photos + chunk - 1) / chunk
+let results = Results(count: chunks)
+DispatchQueue.concurrentPerform(iterations: chunks) { index in
+    let range = index * chunk ..< min(photos, (index + 1) * chunk)
+    results.set(index, Result { try generator.writePhotos(range, of: photos) })
+}
+for name in try results.collected() {
+    print(name)
 }
 for video in 0 ..< videos {
     print(try await generator.writeVideo(video))

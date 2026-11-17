@@ -8,6 +8,7 @@
 // types intentionally keep the per-asset prefix — they are not grid-level and are
 // not part of this rename.
 
+import AppKit
 import Foundation
 
 nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
@@ -226,6 +227,20 @@ nonisolated enum MediaGridScrollWorkCadence {
             return true
         }
         return sinceLastRun >= maximumWait
+    }
+}
+
+/// Whether a scroll-bounds tick is the user scrolling, which is what holds the grid's
+/// content still (`MediaGridMutationGate.scrollHold`). The user scrolls by gesture or by
+/// the scroller, which AppKit brackets with its live-scroll notifications, or by a wheel
+/// mouse, which sends no such pair: its ticks arrive while a scroll-wheel event is being
+/// handled. Every other tick is a move Otos made itself (a structural apply keeping its
+/// anchor, a focus scroll, a clamp after a layout), and holding on it parked a Move to
+/// Trash's result at the owner's library size for the whole quiet threshold
+/// (`docs/research/2026-11-17-acts-at-the-owners-library-size.md`).
+nonisolated enum MediaGridScrollInput {
+    static func isUserScroll(liveScrolling: Bool, handlingEvent: NSEvent.EventType?) -> Bool {
+        liveScrolling || handlingEvent == .scrollWheel
     }
 }
 

@@ -126,7 +126,12 @@ real backlog. Three instruments see those:
   same system Trash a user's Move to Trash uses, on a sandbox library
   (`script/sandbox-library.sh`, `script/scorecard.sh --seed <photos>`): a sparse APFS image
   mounted inside the sandbox home holding generated photos (words, skies, near-duplicates,
-  GPS, anniversaries) and two short videos, registered by the app itself through the
+  GPS, anniversaries) and two short videos, either camera-size photos in one folder or, for
+  a library of the owner's size (`--seed 160000 --seed-media small`), 64 × 64 JPEGs of a few
+  KB in a year / month / ten-day folder tree with the features a small share of it, so the
+  costs that grow with the library (the window's apply and grid edit, the projection's
+  re-read, the Store's write) are met at his size without his library taking an act;
+  registered by the app itself through the
   window's Add Library intent (`OTOS_SANDBOX_LIBRARY`, `SandboxLibrary`, ADR 0020). After
   every tour in it the account's Trash is tested by path for each generated file; one found
   there is removed and the run fails, and the run's end detaches the volume (never forced)

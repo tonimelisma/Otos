@@ -125,6 +125,20 @@ Not Rated 0 / 0 ms, Move to Trash 8 / 19 ms, Put Back 9 / 12 ms; five Trashes in
 The presented-frame number is reported apart and read `occluded` in every run because the
 display was asleep, so no presented-frame figure exists yet.
 
+**Acts at the owner's library size** (sandbox only; 160,002 generated files, `--seed 160000
+--seed-media small`, settled tours, the window occluded;
+`2026-11-17-acts-at-the-owners-library-size.md`):
+
+| Build | Dislike / Like / Not Rated | Move to Trash, five in a row | Put Back, five in a row |
+| --- | --- | --- | --- |
+| 8cdd35f6, two tours | 2–7 ms | 272–424 ms | 325–434 ms |
+| with the scroll hold for the user's scrolling only, four tours | 1–15 ms | 17–116 ms | 25–113 ms |
+
+Before the change every Move to Trash and Put Back waited out the grid's 250 ms scroll hold,
+begun by the grid's own anchor-keeping scroll. After it, 45 of 48 trash and Put Back acts
+were within 100 ms; the three over (101–116 ms) met a background reorder from enrichment's
+160,000-photo backlog and paid a whole-order comparison, which was measured, not changed.
+
 **A new library's first launch** (seeded 28 camera-size photos, tour peak): 864–930 MB before
 #899 and #903 → 435 MB (launch kind) / 458 MB (settled).
 
@@ -212,6 +226,7 @@ ordering path, and #836 built it with the SQL's own comparator (`CatalogOrderPat
 | --- | --- |
 | `script/scorecard.sh --tour` | one read-only tour of the installed app; add `--settled` for a settled-kind session |
 | `script/scorecard.sh --tour --dev --optimized --seed <photos>` | a tour of a generated library on its own volume, acts included |
+| the same with `--seed 160000 --seed-media small` | the same at the owner's library size: 64 × 64 JPEGs in a folder tree, about 630 MB, written in about 95 s |
 | `script/scorecard.sh --ablate <owners>` / `--ablation-matrix` | the same tour with owners left unstarted, or the whole matrix |
 | `script/scorecard.sh --compare <saved.json>` | before and after, like kind with like |
 | `script/survey.sh` | one session's machine picture: trace, memory by region, heap, disk, CPU |
