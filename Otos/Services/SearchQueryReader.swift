@@ -37,7 +37,16 @@ nonisolated enum SearchQueryStatus: Sendable, Equatable {
 ///   then the tower's load is started, and the loop goes back to its doorbell rather than
 ///   waiting for it. The load's end rings the loop, which then reads the query with the tower.
 ///   So no query's first answer waits on the load, however long Core ML takes, and a query
-///   typed while it runs is read for its words at once too.
+///   typed while it runs is read for its words at once too: its tower reading joins that one
+///   load (warm-up included), and never starts a second.
+/// - **The words and the tower race, once it is prepared.** A prepared tower can still answer
+///   slowly (1.1 s for a second prediction two idle minutes after its warm-up, on a Mac with
+///   91 MB free and 5.8 GB swapped), and nothing says beforehand whether it will. So both
+///   readings start; whichever lands first is published. The words answer is published only
+///   when no tower answer for the query has landed by the time it is ready — a fact the
+///   reader holds, never a timer — so a quick tower changes the grid once, and a slow one
+///   shows the words' matches (`refining`) until it lands. A words answer that matches
+///   nothing changes nothing on screen (`CatalogProjection` keeps what it showed).
 /// - **A first reading.** A query whose full reading waits on Translation or Apple Maps is
 ///   first read as typed (`firstReading`, about 40 ms: the multilingual text tower), and that
 ///   reading is reported (`refining`) before the full one is asked for, so the picture's first
@@ -227,7 +236,7 @@ actor SearchQueryReader {
 
     /// Reads the query wanted now, unless its answer is held; a failed answer is read again only
     /// when its retry is due. While the tower loads, only the words are read: the load's end
-    /// rings this again.
+    /// rings this again. Once it is prepared, the words and the tower race.
     private func readWanted() async {
         await startLoadIfAsked()
         guard !Task.isCancelled, let request = wanted else { return }
@@ -255,7 +264,21 @@ actor SearchQueryReader {
             return
         }
         retryDue = false
-        if answer?.request != request || answer?.stage == .words, let first {
+        // The words and the tower race: a prepared tower can still be slow now (its pages
+        // read in again after an idle under memory pressure), and nothing says beforehand
+        // whether it is. Both start; the words answer is published only if no tower answer
+        // has landed for the query when it is ready (`readWords`), so a fast tower changes
+        // the grid once.
+        let readsFirst = answer?.request != request || answer?.stage == .words
+        async let wordsRead: Void = readWords(request)
+        await readWithTower(request, readsFirst: readsFirst)
+        await wordsRead
+    }
+
+    /// The tower's readings of `request`: its first reading when the full one waits on
+    /// Translation or Maps, then the full one; each published as it lands.
+    private func readWithTower(_ request: SearchQueryRequest, readsFirst: Bool) async {
+        if readsFirst, let first {
             await readFirst(request, with: first)
             guard !Task.isCancelled, wanted == request else {
                 ring?.yield()
@@ -356,14 +379,26 @@ actor SearchQueryReader {
         ring?.yield()
     }
 
-    /// Reads `request` without the tower and reports it, unless an answer for it is held. One
-    /// that fails is logged and leaves the later readings to answer.
+    /// Reads `request` without the tower and reports it, unless an answer for it is held when
+    /// the reading is ready: a tower answer that landed first is the one the window shows
+    /// (`op=search.words phase=dropped`). One that fails is logged and leaves the later
+    /// readings to answer.
     private func readWords(_ request: SearchQueryRequest) async {
         guard let words, answer?.request != request else { return }
+        let start = ContinuousClock.now
         do {
-            guard let encoding = try await words(request), !Task.isCancelled, answer?.request != request else { return }
+            guard let encoding = try await words(request), !Task.isCancelled, wanted == request else { return }
+            guard answer?.request != request else {
+                OtosLog.catalog.noticeOperation("search.words", phase: "dropped", fields: [
+                    "reason": "towerFirst", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+                ])
+                return
+            }
             answer = (request, encoding, .words)
             wordsReadings += 1
+            OtosLog.catalog.noticeOperation("search.words", phase: "shown", fields: [
+                "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+            ])
             announce()
         } catch {
             let failure = error as NSError

@@ -486,6 +486,13 @@ actor SearchQueryEncoder {
         try await tower.prepare()
     }
 
+    /// The tower's predictions so far, its warm-up included: what a test counts.
+    var towerPredictions: Int {
+        get async {
+            await tower.predictions
+        }
+    }
+
     /// Whether the tower's tokenizer and model are loaded: what a test asks.
     var isLoaded: Bool {
         get async {
@@ -713,23 +720,36 @@ actor SearchTextTower {
     /// `text`'s embedding, loading the tokenizer and the model first when they are not loaded.
     func embedding(of text: String) throws -> [Float] {
         let (tokenizer, model) = try loaded()
-        let embedding = try model.embedding(of: tokenizer.tokenIDs(for: text))
+        let embedding = try predict(text, tokenizer: tokenizer, model: model)
         warmed = true
         return embedding
     }
 
-    /// Loads the tokenizer and the model and runs one prediction; nothing when prepared.
+    /// Predictions made since the tower was made, the warm-up included: what a test counts.
+    private(set) var predictions = 0
+
+    /// Loads the tokenizer and the model and runs one warm-up prediction, the slow first one,
+    /// so the first query pays neither; nothing when prepared. `op=search.encoder
+    /// phase=prepared` reports the load and the warm-up apart (`loadMs`, `warmUpMs`).
     func prepare() throws {
         guard !isPrepared else { return }
         let start = ContinuousClock.now
         let before = ProcessResourceSample.current().footprintBytes
         let (tokenizer, model) = try loaded()
-        _ = try model.embedding(of: tokenizer.tokenIDs(for: "a photo"))
+        let warmUpStart = ContinuousClock.now
+        _ = try predict("a photo", tokenizer: tokenizer, model: model)
         warmed = true
         OtosLog.catalog.noticeOperation("search.encoder", phase: "prepared", fields: [
             "footprintDeltaMB": "\((Int64(ProcessResourceSample.current().footprintBytes) - Int64(before)) / 1_048_576)",
+            "loadMs": "\(DiagnosticsTiming.milliseconds(start.duration(to: warmUpStart)))",
+            "warmUpMs": "\(DiagnosticsTiming.milliseconds(since: warmUpStart))",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])
+    }
+
+    private func predict(_ text: String, tokenizer: SearchTextTokenizer, model: SearchTextModel) throws -> [Float] {
+        predictions += 1
+        return try model.embedding(of: tokenizer.tokenIDs(for: text))
     }
 
     var isLoaded: Bool {

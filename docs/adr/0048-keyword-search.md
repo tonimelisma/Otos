@@ -103,8 +103,17 @@ The projection publishes which state the shown query is in
     waiting for it; the load's end rings the reader, which reads the query with the tower. So
     the first answer never waits on the load, which a fresh Core ML compile after an install
     stretched to 3 s (`docs/research/2026-11-16-first-search-while-the-encoder-loads.md`), and
-    a query typed while it runs is read for its words at once too. With the tower ready there
-    is no words reading: the picture's answer comes as quickly. The words reading matches
+    a query typed while it runs is read for its words at once too; its tower reading joins
+    that one load, warm-up included. "Prepared" means the tower has answered once: the load
+    makes one warm-up prediction (`op=search.encoder phase=prepared loadMs= warmUpMs=`).
+    With the tower prepared the two readings race: both start, and the words answer is
+    published only when no tower answer for the query has landed by the time it is ready, a
+    fact the reader holds, never a timer. A prepared tower is not always quick: on the
+    owner's Mac, with 91 MB free and 5.8 GB swapped, the first query two minutes after the
+    warm-up took 1.1 s in its embedding and the next 26 ms, so a rule that asked "is it
+    prepared?" to skip the words showed nothing for 1.5 s. A quick tower lands first and the
+    grid changes once (`op=search.words phase=dropped reason=towerFirst`); a slow one shows the
+    words' matches first (`phase=shown`), then its own. The words reading matches
     the words read in photos through the catalog's text index ("Text in the photo"), which no
     pass loads, so its answer is ready as soon as the catalog is open; when the index held
     them in memory, its first pass read them in for 4.5 s on the owner's library before the

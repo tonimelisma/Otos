@@ -273,17 +273,75 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
-    /// A query read when the tower is ready has no words reading: its picture answer is the
-    /// first thing published, so the grid does not change twice.
-    @Test func aQueryReadWithTheTowerReadyHasNoWordsReading() async throws {
+    /// "Prepared" means the tower has answered once: preparing loads it and makes exactly one
+    /// warm-up prediction, preparing again makes none, and a query's embedding is the next.
+    @Test func preparingTheTowerMakesExactlyOneWarmUpPrediction() async throws {
+        let encoder = SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self))
+        #expect(await encoder.towerPredictions == 0)
+        try await encoder.prepare()
+        #expect(await encoder.isPrepared)
+        #expect(await encoder.towerPredictions == 1)
+        try await encoder.prepare()
+        #expect(await encoder.towerPredictions == 1)
+        _ = try await encoder.englishEncoding(of: "a dog on a beach")
+        #expect(await encoder.towerPredictions == 2)
+    }
+
+    /// A prepared tower that answers before the words reading is ready is the one answer
+    /// published: the words reading that lands after it is dropped, so the grid changes once.
+    @Test func aTowerThatAnswersBeforeTheWordsIsPublishedOnce() async {
+        let words = HeldReading()
         let reader = SearchQueryReader(
-            words: { Self.words($0.text) }, prepare: {}, isPrepared: { true }
+            words: { request in
+                _ = try await words.read(request)
+                return Self.words(request.text)
+            },
+            prepare: {},
+            isPrepared: { true }
         ) { Self.encoding($0.text) }
+        let readings = await reader.readings()
         let lake = SearchQueryRequest(text: "lake")
         _ = await reader.status(for: lake)
-        try await waitUntil { await reader.status(for: lake) == .read(Self.encoding("lake")) }
-        #expect(await reader.wordsReadings == 0)
+        for await _ in readings where await reader.status(for: lake) == .read(Self.encoding("lake")) {
+            break
+        }
+        await words.release("lake")
+        // One loop reads one query at a time: the next query's reading starts only once the
+        // first race has ended, its words dropped.
+        let pond = SearchQueryRequest(text: "pond")
+        _ = await reader.status(for: pond)
+        for await _ in readings where await reader.status(for: pond) == .read(Self.encoding("pond")) {
+            break
+        }
+        #expect(await reader.wordsReadings == 0, "the words landed after the tower's answer")
+        #expect(await reader.announcements == 2, "one publication a query")
+        await words.release("pond")
+        await reader.shutdown()
+    }
+
+    /// A prepared tower whose embedding is held (pages read in again after an idle) does not
+    /// hold the first results: the words answer is published with its matches, still
+    /// searching, then the tower's full answer once.
+    @Test func aHeldTowerLetsTheWordsAnswerPublishFirst() async {
+        let tower = HeldReading()
+        let reader = SearchQueryReader(
+            words: { Self.words($0.text) },
+            prepare: {},
+            isPrepared: { true }
+        ) { try await tower.read($0) }
+        let readings = await reader.readings()
+        let dog = SearchQueryRequest(text: "dog")
+        #expect(await reader.status(for: dog) == .reading)
+        for await _ in readings where await reader.status(for: dog) == .refining(Self.words("dog")) {
+            break
+        }
         #expect(await reader.announcements == 1)
+        await tower.release("dog")
+        for await _ in readings where await reader.status(for: dog) == .read(Self.encoding("dog")) {
+            break
+        }
+        #expect(await reader.wordsReadings == 1)
+        #expect(await reader.announcements == 2)
         await reader.shutdown()
     }
 
