@@ -126,6 +126,12 @@ nonisolated struct MediaRelativePath: Hashable, Codable, RawRepresentable, Custo
         fingerprint = PathFingerprint.fnv1a64(PathFingerprint.offsetBasis, rawValue)
     }
 
+    /// A path whose fingerprint is already known: the identity table's own copy.
+    fileprivate init(rawValue: String, fingerprint: UInt64) {
+        self.rawValue = rawValue
+        self.fingerprint = fingerprint
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let rawValue = try container.decode(String.self)
@@ -199,20 +205,42 @@ nonisolated extension MediaRelativePath {
 /// Media identity is the natural filesystem identity inside Otos: which library
 /// root the file belongs to plus its path inside that root. Keeping this as a
 /// pair avoids ambiguous string concatenation and avoids generated IDs.
-nonisolated struct MediaAssetID: Hashable {
-    let libraryRootPath: LibraryRootPath
-    let relativePath: MediaRelativePath
-    /// Derived from both paths' FNV-1a fingerprints (`PathFingerprint.mediaAsset`). Cheap Hashable / ObjC
-    /// `hashValue` for diffable snapshots — never persisted or logged as identity.
-    let fingerprint: UInt64
+///
+/// The value is the pair's place in the process's identity table
+/// (`MediaAssetIdentityTable`), which holds each distinct pair's bytes once: equal pairs are
+/// one place, so an ID is 4 bytes, compares and hashes as an integer, and an order of
+/// 165,000 IDs holds no string. The place is never persisted, logged or sent anywhere:
+/// what names the asset is still its two paths, read back from the table.
+nonisolated struct MediaAssetID: Hashable, CustomReflectable {
+    /// The pair's place in `MediaAssetIdentityTable.shared`, the same for equal pairs in this
+    /// process and meaningless outside it.
+    private let place: UInt32
 
     init(libraryRootPath: LibraryRootPath, relativePath: MediaRelativePath) {
-        self.libraryRootPath = libraryRootPath
-        self.relativePath = relativePath
-        fingerprint = PathFingerprint.mediaAsset(
-            root: libraryRootPath.fingerprint,
-            relative: relativePath.fingerprint
-        )
+        place = MediaAssetIdentityTable.shared.place(of: libraryRootPath, relativePath)
+    }
+
+    var libraryRootPath: LibraryRootPath {
+        MediaAssetIdentityTable.shared.root(at: place)
+    }
+
+    var relativePath: MediaRelativePath {
+        MediaAssetIdentityTable.shared.relativePath(at: place)
+    }
+
+    /// Derived from both paths' FNV-1a fingerprints (`PathFingerprint.mediaAsset`), never
+    /// persisted or logged as identity.
+    var fingerprint: UInt64 {
+        MediaAssetIdentityTable.shared.fingerprint(at: place)
+    }
+
+    /// The two paths, as the stored pair printed them: a test's message and a diagnostic
+    /// name the asset, not its place.
+    var customMirror: Mirror {
+        Mirror(self, children: [
+            "libraryRootPath": libraryRootPath,
+            "relativePath": relativePath,
+        ], displayStyle: .struct)
     }
 
     /// The absolute filesystem URL of the original file this identity names. Built
@@ -225,15 +253,204 @@ nonisolated struct MediaAssetID: Hashable {
     }
 
     func hash(into hasher: inout Hasher) {
-        hasher.combine(fingerprint)
+        hasher.combine(place)
+    }
+}
+
+/// Media asset identity table guide
+///
+/// Every `MediaAssetID` the process makes is a place in this one table, which holds each
+/// distinct (library root, relative path) pair once: the root as one of a few hundred
+/// `LibraryRootPath`s, the relative path as its UTF-8 bytes in the table's own regions. The
+/// window's orders, collapses, stacks, People's and Duplicates' structures then hold 4 bytes
+/// per asset where they held a 56-byte pair of strings and fingerprints, and every read of an
+/// order no longer leaves its own copy of every path held by whoever keeps the order
+/// (`docs/research/2026-11-17-asset-identity-memory.md`).
+///
+/// - **Equality is the bytes.** A pair is found by its root and its relative path's UTF-8,
+///   byte for byte, as `MediaRelativePath` and `LibraryRootPath` compare (their fingerprints
+///   are FNV-1a over the bytes, so two spellings are two paths there too).
+/// - **Nothing in it dies.** A place, once made, names its pair for the rest of the process:
+///   an ID held anywhere stays valid, and a pair seen again (a re-read, a rename back) is the
+///   same place. It grows by one entry per distinct pair the process ever names — the
+///   catalog's rows, and the paths renames and imports add — about 110 bytes each.
+/// - **Not the malloc heap.** Entries and bytes live in mapped regions that are never freed,
+///   so what the table keeps is never scattered among the freed blocks of the reads that
+///   made its pairs: an intern table of `String`s kept every read's first string for each
+///   path and raised the footprint by about 90 MB that way
+///   (`docs/research/2026-11-16-shared-path-strings.md`). The index is rebuilt into a new
+///   mapping when it fills, and the old one unmapped.
+/// - **Concurrency.** The table is one `Mutex`: finding or adding a pair and reading a place's
+///   paths each take it once, for a lookup and a copy. Equality and hashing never take it.
+/// - **Never persisted.** A place is this process's alone; the catalog's key is the pair.
+final nonisolated class MediaAssetIdentityTable: Sendable {
+    static let shared = MediaAssetIdentityTable()
+
+    private struct Entry {
+        let bytes: UnsafePointer<UInt8>
+        let count: UInt32
+        let root: UInt32
+        let relativeFingerprint: UInt64
     }
 
-    static func == (lhs: MediaAssetID, rhs: MediaAssetID) -> Bool {
-        if lhs.fingerprint != rhs.fingerprint {
-            return false
+    private static let entriesPerChunkShift = 16
+    private static let entriesPerChunk = 1 << entriesPerChunkShift
+    private static let chunkLimit = 1 << 16
+    private static let byteRegionSize = 1 << 20
+
+    /// Everything the table holds, owned by its lock.
+    private struct Storage {
+        var count: UInt32 = 0
+        /// The entries' chunks, by place >> 16; the chunk table is mapped once at its full
+        /// size (only touched pages count) and a chunk once it is first needed.
+        let chunks: UnsafeMutablePointer<UnsafeMutablePointer<Entry>?>
+        var roots: [LibraryRootPath] = []
+        var rootIndex: [LibraryRootPath: UInt32] = [:]
+        /// Open addressing: each slot is a place + 1, 0 when empty; capacity a power of two,
+        /// kept at most half full.
+        var slots: UnsafeMutablePointer<UInt32>
+        var slotCapacity: Int
+        var bytesNext: UnsafeMutablePointer<UInt8>?
+        var bytesLeft = 0
+
+        init() {
+            chunks = MediaAssetIdentityTable.map(MediaAssetIdentityTable.chunkLimit, of: UnsafeMutablePointer<Entry>?.self)
+            slotCapacity = 1 << 12
+            slots = MediaAssetIdentityTable.map(slotCapacity, of: UInt32.self)
         }
-        return lhs.libraryRootPath == rhs.libraryRootPath
-            && lhs.relativePath == rhs.relativePath
+
+        func entry(at place: UInt32) -> Entry {
+            chunks[Int(place) >> MediaAssetIdentityTable.entriesPerChunkShift]!
+                .advanced(by: Int(place) & (MediaAssetIdentityTable.entriesPerChunk - 1)).pointee
+        }
+
+        func hash(of entry: Entry) -> UInt64 {
+            PathFingerprint.mediaAsset(root: roots[Int(entry.root)].fingerprint, relative: entry.relativeFingerprint)
+        }
+    }
+
+    private let storage = Mutex(Storage())
+
+    /// The place of the pair, made now if the process has not named it before.
+    func place(of root: LibraryRootPath, _ relativePath: MediaRelativePath) -> UInt32 {
+        let text = relativePath.rawValue
+        let relativeFingerprint = relativePath.fingerprint
+        let hash = PathFingerprint.mediaAsset(root: root.fingerprint, relative: relativeFingerprint)
+        return storage.withLock { storage in
+            // The bytes are read inside the lock, from the path's own string: nothing outside the
+            // lock's region reaches the storage.
+            var text = text
+            return text.withUTF8 { utf8 in
+                let rootIndex = storage.rootIndex[root] ?? Self.addRoot(root, to: &storage)
+                var slot = Int(truncatingIfNeeded: hash) & (storage.slotCapacity - 1)
+                while true {
+                    let stored = storage.slots[slot]
+                    if stored == 0 {
+                        break
+                    }
+                    let entry = storage.entry(at: stored - 1)
+                    if entry.root == rootIndex, entry.relativeFingerprint == relativeFingerprint,
+                       Int(entry.count) == utf8.count,
+                       utf8.isEmpty || memcmp(entry.bytes, utf8.baseAddress, utf8.count) == 0
+                    {
+                        return stored - 1
+                    }
+                    slot = (slot + 1) & (storage.slotCapacity - 1)
+                }
+                let place = storage.count
+                precondition(Int(place) < Self.chunkLimit * Self.entriesPerChunk, "op=assetIdentity.table phase=full")
+                let chunkIndex = Int(place) >> Self.entriesPerChunkShift
+                if storage.chunks[chunkIndex] == nil {
+                    storage.chunks[chunkIndex] = Self.map(Self.entriesPerChunk, of: Entry.self)
+                }
+                let bytes = Self.copy(utf8, into: &storage)
+                storage.chunks[chunkIndex]!.advanced(by: Int(place) & (Self.entriesPerChunk - 1)).initialize(to: Entry(
+                    bytes: bytes,
+                    count: UInt32(utf8.count),
+                    root: rootIndex,
+                    relativeFingerprint: relativeFingerprint
+                ))
+                storage.slots[slot] = place + 1
+                storage.count = place + 1
+                if Int(storage.count) * 2 > storage.slotCapacity {
+                    Self.grow(&storage)
+                }
+                return place
+            }
+        }
+    }
+
+    func root(at place: UInt32) -> LibraryRootPath {
+        storage.withLock { $0.roots[Int($0.entry(at: place).root)] }
+    }
+
+    func relativePath(at place: UInt32) -> MediaRelativePath {
+        storage.withLock { storage in
+            let entry = storage.entry(at: place)
+            let text = String(decoding: UnsafeBufferPointer(start: entry.bytes, count: Int(entry.count)), as: UTF8.self)
+            return MediaRelativePath(rawValue: text, fingerprint: entry.relativeFingerprint)
+        }
+    }
+
+    func fingerprint(at place: UInt32) -> UInt64 {
+        storage.withLock { $0.hash(of: $0.entry(at: place)) }
+    }
+
+    /// The pairs the process has named.
+    var count: Int {
+        storage.withLock { Int($0.count) }
+    }
+
+    private static func addRoot(_ root: LibraryRootPath, to storage: inout Storage) -> UInt32 {
+        let index = UInt32(storage.roots.count)
+        storage.roots.append(root)
+        storage.rootIndex[root] = index
+        return index
+    }
+
+    /// A stable copy of `utf8` in the table's byte regions.
+    private static func copy(_ utf8: UnsafeBufferPointer<UInt8>, into storage: inout Storage) -> UnsafePointer<UInt8> {
+        if storage.bytesNext == nil || storage.bytesLeft < utf8.count {
+            let size = max(byteRegionSize, utf8.count)
+            storage.bytesNext = map(size, of: UInt8.self)
+            storage.bytesLeft = size
+        }
+        let destination = storage.bytesNext!
+        if let source = utf8.baseAddress, !utf8.isEmpty {
+            destination.update(from: source, count: utf8.count)
+        }
+        storage.bytesNext = destination.advanced(by: utf8.count)
+        storage.bytesLeft -= utf8.count
+        return UnsafePointer(destination)
+    }
+
+    /// Doubles the index into a new mapping and unmaps the old one.
+    private static func grow(_ storage: inout Storage) {
+        let capacity = storage.slotCapacity * 2
+        let slots = map(capacity, of: UInt32.self)
+        for old in 0 ..< storage.slotCapacity {
+            let stored = storage.slots[old]
+            guard stored != 0 else { continue }
+            var slot = Int(truncatingIfNeeded: storage.hash(of: storage.entry(at: stored - 1))) & (capacity - 1)
+            while slots[slot] != 0 {
+                slot = (slot + 1) & (capacity - 1)
+            }
+            slots[slot] = stored
+        }
+        munmap(UnsafeMutableRawPointer(storage.slots), storage.slotCapacity * MemoryLayout<UInt32>.stride)
+        storage.slots = slots
+        storage.slotCapacity = capacity
+    }
+
+    /// A zeroed mapping for `count` elements; a mapping that fails is the process out of
+    /// address space, which nothing can recover from.
+    private static func map<Element>(_ count: Int, of _: Element.Type) -> UnsafeMutablePointer<Element> {
+        let bytes = count * MemoryLayout<Element>.stride
+        let region = mmap(nil, bytes, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0)
+        guard let region, region != MAP_FAILED else {
+            fatalError("op=assetIdentity.map phase=failed bytes=\(bytes) errno=\(errno)")
+        }
+        return region.bindMemory(to: Element.self, capacity: count)
     }
 }
 

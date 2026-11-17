@@ -186,6 +186,11 @@ nonisolated enum CatalogWindowPolicy {
         }
         let pairsBuckets = dayBuckets.count == orderedAssetIDs.count
         let pairsCoordinates = coordinates.count == orderedAssetIDs.count
+        guard let firstDropped = orderedAssetIDs.firstIndex(where: { !keeps($0) }) else {
+            // Every ID is kept: the order's own arrays, so the scoped order is the held order's
+            // copy, not a second one (ADR 0005, "One copy of an order").
+            return (orderedAssetIDs, pairsBuckets ? dayBuckets : [], pairsCoordinates ? coordinates : [])
+        }
         var filteredIDs: [MediaAssetID] = []
         var filteredBuckets: [Date?] = []
         var filteredCoordinates: [PlaceCoordinate] = []
@@ -196,8 +201,15 @@ nonisolated enum CatalogWindowPolicy {
         if pairsCoordinates {
             filteredCoordinates.reserveCapacity(orderedAssetIDs.count)
         }
-        for (index, id) in orderedAssetIDs.enumerated() where keeps(id) {
-            filteredIDs.append(id)
+        filteredIDs.append(contentsOf: orderedAssetIDs[..<firstDropped])
+        if pairsBuckets {
+            filteredBuckets.append(contentsOf: dayBuckets[..<firstDropped])
+        }
+        if pairsCoordinates {
+            filteredCoordinates.append(contentsOf: coordinates[..<firstDropped])
+        }
+        for index in firstDropped ..< orderedAssetIDs.count where keeps(orderedAssetIDs[index]) {
+            filteredIDs.append(orderedAssetIDs[index])
             if pairsBuckets {
                 filteredBuckets.append(dayBuckets[index])
             }

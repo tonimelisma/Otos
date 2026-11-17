@@ -7,19 +7,30 @@ import Testing
 /// an order"): on a catalog of the owner's shape with every background owner off, the
 /// projection's held orders, collapses, stacks and window are measured after All Media's first
 /// publication and again after 20 scope changes, each followed by a whole re-read of the shown
-/// order: the distinct path strings they reference, those strings' bytes per path, and the
-/// process footprint (`phys_footprint`, reported, not judged: it moves with the allocator).
-/// The held strings must not climb: an order read again that came back as held is held once.
+/// order: the distinct ID arrays they reference, the IDs those hold per distinct asset, their
+/// bytes per asset, and the process footprint (`phys_footprint`, reported, not judged: it
+/// moves with the allocator). The held IDs must not climb: an order read again that came back
+/// as held is held once, and an ID holds no string of its own (`MediaAssetIdentityTable`).
 /// At the owner's size (`OTOS_SCALE_TEST=1`, run alone) each checkpoint is written to
 /// `build/window-memory/run.txt`, and each step as it ends to `run.progress`.
 @Suite(.testScope, .serialized)
 struct WindowMemoryTests {
-    /// The path storages the held structures may reference per distinct path: one copy of the
-    /// order, and the stacks' own read of the members they hold (about 7 % of the paths on the
-    /// owner's shape). An order held twice is two.
-    static let storagesPerPathLimit = 1.15
+    /// The IDs the held arrays may hold per distinct asset they name: All Media's order, its
+    /// collapse (the order less the stacks' hidden files) and the stacks' own member arrays,
+    /// about 7 % of the files on the owner's shape. An order held twice is about three.
+    static let idsPerAssetLimit = 2.2
 
-    @Test func heldPathStringsDoNotClimbAcrossScopeChanges() async throws {
+    /// What the held arrays may hold per distinct asset, in bytes: their IDs at
+    /// `idsPerAssetLimit`, each a 4-byte place in the identity table. An ID that carried its
+    /// own path strings was 56 bytes.
+    static let bytesPerAssetLimit = 10
+
+    /// The test process's footprint after the 20 steps at the owner's size, run alone: 144 MB
+    /// measured with 4-byte IDs, 212–220 MB when each ID carried its path strings
+    /// (`docs/research/2026-11-17-asset-identity-memory.md`).
+    static let ownerSizeFootprintLimit: UInt64 = 180 * 1_048_576
+
+    @Test func heldIDsDoNotClimbAcrossScopeChanges() async throws {
         let ownerSize = StallReproductionTests.ownerSize
         let directory = try makeTestDirectory()
         let catalog = try OwnerShapedCatalog.make(in: directory, scale: ownerSize ? 1 : 0.02)
@@ -75,10 +86,14 @@ struct WindowMemoryTests {
             try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: url)
         }
         let report = lines.joined(separator: "\n")
-        // Every held structure together references about one string per path it holds, and
-        // no more after the 20 than after the first.
-        #expect(after.all.storages.count <= first.all.storages.count + first.all.storages.count / 20, "\(report)")
-        #expect(Double(after.all.storages.count) <= Double(after.distinctPaths) * Self.storagesPerPathLimit, "\(report)")
+        // Every held structure together holds about one copy of each order it names, no more
+        // after the 20 than after the first, in a few bytes per asset.
+        #expect(after.all.elements <= first.all.elements + first.all.elements / 20, "\(report)")
+        #expect(Double(after.all.elements) <= Double(after.distinctAssets) * Self.idsPerAssetLimit, "\(report)")
+        #expect(after.all.bytes <= after.distinctAssets * Self.bytesPerAssetLimit, "\(report)")
+        if ownerSize {
+            #expect(after.footprint <= Self.ownerSizeFootprintLimit, "\(report)")
+        }
     }
 
     /// The footprint and SQLite's own allocations now, for a progress line.
@@ -118,17 +133,20 @@ struct WindowMemoryTests {
 
     /// One checkpoint: each held structure's census, all of them together, and the footprint.
     private struct Census {
-        var structures: [(String, PathStorageCensus)] = []
-        var all = PathStorageCensus()
-        /// The distinct paths (by text) every structure together holds.
-        var distinctPaths = 0
+        var structures: [(String, IDStorageCensus)] = []
+        var all = IDStorageCensus()
+        /// The distinct assets every structure together names.
+        var distinctAssets = 0
         var footprint: UInt64 = 0
+        /// The process's identity table, reported: other suites in the process add to it too.
+        var identityTableEntries = 0
 
         func lines(_ checkpoint: String) -> [String] {
-            let separately = structures.reduce(0) { $0 + $1.1.storages.count }
+            let separately = structures.reduce(0) { $0 + $1.1.elements }
+            let perAsset = distinctAssets == 0 ? 0 : Double(all.bytes) / Double(distinctAssets)
             return structures.map { "\(checkpoint) structure=\($0.0) \($0.1.summary)" } + [
-                "\(checkpoint) structure=all \(all.summary) distinctPaths=\(distinctPaths) storagesCountedSeparately=\(separately) bytesPerPath=\(distinctPaths == 0 ? 0 : all.bytes / distinctPaths)",
-                "\(checkpoint) footprintMB=\(footprint / 1_048_576)",
+                "\(checkpoint) structure=all \(all.summary) distinctAssets=\(distinctAssets) elementsCountedSeparately=\(separately) bytesPerAsset=\(perAsset)",
+                "\(checkpoint) footprintMB=\(footprint / 1_048_576) identityTableEntries=\(identityTableEntries)",
             ]
         }
     }
@@ -140,8 +158,9 @@ struct WindowMemoryTests {
         var census = Census()
         // Read before the census builds its own sets.
         census.footprint = ProcessResourceSample.current().footprintBytes
-        func count(_ name: String, _ fill: (inout PathStorageCensus) -> Void) {
-            var structure = PathStorageCensus()
+        census.identityTableEntries = MediaAssetIdentityTable.shared.count
+        func count(_ name: String, _ fill: (inout IDStorageCensus) -> Void) {
+            var structure = IDStorageCensus()
             fill(&structure)
             census.structures.append((name, structure))
         }
@@ -156,7 +175,6 @@ struct WindowMemoryTests {
                     }
                     structure.add(collapse.ids)
                     structure.add(collapse.result.ids)
-                    structure.add(collapse.result.stackedPositions.keys)
                 }
             }
         }
@@ -172,63 +190,62 @@ struct WindowMemoryTests {
                 }
             }
         }
-        var texts = Set<String>()
+        var assets = Set<MediaAssetID>()
         for (_, structure) in census.structures {
             census.all.formUnion(structure)
-            texts.formUnion(structure.texts)
+            assets.formUnion(structure.ids)
         }
-        census.distinctPaths = texts.count
+        census.distinctAssets = assets.count
         return census
     }
 }
 
-/// The distinct heap storages a set of path strings references, by the address of each one's
-/// contiguous UTF-8. A path short enough to live inside its `String` has no storage and is
-/// counted apart (`inline`).
-struct PathStorageCensus {
-    /// The longest UTF-8 a 64-bit `String` holds inline.
-    static let inlineCapacity = 15
-
-    /// Each storage's address and its UTF-8 count.
+/// The distinct ID arrays a set of held structures references, by the address of each one's
+/// contiguous storage: an array shared by two structures is counted once.
+struct IDStorageCensus {
+    /// Each storage's address and its element count.
     private(set) var storages: [UInt: Int] = [:]
-    /// The texts of the paths with a storage.
-    private(set) var texts: Set<String> = []
+    /// The IDs the storages hold.
+    private(set) var ids: Set<MediaAssetID> = []
     private(set) var references = 0
-    private(set) var inline = 0
 
-    mutating func add(_ ids: some Sequence<MediaAssetID>) {
-        for id in ids {
-            add(id.relativePath.rawValue)
-        }
-    }
-
-    mutating func add(_ text: String) {
-        references += 1
-        let count = text.utf8.count
-        guard count > Self.inlineCapacity,
-              let address = text.utf8.withContiguousStorageIfAvailable({ UInt(bitPattern: $0.baseAddress) })
+    mutating func add(_ array: [MediaAssetID]) {
+        references += array.count
+        guard !array.isEmpty,
+              let address = array.withUnsafeBufferPointer({ $0.baseAddress.map { UInt(bitPattern: $0) } })
         else {
-            inline += 1
             return
         }
-        storages[address] = count
-        texts.insert(text)
+        if storages[address] == nil {
+            storages[address] = array.count
+            ids.formUnion(array)
+        }
     }
 
-    mutating func formUnion(_ other: PathStorageCensus) {
+    /// A set's own storage, counted as one more (a set exposes no storage address).
+    mutating func add(_ set: Set<MediaAssetID>) {
+        references += set.count
+        guard !set.isEmpty else { return }
+        storages[UInt.max - UInt(storages.count)] = set.count
+        ids.formUnion(set)
+    }
+
+    mutating func formUnion(_ other: IDStorageCensus) {
         storages.merge(other.storages) { first, _ in first }
-        texts.formUnion(other.texts)
+        ids.formUnion(other.ids)
         references += other.references
-        inline += other.inline
     }
 
-    /// What the storages occupy: a native string's 32-byte header, its UTF-8 and a NUL, as
-    /// malloc rounds it.
+    var elements: Int {
+        storages.values.reduce(0, +)
+    }
+
+    /// What the storages' elements occupy.
     var bytes: Int {
-        storages.values.reduce(0) { $0 + malloc_good_size(32 + $1 + 1) }
+        elements * MemoryLayout<MediaAssetID>.stride
     }
 
     var summary: String {
-        "references=\(references) storages=\(storages.count) storageKB=\(bytes / 1024) inline=\(inline)"
+        "references=\(references) storages=\(storages.count) elements=\(elements) kilobytes=\(bytes / 1024)"
     }
 }

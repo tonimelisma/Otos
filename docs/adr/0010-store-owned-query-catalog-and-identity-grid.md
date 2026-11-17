@@ -95,11 +95,11 @@ before relying on the coalesced publication loop so detail-only Store writes can
 be missed between startup and the first visible publication.
 
 The UI holds only ordered `MediaAssetID`s for the current scope and sort. The grid
-uses a diffable data source keyed by `MediaAssetID`. `MediaAssetID` (and its path
-components) hash through a derived process-independent FNV-1a fingerprint so
-23k-item snapshot builds and Set membership stay cheap; equality still falls back
-to full path-string comparison on fingerprint collision, and Codable/persistence
-remain the raw path strings only. The scalar generation is not
+uses a diffable data source keyed by `MediaAssetID`. `MediaAssetID` hashes and
+compares as its place in the process's identity table (ADR 0005), so snapshot builds and
+Set membership stay cheap; its path components hash through a derived FNV-1a fingerprint
+with full string comparison on collision, and Codable/persistence remain the raw path
+strings only. The scalar generation is not
 catalog truth; it is only an invalidation counter that lets Store detail-only
 changes reach the visible detail reader even when ordered IDs are unchanged. The
 AppKit grid controller owns viewport and reuse. Cells paint one asset and request

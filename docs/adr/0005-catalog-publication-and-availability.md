@@ -195,8 +195,22 @@ format, the key and what tests visibility (the date order index holds no format)
 each located row's coordinate by its key in the location index. On the owner's library a sync
 re-read All Media's options whole 92 times while 152 metadata changes arrived.
 
-**One copy of an order.** A read makes its own string for every row's path and its own
-arrays, so two reads of one order are two copies. When an order read again, whole or by key,
+**An ID is a place in the process's identity table.** `MediaAssetID` is 4 bytes: the place of
+its (library root, relative path) pair in `MediaAssetIdentityTable`, which holds each distinct
+pair's bytes once, in mapped regions outside the malloc heap, for the rest of the process.
+Equal pairs are one place, so IDs compare and hash as integers, and an order, a collapse, a
+position index or a stack's members hold no string. Before, an ID was 56 bytes carrying its own
+relative-path string, and every read made a new one per row: after a tour of the owner's shape
+the window, People and the stacks held 691,102 strings (86 MB) and 40 MB of ID arrays
+(`docs/research/2026-11-17-asset-identity-memory.md`). The place is never persisted or logged;
+the catalog's key and the overlay's identity stay the pair (ADR 0008). Rejected: the catalog's
+row id as the in-memory identity. `media_asset` has no `INTEGER PRIMARY KEY`, so `VACUUM`
+(the open's compaction) and a table rebuild (v71) renumber its rows, and a deleted last row's
+id is handed to the next insert; a held ID would then name another file. Every consumer of a
+path would also need a Store read to get it.
+
+**One copy of an order.** A read makes its own arrays, so two reads of one order are two
+copies. When an order read again, whole or by key,
 comes back equal to the order the slot holds, the projection keeps the held arrays — IDs,
 day buckets, coordinates and sort keys, each where it is equal
 (`CatalogOrderedAssets.holdingArrays(of:)`) — so the collapse it reuses, the published window

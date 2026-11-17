@@ -135,9 +135,11 @@ everything expensive happens on an actor off the main thread.
 ## Key subsystems
 
 - **Identity** is typed: `LibraryRootPath` + `MediaRelativePath` = `MediaAssetID`. No
-  invented durable IDs; the filesystem path is the identity (ADR 0003/0008). Each
-  identity value carries a derived FNV-1a `fingerprint` for cheap Hashable hashing
-  only — never persisted, never a second identity.
+  invented durable IDs; the filesystem path is the identity (ADR 0003/0008). The path types
+  carry a derived FNV-1a `fingerprint` for cheap hashing only. A `MediaAssetID` is the 4-byte
+  place of its pair in the process's `MediaAssetIdentityTable`, which holds each distinct
+  pair's bytes once outside the malloc heap: equal pairs are one place, and the place is never
+  persisted or logged (ADR 0005, "An ID is a place in the process's identity table").
 - **Query scope** is resolved once. `RootRegistry.scopePredicate` turns a
   `SidebarSelection` into one `CatalogScopePredicate` (root IDs plus an optional
   import-batch stamp), and every scoped read — ordered IDs, cataloged count, visible
