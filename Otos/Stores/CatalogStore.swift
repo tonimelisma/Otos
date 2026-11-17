@@ -53,7 +53,7 @@ nonisolated enum CatalogStoreChange: Equatable, Sendable {
     }
 }
 
-/// Which assets' rows one write changed or removed (plan 0116 bet 2b): what an owner that keeps
+/// Which assets' rows one write changed or removed (ADR 0005, "Keyed re-reads"): what an owner that keeps
 /// a memory per asset reconciles by key instead of reading the whole library again. A write
 /// names the rows it wrote; a fact derived from rows it did not write (a Live Photo's pair, a
 /// copy) is the owner's to resolve from them, except where the row it would resolve from is
@@ -89,7 +89,7 @@ nonisolated struct CatalogNamedRows: Equatable, Sendable {
     }
 }
 
-/// What a background owner of a derived product wakes on (plan 0116 stage 2): the kinds of
+/// What a background owner of a derived product wakes on (ADR 0005): the kinds of
 /// fact whose writes could change what its candidate statements read, derived from their
 /// SQL (`CatalogChangedFacts.read(by:)`), less the kinds its own writes name — no owner is rung
 /// by its own write — and with the facts its SQL does not read but its work depends on (which
@@ -209,7 +209,7 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
         (.searchContent, "searchContent"), (.faceTiles, "faceTiles"), (.peopleGallery, "peopleGallery"),
     ]
 
-    /// What each kind's writes change, as the database events they make (plan 0116 stage 2).
+    /// What each kind's writes change, as the database events they make (ADR 0005).
     /// A background owner's inputs are derived from it: the kinds whose events could change
     /// what its candidate statements read (`read(by:)`, over GRDB's `Statement.databaseRegion`),
     /// so no owner keeps a hand-written list of the facts its SQL reads, and an owner whose SQL
@@ -821,7 +821,7 @@ actor CatalogStore {
     private var migrationRun: MigrationRun?
     /// Who may enter the pool's readers for a background read (`CatalogReadAdmission`): at
     /// most `CatalogReadAdmission.backgroundReaders` at once, so a window read always finds
-    /// one of the pool's `CatalogStore.readerCount` readers free (plan 0116 bet 5, ADR 0002).
+    /// one of the pool's `CatalogStore.readerCount` readers free (ADR 0002).
     private nonisolated let readAdmission = CatalogReadAdmission()
     /// The background admission as it is now: which background reads hold a turn and which
     /// wait for one.
@@ -7125,7 +7125,7 @@ extension CatalogStore {
 
     /// Holds one of the pool's readers on its snapshot, in `lane`, until `hold` returns, as a
     /// long read does (a People snapshot, a duplicates build): what a test stands one in with,
-    /// to show what such a read holds up and what it does not (ARC-063, plan 0116 bet 5).
+    /// to show what such a read holds up and what it does not (ARC-063, ADR 0002).
     func holdRead(_ hold: @escaping @Sendable () -> Void, lane: CatalogReadLane) async throws {
         try await reader(for: lane).readFreeingConnection { db in
             _ = try Int.fetchOne(db, sql: "SELECT count(*) FROM library_root")

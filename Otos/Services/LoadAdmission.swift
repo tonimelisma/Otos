@@ -2,7 +2,7 @@ import Foundation
 import OSLog
 
 /// A bounded load a background owner runs that holds a lot of memory or reads a lot of the
-/// catalog at once (plan 0116 bet 6): what `LoadAdmission` runs one at a time.
+/// catalog at once (ADR 0055): what `LoadAdmission` runs one at a time.
 nonisolated enum BackgroundLoad: String, CaseIterable, Sendable {
     /// One People pass: the snapshot, the gallery, and assignment when its inputs moved
     /// (`PeopleAssignment`).
@@ -203,7 +203,7 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
 
 /// Load admission guide
 ///
-/// The one owner of when a heavy background load may run (plan 0116 bet 6): the search
+/// The one owner of when a heavy background load may run (ADR 0055): the search
 /// index's first load, a People pass, a duplicates build, an account's mirror pairing. Each
 /// holds hundreds of megabytes or reads much of the catalog, and on a 16 GB Mac with little
 /// free memory, two at once pushed the footprint to 3.8 GB and paid every read cold. They

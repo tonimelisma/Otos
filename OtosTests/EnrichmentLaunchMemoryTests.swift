@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// What enrichment costs the footprint when it starts, on a catalog of the owner's shape
-/// (plan 0116: peak footprint ≤ 700 MB). Measured by the kernel's own footprint
+/// (peak footprint ≤ 700 MB, `docs/scorecard-targets.json`). Measured by the kernel's own footprint
 /// (`ProcessResourceSample`).
 ///
 /// - **Claims.** Enrichment runs alone over the generated catalog for `passes` passes, where

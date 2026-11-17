@@ -240,7 +240,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
-    /// Plan 0116 bet 2b: a change that names its rows costs reads of those rows, never of the
+    /// ADR 0005, "Keyed re-reads": a change that names its rows costs reads of those rows, never of the
     /// library. Once the index has settled, a new thumbnail for one photo is embedded again
     /// through reads by key: no whole-library currency read, no backlog walk and no text
     /// currency read runs for it, however large the library, and the new embedding supersedes
@@ -1403,7 +1403,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
-    /// Plan 0116, the first search while the text tower loads: a query typed while the first
+    /// ADR 0048, the first search while the text tower loads: a query typed while the first
     /// grid's readying holds the tower's load at its suspension publishes the photo showing its
     /// words at once, still searching, and the picture's answer when the load is let go: the
     /// first publication never waits on the load, and the grid never empties between them.
@@ -1474,7 +1474,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
-    /// Plan 0116, the first search of a session: a query typed while the text tower loads and
+    /// ADR 0048, the first search of a session: a query typed while the text tower loads and
     /// the index's first pass is still at its vectors (here the build of the file, held as it
     /// names it) publishes the photo whose words match at once, still searching. The words are
     /// matched by the catalog's text index, which the index's pass never loads, so the words

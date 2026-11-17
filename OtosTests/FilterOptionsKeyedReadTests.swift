@@ -4,7 +4,7 @@ import GRDB
 import Testing
 
 /// N location writes on a catalog of the owner's shape cost options reads in proportion to N
-/// (plan 0116, ADR 0005 "Keyed re-reads"): each write's rows are read again by key and patched
+/// (ADR 0005, "Keyed re-reads"): each write's rows are read again by key and patched
 /// into All Media's tally, the row's scope is never read again, and the options shown after
 /// each write are exactly what a whole read gives. On the owner's library a sync re-read All
 /// Media's options whole 92 times while 152 metadata changes arrived. It runs on a fiftieth of

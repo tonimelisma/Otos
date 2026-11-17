@@ -4,7 +4,7 @@ import GRDB
 import Testing
 
 /// v71 rebuilds `media_asset` narrow and moves the render signature's gray out of
-/// it (plan 0116 bet 8). A rebuild drops the table every overlay table refers to, so this
+/// it (ADR 0002). A rebuild drops the table every overlay table refers to, so this
 /// asserts what must survive it: every asset row with every column but the three removed,
 /// every row of every table that refers to an asset, byte for byte, and the signatures that
 /// were current for their thumbnail. It runs on a catalog made at v70 with the rows a

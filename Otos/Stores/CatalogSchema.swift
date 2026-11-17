@@ -1864,7 +1864,7 @@ nonisolated enum CatalogSchema {
     }
 
     /// v65: every background owner's "what is owed" read is answered from an index that holds
-    /// what it compares, never from the wide rows (plan 0116 stage 1b;
+    /// what it compares, never from the wide rows (ADR 0009;
     /// `docs/research/2026-11-16-plan-0116-due-diligence.md`):
     /// - `search_embedding`, `search_text` and `photo_description` each carry their key with
     ///   the source a current row must name (`idx_*_source`), so "is this asset's derived row
@@ -2120,8 +2120,8 @@ nonisolated enum CatalogSchema {
         ]
     }
 
-    /// v67: the same-photo rule's candidate read touches no wide row (ADR 0042, plan 0116
-    /// bet 3). `idx_media_asset_same_photo_candidate` holds exactly the stills the rule
+    /// v67: the same-photo rule's candidate read touches no wide row (ADR 0042).
+    /// `idx_media_asset_same_photo_candidate` holds exactly the stills the rule
     /// compares (`SamePhotoSQL.candidatePredicate`) with every column the read names, and
     /// `idx_asset_metadata_same_photo` the record columns pairs are proposed from. On the
     /// owner's catalog the read walked every row of every root, 545 MB of asset rows and the
@@ -2248,7 +2248,7 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
-    /// v71: `media_asset` is rebuilt as a narrow table (plan 0116 bet 8,
+    /// v71: `media_asset` is rebuilt as a narrow table (ADR 0002,
     /// `docs/research/2026-11-16-media-asset-split-study.md`). On the owner's catalog the row was
     /// about 2 KB and the table 545 MB, so every read that tests rows outside a covering index
     /// (the choices filter, the filter options, People's photos, the stacks) read about 140k

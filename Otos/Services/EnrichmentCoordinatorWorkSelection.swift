@@ -259,7 +259,7 @@ extension EnrichmentCoordinator {
                 )
                 // With no slot for it, the row keeps its claim and waits held, handed off when
                 // a slot frees; given back, the next pass would claim it again to find the
-                // same full hand-off (plan 0116).
+                // same full hand-off (ADR 0009).
                 let held = schedule.demand(
                     work, ownsStoreClaim: true, outstandingLimit: handoffPolicy.globalOutstandingLimit
                 )

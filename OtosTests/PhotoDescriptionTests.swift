@@ -128,7 +128,7 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
-    /// One drain is one newest-first walk (plan 0116), and a fact change during it restarts the
+    /// One drain is one newest-first walk (ADR 0009), and a fact change during it restarts the
     /// walk from the newest still at its next page: a still made owed while an older one is
     /// described comes next, before the rest of the backlog.
     @Test func aChangeDuringTheWalkRestartsItFromTheNewestStill() async throws {
@@ -186,7 +186,7 @@ struct PhotoDescriptionTests {
 
     /// A change that names its rows owes those stills alone: the writer reads them by key and
     /// walks nothing, so a backlog's described stills are never visited again for each reading
-    /// written (plan 0116). A change that names none still walks.
+    /// written (ADR 0009). A change that names none still walks.
     @Test func aNamedChangeIsDescribedByKeyWithoutAWalk() async throws {
         // A file-backed catalog: its connections account each transaction to its operation.
         let root = try makeTestDirectory()

@@ -4,8 +4,8 @@ import Synchronization
 import Testing
 
 /// Background reads take at most `CatalogReadAdmission.backgroundReaders` of the pool's
-/// readers, in the order asked, so a window read always finds one free (plan 0116 bet 5,
-/// ADR 0002). The machine is tested as a sequence of events; the Store with every competing
+/// readers, in the order asked, so a window read always finds one free (ADR 0002).
+/// The machine is tested as a sequence of events; the Store with every competing
 /// event delivered while the background reads are held on their readers' queues.
 struct ReadAdmissionMachineTests {
     @Test func readsBeyondTheCapacityWaitInTheOrderAsked() {

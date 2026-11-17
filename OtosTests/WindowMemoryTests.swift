@@ -4,7 +4,7 @@ import Foundation
 import Synchronization
 import Testing
 
-/// The window's memory across scope changes and re-reads (plan 0116; ADR 0005, "One copy of
+/// The window's memory across scope changes and re-reads (ADR 0005, "One copy of
 /// an order"): on a catalog of the owner's shape with every background owner off, the
 /// projection's held orders, collapses, stacks and window are measured after All Media's first
 /// publication and again after 20 scope changes, each followed by a whole re-read of the shown

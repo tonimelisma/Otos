@@ -17,7 +17,7 @@ import OSLog
 /// through the Store, then compares pixels off this actor (`@concurrent`), so a `request()`
 /// never waits behind the comparison.
 ///
-/// A build costs what changed (plan 0116 bet 3). It reads the identical copies and the
+/// A build costs what changed (ADR 0042). It reads the identical copies and the
 /// compared stills' column facts, both from indexes that hold only those rows, and leaves a
 /// `SamePhotoMemory` for the next: what it paired from, which stills that joined, and the
 /// evidence (render and sub-seconds) it read with the stamp each was read at. The next build

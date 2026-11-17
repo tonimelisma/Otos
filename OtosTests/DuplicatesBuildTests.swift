@@ -3,7 +3,7 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-/// ADR 0042, plan 0116 bet 3: a duplicates build costs what changed. It reads the identical
+/// ADR 0042: a duplicates build costs what changed. It reads the identical
 /// copies and the compared stills' column facts from indexes that hold only those, pairs the
 /// stills again only when they, the identical copies or the reach moved, and reads a still's
 /// evidence only when its stamp moved. What it publishes is, after every change, what a build

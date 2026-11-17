@@ -507,7 +507,7 @@ final class CatalogWindowViewModel {
     /// Which background owners `start` starts: every one, except in a tour that leaves some
     /// out (`BackgroundOwners.configured`).
     @ObservationIgnored let backgroundOwners: BackgroundOwners
-    /// Runs the owners' heavy loads one at a time (plan 0116 bet 6). Closed until this
+    /// Runs the owners' heavy loads one at a time (ADR 0055). Closed until this
     /// window's first grid (`op=launch.firstGrid`), told what each query's view needs, and
     /// shut at teardown, all synchronously from here.
     @ObservationIgnored let loadAdmission: LoadAdmission
@@ -1355,7 +1355,7 @@ extension CatalogWindowViewModel {
 
     /// Starts the background owners, once, when the first grid has been applied: before it,
     /// every owner's first walk and load read the catalog beside the window's first read and
-    /// took launch from 2.2 s with none running to 2.8 s with all (plan 0116 bet 6). The
+    /// took launch from 2.2 s with none running to 2.8 s with all (ADR 0055). The
     /// heavy loads also wait for the admission this opens, so the duplicates builds and People
     /// passes the projection asked for meanwhile start now too, one at a time.
     ///

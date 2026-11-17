@@ -15,7 +15,7 @@ import Testing
 ///
 /// `windowReadsAreAnsweredWhileEveryBackgroundOwnerRuns` states the requirement in what the
 /// test owns on any machine: while every background owner runs, no window read waits for a
-/// connection longer than the allowance (the lanes, plan 0116 bet 5); each window read visits
+/// connection longer than the allowance (the lanes, ADR 0002); each window read visits
 /// rows in proportion to what it answers or to its scope; and each background read visits
 /// rows in proportion to what it owes, or, where what it owes is found only by walking the
 /// library, walks it at most once per drain. It once asked each window read to answer within
@@ -108,7 +108,7 @@ struct StallReproductionTests {
                 "\(read.name) visited \(read.visitedRows) rows to return \(read.returned)"
             )
         }
-        // Window reads have their own readers (plan 0116 bet 5): a background read takes one
+        // Window reads have their own readers (ADR 0002): a background read takes one
         // of `CatalogReadAdmission.backgroundReaders` turns before it enters the pool. No window
         // read waits for a connection longer than the allowance (the live store's stall
         // threshold), and none a second.
@@ -147,11 +147,11 @@ enum StallReproduction {
         "orderedAssetIDs", "filterOptions", "importBatches", "mediaTileDetails", "visibleAssetCount", "catalogedAssetCount",
     ]
     /// A read that finds what it owes only by walking the library, and the indexes its walk
-    /// joins: it visits each row at most once per index, once per drain (plan 0116 stage 1),
+    /// joins: it visits each row at most once per index, once per drain (ADR 0009),
     /// whatever it returns. Each is a walk by what decides what is owed:
     /// - the search embedding and text readings, and descriptions: a row is owed when its
     ///   product's stamp differs from the asset's own, a comparison of two tables no index holds
-    ///   (a trigger-kept ledger of owed rows was rejected, plan 0116 §5); a change that names
+    ///   (a trigger-kept ledger of owed rows was rejected, ADR 0009); a change that names
     ///   its rows is read by key (`CatalogChangedRows`);
     /// - a metadata record is stale by its family's revision, which a MediaMetadata release
     ///   moves, so no index can hold the stale ones without a migration per release (ADR 0039);
@@ -281,7 +281,7 @@ enum StallReproduction {
         try await replay("searchEmbeddingCandidates", limit: 16) { try await store.backgroundReads.searchEmbeddingCandidates(limit: 16).candidates.count }
         try await replay("searchTextCandidates", limit: 8) { try await store.backgroundReads.searchTextCandidates(limit: 8).candidates.count }
         try await replay("photoDescriptionCandidates", limit: 16) { try await store.backgroundReads.photoDescriptionCandidates(limit: 16).candidates.count }
-        // One drain is one walk (plan 0116): each owner's whole walk, page after page, as its
+        // One drain is one walk (ADR 0009): each owner's whole walk, page after page, as its
         // drain asks for it.
         try await replay("renderSignatureCandidates.drain", limit: 128) {
             try await walk { try await store.backgroundReads.renderSignatureCandidates(after: $0, limit: 128) }

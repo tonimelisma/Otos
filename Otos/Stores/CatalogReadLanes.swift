@@ -4,7 +4,7 @@ import Synchronization
 
 // Catalog read lanes guide
 //
-// Every Store read runs in one of two lanes (plan 0116 bet 5, ADR 0002). A window read is one
+// Every Store read runs in one of two lanes (ADR 0002). A window read is one
 // the window shows as its answer: a scope's order, the filter's options, the visible tiles,
 // the Info pane, a user's act. A background read is an owner's work: a candidate walk, a
 // People or duplicates build, the search index's load. Both use the one pool of

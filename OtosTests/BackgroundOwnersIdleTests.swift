@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// Once every background owner has done what it owes, a catalog with nothing new costs
-/// nothing (plan 0116): no store change, no write, and at most a few reads per owner. An
+/// nothing (ADR 0032 rule 8): no store change, no write, and at most a few reads per owner. An
 /// owner that writes while idle wakes every owner that reads what it wrote, and one that reads
 /// a whole set on a timer reads it cold on a Mac under memory pressure; the owner's
 /// four-minute tour found both kinds (`copies` announced 227 times by digests no other file

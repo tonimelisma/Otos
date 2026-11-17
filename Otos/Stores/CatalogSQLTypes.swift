@@ -309,7 +309,7 @@ nonisolated struct CatalogScopePredicate: Equatable {
     static let nothing = CatalogScopePredicate(rootIDs: [])
 }
 
-// MARK: - Candidate walks (plan 0116)
+// MARK: - Candidate walks (ADR 0009)
 
 /// The asset columns a derived product's "is it owed" test reads (v65): what makes a row
 /// visible and a Live Photo's movie (`LivePhotoSQL`), the stored thumbnail's and preview's
@@ -398,7 +398,7 @@ nonisolated struct CandidatePage<Candidate: Sendable, Cursor: Sendable>: Sendabl
 
 extension CandidatePage: Equatable where Candidate: Equatable, Cursor: Equatable {}
 
-/// How a background owner finds what it owes (plan 0116 stage 1): **one drain is one walk**.
+/// How a background owner finds what it owes (ADR 0009): **one drain is one walk**.
 /// The owner keeps the cursor of the walk it is in and asks for the page after it, so a drain
 /// visits each row once rather than starting from the first row for every page. A row that
 /// becomes owed behind the cursor is found by the next walk, which the change that made it

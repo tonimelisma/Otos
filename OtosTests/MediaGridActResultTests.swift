@@ -4,7 +4,7 @@ import Testing
 
 extension AppKitWindowTests {
     /// An act's result is timed from its intent to the grid that shows it
-    /// (`op=ui.actToResult`, plan 0116's "every act's result visible in 0.1 s"): a choice
+    /// (`op=ui.actToResult`, the 0.1 s target in `docs/scorecard-targets.json`): a choice
     /// ends when the grid draws the act's own tile, a Move to Trash when the grid
     /// commits an order without its items. A generated library of twelve photos, in a real
     /// window, so the grid's visible tiles are the ones AppKit lays out.

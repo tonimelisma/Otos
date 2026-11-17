@@ -212,7 +212,7 @@ actor EnrichmentCoordinator: QuiescentOwner {
     var claimReadFailed = false
     /// The revision and video-faces admission a background claim last found nothing at. While
     /// both stand, another claim would find nothing again, so none is asked: an empty claim is
-    /// still a write transaction, and an idle coordinator writes nothing (plan 0116).
+    /// still a write transaction, and an idle coordinator writes nothing (ADR 0009).
     var exhaustedClaims: (revision: UInt64, videoFaces: VideoFacesAdmission)?
     /// What the next pass asks the Store of the demanded rows (`reconcileDemandSources`): the
     /// rows a membership change named or a deadline brought back from parking, and, after a

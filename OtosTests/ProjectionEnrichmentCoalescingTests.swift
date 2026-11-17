@@ -220,8 +220,8 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
-    /// N capture-date writes cost reads in proportion to N, never N times the library (plan
-    /// 0116 bet 4): each re-reads only the rows its change named and merges them into the
+    /// N capture-date writes cost reads in proportion to N, never N times the library (ADR 0005,
+    /// "Keyed re-reads"): each re-reads only the rows its change named and merges them into the
     /// order held, which is then exactly what a full read gives. On the owner's catalog, while
     /// a sync brought metadata for 152 rows, the order was read whole 125 times.
     @Test func captureDateWritesReadOnlyTheirRowsAndKeepTheOrderAFullReadGives() async throws {
@@ -255,7 +255,7 @@ struct ProjectionEnrichmentCoalescingTests {
     }
 
     /// N location writes cost options reads in proportion to N, never N times the row's scope
-    /// (plan 0116, ADR 0005 "Keyed re-reads"): each re-reads only the rows its change named
+    /// (ADR 0005, "Keyed re-reads"): each re-reads only the rows its change named
     /// and patches the options' tally, and a renamed cell re-reads only the names; the options
     /// shown are then exactly what a full read gives. On the owner's library a sync re-read
     /// the options whole 92 times for location changes.

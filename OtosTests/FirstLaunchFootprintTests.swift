@@ -8,7 +8,7 @@ import Testing
 import UniformTypeIdentifiers
 import VideoToolbox
 
-/// Plan 0116, peak footprint ≤ 700 MB: what the heavy reads of a launch cost the process at
+/// Peak footprint ≤ 700 MB (`docs/scorecard-targets.json`): what the heavy reads of a launch cost the process at
 /// their peak, measured in this process (`FootprintPeak`). They run only when asked
 /// (`OTOS_SCALE_TEST=1 script/check.sh --only FirstLaunchFootprintTests`), alone, because a
 /// peak is the process's: anything else running beside them is in it. Each line goes to

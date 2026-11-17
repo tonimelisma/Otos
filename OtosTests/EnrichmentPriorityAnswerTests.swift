@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// ADR 0032 rule 8, plan 0116: the rows on screen are claimed ahead of background work, so
+/// ADR 0032 rule 8, ADR 0009: the rows on screen are claimed ahead of background work, so
 /// every enrichment pass asks the Store which of them owe work. A row the Store answered owes
 /// nothing is not asked of again until a write names it (`PriorityAnswers`): a pass woken by
 /// anything else reads none of them, where every pass read every row on screen (1,084 reads in

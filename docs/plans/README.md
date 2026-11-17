@@ -3,8 +3,7 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-Plan 0116 (the performance program) is complete. Its file is a pointer only, deleted with
-the source comments that still cite it. It opened
+Plan 0116 (the performance program) is complete and was removed at closure. It opened
 2026-11-16 with targets a read-only tour of the owner's library must meet, and every target
 was met on 2026-11-17 (revision 509cc0a0). Its targets, first baseline, final measurement,
 attribution by PR, rejections and what remains are

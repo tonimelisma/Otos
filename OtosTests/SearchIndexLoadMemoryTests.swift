@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Plan 0116 bet 2: what the search index's launch pass costs the process on a catalog of the
+/// ADR 0048: what the search index's launch pass costs the process on a catalog of the
 /// owner's shape (165,787 embeddings, 75,795 text readings of which 12,633 hold text), by the
 /// kernel's own footprint (`ProcessResourceSample`). The first index builds the vector file
 /// from the catalog; a second, as at the next launch, maps it and runs its first pass: the
@@ -17,7 +17,7 @@ import Testing
 /// `build/search-index-memory/owner.txt`. A measurement, not a benchmark.
 @Suite(.testScope, .serialized)
 struct SearchIndexLoadMemoryTests {
-    /// The search index's share of the 700 MB whole-app target (plan 0116).
+    /// The search index's share of the 700 MB whole-app target (`docs/scorecard-targets.json`).
     static let footprintBoundMB: UInt64 = 100
 
     /// Words a query asks the text index for: a word a sixth of the generated readings hold, a

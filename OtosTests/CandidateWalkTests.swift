@@ -3,7 +3,7 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-/// Plan 0116: a candidate walk visits every row exactly once, in its index's order, whatever
+/// ADR 0009: a candidate walk visits every row exactly once, in its index's order, whatever
 /// the page size: rows tied at one capture time, rows with none, and a cursor whose root has
 /// gone.
 struct CandidateWalkTests {

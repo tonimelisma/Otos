@@ -4,7 +4,7 @@ import Synchronization
 import Testing
 
 /// The heavy background loads run one at a time, none before the window's first grid, the one
-/// the view needs first, and none after teardown (plan 0116 bet 6). The machine is tested as a
+/// the view needs first, and none after teardown (ADR 0055). The machine is tested as a
 /// sequence of events; the shell and its owners with each competing event delivered while a
 /// load is held at its suspension.
 struct LoadAdmissionMachineTests {

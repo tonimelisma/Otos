@@ -1221,7 +1221,7 @@ extension CatalogStoreQueryPlanTests {
 }
 
 extension CatalogStoreQueryPlanTests {
-    /// Plan 0116: every background owner's walk is a range of one index it names, in that
+    /// ADR 0009: every background owner's walk is a range of one index it names, in that
     /// index's order, so a page never sorts and never restarts from the first row. A newest-first
     /// walk's three phases each read a range of the window's date order index; a key walk seeks
     /// one root and walks its paths; the metadata refresher's never reaches a root it does not
@@ -1366,7 +1366,7 @@ extension CatalogStoreQueryPlanTests {
         }
     }
 
-    /// ADR 0054, plan 0116: the mirror probe walks the library outer and seeks the account's
+    /// ADR 0054: the mirror probe walks the library outer and seeks the account's
     /// size index inner. The other order walked every account row (over 75 s on the owner's
     /// catalog against 0.16 s), so the order itself is asserted, not only the index.
     @Test func theMirrorProbeWalksTheLibraryAndSeeksTheAccount() async throws {

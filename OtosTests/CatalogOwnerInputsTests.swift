@@ -4,7 +4,7 @@ import GRDB
 import Synchronization
 import Testing
 
-/// Plan 0116 stage 2: a background owner of a derived product wakes on a change of a kind its
+/// ADR 0005: a background owner of a derived product wakes on a change of a kind its
 /// own SQL reads, never on its own writes, and never on a change of anything else. Its inputs
 /// are derived from its statements (`CatalogOwnerInputs`), so these tests hold the derivation
 /// to the schema and each owner to its wakes, with each change delivered in order through the

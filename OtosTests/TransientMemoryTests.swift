@@ -3,7 +3,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Freed memory the footprint keeps (plan 0116): on macOS 27 a freed malloc block of 4 KB or
+/// Freed memory the footprint keeps (ADR 0056): on macOS 27 a freed malloc block of 4 KB or
 /// more stays dirty in the process until malloc reuses it
 /// (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). On the owner's library
 /// the app held 460 MB of dirty malloc regions at idle against a live heap of 324 MB. These

@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-/// Background owner set guide (plan 0116 bet 6, ADR 0032 rule 8)
+/// Background owner set guide (ADR 0055, ADR 0032 rule 8)
 ///
 /// The background owners a window starts once its first grid has painted, and the one place
 /// that starts them: the window's start path and the idle guard both run `start()`, so the

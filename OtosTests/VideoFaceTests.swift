@@ -91,7 +91,7 @@ struct VideoFaceTests {
         #expect(read == .noneFound)
     }
 
-    /// Plan 0116, peak footprint: one full-resolution frame is held at a time. Each frame is
+    /// ADR 0047: one full-resolution frame is held at a time. Each frame is
     /// analysed before the next is decoded, and none is decoded twice; a frame in which faces
     /// were found is kept only at the preview's size, which is what is staged.
     @Test func oneFullResolutionFrameIsHeldAtATime() async throws {

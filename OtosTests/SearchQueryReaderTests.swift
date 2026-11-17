@@ -220,7 +220,7 @@ struct SearchQueryReaderTests {
         )
     }
 
-    /// Plan 0116: a query issued while the text tower's load is in flight — the first grid's
+    /// ADR 0048: a query issued while the text tower's load is in flight — the first grid's
     /// readying, held at its suspension — publishes its words reading without awaiting the
     /// load, and so does a query typed after it while the load still runs; neither is read
     /// with the tower until the load ends, and then the newest is, once. Publications counted,
@@ -370,7 +370,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
-    /// Plan 0116: the first query, typed while a People pass runs and a duplicates build and
+    /// ADR 0055: the first query, typed while a People pass runs and a duplicates build and
     /// the first grid's readying wait their turn, is served without waiting for them. Its
     /// encoder load is admitted for the user at once, beside the running pass, and nothing
     /// waiting starts while it runs; a second query loads nothing. Admissions are counted, not
