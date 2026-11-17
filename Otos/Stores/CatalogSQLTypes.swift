@@ -490,3 +490,158 @@ nonisolated enum CandidateWalk {
         }
     }
 }
+
+/// One media row's filesystem facts as a scan upsert compares them: the values it binds,
+/// with each date at the whole second the upsert's `WHERE` compares
+/// (`CatalogStore.upsertScannedFile`). Text compares byte for byte, as SQLite does: Swift's
+/// `String ==` would call a precomposed and a decomposed spelling equal.
+nonisolated struct ScanFactValues: Sendable {
+    let pathKey: String?
+    let nameSortKey: String?
+    let name: String?
+    let contentTypeIdentifier: String?
+    let kind: String?
+    let format: String?
+    let byteSize: Int64?
+    let createdSecond: Int64?
+    let modifiedSecond: Int64?
+    let fileIdentifier: Int64?
+
+    /// The facts a scan upsert of `file` would write.
+    init(_ file: ScannedMediaFile, capabilities: VolumeNamespaceCapabilities) {
+        pathKey = FilesystemNamespaceSemantics.nameKey(relativePath: file.relativePath, capabilities: capabilities).rawValue
+        nameSortKey = ScanFactValues.nameSortKey(of: file)
+        name = file.name
+        contentTypeIdentifier = file.contentTypeIdentifier
+        kind = file.kind?.rawValue
+        format = file.format?.rawValue
+        byteSize = file.byteSize
+        createdSecond = ScanFactValues.wholeSecond(file.createdAt?.timeIntervalSince1970)
+        modifiedSecond = ScanFactValues.wholeSecond(file.contentModifiedAt?.timeIntervalSince1970)
+        fileIdentifier = file.fileIdentifier.map { Int64(bitPattern: $0) }
+    }
+
+    init(
+        pathKey: String?,
+        nameSortKey: String?,
+        name: String?,
+        contentTypeIdentifier: String?,
+        kind: String?,
+        format: String?,
+        byteSize: Int64?,
+        createdSecond: Int64?,
+        modifiedSecond: Int64?,
+        fileIdentifier: Int64?
+    ) {
+        self.pathKey = pathKey
+        self.nameSortKey = nameSortKey
+        self.name = name
+        self.contentTypeIdentifier = contentTypeIdentifier
+        self.kind = kind
+        self.format = format
+        self.byteSize = byteSize
+        self.createdSecond = createdSecond
+        self.modifiedSecond = modifiedSecond
+        self.fileIdentifier = fileIdentifier
+    }
+
+    /// The name a row sorts by: its file name when the filesystem reported none.
+    static func nameSortKey(of file: ScannedMediaFile) -> String {
+        MediaSortKey.naturalKey(file.name ?? file.relativePath.fileName)
+    }
+
+    /// `CAST(seconds AS INTEGER)`: toward zero.
+    static func wholeSecond(_ seconds: Double?) -> Int64? {
+        seconds.flatMap { Int64(exactly: $0.rounded(.towardZero)) }
+    }
+
+    func matches(_ other: ScanFactValues) -> Bool {
+        Self.sameBytes(pathKey, other.pathKey)
+            && Self.sameBytes(nameSortKey, other.nameSortKey)
+            && Self.sameBytes(name, other.name)
+            && Self.sameBytes(contentTypeIdentifier, other.contentTypeIdentifier)
+            && Self.sameBytes(kind, other.kind)
+            && Self.sameBytes(format, other.format)
+            && byteSize == other.byteSize
+            && createdSecond == other.createdSecond
+            && modifiedSecond == other.modifiedSecond
+            && fileIdentifier == other.fileIdentifier
+    }
+
+    static func sameBytes(_ lhs: String?, _ rhs: String?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            true
+        case let (lhs?, rhs?):
+            lhs.utf8.elementsEqual(rhs.utf8)
+        default:
+            false
+        }
+    }
+}
+
+/// One companion row's facts as the companion upsert compares them (`upsertCompanion`).
+nonisolated struct ScanCompanionFactValues: Sendable {
+    let pathKey: String?
+    let kind: String?
+    let byteSize: Int64?
+    let modifiedSecond: Int64?
+
+    init(_ companion: ScannedCompanionFile, capabilities: VolumeNamespaceCapabilities) {
+        pathKey = FilesystemNamespaceSemantics.nameKey(relativePath: companion.relativePath, capabilities: capabilities).rawValue
+        kind = companion.kind.rawValue
+        byteSize = companion.byteSize
+        modifiedSecond = ScanFactValues.wholeSecond(companion.contentModifiedAt?.timeIntervalSince1970)
+    }
+
+    init(pathKey: String?, kind: String?, byteSize: Int64?, modifiedSecond: Int64?) {
+        self.pathKey = pathKey
+        self.kind = kind
+        self.byteSize = byteSize
+        self.modifiedSecond = modifiedSecond
+    }
+
+    func matches(_ other: ScanCompanionFactValues) -> Bool {
+        ScanFactValues.sameBytes(pathKey, other.pathKey)
+            && ScanFactValues.sameBytes(kind, other.kind)
+            && byteSize == other.byteSize
+            && modifiedSecond == other.modifiedSecond
+    }
+}
+
+/// What the catalog held for a scan pass's scope (a root, or one subtree of it) as the pass
+/// began, read once on a background lane before the walk (`fetchScanBaseline`). A file the
+/// walk observes with the facts its row already holds needs no write, so only the files
+/// that differ reach the writer, and a pass over an unchanged scope takes the writer for
+/// nothing. The baseline only says what may be skipped: deletion is still decided from the
+/// rows the pass's end reads, and the upsert's own `WHERE` still guards every write.
+nonisolated struct ScanBaseline: Sendable {
+    /// Settled rows only: a row awaiting presence or held in the Trash is absent, so
+    /// observing it always writes.
+    let media: [MediaRelativePath: ScanFactValues]
+    let companions: [MediaRelativePath: ScanCompanionFactValues]
+    let capabilities: VolumeNamespaceCapabilities
+
+    /// The files of `batch` whose row is missing or holds other facts.
+    func filesNeedingWrite(_ batch: [ScannedMediaFile]) -> [ScannedMediaFile] {
+        batch.filter { file in
+            guard let stored = media[file.relativePath] else {
+                return true
+            }
+            return !stored.matches(ScanFactValues(file, capabilities: capabilities))
+        }
+    }
+
+    /// Whether the companions a pass observed are exactly the ones the catalog holds for its
+    /// scope, with the same facts. Pairing reads the companions and the scope's media rows,
+    /// so a pass that changed no media row and observed matching companions would write
+    /// back what is there.
+    func companionsMatch(_ observed: [ScannedCompanionFile]) -> Bool {
+        guard observed.count == companions.count else {
+            return false
+        }
+        return observed.allSatisfy { companion in
+            companions[companion.relativePath]?.matches(ScanCompanionFactValues(companion, capabilities: capabilities)) == true
+        }
+    }
+}

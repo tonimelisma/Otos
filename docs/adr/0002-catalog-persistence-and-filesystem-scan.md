@@ -450,6 +450,18 @@ background publication cadence when pending view changes exist. Direct user
 sidebar, sort, and filter intents can still wake a publication immediately. The
 cadence is time-based, not a scanned-file threshold.
 
+A pass reads, before it walks, what the catalog holds for its scope (`ScanBaseline`:
+each settled row's filesystem facts as the upsert compares them, and each companion's)
+on a background read lane. Each batch is compared with it off the Store actor, and only
+files whose row is missing or differs reach the writer; companions are written only when
+the pass changed a media row or observed companions that differ. A pass over an
+unchanged scope therefore takes no write transaction. Measured on the owner's library
+before this rule: six batches of a 16,924-file root that changed nothing held the writer
+about 1.9 s in total, four statements per file inside each transaction. The baseline
+decides only what may be skipped: deletion is still decided from the rows read at the
+pass's end, a row awaiting presence or held in the Trash always writes when observed, and
+the upsert's own `WHERE` still guards every write that does run.
+
 If a SQLite flush takes longer than one tick, the next tick coalesces pending
 changes. The catalog owner must not run overlapping SQLite writes for one
 catalog.

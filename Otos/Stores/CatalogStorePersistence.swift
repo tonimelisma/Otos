@@ -1757,6 +1757,67 @@ extension CatalogStore {
         }
     }
 
+    /// What the catalog held for a pass's scope as the pass began (`ScanBaseline`): each
+    /// media row's filesystem facts as a scan upsert compares them, and each companion's.
+    /// A row that is awaiting presence or whose file is in the system Trash is left out, so
+    /// observing it always writes: seeing it reveals it, or puts it back.
+    static func fetchScanBaseline(
+        libraryRootID: Int64,
+        underSubtree: MediaRelativePath?,
+        capabilities: VolumeNamespaceCapabilities,
+        db: Database
+    ) throws -> ScanBaseline {
+        let scope = underSubtree.map { _ in " AND \(Self.subtreeSQL)" } ?? ""
+        let arguments: StatementArguments = [libraryRootID] + (underSubtree.map(Self.subtreeArguments) ?? [])
+        var media: [MediaRelativePath: ScanFactValues] = [:]
+        let rows = try Row.fetchCursor(
+            db,
+            sql: """
+            SELECT relative_path, relative_path_key, name_sort_key, name, content_type_identifier, kind, format,
+                byte_size, created_at_unix, content_modified_at_unix, file_identifier
+            FROM media_asset
+            WHERE library_root_id = ? AND awaiting_presence = 0 AND trash_path IS NULL\(scope)
+            """,
+            arguments: arguments
+        )
+        while let row = try rows.next() {
+            let created: Double? = row["created_at_unix"]
+            let modified: Double? = row["content_modified_at_unix"]
+            media[MediaRelativePath(rawValue: row["relative_path"])] = ScanFactValues(
+                pathKey: row["relative_path_key"],
+                nameSortKey: row["name_sort_key"],
+                name: row["name"],
+                contentTypeIdentifier: row["content_type_identifier"],
+                kind: row["kind"],
+                format: row["format"],
+                byteSize: row["byte_size"],
+                createdSecond: ScanFactValues.wholeSecond(created),
+                modifiedSecond: ScanFactValues.wholeSecond(modified),
+                fileIdentifier: row["file_identifier"]
+            )
+        }
+        var companions: [MediaRelativePath: ScanCompanionFactValues] = [:]
+        let companionRows = try Row.fetchCursor(
+            db,
+            sql: """
+            SELECT relative_path, relative_path_key, kind, byte_size, content_modified_at
+            FROM media_companion
+            WHERE library_root_id = ?\(scope)
+            """,
+            arguments: arguments
+        )
+        while let row = try companionRows.next() {
+            let modified: Double? = row["content_modified_at"]
+            companions[MediaRelativePath(rawValue: row["relative_path"])] = ScanCompanionFactValues(
+                pathKey: row["relative_path_key"],
+                kind: row["kind"],
+                byteSize: row["byte_size"],
+                modifiedSecond: ScanFactValues.wholeSecond(modified)
+            )
+        }
+        return ScanBaseline(media: media, companions: companions, capabilities: capabilities)
+    }
+
     static func fetchExistingCompanionPaths(
         libraryRootID: Int64,
         underSubtree: MediaRelativePath? = nil,
@@ -2381,7 +2442,7 @@ private nonisolated func scannedFileUpsertArguments(
         libraryRootID,
         file.relativePath.rawValue,
         pathKey,
-        MediaSortKey.naturalKey(file.name ?? file.relativePath.fileName),
+        ScanFactValues.nameSortKey(of: file),
         file.name,
         file.contentTypeIdentifier,
         file.kind?.rawValue,

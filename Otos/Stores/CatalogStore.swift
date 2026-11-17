@@ -7854,10 +7854,15 @@ private extension CatalogStore {
             )
             scanTasks[lane] = Task.detached(priority: .utility) { [scanner, scanCadence] in
                 do {
+                    let baseline = try await self.scanBaseline(scan: scan, underSubtree: nil)
+                    let tally = ScanWriteTally()
                     let observation = try await scanner.scanRoot(nextPath, scanCadence) { batch in
-                        try await self.recordScannedBatch(batch, scan: scan)
+                        // Compared here, off the Store actor: only what differs reaches it.
+                        try await self.recordScannedBatch(
+                            baseline.filesNeedingWrite(batch), observedCount: batch.count, tally: tally, scan: scan
+                        )
                     }
-                    await self.scanCompleted(scan: scan, observation: observation)
+                    await self.scanCompleted(scan: scan, observation: observation, baseline: baseline, tally: tally)
                 } catch is CancellationError {
                     await self.scanCancelled(scan: scan)
                 } catch {
@@ -7867,11 +7872,45 @@ private extension CatalogStore {
         }
     }
 
-    private func recordScannedBatch(_ batch: [ScannedMediaFile], scan: ActiveScan) async throws {
+    /// What the catalog holds for a pass's scope before it walks (`ScanBaseline`), read on a
+    /// background lane. A failed read fails the pass: it is never taken as an empty catalog.
+    private func scanBaseline(scan: ActiveScan, underSubtree: MediaRelativePath?) async throws -> ScanBaseline {
+        guard owns(scan) else {
+            throw CancellationError()
+        }
+        let capabilities = roots[scan.rootPath]?.capabilities ?? .unknown
+        let rootRowID = scan.rootRowID
+        return try await reader(for: backgroundReads.lane).readFreeingConnection { db in
+            try Self.fetchScanBaseline(
+                libraryRootID: rootRowID,
+                underSubtree: underSubtree,
+                capabilities: capabilities,
+                db: db
+            )
+        }
+    }
+
+    /// Writes the files of one scan batch whose rows differ from the pass's baseline
+    /// (`candidates`, of the `observedCount` files the walk observed). A batch with none
+    /// takes no write transaction: an unchanged walk holds the writer for nothing.
+    private func recordScannedBatch(
+        _ candidates: [ScannedMediaFile],
+        observedCount: Int,
+        tally: ScanWriteTally,
+        scan: ActiveScan
+    ) async throws {
         guard owns(scan) else {
             await recordIgnoredStaleCallback(scan, callback: "batch.beforeWrite")
             throw CancellationError()
         }
+        tally.observed(observedCount)
+        guard !candidates.isEmpty else {
+            OtosLog.catalog.notice(
+                "op=catalog.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(observedCount, privacy: .public) candidates=0 changed=false changedCount=0 inserted=0 updated=0 writeMs=0"
+            )
+            return
+        }
+        let batch = candidates
 
         let dbQueue = try database()
         let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
@@ -7910,13 +7949,15 @@ private extension CatalogStore {
             bumpNamespaceRevision(for: scan.rootPath)
             announced.forEach(notifyCatalogChanged)
         }
-        recordScanBatchWrite(scan: scan, scannedCount: batch.count, timed: timedRows)
+        tally.wrote(rows.inserted + rows.updated)
+        recordScanBatchWrite(scan: scan, scannedCount: observedCount, candidates: batch.count, timed: timedRows)
         await boundWAL(reason: "scanBatch")
     }
 
     private func recordScanBatchWrite(
         scan: ActiveScan,
         scannedCount: Int,
+        candidates: Int,
         timed timing: DatabaseTimedValue<CatalogRowChanges>
     ) {
         let rows = timing.value
@@ -7932,11 +7973,16 @@ private extension CatalogStore {
             """
         )
         OtosLog.catalog.notice(
-            "op=catalog.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(scannedCount, privacy: .public) changed=\(visibleChange, privacy: .public) changedCount=\(changedCount, privacy: .public) inserted=\(rows.inserted, privacy: .public) updated=\(rows.updated, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) resumeMs=\(timing.resumeMs, privacy: .public) priority=\(timing.priorityName, privacy: .public) writeMs=\(timing.totalMs, privacy: .public)"
+            "op=catalog.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(scannedCount, privacy: .public) candidates=\(candidates, privacy: .public) changed=\(visibleChange, privacy: .public) changedCount=\(changedCount, privacy: .public) inserted=\(rows.inserted, privacy: .public) updated=\(rows.updated, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) resumeMs=\(timing.resumeMs, privacy: .public) priority=\(timing.priorityName, privacy: .public) writeMs=\(timing.totalMs, privacy: .public)"
         )
     }
 
-    private func scanCompleted(scan: ActiveScan, observation: CatalogScanObservation) async {
+    private func scanCompleted(
+        scan: ActiveScan,
+        observation: CatalogScanObservation,
+        baseline: ScanBaseline,
+        tally: ScanWriteTally
+    ) async {
         guard owns(scan) else {
             await recordIgnoredStaleCallback(scan, callback: "completion")
             return
@@ -7948,11 +7994,19 @@ private extension CatalogStore {
                 observedPaths: observation.mediaPaths
             )
             let canReconcileCompanionDeletions = scanCanDelete(scan)
-            let companionChanged = try await applyAndReconcileCompanions(
-                scan: scan,
-                companions: observation.companions,
-                reconcileMissing: canReconcileCompanionDeletions && scanCanDelete(scan)
-            )
+            // Pairing reads the companions and the root's media rows: when the walk changed
+            // neither, it would write back what the catalog holds, so it takes no writer.
+            let companionChanged = if tally.rowsWritten == 0, deletedCount == 0,
+                                      baseline.companionsMatch(observation.companions)
+            {
+                false
+            } else {
+                try await applyAndReconcileCompanions(
+                    scan: scan,
+                    companions: observation.companions,
+                    reconcileMissing: canReconcileCompanionDeletions && scanCanDelete(scan)
+                )
+            }
             if var state = roots[scan.rootPath] {
                 state.skippedPackageCount = observation.skippedPackageCount
                 upsert(state)
@@ -7980,7 +8034,7 @@ private extension CatalogStore {
                 """
             )
             OtosLog.catalog.notice(
-                "op=catalog.scan phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) observed=\(observation.mediaPaths.count, privacy: .public) companionCount=\(observation.companions.count, privacy: .public) deleted=\(deletedCount, privacy: .public) skippedPackageCount=\(observation.skippedPackageCount, privacy: .public)"
+                "op=catalog.scan phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) observed=\(observation.mediaPaths.count, privacy: .public) rowsWritten=\(tally.rowsWritten, privacy: .public) companionCount=\(observation.companions.count, privacy: .public) companionsChanged=\(companionChanged, privacy: .public) deleted=\(deletedCount, privacy: .public) skippedPackageCount=\(observation.skippedPackageCount, privacy: .public)"
             )
             if !canReconcileCompanionDeletions || !scanCanDelete(scan) {
                 let dirty = filesystemDirty[scan.rootPath]
@@ -8804,8 +8858,12 @@ private extension CatalogStore {
                     guard await self.owns(scan) else {
                         return
                     }
+                    let baseline = try await self.scanBaseline(scan: scan, underSubtree: subtree)
+                    let tally = ScanWriteTally()
                     let observation = try await scanner.scanSubtree(root, subtree, scanCadence) { batch in
-                        try await self.recordScannedBatch(batch, scan: scan)
+                        try await self.recordScannedBatch(
+                            baseline.filesNeedingWrite(batch), observedCount: batch.count, tally: tally, scan: scan
+                        )
                     }
                     totalObserved += observation.mediaPaths.count
                     let deleted = try await self.reconcileMissingAssets(
@@ -8814,11 +8872,17 @@ private extension CatalogStore {
                         underSubtree: subtree
                     )
                     totalDeleted += deleted
-                    let companionChanged = try await self.applyAndReconcileCompanions(
-                        scan: scan,
-                        companions: observation.companions,
-                        underSubtree: subtree
-                    )
+                    let companionChanged = if tally.rowsWritten == 0, deleted == 0,
+                                              baseline.companionsMatch(observation.companions)
+                    {
+                        false
+                    } else {
+                        try await self.applyAndReconcileCompanions(
+                            scan: scan,
+                            companions: observation.companions,
+                            underSubtree: subtree
+                        )
+                    }
                     if deleted > 0 || companionChanged {
                         catalogChanged = true
                     }
@@ -10893,5 +10957,29 @@ extension CatalogStore {
             values.merge(read) { $1 }
         }
         return values
+    }
+}
+
+/// What one scan pass observed and how many rows it changed, counted by the Store as each
+/// batch is applied. One pass's own count, made by the one task that runs it and read when
+/// it ends: the rows a pass changed decide whether its companions need the writer, and the
+/// pass's finish line reports both.
+final nonisolated class ScanWriteTally: Sendable {
+    private let counts = Mutex((observed: 0, written: 0))
+
+    func observed(_ count: Int) {
+        counts.withLock { $0.observed += count }
+    }
+
+    func wrote(_ count: Int) {
+        counts.withLock { $0.written += count }
+    }
+
+    var filesObserved: Int {
+        counts.withLock { $0.observed }
+    }
+
+    var rowsWritten: Int {
+        counts.withLock { $0.written }
     }
 }
