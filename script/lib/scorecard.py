@@ -619,10 +619,12 @@ def machine(start, events):
     """The machine's memory-pressure level over the session, and the load of Otos's own
     process tree (the app and its text-reading helpers).
 
-    The level comes from `op=system.pressure` lines: `phase=launch` is the level when the app
-    started, read once from the kernel (`kern.memorystatus_vm_pressure_level`), and each
-    `phase=changed` is a report of the system's memory-pressure source
-    (`DispatchSource.makeMemoryPressureSource`). Seconds at each level run from the launch line
+    The level comes from `op=system.pressure` lines, each the kernel's level
+    (`kern.memorystatus_vm_pressure_level`) as the background room read it (ADR 0057):
+    `phase=launch` is its first read, and each `phase=changed` a later read whose level
+    differs from the last logged, at a decision, a report of the memory-pressure source or a
+    re-read while held, so a level the source never announced is counted.
+    `phase=sourceReport` lines (the source's own reports) are not levels. Seconds at each level run from the launch line
     to the session's last event. The judgement (`pressureCaused`) holds only when the machine
     was at `normal` at launch: then a level that left `normal` came while Otos was the new
     workload (`caused`), one that stayed is `normal`; a launch at another level is `notJudged`,

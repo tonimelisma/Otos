@@ -101,12 +101,14 @@ real backlog. Three instruments see those:
   beside its line, so the line keeps its waiter and wait; a named write that waited 100 ms
   for the writer logs `op=catalog.store.writeWait`; the order read splits its SQL
   (`orderSqlMs`) from making the window's IDs (`mapMs`).
-- **The machine's level and Otos's process tree.** `op=system.pressure phase=launch` gives
-  the machine's memory-pressure level when the app starts, read once from the kernel
-  (`kern.memorystatus_vm_pressure_level`, with `kern.memorystatus_level`, the share it
-  counts available, the thermal state and Low Power Mode), since the pressure source
-  reports changes only; `phase=changed` is each report of that source, with the kernel's
-  level read in the same step. Each text-reading helper logs what it cost so far after each
+- **The machine's level and Otos's process tree.** `op=system.pressure` is the kernel's
+  memory-pressure level as the background room reads it (ADR 0057):
+  `phase=launch` is its first read (`kern.memorystatus_vm_pressure_level` as `level` and
+  `systemLevel`, `kern.memorystatus_level`, the share it counts available, the thermal state
+  and Low Power Mode); `phase=changed` is each later read whose level differs from the last
+  logged, with its `cause` (`decision`, `sourceReport`, `recheck`) and the pressure
+  source's last report (`source`), so a level the source never announced is logged; and
+  `phase=sourceReport` is each report of the pressure source beside the kernel's level. Each text-reading helper logs what it cost so far after each
   page and as its session ends (`op=process.usage phase=helper role=textReader`: its CPU and
   peak footprint from `proc_pid_rusage`, cumulative, so a helper alive at the app's quit is
   still counted); the scorecard keeps each helper's last line. The scorecard prints the level over the

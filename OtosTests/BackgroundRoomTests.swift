@@ -101,11 +101,14 @@ struct BackgroundRoomTests {
         let admission = LoadAdmission(isOpen: true, room: room)
         let order = Mutex<[BackgroundLoad]>([])
         admission.want(.people)
-        let loads = [BackgroundLoad.duplicates, .searchIndex, .people].map { load in
-            Task {
-                try await admission.run(load) { order.withLock { $0.append(load) } }
-            }
+        // Each asks once the one before is waiting: their order is the test's, not the
+        // scheduler's.
+        var loads: [Task<Void, any Error>] = []
+        for (asked, load) in [BackgroundLoad.duplicates, .searchIndex].enumerated() {
+            loads.append(Task { try await admission.run(load) { order.withLock { $0.append(load) } } })
+            try await waitUntil { admission.snapshot.waiting.count == asked + 1 }
         }
+        loads.append(Task { try await admission.run(.people) { order.withLock { $0.append(.people) } } })
         try await waitUntil { order.withLock { $0 } == [.people] }
         try await waitUntil { admission.snapshot.waiting.count == 2 && admission.snapshot.running == nil }
         #expect(admission.snapshot.granted == [.people: 1])
@@ -158,6 +161,189 @@ struct BackgroundRoomTests {
         _ = await reader.read(page, directory: directory)
         #expect(starts.withLock { $0 } == 2)
         #expect(closed.withLock { $0 } == 1)
+    }
+
+    /// The kernel at `warning` and a source that never says so: every decision reads the
+    /// kernel, so no kind is let start — a serial waiter waits, and a heavy load asked for
+    /// after the kernel rose is not granted though the admission last heard `normal`.
+    @Test func aWarningTheSourceNeverAnnouncedHoldsEveryKind() async throws {
+        let kernel = ScriptedKernel(.normal)
+        let room = BackgroundRoom(memory: kernel.reader)
+        let admission = LoadAdmission(isOpen: true, room: room)
+        #expect(admission.snapshot.roomHeld == false)
+
+        kernel.set(.warning)
+        for work in BackgroundWork.allCases {
+            #expect(room.hold(for: work) == .memoryWarning)
+        }
+        let waiter = Task { try await room.untilOpen(for: .description) }
+        try await waitUntil { room.counts.waiting[.description] == 1 }
+        let ran = Mutex(false)
+        let load = Task { try await admission.run(.duplicates) { ran.withLock { $0 = true } } }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
+        #expect(admission.snapshot.granted.isEmpty)
+        #expect(ran.withLock { $0 } == false)
+        #expect(room.counts.admitted.isEmpty)
+
+        room.sourceReported(.normal)
+        kernel.set(.normal)
+        room.sourceReported(.normal)
+        try await waiter.value
+        try await load.value
+        #expect(ran.withLock { $0 })
+        #expect(room.counts.admitted[.description] == 1)
+    }
+
+    /// The kernel back at `normal` and a source that stays silent: the room, holding a level
+    /// above normal, looks again, and the held waiter starts in the step of that look.
+    @Test func aReturnToNormalTheSourceNeverAnnouncedResumesHeldOwnersAtTheNextLook() async throws {
+        let kernel = ScriptedKernel(.warning)
+        let room = BackgroundRoom(memory: kernel.reader)
+        let waiter = Task { try await room.untilOpen(for: .textReading) }
+        try await waitUntil { room.counts.waiting[.textReading] == 1 }
+        try await waitUntil { kernel.looking }
+
+        // A look while the kernel still says warning opens nothing, and the room looks again.
+        kernel.tick()
+        try await waitUntil { kernel.looks == 2 && kernel.looking }
+        #expect(room.counts.waiting[.textReading] == 1)
+
+        kernel.set(.normal)
+        kernel.tick()
+        try await waiter.value
+        #expect(room.counts.admitted[.textReading] == 1)
+        #expect(room.conditions.memory == .normal)
+
+        // A later rise found by a decision arms the look again.
+        kernel.set(.critical)
+        #expect(room.hold(for: .download) == .memoryCritical)
+        try await waitUntil { kernel.looks == 3 && kernel.looking }
+    }
+
+    /// The source and the kernel disagree: the kernel's current level wins, either way.
+    @Test func theKernelsLevelWinsOverTheSourcesReport() {
+        let kernel = ScriptedKernel(.normal)
+        let room = BackgroundRoom(memory: kernel.reader)
+        room.sourceReported(.warning)
+        #expect(room.conditions.memory == .normal)
+        #expect(room.hold(for: .download) == nil)
+
+        kernel.set(.warning)
+        room.sourceReported(.normal)
+        #expect(room.conditions.memory == .warning)
+        #expect(room.hold(for: .download) == .memoryWarning)
+    }
+
+    /// A source report is a doorbell: a held waiter starts in the report's step when the
+    /// kernel's level it reads is normal, with no look on time.
+    @Test func aSourceReportReadsTheKernelAndOpensTheRoomInItsStep() async throws {
+        let kernel = ScriptedKernel(.warning)
+        let room = BackgroundRoom(memory: kernel.reader)
+        let waiter = Task { try await room.untilOpen(for: .heavyLoad) }
+        try await waitUntil { room.counts.waiting[.heavyLoad] == 1 }
+        let reads = room.kernelReads
+        kernel.set(.normal)
+        room.sourceReported(.normal)
+        #expect(room.kernelReads == reads + 1)
+        try await waiter.value
+        #expect(room.counts.admitted[.heavyLoad] == 1)
+    }
+
+    /// A kernel that cannot be read changes nothing: the level held stays, and the source's
+    /// report is the level then.
+    @Test func anUnreadKernelLeavesTheLevelToTheSource() {
+        let kernel = ScriptedKernel(nil)
+        let room = BackgroundRoom(conditions: Self.warning, memory: kernel.reader)
+        #expect(room.hold(for: .download) == .memoryWarning)
+        room.sourceReported(.normal)
+        #expect(room.hold(for: .download) == nil)
+    }
+
+    /// The look is the room's: once the room is gone, the look waiting is cancelled.
+    @Test func aRoomThatEndsStopsLooking() async throws {
+        let kernel = ScriptedKernel(.warning)
+        var room: BackgroundRoom? = BackgroundRoom(memory: kernel.reader)
+        #expect(room?.hold(for: .download) == .memoryWarning)
+        try await waitUntil { kernel.looking }
+        room = nil
+        try await waitUntil { kernel.cancelledLooks == 1 }
+        #expect(room == nil)
+    }
+}
+
+/// A kernel whose level the test sets, and whose looks run only when the test ticks.
+final nonisolated class ScriptedKernel: Sendable {
+    private struct State {
+        var level: MachineConditions.Memory?
+        var look: CheckedContinuation<Void, any Error>?
+        var looks = 0
+        var cancelledLooks = 0
+    }
+
+    private let state: Mutex<State>
+
+    init(_ level: MachineConditions.Memory?) {
+        state = Mutex(State(level: level))
+    }
+
+    var reader: MemoryPressureReader {
+        MemoryPressureReader(
+            read: { [self] in state.withLock { $0.level }.map { KernelMemoryPressure(level: $0, availablePercent: 50) } },
+            nextLook: { [self] in try await nextLook() }
+        )
+    }
+
+    func set(_ level: MachineConditions.Memory?) {
+        state.withLock { $0.level = level }
+    }
+
+    /// A look is waiting for the test's tick.
+    var looking: Bool {
+        state.withLock { $0.look != nil }
+    }
+
+    /// How many looks began.
+    var looks: Int {
+        state.withLock { $0.looks }
+    }
+
+    var cancelledLooks: Int {
+        state.withLock { $0.cancelledLooks }
+    }
+
+    /// Ends the waiting look: the room reads the level again.
+    func tick() {
+        state.withLock { state in
+            defer { state.look = nil }
+            return state.look
+        }?.resume()
+    }
+
+    private func nextLook() async throws {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                let cancelled = state.withLock { state in
+                    if Task.isCancelled {
+                        state.cancelledLooks += 1
+                        return true
+                    }
+                    state.looks += 1
+                    state.look = continuation
+                    return false
+                }
+                if cancelled {
+                    continuation.resume(throwing: CancellationError())
+                }
+            }
+        } onCancel: {
+            state.withLock { state in
+                defer { state.look = nil }
+                if state.look != nil {
+                    state.cancelledLooks += 1
+                }
+                return state.look
+            }?.resume(throwing: CancellationError())
+        }
     }
 }
 

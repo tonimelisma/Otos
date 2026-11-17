@@ -34,14 +34,22 @@ instruments to ADR 0015.
 
 ## Decision
 
-1. **One owner, `BackgroundRoom`, holds the machine's conditions as the platform reports
-   them** (`MachineConditions`): the memory-pressure source
-   (`DispatchSource.makeMemoryPressureSource`, its level at launch read from
-   `kern.memorystatus_vm_pressure_level`), `ProcessInfo.thermalState`, Low Power Mode, and
+1. **One owner, `BackgroundRoom`, holds the machine's conditions** (`MachineConditions`):
+   the kernel's memory-pressure level, `ProcessInfo.thermalState`, Low Power Mode, and
    whether Otos is the active app (`NSApplication` becoming and resigning active: the
    person is in the app). `MachineConditionsMonitor`, owned by the app delegate, is the one
-   listener; each report changes its one field in the step it arrives. Nothing samples, and
-   no timer stands in for any of these facts (ADR 0033).
+   listener to the platform's reports; each changes its one field in the step it arrives.
+   **Memory pressure is read at the moment of each decision, not heard** (below, "The two
+   memory-pressure sources"): every `hold(for:)` and `untilOpen(for:)` reads
+   `kern.memorystatus_vm_pressure_level` first (`MemoryPressureReader`), so a unit never
+   starts on a level older than its own question; `LoadAdmission` asks at each request and
+   release. The memory-pressure source (`DispatchSource.makeMemoryPressureSource`) is only a
+   doorbell: on a report the room reads the kernel, and the kernel's level wins; when the
+   kernel cannot be read, the report is the level. While the level the room holds is above
+   normal, and only then, it reads the level again every 5 s (`time: poll`), since nothing
+   reports a return to normal to a process the kernel did not tell of the warning; the
+   interval is the kernel's own smoothing of a falling level (5 s), so a closer look finds no
+   newer fact. No timer stands in for any other fact (ADR 0033).
 2. **The room decides, per kind of work, whether a new unit may start**
    (`MachineConditions.hold(for:)`). Four kinds (`BackgroundWork`): a background download of a
    cloud original, a page of text reading, a description request, and a background heavy
@@ -75,6 +83,41 @@ instruments to ADR 0015.
      cap below four costs less per byte hashed.
    - Heavy loads: one at a time (ADR 0055).
 
+### The two memory-pressure sources
+
+Measured on the owner's machine (installed f398d5dc, pid 10258, ten minutes): the kernel's
+level, read from outside every 30 s, was 2 (warning) from 30 s after launch to the end,
+while the app's dispatch source reported warning at 119 s, normal at 271 s and warning at
+534 s. In a sandbox tour the kernel read 2 for about 34 s and the source reported nothing
+(`docs/research/2026-11-17-background-load-attribution.md`). The two are different facts:
+
+- **`kern.memorystatus_vm_pressure_level` is the kernel's current level.** XNU
+  (`bsd/kern/kern_memorystatus_notify.c`) defines it read-only (`CTLFLAG_RD`) and returns the
+  internal level converted to the memory-pressure notes: normal →
+  `NOTE_MEMORYSTATUS_PRESSURE_NORMAL` (1), warning and urgent → `_WARN` (2), critical →
+  `_CRITICAL` (4) (`bsd/sys/event_private.h`), the same bits the SDK's
+  `DISPATCH_MEMORYPRESSURE_NORMAL`/`_WARN`/`_CRITICAL` define. The handler's privilege check
+  (`PRIV_VM_PRESSURE`) is compiled only for targets other than macOS; on macOS 27 an
+  unsandboxed user process reads it with no entitlement (read here: `1`, beside
+  `kern.memorystatus_level` 76). It is one `sysctlbyname` call.
+- **The dispatch source is a notification the kernel sends to processes it chooses.** The
+  SDK documents it as monitoring "changes in memory pressure condition"
+  (`dispatch/source.h`). In XNU, `memorystatus_update_vm_pressure()` notifies one candidate
+  at a time (`vm_pressure_select_optimal_candidate_to_notify`): a process already notified
+  at that level is skipped, one under 10 MB is skipped, the foreground and background passes
+  are separate, the least important and then the largest goes first, with 0.25 s between
+  notifications and resting periods of 25 s; and a return to normal goes only to a process
+  that was notified of warning or critical. So a process may hear a warning late or never,
+  and a process never told of the warning never hears the return to normal.
+- **No other supported call gives the current level.** `os_proc_available_memory` is
+  unavailable on macOS (`os/proc.h`), `ProcessInfo` has no level, `host_statistics64` gives
+  page counts, not the level, and `memorystatus_get_level` is not in the SDK.
+
+So the level is read where it is needed, and the source rings the room to read it. Whether
+the source ever delivers a normal after a warning it never sent was not measured live
+(producing pressure on the owner's machine is not safe); the kernel's code says it does not,
+which is why the held level is read again on a poll rather than left to the next event.
+
 ### Decision for the owner to confirm
 
 **Descriptions run only while Otos is not the active app.** While the person uses the
@@ -86,6 +129,14 @@ rate-limit a request from an app in the background; a busy answer paces the writ
 minute (ADR 0053), as before. Recorded in ADR 0009 and ADR 0053 too.
 
 ## Rejected alternatives
+
+- **The dispatch source as the level.** It reports late or never (above); the room believed
+  `normal` while the kernel said warning for minutes.
+- **Leaving a silent return to normal to the next event.** The kernel sends no normal to a
+  process it never warned, so held work would wait for an unrelated change (a thermal or
+  active-app report) that may not come in the session.
+- **Polling the level all the time.** A rise is caught by the next decision's read, so a
+  poll while the level is normal finds nothing a decision would not.
 
 - **A throttle by time** (a pause between units, a nightly window): time stands in for facts
   the platform reports (ADR 0033), and it slows the backlog on an idle machine too.
@@ -104,9 +155,18 @@ minute (ADR 0053), as before. Recorded in ADR 0009 and ADR 0053 too.
 ## Consequences
 
 - Under `warning`, no new description, text page, background download or background heavy
-  load starts; the window's own work does. When the level returns to `normal`, each held
-  owner resumes in that step.
+  load starts; the window's own work does. The hold begins at the first decision after the
+  kernel reaches warning, whatever the source says. When the level returns to `normal`, each
+  held owner resumes in the step that reads it: a source report or the next look, at most
+  5 s after the kernel lowered it.
+- `op=system.pressure` is the kernel's level over the session: `phase=launch` is the
+  room's first read, each read whose level differs from the last logged is `phase=changed`
+  (`cause` = `decision`, `sourceReport` or `recheck`, with the source's last report), and each
+  source report is `phase=sourceReport` beside the kernel's level. The scorecard's MACHINE
+  section reads the launch and changed lines, so a level the source never announced is in it.
 - The backlog drains only while the machine has room: on a machine that sits at `warning`,
   it waits. Rows hashed and described per minute are lower on a loaded machine.
-- A test scripts the conditions (`BackgroundRoom(conditions:)`, `deliver(_:)`); owners made
-  alone get a roomy room, so every existing owner test runs as before.
+- A test scripts the conditions (`BackgroundRoom(conditions:)`, `deliver(_:)`), and the
+  kernel and its looks (`BackgroundRoom(memory:)` with a scripted `MemoryPressureReader`);
+  owners made alone get a roomy room with no reader, so every existing owner test runs as
+  before. Only the app's room reads the live kernel.

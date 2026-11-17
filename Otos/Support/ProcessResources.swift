@@ -245,25 +245,54 @@ nonisolated enum ResourceCheckpoint {
     }
 }
 
-/// What the kernel says of the machine's memory now: its pressure level and the share of
-/// memory it counts available. Two `sysctl` reads, no sampling.
-nonisolated enum SystemPressure {
-    /// `systemLevel` (the kernel's level: 1 normal, 2 warning, 4 critical) and
-    /// `availablePercent` (`kern.memorystatus_level`), each `unknown` when unread.
-    static func kernelFields() -> [String: String] {
+/// What the kernel says of the machine's memory now (ADR 0057): its pressure level and the
+/// share of memory it counts available.
+nonisolated struct KernelMemoryPressure: Equatable, Sendable {
+    var level: MachineConditions.Memory
+    /// `kern.memorystatus_level`, or nil when unread.
+    var availablePercent: Int32?
+
+    /// The kernel's own numbers, for a log line: `systemLevel` 1, 2 or 4, `availablePercent`.
+    var logFields: [String: String] {
         [
-            "systemLevel": sysctlInt("kern.memorystatus_vm_pressure_level").map { "\($0)" } ?? "unknown",
-            "availablePercent": sysctlInt("kern.memorystatus_level").map { "\($0)" } ?? "unknown",
+            "systemLevel": "\(SystemPressure.kernelValue(level))",
+            "availablePercent": availablePercent.map { "\($0)" } ?? "unknown",
         ]
     }
+}
 
-    /// The kernel's level by the source's names; `unknown` for a value it does not define.
-    static func kernelLevelName(_ value: String?) -> String {
-        switch value {
-        case "1": "normal"
-        case "2": "warning"
-        case "4": "critical"
-        default: "unknown"
+/// Reads the machine's memory state from the kernel: two `sysctl` reads at the moment a
+/// caller needs them, no sampling.
+nonisolated enum SystemPressure {
+    /// `kern.memorystatus_vm_pressure_level` and `kern.memorystatus_level` now, or nil when the
+    /// level cannot be read or is a value the kernel does not define.
+    ///
+    /// The level is the kernel's current one, the value it converts to the memory-pressure
+    /// notes (`NOTE_MEMORYSTATUS_PRESSURE_NORMAL` 1, `_WARN` 2, `_CRITICAL` 4, the same bits as
+    /// `DISPATCH_MEMORYPRESSURE_*`); readable by any process on macOS, with no privilege check
+    /// (ADR 0057).
+    static func kernelMemory() -> KernelMemoryPressure? {
+        guard let value = sysctlInt("kern.memorystatus_vm_pressure_level"), let level = memory(kernelValue: value) else {
+            return nil
+        }
+        return KernelMemoryPressure(level: level, availablePercent: sysctlInt("kern.memorystatus_level"))
+    }
+
+    /// The kernel's level by the source's names; nil for a value it does not define.
+    static func memory(kernelValue: Int32) -> MachineConditions.Memory? {
+        switch kernelValue {
+        case 1: .normal
+        case 2: .warning
+        case 4: .critical
+        default: nil
+        }
+    }
+
+    static func kernelValue(_ memory: MachineConditions.Memory) -> Int32 {
+        switch memory {
+        case .normal: 1
+        case .warning: 2
+        case .critical: 4
         }
     }
 

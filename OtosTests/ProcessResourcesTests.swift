@@ -41,15 +41,19 @@ struct ProcessResourcesTests {
     /// The pressure line's level comes from the kernel's own numbers, and a value the kernel
     /// does not define is unknown, never normal.
     @Test func theKernelPressureLevelIsNamedAsTheSourceNamesItAndReadsAsANumber() throws {
-        #expect(SystemPressure.kernelLevelName("1") == "normal")
-        #expect(SystemPressure.kernelLevelName("2") == "warning")
-        #expect(SystemPressure.kernelLevelName("4") == "critical")
-        #expect(SystemPressure.kernelLevelName("unknown") == "unknown")
-        #expect(SystemPressure.kernelLevelName(nil) == "unknown")
-        let fields = SystemPressure.kernelFields()
+        #expect(SystemPressure.memory(kernelValue: 1) == .normal)
+        #expect(SystemPressure.memory(kernelValue: 2) == .warning)
+        #expect(SystemPressure.memory(kernelValue: 4) == .critical)
+        #expect(SystemPressure.memory(kernelValue: 0) == nil)
+        #expect(SystemPressure.memory(kernelValue: 3) == nil)
+        for level in [MachineConditions.Memory.normal, .warning, .critical] {
+            #expect(SystemPressure.memory(kernelValue: SystemPressure.kernelValue(level)) == level)
+        }
+        let kernel = try #require(SystemPressure.kernelMemory())
+        let fields = kernel.logFields
         let level = try #require(fields["systemLevel"].flatMap(Int.init))
         #expect([1, 2, 4].contains(level))
-        let available = try #require(fields["availablePercent"].flatMap(Int.init))
+        let available = try #require(kernel.availablePercent)
         #expect((0 ... 100).contains(available))
     }
 

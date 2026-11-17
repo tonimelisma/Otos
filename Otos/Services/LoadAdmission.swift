@@ -247,6 +247,9 @@ final nonisolated class LoadAdmission: Sendable {
 
     /// Tells the machine each time the background room's hold on heavy loads changes.
     private let roomObservation: BackgroundRoomObservation?
+    /// Asked at each decision the machine makes for a background load: a request and a
+    /// release, so a grant never stands on a level the room has not read since.
+    private let room: BackgroundRoom?
 
     /// Closed until `open()`. An owner a test makes alone gets an open admission of its own.
     /// `footprint` is the process's own unless a test scripts it. With a `room`, a background
@@ -260,6 +263,7 @@ final nonisolated class LoadAdmission: Sendable {
         let admission = Admission(LoadAdmissionMachine(isOpen: isOpen))
         self.admission = admission
         self.footprint = footprint
+        self.room = room
         roomObservation = room.map { room in
             room.observe { [weak room] in
                 guard let room else { return }
@@ -297,6 +301,7 @@ final nonisolated class LoadAdmission: Sendable {
     /// waits, or the admission shuts down first. A load `for: .user` is admitted at once.
     func run<T>(_ load: BackgroundLoad, for waiter: LoadWaiter = .background, _ body: () async throws -> T) async throws -> T {
         let asked = ContinuousClock.now
+        askRoom()
         let request = try await admission.admit(LoadAdmissionMachine.Ask(load: load, waiter: waiter))
         OtosLog.performance.noticeOperation("load.admission", phase: "granted", fields: [
             "load": load.rawValue, "request": "\(request)", "waiter": waiter.rawValue,
@@ -307,6 +312,7 @@ final nonisolated class LoadAdmission: Sendable {
         ])
         let started = ContinuousClock.now
         defer {
+            askRoom()
             admission.release(request)
             // The footprint each load leaves: memory a load freed stays counted until reused,
             // and asking malloc to return it returns nothing on macOS 27
@@ -323,5 +329,12 @@ final nonisolated class LoadAdmission: Sendable {
             }
         }
         return try await body()
+    }
+
+    /// Tells the machine whether the room holds heavy loads as of now: the room reads the
+    /// kernel's level for the question (ADR 0057).
+    private func askRoom() {
+        guard let room else { return }
+        admission.perform(.room(held: room.hold(for: .heavyLoad) != nil))
     }
 }

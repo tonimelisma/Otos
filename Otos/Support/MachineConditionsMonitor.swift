@@ -8,12 +8,14 @@ import Foundation
 /// (`DispatchSource.makeMemoryPressureSource`), the thermal state's and Low Power Mode's
 /// notifications, and the app becoming and ceasing to be the active app. Each report updates
 /// one field of the room's conditions in the step it arrives, on the thread it arrives on;
-/// nothing samples, and nothing hops to another actor.
+/// nothing hops to another actor.
 ///
-/// A memory-pressure report is also the session's checkpoint (`event=memoryPressure`) and
-/// its `op=system.pressure phase=changed` line; `phase=launch` is the level at start, read
-/// from the kernel (`kern.memorystatus_vm_pressure_level`), since the source reports only
-/// changes. The room's conditions start from the same reading.
+/// The memory-pressure source is a doorbell, not the level: on each report the room reads
+/// the kernel's level (`kern.memorystatus_vm_pressure_level`) and holds that, since the
+/// kernel tells the source of a change late, or not at all (ADR 0057). The room's first read
+/// is the session's `op=system.pressure phase=launch` line, with the thermal state and Low
+/// Power Mode beside it. A source report is also the session's checkpoint
+/// (`event=memoryPressure`).
 @MainActor
 final class MachineConditionsMonitor {
     private let source: any DispatchSourceMemoryPressure
@@ -21,18 +23,15 @@ final class MachineConditionsMonitor {
 
     init(room: BackgroundRoom, storeUse: (@Sendable () -> CatalogStoreUse)?) {
         let info = ProcessInfo.processInfo
-        var launch = SystemPressure.kernelFields()
-        let level = SystemPressure.kernelLevelName(launch["systemLevel"])
-        launch["level"] = level
-        launch["thermal"] = SystemPressure.thermalName(info.thermalState)
-        launch["lowPower"] = "\(info.isLowPowerModeEnabled)"
-        OtosLog.performance.noticeOperation("system.pressure", phase: "launch", fields: launch)
         room.update { conditions in
-            conditions.memory = MachineConditions.Memory(rawValue: level) ?? .normal
             conditions.thermal = info.thermalState
             conditions.lowPower = info.isLowPowerModeEnabled
             conditions.userInApp = NSApp?.isActive ?? false
         }
+        room.readMemory(.launch, fields: [
+            "thermal": SystemPressure.thermalName(info.thermalState),
+            "lowPower": "\(info.isLowPowerModeEnabled)",
+        ])
 
         let source = DispatchSource.makeMemoryPressureSource(
             eventMask: [.normal, .warning, .critical],
@@ -44,11 +43,8 @@ final class MachineConditionsMonitor {
                 return
             }
             let memory = Self.memory(event)
-            var changed = SystemPressure.kernelFields()
-            changed["level"] = memory.rawValue
-            OtosLog.performance.noticeOperation("system.pressure", phase: "changed", fields: changed)
             ResourceCheckpoint.record("memoryPressure", fields: ["level": memory.rawValue], storeUse: storeUse)
-            room.update { $0.memory = memory }
+            room.sourceReported(memory)
         }
         source.activate()
 
