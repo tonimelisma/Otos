@@ -68,6 +68,19 @@ struct SmokeTourTests {
         #expect(SmokeTour.Configuration(environment: tour.merging([SmokeTour.startVariable: "later"]) { $1 })?.start == .launch)
     }
 
+    /// The wait for a sandbox library's first walk has a deadline of its own, longer than a
+    /// step's by default: a walk of the owner's library size takes minutes on a loaded Mac.
+    @Test func theLibrarysFirstWalkHasADeadlineOfItsOwn() throws {
+        let tour = [SmokeTour.tourVariable: "1"]
+        let defaults = try #require(SmokeTour.Configuration(environment: tour))
+        #expect(defaults.libraryDeadline == .seconds(900))
+        #expect(defaults.libraryDeadline > defaults.stepDeadline)
+        let asked = try #require(SmokeTour.Configuration(environment: tour.merging([
+            SmokeTour.libraryDeadlineVariable: "1200",
+        ]) { $1 }))
+        #expect(asked.libraryDeadline == .seconds(1200))
+    }
+
     /// An owner's status says what keeps it from quiescence: a pass running a long walk, a
     /// request owed, a change not acted on, work in flight; with none of them it is quiescent.
     @Test func anOwnersStatusNamesWhatKeepsItBusy() {

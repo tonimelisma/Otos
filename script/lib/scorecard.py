@@ -60,7 +60,7 @@ def parse_time(stamp):
 
 
 class Event:
-    __slots__ = ("time", "op", "phase", "fields", "pid", "image", "message")
+    __slots__ = ("time", "op", "phase", "fields", "pid", "image", "message", "level")
 
     def __init__(self, raw):
         self.message = raw.get("eventMessage", "")
@@ -70,6 +70,9 @@ class Event:
         self.time = parse_time(raw["timestamp"])
         self.pid = raw.get("processID")
         self.image = raw.get("processImagePath", "")
+        # `log show`'s `messageType` (Debug, Info, Default, Error, Fault); the live capture's
+        # entries carry none.
+        self.level = raw.get("messageType")
 
     def num(self, key, default=None):
         value = self.fields.get(key)
@@ -94,6 +97,84 @@ def read_events(lines):
         events.append(Event(raw))
     events.sort(key=lambda e: e.time)
     return events
+
+
+# `log stream --style compact`: `2026-11-17 07:43:18.178 Df Otos[86247:232e519] [sub:Cat] message`.
+COMPACT_LINE = re.compile(
+    r"^(?P<stamp>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+) +\S+ +(?P<process>.+?)\[(?P<pid>\d+):[0-9a-f]+\] +"
+    r"(?:\[[^\]]*\] +)?(?P<message>.*)$")
+# What `log stream` writes in place of messages it could not deliver in time. It names no
+# count: one notice is one or more lost messages.
+DROP_NOTICE = "=== Messages dropped during live streaming"
+
+
+def read_live_capture(lines, image):
+    """A tour's live capture (`log stream --style compact`, script/scorecard.sh) as events,
+    with the number of drop notices the stream wrote. Every line comes from the one executable
+    the script toured (`image`), which compact style does not print. A line that starts no
+    entry continues the message before it; the stream's own header lines are skipped. Times
+    are this Mac's local time, as `log stream` prints them."""
+    raws = []
+    drops = 0
+    for line in lines:
+        line = line.rstrip("\n")
+        if line.startswith(DROP_NOTICE):
+            drops += 1
+            continue
+        match = COMPACT_LINE.match(line)
+        if not match:
+            if raws and line and not line.startswith(("Filtering the log data", "Timestamp ")):
+                raws[-1]["eventMessage"] += "\n" + line
+            continue
+        stamp = dt.datetime.strptime(match.group("stamp"), "%Y-%m-%d %H:%M:%S.%f").astimezone()
+        raws.append({
+            "timestamp": stamp.strftime("%Y-%m-%d %H:%M:%S.%f%z"),
+            "eventMessage": match.group("message"),
+            "processID": int(match.group("pid")),
+            "processImagePath": image if match.group("process") == image.rsplit("/", 1)[-1] else "",
+        })
+    events = [Event(raw) for raw in raws]
+    events.sort(key=lambda e: e.time)
+    return events, drops
+
+
+def capture_summary(source, session_lines, drops=None, ended=None, log_show_lines=None, log_show_only=None):
+    """What the scorecard read and whether it is the whole session: `live` (the tour's live
+    capture, with its drop notices, whether its end marker came through, and how many of the
+    lines `log show` still held for the session the capture lacks) or `logShow` (the log's
+    store, which rotates a busy session's lines out: what it lost cannot be counted)."""
+    if source == "live":
+        complete = drops == 0 and ended == "seen" and not log_show_only
+    else:
+        complete = None
+    return {"source": source, "lines": session_lines, "dropped": drops, "end": ended,
+            "logShowLines": log_show_lines, "logShowOnly": log_show_only, "complete": complete}
+
+
+def live_comparable(events, pid):
+    """The session's `log show` lines a live capture at info level is to hold: its process's
+    lines from its `op=sessionStart` on, as the capture's session is read, and not debug, which
+    the capture does not ask for."""
+    found = [body for start, body in sessions(events) if start.pid == pid]
+    body = found[-1] if found else [e for e in events if e.pid == pid]
+    return [e for e in body if e.level != "Debug"]
+
+
+def missing_from_capture(log_show_events, captured):
+    """How many of `log show`'s lines the live capture lacks, matched by message (each
+    message counted as often as it was logged). Not by time: a stream stamps every entry a
+    constant few tens of milliseconds apart from the store's stamp for it. Each one is a line
+    the stream lost without a notice."""
+    held = {}
+    for event in captured:
+        held[event.message] = held.get(event.message, 0) + 1
+    missing = 0
+    for event in log_show_events:
+        if held.get(event.message, 0) > 0:
+            held[event.message] -= 1
+        else:
+            missing += 1
+    return missing
 
 
 def is_installed(event):
@@ -562,15 +643,17 @@ def peak_moment(start, samples, tour_steps):
     }
 
 
-def tour_silence_limit(idle_seconds, deadline_seconds, settle_seconds=0):
+def tour_silence_limit(idle_seconds, deadline_seconds, settle_seconds=0, library_seconds=0):
     """How long a tour may go without a line before the script calls it stuck, in seconds.
     The longest stretch a working tour is silent is its idle step (`idle_seconds`, one sleep),
     one step's wait for its fact (at most `deadline_seconds`, then the step reports
-    `outcome=deadline`) or a settled tour's wait for the launch to settle (at most
-    `settle_seconds`, then `op=tour phase=settled by=deadline`), whichever is longest; the
-    margin covers the untimed reads between a step's waits and the launch before the first
-    line. time: deadline"""
-    return max(int(idle_seconds), int(deadline_seconds), int(settle_seconds)) + TOUR_SILENCE_MARGIN_SECONDS
+    `outcome=deadline`), a settled tour's wait for the launch to settle (at most
+    `settle_seconds`, then `op=tour phase=settled by=deadline`) or the wait for a sandbox
+    library's first walk (at most `library_seconds`, then `sandboxLibraryNeverScanned`),
+    whichever is longest; the margin covers the untimed reads between a step's waits and the
+    launch before the first line. time: deadline"""
+    longest = max(int(idle_seconds), int(deadline_seconds), int(settle_seconds), int(library_seconds))
+    return longest + TOUR_SILENCE_MARGIN_SECONDS
 
 
 TOUR_SILENCE_MARGIN_SECONDS = 60
@@ -776,7 +859,8 @@ def tour(start, events):
         "finished": finish.fields.get("outcome") if finish else None,
         # A build older than the start field toured at launch: that was the only kind.
         "start": (config.fields.get("start") or "launch") if config else None,
-        "settled": {"by": settled_line.fields.get("by"), "waitMs": settled_line.num("waitMs")} if settled_line else None,
+        "settled": {"by": settled_line.fields.get("by"), "waitMs": settled_line.num("waitMs"),
+                    "backlog": settled_line.fields.get("backlog")} if settled_line else None,
         "steps": steps,
         "idle": idle,
     }
@@ -784,14 +868,16 @@ def tour(start, events):
 
 def session_kind(toured):
     """What kind of session a scorecard measured: `launch` (a tour from the first grid, under
-    the launch's own load), `settled` (a tour that first waited for the launch to settle; one
-    whose wait reached its deadline is `settled(deadline)`, still under load), or `untoured`."""
+    the launch's own load), `settled` (a tour that first waited for the launch to settle, or,
+    when it registered its library, for the work that library's first walk raised:
+    `libraryWork`; one whose wait reached its deadline is `settled(deadline)`, still under
+    load), or `untoured`."""
     if toured["start"] is None:
         return "untoured"
     if toured["start"] != "settled":
         return "launch"
     by = (toured["settled"] or {}).get("by")
-    return "settled" if by in ("launchWork", "ownersQuiescent") else "settled(deadline)"
+    return "settled" if by in ("launchWork", "ownersQuiescent", "libraryWork") else "settled(deadline)"
 
 
 def owners_at_end(events):
@@ -982,6 +1068,27 @@ def fmt(value):
     return "-" if value is None else str(value)
 
 
+def describe_capture(captured):
+    """The `capture=` line: which source the numbers come from, how many of the session's lines
+    each source held, and whether the session is whole. A partial capture is said to be one."""
+    line = (f"capture={captured['source']} lines={captured['lines']} dropped={fmt(captured['dropped'])}"
+            f" logShowLines={fmt(captured['logShowLines'])}")
+    if captured["source"] == "live":
+        line += (f" logShowOnly={fmt(captured.get('logShowOnly'))} end={captured['end']}"
+                 f" complete={'yes' if captured['complete'] else 'no'}")
+        if captured.get("logShowOnly"):
+            line += (f"\nPARTIAL: `log show` still held {captured['logShowOnly']} of the session's lines the live capture"
+                     " lacks: the stream lost them without a notice")
+        if captured["dropped"]:
+            line += (f"\nPARTIAL: the live capture dropped messages {captured['dropped']} times (each notice is one or"
+                     " more lines): a number below may miss a fact the session logged")
+        if captured["end"] != "seen":
+            line += "\nPARTIAL: the capture's end marker never came through: the session's last lines may be missing"
+    else:
+        line += " complete=unknown (the log's store rotates a busy session's lines out; what it lost cannot be counted)"
+    return line
+
+
 def print_report(report, rows, out):
     w = out.write
     w(f"op=scorecard session={report.get('session')} kind={report.get('sessionKind', 'launch')} "
@@ -989,6 +1096,9 @@ def print_report(report, rows, out):
       f"durationS={report.get('durationS')} clicks={len(report['clicks'])} stalls={report['stalls']['count']} "
       f"peakFootprintMB={fmt(report['memory']['peakFootprintMB'])} "
       f"fails={sum(1 for r in rows if r['verdict'] == 'FAIL')}\n")
+    captured = report.get("capture")
+    if captured:
+        w(describe_capture(captured) + "\n")
     for row in rows:
         if row["metric"] == "tour.deadline":
             w(f"FAIL: tour {row['label']} after {fmt(row['value'])} ms: the fact it waits on never came\n")
@@ -1029,7 +1139,9 @@ def print_report(report, rows, out):
                     w(f"    {describe_pending(owner)}\n")
     settled = report["tour"].get("settled")
     if settled:
-        w(f"  the tour waited {fmt(settled['waitMs'])} ms for the launch to settle: by {fmt(settled['by'])}\n")
+        what = "its library's work" if settled["by"] == "libraryWork" else "the launch"
+        w(f"  the tour waited {fmt(settled['waitMs'])} ms for {what} to settle: by {fmt(settled['by'])}"
+          + (f" backlog={settled['backlog']}" if settled.get("backlog") else "") + "\n")
     w("\nCLICK TO PAINT\n")
     for click in report["clicks"]:
         order = click.get("order", {})
@@ -1206,6 +1318,11 @@ def compare(report, rows, saved, out):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--input", help="ndjson from log show, or - for stdin")
+    parser.add_argument("--live", help="a tour's live capture (log stream --style compact); --input is then the "
+                                       "log show read of the same window, only counted")
+    parser.add_argument("--live-end", choices=("seen", "missing"), default="missing",
+                        help="whether the capture's end marker came through")
+    parser.add_argument("--image", help="the executable a --live capture was taken of")
     parser.add_argument("--targets")
     parser.add_argument("--dev", action="store_true", help="the dev build's newest session, not the installed app's")
     parser.add_argument("--session", help="a session id from op=sessionStart")
@@ -1224,8 +1341,8 @@ def main(argv=None):
     if args.trash_leftovers:
         return report_trash_leftovers(*args.trash_leftovers, sys.stdout)
     if args.tour_silence_limit:
-        if len(args.tour_silence_limit) not in (2, 3):
-            parser.error("--tour-silence-limit takes IDLE DEADLINE [SETTLE]")
+        if len(args.tour_silence_limit) not in (2, 3, 4):
+            parser.error("--tour-silence-limit takes IDLE DEADLINE [SETTLE [LIBRARY]]")
         print(tour_silence_limit(*args.tour_silence_limit))
         return 0
     if args.matrix:
@@ -1243,6 +1360,13 @@ def main(argv=None):
     else:
         with open(args.input, encoding="utf-8") as stream:
             events = read_events(stream)
+    log_show_events, drops = None, None
+    if args.live:
+        if not args.image:
+            parser.error("--live needs --image")
+        log_show_events = events
+        with open(args.live, encoding="utf-8", errors="replace") as stream:
+            events, drops = read_live_capture(stream, args.image)
     with open(args.targets, encoding="utf-8") as handle:
         targets = {t["metric"]: t for t in json.load(handle)["targets"]}
     if args.window:
@@ -1256,6 +1380,13 @@ def main(argv=None):
             print("op=scorecard phase=failed reason=noSession hint=no op=sessionStart for that build in the window")
             return 0
     report = analyse(body, session_start)
+    pid = session_start.pid if session_start else args.pid
+    if args.live:
+        comparable = live_comparable(log_show_events, pid)
+        report["capture"] = capture_summary("live", len(body), drops, args.live_end, len(comparable),
+                                            missing_from_capture(comparable, body))
+    else:
+        report["capture"] = capture_summary("logShow", len(body))
     rows = verdicts(report, targets)
     print_report(report, rows, sys.stdout)
     if args.compare:

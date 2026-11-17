@@ -685,10 +685,13 @@ final class CatalogWindowViewModel {
     /// its indicator shows. Cleared by every scope intent.
     private(set) var waitingFramePresentedScope: SidebarSelection?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
-    /// Starts the background owners (`BackgroundOwnerSet`) once the first grid has been
-    /// applied, then waits for each stage of the launch's settlement in turn (`op=owners.settled`,
-    /// `op=owners.quiescent`).
+    /// Waits, once the first grid has been applied, for each stage of the launch's settlement
+    /// in turn (`op=owners.settled`, `op=owners.quiescent`).
     @ObservationIgnored private var ownerStartTask: Task<Void, Never>?
+    /// The catalog's start, then `BackgroundOwnerSet.start()`: true once every owner has
+    /// started, false when the catalog failed to start and none did. A settled fact about the
+    /// owners means something only after it (`untilOwnersCaughtUp()`).
+    @ObservationIgnored private var ownersStart: Task<Bool, Never>?
     /// The owners started at the first grid, kept so a session's end can report each one's
     /// status (`ownerStatuses()`).
     @ObservationIgnored private var backgroundOwnerSet: BackgroundOwnerSet?
@@ -1134,6 +1137,7 @@ final class CatalogWindowViewModel {
         currentTargetChoiceTask?.cancel()
         viewportForwardingTask?.cancel()
         ownerStartTask?.cancel()
+        ownersStart?.cancel()
         // Before the owners are told to stop: a heavy load still waiting never starts.
         loadAdmission.shutdown()
         deviceStagingSweepTask?.cancel()
@@ -1401,27 +1405,37 @@ extension CatalogWindowViewModel {
         // The first grid follows the catalog's load, so each owner's first candidate query
         // sees persisted rows. `store.start()` is idempotent and shared: it returns the load
         // `startCatalog` ran, and a failed load starts no owner.
-        ownerStartTask = Task(priority: .backgroundOwner) { [weak self, owners, store = catalogStore] in
+        let ownersStart = Task(priority: .backgroundOwner) { [owners, store = catalogStore] () -> Bool in
             do {
                 try await store.start()
             } catch {
                 OtosLog.persistence.error("Background owners skipped because catalog start failed")
+                return false
+            }
+            await owners.start()
+            return true
+        }
+        self.ownersStart = ownersStart
+        ownerStartTask = Task(priority: .backgroundOwner) { [weak self, owners, store = catalogStore] in
+            do {
+                try await store.start()
+            } catch {
+                // Logged by `ownersStart`, which starts no owner.
                 return
             }
             // The duplicates stage is the groups owner's own covered request, so it is waited
             // on beside the owners' start, which runs the metadata pass to its end. The
             // settled stages list every owner, so they wait for every owner to have started.
-            async let started: Void = owners.start()
             do {
                 try await owners.untilLaunchDuplicatesBuilt()
                 let backlog = await BackgroundOwnerQuiescence.statuses(of: owners.quiescentOwners())
                     .filter(\.worksBacklog).map(\.owner)
                 BackgroundOwnerQuiescence.logSettled(.duplicatesBuilt, sinceLaunch: launchStartedAt, backlog: backlog)
                 self?.settleLaunch(.duplicatesBuilt)
-                await started
-                let settled = try await BackgroundOwnerQuiescence.untilSettled(owners.quiescentOwners(), store: store)
+                guard await ownersStart.value else { return }
+                let caughtUp = try await BackgroundOwnerQuiescence.untilCaughtUp(owners.quiescentOwners())
                 BackgroundOwnerQuiescence.logSettled(
-                    .launchWork, sinceLaunch: launchStartedAt, backlog: settled.filter(\.backlog).map(\.owner)
+                    .launchWork, sinceLaunch: launchStartedAt, backlog: caughtUp.filter(\.backlog).map(\.owner)
                 )
                 self?.settleLaunch(.launchWork)
                 let facts = try await BackgroundOwnerQuiescence.untilQuiescent(owners.quiescentOwners(), store: store)
@@ -1441,6 +1455,21 @@ extension CatalogWindowViewModel {
             showsLaunchDuplicates = true
         }
         launchSettlement = settlement
+    }
+
+    /// Returns once every background owner has caught up to this call
+    /// (`BackgroundOwnerQuiescence.untilCaughtUp`): taken up the Store changes yielded to it by
+    /// then and covered what it owed after them, or working only its backlog. What a session
+    /// waits on after it changed the catalog the launch's stages were judged on, as a tour that
+    /// adds its library does once that library's first walk is complete: the launch's stages,
+    /// judged on the catalog before it, say nothing of the work the walk's rows raised. Judged
+    /// from once every owner has started when the call comes first. Nil when no owner was
+    /// started, or the catalog failed to start.
+    func untilOwnersCaughtUp() async throws -> [OwnerCaughtUp]? {
+        guard let ownersStart, let owners = backgroundOwnerSet, await ownersStart.value else {
+            return nil
+        }
+        return try await BackgroundOwnerQuiescence.untilCaughtUp(owners.quiescentOwners())
     }
 
     /// Every started background owner's status now, quiescent or not; empty before the owners

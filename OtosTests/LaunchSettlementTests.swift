@@ -45,6 +45,34 @@ struct LaunchSettlementTests {
             activity.hasCovered(request)
         }
 
+        /// A pass begun on what is owed: returns the request it answers.
+        func beginPass() -> UInt64 {
+            let request = activity.beginPass()
+            settleQuiescence()
+            return request
+        }
+
+        /// Another request taken while a pass runs or before the next one begins.
+        func ask() {
+            activity.request()
+            settleQuiescence()
+        }
+
+        /// The Store yields a change to this owner's subscription.
+        func deliverChange() {
+            activity.deliveries.recordDelivery()
+            settleQuiescence()
+        }
+
+        /// The owner takes up a delivered change, which asks it for a pass, and begins it.
+        func actOnChangeAsking() -> UInt64 {
+            let request = activity.request()
+            activity.actedOnChange()
+            activity.beginPass()
+            settleQuiescence()
+            return request
+        }
+
         func set(holdsWork: Bool, worksBacklog: Bool) {
             self.holdsWork = holdsWork
             self.worksBacklog = worksBacklog
@@ -107,11 +135,9 @@ struct LaunchSettlementTests {
     }
 
     /// A settled launch waits for every owner's launch requests and passes over a backlog:
-    /// with enrichment working its backlog the round settles once the launch owner's pass is
-    /// covered, reports which owner was still on its backlog, and is no quiescence.
+    /// with enrichment working its backlog the round is caught up once the launch owner's pass
+    /// is covered, reports which owner was on its backlog, and is no quiescence.
     @Test func aSettledLaunchSettlesWhileABacklogPassRuns() async throws {
-        let store = makeTestStore(location: .inMemory)
-        try await store.start(scansSavedLibraries: false)
         let launch = ScriptedOwner("people")
         let enrichment = ScriptedOwner("enrichment")
         let request = await launch.beginRequestedPass()
@@ -119,23 +145,68 @@ struct LaunchSettlementTests {
         await enrichment.endPass(covering: enrichment.beginRequestedPass())
         await enrichment.set(holdsWork: true, worksBacklog: false)
 
-        let settled = Mutex<[OwnerQuiescence]?>(nil)
+        let caughtUp = Mutex<[OwnerCaughtUp]?>(nil)
         let round = Task {
-            let facts = try await BackgroundOwnerQuiescence.untilSettled([launch, enrichment], store: store)
-            settled.withLock { $0 = facts }
+            let facts = try await BackgroundOwnerQuiescence.untilCaughtUp([launch, enrichment])
+            caughtUp.withLock { $0 = facts }
         }
-        // Enrichment holding a visible row's claim is the window's work: still not settled.
+        // Enrichment holding a visible row's claim is the window's work: not caught up.
         #expect(await enrichment.settledFact == nil)
         await enrichment.set(holdsWork: true, worksBacklog: true)
         #expect(await enrichment.settledFact?.backlog == true)
-        #expect(settled.withLock { $0 } == nil, "the launch owner's pass is not covered yet")
+        #expect(caughtUp.withLock { $0 } == nil, "the launch owner's pass is not covered yet")
         await launch.endPass(covering: request)
         try await round.value
 
-        let facts = try #require(settled.withLock { $0 })
+        let facts = try #require(caughtUp.withLock { $0 })
         #expect(facts.map(\.owner) == ["people", "enrichment"])
         #expect(facts.filter(\.backlog).map(\.owner) == ["enrichment"])
         #expect(await enrichment.quiescence == nil, "a backlog still owed is no quiescence")
+    }
+
+    /// The settlement a 160,000-photo library never reached: enrichment's backlog writes rows
+    /// all the time, and every write asks the owners that read them (render signatures here)
+    /// for another pass, so that owner is never quiescent and never all settled at one instant
+    /// with the others. Caught up is monotone: once the pass answering what it owed at the
+    /// moment succeeds, later requests from the backlog do not put it off.
+    @Test func anOwnerTheBacklogAsksAgainAndAgainStillCatchesUp() async throws {
+        let renderSignatures = ScriptedOwner("renderSignatures")
+        let owed = await renderSignatures.beginRequestedPass()
+        let mark = await renderSignatures.owedMark
+        // Enrichment writes a batch while the pass runs: the owner is asked again.
+        await renderSignatures.ask()
+        #expect(await renderSignatures.covers(mark) == false, "the pass answering the mark runs")
+        await renderSignatures.endPass(covering: owed)
+        // And again, before the next pass begins.
+        await renderSignatures.ask()
+        #expect(await renderSignatures.covers(mark))
+        #expect(await renderSignatures.quiescence == nil, "still owed: the backlog's later asks")
+        #expect(await renderSignatures.settledFact == nil, "not on a backlog of its own either")
+        // The round, from a moment after all that, is caught up by the next pass.
+        let round = Task { try await BackgroundOwnerQuiescence.untilCaughtUp([renderSignatures]) }
+        let next = await renderSignatures.beginPass()
+        await renderSignatures.endPass(covering: next)
+        #expect(try await round.value == [OwnerCaughtUp(owner: "renderSignatures", backlog: false)])
+    }
+
+    /// The moment includes the Store changes already yielded to an owner: a change delivered
+    /// before the round, which the owner takes up only after it, is acted on first, and the
+    /// request it raised is covered before the owner counts as caught up.
+    @Test func aChangeDeliveredBeforeTheMomentIsTakenUpAndItsRequestCovered() async throws {
+        let people = ScriptedOwner("people")
+        // The walk's last batch: the Store yielded it, the owner has not taken it up.
+        await people.deliverChange()
+        let caughtUp = Mutex(false)
+        let round = Task {
+            _ = try await BackgroundOwnerQuiescence.untilCaughtUp([people])
+            caughtUp.withLock { $0 = true }
+        }
+        #expect(await people.quiescence == nil, "a change delivered and not acted on")
+        let raised = await people.actOnChangeAsking()
+        #expect(!caughtUp.withLock { $0 }, "the request the change raised is not covered yet")
+        await people.endPass(covering: raised)
+        try await round.value
+        #expect(caughtUp.withLock { $0 })
     }
 
     /// A request covered is monotone: requests made after it never put it off, and a pass

@@ -145,10 +145,16 @@ extension PreferencesDomain {
         static let deadlineVariable = "OTOS_TOUR_STEP_DEADLINE_SECONDS"
         /// `launch` (default): the first step as soon as the first grid is in, under the
         /// launch's own load. `settled`: once the launch's background work has settled
-        /// (`CatalogWindowViewModel.launchSettlement`), as a person's session meets it.
+        /// (`CatalogWindowViewModel.launchSettlement`), as a person's session meets it; for a
+        /// tour that registers its library, once the work that library's first walk raised has
+        /// (`CatalogWindowViewModel.untilOwnersCaughtUp`).
         static let startVariable = "OTOS_TOUR_START"
         /// The longest a settled tour waits for the settlement before it starts anyway.
         static let settleDeadlineVariable = "OTOS_TOUR_SETTLE_DEADLINE_SECONDS"
+        /// The longest a tour waits for the sandbox library it registers to finish its first
+        /// walk before it fails (`sandboxLibraryNeverScanned`): a walk of the owner's library
+        /// size takes minutes, more than a step's deadline, on a loaded Mac.
+        static let libraryDeadlineVariable = "OTOS_TOUR_LIBRARY_DEADLINE_SECONDS"
         /// Fixed queries: a common word with many matches, a rarer one with few.
         static let manyResultsQuery = "sky"
         static let fewResultsQuery = "lighthouse"
@@ -173,6 +179,7 @@ extension PreferencesDomain {
             /// When the first step runs (`SmokeTour.startVariable`).
             let start: Start
             let settleDeadline: Duration
+            let libraryDeadline: Duration
 
             enum Start: String, Sendable {
                 case launch
@@ -192,6 +199,7 @@ extension PreferencesDomain {
                 stepDeadline = .seconds(Int(environment[SmokeTour.deadlineVariable] ?? "") ?? 120)
                 start = Start(rawValue: environment[SmokeTour.startVariable] ?? "launch") ?? .launch
                 settleDeadline = .seconds(Int(environment[SmokeTour.settleDeadlineVariable] ?? "") ?? 900)
+                libraryDeadline = .seconds(Int(environment[SmokeTour.libraryDeadlineVariable] ?? "") ?? 900)
             }
         }
 
@@ -497,9 +505,11 @@ extension PreferencesDomain {
                 return
             }
             // A sandbox library this launch registers (`SandboxLibrary`) is toured once its
-            // first scan has delivered, so the plan sees it.
-            if let library = SandboxLibrary.requestedPath(environment: environment) {
-                guard await until({ SandboxLibrary.isScanned(library, in: $0.state) }) else {
+            // first scan has delivered, so the plan sees it: up to the library deadline, since a
+            // walk of the owner's library size outlasts a step's.
+            let library = SandboxLibrary.requestedPath(environment: environment)
+            if let library {
+                guard await until(deadline: configuration.libraryDeadline, { SandboxLibrary.isScanned(library, in: $0.state) }) else {
                     OtosLog.performance.errorOperation("tour", phase: "failed", fields: [
                         "reason": "sandboxLibraryNeverScanned", "rootPath": library.rawValue,
                     ])
@@ -509,7 +519,11 @@ extension PreferencesDomain {
                 OtosLog.performance.noticeOperation("tour", phase: "library", fields: ["rootPath": library.rawValue])
             }
             if configuration.start == .settled {
-                await waitForSettlement()
+                if library != nil {
+                    await waitForSettlementAfterLibrary()
+                } else {
+                    await waitForSettlement()
+                }
             }
             guard let viewModel else {
                 await finish(outcome: "failed")
@@ -539,9 +553,9 @@ extension PreferencesDomain {
             await finish(outcome: "finished")
         }
 
-        /// A settled tour's first step waits for the launch's work to settle
-        /// (`LaunchSettlement.launchWork`: every owner settled at one instant — quiescent, or
-        /// working only its own backlog, as enrichment's hashing of a cloud library does for
+        /// A settled tour on the libraries the launch restored waits for the launch's work to settle
+        /// (`LaunchSettlement.launchWork`: every owner covered what it owed once all had started,
+        /// or works only its own backlog, as enrichment's hashing of a cloud library does for
         /// hours), up to the settle deadline; either way it says what it met
         /// (`op=tour phase=settled by=launchWork|ownersQuiescent|deadline`), and the scorecard
         /// labels the session by it.
@@ -554,6 +568,72 @@ extension PreferencesDomain {
                 "by": settled ? (viewModel?.launchSettlement?.rawValue ?? "windowGone") : "deadline",
                 "waitMs": "\(DiagnosticsTiming.milliseconds(since: started))",
             ])
+        }
+
+        /// A settled tour that added its library waits for the work that library raised, not
+        /// for the launch's: the launch's stages were judged on the catalog before the library
+        /// (empty, for a sandbox home), so they could be met before its walk began. From the
+        /// moment its first walk is complete it waits, up to the settle deadline, for every
+        /// owner caught up to that moment (`CatalogWindowViewModel.untilOwnersCaughtUp`): the
+        /// requests the walk's rows raised covered, the backlogs still walking
+        /// (`by=libraryWork`, with them named).
+        private func waitForSettlementAfterLibrary() async {
+            let started = ContinuousClock.now
+            let settled: [OwnerCaughtUp]?? = await first(deadline: configuration.settleDeadline) { viewModel in
+                // Thrown only when the deadline cancelled the wait, whose answer is then unread.
+                try await viewModel.untilOwnersCaughtUp()
+            }
+            var fields = ["waitMs": "\(DiagnosticsTiming.milliseconds(since: started))"]
+            switch settled {
+            case let .some(.some(facts)):
+                fields["by"] = "libraryWork"
+                let backlog = facts.filter(\.backlog).map(\.owner)
+                fields["backlog"] = backlog.isEmpty ? "none" : backlog.joined(separator: ",")
+            case .some(.none):
+                fields["by"] = "noOwners"
+            case .none:
+                fields["by"] = "deadline"
+            }
+            OtosLog.performance.noticeOperation("tour", phase: "settled", fields: fields)
+        }
+
+        /// The answer of `work` on the window, or nil once `deadline` passes, the window is
+        /// gone or the work threw first. `until`'s race, for a fact an owner reports by
+        /// returning rather than one the window shows.
+        private func first<Answer: Sendable>(
+            deadline: Duration,
+            _ work: @escaping @MainActor (CatalogWindowViewModel) async throws -> Answer
+        ) async -> Answer? {
+            guard let viewModel else {
+                return nil
+            }
+            let (answers, answer) = AsyncStream<Answer?>.makeStream(bufferingPolicy: .bufferingNewest(1))
+            let worker = Task { @MainActor [weak viewModel] in
+                guard let viewModel else {
+                    answer.yield(nil)
+                    return
+                }
+                do {
+                    let result = try await work(viewModel)
+                    answer.yield(result)
+                } catch {
+                    answer.yield(nil)
+                }
+            }
+            let timer = Task {
+                // time: deadline — a settlement that never comes must not hang the tour
+                try? await Task.sleep(for: deadline)
+                answer.yield(nil)
+            }
+            var met: Answer?
+            for await first in answers {
+                met = first
+                break
+            }
+            worker.cancel()
+            timer.cancel()
+            answer.finish()
+            return met
         }
 
         /// Ends the tour: what every background owner still owed or ran at its end

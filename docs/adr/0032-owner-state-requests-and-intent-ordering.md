@@ -123,15 +123,22 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    (`op=owners.status phase=sessionEnd`, one `op=owners.pending` line for each owner that is
    not quiescent), which the scorecard prints under the launch.
 
-   Two weaker facts answer callers that need less than quiescence, each reported by the
-   owner the same way and resumed in the step that makes it hold. **Settled**
-   (`untilSettled()`): quiescent, or everything it owes, runs and holds is its backlog, which
-   the owner says from its own state (`worksBacklog`); several owners are settled at one
-   instant when the round above holds for every owner not on its backlog (a backlog's
-   revision and writes move with its work, and each owner counts a change in the step it is
-   delivered). **Covered** (`untilCovered(_:)`): the pass answering one request succeeded,
-   whatever was asked since; monotone, so one build a caller needs is never put off by later
-   requests. A launch's settlement stages are built from them (`LaunchSettlement`).
+   Weaker facts answer callers that need less than quiescence, each reported by the owner
+   the same way and resumed in the step that makes it hold. **Settled** (`settledFact`):
+   quiescent, or everything it owes, runs and holds is its backlog, which the owner says from
+   its own state (`worksBacklog`). **Covered** (`untilCovered(_:)`): the pass answering one
+   request succeeded, whatever was asked since; monotone, so one build a caller needs is never
+   put off by later requests. **Caught up** to a moment (`untilCaughtUp(throughDelivery:)`):
+   the owner has acted on the Store changes yielded to it by then, and then covered every
+   request it had taken (its `owedMark`, which an owner that counts its requests itself, the
+   projection, supplies), with no work of its own in flight; or it is settled. Several owners
+   are caught up to a moment when each is, waited on in turn in their start order, so a
+   request one makes of a later one while answering is in the later one's mark. A launch's
+   settlement stages are built from these (`LaunchSettlement`). Settled at one instant is not
+   one of them: on a library whose enrichment backlog lasts hours, every batch it writes asks
+   the owners that read it for another pass, so they were never all settled at once and a
+   160,000-photo library never reached the stage; each of them still covers what it owed at a
+   moment.
 
    A request covers what the owner owes, not a fresh look. An owner that cannot make progress
    on a row now — a still paced after a failed read, a model that would not load — holds

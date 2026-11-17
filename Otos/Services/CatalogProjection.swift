@@ -1948,6 +1948,19 @@ extension CatalogProjection: QuiescentOwner {
         requested != covered || runningPasses != 0 || optionsRequested != optionsCovered || optionsInFlight != nil
     }
 
+    /// The publications and options reads asked for so far: the projection's own counters, the
+    /// whole of what it holds (`holdsWork`), so covering them is its catch-up. A background
+    /// change asks for a publication on the cadence, so while a backlog writes there is nearly
+    /// always one owed: a later request never puts off covering an earlier mark.
+    var owedMark: OwnerMark {
+        OwnerMark([requested, optionsRequested])
+    }
+
+    func covers(_ mark: OwnerMark) -> Bool {
+        guard mark.revisions.count == 2 else { return false }
+        return covered >= mark.revisions[0] && optionsCovered >= mark.revisions[1]
+    }
+
     /// Asks for a publication on the cadence, as a background change does.
     func ringIdle() {
         requestPublication(ringNow: false)

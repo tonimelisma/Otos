@@ -20,13 +20,20 @@ import Synchronization
 // descriptions — reports so itself (`QuiescentOwner.worksBacklog`): everything it owes, runs
 // and holds is that walk, and no request waits on anything else. On a large cloud library the
 // walk lasts hours, so a session may never see the owner quiescent; it is settled
-// (`untilSettled()`): quiescent, or working only its backlog. That is what a launch's
-// settlement waits for (`LaunchSettlement.launchWork`). Quiescence is never relaxed by it.
+// (`settledFact`): quiescent, or working only its backlog. Quiescence is never relaxed by it.
 //
 // A request covered is the third fact (`untilCovered(_:)`, ADR 0032 rule 2): the pass that
 // answered that request succeeded, whatever was asked since. It is monotone, so a caller that
 // needs one build — the duplicate groups the launch owed — waits on it rather than on the
 // owner owing nothing, which a stream of later requests can put off for the whole session.
+//
+// Caught up to a moment is the fourth (`untilCaughtUp(throughDelivery:)`): the owner acted on
+// the Store changes yielded to it by then and covered every request it had taken after them
+// (`owedMark`, `covers(_:)`), or it is settled. Also monotone: while a backlog writes, the
+// owners that read what it writes are asked again and again and are rarely all settled at one
+// instant, but each covers what it owed at a moment. That is what a launch's settlement waits
+// for (`LaunchSettlement.launchWork`), and a session that changed the catalog after its launch
+// (`CatalogWindowViewModel.untilOwnersCaughtUp()`).
 //
 // What an owner did is counted in its own units (`OwnerWork`): passes started, reads it
 // issued, rows those reads returned, rows it wrote. A caller compares two facts to see what
@@ -100,7 +107,7 @@ nonisolated struct OwnerWork: Equatable, Sendable, CustomStringConvertible {
 }
 
 /// An owner's quiescence: it owes nothing and runs nothing, as of the step that reported it.
-/// As a settled fact (`untilSettled()`) it may instead say the owner was working only its
+/// As a settled fact (`settledFact`) it may instead say the owner was working only its
 /// backlog (`backlog`).
 nonisolated struct OwnerQuiescence: Equatable, Sendable {
     let owner: String
@@ -116,6 +123,13 @@ nonisolated struct OwnerQuiescence: Equatable, Sendable {
     var backlog = false
 }
 
+/// One owner caught up to a moment (`QuiescentOwner.untilCaughtUp`): `backlog` when it was by
+/// working only its backlog rather than by covering what it owed.
+nonisolated struct OwnerCaughtUp: Equatable, Sendable {
+    let owner: String
+    let backlog: Bool
+}
+
 /// How far a launch's background work has settled, each stage reached after the one before
 /// (`CatalogWindowViewModel`'s owner start): each names only what its consumer needs, and each
 /// is reachable on a library whose enrichment, search index and descriptions work a backlog
@@ -125,10 +139,11 @@ nonisolated struct OwnerQuiescence: Equatable, Sendable {
 ///   duplicates owner covered its launch request (`DuplicatesProjection.untilLaunchBuildPublished`),
 ///   whatever enrichment's digests ask of it later. What the tour's Duplicates step waits on,
 ///   with the window showing them.
-/// - `launchWork`: every owner settled at one instant — quiescent, or working only its own
-///   backlog (`QuiescentOwner.worksBacklog`): the launch's own requests are covered, while a
-///   backlog may still be owed. What a settled tour waits on: a person's session meets the
-///   window with the backlogs still walking.
+/// - `launchWork`: every owner caught up to the moment all of them had started
+///   (`BackgroundOwnerQuiescence.untilCaughtUp`): the requests owed then are covered, or the
+///   owner works only its backlog (`QuiescentOwner.worksBacklog`), while a backlog and what it
+///   asks of the owners after it may still be owed. What a settled tour waits on: a person's
+///   session meets the window with the backlogs still walking.
 /// - `ownersQuiescent`: every owner quiescent at one instant: nothing is owed anywhere.
 nonisolated enum LaunchSettlement: String, Sendable, Comparable {
     case duplicatesBuilt
@@ -317,16 +332,21 @@ final nonisolated class OwnerActivity {
     /// Resumes every waiter whose fact holds. The owner calls it after each step that can
     /// make one hold: a pass ends, a change is acted on, work in flight returns, a backlog
     /// walk begins.
-    func settle(holdsWork: Bool, worksBacklog: Bool = false) {
+    func settle(holdsWork: Bool, worksBacklog: Bool = false, covers: (OwnerMark) -> Bool) {
         for (id, waiter) in waiters {
-            guard let fact = fact(for: waiter.wait, holdsWork: holdsWork, worksBacklog: worksBacklog) else { continue }
+            guard let fact = fact(for: waiter.wait, holdsWork: holdsWork, worksBacklog: worksBacklog, covers: covers) else {
+                continue
+            }
             waiters[id] = nil
             waiter.continuation.resume(returning: fact)
         }
     }
 
-    /// The fact `wait` asks for now, if it holds: `.some(nil)` for a request covered.
-    func fact(for wait: OwnerWait, holdsWork: Bool, worksBacklog: Bool) -> OwnerQuiescence?? {
+    /// The fact `wait` asks for now, if it holds: `.some(nil)` for a request covered, a change
+    /// count acted on, or a mark caught up to by covering it.
+    func fact(
+        for wait: OwnerWait, holdsWork: Bool, worksBacklog: Bool, covers: (OwnerMark) -> Bool
+    ) -> OwnerQuiescence?? {
         switch wait {
         case .quiescent:
             quiescence(holdsWork: holdsWork).map { .some($0) }
@@ -334,7 +354,20 @@ final nonisolated class OwnerActivity {
             settled(holdsWork: holdsWork, worksBacklog: worksBacklog).map { .some($0) }
         case let .covered(request):
             hasCovered(request) ? .some(nil) : nil
+        case let .actedOn(delivered):
+            changesActedOn >= delivered ? .some(nil) : nil
+        case let .caughtUp(mark):
+            if covers(mark) {
+                .some(nil)
+            } else {
+                settled(holdsWork: holdsWork, worksBacklog: worksBacklog).map { .some($0) }
+            }
         }
+    }
+
+    /// Every request taken so far, as a mark (`QuiescentOwner.owedMark`'s default).
+    var requestMark: OwnerMark {
+        OwnerMark([requested])
     }
 
     func addWaiter(_ id: UUID, for wait: OwnerWait, _ continuation: CheckedContinuation<OwnerQuiescence?, any Error>) {
@@ -354,6 +387,21 @@ nonisolated enum OwnerWait: Equatable, Sendable {
     case settled
     /// The pass answering this request succeeded.
     case covered(UInt64)
+    /// It has acted on this many Store changes delivered to it.
+    case actedOn(UInt64)
+    /// Every request in this mark is covered (`QuiescentOwner.covers(_:)`), or it is settled.
+    case caughtUp(OwnerMark)
+}
+
+/// What an owner owed at one moment: its request revision of each kind it counts (most count
+/// one; the projection counts its publications and its options reads apart). Covering a mark
+/// is monotone: requests taken after it never put it off.
+nonisolated struct OwnerMark: Equatable, Sendable {
+    let revisions: [UInt64]
+
+    init(_ revisions: [UInt64]) {
+        self.revisions = revisions
+    }
 }
 
 /// A background owner that reports its quiescence (see the guide).
@@ -372,6 +420,12 @@ nonisolated protocol QuiescentOwner: Actor {
     /// what a caller runs to see that a wake with nothing new costs nothing. An owner with no
     /// wake path (one pass a launch) does nothing.
     func ringIdle()
+    /// Every request the owner has taken, as a mark `covers(_:)` later answers. The default
+    /// is its activity's request revision; an owner that counts its requests itself says so.
+    var owedMark: OwnerMark { get }
+    /// Whether a pass that succeeded has answered every request in `mark`, and nothing the
+    /// owner holds beyond what its mark counts is in flight.
+    func covers(_ mark: OwnerMark) -> Bool
 }
 
 extension QuiescentOwner {
@@ -381,6 +435,22 @@ extension QuiescentOwner {
 
     var worksBacklog: Bool {
         false
+    }
+
+    var owedMark: OwnerMark {
+        activity.requestMark
+    }
+
+    /// The activity's request in `mark` covered, and no work of the owner's own in flight
+    /// (`holdsWork`: a claim, a transfer, a preparation), which its request revision does not
+    /// count. An owner on its backlog is caught up by being settled instead.
+    func covers(_ mark: OwnerMark) -> Bool {
+        !holdsWork && (mark.revisions.first.map { activity.hasCovered($0) } ?? true)
+    }
+
+    /// Store changes delivered to this owner so far.
+    var deliveredChanges: UInt64 {
+        activity.deliveries.delivered
     }
 
     /// The fact now, or nil while the owner owes or runs something.
@@ -400,7 +470,7 @@ extension QuiescentOwner {
 
     /// Resumes the waiters whose fact now holds.
     func settleQuiescence() {
-        activity.settle(holdsWork: holdsWork, worksBacklog: worksBacklog)
+        activity.settle(holdsWork: holdsWork, worksBacklog: worksBacklog) { covers($0) }
     }
 
     /// Returns once the owner is quiescent: at once when it is, else in the step that makes it
@@ -409,9 +479,15 @@ extension QuiescentOwner {
         try await until(.quiescent) ?? quiescenceMissing()
     }
 
-    /// Returns once the owner is settled: quiescent, or working only its backlog.
-    func untilSettled() async throws -> OwnerQuiescence {
-        try await until(.settled) ?? quiescenceMissing()
+    /// Returns once the owner has caught up to a moment: it has acted on the `delivered` Store
+    /// changes the Store had yielded to it by then, and then covered every request it had taken
+    /// (`owedMark`, read once those are acted on), or it is settled: quiescent, or working only
+    /// its backlog. Monotone, so requests taken later never put it off. Says whether the owner
+    /// was caught up by working its backlog.
+    func untilCaughtUp(throughDelivery delivered: UInt64) async throws -> OwnerCaughtUp {
+        _ = try await until(.actedOn(delivered))
+        let fact = try await until(.caughtUp(owedMark))
+        return OwnerCaughtUp(owner: activity.owner, backlog: fact?.backlog == true)
     }
 
     /// Returns once the pass answering `request` has succeeded, whatever was asked since.
@@ -424,7 +500,7 @@ extension QuiescentOwner {
     }
 
     private func until(_ wait: OwnerWait) async throws -> OwnerQuiescence? {
-        if let fact = activity.fact(for: wait, holdsWork: holdsWork, worksBacklog: worksBacklog) {
+        if let fact = activity.fact(for: wait, holdsWork: holdsWork, worksBacklog: worksBacklog, covers: { covers($0) }) {
             return fact
         }
         let id = UUID()
@@ -471,33 +547,25 @@ nonisolated enum BackgroundOwnerQuiescence {
         }
     }
 
-    /// Returns every owner's settled fact once all of them are settled at one instant: each
-    /// quiescent, or working only its backlog. The round is `untilQuiescent`'s, but an owner
-    /// working its backlog moves its revision, and writes to the Store, with that work, so it
-    /// says nothing about the instant: only the other owners' revisions are compared. While
-    /// one works its backlog the Store's announcements are not compared either — the backlog's
-    /// writes move them — and need not be: every owner counts a change it was delivered in the
-    /// step the Store yields it, so one that took a change between the readings is unsettled
-    /// at the second or has moved its revision.
-    static func untilSettled(_ owners: [any QuiescentOwner], store: CatalogStore) async throws -> [OwnerQuiescence] {
-        while true {
-            let changes = store.use().changes.notifications
-            var first: [OwnerQuiescence] = []
-            for owner in owners {
-                try await first.append(owner.untilSettled())
-            }
-            var second: [OwnerQuiescence] = []
-            for owner in owners {
-                guard let fact = await owner.settledFact else { break }
-                second.append(fact)
-            }
-            guard second.count == first.count else { continue }
-            let backlog = zip(first, second).contains { $0.backlog || $1.backlog }
-            let still = zip(first, second).allSatisfy { $0.backlog || $1.backlog || $0.revision == $1.revision }
-            if still, backlog || store.use().changes.notifications == changes {
-                return second
-            }
+    /// Returns once every owner has caught up to the moment of the call
+    /// (`QuiescentOwner.untilCaughtUp`): taken up the Store changes yielded to it by then and
+    /// covered the requests it owed after them, or settled, an owner on its backlog among them.
+    /// The delivery counts are read first, for every owner; the owners are then waited on in
+    /// turn, in their start order, so a request one makes of a later one while answering its
+    /// own (the projection of the duplicates owner, enrichment's writes of the walkers) is taken
+    /// before the later one's mark is read. Every fact is monotone, so this is reached while a
+    /// backlog's writes keep asking the owners after it for more, which no single instant at
+    /// which all of them are settled is on a library whose enrichment backlog lasts hours.
+    static func untilCaughtUp(_ owners: [any QuiescentOwner]) async throws -> [OwnerCaughtUp] {
+        var delivered: [UInt64] = []
+        for owner in owners {
+            await delivered.append(owner.deliveredChanges)
         }
+        var caughtUp: [OwnerCaughtUp] = []
+        for (owner, count) in zip(owners, delivered) {
+            try await caughtUp.append(owner.untilCaughtUp(throughDelivery: count))
+        }
+        return caughtUp
     }
 
     /// Every owner's status now, read in turn.

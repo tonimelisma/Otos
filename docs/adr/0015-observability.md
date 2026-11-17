@@ -174,21 +174,39 @@ real backlog. Three instruments see those:
   The memory section says when the peak footprint was reached (between two samples) and
   which tour step had just finished and which was running then.
   `--compare` reads a field an older saved scorecard lacks as unknown. `--tour` runs a tour and saves the scorecard
-  under `build/scorecards/`. It passes the tour its idle length and step deadline, and
+  under `build/scorecards/`. A tour is read from a live capture of its session, not from the
+  log's store, which rotates a busy session's lines out before `log show` reads them (two
+  owner-size tours lost their act lines that way). The capture is one `log stream --style
+  compact --level info` of the toured executable (no line it reads is logged at debug). It opens before the launch and closes
+  once a marker logged after the app's exit has come through. Compact style is used because
+  it is the style in which the stream reports what it dropped; the JSON styles drop silently
+  (`docs/research/2026-11-17-scorecard-live-capture.md`). The scorecard prints
+  `capture=live lines=<n> dropped=<notices> logShowLines=<n> logShowOnly=<n> end=seen|missing complete=yes|no`
+  (`logShowOnly`: lines `log show` still held that the capture lacks) and labels a capture
+  that dropped lines, lacks one `log show` held, or never saw its end, `PARTIAL`. `log show` is
+  read alone only when no capture exists, and then `complete=unknown`. It passes the tour its idle length and step deadline, and
   calls the tour stuck only after a silence longer than the longest of them (and a settled
-  tour's settle deadline) plus a minute, so a long idle is never cut. A tour is one of two
+  tour's settle deadline, and the wait for a sandbox library's first walk,
+  `--library-deadline`, 900 s by default) plus a minute, so a long idle is never cut. A tour is one of two
   kinds, and the scorecard says which (`kind=`): a `launch` tour takes its first step at the
   first grid, under the launch's own load (the harsh sequence that found real defects), and
   a `settled` tour (`--settled`, `OTOS_TOUR_START=settled`) first waits for the launch's
   background work to settle as a person's session meets it: the window's
-  `launchSettlement` at `launchWork`, every owner settled at one instant: quiescent, or
-  working only its own backlog. An owner says itself when all it owes, runs and holds is its
+  `launchSettlement` at `launchWork`, every owner caught up to the moment all had started
+  (ADR 0032): it covered what it owed then, or works only its own backlog. An owner says itself when all it owes, runs and holds is its
   backlog (`QuiescentOwner.worksBacklog`): enrichment's hashing and downloads of rows off
   screen with the background transfers it hands the materializer, the search index's
   embeddings and readings once its memory is in line with the catalog, the descriptions'
   walk. On a cloud library those last hours, and a person's session meets the window with
   them still walking, so "the launch's own requests are covered" is the stage and "nothing
-  is owed anywhere" (`op=owners.quiescent`) is the last one. The launch reaches its stages
+  is owed anywhere" (`op=owners.quiescent`) is the last one. A tour that registers its own
+  library (a sandbox home, `OTOS_SANDBOX_LIBRARY`) is not settled by the launch's stages:
+  those were judged on the catalog before the library existed, so they could be met before
+  its walk began. It waits instead, from
+  the moment that library's first walk is complete, for every owner caught up to that moment
+  (`CatalogWindowViewModel.untilOwnersCaughtUp`): the requests the walk's rows raised are
+  covered and only the backlogs are still walking (`op=tour phase=settled by=libraryWork
+  backlog=<owners>`). The launch reaches its stages
   in turn and logs each with the owners still on a backlog then (`op=owners.settled
   phase=duplicatesBuilt|launchWork backlog=<owners>|none`), and the scorecard prints them
   (`settled: no stage reached` when none was). `duplicatesBuilt` is the duplicates owner's

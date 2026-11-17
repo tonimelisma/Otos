@@ -678,6 +678,130 @@ class SessionKindTests(unittest.TestCase):
         self.assertEqual(scorecard.tour_silence_limit(60, 120, 900), 900 + scorecard.TOUR_SILENCE_MARGIN_SECONDS)
         self.assertEqual(scorecard.tour_silence_limit(60, 120), scorecard.tour_silence_limit(60, 120, 0))
 
+    def test_a_tour_that_adds_its_library_waits_out_the_walk_before_it_is_stuck(self):
+        self.assertEqual(scorecard.tour_silence_limit(60, 120, 0, 900), 900 + scorecard.TOUR_SILENCE_MARGIN_SECONDS)
+
+    def test_a_tour_that_added_its_library_is_settled_by_that_librarys_work(self):
+        tour = self.settled("libraryWork")
+        tour[-2] = line(1.4, "op=tour phase=settled backlog=enrichment,searchIndex by=libraryWork waitMs=41000")
+        report, _, text = run(tour)
+        self.assertEqual(report["sessionKind"], "settled")
+        self.assertIn("the tour waited 41000 ms for its library's work to settle: by libraryWork "
+                      "backlog=enrichment,searchIndex", text)
+        self.assertEqual(run(self.settled("deadline"))[0]["sessionKind"], "settled(deadline)")
+
+
+class LiveCaptureTests(unittest.TestCase):
+    """A tour is read from its live capture (`log stream --style compact`), which keeps the lines
+    the log's store rotates out; the scorecard says how many lines it and `log show` held, and
+    never prints a capture that dropped lines, or never saw its end, as the whole session."""
+
+    IMAGE = "/Users/example/Otos.app/Contents/MacOS/Otos"
+
+    @staticmethod
+    def compact(second, message, pid=100, process="Otos", kind="Df", category="[net.melisma.Otos:Performance] "):
+        return f"2026-01-01 10:00:{second:06.3f} {kind} {process}[{pid}:1a2b] {category}{message}"
+
+    def capture(self, extra=(), end=True):
+        lines = [
+            'Filtering the log data using "processImagePath == "/x" AND subsystem == "net.melisma.Otos""',
+            "Timestamp               Ty Process[PID:TID]",
+            self.compact(0.0, "op=sessionStart session=S1 kind=dev"),
+            self.compact(1.2, "op=launch.firstGrid phase=applied applyMs=0 catalogMs=1000 emptyState=none items=40 ms=1200 scope=allMedia"),
+            self.compact(2.0, "Catalog scan completed path=/x observed=3", category="[net.melisma.Otos:Catalog] "),
+            "companions=0 deleted=0",
+            self.compact(2.5, "op=tour phase=config start=launch steps=full"),
+            *extra,
+            self.compact(9.0, "op=tour phase=finish outcome=finished"),
+        ]
+        if end:
+            lines.append(self.compact(9.5, "op=scorecard.capture.end token=1-2", pid=200, process="logger", category=""))
+        return lines
+
+    def main(self, log_show_lines, *args):
+        directory = tempfile.mkdtemp()
+        paths = {name: os.path.join(directory, name) for name in ("show.ndjson", "targets.json")}
+        with open(paths["show.ndjson"], "w", encoding="utf-8") as handle:
+            handle.write("\n".join(log_show_lines) + "\n")
+        with open(paths["targets.json"], "w", encoding="utf-8") as handle:
+            json.dump({"targets": list(TARGETS.values())}, handle)
+        out = io.StringIO()
+        stdout, sys.stdout = sys.stdout, out
+        try:
+            scorecard.main(["--input", paths["show.ndjson"], "--targets", paths["targets.json"], "--pid", "100", *args])
+        finally:
+            sys.stdout = stdout
+        for path in paths.values():
+            os.remove(path)
+        os.rmdir(directory)
+        return out.getvalue()
+
+    @classmethod
+    def shown(cls, second, message, level="Default"):
+        """A `log show` line of the toured process at this Mac's local time, as the capture's
+        compact lines are read, so the two sources name the same instants."""
+        stamp = scorecard.dt.datetime(2026, 1, 1, 10, 0, 0).astimezone() + scorecard.dt.timedelta(seconds=second)
+        return json.dumps({
+            "timestamp": stamp.strftime("%Y-%m-%d %H:%M:%S.%f%z"), "eventMessage": message,
+            "processID": 100, "processImagePath": cls.IMAGE, "messageType": level,
+        })
+
+    def test_a_live_capture_is_read_as_the_session_with_the_log_shows_count_beside_it(self):
+        events, drops = scorecard.read_live_capture(self.capture(), self.IMAGE)
+        self.assertEqual(drops, 0)
+        start, body = [(s, b) for s, b in scorecard.sessions(events) if s.pid == 100][-1]
+        self.assertEqual(len(body), 5)
+        self.assertEqual(start.image, self.IMAGE)
+        # A message the stream wrapped onto a second line stays one message.
+        self.assertIn("observed=3\ncompanions=0", body[2].message)
+        # The log's store kept only the start and the first grid of this session, a debug line,
+        # which the capture does not ask for, and a line from before the session started: the
+        # last two are not counted.
+        shown = [self.shown(-0.5, "op=process.launch phase=start"),
+                 self.shown(0.0, "op=sessionStart session=S1 kind=dev"),
+                 self.shown(1.2, "op=launch.firstGrid phase=applied applyMs=0 catalogMs=1000 emptyState=none items=40 "
+                                 "ms=1200 scope=allMedia"),
+                 self.shown(1.3, "op=catalog.store.query.tileDetail phase=finish", level="Debug")]
+        text = self.main_live(self.capture(), shown, "seen")
+        self.assertIn("capture=live lines=5 dropped=0 logShowLines=2 logShowOnly=0 end=seen complete=yes", text)
+        self.assertNotIn("PARTIAL", text)
+        self.assertIn("kind=launch build=dev pid=100", text.splitlines()[0])
+
+    def test_a_line_the_log_store_held_and_the_capture_lacks_is_a_loss_without_a_notice(self):
+        shown = [self.shown(0.0, "op=sessionStart session=S1 kind=dev"),
+                 self.shown(5.0, "op=tour phase=step index=1 kind=scope label=allMedia outcome=reported ms=300")]
+        text = self.main_live(self.capture(), shown, "seen")
+        self.assertIn("logShowLines=2 logShowOnly=1 end=seen complete=no", text)
+        self.assertIn("PARTIAL: `log show` still held 1 of the session's lines the live capture lacks", text)
+
+    def main_live(self, live_lines, log_show_lines, end):
+        directory = tempfile.mkdtemp()
+        live = os.path.join(directory, "live.txt")
+        with open(live, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(live_lines) + "\n")
+        try:
+            return self.main(log_show_lines, "--live", live, "--live-end", end, "--image", self.IMAGE)
+        finally:
+            os.remove(live)
+            os.rmdir(directory)
+
+    def test_a_capture_that_dropped_lines_says_it_is_partial(self):
+        dropped = self.capture(extra=[scorecard.DROP_NOTICE + " (use `log show` to see what they were)"] * 2)
+        text = self.main_live(dropped, [], "seen")
+        self.assertIn("capture=live lines=5 dropped=2 logShowLines=0 logShowOnly=0 end=seen complete=no", text)
+        self.assertIn("PARTIAL: the live capture dropped messages 2 times", text)
+
+    def test_a_capture_whose_end_never_came_through_says_it_is_partial(self):
+        text = self.main_live(self.capture(end=False), [], "missing")
+        self.assertIn("end=missing complete=no", text)
+        self.assertIn("PARTIAL: the capture's end marker never came through", text)
+
+    def test_the_log_store_alone_says_its_loss_cannot_be_counted(self):
+        shown = [line(0.0, "op=sessionStart session=S1 kind=dev", pid=100, image=self.IMAGE),
+                 line(9.0, "op=tour phase=finish outcome=finished", pid=100, image=self.IMAGE)]
+        text = self.main(shown)
+        self.assertIn("capture=logShow lines=2 dropped=- logShowLines=- complete=unknown", text)
+
 
 class SandboxTrashTests(unittest.TestCase):
     """A sandbox library's teardown tests the account's Trash for each generated file by name

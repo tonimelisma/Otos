@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The scorecard: what one Otos session felt like, read from the unified log (ADR 0015).
 #
-# A report, never a gate: it is not part of script/check.sh and is not a benchmark. It
-# reads the log unsandboxed with /usr/bin/log show; the parsing lives in
-# script/lib/scorecard.py and is tested by script/lib/scorecard_test.py.
+# A report, never a gate: it is not part of script/check.sh and is not a benchmark. A tour
+# is read from a live capture of its session (`log stream`, below); any other session from
+# the log's store with /usr/bin/log show. The parsing lives in script/lib/scorecard.py and
+# is tested by script/lib/scorecard_test.py.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,14 +31,22 @@ usage:
   script/scorecard.sh --tour [--dev [--optimized] [--home <dir>] [--seed <photos> [--seed-media camera|small]]]
                       [--ablate none|all|<owner>[,<owner>…]]
                       [--steps full|scopes] [--idle <seconds>] [--deadline <seconds a step>]
-                      [--settled [--settle-deadline <seconds>]] [--compare <saved.json>]
+                      [--settled [--settle-deadline <seconds>]] [--library-deadline <seconds>]
+                      [--compare <saved.json>]
       Launches the app with OTOS_TOUR=1, waits for it to finish its read-only tour and quit,
       prints that session's scorecard and saves it under build/scorecards/. A tour starts at
       the first grid, under the launch's own load (a `launch` session). With --settled it
       first waits for the launch's background work to settle, as a person's session meets
       it: every owner quiescent, or the heavy loads the launch asked for all run, whichever
       the app reports first (up to --settle-deadline, default 900 s; a `settled` session).
+      With a sandbox library (--seed, or a --home that has one) the tour waits for the
+      library's first walk first, up to --library-deadline (default 900 s), and a settled tour
+      then waits for the work that walk raised (`by=libraryWork`), not for the launch's.
       The scorecard labels each session's kind and --compare compares only like with like.
+      The session is captured live (`log stream`, info and above, started before the launch and
+      closed once a marker logged after the app's exit has come through), so lines the log's
+      store rotates out are not lost; the scorecard says how many lines the capture and
+      `log show` each held and how many times the stream dropped messages (`capture=` line).
   script/scorecard.sh --ablation-matrix [--dev [--home <dir>] [--seed <photos> [--seed-media camera|small]]]
       Short tours with every background owner off (the floor), with each owner alone
       running, and with none off; prints one table.
@@ -76,6 +85,7 @@ IDLE=""
 DEADLINE=""
 SETTLED=0
 SETTLE_DEADLINE=900
+LIBRARY_DEADLINE=900
 HOME_DIR=""
 SEED=""
 SEED_MEDIA=camera
@@ -96,6 +106,7 @@ while [[ $# -gt 0 ]]; do
     --idle) IDLE="${2:?}"; shift 2 ;;
     --settled) SETTLED=1; shift ;;
     --settle-deadline) SETTLE_DEADLINE="${2:?}"; shift 2 ;;
+    --library-deadline) LIBRARY_DEADLINE="${2:?}"; shift 2 ;;
     --deadline) DEADLINE="${2:?}"; shift 2 ;;
     --home) HOME_DIR="${2:?}"; shift 2 ;;
     --seed) SEED="${2:?}"; shift 2 ;;
@@ -217,6 +228,67 @@ capture() {
     --predicate "process == \"$APP_NAME\" AND subsystem == \"$SUBSYSTEM\"" > "$out"
 }
 
+# ── The session's live capture ─────────────────────────────────────────────────
+# The log's store keeps a busy session's lines only until it rotates them, so a tour read
+# back with `log show` after it quit can come back short. A tour is captured live instead:
+# one `log stream` of the toured executable's lines at info and above (no line the scorecard
+# reads is logged at debug, which at the owner's library size is half the volume), opened
+# before the launch.
+# Compact style, because it is the style in which `log stream` reports messages it dropped
+# (`=== Messages dropped during live streaming`); the JSON styles drop them silently
+# (docs/research/2026-11-17-scorecard-live-capture.md). It is closed once a marker logged
+# after the app exited has come through it: everything the app logged came before.
+LIVE_PID=""
+LIVE_FILE=""
+LIVE_MARKER=""
+LIVE_END=missing
+
+live_capture_open() {
+  local executable="$1"
+  LIVE_FILE="$(mktemp -t otos-live)"
+  LIVE_MARKER="op=scorecard.capture.end token=$$-$RANDOM"
+  LIVE_END=missing
+  /usr/bin/log stream --style compact --level info \
+    --predicate "(processImagePath == \"$executable\" AND subsystem == \"$SUBSYSTEM\") OR eventMessage == \"$LIVE_MARKER\"" \
+    > "$LIVE_FILE" 2>&1 &
+  LIVE_PID="$!"
+  # The stream writes its header once it reads: a line logged after that is in the capture.
+  until [[ -s "$LIVE_FILE" ]]; do
+    if ! kill -0 "$LIVE_PID" 2>/dev/null; then
+      echo "op=scorecard.capture phase=failed reason=streamExited — the scorecard falls back to log show" >&2
+      LIVE_PID=""
+      return 0
+    fi
+    # time: poll — `log stream` says it is reading only by writing its header
+    sleep 0.1
+  done
+}
+
+# Logs the marker, waits for it to come through, and stops the stream; says what the capture
+# holds and what it cost.
+live_capture_close() {
+  [[ -n "$LIVE_PID" ]] || return 0
+  /usr/bin/logger "$LIVE_MARKER"
+  local waited=0
+  # The header quotes the marker after `== "`; only the logged line has it after `] `. A
+  # stream that never delivers it is given up on after a minute (end=missing).
+  while ! /usr/bin/grep -qF "] $LIVE_MARKER" "$LIVE_FILE"; do
+    if ! kill -0 "$LIVE_PID" 2>/dev/null || (( waited >= 600 )); then
+      break
+    fi
+    # time: poll — `log stream` reports a delivery only by writing it to the file
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  /usr/bin/grep -qF "] $LIVE_MARKER" "$LIVE_FILE" && LIVE_END=seen
+  local cpu
+  cpu="$(/bin/ps -o time= -p "$LIVE_PID" 2>/dev/null | tr -d ' ' || true)"
+  kill "$LIVE_PID" 2>/dev/null || true
+  wait "$LIVE_PID" 2>/dev/null || true
+  LIVE_PID=""
+  echo "op=scorecard.capture phase=closed end=$LIVE_END lines=$(/usr/bin/wc -l < "$LIVE_FILE" | tr -d ' ') bytes=$(/usr/bin/stat -f %z "$LIVE_FILE") dropNotices=$(/usr/bin/grep -c '^=== Messages dropped' "$LIVE_FILE" || true) streamCpu=${cpu:-unknown}" >&2
+}
+
 # ── One tour ───────────────────────────────────────────────────────────────────
 # Launches the app with the tour flag and its options, waits on the app's own report that
 # the tour finished (or the process ending), confirms it quit, and leaves the session's
@@ -255,11 +327,15 @@ run_one_tour() {
     start=settled
     settle="$SETTLE_DEADLINE"
   fi
+  # A tour that registers a sandbox library is silent while that library's first walk runs.
+  local library_wait=0
+  [[ -n "$SANDBOX_LIBRARY" ]] && library_wait="$LIBRARY_DEADLINE"
   local silence_limit
-  silence_limit="$(/usr/bin/python3 -I "$PARSER" --tour-silence-limit "$idle" "$deadline" "$settle")"
+  silence_limit="$(/usr/bin/python3 -I "$PARSER" --tour-silence-limit "$idle" "$deadline" "$settle" "$library_wait")"
   local env_args=(OTOS_TOUR=1 "OTOS_TOUR_ABLATE=$ablate" "OTOS_TOUR_STEPS=$steps"
     "OTOS_TOUR_IDLE_SECONDS=$idle" "OTOS_TOUR_STEP_DEADLINE_SECONDS=$deadline"
-    "OTOS_TOUR_START=$start" "OTOS_TOUR_SETTLE_DEADLINE_SECONDS=$settle")
+    "OTOS_TOUR_START=$start" "OTOS_TOUR_SETTLE_DEADLINE_SECONDS=$settle"
+    "OTOS_TOUR_LIBRARY_DEADLINE_SECONDS=$LIBRARY_DEADLINE")
   [[ -n "$HOME_DIR" ]] && env_args+=("CFFIXED_USER_HOME=$HOME_DIR" "HOME=$HOME_DIR")
   [[ -n "$SANDBOX_LIBRARY" ]] && env_args+=("OTOS_SANDBOX_LIBRARY=$SANDBOX_LIBRARY")
   # The dev build's saved window state is the account's, not the sandbox home's (AppKit keeps
@@ -271,6 +347,7 @@ run_one_tour() {
   [[ "$DEV" == 1 ]] && app_args+=(-ApplePersistenceIgnoreState YES)
   local started
   started="$(date '+%Y-%m-%d %H:%M:%S')"
+  live_capture_open "$executable"
   otos_log_stream_open "process == \"$APP_NAME\" AND subsystem == \"$SUBSYSTEM\" AND eventMessage BEGINSWITH \"op=tour \""
   env "${env_args[@]}" "$app/Contents/MacOS/$APP_NAME" ${app_args[@]+"${app_args[@]}"} >/dev/null 2>&1 3<&- &
   TOUR_PID="$!"
@@ -330,9 +407,23 @@ run_one_tour() {
   else
     echo "op=scorecard.tour phase=quit pid=$TOUR_PID confirmed=noProcessOf=$executable" >&2
   fi
+  live_capture_close
   check_sandbox_trash
   TOUR_NDJSON="$(mktemp -t otos-tour)"
   capture "$TOUR_NDJSON" --start "$started"
+  TOUR_EXECUTABLE="$executable"
+}
+
+# The scorecard of the tour just run: from its live capture, with the `log show` read of the
+# same window counted beside it; from `log show` alone when no capture was made.
+parse_tour() {
+  if [[ -n "$LIVE_FILE" && -s "$LIVE_FILE" ]]; then
+    run_parser "$TOUR_NDJSON" --pid "$TOUR_PID" --live "$LIVE_FILE" --live-end "$LIVE_END" --image "$TOUR_EXECUTABLE" "$@"
+  else
+    run_parser "$TOUR_NDJSON" --pid "$TOUR_PID" "$@"
+  fi
+  rm -f "$TOUR_NDJSON" "$LIVE_FILE"
+  LIVE_FILE=""
 }
 
 save_path() {
@@ -364,8 +455,7 @@ if [[ "$MATRIX" == 1 ]]; then
     done
     out="$(save_path "matrix-${label//[^A-Za-z]/}")"
     JSON_OUT="$out"
-    run_parser "$TOUR_NDJSON" --pid "$TOUR_PID" > /dev/null
-    rm -f "$TOUR_NDJSON"
+    parse_tour > /dev/null
     files+=("$out")
     labels+=("$label")
   done
@@ -376,8 +466,7 @@ fi
 if [[ "$TOUR" == 1 ]]; then
   run_one_tour "$ABLATE" "$STEPS"
   [[ -n "$JSON_OUT" ]] || JSON_OUT="$(save_path tour)"
-  run_parser "$TOUR_NDJSON" --pid "$TOUR_PID"
-  rm -f "$TOUR_NDJSON"
+  parse_tour
   exit 0
 fi
 
