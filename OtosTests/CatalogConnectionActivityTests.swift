@@ -140,6 +140,80 @@ struct CatalogConnectionActivityTests {
         try pool.close()
     }
 
+    /// A `CatalogWriter` names every transaction for its caller, a body's statements outside
+    /// any `BEGIN` included (the pragmas a durable write sets around its transaction), and the open's own
+    /// work is accounted to it: no transaction is left unnamed.
+    @Test func everyWriteThroughTheCatalogWriterIsNamedForItsCaller() async throws {
+        let activity = CatalogConnectionActivity()
+        let directory = try makeTestDirectory()
+        let pool = try activity.naming("catalogOpen") {
+            let pool = try DatabasePool(
+                path: directory.appending(path: "named.sqlite").path(percentEncoded: false),
+                configuration: CatalogStore.fileBackedDatabaseConfiguration(activity: activity)
+            )
+            try pool.write { db in try db.execute(sql: "CREATE TABLE t (x)") }
+            return pool
+        }
+        let writer = CatalogWriter(pool)
+        func insertRow() async throws {
+            try await writer.write { db in try db.execute(sql: "INSERT INTO t (x) VALUES (1)") }
+        }
+        try await insertRow()
+        try await writer.writeWithoutTransaction(operation: "durableWrite") { db in
+            try db.execute(sql: "PRAGMA synchronous = FULL")
+            try db.inTransaction {
+                try db.execute(sql: "INSERT INTO t (x) VALUES (2)")
+                return .commit
+            }
+            try db.execute(sql: "PRAGMA synchronous = NORMAL")
+        }
+        try await writer.writeWithoutTransaction { db in try db.execute(sql: "PRAGMA user_version = 1") }
+
+        let holds = activity.use().holds
+        #expect(holds.allSatisfy { $0.operation != CatalogConnectionActivity.unnamed }, "\(holds.map(\.operation))")
+        #expect(holds.first { $0.operation == "insertRow" }?.count == 1)
+        #expect(holds.first { $0.operation == "durableWrite" }?.count == 3)
+        #expect(holds.contains { $0.operation == "catalogOpen" })
+        #expect(holds.contains { $0.operation == "everyWriteThroughTheCatalogWriterIsNamedForItsCaller" })
+        try pool.close()
+    }
+
+    /// A read that brings pages into SQLite's cache is charged their bytes, and a read of pages
+    /// already cached is not: what each operation asked of the file.
+    @Test func aReadIsChargedThePagesItReadFromTheFile() async throws {
+        let activity = CatalogConnectionActivity()
+        var configuration = CatalogStore.fileBackedDatabaseConfiguration(activity: activity)
+        configuration.maximumReaderCount = 1
+        configuration.prepareDatabase { db in
+            // Past the mapped region, as most of a large catalog is: pages are read, not faulted.
+            try db.execute(sql: "PRAGMA mmap_size = 0")
+        }
+        let directory = try makeTestDirectory()
+        let pool = try DatabasePool(path: directory.appending(path: "pages.sqlite").path(percentEncoded: false), configuration: configuration)
+        let writer = CatalogWriter(pool)
+        try await writer.write(operation: "fill") { db in
+            try db.execute(sql: "CREATE TABLE t (x)")
+            for index in 0 ..< 2000 {
+                try db.execute(sql: "INSERT INTO t (x) VALUES (?)", arguments: [String(repeating: "x", count: 400) + "\(index)"])
+            }
+        }
+        let pageSize = try await pool.read { db in try Int64.fetchOne(db, sql: "PRAGMA page_size") ?? 4096 }
+        let pages = try await pool.read { db in try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0 }
+        for operation in ["coldRead", "warmRead"] {
+            _ = try await pool.readFreeingConnection(operation: operation) { db in
+                try Int.fetchOne(db, sql: "SELECT count(*) FROM t WHERE x LIKE '%9'") ?? 0
+            }
+        }
+
+        let holds = activity.use().holds
+        let cold = try #require(holds.first { $0.operation == "coldRead" })
+        let warm = try #require(holds.first { $0.operation == "warmRead" })
+        #expect(cold.readBytes >= (pages / 2) * pageSize, "\(cold.readBytes) of \(pages * pageSize)")
+        #expect(warm.readBytes < cold.readBytes / 10, "\(warm.readBytes)")
+        #expect(activity.use().readBytes["main.reader"] == holds.filter { $0.role == "main.reader" }.reduce(0) { $0 + $1.readBytes })
+        try pool.close()
+    }
+
     /// A stall's holders leave in parts the unified log keeps whole, none splitting a holder.
     @Test func holdersLeaveInPartsTheLogKeepsWhole() {
         let holders = (0 ..< 20).map { index in

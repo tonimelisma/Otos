@@ -193,6 +193,40 @@ class ScorecardTests(unittest.TestCase):
         self.assertFalse(idle["quiet"])
         self.assertEqual(report["resources"]["writer"], [["main.writer:applyEnrichmentBatch", 400, 8, 90]])
 
+    def test_disk_read_is_split_by_the_owner_that_asked_for_it(self):
+        mib = 1048576
+        lines = [l for l in SESSION if "event=idleStart" not in l and "event=idleEnd" not in l] + [
+            line(10.0, "op=process.usage phase=sample event=idleStart cpuMs=4000 diskReadMB=100 diskWrittenMB=10 pageIns=1000"),
+            line(10.0, "op=catalog.store.reads phase=sample event=idleStart readKB=main.reader:10240,main.writer:1024 "
+                       "top=main.reader:photoDescriptionCandidates:8192:4,main.reader:mediaAssets:2048:30"),
+            line(12.0, f"op=contentHash phase=finish bytes={300 * mib} elapsedMs=300 owner=enrichment relativePath=a.mov rootPath=/r"),
+            line(13.0, f"op=contentHash phase=finish bytes={100 * mib} elapsedMs=90 owner=enrichment relativePath=b.mov rootPath=/r"),
+            line(14.0, f"op=contentHash phase=finish bytes={20 * mib} elapsedMs=20 owner=import relativePath=c.jpg rootPath=/r"),
+            line(40.0, "op=process.usage phase=sample event=idleEnd cpuMs=7000 diskReadMB=600 diskWrittenMB=12 pageIns=1640"),
+            line(40.0, "op=catalog.store.reads phase=sample event=idleEnd readKB=main.reader:61440,main.writer:2048 "
+                       "top=main.reader:photoDescriptionCandidates:49152:9,main.reader:mediaAssets:4096:80"),
+        ]
+        report, _, text = run(lines)
+        idle = report["resources"]["diskByOwner"]["idle"]
+        by_owner = {row["owner"]: row["mb"] for row in idle["rows"]}
+        self.assertEqual(idle["totalMB"], 500)
+        self.assertEqual(by_owner["originals hashed: enrichment"], 400)
+        self.assertEqual(by_owner["originals hashed: import"], 20)
+        self.assertEqual(by_owner["catalog pages: main.reader"], 50)
+        self.assertEqual(by_owner["catalog pages: main.writer"], 1)
+        # 640 page-ins of 16 KiB.
+        self.assertEqual(by_owner["page-ins: mapped files, models, frameworks"], 10)
+        self.assertEqual(idle["notAttributedMB"], 500 - 400 - 20 - 50 - 1 - 10)
+        self.assertEqual(idle["catalogTop"][0], ["main.reader:photoDescriptionCandidates", 40, 5])
+        self.assertIn("DISK READ BY OWNER", text)
+        self.assertIn("originals hashed: enrichment", text)
+
+    def test_disk_read_by_owner_says_when_a_build_logs_no_catalog_reads(self):
+        report, _, text = run(SESSION)
+        idle = report["resources"]["diskByOwner"]["idle"]
+        self.assertFalse(idle["catalogMeasured"])
+        self.assertIn("no op=catalog.store.reads line", text)
+
     def test_verdicts_compare_each_number_with_its_target(self):
         _, rows, _ = run(SESSION)
         by_label = {r["label"]: r["verdict"] for r in rows}

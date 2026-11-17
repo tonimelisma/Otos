@@ -660,7 +660,7 @@ struct CatalogStoreEnrichmentTests {
             try db.execute(sql: "PRAGMA max_page_count = 8")
         }
         #expect(throws: CatalogStoreError.outOfSpace) {
-            try CatalogStore.writeWithJournalDurability(queue) { db in
+            try CatalogStore.writeWithJournalDurability(CatalogWriter(queue)) { db in
                 try db.execute(sql: "INSERT INTO t VALUES (zeroblob(1000000))")
             }
         }

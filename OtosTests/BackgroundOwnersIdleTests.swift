@@ -89,6 +89,11 @@ struct BackgroundOwnersIdleTests {
         // or every pass walks a growing set (ENR-009).
         let demands = await owners.enrichment.schedule.materializations.count
         let demandBound = await owners.enrichment.claimWindowLimit + owners.enrichment.handoffPolicy.globalOutstandingLimit
+        // Every transaction of the session — the open, every owner's settling and the idle
+        // round — is accounted to the operation that ran it (`CatalogWriter`, the lanes), so
+        // the scorecard can say whose a write was.
+        let unnamed = store.use().connections.holds.filter { $0.operation == CatalogConnectionActivity.unnamed }
+        #expect(unnamed.isEmpty, "unnamed transactions: \(unnamed.map { "\($0.role):\($0.count)" })")
         await owners.shutdown()
         await store.shutdown()
         let report = "settled: \(OwnerRound.summary(settled))\nrounds run again for a wake that came due: "

@@ -588,7 +588,8 @@ final class StatementVisits: Sendable {
     /// Installs the count on the writer and on every one of the main pool's readers: four
     /// reads held open together make the pool open all four.
     func install(on store: CatalogStore) async throws {
-        let pool = try #require(Mirror(reflecting: store).children.first { $0.label == "dbWriter" }?.value as? DatabasePool)
+        let writer = try #require(Mirror(reflecting: store).children.first { $0.label == "dbWriter" }?.value as? CatalogWriter)
+        let pool = try #require(Mirror(reflecting: writer).children.first { $0.label == "pool" }?.value as? DatabasePool)
         try await pool.writeWithoutTransaction { db in self.attach(to: db) }
         let readers = CatalogStore.readerCount
         let arrived = Tally()

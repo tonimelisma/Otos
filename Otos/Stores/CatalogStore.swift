@@ -800,7 +800,7 @@ actor CatalogStore {
     private let wallClock: @Sendable () -> Date
     private let initialLoadDidRead: (@Sendable () async -> Void)?
     private let importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)?
-    private var dbWriter: (any DatabaseWriter)?
+    private var dbWriter: CatalogWriter?
     /// What the open is doing, for the window while it waits (DES-121): one consumer, the
     /// main window's view model, which reads the newest value. `nonisolated` so it can be
     /// subscribed while the open holds this actor. Finished when the open ends.
@@ -4864,7 +4864,7 @@ extension CatalogStore {
         return namespaceMutationLeases[root]
     }
 
-    private func clearAbandonedEnrichmentClaims(_ dbQueue: any DatabaseWriter) async throws {
+    private func clearAbandonedEnrichmentClaims(_ dbQueue: CatalogWriter) async throws {
         let clearedCount = try await dbQueue.write { db in
             try EnrichmentClaimGateway.clearEnrichmentClaims(db: db)
         }
@@ -5047,7 +5047,7 @@ extension CatalogStore {
         _ results: [EnrichmentResult],
         rootIDsByPath: [LibraryRootPath: Int64],
         derivedFolder: DerivedFolder?,
-        dbWriter: any DatabaseWriter
+        dbWriter: CatalogWriter
     ) async throws -> EnrichmentBatchWriteOutcome {
         let timedOutcome = try await timedWrite(dbWriter) { db in
             var outcome = EnrichmentBatchWriteOutcome()
@@ -5748,7 +5748,7 @@ extension CatalogStore {
     /// failed write is logged and the attachment goes on: the rows then show as last held.
     private func markRetainedRowsAwaitingPresence(
         _ attachment: RemovableRootAttachment,
-        dbWriter: any DatabaseWriter
+        dbWriter: CatalogWriter
     ) async {
         guard let rootRowID = roots[attachment.path]?.rowID else {
             return
@@ -5777,7 +5777,7 @@ extension CatalogStore {
         existingRoot: LibraryRoot,
         rootRowID: Int64,
         lastSeenAt: Date,
-        dbWriter: any DatabaseWriter
+        dbWriter: CatalogWriter
     ) async throws {
         try validateNoOverlap(attachment.path, ignoring: rootRowID)
         if existingRoot.path != attachment.path {
@@ -5809,7 +5809,7 @@ extension CatalogStore {
     private func insertRemovableRoot(
         _ attachment: RemovableRootAttachment,
         lastSeenAt: Date,
-        dbWriter: any DatabaseWriter
+        dbWriter: CatalogWriter
     ) async throws {
         try validateNoOverlap(attachment.path)
         let storedRoot = try await dbWriter.write { db in
@@ -7195,7 +7195,7 @@ extension CatalogStore {
         stored: DerivedFileReconciliation.Census?,
         folder: DerivedFolder,
         laneReader: CatalogLaneReader,
-        dbWriter: any DatabaseWriter
+        dbWriter: CatalogWriter
     ) async throws -> DerivedFolderOutcome {
         let start = ContinuousClock.now
         let pageSize = Self.derivedReconcilePageSize
@@ -7307,7 +7307,7 @@ private extension CatalogStore {
     /// once by a window read and through the background admission by a background read. The
     /// only way a Store read reaches a connection, apart from the open's own reads.
     func reader(for lane: CatalogReadLane) throws -> CatalogLaneReader {
-        try CatalogLaneReader(pool: database(), lane: lane, admission: readAdmission)
+        try CatalogLaneReader(pool: database().reader, lane: lane, admission: readAdmission)
     }
 
     /// `operation` names the read for a stall line (`CatalogConnectionActivity`); `askedAt`
@@ -7344,15 +7344,14 @@ private extension CatalogStore {
     /// `operation` names the write on the writer's connection for a stall line
     /// (`CatalogConnectionActivity`).
     private func timedWrite<Value: Sendable>(
-        _ dbWriter: any DatabaseWriter,
+        _ dbWriter: CatalogWriter,
         operation: String = #function,
         _ body: @Sendable @escaping (Database) throws -> Value
     ) async throws -> DatabaseTimedValue<Value> {
         let priority = Task.currentPriority
         let start = ContinuousClock.now
-        let (timed, left) = try await dbWriter.write { db in
+        let (timed, left) = try await dbWriter.write(operation: operation) { db in
             let entered = ContinuousClock.now
-            CatalogConnectionActivity.Connection.attached(to: db)?.named(operation: operation)
             let value = try body(db)
             let left = ContinuousClock.now
             return (
@@ -7386,7 +7385,7 @@ private extension CatalogStore {
         try await loadIfNeeded()
     }
 
-    private func database() throws -> any DatabaseWriter {
+    private func database() throws -> CatalogWriter {
         if let dbWriter {
             return dbWriter
         }
@@ -7396,7 +7395,8 @@ private extension CatalogStore {
             OtosSignpost.persistence.endInterval("CatalogOpenDatabase", state)
         }
         do {
-            let dbWriter = try openAndMigrateDatabase()
+            // The open's own transactions are accounted to it: no caller names them.
+            let dbWriter = try connectionActivity.naming("catalogOpen") { try openAndMigrateDatabase() }
             // The load's own reads follow; the window says the catalog is opening until
             // its first state arrives.
             reportedOpening.phase = .opening
@@ -7418,7 +7418,7 @@ private extension CatalogStore {
     /// (`op=catalog.migration`). SQLite recovers a write-ahead log left by the last process
     /// on the first read (`schemaMs`); nothing here checkpoints, checks integrity or
     /// analyzes, so no other step reads the whole file.
-    private func openAndMigrateDatabase() throws -> any DatabaseWriter {
+    private func openAndMigrateDatabase() throws -> CatalogWriter {
         var timer = LoadPhaseTimer()
         let openResult = try openDatabaseWriter()
         let dbWriter = openResult.dbWriter
@@ -7462,7 +7462,8 @@ private extension CatalogStore {
         timer.lap("compactionMs")
         performThumbnailStoreStartupMaintenance()
         timer.lap("thumbnailsMs")
-        self.dbWriter = dbWriter
+        let writer = CatalogWriter(dbWriter)
+        self.dbWriter = writer
         databaseFileURL = openResult.openedFileURL
         var fields = timer.fields
         fields["migrations"] = "\(migrations.applied)"
@@ -7471,7 +7472,7 @@ private extension CatalogStore {
         OtosLog.persistence.info(
             "Catalog database opened storage=\(openResult.storageKind, privacy: .public)"
         )
-        return dbWriter
+        return writer
     }
 
     private struct DatabaseOpenResult {
@@ -7596,7 +7597,7 @@ private extension CatalogStore {
 
     private func normalizeLoadedRoots(
         _ roots: [StoredRoot],
-        dbWriter: any DatabaseWriter
+        dbWriter: CatalogWriter
     ) async -> [StoredRoot] {
         var normalizedRoots: [StoredRoot] = []
         for storedRoot in roots {
@@ -7629,7 +7630,7 @@ private extension CatalogStore {
 
     private func normalizedLoadedRoot(
         _ storedRoot: StoredRoot,
-        dbWriter: any DatabaseWriter
+        dbWriter: CatalogWriter
     ) async -> StoredRoot {
         guard let normalizedPath = loadedPath(of: storedRoot), normalizedPath != storedRoot.path else {
             return storedRoot
@@ -9096,7 +9097,7 @@ private extension CatalogStore {
         rootRowID: Int64,
         witness: ReconcileWitness?
     ) async -> FileReconcileResult {
-        let dbQueue: any DatabaseWriter
+        let dbQueue: CatalogWriter
         do {
             dbQueue = try database()
         } catch {
@@ -9183,7 +9184,7 @@ private extension CatalogStore {
         rootRowID: Int64,
         witness: ReconcileWitness?
     ) async -> FileReconcileResult {
-        let dbQueue: any DatabaseWriter
+        let dbQueue: CatalogWriter
         do {
             dbQueue = try database()
         } catch {

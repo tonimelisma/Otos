@@ -86,7 +86,17 @@ real backlog. Three instruments see those:
   compressed and swapped memory), `op=process.usage` (CPU time, disk bytes read and
   written, and page-ins `ri_pageins`: faults served from disk, `proc_pid_rusage`) and, where the caller reaches the Store, `op=catalog.store.use`:
   every transaction's time by connection role and Store operation, and the change
-  notifications by kind of fact, since launch. The kernel keeps the peak, so no periodic
+  notifications by kind of fact, since launch, with `op=catalog.store.reads` beside it: the
+  catalog page bytes each role and its heaviest operations read into SQLite's cache
+  (`SQLITE_DBSTATUS_CACHE_MISS`, reset as each transaction ends, times the page size). Every
+  transaction is accounted to an operation: a write to the function that asked for it
+  through the Store's one writer (`CatalogWriter`), a read to its lane's caller, the open's
+  work to `catalogOpen` and a new connection's own statements to `connectionOpen`;
+  `BackgroundOwnersIdleTests` fails on any left `unnamed`. With the `op=contentHash` lines,
+  which carry the bytes of each original read whole and the owner that read it, and the
+  page-ins, the scorecard splits a session's disk read by owner (`DISK READ BY OWNER`) and
+  names the rest not attributed: originals read for metadata and renders, previews decoded
+  for faces, descriptions and search, and frameworks. The kernel keeps the peak, so no periodic
   sampler exists. A store stall's holders leave on `op=catalog.store.stall.holders` parts
   beside its line, so the line keeps its waiter and wait; a named write that waited 100 ms
   for the writer logs `op=catalog.store.writeWait`; the order read splits its SQL

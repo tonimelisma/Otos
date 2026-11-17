@@ -719,11 +719,12 @@ extension CatalogStore {
     /// pragma is set on the writer connection before `BEGIN` and restored after
     /// commit/rollback.
     static func writeWithJournalDurability<T>(
-        _ dbWriter: any DatabaseWriter,
+        _ dbWriter: CatalogWriter,
+        operation: String = #function,
         _ body: (Database) throws -> T
     ) throws -> T {
         do {
-            return try writeWithFullSynchronous(dbWriter, body)
+            return try writeWithFullSynchronous(dbWriter, operation: operation, body)
         } catch let error as DatabaseError where error.resultCode == .SQLITE_FULL {
             // Typed here, where the catalog's writes are, so an import stops on a full disk
             // rather than failing entry after entry (ADR 0027).
@@ -732,10 +733,11 @@ extension CatalogStore {
     }
 
     private static func writeWithFullSynchronous<T>(
-        _ dbWriter: any DatabaseWriter,
+        _ dbWriter: CatalogWriter,
+        operation: String,
         _ body: (Database) throws -> T
     ) throws -> T {
-        try dbWriter.writeWithoutTransaction { db in
+        try dbWriter.writeWithoutTransaction(operation: operation) { db in
             try db.execute(sql: "PRAGMA synchronous = FULL")
             defer {
                 do {
@@ -2746,6 +2748,61 @@ final nonisolated class ReaderLockWait: Sendable {
     }
 }
 
+// MARK: - The Store's one way to write
+
+/// The Store's writer, and the only way it writes: every transaction is named for the function
+/// that asked for it (`operation`, its caller's `#function` unless given), so the connection
+/// activity accounts each write to its owner (`op=catalog.store.use`) and a stall line says
+/// what held the writer. The pool's readers are reached only as a `DatabaseReader`
+/// (`reader`), which cannot write, so no write can reach the file unnamed.
+nonisolated struct CatalogWriter: Sendable {
+    private let pool: any DatabaseWriter
+
+    init(_ pool: any DatabaseWriter) {
+        self.pool = pool
+    }
+
+    /// The pool, for the lanes' reads (`CatalogLaneReader`) and the open's own.
+    var reader: any DatabaseReader {
+        pool
+    }
+
+    func write<T: Sendable>(
+        operation: String = #function,
+        _ body: @escaping @Sendable (Database) throws -> T
+    ) async throws -> T {
+        try await pool.write { db in
+            CatalogConnectionActivity.Connection.attached(to: db)?.named(operation: operation)
+            return try body(db)
+        }
+    }
+
+    /// A body that runs its own transactions, or none: each statement it runs outside one is
+    /// named for `operation` too.
+    func writeWithoutTransaction<T: Sendable>(
+        operation: String = #function,
+        _ body: @escaping @Sendable (Database) throws -> T
+    ) async throws -> T {
+        try await pool.writeWithoutTransaction { db in
+            try Self.scoped(db, operation: operation) { try body(db) }
+        }
+    }
+
+    /// The synchronous form, for the Store's few writes that must land before it returns.
+    func writeWithoutTransaction<T>(operation: String = #function, _ body: (Database) throws -> T) throws -> T {
+        try pool.writeWithoutTransaction { db in
+            try Self.scoped(db, operation: operation) { try body(db) }
+        }
+    }
+
+    private static func scoped<T>(_ db: Database, operation: String, _ body: () throws -> T) throws -> T {
+        guard let connection = CatalogConnectionActivity.Connection.attached(to: db) else {
+            return try body()
+        }
+        return try connection.scoped(operation: operation, body)
+    }
+}
+
 // MARK: - What every connection is doing, for a read that waited
 
 /// Every connection the Store's pools open and what each is doing, so a read that waited a
@@ -2831,6 +2888,12 @@ final nonisolated class CatalogConnectionActivity: Sendable {
         /// The most rows one of its transactions changed (SQLite's change count): what a
         /// bound on background write transactions is held to (`writeInPages`).
         var mostRows: Int = 0
+        /// The bytes of catalog pages its transactions read from the file into SQLite's page
+        /// cache (`SQLITE_DBSTATUS_CACHE_MISS` times the page size): what the operation asked
+        /// of the disk, though the system may have served some from its own cache. A page
+        /// within the mapped region (`mmap_size`) is reached by a page fault instead, which
+        /// the process's page-ins count.
+        var readBytes: Int64 = 0
     }
 
     /// Every transaction's time since launch, by role and operation (`op=catalog.store.use`):
@@ -2842,6 +2905,11 @@ final nonisolated class CatalogConnectionActivity: Sendable {
         var busy: [String: Duration] {
             holds.reduce(into: [:]) { $0[$1.role, default: .zero] += $1.total }
         }
+
+        /// Catalog page bytes read by role.
+        var readBytes: [String: Int64] {
+            holds.reduce(into: [:]) { $0[$1.role, default: 0] += $1.readBytes }
+        }
     }
 
     private struct Registry {
@@ -2850,6 +2918,8 @@ final nonisolated class CatalogConnectionActivity: Sendable {
         var lastResumed: (operation: String, at: ContinuousClock.Instant)?
         var stallCount = 0
         var holds: [String: Hold] = [:]
+        /// What an unnamed transaction is accounted to while the catalog opens (`naming`).
+        var opening: String?
     }
 
     private let registry = Mutex(Registry())
@@ -2872,7 +2942,9 @@ final nonisolated class CatalogConnectionActivity: Sendable {
     /// opens (`fileBackedDatabaseConfiguration`); the record leaves the registry as SQLite
     /// closes the connection.
     func attach(to db: Database, pool: Pool) {
-        let connection = Connection(name: Self.connectionName(db, pool: pool), activity: self)
+        // Read before the trace is installed, so the open's own pragma is not a transaction.
+        let pageSize = (try? Int64.fetchOne(db, sql: "PRAGMA page_size")).flatMap(\.self) ?? 4096
+        let connection = Connection(name: Self.connectionName(db, pool: pool), activity: self, pageSize: pageSize)
         registry.withLock { $0.connections[ObjectIdentifier(connection)] = connection }
         let context = Unmanaged.passRetained(connection).toOpaque()
         sqlite3_set_clientdata(db.sqliteConnection, Connection.clientDataName, context) { context in
@@ -2887,12 +2959,13 @@ final nonisolated class CatalogConnectionActivity: Sendable {
                 return 0
             }
             let connection = Unmanaged<Connection>.fromOpaque(context).takeUnretainedValue()
-            let inTransaction = sqlite3_get_autocommit(sqlite3_db_handle(OpaquePointer(statement))) == 0
-            let changes = sqlite3_total_changes64(sqlite3_db_handle(OpaquePointer(statement)))
+            let handle = sqlite3_db_handle(OpaquePointer(statement))
+            let inTransaction = sqlite3_get_autocommit(handle) == 0
+            let changes = sqlite3_total_changes64(handle)
             if mask == UInt32(SQLITE_TRACE_STMT) {
                 connection.statementStarted(sql: sql?.assumingMemoryBound(to: CChar.self), inTransaction: inTransaction, changes: changes)
             } else if !inTransaction {
-                connection.transactionEnded(changes: changes)
+                connection.transactionEnded(changes: changes, missedPages: Connection.takeMissedPages(handle))
             }
             return 0
         }, context)
@@ -2914,18 +2987,41 @@ final nonisolated class CatalogConnectionActivity: Sendable {
     /// Adds one ended transaction to its role's and operation's totals. Called for every
     /// transaction, however short: a thousand 5 ms reads hold a connection as long as one
     /// 5 s read.
-    fileprivate func account(connection: String, operation: String?, duration: Duration, rows: Int) {
+    fileprivate func account(connection: String, operation: String?, duration: Duration, rows: Int, readBytes: Int64) {
         let role = Self.role(of: connection)
-        let operation = operation.map(Self.shortName) ?? "unnamed"
-        let key = "\(role):\(operation)"
         registry.withLock { registry in
+            // While the catalog opens, what no caller named, a new connection's own statements
+            // among it, is the open's.
+            let operation = (operation == nil || operation == Self.connectionOpen ? registry.opening ?? operation : operation)
+                .map(Self.shortName) ?? Self.unnamed
+            let key = "\(role):\(operation)"
             var hold = registry.holds[key] ?? Hold(role: role, operation: operation, count: 0, total: .zero, longest: .zero)
             hold.count += 1
             hold.total += duration
             hold.longest = max(hold.longest, duration)
             hold.mostRows = max(hold.mostRows, rows)
+            hold.readBytes += readBytes
             registry.holds[key] = hold
         }
+    }
+
+    /// The operation a transaction is accounted to when nothing named it. Every Store write is
+    /// named by its caller (`CatalogWriter`), and every read by its lane (`CatalogLaneReader`);
+    /// a hold of this name is a connection used some other way, which
+    /// `BackgroundOwnersIdleTests` fails on.
+    static let unnamed = "unnamed"
+
+    /// What a connection's statements are accounted to as GRDB opens it, before any caller
+    /// names its work.
+    static let connectionOpen = "connectionOpen"
+
+    /// Names every transaction that `body` runs and nothing else names `operation`: the open's
+    /// own work — its reads, the migrator's transactions and the compaction — which runs before
+    /// any lane or `CatalogWriter` exists and on no other caller's behalf.
+    func naming<T>(_ operation: String, _ body: () throws -> T) rethrows -> T {
+        registry.withLock { $0.opening = operation }
+        defer { registry.withLock { $0.opening = nil } }
+        return try body()
     }
 
     /// The totals since launch, longest total first.
@@ -3090,6 +3186,8 @@ final nonisolated class CatalogConnectionActivity: Sendable {
 
         let name: String
         let activity: CatalogConnectionActivity
+        /// The catalog file's page size, read as the connection opened.
+        let pageSize: Int64
 
         fileprivate struct Snapshot {
             let name: String
@@ -3105,15 +3203,33 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             /// The transaction's first statement other than its `BEGIN` and GRDB's pragmas.
             var statement: String?
             var operation: String?
+            /// What every transaction a `CatalogWriter` body begins outside a transaction of
+            /// its own is for: the body's statements outside `BEGIN`, a checkpoint, the
+            /// pragmas a durable write sets around its transaction. A new connection's is
+            /// `connectionOpen`: GRDB's own statements as it opens one (reading the schema),
+            /// until the first read or write names its work.
+            var scope: String? = CatalogConnectionActivity.connectionOpen
             /// SQLite's count of rows changed on the connection as the transaction began.
             var changesAtStart: Int64 = 0
         }
 
         private let state = Mutex(State())
 
-        fileprivate init(name: String, activity: CatalogConnectionActivity) {
+        fileprivate init(name: String, activity: CatalogConnectionActivity, pageSize: Int64) {
             self.name = name
             self.activity = activity
+            self.pageSize = pageSize
+        }
+
+        /// The pages `handle` has read into its cache since the last call, which resets the
+        /// count: the transaction that just ended read them.
+        fileprivate static func takeMissedPages(_ handle: OpaquePointer?) -> Int64 {
+            var current: Int32 = 0
+            var highwater: Int32 = 0
+            guard sqlite3_db_status(handle, SQLITE_DBSTATUS_CACHE_MISS, &current, &highwater, 1) == SQLITE_OK else {
+                return 0
+            }
+            return Int64(current)
         }
 
         static func attached(to db: Database) -> Connection? {
@@ -3132,6 +3248,7 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             let entered = ContinuousClock.now
             let transactionStart = state.withLock { state in
                 state.operation = operation
+                state.scope = nil
                 return state.transactionStart
             }
             guard entered - askedAt >= activity.stallThreshold else {
@@ -3150,7 +3267,21 @@ final nonisolated class CatalogConnectionActivity: Sendable {
 
         /// Names the transaction this connection is in, for a write.
         func named(operation: String) {
-            state.withLock { $0.operation = operation }
+            state.withLock { state in
+                state.operation = operation
+                state.scope = nil
+            }
+        }
+
+        /// Names every transaction `body` runs on this connection, those it begins with no
+        /// `BEGIN` of its own included.
+        func scoped<T>(operation: String, _ body: () throws -> T) rethrows -> T {
+            state.withLock { state in
+                state.scope = operation
+                state.operation = operation
+            }
+            defer { state.withLock { $0.scope = nil } }
+            return try body()
         }
 
         /// Runs for every statement every connection steps, the hundreds of one write
@@ -3161,7 +3292,7 @@ final nonisolated class CatalogConnectionActivity: Sendable {
                 if !inTransaction {
                     state.transactionStart = now
                     state.statement = nil
-                    state.operation = nil
+                    state.operation = state.scope
                     state.changesAtStart = changes
                 }
                 if state.statement == nil, let sql, Self.namesTheTransaction(sql) {
@@ -3170,7 +3301,7 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             }
         }
 
-        fileprivate func transactionEnded(changes: Int64) {
+        fileprivate func transactionEnded(changes: Int64, missedPages: Int64) {
             let now = ContinuousClock.now
             var rows = 0
             let ended = state.withLock { state -> Transaction? in
@@ -3178,7 +3309,7 @@ final nonisolated class CatalogConnectionActivity: Sendable {
                 defer {
                     state.transactionStart = nil
                     state.statement = nil
-                    state.operation = nil
+                    state.operation = state.scope
                 }
                 guard let start = state.transactionStart else {
                     return nil
@@ -3188,7 +3319,10 @@ final nonisolated class CatalogConnectionActivity: Sendable {
             guard let ended else {
                 return
             }
-            activity.account(connection: name, operation: ended.operation, duration: ended.end - ended.start, rows: rows)
+            activity.account(
+                connection: name, operation: ended.operation, duration: ended.end - ended.start, rows: rows,
+                readBytes: missedPages * pageSize
+            )
             if ended.end - ended.start >= activity.keptTransactionMinimum {
                 activity.keep(ended)
             }
@@ -3303,6 +3437,22 @@ nonisolated struct CatalogStoreUse: Equatable, Sendable {
             "backgroundReadsWaited": "\(backgroundReads.waited)",
             "backgroundWaitMs": "\(DiagnosticsTiming.milliseconds(backgroundReads.totalWait))",
             "backgroundLongestWaitMs": "\(DiagnosticsTiming.milliseconds(backgroundReads.longestWait))",
+        ]
+    }
+
+    /// The `op=catalog.store.reads` fields: the catalog page bytes each role read
+    /// (`readKB=main.reader:812345,main.writer:20480`) and the operations that read the most
+    /// (`top=role:operation:readKB:transactions,…`, at most `namedHolds`, most first). On a line
+    /// of their own: `op=catalog.store.use` is near the unified log's message limit.
+    var readFields: [String: String] {
+        let byRole = connections.readBytes.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value / 1024)" }
+        let top = connections.holds.filter { $0.readBytes >= 1024 }
+            .sorted { ($0.readBytes, $1.operation) > ($1.readBytes, $0.operation) }
+            .prefix(Self.namedHolds)
+            .map { "\($0.role):\($0.operation):\($0.readBytes / 1024):\($0.count)" }
+        return [
+            "readKB": byRole.isEmpty ? "none" : byRole.joined(separator: ","),
+            "top": top.isEmpty ? "none" : top.joined(separator: ","),
         ]
     }
 }

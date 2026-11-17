@@ -611,6 +611,11 @@ def resources(events):
     usages = of(events, "process.usage")
     uses = of(events, "catalog.store.use")
     result = {"session": usage_delta(usages[0], usages[-1]) if len(usages) > 1 else None}
+    idle_start, idle_end = idle_window(events)
+    result["diskByOwner"] = {
+        "session": disk_by_owner(events, usages[0], usages[-1]) if len(usages) > 1 else None,
+        "idle": disk_by_owner(events, idle_start, idle_end),
+    }
     if uses:
         total = store_use(uses[-1])
         result["connections"] = total["busyMs"]
@@ -619,6 +624,80 @@ def resources(events):
         result["changes"] = total["changes"]
         result["changeFacts"] = total["changeFacts"]
     return result
+
+
+# The page a page-in reads, on Apple silicon: `ri_pageins` counts pages, not bytes.
+PAGE_BYTES = 16384
+MIB = 1048576
+
+
+def store_reads(line):
+    """`op=catalog.store.reads` as KiB: by role, and by `role:operation` with transactions."""
+    def pairs(value, width):
+        out = {}
+        if not value or value == "none":
+            return out
+        for item in value.split(","):
+            parts = item.rsplit(":", width)
+            try:
+                out[parts[0]] = [int(p) for p in parts[1:]] if len(parts) == width + 1 else None
+            except ValueError:
+                continue
+        return {k: v for k, v in out.items() if v is not None}
+    return {
+        "byRole": {k: v[0] for k, v in pairs(line.fields.get("readKB"), 1).items()},
+        "byOperation": pairs(line.fields.get("top"), 2),
+    }
+
+
+def disk_by_owner(events, first_usage, last_usage):
+    """Who read the disk between two `op=process.usage` samples, in MiB: the originals each
+    owner hashed whole (`op=contentHash` bytes), the catalog pages each connection role read
+    into SQLite's cache (`op=catalog.store.reads` at the same events), and the pages the
+    process faulted in from mapped files (page-ins); the rest of the process's disk read is
+    named as not attributed. Each owner's figure is what it asked of the disk; the system may
+    have served part of it from memory, so the parts can exceed the total."""
+    if not first_usage or not last_usage:
+        return None
+    total = usage_delta(first_usage, last_usage)
+    if total is None or total["diskReadMB"] is None:
+        return None
+    rows = []
+    hashed = {}
+    for line in of(events, "contentHash", "finish"):
+        if first_usage.time <= line.time <= last_usage.time:
+            owner = line.fields.get("owner", "unknown")
+            hashed[owner] = hashed.get(owner, 0) + (line.num("bytes", 0) or 0)
+    for owner, size in sorted(hashed.items(), key=lambda item: -item[1]):
+        rows.append({"owner": f"originals hashed: {owner}", "mb": round(size / MIB), "source": "op=contentHash bytes"})
+    event_of = lambda line: line.fields.get("event")  # noqa: E731
+    reads = {event_of(line): line for line in of(events, "catalog.store.reads")}
+    first_reads, last_reads = reads.get(event_of(first_usage)), reads.get(event_of(last_usage))
+    top = []
+    if last_reads:
+        later = store_reads(last_reads)
+        earlier = store_reads(first_reads) if first_reads else {"byRole": {}, "byOperation": {}}
+        for role, kb in sorted(later["byRole"].items()):
+            grown = kb - earlier["byRole"].get(role, 0)
+            if grown > 0:
+                rows.append({"owner": f"catalog pages: {role}", "mb": round(grown / 1024), "source": "SQLite cache misses"})
+        for key, (kb, count) in later["byOperation"].items():
+            before = earlier["byOperation"].get(key, [0, 0])
+            if kb - before[0] > 0:
+                top.append([key, round((kb - before[0]) / 1024), count - before[1]])
+        top.sort(key=lambda row: -row[1])
+    if total["pageIns"] is not None:
+        rows.append({"owner": "page-ins: mapped files, models, frameworks", "mb": round(total["pageIns"] * PAGE_BYTES / MIB),
+                     "source": "op=process.usage pageIns"})
+    named = sum(row["mb"] for row in rows)
+    return {
+        "totalMB": total["diskReadMB"],
+        "cpuMs": total["cpuMs"],
+        "rows": rows,
+        "notAttributedMB": max(0, total["diskReadMB"] - named),
+        "catalogTop": top[:8],
+        "catalogMeasured": last_reads is not None,
+    }
 
 
 def idle_window(events):
@@ -959,6 +1038,7 @@ def print_report(report, rows, out):
         for row in res["topHolds"]:
             w(f"    {row[0]:52} {row[1]:>9} {row[2]:>7} {row[3]:>8}\n")
         w(f"  store changes {res['changes']} by kind {res['changeFacts']}\n")
+    print_disk_by_owner(res.get("diskByOwner") or {}, w)
     t = report["tour"]
     if t["steps"] or t["config"]:
         w(f"\nTOUR config={t['config']} finished={t['finished']}\n")
@@ -971,6 +1051,24 @@ def print_report(report, rows, out):
     w("\nNOT MEASURED\n")
     for item in report["notMeasured"]:
         w(f"  - {item}\n")
+
+
+def print_disk_by_owner(windows, w):
+    w("\nDISK READ BY OWNER (MiB; each owner's figure is what it asked of the disk)\n")
+    for name in ("session", "idle"):
+        window = windows.get(name)
+        if not window:
+            w(f"  {name}: - (no op=process.usage samples bound it)\n")
+            continue
+        w(f"  {name}: {window['totalMB']} MiB read, {fmt(window['cpuMs'])} ms CPU\n")
+        for row in window["rows"]:
+            w(f"    {row['owner']:48} {row['mb']:>8}  ({row['source']})\n")
+        w(f"    {'not attributed':48} {window['notAttributedMB']:>8}  (originals read for metadata and renders, "
+          f"previews decoded, everything else)\n")
+        if not window["catalogMeasured"]:
+            w("    catalog pages: - (no op=catalog.store.reads line: a build older than it)\n")
+        for key, mb, count in window["catalogTop"]:
+            w(f"      {key:46} {mb:>8}  in {count} transactions\n")
 
 
 def print_matrix(saved, labels, out):

@@ -25,6 +25,10 @@ import SQLite3
 //   op=catalog.store.use what the Store's connections were busy with and which kinds of
 //                        fact its change notifications carried, since launch (when the
 //                        caller can reach the Store)
+//   op=catalog.store.reads
+//                        the catalog page bytes each role and its heaviest operations read
+//                        from the file, since launch: the catalog's share of the disk read.
+//                        An original's bytes read whole are on each `op=contentHash` line.
 //
 // Every value is cumulative or instantaneous as named; a reader takes differences between
 // two checkpoints. Reading them costs a few system calls and one lock, microseconds.
@@ -219,6 +223,9 @@ nonisolated enum ResourceCheckpoint {
                 var store = use.fields
                 store["event"] = event
                 OtosLog.performance.noticeOperation("catalog.store.use", phase: "sample", fields: store)
+                var reads = use.readFields
+                reads["event"] = event
+                OtosLog.performance.noticeOperation("catalog.store.reads", phase: "sample", fields: reads)
             }
         }
     }
