@@ -26,7 +26,7 @@ struct CameraStagingCompositionTests {
         try await store.start(scansSavedLibraries: false)
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,

@@ -540,7 +540,7 @@ struct PeopleStoreTests {
             try await waitUntil { vectorReads() >= count }
             return vectorReads()
         }
-        let people = PeopleAssignment(store: store)
+        let people = PeopleAssignment(store: store, vectorSpace: .ample)
         try await people.settle()
         #expect(try await store.gallery(libraries: libraries).person(sam)?.media.total == 4)
 
@@ -560,6 +560,50 @@ struct PeopleStoreTests {
         #expect(try await store.gallery(libraries: libraries).person(sam)?.media.total == 5)
         #expect(try await vectorReads(reaching: afterRanking + 1) == afterRanking + 1, "one page above the vectors held")
         await store.shutdown()
+    }
+
+    /// At the free-space floor People holds "no room for the vectors": its pass writes the
+    /// gallery facts it read and assigns nothing, says so once, and arms one backoff wake; the
+    /// changes rung while it holds read nothing; People shows what the catalog holds (the named
+    /// face, no guesses), never an empty gallery. When the wake finds room, one pass assigns.
+    @Test func atTheFloorPeopleHoldsUntilTheWakeFindsRoom() async throws {
+        let (library, _) = try await Self.lookalikes(4, in: makeTestDirectory())
+        let libraries = try #require(await library.store.loadedLibraries())
+        let room = ReportedCapacity(FreeSpaceFloor.bytes)
+        let owner = PeopleAssignment(
+            store: library.store,
+            vectorSpace: FaceVectorFile.Space(directory: FileManager.default.temporaryDirectory, availableBytes: room.read),
+            spaceBackoff: (.seconds(86400), .seconds(86400))
+        )
+        await owner.start()
+        defer { owner.stop() }
+        await owner.request()
+        let held = try await owner.untilQuiescent()
+        #expect(await owner.isHeldForSpace)
+        #expect(held.wake?.kind == .backoff, "quiet until the wake that looks for room")
+        let sam = try #require(try await library.store.gallery(libraries: libraries).people.first)
+        #expect(sam.media.total == 1, "the named face stands; nothing assigned, nothing emptied")
+
+        // Changes while held read nothing.
+        for _ in 0 ..< 3 {
+            await owner.request()
+        }
+        let rung = try await owner.untilQuiescent()
+        #expect((rung.work - held.work).reads == 0, "\(rung.work - held.work)")
+
+        // The wake with the volume still at the floor reads nothing and arms again.
+        await owner.spaceRetryFired()
+        #expect(await owner.isHeldForSpace)
+        #expect(try await owner.untilQuiescent().work.reads == rung.work.reads)
+
+        room.set(1 << 40)
+        await owner.spaceRetryFired()
+        #expect(await !owner.isHeldForSpace)
+        let assigned = try await owner.untilQuiescent()
+        #expect(assigned.wake == nil && assigned.work.reads > rung.work.reads)
+        try await owner.settle()
+        #expect(try await library.store.gallery(libraries: libraries).person(sam.id)?.media.total == 4)
+        await library.store.shutdown()
     }
 
     /// What People costs at the owner's scale, on a generated catalog of his shape whose faces
@@ -622,15 +666,16 @@ struct PeopleStoreTests {
         // The parts of one pass, each alone, kept alive as a pass keeps them.
         let snapshot = try await phase("snapshot") { try await store.backgroundReads.peopleSnapshot() }
         let galleryFacts = await phase("galleryFacts") { snapshot.computedGalleryFacts }
-        var vectors = FaceVectors()
-        try await phase("vectors") {
+        let vectors = try await phase("vectors") {
+            var vectorStore = FaceVectorStore(space: .ample)
             while true {
-                let page = try await store.backgroundReads.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
-                try vectors.add(page)
-                if page.count < FaceVectors.pageSize {
+                let page = try await store.backgroundReads.faceEmbeddings(after: vectorStore.vectors.owed, limit: FaceVectorStore.pageSize)
+                try vectorStore.add(page)
+                if page.count < FaceVectorStore.pageSize {
                     break
                 }
             }
+            return vectorStore.vectors
         }
         // The guard: every vector is held in the mapped file, so reading them all adds only
         // their numbers to the footprint (ADR 0047). On the heap they added 113 MB.
@@ -695,7 +740,7 @@ struct PeopleStoreTests {
         try await readAgain()
         // An owner holding every vector, as the app's does after its first pass: what each
         // later pass leaves behind is what it strands.
-        let owner = PeopleAssignment(store: store)
+        let owner = PeopleAssignment(store: store, vectorSpace: .ample)
         try await owner.settle()
         // Writes from outside the Store name no rows: each pass after one reads every face.
         await owner.request()
@@ -752,7 +797,7 @@ struct PeopleStoreTests {
         let library = FaceEnrichmentTests.ScannedLibrary(
             store: store, root: scanned.root, rootPath: scanned.rootPath, emit: scanned.emit, databaseURL: databaseURL
         )
-        let owner = PeopleAssignment(store: library.store)
+        let owner = PeopleAssignment(store: library.store, vectorSpace: .ample)
         try await owner.settle()
         func reads(_ operation: String) -> Int {
             library.store.use().connections.holds.filter { $0.operation == operation }.reduce(0) { $0 + $1.count }
@@ -791,7 +836,7 @@ struct PeopleStoreTests {
         try await library.readFaces(names.enumerated().map { library.result(for: $1, faces: [Self.lookalike($0)]) })
         // The pass is held at its admission, inside the pass, until the burst has been delivered.
         let admission = LoadAdmission(isOpen: false)
-        let owner = PeopleAssignment(store: library.store, admission: admission)
+        let owner = PeopleAssignment(store: library.store, vectorSpace: .ample, admission: admission)
         await owner.start()
         await owner.request()
         try await waitUntil { admission.snapshot.waiting.contains { $0.load == .people } }
@@ -838,13 +883,14 @@ struct PeopleStoreTests {
         #expect(snapshot.vectorHorizon == snapshot.faces.first?.vector)
         // A reading lands between the snapshot's read and the vectors' read.
         try await library.readFaces([library.result(for: "b.jpg", faces: [Self.face(x: 0.3)])])
-        var vectors = FaceVectors()
-        try await vectors.add(library.store.backgroundReads.faceEmbeddings(after: 0, limit: FaceVectors.pageSize))
-        #expect(vectors.count == 2)
-        try vectors.keep(snapshot.vectors, through: snapshot.vectorHorizon)
-        #expect(vectors.count == 2, "the newer reading stays")
+        var vectorStore = FaceVectorStore(space: .ample)
+        try await vectorStore.add(library.store.backgroundReads.faceEmbeddings(after: 0, limit: FaceVectorStore.pageSize))
+        #expect(vectorStore.vectors.count == 2)
+        try vectorStore.keep(snapshot.vectors, through: snapshot.vectorHorizon)
+        #expect(vectorStore.vectors.count == 2, "the newer reading stays")
         let next = try await library.store.backgroundReads.peopleSnapshot()
-        #expect(next.faces.allSatisfy { vectors.vector($0.vector) != nil })
+        let held = vectorStore.vectors
+        #expect(next.faces.allSatisfy { held.vector($0.vector) != nil })
         await library.store.shutdown()
     }
 
@@ -930,7 +976,7 @@ struct PeopleStoreTests {
         for name in names {
             try await read(name)
         }
-        let owner = PeopleAssignment(store: library.store)
+        let owner = PeopleAssignment(store: library.store, vectorSpace: .ample)
         let libraries = try #require(await library.store.loadedLibraries())
         var present = names
         for step in 0 ..< 40 {

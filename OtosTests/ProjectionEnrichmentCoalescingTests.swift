@@ -81,7 +81,7 @@ struct ProjectionEnrichmentCoalescingTests {
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let store = makeTestStore(location: .inMemory, scanner: seededScanner())
-        let projection = CatalogProjection(cadence: .milliseconds(25))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(25))
         let recorder = AsyncValueRecorder<CatalogWindowState>()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recording = Task {
@@ -377,7 +377,7 @@ struct ProjectionEnrichmentCoalescingTests {
     /// reads that order again.
     @Test func facesReadTheOrderOnlyWhereTheScopeIsByPerson() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
-        let projection = CatalogProjection(cadence: .milliseconds(25))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(25))
         let recorder = AsyncValueRecorder<CatalogWindowState>()
         let stream = await projection.states(
             store: library.store,
@@ -424,7 +424,7 @@ struct ProjectionEnrichmentCoalescingTests {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
         let store = makeTestStore(location: .inMemory, scanner: seededScanner())
-        let projection = CatalogProjection(cadence: .milliseconds(25))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(25))
         let recorder = AsyncValueRecorder<CatalogWindowState>()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recording = Task {

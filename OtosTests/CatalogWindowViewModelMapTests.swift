@@ -386,7 +386,7 @@ struct CatalogWindowViewModelMapTests {
     private func makeViewModel() -> CatalogWindowViewModel {
         CatalogWindowViewModel(
             catalogStore: makeTestStore(location: .inMemory, scanCadence: .milliseconds(10)),
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,

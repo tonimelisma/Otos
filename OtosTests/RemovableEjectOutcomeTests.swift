@@ -11,7 +11,7 @@ struct RemovableEjectOutcomeTests {
         let temp = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: makeTestStore(location: .inMemory),
-            catalogProjection: CatalogProjection(),
+            catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,

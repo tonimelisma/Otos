@@ -42,6 +42,7 @@ struct WindowMemoryTests {
             .importBatch(batch.batchID), .allMedia,
         ]
         let projection = CatalogProjection(
+            volumeCapacity: ampleVolumeCapacity,
             cadence: .milliseconds(25),
             backgroundOwners: BackgroundOwners(off: Set(BackgroundOwner.allCases))
         )

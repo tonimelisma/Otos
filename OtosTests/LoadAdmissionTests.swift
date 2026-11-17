@@ -230,6 +230,7 @@ struct LoadAdmissionTests {
         let duplicates = ArrivalGate()
         let people = ArrivalGate()
         let projection = CatalogProjection(
+            volumeCapacity: ampleVolumeCapacity,
             cadence: .milliseconds(10),
             duplicatesBuilder: { _, _ in
                 await duplicates.arrive()
@@ -271,7 +272,7 @@ struct LoadAdmissionTests {
         let admission = LoadAdmission()
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
             loadAdmission: admission,
             startsStallMonitor: false,
             startsEnrichment: false,

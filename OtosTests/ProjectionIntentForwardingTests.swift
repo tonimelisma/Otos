@@ -12,7 +12,7 @@ struct ProjectionIntentForwardingTests {
     @MainActor
     @Test func aHideReachesProjectionWhileTheMainThreadIsBusy() async throws {
         try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "forward") { fixture in
-            let projection = CatalogProjection(cadence: .milliseconds(10))
+            let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
             let recorder = AsyncValueRecorder<CatalogWindowState>()
             let stream = await projection.states(
                 store: fixture.store,

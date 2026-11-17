@@ -876,7 +876,7 @@ final class CatalogWindowViewModel {
         // A projection a test makes keeps its own admission; the window's shares this one, so
         // its duplicates builds and People passes take turns with the owners started here.
         self.catalogProjection = catalogProjection
-            ?? CatalogProjection(backgroundOwners: backgroundOwners, admission: loadAdmission)
+            ?? CatalogProjection(volumeCapacity: volumeCapacity, backgroundOwners: backgroundOwners, admission: loadAdmission)
         let mediaChoiceOverlay = MediaChoiceOverlay()
         self.mediaChoiceOverlay = mediaChoiceOverlay
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore, choices: mediaChoiceOverlay)

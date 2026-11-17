@@ -180,7 +180,7 @@ extension AppKitWindowTests {
                     location: .databaseFile(directory.appending(path: "Catalog.sqlite")),
                     stagingContainers: StagingContainers(base: directory)
                 ),
-                catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+                catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
                 startsStallMonitor: false,
                 startsEnrichment: false,
                 startsSourceMonitoring: false,

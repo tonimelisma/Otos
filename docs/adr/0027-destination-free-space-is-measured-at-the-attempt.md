@@ -29,7 +29,8 @@ files early. Every owner with several writes at once checks the floor this way, 
 with its own ledger per volume: an import run, Move to Trash's downloads, and
 `MaterializationCoordinator`'s downloads. The last two hold a volume's ledger for as
 long as one of their downloads there is in flight, and read the figure afresh after.
-A single write (an export, an Immich sync file) checks `available − bytes` directly.
+A single write (an export, an Immich sync file, a page of the search index's or People's
+mapped vectors) checks `available − bytes` directly.
 The first entry that would breach the floor ends the run: nothing after it is
 attempted, entries already in flight finish, and the run settles as **stopped** —
 the same shape as a user Cancel, carrying `ImportStopReason.diskFloor(bytesFree:)`,

@@ -43,6 +43,17 @@ import OSLog
 /// A failed pass leaves its request outstanding for the next request to retry. `stop()` is
 /// teardown: it ends the doorbell, so the loop ends with it. The requests, the pass and its
 /// reads are kept in `OwnerActivity` (`QuiescentOwner`).
+///
+/// **No room for the vectors** (ADR 0027, ADR 0032 rule 8). When the vectors a pass owes would
+/// take the volume below the free-space floor, or their write finds it full, the owner holds
+/// that fact (`spaceHold`), logs it once (`op=people.vectors phase=floorHeld`) and arms one
+/// wake, a backoff (`time: backoff`: nothing reports when space comes back). Until the wake
+/// finds room, a pass reads nothing and assigns nothing: a change only adds the photos it names
+/// to what the next read owes. What People shows meanwhile is what the catalog holds — the
+/// guesses and gallery facts last written, and the read held (`lastRead`), so ranking goes on
+/// over the vectors held and a face whose vector is not held is offered no candidates. Nothing
+/// is published as empty. When the wake finds room it says so (`phase=floorCleared`) and owes
+/// one pass, which reads by key what changed since and assigns.
 actor PeopleAssignment: QuiescentOwner {
     /// What the People snapshot reads (`CatalogStore.peopleSnapshot`), so `CatalogProjection`
     /// asks for a pass only when one of these moved: the faces, who they are and the people;
@@ -62,7 +73,22 @@ actor PeopleAssignment: QuiescentOwner {
     /// What the last pass read, for `candidates(for:)`.
     private var lastRead: PeopleSnapshot?
     /// Every face's vector read so far; read on the first assignment or ranking that needs it.
-    private var vectors = FaceVectors()
+    private var vectorStore: FaceVectorStore
+    /// The vectors held, as every reader takes them.
+    private var vectors: FaceVectors {
+        vectorStore.vectors
+    }
+
+    /// The volume had no room for the vectors owed: no pass reads until the wake finds room.
+    private var spaceHold: SpaceHold?
+    private var spaceRetry: Task<Void, Never>?
+    private let spaceBackoff: (first: Duration, last: Duration)
+
+    private struct SpaceHold {
+        /// The pause before the wake after the next.
+        var next: Duration
+    }
+
     /// The ranker over `lastRead` and `vectors`; nil until asked for, and after either changes.
     private var ranker: FaceRanker?
     /// The inputs whose assignment the catalog holds; read from the catalog by the first pass.
@@ -80,9 +106,18 @@ actor PeopleAssignment: QuiescentOwner {
     /// Runs each pass one heavy load at a time with the other owners' (`LoadAdmission`).
     private let admission: LoadAdmission
 
-    init(store: CatalogStore, admission: LoadAdmission = LoadAdmission(isOpen: true)) {
+    /// `vectorSpace` is where the vectors' file is made and the free space its volume reports;
+    /// `spaceBackoff` the first and the longest pause before a wake looks for room again.
+    init(
+        store: CatalogStore,
+        vectorSpace: FaceVectorFile.Space,
+        admission: LoadAdmission = LoadAdmission(isOpen: true),
+        spaceBackoff: (first: Duration, last: Duration) = (.seconds(30), .seconds(900))
+    ) {
         self.store = store
         self.admission = admission
+        self.spaceBackoff = spaceBackoff
+        vectorStore = FaceVectorStore(space: vectorSpace)
         (bell, doorbell) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
@@ -125,9 +160,14 @@ actor PeopleAssignment: QuiescentOwner {
     /// exist, copies, stacks, choices) can move what other photos stand for, so it is read whole.
     static let incrementalInputs: CatalogChangedFacts = [.faces, .faceTiles]
 
-    /// Teardown, callable from anywhere: ends the loop.
+    /// Teardown, callable from anywhere: ends the loop. A wake waiting for room holds this
+    /// owner weakly and is cancelled when it goes.
     nonisolated func stop() {
         doorbell.finish()
+    }
+
+    deinit {
+        spaceRetry?.cancel()
     }
 
     /// The people each face of `photos` could be, from the last pass's read: a hidden
@@ -138,13 +178,18 @@ actor PeopleAssignment: QuiescentOwner {
         guard let read = lastRead else {
             return [:]
         }
-        do {
-            try await syncVectors(for: read)
-        } catch {
-            OtosLog.catalog.errorOperation("people.candidates", phase: "vectorsFailed", fields: [
-                "error": String(describing: error),
-            ])
-            return nil
+        // At the floor the vectors held are ranked: a face whose vector is not held gets none.
+        if spaceHold == nil {
+            do {
+                try await syncVectors(for: read)
+            } catch let failure as FaceVectorFile.Failure where failure.isNoSpace {
+                holdForSpace(failure)
+            } catch {
+                OtosLog.catalog.errorOperation("people.candidates", phase: "vectorsFailed", fields: [
+                    "error": String(describing: error),
+                ])
+                return nil
+            }
         }
         // The read may have moved while the vectors were read: rank what is held now, from
         // values taken in this synchronous step.
@@ -164,6 +209,12 @@ actor PeopleAssignment: QuiescentOwner {
             activity.endPass(covering: answered)
             settleQuiescence()
         }
+        // No room for the vectors: the wake that finds room owes the pass; this one reads
+        // nothing, and the photos a change named wait in `owedRows`.
+        guard spaceHold == nil else {
+            answered = startedFrom
+            return
+        }
         do {
             // Before the catalog's first load there is nothing to read; the load is a catalog
             // change, so a request follows it.
@@ -177,6 +228,12 @@ actor PeopleAssignment: QuiescentOwner {
             }
         } catch is CancellationError {
             owedRows = nil
+            return
+        } catch let failure as FaceVectorFile.Failure where failure.isNoSpace {
+            // The read stands (`lastRead`), and what changed since it is in `owedRows`: the
+            // pass is held, not failed, so it covers the request and the wake owes the next.
+            holdForSpace(failure)
+            answered = startedFrom
             return
         } catch {
             // What the failed read was to cover is owed again, whole.
@@ -276,17 +333,17 @@ actor PeopleAssignment: QuiescentOwner {
     private func syncVectors(for read: PeopleSnapshot) async throws {
         var malformed: [Int64] = []
         while true {
-            let page = try await store.backgroundReads.faceEmbeddings(after: vectors.owed, limit: FaceVectors.pageSize)
+            let page = try await store.backgroundReads.faceEmbeddings(after: vectors.owed, limit: FaceVectorStore.pageSize)
             let owed = vectors.owed
             let fresh = page.filter { $0.vector > owed }
-            try vectors.add(fresh)
+            try vectorStore.add(fresh)
             malformed += fresh.filter { $0.embedding == nil }.map(\.vector)
             ranker = nil
-            if page.count < FaceVectors.pageSize {
+            if page.count < FaceVectorStore.pageSize {
                 break
             }
         }
-        try vectors.keep(read.vectors, through: read.vectorHorizon)
+        try vectorStore.keep(read.vectors, through: read.vectorHorizon)
         guard !malformed.isEmpty else { return }
         let bad = Set(malformed)
         try await store.oweFacesAgain(Set(read.faces.filter { bad.contains($0.vector) }.map(\.id.asset)))
@@ -294,6 +351,59 @@ actor PeopleAssignment: QuiescentOwner {
 }
 
 extension PeopleAssignment {
+    /// Holds "no room for the vectors" and arms the wake that looks for room; logged once,
+    /// when the hold begins.
+    private func holdForSpace(_ failure: FaceVectorFile.Failure) {
+        guard spaceHold == nil else { return }
+        spaceHold = SpaceHold(next: spaceBackoff.first)
+        OtosLog.catalog.noticeOperation("people.vectors", phase: "floorHeld", fields: [
+            "reason": "\(failure)", "vectors": "\(vectors.count)",
+        ])
+        armSpaceRetry()
+    }
+
+    /// One wake at a time; each waits twice as long as the last, up to `spaceBackoff.last`.
+    private func armSpaceRetry() {
+        guard var hold = spaceHold, spaceRetry == nil else { return }
+        let delay = hold.next
+        hold.next = min(hold.next * 2, spaceBackoff.last)
+        spaceHold = hold
+        activity.wake = OwnerWake(kind: .backoff, at: ContinuousClock.now.advanced(by: delay))
+        spaceRetry = Task { [weak self] in
+            // time: backoff — the volume was at the free-space floor; nothing reports when
+            // space comes back
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            await spaceRetryFired()
+        }
+    }
+
+    /// The wake: when the volume has room for a page of vectors again, the hold ends and one
+    /// pass is owed; otherwise the wake is armed again and nothing is read. Internal so a test
+    /// delivers the wake at its point rather than waiting for it.
+    func spaceRetryFired() {
+        spaceRetry = nil
+        activity.wake = nil
+        guard spaceHold != nil else { return }
+        do {
+            try vectorStore.space.admit(bytes: FaceVectorStore.pageSize * FaceVector.byteCount)
+        } catch {
+            armSpaceRetry()
+            settleQuiescence()
+            return
+        }
+        spaceHold = nil
+        OtosLog.catalog.noticeOperation("people.vectors", phase: "floorCleared", fields: [
+            "vectors": "\(vectors.count)",
+        ])
+        request(rows: .none)
+    }
+
+    /// Whether the owner holds "no room for the vectors": what a test checks.
+    var isHeldForSpace: Bool {
+        spaceHold != nil
+    }
+
     /// What the last pass read and holds. Internal for the tests that compare it with a whole read.
     var heldRead: PeopleSnapshot? {
         lastRead
@@ -538,6 +648,14 @@ actor PeopleGallery: QuiescentOwner {
 /// read them again (`FaceVectorFile`). About 105 MB for the owner's 103k faces, none of it in the
 /// footprint.
 ///
+/// Two types, so that only one value can write the file:
+/// - **`FaceVectorStore`** is the one writer: non-copyable, held by `PeopleAssignment`, it owns
+///   the file and is the only value that appends to it or compacts it.
+/// - **`FaceVectors`** is what readers take (assignment, ranking, a pass's facts): the slots
+///   written so far and their mapping, copyable and holding no file, so a copy reads what it
+///   was made with and cannot write anything. A copy a pass still reads keeps the mapping it
+///   was made with: an append writes past it, and a compaction writes another file.
+///
 /// - **Slots:** each vector is one slot of `FaceEmbeddingModel.dimensions` Float16 values,
 ///   appended in vector-number order, so `numbers` is ascending and a vector is found by binary
 ///   search. A vector handed out is a slice of the mapping (`FaceVector`), never a copy.
@@ -546,43 +664,30 @@ actor PeopleGallery: QuiescentOwner {
 ///   own short read, and `add(_:)` writes a page's slots to the file and maps it again. A
 ///   reading's vector is never rewritten in place: a new reading writes a new row with a higher
 ///   number, so nothing at or below `owed` changes, and a slot once written never changes.
+/// - **Free space:** a page's slots are written only while the volume keeps the free-space
+///   floor after them (ADR 0027, `FreeSpaceFloor`); otherwise, and when the write itself finds
+///   the volume full, `add(_:)` throws a failure that `isNoSpace` and holds what it held.
 /// - **Forgetting:** `keep(_:through:)` drops every vector no stored face names. A dropped slot
 ///   stays in the file until a compaction, which runs when a quarter of the slots are dropped
-///   and writes the slots kept into a new file.
-/// - **Copies:** a copy of this value shares the file and its mapping. A copy a pass still reads
-///   keeps the mapping it was made with: an append writes past it, and a compaction writes
-///   another file.
+///   and writes the slots kept into a new file; at the floor no compaction runs, and the
+///   dropped slots stay unread in the file they are in.
 /// - **Malformed rows:** a vector whose bytes are no embedding is held as malformed, so its
 ///   face is left out of assignment and its photo owes its faces again (`malformed`).
 nonisolated struct FaceVectors: Sendable {
-    /// One row of the vector table as read: its number, and its embedding, nil when its bytes
-    /// hold none.
-    nonisolated struct Read: Sendable, Equatable {
-        let vector: Int64
-        let embedding: FaceEmbedding?
-    }
-
-    /// Vectors per read: 4 MB of rows, one short read each.
-    static let pageSize = 2048
-
-    /// The file the slots are written to; nil until the first is written.
-    private var file: FaceVectorFile?
     /// Every slot written, mapped read-only.
-    private var mapped = Data()
+    fileprivate(set) var mapped = Data()
     /// Each slot's vector number, ascending.
-    private var numbers: [Int64] = []
+    fileprivate(set) var numbers: [Int64] = []
     /// Each slot's state: `recognisableFlag`, `droppedFlag`.
-    private var states: [UInt8] = []
-    private var dropped = 0
+    fileprivate(set) var states: [UInt8] = []
+    fileprivate(set) var dropped = 0
     /// The vectors whose bytes hold no embedding.
-    private(set) var malformed: Set<Int64> = []
+    fileprivate(set) var malformed: Set<Int64> = []
     /// The largest vector number read; the catalog's rows above it are not held.
-    private(set) var owed: Int64 = 0
+    fileprivate(set) var owed: Int64 = 0
 
-    private static let recognisableFlag: UInt8 = 1
-    private static let droppedFlag: UInt8 = 2
-
-    init() {}
+    fileprivate static let recognisableFlag: UInt8 = 1
+    fileprivate static let droppedFlag: UInt8 = 2
 
     /// The vectors held.
     var count: Int {
@@ -620,12 +725,38 @@ nonisolated struct FaceVectors: Sendable {
         guard low < numbers.count, numbers[low] == vector, states[low] & Self.droppedFlag == 0 else { return nil }
         return low
     }
+}
+
+/// The one writer of People's vector file (see the face vectors guide). Non-copyable, so no
+/// second value can append to the file it owns: everyone else reads `vectors`.
+nonisolated struct FaceVectorStore: ~Copyable, Sendable {
+    /// One row of the vector table as read: its number, and its embedding, nil when its bytes
+    /// hold none.
+    nonisolated struct Read: Sendable, Equatable {
+        let vector: Int64
+        let embedding: FaceEmbedding?
+    }
+
+    /// Vectors per read: 4 MB of rows, one short read each.
+    static let pageSize = 2048
+
+    /// Where the file is made and the free space its volume reports (ADR 0027).
+    let space: FaceVectorFile.Space
+    /// The file the slots are written to; nil until the first is written.
+    private var file: FaceVectorFile?
+    /// What the file holds, for every reader.
+    private(set) var vectors = FaceVectors()
+
+    init(space: FaceVectorFile.Space) {
+        self.space = space
+    }
 
     /// Writes the slots of a page read in number order above `owed`; rows at or below it are
-    /// already held and are passed over. A write that fails leaves this value as it was.
-    mutating func add(_ page: [Read]) throws {
-        var owed = owed
-        var malformed = malformed
+    /// already held and are passed over. A write that fails, or that the free-space floor
+    /// refuses, leaves what is held as it was.
+    mutating func add(_ page: [Read]) throws(FaceVectorFile.Failure) {
+        var owed = vectors.owed
+        var malformed = vectors.malformed
         var fresh: [(vector: Int64, embedding: FaceEmbedding)] = []
         for read in page where read.vector > owed {
             owed = read.vector
@@ -636,56 +767,65 @@ nonisolated struct FaceVectors: Sendable {
             }
         }
         if !fresh.isEmpty {
+            let bytes = fresh.count * FaceVector.byteCount
+            try space.admit(bytes: bytes)
             // The page's slots, made once in a region of their own and unmapped as this returns.
             let slots = ScratchBuffer<Float16>(count: fresh.count * FaceEmbeddingModel.dimensions)
             for (index, read) in fresh.enumerated() {
                 FaceVector.halve(read.embedding.values, into: slots.base + index * FaceEmbeddingModel.dimensions)
             }
-            let file = try file ?? FaceVectorFile()
-            let length = numbers.count * FaceVector.byteCount
-            let bytes = fresh.count * FaceVector.byteCount
+            let file: FaceVectorFile = if let held = self.file {
+                held
+            } else {
+                try FaceVectorFile(in: space.directory)
+            }
+            let length = vectors.numbers.count * FaceVector.byteCount
             try file.write(UnsafeRawBufferPointer(start: slots.base, count: bytes), at: length)
-            mapped = try file.map(length: length + bytes)
+            vectors.mapped = try file.map(length: length + bytes)
             self.file = file
-            numbers += fresh.map(\.vector)
-            states += fresh.map { FaceRecognisability.isRecognisable($0.embedding) ? Self.recognisableFlag : 0 }
+            vectors.numbers += fresh.map(\.vector)
+            vectors.states += fresh.map { FaceRecognisability.isRecognisable($0.embedding) ? FaceVectors.recognisableFlag : 0 }
         }
-        self.owed = owed
-        self.malformed = malformed
+        vectors.owed = owed
+        vectors.malformed = malformed
     }
 
-    /// Keeps only `vectors`, the ones a snapshot's faces name, among the vectors numbered up to
+    /// Keeps only `named`, the vectors a snapshot's faces name, among the vectors numbered up to
     /// `horizon`, the largest number that snapshot could see: a vector written after it is
-    /// some face's newer reading, which a later snapshot names, so it stays.
-    mutating func keep(_ vectors: Set<Int64>, through horizon: Int64) throws {
-        var states = states
-        var dropped = dropped
-        for slot in numbers.indices where numbers[slot] <= horizon && states[slot] & Self.droppedFlag == 0 {
-            if !vectors.contains(numbers[slot]) {
-                states[slot] |= Self.droppedFlag
-                dropped += 1
+    /// some face's newer reading, which a later snapshot names, so it stays. A compaction the
+    /// floor refuses, or whose write finds the volume full, is not run: the dropped slots stay
+    /// in the file, unread.
+    mutating func keep(_ named: Set<Int64>, through horizon: Int64) throws(FaceVectorFile.Failure) {
+        var kept = vectors
+        for slot in kept.numbers.indices where kept.numbers[slot] <= horizon && kept.states[slot] & FaceVectors.droppedFlag == 0 {
+            if !named.contains(kept.numbers[slot]) {
+                kept.states[slot] |= FaceVectors.droppedFlag
+                kept.dropped += 1
             }
         }
-        let malformed = malformed.filter { $0 > horizon || vectors.contains($0) }
-        if dropped * 4 > numbers.count {
-            self = try Self.compacted(numbers: numbers, states: states, mapped: mapped, owed: owed, malformed: malformed)
-        } else {
-            self.states = states
-            self.dropped = dropped
-            self.malformed = malformed
+        kept.malformed = kept.malformed.filter { $0 > horizon || named.contains($0) }
+        guard kept.dropped * 4 > kept.numbers.count else {
+            vectors = kept
+            return
+        }
+        do {
+            (file, vectors) = try Self.compacted(kept, space: space)
+        } catch where error.isNoSpace {
+            vectors = kept
         }
     }
 
-    /// The slots not dropped, in order, written into a new file.
+    /// The slots of `held` not dropped, in order, written into a new file.
     private static func compacted(
-        numbers: [Int64], states: [UInt8], mapped: Data, owed: Int64, malformed: Set<Int64>
-    ) throws -> FaceVectors {
+        _ held: FaceVectors, space: FaceVectorFile.Space
+    ) throws(FaceVectorFile.Failure) -> (FaceVectorFile?, FaceVectors) {
         var compacted = FaceVectors()
-        compacted.owed = owed
-        compacted.malformed = malformed
-        let kept = numbers.indices.filter { states[$0] & droppedFlag == 0 }
-        guard !kept.isEmpty else { return compacted }
-        let file = try FaceVectorFile()
+        compacted.owed = held.owed
+        compacted.malformed = held.malformed
+        let kept = held.numbers.indices.filter { held.states[$0] & FaceVectors.droppedFlag == 0 }
+        guard !kept.isEmpty else { return (nil, compacted) }
+        try space.admit(bytes: kept.count * FaceVector.byteCount)
+        let file = try FaceVectorFile(in: space.directory)
         var written = 0
         var start = 0
         // Each run of kept slots is one write, straight from the old mapping.
@@ -696,24 +836,23 @@ nonisolated struct FaceVectors: Sendable {
             }
             let from = kept[start] * FaceVector.byteCount
             let bytes = (end - start) * FaceVector.byteCount
-            try mapped.withUnsafeBytes { (source: UnsafeRawBufferPointer) in
+            try held.mapped.withUnsafeBytes { (source: UnsafeRawBufferPointer) throws(FaceVectorFile.Failure) in
                 try file.write(UnsafeRawBufferPointer(rebasing: source[from ..< from + bytes]), at: written)
             }
             written += bytes
             start = end
         }
-        compacted.file = file
         compacted.mapped = try file.map(length: written)
-        compacted.numbers = kept.map { numbers[$0] }
-        compacted.states = kept.map { states[$0] }
-        return compacted
+        compacted.numbers = kept.map { held.numbers[$0] }
+        compacted.states = kept.map { held.states[$0] }
+        return (file, compacted)
     }
 }
 
 /// Face vector file guide
 ///
-/// The file `FaceVectors` writes its slots to: created in the user's temporary directory and
-/// unlinked at once, so it has no name, lives exactly as long as the process holds it, and
+/// The file `FaceVectorStore` writes its slots to: created in the user's temporary directory
+/// and unlinked at once, so it has no name, lives exactly as long as the process holds it, and
 /// leaves nothing on disk after a crash. It is made again from the catalog's `face_embedding`
 /// rows every launch, so it is never stale and never a second source of truth (ADR 0047), and it
 /// is never in a media folder. Slots are written with `pwrite(2)` and read through a read-only
@@ -728,13 +867,43 @@ final nonisolated class FaceVectorFile: Sendable {
         case create(errno: Int32)
         case write(errno: Int32)
         case map(errno: Int32)
+        /// The write would take the volume below the free-space floor (ADR 0027).
+        case floorReached
+
+        /// The volume has no room for the write: the floor refused it, or the system did.
+        var isNoSpace: Bool {
+            switch self {
+            case .floorReached, .create(errno: ENOSPC), .write(errno: ENOSPC): true
+            default: false
+            }
+        }
+    }
+
+    /// Where vector files are made, and the free space its volume reports: the real disk's in
+    /// the app (`FreeSpaceFloor.availableBytes`), a test's own figure in a test.
+    nonisolated struct Space: Sendable {
+        let directory: URL
+        let availableBytes: VolumeCapacityReader
+
+        /// In the user's temporary directory, whose volume `availableBytes` is asked about.
+        static func temporary(availableBytes: @escaping VolumeCapacityReader) -> Space {
+            Space(directory: FileManager.default.temporaryDirectory, availableBytes: availableBytes)
+        }
+
+        /// Whether writing `bytes` more keeps the volume at the floor; throws `floorReached`
+        /// when it would not. An unknown capacity admits, and the write's `ENOSPC` is the
+        /// backstop (`FreeSpaceFloor.admits`).
+        func admit(bytes: Int) throws(Failure) {
+            guard FreeSpaceFloor.admits(Int64(bytes), available: availableBytes(directory)) else {
+                throw .floorReached
+            }
+        }
     }
 
     private let descriptor: Int32
 
-    init() throws(Failure) {
-        let path = FileManager.default.temporaryDirectory
-            .appending(path: "otos-face-vectors-\(UUID().uuidString)").path(percentEncoded: false)
+    init(in directory: URL) throws(Failure) {
+        let path = directory.appending(path: "otos-face-vectors-\(UUID().uuidString)").path(percentEncoded: false)
         let descriptor = Darwin.open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else {
             throw .create(errno: errno)

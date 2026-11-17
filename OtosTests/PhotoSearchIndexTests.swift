@@ -937,7 +937,7 @@ struct PhotoSearchIndexTests {
         for await _ in changes where await index.embeddedCount == 2 {
             break
         }
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         await projection.attachSearchIndex(index)
         let stream = await projection.states(store: catalog.store, initialDescriptor: .default)
         let recorder = AsyncValueRecorder<CatalogWindowState>()
@@ -1013,7 +1013,7 @@ struct PhotoSearchIndexTests {
         for await _ in changes where await index.embeddedCount == 2 {
             break
         }
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         await projection.attachSearchIndex(index)
         let stream = await projection.states(
             store: catalog.store,
@@ -1130,7 +1130,7 @@ struct PhotoSearchIndexTests {
         for await _ in changes where await index.embeddedCount == 2 {
             break
         }
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         await projection.attachSearchIndex(index)
         let stream = await projection.states(store: catalog.store, initialDescriptor: .default)
         let recorder = AsyncValueRecorder<CatalogWindowState>()
@@ -1187,7 +1187,7 @@ struct PhotoSearchIndexTests {
         for await _ in changes where await index.embeddedCount == 2 {
             break
         }
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         await projection.attachSearchIndex(index)
         let stream = await projection.states(store: catalog.store, initialDescriptor: .default)
         let recorder = AsyncValueRecorder<CatalogWindowState>()
@@ -1270,7 +1270,7 @@ struct PhotoSearchIndexTests {
         for await _ in changes where await index.embeddedCount == 2 {
             break
         }
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         await projection.attachSearchIndex(index)
         let stream = await projection.states(store: catalog.store, initialDescriptor: .default)
         let recorder = AsyncValueRecorder<CatalogWindowState>()

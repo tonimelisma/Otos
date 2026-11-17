@@ -19,6 +19,7 @@ struct FilterOptionsKeyedReadTests {
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let projection = CatalogProjection(
+            volumeCapacity: ampleVolumeCapacity,
             cadence: .milliseconds(25),
             backgroundOwners: BackgroundOwners(off: Set(BackgroundOwner.allCases))
         )

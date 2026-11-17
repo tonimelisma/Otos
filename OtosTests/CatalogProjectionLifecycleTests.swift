@@ -28,7 +28,7 @@ struct CatalogProjectionLifecycleTests {
                 return .empty
             }
             let store = makeTestStore(location: .inMemory, scanner: scanner)
-            let projection = CatalogProjection(cadence: .milliseconds(10))
+            let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
             let stream = await projection.states(store: store, initialDescriptor: .default)
             let recordingTask = Task {
                 for await _ in stream {}
@@ -52,7 +52,7 @@ struct CatalogProjectionLifecycleTests {
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let scanner = CatalogScanner { _, _, _ in .empty }
         let store = makeTestStore(location: .inMemory, scanner: scanner)
-        let projection = CatalogProjection(cadence: .milliseconds(50))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(50))
         let recorder = LifecycleStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
@@ -124,7 +124,7 @@ private func selectionNormalizingProjection(
     missing: SidebarSelection,
     gate: ArrivalGate
 ) -> CatalogProjection {
-    CatalogProjection(cadence: .milliseconds(10)) { _, _, request in
+    CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)) { _, _, request in
         let selection = request.descriptor.scope
         if selection == missing {
             await gate.arrive()

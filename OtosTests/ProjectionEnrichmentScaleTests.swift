@@ -64,7 +64,7 @@ struct ProjectionEnrichmentScaleTests {
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
 
         let store = makeTestStore(location: .databaseFile(databaseURL), scanner: seededScanner())
-        let projection = CatalogProjection(cadence: .milliseconds(25))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(25))
         let recorder = AsyncValueRecorder<CatalogWindowState>()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {

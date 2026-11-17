@@ -1893,13 +1893,13 @@ extension CatalogStore {
     /// The vectors numbered above `vector`, in number order, at most `limit` of them: one short
     /// read of the vector table's primary key (`FaceEmbeddingSQL`). A row whose bytes are no
     /// embedding (not 512 values of unit length) comes back without one.
-    func faceEmbeddings(after vector: Int64, limit: Int, lane: CatalogReadLane) async throws -> [FaceVectors.Read] {
+    func faceEmbeddings(after vector: Int64, limit: Int, lane: CatalogReadLane) async throws -> [FaceVectorStore.Read] {
         try await reader(for: lane).readFreeingConnection { db in
             try Row.fetchAll(
                 db.cachedStatement(sql: "SELECT id, embedding FROM face_embedding WHERE id > ? ORDER BY id LIMIT ?"),
                 arguments: [vector, limit]
             ).map { row in
-                FaceVectors.Read(vector: row[0], embedding: FaceStorage.embedding(from: row[1]))
+                FaceVectorStore.Read(vector: row[0], embedding: FaceStorage.embedding(from: row[1]))
             }
         }
     }

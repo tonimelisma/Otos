@@ -198,7 +198,7 @@ extension AppKitWindowTests {
                     location: .databaseFile(directory.appending(path: "Catalog.sqlite")),
                     stagingContainers: StagingContainers(base: directory)
                 ),
-                catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+                catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
                 startsStallMonitor: false,
                 startsEnrichment: false,
                 startsSourceMonitoring: false,
@@ -446,6 +446,7 @@ extension AppKitWindowTests {
             try await store.start(scansSavedLibraries: false)
             let thumbnails = try #require(store.thumbnailDirectory)
             let projection = CatalogProjection(
+                volumeCapacity: ampleVolumeCapacity,
                 cadence: .milliseconds(25), backgroundOwners: BackgroundOwners(off: Set(BackgroundOwner.allCases))
             )
             let stream = await projection.states(store: store, initialDescriptor: .default)

@@ -5,7 +5,7 @@ extension PeopleAssignment {
     /// Runs passes on a fresh owner as the loop would after each write's change, until one
     /// assigns nothing, and returns the gallery the window then reads.
     static func settle(store: CatalogStore, libraries: [CatalogLibraryState]) async throws -> CatalogPeopleState {
-        try await PeopleAssignment(store: store).settle()
+        try await PeopleAssignment(store: store, vectorSpace: .ample).settle()
         return try await store.gallery(libraries: libraries)
     }
 }
@@ -18,12 +18,19 @@ extension CatalogStore {
     }
 }
 
+extension FaceVectorFile.Space {
+    /// The test process's temporary directory, on a volume reported with room to spare: a
+    /// test's vectors never depend on how full the disk is (ADR 0027).
+    static let ample = FaceVectorFile.Space.temporary(availableBytes: ampleVolumeCapacity)
+}
+
 extension FaceVectors {
     /// The vectors of `faces`, numbered as `PeopleSnapshot(facts:)` numbers them: 1, 2, … in
     /// order.
-    init(facts faces: [FaceFact]) throws {
-        self.init()
-        try add(faces.enumerated().map { Read(vector: Int64($0.offset + 1), embedding: $0.element.embedding) })
+    static func held(facts faces: [FaceFact]) throws -> FaceVectors {
+        var store = FaceVectorStore(space: .ample)
+        try store.add(faces.enumerated().map { .init(vector: Int64($0.offset + 1), embedding: $0.element.embedding) })
+        return store.vectors
     }
 }
 
@@ -39,7 +46,7 @@ extension PeopleSnapshot.Face {
 }
 
 extension PeopleSnapshot {
-    /// A snapshot of `facts`, their vectors numbered 1, 2, … in order (`FaceVectors(facts:)`).
+    /// A snapshot of `facts`, their vectors numbered 1, 2, … in order (`FaceVectors.held(facts:)`).
     init(
         facts: [FaceFact],
         people: [Person],

@@ -307,7 +307,7 @@ grouping had put with the right child.
   vectors at half precision (105 MB for 103k faces): on the owner's 102,978 vectors it changed
   no best person, threshold or margin decision in 3,029 faces sampled
   (`docs/research/2026-11-16-people-memory-and-kernel.md`). They are held in a file of their
-  own, never on the heap (`FaceVectors`, `FaceVectorFile`): created in the temporary directory
+  own, never on the heap (`FaceVectorStore`, `FaceVectorFile`): created in the temporary directory
   and unlinked at once, written with `pwrite`, read through a read-only shared mapping, so their
   pages are clean and file-backed and the footprint never counts them. The file is made again
   from `face_embedding` every launch, as the vectors were read before, so it is never stale and
@@ -322,6 +322,24 @@ grouping had put with the right child.
   kept across launches, which would save the launch's one read of every vector (under a second
   of a background reader) at the cost of a commit point in the catalog, a check against a
   restored catalog whose vector numbers run again, and a file to remove with its faces.
+  One value writes the file: `FaceVectorStore` is non-copyable and held by `PeopleAssignment`,
+  and what a pass, the ranker or the kernel reads is `FaceVectors`, a copyable view of the slots
+  and their mapping that holds no file, so no copy can append over slots another has mapped.
+  Rejected: one copyable value that both reads and writes, which let any copy but the owner's
+  write at the length it was made with, over slots the owner had appended since.
+- **No room for the vectors.** The file obeys the free-space floor (ADR 0027): a page of vectors
+  is written only while the volume keeps the floor after it, and a write that finds the volume
+  full is the same fact. People then holds "no room" (ADR 0032 rule 8): it logs it once
+  (`op=people.vectors phase=floorHeld`), arms one backoff wake (30 s, doubling to 15 min;
+  nothing reports when space comes back) and reads nothing until the wake finds room for a page
+  (`phase=floorCleared`). Meanwhile People shows what the catalog holds: the names, guesses and
+  gallery facts last written, and the read it holds, so ranking goes on over the vectors held
+  and a face whose vector is not held is offered no candidates; a change only adds the photos
+  it names to what the next read owes, and nothing is published as empty. At the floor no
+  compaction runs: the dropped slots stay unread in the file they are in. Rejected: failing the
+  pass, which owed a whole `peopleSnapshot()` read and the same refused write on every later
+  catalog change until space returned; and making assignment's input wait on space by
+  dropping the read, which would show People emptier than the catalog.
 - **Settles on its own output:** assignment reads only the anchors, so run on what it wrote it
   writes nothing; the hash of its inputs says when it need not run at all (Work and placement).
 - **A new reading** of the same source keeps the user's word: each act, and each seed, moves

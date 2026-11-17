@@ -14,7 +14,7 @@ struct CatalogProjectionShownFirstTests {
             _ = try await fixture.store.setMediaChoices(Dictionary(uniqueKeysWithValues: fixture.ids.map { ($0, .liked) }))
             var filter = MediaFilter.all
             filter.choices = [.liked]
-            let projection = CatalogProjection(cadence: .milliseconds(10))
+            let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
             let recorder = AsyncValueRecorder<CatalogWindowState>()
             let stream = await projection.states(
                 store: fixture.store,
@@ -70,7 +70,7 @@ struct CatalogProjectionShownFirstTests {
         let jpeg1 = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "DSC1.JPG"))
         let raw1 = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "DSC1.ARW"))
 
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         let recorder = AsyncValueRecorder<CatalogWindowState>()
         let stream = await projection.states(store: store, initialRequest: CatalogQueryRequest(descriptor: .default, generation: 0))
         let recordingTask = Task {

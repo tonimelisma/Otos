@@ -20,7 +20,7 @@ struct BenchmarkTests {
         let libraries = library.libraries
 
         // The window's publication of All Media: the order query and the window state.
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
         try await Benchmark.measure("projection.windowState.allMedia") {
             guard case let .built(state, _, _, _) = try await projection.buildWindowState(
@@ -267,7 +267,7 @@ struct BenchmarkTests {
             let snapshot = try await store.backgroundReads.peopleSnapshot()
             #expect(snapshot.faces.count == 10000)
         }
-        let people = PeopleAssignment(store: store)
+        let people = PeopleAssignment(store: store, vectorSpace: .ample)
         try await people.settle()
         // A pass that reads every face, as one after a change that names no rows.
         try await Benchmark.measure("people.pass.10k", iterations: 3) {
@@ -284,7 +284,7 @@ struct BenchmarkTests {
         // window's pass, and a build of each owner whose answer is built from faces
         // (`PeopleAssignment.inputs`, `DuplicatesProjection.inputs`). A new person is a faces
         // write that leaves every face where it was.
-        let window = CatalogProjection(cadence: .milliseconds(25))
+        let window = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(25))
         let states = await window.states(store: store, initialDescriptor: .default)
         let consuming = Task {
             for await _ in states {}
@@ -316,7 +316,7 @@ struct BenchmarkTests {
     /// with its stack candidates, the stack rule and the collapse pass.
     @Test func stackCases() async throws {
         let library = try await BenchmarkPairLibrary.make(in: makeTestDirectory())
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let request = CatalogQueryRequest(descriptor: .default, generation: 0)
         var lastReads = CatalogProjectionReads.none
         try await Benchmark.measure("projection.windowState.pairs") {

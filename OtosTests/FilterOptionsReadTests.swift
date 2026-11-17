@@ -35,7 +35,7 @@ struct FilterOptionsReadTests {
             try await store.addLibrary(url: url)
         }
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.libraries.count == 2 }
-        let projection = CatalogProjection(cadence: .seconds(3600), filterOptionsReader: { owed in
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .seconds(3600), filterOptionsReader: { owed in
             rows.append(owed.row)
             await gate.arrive()
             try Task.checkCancellation()

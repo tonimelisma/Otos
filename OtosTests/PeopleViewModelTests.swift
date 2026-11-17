@@ -56,7 +56,7 @@ struct PeopleViewModelTests {
             let sam = try #require(try await library.store.perform(.moveToNewPerson([hers], name: "Sam")).person)
             let model = CatalogWindowViewModel(
                 catalogStore: library.store,
-                catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+                catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
                 startsStallMonitor: false,
                 startsEnrichment: false,
                 startsSourceMonitoring: false,

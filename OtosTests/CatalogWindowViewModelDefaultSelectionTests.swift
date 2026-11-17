@@ -15,7 +15,7 @@ struct ViewModelDefaultSelectionTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
@@ -110,7 +110,7 @@ struct ViewModelDefaultSelectionTests {
         let temp = PreferencesDomain.suite(UUID().uuidString)
         return CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,

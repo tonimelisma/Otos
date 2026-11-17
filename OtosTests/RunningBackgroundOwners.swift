@@ -61,7 +61,7 @@ actor RunningBackgroundOwners {
         }
         metadata = MetadataRefresher(store: store) { _ in .unreachable }
         derivedFolder = DerivedFolderLoad(store: store, admission: admission)
-        projection = CatalogProjection(admission: admission)
+        projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, admission: admission)
         accountSync = account.map { account in
             ImmichCatalogSync(
                 rootPath: account, source: QuietServer(), store: store, volumeCapacity: ampleVolumeCapacity, admission: admission

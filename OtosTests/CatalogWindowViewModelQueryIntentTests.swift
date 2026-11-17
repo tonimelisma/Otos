@@ -85,6 +85,7 @@ private func makeQueryIntentModel(temp: PreferencesDomain)
     let store = makeTestStore(location: .inMemory)
     let gate = WindowStateBuildGate()
     let projection = CatalogProjection(
+        volumeCapacity: ampleVolumeCapacity,
         cadence: .milliseconds(10),
         stateBuilder: { libraries, _, request in
             let buildNumber = await gate.record(request)

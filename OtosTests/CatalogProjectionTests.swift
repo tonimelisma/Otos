@@ -10,7 +10,7 @@ struct CatalogProjectionTests {
     @Test func windowStatePreservesLibraryOrderAndSortsAssets() async {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let fixture = makeProjectionFixture(
             libraries: [
                 makeLibrary(root: pictures, activity: .scanning),
@@ -34,7 +34,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func windowStateFallsBackWhenSelectedLibraryIsMissing() async {
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
 
@@ -55,7 +55,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func windowStateHidesUnavailableLibraryAssets() async {
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let fixture = makeProjectionFixture(
@@ -81,7 +81,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func windowStateHidesUnknownAssetsAndReportsCheckingStates() async {
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let fixture = makeProjectionFixture(
@@ -105,7 +105,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func availableAssetsRemainVisibleWhileAnotherLibraryIsUnknown() async {
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let fixture = makeProjectionFixture(
@@ -127,7 +127,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func allMediaEmptyStateDistinguishesUnavailableCatalogedMedia() async {
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let fixture = makeProjectionFixture(
             libraries: [makeLibrary(root: pictures, availability: .unavailable)],
@@ -146,7 +146,7 @@ struct CatalogProjectionTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
         let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         let recorder = StateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
@@ -215,6 +215,7 @@ struct CatalogProjectionTests {
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         let projection = CatalogProjection(
+            volumeCapacity: ampleVolumeCapacity,
             cadence: .milliseconds(10),
             stateBuilder: { libraries, orderedAssetIDs, request in
                 try await probe.build(
@@ -256,6 +257,7 @@ struct CatalogProjectionTests {
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         let projection = CatalogProjection(
+            volumeCapacity: ampleVolumeCapacity,
             cadence: .seconds(3600),
             stateBuilder: { libraries, orderedAssetIDs, request in
                 try await probe.build(
@@ -301,6 +303,7 @@ struct CatalogProjectionTests {
         try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         let projection = CatalogProjection(
+            volumeCapacity: ampleVolumeCapacity,
             cadence: .milliseconds(10),
             stateBuilder: { libraries, orderedAssetIDs, request in
                 try await probe.build(
@@ -470,6 +473,7 @@ struct CatalogProjectionTests {
     @Test func publicationLoopDoesNotYieldUnchangedWindowState() async throws {
         let store = makeTestStore(location: .inMemory)
         let projection = CatalogProjection(
+            volumeCapacity: ampleVolumeCapacity,
             cadence: .milliseconds(10),
             stateBuilder: { _, _, _ in .empty }
         )
@@ -499,7 +503,7 @@ struct CatalogProjectionTests {
     /// hide brings the items back.
     @Test func aHideIsPublishedWithoutAReadAndItsLandedMarkAppliesNothingTwice() async throws {
         try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "hide") { fixture in
-            let projection = CatalogProjection(cadence: .milliseconds(10))
+            let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
             let recorder = StateRecorder()
             let stream = await projection.states(
                 store: fixture.store,
@@ -555,7 +559,7 @@ struct CatalogProjectionTests {
     /// row, held together, from the one before it.
     @Test func eachHideIsAnEditOfTheOrderLastPublished() async throws {
         try await withCatalogedLibrary(fileCount: 4, fileNamePrefix: "edit") { fixture in
-            let projection = CatalogProjection(cadence: .milliseconds(10))
+            let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
             let recorder = StateRecorder()
             let stream = await projection.states(
                 store: fixture.store,
@@ -694,7 +698,7 @@ struct CatalogProjectionTests {
     private static func recordedProjection(
         _ fixture: CatalogedLibrary
     ) async -> (CatalogProjection, StateRecorder, Task<Void, Never>) {
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         let recorder = StateRecorder()
         let stream = await projection.states(
             store: fixture.store,
@@ -711,7 +715,7 @@ struct CatalogProjectionTests {
 
 extension CatalogProjectionTests {
     @Test func removableSourcesAreSeparateAndExcludedFromAllMedia() async {
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let card = LibraryRoot(
@@ -744,7 +748,7 @@ extension CatalogProjectionTests {
     }
 
     @Test func mtpCameraSelectionShowsEnumeratingStateAndConnectionBanner() async {
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let camera = LibraryRoot(
             path: LibraryRootPath(rawValue: "/tmp/Otos/DeviceStaging/camera"),
             kind: .deviceMTP,
@@ -770,7 +774,7 @@ extension CatalogProjectionTests {
     /// ADR 0013: while an attached card is scanned and nothing on it has been seen yet,
     /// the grid says it is reading the card — not that there is no media.
     @Test func aCardBeingScannedWithNothingSeenYetShowsReadingCard() async {
-        let projection = CatalogProjection()
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let card = LibraryRoot(
             path: LibraryRootPath(rawValue: "/Volumes/CARD"),
             kind: .removableVolume,
@@ -826,6 +830,7 @@ private func makeProbedProjection(
     cadence: Duration = .milliseconds(10)
 ) -> CatalogProjection {
     CatalogProjection(
+        volumeCapacity: ampleVolumeCapacity,
         cadence: cadence,
         stateBuilder: { libraries, orderedAssetIDs, request in
             try await probe.build(
@@ -955,7 +960,7 @@ private func makeDetailRefreshFixture() async throws -> DetailRefreshFixture {
     try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
 
     let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
-    let projection = CatalogProjection(cadence: .milliseconds(10))
+    let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
     let recorder = StateRecorder()
     let stream = await projection.states(store: store, initialDescriptor: .default)
     let recordingTask = Task {

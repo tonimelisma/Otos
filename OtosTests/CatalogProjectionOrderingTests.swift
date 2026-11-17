@@ -11,7 +11,7 @@ struct CatalogProjectionOrderingTests {
         try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
 
         let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         let recorder = OrderingStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {

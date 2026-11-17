@@ -27,7 +27,7 @@ struct CatalogProjectionEmptyStateTests {
             location: .databaseFile(databaseURL),
             scanCadence: .milliseconds(10)
         )
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         let recorder = EmptyStateRecorder()
         let stream = await projection.states(store: secondStore, initialDescriptor: .default)
         let recordingTask = Task {
@@ -68,7 +68,7 @@ struct CatalogProjectionEmptyStateTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
         let gate = ArrivalGate()
-        let projection = CatalogProjection(cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
             await gate.arrive()
             return .empty
         })
@@ -125,7 +125,7 @@ struct CatalogProjectionEmptyStateTests {
         }
         let gate = ArrivalGate()
         await gate.open()
-        let projection = CatalogProjection(cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
             await gate.arrive()
             return .empty
         })
@@ -191,6 +191,7 @@ struct CatalogProjectionEmptyStateTests {
         await duplicatesGate.open()
         await peopleGate.open()
         let projection = CatalogProjection(
+            volumeCapacity: ampleVolumeCapacity,
             cadence: .milliseconds(10),
             duplicatesBuilder: { _, _ in
                 await duplicatesGate.arrive()
@@ -264,7 +265,7 @@ struct CatalogProjectionEmptyStateTests {
         }
         let gate = ArrivalGate()
         await gate.open()
-        let projection = CatalogProjection(cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
             await gate.arrive()
             return .empty
         })
@@ -321,7 +322,7 @@ struct CatalogProjectionEmptyStateTests {
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
 
         let gate = ArrivalGate()
-        let projection = CatalogProjection(cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10), duplicatesBuilder: { _, _ in
             await gate.arrive()
             return .empty
         })
@@ -360,7 +361,7 @@ struct CatalogProjectionEmptyStateTests {
     /// "No Media", no title (APP-044). A catalog that really is empty says so once loaded.
     @Test func beforeTheCatalogLoadsNoEmptinessIsClaimed() async throws {
         let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         let recorder = EmptyStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
@@ -404,7 +405,7 @@ struct CatalogProjectionEmptyStateTests {
         await firstStore.shutdown()
 
         let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
-        let projection = CatalogProjection(cadence: .seconds(60))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .seconds(60))
         let recorder = EmptyStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {

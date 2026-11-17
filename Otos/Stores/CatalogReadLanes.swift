@@ -434,7 +434,7 @@ extension CatalogReads where Lane == BackgroundLane {
         try await store.peopleSnapshot(of: photos, lane: lane)
     }
 
-    func faceEmbeddings(after vector: Int64, limit: Int) async throws -> [FaceVectors.Read] {
+    func faceEmbeddings(after vector: Int64, limit: Int) async throws -> [FaceVectorStore.Read] {
         try await store.faceEmbeddings(after: vector, limit: limit, lane: lane)
     }
 

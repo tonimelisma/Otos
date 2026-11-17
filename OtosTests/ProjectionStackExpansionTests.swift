@@ -22,7 +22,7 @@ struct ProjectionStackExpansionTests {
         let raw1 = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "DSC1.ARW"))
         let jpeg2 = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "DSC2.JPG"))
 
-        let projection = CatalogProjection(cadence: .milliseconds(10))
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
         let initial = CatalogQueryRequest(descriptor: .default, generation: 0)
         let recorder = AsyncValueRecorder<CatalogWindowState>()
         let stream = await projection.states(store: store, initialRequest: initial)

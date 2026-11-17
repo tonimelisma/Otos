@@ -58,7 +58,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: secondStore,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
+            catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
             enrichmentCoordinator: coordinator,
             startsStallMonitor: false,
             startsSourceMonitoring: false,

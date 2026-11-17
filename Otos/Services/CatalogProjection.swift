@@ -101,6 +101,8 @@ actor CatalogProjection {
     /// Runs the duplicates builds and People passes one heavy load at a time with the other
     /// owners' (`LoadAdmission`): the window's, which opens it at its first grid.
     let admission: LoadAdmission
+    /// The free space of the volume People's vector file is made on (ADR 0027).
+    private let volumeCapacity: VolumeCapacityReader
 
     /// The changes delivered against those acted on, the inputs and the passes, for the
     /// projection's quiescence (`QuiescentOwner`); its own counters say what it owes.
@@ -283,7 +285,11 @@ actor CatalogProjection {
         !continuations.isEmpty
     }
 
+    /// `volumeCapacity` reports the free space of the volume People's vector file is made on
+    /// (`FaceVectorFile.Space`, ADR 0027); no default, so no caller depends on how full the
+    /// real disk is by omitting it (ADR 0020).
     init(
+        volumeCapacity: @escaping VolumeCapacityReader,
         cadence: Duration = .seconds(1),
         stateBuilder: WindowStateBuilder? = nil,
         filterOptionsReader: FilterOptionsReader? = nil,
@@ -293,6 +299,7 @@ actor CatalogProjection {
         admission: LoadAdmission = LoadAdmission(isOpen: true)
     ) {
         self.admission = admission
+        self.volumeCapacity = volumeCapacity
         self.cadence = cadence
         self.stateBuilder = stateBuilder
         self.filterOptionsReader = filterOptionsReader
@@ -1022,7 +1029,7 @@ private extension CatalogProjection {
         self.duplicatesProjection = duplicatesProjection
         // A test that injects the gallery's read assigns nothing: its states are the test's.
         let peopleAssignment = backgroundOwners.starts(.people) && peopleBuilder == nil
-            ? PeopleAssignment(store: store, admission: admission) : nil
+            ? PeopleAssignment(store: store, vectorSpace: .temporary(availableBytes: volumeCapacity), admission: admission) : nil
         self.peopleAssignment = peopleAssignment
         // The gallery is the window's own read, not a background owner: it runs whatever the
         // tour leaves out, at the window's priority.
