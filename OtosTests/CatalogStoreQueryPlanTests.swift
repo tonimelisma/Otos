@@ -1381,3 +1381,58 @@ extension CatalogStoreQueryPlanTests {
         #expect(loops.last?.hasPrefix("SEARCH asset USING INDEX idx_media_asset_size_root_asc") == true, "\(plan)")
     }
 }
+
+extension CatalogStoreQueryPlanTests {
+    /// Every order a wide scope can ask for — each sort, under each filter the window offers —
+    /// walks its order index in order, sorts nothing, and tests each row it walks from that
+    /// index entry and the indexes its plan names (a person's faces, a place's cell), never
+    /// from the asset's or its metadata's table row: the pages it reads are at most the pages of
+    /// the trees its plan names and the small tables of names and people, which leaves out
+    /// `media_asset`'s and `asset_metadata`'s tables. With no filter, a scope of whole libraries
+    /// visits about one index entry per row it returns. A filter of chosen rows only (Liked,
+    /// Disliked) seeks them and sorts the few it finds, as a narrow scope does. On a generated
+    /// catalog of the owner's shape (`docs/research/2026-11-17-every-order-the-window-asks-for.md`).
+    @Test func everyOrderOfAWideScopeWalksItsIndexAndReadsNoTableRow() async throws {
+        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
+        let path = catalog.databaseURL.path(percentEncoded: false)
+        let queue = try makeTestDatabaseQueue(path: path)
+        let (picks, trees) = try await queue.write { db in
+            try db.execute(sql: "UPDATE media_asset SET media_choice = 'liked' WHERE byte_size % 100 = 0")
+            let trees = try Dictionary(uniqueKeysWithValues: Row.fetchAll(db, sql: """
+            SELECT name, count(*) AS pages FROM dbstat GROUP BY name
+            """).map { ($0["name"] as String, $0["pages"] as Int64) })
+            return try (OrderReadSurveyTests.Picks(db), trees)
+        }
+        try queue.close()
+        let wide = ["allMedia.", "allMediaOneLibraryOffline.", "library15.", "library7.", "places.", "people."]
+        let reads = OrderReadSurvey.reads(picks).filter { read in wide.contains { read.name.hasPrefix($0) } }
+        #expect(reads.count == 6 * 12 * 6)
+        let indexName = /USING (?:COVERING )?INDEX (\w+)/
+        for read in reads {
+            let measured = try #require(try OrderReadSurvey.measure(read, path: path))
+            let chosen = !read.descriptor.filter.choices.isEmpty && !read.descriptor.filter.choices.contains(.notRated)
+            #expect(measured.tempBTree == chosen, "\(read.name): \(measured.plan)")
+            if !chosen {
+                // A walk of every row in the order, or of one root's range of it.
+                let walk = measured.plan.first.map { line in
+                    line.hasPrefix("SCAN media_asset USING ") || line.contains("_root_") && line.hasSuffix("(library_root_id=?)")
+                } ?? false
+                #expect(walk, "\(read.name): \(measured.plan)")
+            }
+            // The trees the plan names, and the small tables a named-cell or face test reads its
+            // names and people from; never the asset table or the metadata table.
+            var named: Set = ["sqlite_schema", "library_root", "place_cell", "face", "person"]
+            for line in measured.plan {
+                for match in line.matches(of: indexName) {
+                    named.insert(String(match.1))
+                }
+            }
+            let budget = named.reduce(0) { $0 + (trees[$1] ?? 0) }
+            #expect(measured.pages <= budget, "\(read.name): \(measured.pages) pages, \(budget) in \(named.sorted()); \(measured.plan)")
+            if read.name.contains(".none."), !read.name.hasPrefix("places."), !read.name.hasPrefix("people.") {
+                let walked = measured.loops.first { $0.name.hasPrefix("idx_media_asset_") }?.visited ?? 0
+                #expect(Double(walked) <= Double(measured.rows) * 1.05, "\(read.name): \(walked) visited for \(measured.rows)")
+            }
+        }
+    }
+}

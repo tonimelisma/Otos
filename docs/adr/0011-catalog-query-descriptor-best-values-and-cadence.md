@@ -53,7 +53,6 @@ Adjacent decisions requiring separate specs or ADRs:
 - metadata inspector/details UI
 - media selection, activation, or editing
 - anchor-item scroll preservation if offset preservation proves visually jumpy
-- additional composite filter-by-sort indexes after measured query evidence
 
 ## Decision
 
@@ -136,6 +135,29 @@ rejected too: an area's options would shrink as the map moved, while the filter 
 is the row's. The View menu opens that same popover instead of duplicating the
 hierarchy.
 
+Every order the descriptor can ask for is answered by one index walked in its order. Each
+sort field and direction has two: a global index led by the order's key, for a scope of
+several roots, and a root-local one led by the root, for a scope of one. After the key each
+holds the row's identity — root and path, the ties, ascending under either direction — and
+every column a window read tests a row by: whether it is shown (`pending_trash_batch_unix_ms`,
+`awaiting_presence`, `hidden_by_source`), whether it is a Live Photo's movie (`best_kind`,
+`content_identifier`), which copy of identical files shows (`shown_copy_root_id`,
+`has_copies`), and the filter's format and choice (`best_format`, `media_choice`, v76). So a
+wide scope's walk under any filter but people and places tests each row from its index entry
+and reads no table row; a person's or Unidentified Faces' test seeks the face index, and a
+place's finds the row's coordinate in the location index and computes its cell there. The
+order read carries a row's capture time only under a date order, whose index holds it as its
+key: the day buckets and a keyed re-read use it there alone. A filter of chosen rows (Liked,
+Disliked) seeks them through `idx_media_asset_chosen` and sorts the few it finds. The
+measurements of every order × scope × filter are in
+`docs/research/2026-11-17-every-order-the-window-asks-for.md`.
+
+Rejected: order indexes led by the kind, so a kind filter reads pages in proportion to the
+rows it returns. Two kinds are two ranges SQLite can only merge by sorting, and an
+unfiltered order reads every kind's range out of order, so each of the twelve would need a
+kind-led twin — about 230 MB more index on the owner's catalog, written on every row — to
+save the walk of an index the owner's All Media reads in 82 ms cold.
+
 `best_format` tokens are MediaMetadata's file-type names (ADR 0039): HEIC, HEIF and
 HIF are one `HEIF`, JPG/JPE one `JPEG`, TIF one `TIFF`, so every token is one filter
 row and a file type's predicate is one `best_kind`/`best_format` pair.
@@ -202,7 +224,6 @@ Failure modes:
 - missing a scan/enrichment fact in the upsert suppression key can hide a visible
   change or over-notify
 - generated-column policy changes require a table rebuild
-- sparse filters over very large libraries may require measured composite indexes
 
 Alternative C is selected. It is the simplest correct architecture because it
 keeps data facts in one persistence owner, keeps policy in one generated-column
@@ -223,10 +244,11 @@ definition, and keeps the UI passive.
   this is correct behavior. Same-descriptor reorders render as animated moves
   per ADR 0006; they are ordinary truth adopted every background tick, not a
   special-case animation path outside the structural-apply policy.
-- Query-plan tests must cover production SQL builders for the default and
-  user-facing sort directions.
-- If residual filter scans prove slow, the next step is measured composite
-  filter-by-sort indexes, not a new projection cache.
+- Query-plan tests cover the production SQL of every sort, scope kind and filter: a wide
+  scope's order walks its index, sorts nothing and reads no table row
+  (`CatalogStoreQueryPlanTests.everyOrderOfAWideScopeWalksItsIndexAndReadsNoTableRow`).
+- A choice or a format written on a row moves its entry in all twelve order indexes (about
+  50 KB more write-ahead log for a Like on the owner-shaped catalog).
 
 ## Retirement Proof
 
@@ -263,7 +285,7 @@ current behavior before code lands.
 ## Reversal Plan
 
 If always-requery plus generated best values proves too slow, keep the descriptor
-contract and add measured composite filter-by-sort indexes first. If that still
+contract and measure a filter's walk against an index led by what it filters first. If that still
 fails, introduce typed Store change classification so Projection can skip
 ordered-ID queries only for changes proven unable to affect the active
 descriptor. Reverting to Swift-side ranking or UI-side filtering would require a

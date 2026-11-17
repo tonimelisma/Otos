@@ -2667,6 +2667,92 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// Schema v76: the twelve order indexes also carry each row's format and choice, the last
+    /// two columns a window filter tests a row by, so a file-type filter (`best_format`) and a
+    /// choices filter that holds Not Rated (`media_choice`, which no chosen-rows seek serves)
+    /// test each row they walk from its index entry. Without them each walked row's 2 KB table
+    /// row was read: 21,500–29,000 pages for All Media by any order on a generated catalog of
+    /// the owner's shape, where the same walk with no filter reads 3,500–6,400
+    /// (`docs/research/2026-11-17-every-order-the-window-asks-for.md`). Each index is dropped and
+    /// made again with its own leading columns, as v69 made them, and the two columns after.
+    static let orderFilterColumnsMigrationIdentifier = "v76_order_filter_columns"
+
+    /// Literal, as v76 builds it (ADR 0002: an applied migration's outcome never changes).
+    static let orderFilterColumnsStatements: [String] = [
+        "DROP INDEX idx_media_asset_best_capture_global_desc",
+        """
+        CREATE INDEX idx_media_asset_best_capture_global_desc ON media_asset(best_capture_local DESC, library_root_id, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_best_capture_root_desc",
+        """
+        CREATE INDEX idx_media_asset_best_capture_root_desc ON media_asset(library_root_id, best_capture_local DESC, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_best_capture_global_asc",
+        """
+        CREATE INDEX idx_media_asset_best_capture_global_asc ON media_asset(best_capture_local ASC, library_root_id, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_best_capture_root_asc",
+        """
+        CREATE INDEX idx_media_asset_best_capture_root_asc ON media_asset(library_root_id, best_capture_local ASC, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_name_global_asc",
+        """
+        CREATE INDEX idx_media_asset_name_global_asc ON media_asset(name_sort_key ASC, library_root_id, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_name_global_desc",
+        """
+        CREATE INDEX idx_media_asset_name_global_desc ON media_asset(name_sort_key DESC, library_root_id, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_name_root_asc",
+        """
+        CREATE INDEX idx_media_asset_name_root_asc ON media_asset(library_root_id, name_sort_key ASC, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_name_root_desc",
+        """
+        CREATE INDEX idx_media_asset_name_root_desc ON media_asset(library_root_id, name_sort_key DESC, \
+        relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_size_global_asc",
+        """
+        CREATE INDEX idx_media_asset_size_global_asc ON media_asset((byte_size IS NULL), byte_size ASC, \
+        library_root_id, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+        best_kind, content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_size_global_desc",
+        """
+        CREATE INDEX idx_media_asset_size_global_desc ON media_asset((byte_size IS NULL), byte_size DESC, \
+        library_root_id, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+        best_kind, content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_size_root_asc",
+        """
+        CREATE INDEX idx_media_asset_size_root_asc ON media_asset(library_root_id, (byte_size IS NULL), \
+        byte_size ASC, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+        best_kind, content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+        "DROP INDEX idx_media_asset_size_root_desc",
+        """
+        CREATE INDEX idx_media_asset_size_root_desc ON media_asset(library_root_id, (byte_size IS NULL), \
+        byte_size DESC, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
+        best_kind, content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)
+        """,
+    ]
+
     static func indexStoredSearchTexts(_ db: Database) throws {
         let start = ContinuousClock.now
         let rows = try Row.fetchCursor(db, sql: """

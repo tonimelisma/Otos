@@ -197,7 +197,7 @@ grouping (a Live Photo pairing can hide a row no change named), a change whose r
 unnamed, more rows than `rowCapacity`, and a scope a key cannot test (Places, a day, a batch,
 a person). The whole read is one walk of the scope's rows with each row's kind, format and
 located cell: a wide scope walks `idx_media_asset_stack_candidate`, which holds the kind, the
-format, the key and what tests visibility (the date order index holds no format), and finds
+format, the key and what tests visibility, and finds
 each located row's coordinate by its key in the location index. On the owner's library a sync
 re-read All Media's options whole 92 times while 152 metadata changes arrived.
 

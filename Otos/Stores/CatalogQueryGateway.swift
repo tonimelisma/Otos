@@ -37,7 +37,7 @@ nonisolated enum CatalogQueryGateway {
     /// for `ORDER BY`, not a step toward per-asset detail in window state.
     /// `nil` under any sort other than `.bestDate`: the value is date-contiguous
     /// only under that sort, so callers that don't ask for it don't pay to
-    /// decode it (see `orderPlan`).
+    /// read it: the query selects NULL in its place (`orderedAssetIDQuery`).
     static func fetchOrderedAssetIDRows(
         descriptor: CatalogQueryDescriptor,
         scope: CatalogScopePredicate,
@@ -164,6 +164,14 @@ nonisolated enum CatalogQueryGateway {
         let locationColumns = scope.requiresLocation
             ? ", asset_metadata.primary_latitude, asset_metadata.primary_longitude"
             : ""
+        // The capture time is read only where the order is by date, from the date index's key:
+        // the day buckets and a keyed re-read's placement need it under that order alone, and
+        // no other order index holds it. Read under the name or size order, it was the table
+        // row of every row returned: 20,317 pages for All Media's 20,325 videos by name on the
+        // owner's catalog, 1.1 s cold, against 6,271 without it
+        // (`docs/research/2026-11-17-every-order-the-window-asks-for.md`). Under the likeness
+        // order, which walks a date index, it is not read either: nothing groups by it.
+        let captureColumn = descriptor.effectiveSort.field == .bestDate ? "media_asset.best_capture_local" : "NULL"
         // Read by position in `fetchOrderedAssetIDRows`: keep this column order.
         let likedColumn = scope.isAnniversary ? ", media_asset.media_choice = 'liked' AS is_liked" : ""
         // A sought scope's stacks are built from its rows, so its rows carry their stills' bursts.
@@ -176,7 +184,7 @@ nonisolated enum CatalogQueryGateway {
         // chosen rows (`ChosenRowsSQL`).
         return SQLQuery(
             sql: """
-            SELECT media_asset.library_root_id, media_asset.relative_path, media_asset.best_capture_local\(locationColumns)\(likedColumn)\(burstColumn)
+            SELECT media_asset.library_root_id, media_asset.relative_path, \(captureColumn)\(locationColumns)\(likedColumn)\(burstColumn)
             FROM \(from)
             WHERE \(scopeClause.sql)\(filterSQL)
             ORDER BY \(order.orderBy)
@@ -2081,13 +2089,21 @@ private nonisolated func filterPredicate(
                 arguments.append(place.country)
             }
         }
+        // Each walked row's coordinate is sought in the location index and its cell computed
+        // from it, the expression the generated cell columns are: SQLite never serves a virtual
+        // column from an index, so joining by `place_cell_latitude` read the row's
+        // `asset_metadata` table row, 52,000–81,000 pages for All Media on a generated catalog
+        // of the owner's shape (`docs/research/2026-11-17-every-order-the-window-asks-for.md`).
+        let latitudeCell = PlaceCellSQL.cell("place_metadata.primary_latitude", cells: PlaceCellSQL.latitudeCells)
+        let longitudeCell = PlaceCellSQL.cell("place_metadata.primary_longitude", cells: PlaceCellSQL.longitudeCells)
         clauses.append("""
-        EXISTS (SELECT 1 FROM asset_metadata AS place_metadata
+        EXISTS (SELECT 1 FROM asset_metadata AS place_metadata INDEXED BY \(LocationIndexSQL.indexName)
             JOIN place_cell
-              ON place_cell.cell_latitude = place_metadata.place_cell_latitude
-              AND place_cell.cell_longitude = place_metadata.place_cell_longitude
+              ON place_cell.cell_latitude = \(latitudeCell)
+              AND place_cell.cell_longitude = \(longitudeCell)
             WHERE place_metadata.library_root_id = media_asset.library_root_id
               AND place_metadata.relative_path = media_asset.relative_path
+              AND \(LocationIndexSQL.locatedSQL(row: "place_metadata"))
               AND place_cell.language = ?
               AND (\(placeClauses.joined(separator: " OR "))))
         """)

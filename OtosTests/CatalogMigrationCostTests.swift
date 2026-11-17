@@ -17,14 +17,17 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v75's journal table dropped and its record removed.
-    static let newest = CatalogSchema.rootChangeJournalMigrationIdentifier
+    /// schema before it: v76's twelve order indexes made again as v64 (date) and v69 (name,
+    /// size) left them, and its record removed.
+    static let newest = CatalogSchema.orderFilterColumnsMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
-        [
-            "DROP TABLE library_root_change_journal",
-            "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
-        ]
+        let dateIndexes = CatalogSchema.photoTestedIndexes.prefix(4).map { index in
+            "CREATE INDEX \(index.name) ON media_asset(\(index.columns), \(CatalogSchema.photoTestedColumns))"
+        }
+        let creates = dateIndexes + CatalogSchema.sortOrderTestedColumnsStatements.filter { $0.hasPrefix("CREATE") }
+        let drops = CatalogSchema.orderFilterColumnsStatements.filter { $0.hasPrefix("DROP") }
+        return drops + creates + ["DELETE FROM grdb_migrations WHERE identifier = '\(newest)'"]
     }
 
     @Test(.enabled(if: StallReproductionTests.ownerSize))
@@ -49,6 +52,8 @@ struct CatalogMigrationCostTests {
         }
         try queue.close()
         let readsBefore = try WindowReadPages.measure(path: path)
+        let indexesBefore = try Self.orderIndexBytes(path)
+        let writesBefore = try Self.rowWriteBytes(path)
         let bytesBefore = try Self.size(path)
         let pool = try DatabasePool(path: path)
         let start = ContinuousClock.now
@@ -63,13 +68,9 @@ struct CatalogMigrationCostTests {
         let compaction = try CatalogStore.compactIfOwed(pool, fileURL: URL(filePath: path)) {}
         try pool.close()
         #expect(run.applied == 1)
-        // What v75's table takes on the disk: one empty table.
-        let indexBytes = try makeTestDatabaseQueue(path: path).read { db in
-            try Row.fetchAll(db, sql: """
-            SELECT name, sum(pgsize) AS bytes FROM dbstat
-            WHERE name LIKE '%library_root_change_journal%' GROUP BY name ORDER BY name
-            """).map { "\($0["name"] as String)=\($0["bytes"] as Int64)" }.joined(separator: " ")
-        }
+        // What v76's indexes take on the disk, before and after.
+        let indexesAfter = try Self.orderIndexBytes(path)
+        let writesAfter = try Self.rowWriteBytes(path)
         let readsAfter = try WindowReadPages.measure(path: path)
         let variants = try WindowReadPages.indexVariants(path: path)
         // The layout v71 does not take, measured on the same rows: the table without a row id.
@@ -79,13 +80,68 @@ struct CatalogMigrationCostTests {
         op=migrationCost id=\(Self.newest) ms=\(DiagnosticsTiming.milliseconds(elapsed)) \
         walBytes=\(walBytes) fileBytesBefore=\(bytesBefore) fileBytesAfter=\(bytesAfter)
         op=compaction outcome=\(compaction)
-        op=newestTables \(indexBytes)
+        op=orderIndexes when=before \(indexesBefore)
+        op=orderIndexes when=after \(indexesAfter)
+        op=rowWrites when=before \(writesBefore)
+        op=rowWrites when=after \(writesAfter)
 
         """ + WindowReadPages.report(before: readsBefore, after: readsAfter, withoutRowID: readsWithoutRowID)
             + "\n" + variants.joined(separator: "\n")
         let url = SourceTree.root.appending(path: "build/migration-cost/owner.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(line.utf8).write(to: url)
+    }
+
+    /// What one row's write puts in the write-ahead log, by the write: a choice set and put
+    /// back, the format enrichment corrects and puts back, and a file the scan inserts and the
+    /// scan's removal of it. Each starts from an emptied log, on a row of the account (never
+    /// hashed, so no copy trigger writes) away from the file's ends.
+    private static func rowWriteBytes(_ path: String) throws -> String {
+        // A pool, as the Store opens the catalog: its writes go to the write-ahead log.
+        let queue = try DatabasePool(path: path)
+        defer { try? queue.close() }
+        let key = "printf('%08x-0000-4000-8000-%012x/IMG_%06d.HEIC', 90000, 90000, 90000)"
+        let writes: [(String, String)] = [
+            ("like", "UPDATE media_asset SET media_choice = 'liked' WHERE library_root_id = 15 AND relative_path = \(key)"),
+            ("unlike", "UPDATE media_asset SET media_choice = 'notRated' WHERE library_root_id = 15 AND relative_path = \(key)"),
+            ("format", "UPDATE media_asset SET enriched_format = 'JPEG' WHERE library_root_id = 15 AND relative_path = \(key)"),
+            ("formatBack", "UPDATE media_asset SET enriched_format = 'HEIF' WHERE library_root_id = 15 AND relative_path = \(key)"),
+            ("insert", """
+            INSERT INTO media_asset (library_root_id, relative_path, name_sort_key, name, kind, format, byte_size,
+                                     created_at_unix, content_modified_at_unix)
+            VALUES (15, 'generated-write/IMG_000001.HEIC', 'img_000001.heic', 'IMG_000001.HEIC', 'image', 'HEIF',
+                    2000000, 1600000000, 1600000060)
+            """),
+            ("delete", "DELETE FROM media_asset WHERE library_root_id = 15 AND relative_path = 'generated-write/IMG_000001.HEIC'"),
+        ]
+        var measured: [String] = []
+        try queue.writeWithoutTransaction { db in
+            // A first write after the open, unmeasured: the log the open's first commit
+            // starts is not a row's cost.
+            try db.execute(sql: writes[1].1)
+            for (name, sql) in writes {
+                try db.checkpoint(.truncate)
+                try db.execute(sql: sql)
+                #expect(db.changesCount == 1, "\(name)")
+                try measured.append("\(name)=\(Self.size(path + "-wal"))")
+            }
+            try db.checkpoint(.truncate)
+        }
+        return measured.joined(separator: " ")
+    }
+
+    /// Each order index's bytes on the disk (`dbstat`), by name.
+    private static func orderIndexBytes(_ path: String) throws -> String {
+        let queue = try makeTestDatabaseQueue(path: path)
+        defer { try? queue.close() }
+        return try queue.read { db in
+            try Row.fetchAll(db, sql: """
+            SELECT name, sum(pgsize) AS bytes FROM dbstat
+            WHERE name LIKE 'idx_media_asset_best_capture_%' OR name LIKE 'idx_media_asset_name_%'
+               OR name LIKE 'idx_media_asset_size_%'
+            GROUP BY name ORDER BY name
+            """).map { "\($0["name"] as String)=\($0["bytes"] as Int64)" }.joined(separator: " ")
+        }
     }
 
     private static func size(_ path: String) throws -> Int64 {
