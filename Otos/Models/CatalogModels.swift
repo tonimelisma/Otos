@@ -1836,6 +1836,14 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         }
     }
 
+    /// The positions the index's edit names, from the table it shares to this order: what each
+    /// look-up searches and what the index holds beyond the table. Zero for an order read whole
+    /// and for one whose index is not built; a read's publication starts again from its own
+    /// table, so only the acts published on one read add to it.
+    var indexEditSize: Int {
+        index.withLock { $0?.edit.size ?? 0 }
+    }
+
     /// What making this content cost, its position index included once it is built.
     var work: Work {
         var work = made

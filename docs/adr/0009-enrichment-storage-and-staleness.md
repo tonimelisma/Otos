@@ -153,9 +153,11 @@ Adjacent decisions requiring separate ADRs or specs:
    The no-blank grid invariant (APP-015) is owned by `TileContentStore`: it is the
    sole decoded-image owner for the grid, keyed by asset identity and image-
    content key (`thumbnail_path`, source size, and source mtime seconds),
+   holding the visible tiles and, off screen, the most recently used sixteen
+   screens of them (ADR 0006, "What the tile store keeps"), its decoded images
    cost-capped (default 256 MB) with pin-aware LRU image eviction. Visible IDs
-   are pinned so a painted thumbnail cannot disappear under budget pressure.
-   Unpinned images may be dropped and re-decoded on rebind. The store is never
+   are pinned so a painted thumbnail cannot disappear under either bound.
+   Unpinned tiles may be dropped and read and decoded again on rebind. The store is never
    persisted, never used to answer catalog truth, and a re-enrichment that
    advances the image key keeps any prior painted image until the newer decode
    lands.

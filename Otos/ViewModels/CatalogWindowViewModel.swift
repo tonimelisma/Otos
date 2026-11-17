@@ -1487,6 +1487,7 @@ extension CatalogWindowViewModel {
         ResourceCheckpoint.record("paint", fields: [
             "scope": report.scope.diagnosticDescription,
             "tileCacheMB": "\(tileContentStore.imageBytes / 1_048_576)",
+            "tileEntries": "\(tileContentStore.count)",
         ], storeUse: storeUse)
     }
 

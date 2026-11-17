@@ -205,7 +205,7 @@ everything expensive happens on an actor off the main thread.
   renders it and the subclass never calls `super.mouseDown`). AppKit surfaces never
   write selection truth; the model flows one way, ViewModel → renderer, and
   `selectionIndexPaths` is render output. Paint truth lives in
-  `TileContentStore` (sole decoded-image owner, ViewModel-owned and shared by grid, strip, and panes; visible IDs pinned; cost-bounded);
+  `TileContentStore` (sole decoded-image owner, ViewModel-owned and shared by grid, strip, and panes; visible IDs pinned; off screen the sixteen screens of tiles used most recently, image bytes capped);
   tiles never blank a painted same-asset thumbnail (ADR 0006). A day is named twice by one label
   (`MediaGridDayLabel.swift`): in flow at the head of its run, and by
   `MediaGridDayBarView`, a controller-owned bar at the grid's top edge. Headers are

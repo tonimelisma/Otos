@@ -134,6 +134,32 @@ struct TileContentStoreTests {
         #expect(store.imageBytes == cost * 2)
     }
 
+    /// Off screen the store keeps `offscreenLimit` tiles, the most recently used, entry and
+    /// image: tiles scrolled further away are dropped, the visible ones never.
+    @Test func offScreenTilesBeyondTheLimitAreDroppedLeastRecentFirst() {
+        let image = makeImage(width: 8)
+        let store = TileContentStore()
+        let visible = (0 ..< 100).map { makeDetail(path: "v\($0).jpg", thumbnailPath: "v\($0).t") }
+        for detail in visible {
+            store.mergeDetail(detail)
+            store.applyDecoded(image, key: MediaAssetTilePresentation.imageContentKey(detail), for: detail.id)
+        }
+        store.pinVisible(Set(visible.map(\.id)))
+        #expect(store.offscreenLimit == TileContentStore.offscreenScreens * 100)
+        let scrolledPast = (0 ..< 3000).map { makeDetail(path: "s\($0).jpg", thumbnailPath: "s\($0).t") }
+        for detail in scrolledPast {
+            store.mergeDetail(detail)
+            store.applyDecoded(image, key: MediaAssetTilePresentation.imageContentKey(detail), for: detail.id)
+        }
+
+        #expect(store.count >= 100 + store.offscreenLimit)
+        #expect(store.count <= 100 + store.offscreenLimit * 5 / 4)
+        #expect(visible.allSatisfy { store.content(for: $0.id)?.image != nil })
+        #expect(store.content(for: scrolledPast[0].id) == nil)
+        #expect(store.content(for: scrolledPast[scrolledPast.count - 1].id)?.image != nil)
+        #expect(store.imageBytes == store.count * TileContentStore.byteCost(of: image))
+    }
+
     @Test func additivePinProtectsImageFromBudgetEvictionAndPrune() {
         let image = makeImage(width: 8)
         let cost = TileContentStore.byteCost(of: image)

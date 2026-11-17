@@ -283,8 +283,8 @@ position changes. Reorder-only completion
 skips `TileContentStore.prune` (membership identical by definition), and so does the
 completion of an apply that followed an edit: a Move to Trash's tiles come back by its Put
 Back, inserted beside their neighbours, and come back painted (APP-015); the next apply of a
-new query's order, published whole, prunes them, and `TileContentStore`'s byte budget bounds
-their images until then. The
+new query's order, published whole, prunes them, and until then they are off-screen tiles like
+any other, which the store keeps only within its off-screen limit (below). The
 apply-policy summary reads membership from the previous structure's own identity
 index, so no apply rebuilds a set of the identities on screen.
 Descriptor-changed reorders (sort/scope/filter flips) and large membership
@@ -369,6 +369,38 @@ selection state is never reassigned and its animated ring never blinks on a
 background apply. The selection ring is drawn on the visible tile face, so it
 follows the thumbnail aspect instead of the whole square cell, and fades in/out
 over a tuned duration rather than snapping.
+
+### What the tile store keeps
+
+`TileContentStore` keeps the visible tiles, pinned, and off screen the most recently used
+`offscreenScreens` (16) screens of the visible set's size, at least 64 tiles a screen: the four
+the preheat look-ahead decodes (two screens either way of the visible one) and twelve more that
+were scrolled past, so a scroll back over them paints from the store. A tile beyond that is
+dropped, its entry and image together, and read and decoded again if it comes back on screen;
+the look-ahead decodes it before it arrives in an ordinary scroll. The drop runs when an entry
+is added and a quarter of the limit has gathered past it, one sort of the held entries, so its
+cost is the entries the store holds, never the scope. The 256 MB image budget stays as a cap.
+With the owner's 256-pixel thumbnails (about 196–256 KB counted each) the budget holds
+1,000–1,300 tiles and the limit about 1,100 at the default six columns, so on his library the
+store keeps about what it kept before; on a library whose thumbnails are smaller, the limit
+binds.
+
+This is what the store was designed to hold. Bounded by the byte budget alone, it kept every
+tile it had ever decoded until the budget's count of 4 bytes a pixel reached 256 MB, and a
+backlog keeps bringing new tiles on screen: on a new 160,002-file library of 64 × 64 thumbnails
+the store held 3,757, 5,921 and 8,844 decoded tiles at footprints of 453, 608 and 754 MB, each
+costing about 37 KB (a 16 KB surface, a 14 KB and a 2.5 KB decoder buffer and about 4.6 KB of
+Image I/O and Core Animation objects) against the 16 KB the budget counted, and about 44 % of
+the footprint at the last
+(`docs/research/2026-11-17-tile-store-under-a-backlog.md`). On a library of small thumbnails,
+a scroll back past sixteen screens of tiles now shows placeholder content on tiles until their
+thumbnails decode, as a tile evicted under the budget always did: no
+tile on screen is ever blanked (APP-015).
+Rejected: a smaller byte budget (the bytes a tile costs depend on its thumbnail and its
+decoder, not on the 4 bytes a pixel the store can count, so a budget sized for one library
+keeps 16 times as many tiles of another); pruning to a range of positions around the visible
+one on every apply (a reorder moves which items stand there, so it costs a walk of the range
+per apply, and it drops a tile that has only moved).
 
 ## Why This Is Simplest Correct
 

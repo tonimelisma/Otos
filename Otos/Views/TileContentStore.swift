@@ -13,10 +13,15 @@ import OSLog
 // `TileContent` value idempotently and hold no asset-identity paint logic of their
 // own — the no-blank grid invariant holds by construction.
 //
-// Entry count is bounded by scope via `prune(keeping:)`. Decoded-image memory is bounded by
-// `imageByteBudget` via pin-aware `enforceImageBudget()`. Visible IDs are pinned
-// against both prune and budget eviction so a painted thumbnail cannot disappear
-// merely because an off-screen row was trimmed or the budget was under pressure.
+// What the store keeps is what it is designed to keep: the visible tiles (pinned) and, off
+// screen, `offscreenScreens` screens of the visible set's size, the most recently used: the
+// preheat look-ahead's four (two either way) and twelve scrolled back (`enforceRetention`).
+// A tile that scrolled or moved further away than that is dropped, entry and image, and is
+// read and decoded again if it comes back: placeholder content before its first paint *on
+// screen again*, never on a tile that is on screen. `prune(keeping:)` drops what left the
+// scope after a whole apply, and `imageByteBudget` caps the decoded images when the kept
+// tiles' pixels add up past it (`enforceImageBudget()`). Visible IDs are pinned against all
+// three, so a painted thumbnail cannot disappear while its tile is on screen.
 // Pinning has two shapes: `pinVisible(_:)` replaces the whole set at pass boundaries
 // (reconfigure, merge, structural-apply completion); `pin(_:)` additively pins one id
 // while a tile is being bound mid-pass (dequeue / makeItem).
@@ -112,6 +117,15 @@ final class TileContentStore {
     /// the process's, or a test's own that counts what a bind pays (`countingSteps`).
     private let identities: MediaAssetIdentityTable
 
+    /// Off-screen tiles the store keeps, in screens of the visible set's size: the preheat
+    /// look-ahead decodes two screens either way of the visible one (`preheatLookahead`), and
+    /// twelve more keep what was scrolled past, so a scroll back over them paints from the store.
+    /// With 256-pixel thumbnails the two bounds keep about as many tiles, 1,000 to 1,300.
+    static let offscreenScreens = 16
+    /// The visible set's size the limit counts with when fewer tiles are pinned: a grid not yet
+    /// laid out, or a pane's filmstrip, which pins none.
+    static let minimumScreenTiles = 64
+
     init(imageByteBudget: Int = 256 * 1024 * 1024, identities: MediaAssetIdentityTable = .shared) {
         self.imageByteBudget = max(1, imageByteBudget)
         self.identities = identities
@@ -119,6 +133,12 @@ final class TileContentStore {
 
     var count: Int {
         entries.count
+    }
+
+    /// The off-screen tiles the store keeps at most: `offscreenScreens` screens of the visible
+    /// set's size.
+    var offscreenLimit: Int {
+        Self.offscreenScreens * max(pinnedIDs.count, Self.minimumScreenTiles)
     }
 
     func content(for id: MediaAssetID) -> TileContent? {
@@ -242,6 +262,7 @@ final class TileContentStore {
                 detailRead: read,
                 undecodableKey: nil
             )
+            enforceRetention()
             if detail.thumbnailPath != nil {
                 return .awaitingDecode(retainsImage: false)
             }
@@ -396,21 +417,43 @@ final class TileContentStore {
         pinnedIDs = nextPinned
     }
 
-    /// While over budget, nils the LRU unpinned entry that still has an image (keeps
-    /// detail + imageKey). Never touches a pinned entry's image.
+    /// While over budget, nils the least recently used unpinned entries that still have an
+    /// image (keeping detail + imageKey), oldest first. Never touches a pinned entry's image.
+    /// One sort of the held entries, which `enforceRetention` bounds.
     func enforceImageBudget() {
-        while imageBytes > imageByteBudget {
-            guard let evicted = entries
-                .filter({ !pinnedIDs.contains($0.key) && $0.value.content.image != nil })
-                .min(by: { $0.value.accessStamp < $1.value.accessStamp })
-            else {
+        guard imageBytes > imageByteBudget else {
+            return
+        }
+        let candidates = entries
+            .filter { !pinnedIDs.contains($0.key) && $0.value.content.image != nil }
+            .sorted { $0.value.accessStamp < $1.value.accessStamp }
+        for (id, candidate) in candidates {
+            guard imageBytes > imageByteBudget else {
                 return
             }
-            var entry = evicted.value
+            var entry = candidate
             imageBytes -= entry.imageCost
             entry.content.image = nil
             entry.imageCost = 0
-            entries[evicted.key] = entry
+            entries[id] = entry
+        }
+    }
+
+    /// Drops the least recently used off-screen entries, image and all, once more than
+    /// `offscreenLimit` are held, down to the limit. Run when an entry is added; it lets a
+    /// quarter of the limit gather first, so the one sort of the held entries it costs is
+    /// shared by that many additions. Never drops a pinned (visible) entry.
+    private func enforceRetention() {
+        let limit = offscreenLimit
+        guard entries.count > pinnedIDs.count + limit + limit / 4 else {
+            return
+        }
+        let offscreen = entries
+            .filter { !pinnedIDs.contains($0.key) }
+            .sorted { $0.value.accessStamp < $1.value.accessStamp }
+        for (id, entry) in offscreen.prefix(max(0, offscreen.count - limit)) {
+            imageBytes -= entry.imageCost
+            entries[id] = nil
         }
     }
 
