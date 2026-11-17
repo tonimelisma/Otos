@@ -1,8 +1,9 @@
 # The performance program on the owner's library (2026-11-16 to 2026-11-17)
 
-Date: opened 2026-11-16, closed 2026-11-17 on revision 509cc0a0. This note is the program's
-lasting record: its targets, the first baseline, the final measurement, what moved each number,
-what was measured and rejected, how to measure again, and what remains.
+Date: opened 2026-11-16, closed 2026-11-17; final measurement on installed revision 87e272a1.
+This note is the program's lasting record: its targets, the first baseline, the final
+measurement, what moved each number, what was measured and rejected, how to measure again,
+and what remains.
 
 ## Method
 
@@ -11,7 +12,7 @@ what was measured and rejected, how to measure again, and what remains.
   either was made. The saved scorecards are local files; this note cites the revisions.
 - Two tour kinds (ADR 0015): a **launch** tour takes its first step at the first grid, under
   the launch's own load; a **settled** tour (`--settled`) waits for the launch's background
-  work to settle first. The final launch-kind session lasted 607.5 s; the settled one 77.6 s.
+  work to settle first. The final launch-kind session lasted 607.8 s; the settled one 69.7 s.
 - Acts (Move to Trash, Put Back, Like, Dislike, Not Rated) only in a sandbox: a generated
   library on its own volume (`--dev --optimized --seed <photos>`). The owner's library takes no
   act.
@@ -78,47 +79,51 @@ tour on f192041a peaked at 336 MB with every owner off, 973 MB with the search i
 2,263 MB with People alone: the gap was the owners. The machine is a 16 GB M1 Pro with about
 100 MB free and 4 GB in swap before Otos starts.
 
-## Final measurement (installed 509cc0a0, 2026-11-17)
+## Final measurement (installed 87e272a1, 2026-11-17)
 
 | Number | Baseline 661be172 | Final launch / settled | Target |
 | --- | --- | --- | --- |
-| Launch to first grid | 4,038 ms | 1,099 / 1,021 ms | ≤ 2,000 |
-| First import | 676 ms | 212 / 149 ms | ≤ 1,000 |
-| First library | 1,008 ms | 256 / 241 ms | ≤ 1,000 |
-| First People | 48,818 ms | 53 / 50 ms | ≤ 1,000 |
-| First person | 4,094 ms | 432 / 386 ms | ≤ 1,000 |
-| First Places | 1,469 ms | 372 / 234 ms | ≤ 1,000 |
-| On This Day | 137 ms | 105 / 149 ms | ≤ 1,000 |
-| Duplicates | 193 ms | 56 / 41 ms | ≤ 1,000 |
-| Return to All Media | 545 ms | 104 / 82 ms | ≤ 300 |
-| Photo open / Compare / Info | skipped | 407 / 386, 222 / 193, 481 / 437 ms | ≤ 1,000 |
-| First search: first results | 9,281 ms (complete) | 244 / 234 ms | ≤ 1,000 |
-| First search: complete | 9,281 ms | 332 / 333 ms | none |
-| Filter: videos | skipped | 202 / 171 ms | ≤ 1,000 |
-| Sort by name | 41,806 ms | 152 / 139 ms | ≤ 1,000 |
-| Store stall lines | 62 (235 s) | 0 in a ten-minute session | 0 |
+| Launch to first grid | 4,038 ms | 1,026 / 1,105 ms | ≤ 2,000 |
+| First import | 676 ms | 124 / 146 ms | ≤ 1,000 |
+| First library | 1,008 ms | 266 / 214 ms | ≤ 1,000 |
+| First People | 48,818 ms | 51 / 52 ms | ≤ 1,000 |
+| First person | 4,094 ms | 471 / 343 ms | ≤ 1,000 |
+| First Places | 1,469 ms | 428 / 208 ms | ≤ 1,000 |
+| On This Day | 137 ms | 110 / 106 ms | ≤ 1,000 |
+| Duplicates (18 groups) | 193 ms | 60 / 40 ms | ≤ 1,000 |
+| Return to All Media | 545 ms | 74 / 85 ms | ≤ 300 |
+| Photo open / Compare / Info | skipped | 294 / 256, 183 / 166, 406 / 321 ms | ≤ 1,000 |
+| First search: first results | 9,281 ms (complete) | 278 / 253 ms | ≤ 1,000 |
+| First search: complete | 9,281 ms | 1,092 / 362 ms | none |
+| Filter: videos | skipped | 221 / 89 ms | ≤ 1,000 |
+| Sort by name | 41,806 ms | 176 / 117 ms | ≤ 1,000 |
+| Store stall lines | 62 (235 s) | 0 in each tour | 0 |
 | Main-thread stalls over 250 ms | 0 | 0 | 0 |
-| Peak footprint | 3,730 MB | 408 / 344 MB | ≤ 700 |
+| Peak footprint | 3,730 MB | 411 / 345 MB | ≤ 700 |
 
-Every target is met. More from the final builds:
+Every target is met. Across the last three installed builds (1fe52a12, 509cc0a0, 87e272a1)
+every launch-kind and settled tour passed every target, except one settled tour on 1fe52a12
+that failed sort by name at 1,075 ms, fixed by #909's order indexes. Both final tours had
+zero failures. More from the final builds:
 
 | Number | Value |
 | --- | --- |
-| First launch after an install | 296–405 MB peak (1,179 MB on one earlier install, fixed in #886) |
-| Launch stages, final tours | duplicates built at 3.4 s; launch work settled at 7.1 / 12.0 s, with enrichment, materialization, the search index and descriptions reported as working a backlog |
+| First launch after an install | 296–405 MB peak (342 MB after installing 87e272a1; 1,179 MB on one earlier install, fixed in #886) |
+| Launch stages, final tours | duplicates built at 3.2 s; launch work settled at 17.5 s (launch kind), with materialization, enrichment, the search index and descriptions reported as working a backlog, and at 4.8 s (settled) |
 | Derived folder (the app's own counters) | 54.3 GB: thumbnails 3.7 GB, previews 46.9 GB, face frames 3.7 GB |
-| Session CPU (launch-kind tours) | 52–84 s |
-| Session disk read | 23–26 GB, of which 21.4–21.8 GB is enrichment hashing downloaded cloud originals |
+| Session CPU | 52–84 s on launch-kind tours (73 s on 87e272a1); 15 s on the final settled tour |
+| Session disk read | 5.6 GB on the final launch-kind tour, of which 2.6 GB is originals hashed (23–26 GB, 21.4–21.8 GB of it hashing, on earlier final builds); 1.1 GB on the final settled tour |
 | Catalog pages read / page-ins | 2.0–3.0 GB / 0.9–2.2 GB |
 | Owed hashing on 2026-11-17 | 7,732 cloud rows, 389 GB, not hashed |
 | Catalog | schema v65 → v76; one-time compaction 2.81 → 2.13 GB |
 | Full `script/check.sh` | about two minutes (over six minutes on 2026-11-16) |
 
-**Acts, sandbox only** (final build 509cc0a0, a seeded library of 200 generated photos on its
-own volume, four tours): Move to Trash 12–48 ms, Put Back 4–28 ms, five in a row within the
-same ranges. The three choice acts (Like, Dislike, Not Rated) were skipped as window-occluded
-on the final build. They were last measured at 0–4 ms on revision 7138219e (28 and 2,000
-photos). A fix to measure them without a lit display is in progress at the time of writing.
+**Acts, sandbox only** (the tree of 87e272a1, a seeded library of 200 generated photos on
+its own volume, two settled tours with the window occluded): Dislike 1 / 1 ms, Like 1 / 1 ms,
+Not Rated 0 / 0 ms, Move to Trash 8 / 19 ms, Put Back 9 / 12 ms; five Trashes in a row
+6–34 ms, five Put Backs in a row 4–31 ms. Every act is timed to its main-actor commit (#912).
+The presented-frame number is reported apart and read `occluded` in every run because the
+display was asleep, so no presented-frame figure exists yet.
 
 **A new library's first launch** (seeded 28 camera-size photos, tour peak): 864–930 MB before
 #899 and #903 → 435 MB (launch kind) / 458 MB (settled).
@@ -152,17 +157,17 @@ isolated unless a note says so.
 | Owed work found in one walk | one walk per drain; an index for every "what is owed" read (v65) | #802, #805 | disk read −40 % in idle surveys; no window read waited |
 | Wake on inputs | each owner wakes only on the facts its SQL reads; copy owners only when a copy changes; idle owners write nothing and report quiescence | #807, #809, #829, #831, #840, #864, #869, #896 | stall lines 62 → 0 (f192041a); `copies` changes 227 → 2 |
 | Window read lanes | one pool of eight readers, background admitted four at a time; passive checkpoints; lock waits for every connection | #826, #845, #906 | window waits 1.9 s p95 → 0–4 ms on the generated reproduction |
-| Staged launch | owners start after the first grid; heavy loads take turns (`LoadAdmission`); launch stages name what each consumer needs | #819, #855, #893, #895, #907 | first grid 2,760 → 1,021–1,099 ms with the other bets |
-| People | paint from stored assignment (v68) and a stored gallery (v73); assign only what moved; vectors in an unlinked mapped file; kernel reads faces by position; half-precision vectors | #816, #825, #828, #837, #851, #858, #860, #871, #872, #874, #875, #882, #884 | first People 48,818 → 50–53 ms; with People running the app peaks at 344–408 MB |
-| Search | paged load; mapped Float16 vector file (v70); keyed reconciles; the query shown as typed; encoder load the user waits on; words answer first; text index in the catalog (v74); words and tower race | #811, #822, #830, #833, #848, #855, #876, #885, #887, #889, #908 | first search 9,281 ms → 234–244 ms to first results |
-| Duplicates | a build costs what changed (v67); no Immich external assets | #809, #814, #904 | the candidate read touches no wide row; first Duplicates 193 → 41–56 ms |
-| The window's own reads | stack candidates by folder; filter options walk a wide scope's order; name and size orders from their indexes (v69); `-O` for the installed app; keyed date re-reads; patched filter tallies; held arrays kept; every order walks its index (v76) | #808, #817, #820, #827, #836, #862, #868, #909 | sort by name 41,806 → 139–152 ms; return 545 → 82–104 ms; first person 4,094 → 386–432 ms |
+| Staged launch | owners start after the first grid; heavy loads take turns (`LoadAdmission`); launch stages name what each consumer needs | #819, #855, #893, #895, #907 | first grid 2,760 → 1,026–1,105 ms with the other bets |
+| People | paint from stored assignment (v68) and a stored gallery (v73); assign only what moved; vectors in an unlinked mapped file; kernel reads faces by position; half-precision vectors | #816, #825, #828, #837, #851, #858, #860, #871, #872, #874, #875, #882, #884 | first People 48,818 → 51–52 ms; with People running the app peaks at 345–411 MB |
+| Search | paged load; mapped Float16 vector file (v70); keyed reconciles; the query shown as typed; encoder load the user waits on; words answer first; text index in the catalog (v74); words and tower race | #811, #822, #830, #833, #848, #855, #876, #885, #887, #889, #908 | first search 9,281 ms → 253–278 ms to first results |
+| Duplicates | a build costs what changed (v67); no Immich external assets | #809, #814, #904 | the candidate read touches no wide row; first Duplicates 193 → 40–60 ms |
+| The window's own reads | stack candidates by folder; filter options walk a wide scope's order; name and size orders from their indexes (v69); `-O` for the installed app; keyed date re-reads; patched filter tallies; held arrays kept; every order walks its index (v76) | #808, #817, #820, #827, #836, #862, #868, #909 | sort by name 41,806 → 117–176 ms (1,075 ms on one settled tour of 1fe52a12 until #909's order indexes); return 545 → 74–85 ms; first person 4,094 → 343–471 ms |
 | Narrow tables and compaction | face embedding in its own table (v66); narrow `media_asset` (v71); the open compacts a file a tenth free | #810, #838, #847 | catalog 2.81 → 2.13 GB; name order 147,594 → 28,584 pages (generated) |
 | Memory outside the heap | one reused read buffer; 4-byte asset IDs in a mapped identity table; owner-scale reads in mapped regions | #861, #878, #881, #883 | freed-and-held bytes 92 → 51 MB on a generated sequence |
 | Image memory | face tiles from their region; held decodes bounded; the full-size view from Image I/O's IOSurface; one image per tile; video faces one frame at a time; renders admitted by memory; pane and lane share one budget; JPEG decode route | #865, #866, #877, #879, #886, #899, #903, #905 | first launch after install 1,179 → 296–405 MB; new library tour 864–930 → 435–458 MB |
-| Acts | newest projected state applied part by part; Put Back shown before file work; a landed write read whole | #859, #863, #867, #888 | choice acts 0–4 ms; Move to Trash 12–48 ms (sandbox) |
+| Acts | newest projected state applied part by part; Put Back shown before file work; a landed write read whole | #859, #863, #867, #888 | choice acts 0–1 ms; Move to Trash 8–19 ms (sandbox, timed to the main-actor commit) |
 | Scan and disk | an unchanged scan takes no write; the FSEvents change journal (v75); derived files live as long as a row names them; stored folder counters (v72); test temp folders owned | #834, #835, #850, #891, #897 | a launch walks a library only when its journal cannot vouch for it |
-| Instruments | stall reproduction test; survey; scorecard, tour, kinds, sandbox volume, disk read by owner, page-ins per paint | #798, #803, #804, #813, #852, #870, #873, #890, #893, #894, #900 | made each number readable |
+| Instruments | stall reproduction test; survey; scorecard, tour, kinds, sandbox volume, disk read by owner, page-ins per paint | #798, #803, #804, #813, #852, #870, #873, #890, #893, #894, #900, #912 | made each number readable |
 | Check cost | the allocator probe on demand only; test catalogs start from a migrated template | #884, #902 | full check over six minutes → about two |
 
 **Migrations added** (ADR 0002 cost rule; generated owner-shaped catalog unless stated):
@@ -226,12 +231,12 @@ A tour never runs while Otos is running and quits the app itself.
     exist at full size.
   - Whether the text-reading and description backlog (about 43 h and 66 h at the baseline)
     runs while the window is in use.
-- **In progress.** Measuring the choice acts without a lit display.
 - **Not established.**
   - Why Core ML compiled the text tower again in one session of an install, and why that
     compile took 3 s (`2026-11-16-first-search-while-the-encoder-loads.md`).
   - What made the 1.1 s second prediction of 2026-11-17 (`2026-11-17-first-search-after-the-warm-up.md`).
+  - An act's presented frame: every sandbox run so far read `occluded` (display asleep).
   - Part of a sandbox first launch's 889 MB before #899 and #903: the loupe step's 200 MB
     inside the process (`2026-11-17-first-launch-decodes.md`).
 - **Not measured until the next daily run.** #904's two fixes, and every case the PRs after
-  the judged head 73dffba5 may move (#899–#909).
+  the judged head 73dffba5 may move (#899–#912).
