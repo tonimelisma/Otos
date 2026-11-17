@@ -361,12 +361,6 @@ extension PreferencesDomain {
             }
         }
 
-        /// Whether any of the app's windows is on screen and not covered entirely by others.
-        @MainActor
-        static func windowIsVisible() -> Bool {
-            NSApp?.windows.contains { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
-        }
-
         /// The mount point of the volume holding `path`, resolved; nil when the system does
         /// not say.
         static func volumeRoot(of path: String) -> String? {
@@ -449,8 +443,9 @@ extension PreferencesDomain {
         private var visited: Set<SidebarSelection> = []
         /// The photos the photo steps open: neighbours the loupe shows without a download.
         private var openablePhotos: [MediaAssetID] = []
-        /// The first photo's choice before the act steps, which the last one puts back.
-        private var originalChoice: MediaChoice?
+        /// The tile the choice acts act on and its choice before them, which the last one
+        /// puts back; chosen by the first choice act.
+        private var choiceTarget: (id: MediaAssetID, original: MediaChoice)?
 
         init(
             viewModel: CatalogWindowViewModel,
@@ -581,7 +576,7 @@ extension PreferencesDomain {
         }
 
         /// One step's result, logged and checkpointed.
-        private struct Outcome {
+        struct Outcome {
             var result: String
             var fields: [String: String] = [:]
 
@@ -638,6 +633,9 @@ extension PreferencesDomain {
             case .info:
                 return await ("info", "info", info())
             case let .choiceAct(index):
+                if let refusal = actsRefusal() {
+                    return ("act", "choice\(index)", .skipped(refusal))
+                }
                 return await choiceAct(index)
             case .trashAct:
                 return await ("act", WindowAct.moveToTrash.name, trashAct())
@@ -796,7 +794,6 @@ extension PreferencesDomain {
                 return .skipped("noOpenablePhotos")
             }
             openablePhotos = run
-            originalChoice = found.details[photo]?.mediaChoice
             viewModel.openLoupe(id: photo)
             var outcome = await loupeShows(photo)
             outcome.fields["local"] = "\(run.count(where: found.local.contains))"
@@ -884,44 +881,85 @@ extension PreferencesDomain {
             guard SmokeTour.trashStays(viewModel.state, inside: sandbox) else {
                 return "trashOutsideSandbox"
             }
-            guard !openablePhotos.isEmpty, originalChoice != nil else {
+            guard !openablePhotos.isEmpty else {
                 return "noOpenablePhotos"
             }
             return nil
         }
 
-        /// The `index`th of the three choices on the first photo, in the grid, timed from the
-        /// intent to the grid's reconfigured tile. The third puts back the photo's own choice.
-        private func choiceAct(_ index: Int) async -> (String, String, Outcome) {
-            if let refusal = actsRefusal() {
-                return ("act", "choice\(index)", .skipped(refusal))
-            }
-            guard let viewModel, let photo = openablePhotos.first, let originalChoice else {
+        /// The `index`th of the three choices on one tile the grid holds, timed from the
+        /// menu's and the shortcut's own intent (`submitMediaChoice` on the selection) to the
+        /// main-actor render of that tile with the choice. The third puts back the photo's own
+        /// choice.
+        ///
+        /// The tile is one the collection view holds when the first act runs (the newest
+        /// visible-thumbnails report that still settles the visible set), never one scrolled
+        /// to: an occluded window's layout runs only about once a second, so a scroll there
+        /// clamps to a stale document height and the photo it aims at is not laid out for the
+        /// step's whole deadline (`docs/research/2026-11-17-act-result-in-an-occluded-window.md`).
+        /// A tile the collection view holds is rendered in the same main-actor pass that
+        /// receives the choice, occluded or not, as a Move to Trash's order is committed. The
+        /// later acts bring the tile back on screen only when it has left the visible set.
+        /// `perform` runs it only where the acts may run (`actsRefusal`).
+        func choiceAct(_ index: Int) async -> (String, String, Outcome) {
+            guard let viewModel else {
                 return ("act", "choice\(index)", .skipped("windowGone"))
             }
-            let choice = SmokeTour.choiceCycle(after: originalChoice)[index]
             if viewModel.viewMode != .grid {
                 viewModel.exitToGrid()
             }
-            // A choice's result is its tile drawn again, which only a tile on screen is: the
-            // photo is brought into view first, as a person sees the tile they act on. A window
-            // other windows cover entirely is drawn by nobody (AppKit's occlusion state), so
-            // there the act has no result to time and is skipped as such.
-            guard SmokeTour.windowIsVisible() else {
-                return ("act", WindowAct.choice(choice).name, .skipped("windowOccluded"))
+            if choiceTarget == nil {
+                guard let held = await heldTile() else {
+                    return ("act", "choice\(index)", Outcome(result: "deadline", fields: ["reason": "noVisibleTile"]))
+                }
+                let original: MediaChoice
+                do {
+                    guard let read = try await viewModel.tileDetailReader.details(for: [held])[held]?.mediaChoice else {
+                        return ("act", "choice\(index)", .skipped("noDetail"))
+                    }
+                    original = read
+                } catch {
+                    return ("act", "choice\(index)", Outcome(result: "skipped", fields: [
+                        "reason": "detailReadFailed", "error": String(describing: error),
+                    ]))
+                }
+                choiceTarget = (held, original)
             }
-            guard await onScreen(photo) else {
-                return ("act", WindowAct.choice(choice).name, coveredOr(Outcome(result: "deadline", fields: ["reason": "notOnScreen"])))
+            guard let (photo, original) = choiceTarget, let viewModel = self.viewModel else {
+                return ("act", "choice\(index)", .skipped("windowGone"))
+            }
+            let choice = SmokeTour.choiceCycle(after: original)[index]
+            let name = WindowAct.choice(choice).name
+            if viewModel.tileContentStore.settledVisible?.ids.contains(photo) != true {
+                guard await onScreen(photo) else {
+                    return ("act", name, Outcome(result: "deadline", fields: ["reason": "notOnScreen"]))
+                }
             }
             viewModel.selectAssets([photo])
             // Each act is timed on its own: the one before has written its choice, so this
             // one does not queue behind that write's publication.
             guard await settled() else {
-                return ("act", WindowAct.choice(choice).name, Outcome(result: "deadline", fields: ["reason": "notSettled"]))
+                return ("act", name, Outcome(result: "deadline", fields: ["reason": "notSettled"]))
             }
             let before = viewModel.lastActResult?.revision ?? 0
             viewModel.submitMediaChoice(choice)
-            return await ("act", WindowAct.choice(choice).name, coveredOr(actResult(after: before)))
+            return await ("act", name, actResult(after: before))
+        }
+
+        /// The first tile, in the grid's order, of the visible set the collection view holds
+        /// now: the newest visible-thumbnails report, once it settles the set still shown.
+        /// Nil at the deadline.
+        private func heldTile() async -> MediaAssetID? {
+            let settled = await until { model in
+                guard let report = model.lastVisibleThumbnails else {
+                    return false
+                }
+                return model.tileContentStore.settledVisible == report
+            }
+            guard settled, let viewModel, let report = viewModel.lastVisibleThumbnails else {
+                return nil
+            }
+            return viewModel.parts.mediaGrid.content.inDisplayOrder(report.ids).first
         }
 
         /// Move to Trash on the first photo, timed from the intent to the grid without it, then
@@ -1000,13 +1038,6 @@ extension PreferencesDomain {
             ])
         }
 
-        /// A choice step that reached its deadline while the window was covered had no drawn
-        /// tile to wait for: it is skipped as `windowOccluded`, not failed. Any other outcome
-        /// stands.
-        private func coveredOr(_ outcome: Outcome) -> Outcome {
-            outcome.result == "deadline" && !SmokeTour.windowIsVisible() ? .skipped("windowOccluded") : outcome
-        }
-
         /// Moves the grid's focus to `photo` and waits for a visible-thumbnails report whose
         /// set holds it: a newer one, or the one that still settles the set shown now when it
         /// was already on screen. False at the deadline.
@@ -1034,7 +1065,7 @@ extension PreferencesDomain {
             guard shown, let report = viewModel?.lastActResult else {
                 return .deadline
             }
-            return .reported(["resultMs": "\(report.milliseconds)", "surface": report.surface])
+            return .reported(["resultMs": "\(report.milliseconds)", "surface": report.surface, "window": report.window.rawValue])
         }
 
         /// Filters by a kind the scope's published options offer — videos when offered, else

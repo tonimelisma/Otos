@@ -207,7 +207,7 @@ extension MediaGridViewController {
         }
         // The collection view now holds `grid`: a Move to Trash it no longer shows, or a Put
         // Back it shows again, has its result on screen, whether this apply reloaded or moves.
-        stallMonitor?.completeMembershipToResult(committed: grid)
+        stallMonitor?.completeMembershipToResult(committed: grid, in: collectionView)
         let context = StructuralApplyCompletionContext(
             grid: grid,
             change: change,

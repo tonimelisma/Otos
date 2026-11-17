@@ -314,6 +314,54 @@ class ScorecardTests(unittest.TestCase):
         report, _, _ = run(SESSION)
         self.assertTrue(any("act to result" in item for item in report["notMeasured"]))
 
+    def test_an_acts_presented_frame_is_a_number_beside_its_commit_or_occluded(self):
+        acted = SESSION[:-1] + [
+            line(40.10, "op=ui.actToResult phase=start act=liked count=1"),
+            line(40.11, "op=ui.actToResult phase=finish act=liked count=1 surface=grid ms=3 report=1 window=visible"),
+            line(40.13, "op=ui.actToResult phase=presented act=liked report=1 ms=25"),
+            line(40.20, "op=ui.actToResult phase=start act=disliked count=1"),
+            line(40.21, "op=ui.actToResult phase=finish act=disliked count=1 surface=grid ms=2 report=2 window=occluded"),
+            line(40.30, "op=ui.actToResult phase=start act=notRated count=1"),
+            line(40.31, "op=ui.actToResult phase=finish act=notRated count=1 surface=grid ms=4 report=3 window=visible"),
+            SESSION[-1],
+        ]
+        report, rows, text = run(acted)
+        self.assertEqual([(a["act"], a["window"], a["presentedMs"]) for a in report["acts"]],
+                         [("liked", "visible", 25), ("disliked", "occluded", None), ("notRated", "visible", None)])
+        by_label = {r["label"]: (r.get("state") or r["value"], r["verdict"]) for r in rows}
+        # The commit is held to the target whether or not the window presented it.
+        self.assertEqual(by_label["act liked"], (3, "PASS"))
+        self.assertEqual(by_label["act disliked"], (2, "PASS"))
+        self.assertEqual(by_label["act liked presented"], (25, "NO-TARGET"))
+        self.assertEqual(by_label["act disliked presented"], ("occluded", "OCCLUDED"))
+        # A visible window's frame that never came is unknown, never 0.
+        self.assertEqual(by_label["act notRated presented"], (None, "NO-DATA"))
+        self.assertRegex(text, r"act disliked presented\s+occluded")
+        self.assertIn("window=occluded presentedMs=occluded", text)
+
+    def test_an_older_build_and_an_older_saved_scorecard_read_the_presented_frame_as_unknown(self):
+        old_build = SESSION[:-1] + [
+            line(40.1, "op=ui.actToResult phase=start act=liked count=1"),
+            line(40.2, "op=ui.actToResult phase=finish act=liked count=1 surface=grid ms=40"),
+            SESSION[-1],
+        ]
+        report, rows, _ = run(old_build)
+        self.assertEqual((report["acts"][0]["window"], report["acts"][0]["presentedMs"]), (None, None))
+        by_label = {r["label"]: (r["value"], r["verdict"]) for r in rows}
+        self.assertEqual(by_label["act liked presented"], (None, "NO-DATA"))
+        current = SESSION[:-1] + [
+            line(40.1, "op=ui.actToResult phase=start act=liked count=1"),
+            line(40.2, "op=ui.actToResult phase=finish act=liked count=1 surface=grid ms=3 report=1 window=occluded"),
+            SESSION[-1],
+        ]
+        report, rows, _ = run(current)
+        saved = {"report": {"session": "OLD"}, "verdicts": [{"label": "act liked", "value": 40}]}
+        out = io.StringIO()
+        self.assertTrue(scorecard.compare(report, rows, saved, out))
+        compared = out.getvalue()
+        self.assertRegex(compared, r"act liked\s+40 →\s+3  -37")
+        self.assertRegex(compared, r"act liked presented\s+- →\s+occluded  -")
+
     def test_trash_and_put_back_report_the_visible_result_and_the_file_work_apart(self):
         acted = SESSION[:-1] + [
             line(40.00, "op=trash.move phase=start batch=11 count=1"),

@@ -65,13 +65,65 @@ nonisolated enum WindowAct: Equatable, Sendable {
     }
 }
 
-/// An act's result reached the grid (`op=ui.actToResult phase=finish`): `revision` counts
-/// these reports.
+/// Whether the window that holds an act's committed result can present it: `visible` when
+/// any of it is on screen, `occluded` when other windows or a sleeping display cover all of it
+/// (AppKit's `occlusionState`), `noWindow` for a grid not in one.
+nonisolated enum ActResultWindow: String, Equatable, Sendable {
+    case visible
+    case occluded
+    case noWindow
+
+    @MainActor
+    init(_ window: NSWindow?) {
+        guard let window else {
+            self = .noWindow
+            return
+        }
+        self = window.occlusionState.contains(.visible) ? .visible : .occluded
+    }
+}
+
+/// An act's result was committed to the grid on the main actor
+/// (`op=ui.actToResult phase=finish`): the act's tile rendered with it, or an order without
+/// (or, for Put Back, with) its items handed to the collection view. `revision` counts these
+/// reports; `window` says whether that window could present the commit.
 nonisolated struct ActResultReport: Equatable, Sendable {
     let revision: UInt64
     let act: WindowAct
     let surface: String
     let milliseconds: Int
+    let window: ActResultWindow
+}
+
+/// Reports the first frame presented after an act's result was committed: the first callback
+/// of a display link on the grid's view, which comes at the display refresh after the
+/// transaction holding the commit (as `FramePresentedReporter` reads a scope's first frame).
+/// A platform report, not a timer. It is armed only for a visible window: an occluded one
+/// presents nothing, so its acts have no presented frame to wait for.
+@MainActor
+final class ActPresentationProbe: NSObject {
+    private var link: CADisplayLink?
+    private var presented: (() -> Void)?
+
+    init(on view: NSView, presented: @escaping () -> Void) {
+        super.init()
+        self.presented = presented
+        let link = view.displayLink(target: self, selector: #selector(step(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+        presented = nil
+    }
+
+    @objc private func step(_: CADisplayLink) {
+        let presented = presented
+        stop()
+        presented?()
+    }
 }
 
 @MainActor
@@ -125,6 +177,10 @@ final class MainRunLoopStallMonitor {
 
     private var pendingActToResult: PendingActToResult?
     private var actReports: UInt64 = 0
+    /// The committed acts whose first presented frame has not come yet, by report revision:
+    /// one per act, so an act issued as soon as the one before shows its result does not
+    /// drop that one's frame. Only a visible window's acts are here.
+    private var presentationProbes: [UInt64: ActPresentationProbe] = [:]
     /// Told each time an act's result reaches the grid: the fact the window's owner
     /// republishes for whoever waits on it (a sandboxed tour).
     var onActResult: ((ActResultReport) -> Void)?
@@ -144,6 +200,10 @@ final class MainRunLoopStallMonitor {
     isolated deinit {
         timer?.invalidate()
         watcher?.stop()
+        // A display link retains its target, so a probe whose frame never came is stopped.
+        for probe in presentationProbes.values {
+            probe.stop()
+        }
     }
 
     func reserveUpdateID() -> Int {
@@ -225,22 +285,25 @@ final class MainRunLoopStallMonitor {
         OtosLog.ui.noticeOperation("ui.actToResult", phase: "start", fields: ["act": act.name, "count": "\(ids.count)"])
     }
 
-    /// The grid drew `id`'s tile from the tile store, which holds a choice from the step that
-    /// applied it: a pending choice on it has its result on screen. Any render counts — the
-    /// choice's own reconfigure, or the tile laid out later when it was not on screen then.
+    /// The grid rendered `id`'s tile, in `view`, from the tile store, which holds a choice
+    /// from the step that applied it: a pending choice on it has its result committed. Any
+    /// render counts — the choice's own reconfigure of a tile the collection view holds, or the
+    /// tile laid out later when it held none then. A render sets the tile's views and layers on
+    /// the main actor whether or not the window server shows the window; the frame that
+    /// presents it is reported apart (`phase=presented`).
     @discardableResult
-    func completeChoiceToResult(rendered id: MediaAssetID) -> Bool {
+    func completeChoiceToResult(rendered id: MediaAssetID, in view: NSView? = nil) -> Bool {
         guard let pending = pendingActToResult, case .choice = pending.act, pending.ids.contains(id) else {
             return false
         }
-        return completeActToResult(pending, surface: "grid")
+        return completeActToResult(pending, surface: "grid", in: view)
     }
 
-    /// The grid committed `grid`: a pending Move to Trash whose items it no longer shows, or a
-    /// pending Put Back whose items it shows again (any of them: a stack's other files are
-    /// never shown on their own), has its result on screen.
+    /// The grid committed `grid` to the collection view `view`: a pending Move to Trash whose
+    /// items it no longer shows, or a pending Put Back whose items it shows again (any of
+    /// them: a stack's other files are never shown on their own), has its result committed.
     @discardableResult
-    func completeMembershipToResult(committed grid: CatalogMediaGridState) -> Bool {
+    func completeMembershipToResult(committed grid: CatalogMediaGridState, in view: NSView? = nil) -> Bool {
         guard let pending = pendingActToResult else {
             return false
         }
@@ -250,18 +313,36 @@ final class MainRunLoopStallMonitor {
         case .putBack: shown = pending.ids.contains(where: grid.content.contains)
         case .choice: return false
         }
-        return shown ? completeActToResult(pending, surface: "grid") : false
+        return shown ? completeActToResult(pending, surface: "grid", in: view) : false
     }
 
-    private func completeActToResult(_ pending: PendingActToResult, surface: String) -> Bool {
+    private func completeActToResult(_ pending: PendingActToResult, surface: String, in view: NSView?) -> Bool {
         pendingActToResult = nil
         let ms = DiagnosticsTiming.milliseconds(since: pending.startedAt)
+        let window = ActResultWindow(view?.window)
+        actReports &+= 1
+        let revision = actReports
         OtosLog.ui.noticeOperation("ui.actToResult", phase: "finish", fields: [
             "act": pending.act.name, "count": "\(pending.ids.count)", "surface": surface, "ms": "\(ms)",
+            "report": "\(revision)", "window": window.rawValue,
         ])
-        actReports &+= 1
-        onActResult?(ActResultReport(revision: actReports, act: pending.act, surface: surface, milliseconds: ms))
+        if window == .visible, let view {
+            presentationProbes[revision] = ActPresentationProbe(on: view) { [weak self] in
+                self?.actPresented(pending, revision: revision)
+            }
+        }
+        onActResult?(ActResultReport(revision: revision, act: pending.act, surface: surface, milliseconds: ms, window: window))
         return true
+    }
+
+    /// The first frame after act `revision`'s commit was presented: its result composited on
+    /// screen, timed from its intent.
+    private func actPresented(_ pending: PendingActToResult, revision: UInt64) {
+        presentationProbes[revision] = nil
+        OtosLog.ui.noticeOperation("ui.actToResult", phase: "presented", fields: [
+            "act": pending.act.name, "report": "\(revision)",
+            "ms": "\(DiagnosticsTiming.milliseconds(since: pending.startedAt))",
+        ])
     }
 
     func beginOperation(_ name: String, now: ContinuousClock.Instant = .now) -> MainRunLoopOperationToken {
@@ -322,6 +403,10 @@ final class MainRunLoopStallMonitor {
         operationStack.removeAll()
         lastLongOperation = nil
         pendingIntentToPaint = nil
+        for probe in presentationProbes.values {
+            probe.stop()
+        }
+        presentationProbes.removeAll()
     }
 
     private func tick(now: ContinuousClock.Instant = .now) {

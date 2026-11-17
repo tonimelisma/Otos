@@ -394,8 +394,14 @@ def act_completion(events, act, finished):
 
 
 def acts(events):
-    """Every act timed from its intent to its result on the grid (`op=ui.actToResult`), and,
-    for an act whose file work follows, from its intent to that work's end (`completedMs`)."""
+    """Every act timed from its intent to its result committed on the grid on the main actor
+    (`op=ui.actToResult phase=finish`), with whether its window could present it (`window`:
+    visible, occluded, noWindow; unknown in a build older than the field) and, in a visible
+    window, the first frame presented after it (`presentedMs`, the line `phase=presented` of
+    the same `report`); and, for an act whose file work follows, from its intent to that work's
+    end (`completedMs`)."""
+    presented = {line.fields.get("report"): line.num("ms")
+                 for line in of(events, "ui.actToResult") if line.phase == "presented"}
     result = []
     for line in of(events, "ui.actToResult"):
         if line.phase in ("finish", "abandoned"):
@@ -403,11 +409,19 @@ def acts(events):
             entry = {"act": act, "outcome": "shown" if line.phase == "finish" else "abandoned",
                      "ms": line.num("ms"), "surface": line.fields.get("surface"),
                      "supersededBy": line.fields.get("supersededBy")}
+            if line.phase == "finish":
+                entry["window"] = line.fields.get("window")
+                report = line.fields.get("report")
+                entry["presentedMs"] = presented.get(report) if report is not None else None
             if act in FILE_WORK and line.phase == "finish":
                 entry["completedMs"] = act_completion(events, act, line)
             result.append(entry)
     return result
 
+
+# A window that presents no frame (`window=` on `op=ui.actToResult phase=finish`), and the
+# verdict its act's presented-frame row carries instead of a number.
+UNPRESENTED_WINDOWS = {"occluded": "OCCLUDED", "noWindow": "NO-WINDOW"}
 
 QUERY_STEPS = ("search", "sort", "filter")
 PHOTO_STEPS = ("photo", "compare", "info")
@@ -945,6 +959,12 @@ def verdicts(report, targets):
     for act in report["acts"]:
         if act["outcome"] == "shown":
             add("act.resultMs", f"act {act['act']}", act["ms"])
+            # The frame that composited the commit, a number beside the held one: only a
+            # visible window presents one, so an occluded window's act prints `occluded`.
+            add("act.presentedMs", f"act {act['act']} presented", act.get("presentedMs"))
+            if act.get("window") in UNPRESENTED_WINDOWS:
+                rows[-1]["state"] = act["window"]
+                rows[-1]["verdict"] = UNPRESENTED_WINDOWS[act["window"]]
             if act["act"] in FILE_WORK:
                 add("act.completedMs", f"act {act['act']} file work done", act.get("completedMs"))
     add("stalls.count", "store stall lines", report["stalls"]["count"])
@@ -976,7 +996,7 @@ def print_report(report, rows, out):
     w("USER-FELT NUMBERS\n")
     w(f"  {'number':44} {'value':>9} {'target':>8}  verdict\n")
     for row in rows:
-        w(f"  {row['label'][:44]:44} {fmt(row['value']):>9} {row['target']:>8}  {row['verdict']}"
+        w(f"  {row['label'][:44]:44} {row.get('state') or fmt(row['value']):>9} {row['target']:>8}  {row['verdict']}"
           + (f"  pagedIn={row['pagedIn']}" if row.get("pagedIn") is not None else "") + "\n")
     launched = report.get("launch")
     if launched:
@@ -1041,6 +1061,9 @@ def print_report(report, rows, out):
         w("\nACT TO RESULT (ms)\n")
         for act in report["acts"]:
             w(f"  {fmt(act['act']):14} {act['outcome']:9} {fmt(act['ms']):>7} ms  surface={fmt(act['surface'])}"
+              + (f" window={fmt(act.get('window'))} presentedMs="
+                 f"{act.get('window') if act.get('window') in UNPRESENTED_WINDOWS else fmt(act.get('presentedMs'))}"
+                 if act["outcome"] == "shown" else "")
               + (f" fileWorkDoneMs={fmt(act.get('completedMs'))}" if act['act'] in FILE_WORK else "")
               + (f" supersededBy={act['supersededBy']}" if act.get("supersededBy") else "") + "\n")
     w("\nBACKGROUND PASSES (phase=start lines)\n")
@@ -1175,7 +1198,8 @@ def compare(report, rows, saved, out):
         paged = ""
         if old_row.get("pagedIn") is not None or row.get("pagedIn") is not None:
             paged = f"  pagedIn {fmt(old_row.get('pagedIn'))} → {fmt(row.get('pagedIn'))}"
-        out.write(f"  {row['label'][:44]:44} {fmt(old):>9} → {fmt(row['value']):>9}  {delta}{paged}\n")
+        out.write(f"  {row['label'][:44]:44} {old_row.get('state') or fmt(old):>9} → "
+                  f"{row.get('state') or fmt(row['value']):>9}  {delta}{paged}\n")
     return True
 
 

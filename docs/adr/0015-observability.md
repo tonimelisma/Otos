@@ -132,14 +132,23 @@ real backlog. Three instruments see those:
   there is removed and the run fails, and the run's end detaches the volume (never forced)
   and removes the home, which takes a cut-short tour's trashed files with it. Rejected: a
   tour-only Trash folder injected into `MediaTrashCoordinator.FileOperations`, which would
-  time a move the user's Move to Trash never makes. A choice's result is its tile drawn again,
-  so its photo is first brought on screen (the grid's focus, waited on by a visible-thumbnails
-  report holding it), and a window other windows cover entirely draws nothing: a choice step
-  that finds the window covered, or reaches its deadline while it is, is skipped as
-  `windowOccluded` rather than failed. Each act is timed from its intent to the grid
-  change that shows it, `op=ui.actToResult` (the grid drawing the act's tile, now or when it
-  is next laid out; committing an order without the trashed items; or, for Undo's Put Back,
-  with them again), in every session, toured or not. The scorecard reports a Move to Trash's
+  time a move the user's Move to Trash never makes. Each act is timed from its intent to its
+  result committed on the grid on the main actor, `op=ui.actToResult phase=finish` (the grid
+  rendering the act's tile with the choice, now or when it is next laid out; handing the
+  collection view an order without the trashed items; or, for Undo's Put Back, with them
+  again), in every session, toured or not. That commit sets the tile's views and layers, or
+  the collection view's order, whether or not the window server composites the window, so a
+  covered window or one on a sleeping display measures the same fact a lit one does. The
+  finish line says whether the window could present it (`window=visible|occluded|noWindow`),
+  and in a visible window the first display-link callback after the commit is reported apart
+  as the frame that presented it (`phase=presented`, matched by `report=`); the scorecard
+  prints `occluded` for that number when nothing presented it, and holds only the commit to
+  the 100 ms target. The tour's choice acts act on a tile the collection view holds when the
+  first one runs, never one scrolled to: an occluded window lays its views out only about once
+  a second, so a scroll there lands short and its photo is not laid out within a step's
+  deadline (`docs/research/2026-11-17-act-result-in-an-occluded-window.md`). Nothing makes a
+  tour's window visible on an unattended Mac without changing a user setting or waking the
+  display, and the tour does not try. The scorecard reports a Move to Trash's
   and a Put Back's file work apart, matched by batch (`fileWorkDoneMs`). Projection's intents
   are forwarded off the main actor, so an act's hold never waits for a main-thread turn.
   `OTOS_TOUR_ABLATE` leaves named
