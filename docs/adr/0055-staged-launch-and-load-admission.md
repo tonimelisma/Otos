@@ -105,8 +105,8 @@ starve every bounded load behind it.
 
 - Launch to first grid moves toward the 2,200 ms measured with no owner running, and the
   footprint's peak toward the largest single load's, since no two overlap. On the final
-  tours of the performance program the first grid painted in 1,021–1,099 ms and the peak was
-  344–408 MB (`docs/research/2026-11-16-performance-baseline.md`).
+  tours of the performance program the first grid painted in 1,052–1,271 ms and the peak was
+  327–390 MB (`docs/research/2026-11-16-performance-baseline.md`).
 - A People pass or duplicates build asked for while another load runs waits for it; with
   People or Duplicates shown, theirs runs next. A user's People act therefore waits at most
   one running load longer than before.
