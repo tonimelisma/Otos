@@ -65,6 +65,39 @@ nonisolated struct BackgroundOwnerSet: Sendable {
     /// Every owner `start()` started that reports quiescence, the projection and the owners
     /// it runs included. An owner a tour leaves out is not listed: it owes nothing it was asked.
     func quiescentOwners() async -> [any QuiescentOwner] {
+        await launchOwners() + backlogWalkers()
+    }
+
+    /// What the duplicate groups are built from at launch (`LaunchSettlement.duplicatesBuilt`):
+    /// the projection, which takes up the store's changes and asks for each build, the groups'
+    /// owner, enrichment, which writes the digests, with the materializer it feeds, and the
+    /// render signatures the same-photo rule compares.
+    func duplicatesOwners() async -> [any QuiescentOwner] {
+        var owners = await projection.duplicatesOwners()
+        if starts.starts(.enrichment), let enrichment {
+            owners += [materialization, enrichment]
+        }
+        if starts.starts(.renderSignatures), let renderSignatures {
+            owners.append(renderSignatures)
+        }
+        return owners
+    }
+
+    /// The groups the duplicates owner last built, nil before its first build or when it is
+    /// not started.
+    func builtDuplicates() async -> CatalogDuplicatesState? {
+        await projection.builtDuplicates()
+    }
+
+    /// The owners whose search-index text and descriptions walk a model-bound backlog in one
+    /// pass (`LaunchSettlement.launchWork`).
+    func backlogWalkers() -> [any QuiescentOwner] {
+        let walkers: [(BackgroundOwner, (any QuiescentOwner)?)] = [(.searchIndex, searchIndex), (.descriptions, descriptions)]
+        return walkers.compactMap { owner, running in starts.starts(owner) ? running : nil }
+    }
+
+    /// Every owner but the backlog walkers (`LaunchSettlement.launchWork`).
+    func launchOwners() async -> [any QuiescentOwner] {
         var owners: [any QuiescentOwner] = await projection.quiescentOwners()
         if let derivedFolder {
             owners.append(derivedFolder)
@@ -77,14 +110,9 @@ nonisolated struct BackgroundOwnerSet: Sendable {
         }
         let walkers: [(BackgroundOwner, (any QuiescentOwner)?)] = [
             (.renderSignatures, renderSignatures), (.previewFaces, previewFaces), (.placeNames, placeNames),
-            (.searchIndex, searchIndex), (.descriptions, descriptions), (.metadataRefresh, metadata),
+            (.metadataRefresh, metadata),
         ]
-        for (owner, running) in walkers where starts.starts(owner) {
-            if let running {
-                owners.append(running)
-            }
-        }
-        return owners
+        return owners + walkers.compactMap { owner, running in starts.starts(owner) ? running : nil }
     }
 }
 

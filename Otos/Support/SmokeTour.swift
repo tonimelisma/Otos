@@ -201,9 +201,9 @@ extension PreferencesDomain {
             case scope(label: String, selection: SidebarSelection)
             /// The gallery's most photographed person, chosen when the step is reached.
             case mostPhotographedPerson
-            /// Duplicates, when the step is reached and the sidebar shows its row: the row
-            /// exists only while a group is active.
-            case duplicatesIfShown
+            /// Duplicates, once the groups the launch owes are built: its row is clicked when a
+            /// group is active, the only time the sidebar shows it.
+            case duplicates
             /// The grid's focus moved to this position in the scope's order.
             case scroll(label: String, position: Position)
             case openPhoto
@@ -268,7 +268,7 @@ extension PreferencesDomain {
                 steps.append(.scope(label: "onThisDay", selection: .onThisDay(today)))
             }
             if owners.starts(.duplicates) {
-                steps.append(.duplicatesIfShown)
+                steps.append(.duplicates)
             }
             steps.append(browse)
             guard configuration.steps == .full else {
@@ -544,13 +544,17 @@ extension PreferencesDomain {
             await finish(outcome: "finished")
         }
 
-        /// A settled tour's first step waits for the launch's background work to settle
-        /// (`launchSettlement`), up to the settle deadline; either way it says what it met
-        /// (`op=tour phase=settled by=ownersQuiescent|loadsDrained|deadline`), and the
-        /// scorecard labels the session by it.
+        /// A settled tour's first step waits for the launch's work to settle
+        /// (`LaunchSettlement.launchWork`: every owner quiescent but the backlog walkers, so
+        /// enrichment's first pass over a new library, its duplicates and its people are done),
+        /// up to the settle deadline; either way it says what it met
+        /// (`op=tour phase=settled by=launchWork|ownersQuiescent|deadline`), and the scorecard
+        /// labels the session by it.
         private func waitForSettlement() async {
             let started = ContinuousClock.now
-            let settled = await until(deadline: configuration.settleDeadline) { $0.launchSettlement != nil }
+            let settled = await until(deadline: configuration.settleDeadline) { model in
+                model.launchSettlement.map { $0 >= .launchWork } ?? false
+            }
             OtosLog.performance.noticeOperation("tour", phase: "settled", fields: [
                 "by": settled ? (viewModel?.launchSettlement?.rawValue ?? "windowGone") : "deadline",
                 "waitMs": "\(DiagnosticsTiming.milliseconds(since: started))",
@@ -619,11 +623,8 @@ extension PreferencesDomain {
                     return ("scope", "person", .skipped("noPeople"))
                 }
                 return await ("scope", "person", select(.person(person.id)) { $0.openPerson(person.id) })
-            case .duplicatesIfShown:
-                guard viewModel?.showsDuplicatesRow == true else {
-                    return ("scope", "duplicates", .skipped("noActiveGroups"))
-                }
-                return await ("scope", "duplicates", select(.duplicates))
+            case .duplicates:
+                return await ("scope", "duplicates", duplicates())
             case let .scroll(label, position):
                 return await ("scroll", label, scroll(to: position))
             case .openPhoto:
@@ -692,6 +693,28 @@ extension PreferencesDomain {
             fields["surface"] = paint.surface
             fields["items"] = "\(self.viewModel?.state.mediaGrid.orderedAssetIDs.count ?? 0)"
             return .reported(fields)
+        }
+
+        /// Duplicates once the groups the launch owes are built and shown
+        /// (`LaunchSettlement.duplicatesBuilt`, then `showsLaunchDuplicates`), timed from
+        /// the click to its paint like any scope. With no active group the sidebar has no row
+        /// to click, and the step reports `groups=0` rather than a click.
+        private func duplicates() async -> Outcome {
+            let waitStart = ContinuousClock.now
+            let built = await until { $0.showsLaunchDuplicates }
+            guard built, let viewModel else {
+                return Outcome(result: "deadline", fields: ["reason": "duplicatesNeverBuilt"])
+            }
+            let fields = [
+                "groups": "\(viewModel.duplicatesCount ?? 0)",
+                "buildWaitMs": "\(DiagnosticsTiming.milliseconds(since: waitStart))",
+            ]
+            guard viewModel.showsDuplicatesRow else {
+                return .reported(fields.merging(["row": "absent"]) { $1 })
+            }
+            var outcome = await select(.duplicates)
+            outcome.fields.merge(fields) { $1 }
+            return outcome
         }
 
         private func scroll(to position: SmokeTour.Position) async -> Outcome {
@@ -779,15 +802,18 @@ extension PreferencesDomain {
             return outcome
         }
 
-        /// The arrow keys' step, to the neighbour the order holds now (enrichment can move it)
-        /// when the loupe can show it without a download; one it cannot is recorded and not
-        /// opened.
+        /// The arrow key's own intent, which resolves the neighbour against the order on screen
+        /// at the press and names the photo it moved to; the step waits on the pane showing
+        /// that photo. The tour computes no neighbour of its own, so an order enrichment moves
+        /// before or after the press changes which photo is next, never whether the step ends.
+        /// A photo the loupe cannot show without a download is recorded and not waited on: the
+        /// session refuses every download (`PaneOriginalDownloads.never`), so its pane stays
+        /// empty and nothing is fetched.
         private func stepPhoto(by delta: Int) async -> Outcome {
-            guard let viewModel, viewModel.viewMode == .loupe, let focus = viewModel.focusedAssetID else {
+            guard let viewModel, viewModel.viewMode == .loupe else {
                 return .skipped("noLoupe")
             }
-            let order = viewModel.parts.mediaGrid.orderedAssetIDs
-            guard let next = BrowserModePolicy.neighbor(of: focus, in: order, delta: delta), next != focus else {
+            guard let next = delta > 0 ? viewModel.focusNext() : viewModel.focusPrevious() else {
                 return .skipped("noNeighbour")
             }
             let openable: Bool
@@ -796,20 +822,20 @@ extension PreferencesDomain {
             } catch {
                 return Outcome(result: "skipped", fields: ["reason": "detailReadFailed", "error": String(describing: error)])
             }
-            guard openable, let viewModel = self.viewModel, viewModel.focusedAssetID == focus else {
+            guard openable else {
                 return .skipped("notOpenable")
-            }
-            if delta > 0 {
-                viewModel.focusNext()
-            } else {
-                viewModel.focusPrevious()
             }
             return await loupeShows(next)
         }
 
+        /// Waits for the loupe's pane to show `id`, or for its focus to leave it (a change of
+        /// the order that removed the photo moves the focus to a survivor, reported as such).
         private func loupeShows(_ id: MediaAssetID) async -> Outcome {
-            let shown = await until { $0.panePreviews[.loupe]?.id == id }
-            return shown ? .reported() : .deadline
+            let ended = await until { $0.panePreviews[.loupe]?.id == id || $0.focusedAssetID != id }
+            guard ended, let viewModel else {
+                return .deadline
+            }
+            return viewModel.panePreviews[.loupe]?.id == id ? .reported() : .skipped("focusMoved")
         }
 
         /// Compares the first two photos the loupe opened, then returns to the grid.

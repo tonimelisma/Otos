@@ -4,6 +4,7 @@ import ImageIO
 @testable import OtosKit
 import SwiftUI
 import Testing
+import UniformTypeIdentifiers
 
 extension AppKitWindowTests {
     /// The full-size view on a new library: originals from a person's cameras with no stored
@@ -41,6 +42,120 @@ extension AppKitWindowTests {
             }
         }
 
+        /// What Image I/O holds to make a JPEG original's 2,560-pixel rendering, by route: its
+        /// peak above the start, what the result holds once the route's transients are gone,
+        /// and how long it took. Each route runs on a fresh source three times; the first run
+        /// of the whole test pays the decoder's own setup and is not recorded.
+        @Test func aJPEGsRenderingAt2560ByRoute() async throws {
+            let directory = try makeTestDirectory()
+            let edge = ThumbnailStore.previewMaxPixelSize
+            let jpegs = FirstLaunchFootprintTests.cameras.filter { $0.type == .jpeg }
+            var urls: [URL] = []
+            for (index, camera) in jpegs.enumerated() {
+                let url = directory.appending(path: "route-\(index).jpg")
+                try FirstLaunchFootprintTests.writePhoto(to: url, width: camera.width, height: camera.height, type: .jpeg, seed: index)
+                urls.append(url)
+            }
+            _ = JPEGRoute.thumbnail(cacheImmediately: true).render(urls[0], edge: edge)
+            // time: measurement — writing the originals leaves encoder memory that is let go
+            // shortly after; the footprints compared against are read once it has gone.
+            try await Task.sleep(for: .seconds(1))
+            for (camera, url) in zip(jpegs, urls) {
+                for route in JPEGRoute.all {
+                    for run in 0 ..< 3 {
+                        let before = ImageMemoryFixture.footprintMB()
+                        var held = 0
+                        var shown = "-"
+                        let start = ContinuousClock.now
+                        var ms = 0
+                        let peak = try await FirstLaunchFootprintTests.peakMB {
+                            let image = route.render(url, edge: edge)
+                            ms = DiagnosticsTiming.milliseconds(since: start)
+                            shown = image.map { "\($0.width)x\($0.height)bpp\($0.bitsPerPixel)" } ?? "nil"
+                            held = ImageMemoryFixture.footprintMB() - before
+                            withExtendedLifetime(image) {}
+                        }
+                        ImageMemoryFixture.record(
+                            "op=paneMemory step=jpegRoute camera=\(camera.width)x\(camera.height) route=\(route.name) run=\(run) "
+                                + "edge=\(edge) shown=\(shown) ms=\(ms) peakAboveStartMB=\(peak) heldMB=\(held)"
+                        )
+                    }
+                }
+            }
+        }
+
+        /// The routes whose pixels are filled only when a layer first shows them, measured
+        /// through that first showing: each image set as a layer's contents in a window and
+        /// committed, peak above the start, and what stays held while it is shown.
+        @Test func aJPEGsRenderingShownByRoute() async throws {
+            let directory = try makeTestDirectory()
+            let edge = ThumbnailStore.previewMaxPixelSize
+            let jpegs = FirstLaunchFootprintTests.cameras.filter { $0.type == .jpeg }
+            var urls: [URL] = []
+            for (index, camera) in jpegs.enumerated() {
+                let url = directory.appending(path: "shown-\(index).jpg")
+                try FirstLaunchFootprintTests.writePhoto(to: url, width: camera.width, height: camera.height, type: .jpeg, seed: index)
+                urls.append(url)
+            }
+            let view = NSView(frame: NSRect(x: 0, y: 0, width: 1512, height: 945))
+            view.wantsLayer = true
+            let layer = CALayer()
+            layer.frame = view.bounds
+            layer.contentsGravity = .resizeAspect
+            view.layer?.addSublayer(layer)
+            let window = orderedInTestWindow(width: 1512, height: 945, contentView: view)
+            defer { window.close() }
+            func settle() async {
+                await drainMainQueue()
+                window.displayIfNeeded()
+                CATransaction.flush()
+                await drainMainQueue()
+            }
+            func show(_ image: CGImage?) async {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                layer.contents = image
+                CATransaction.commit()
+                await settle()
+            }
+            let routes: [(String, (URL) -> CGImage?)] = [
+                ("thumbnail.cacheImmediately.drawnToSurface", { JPEGRoute.thumbnail(cacheImmediately: true).render($0, edge: edge) }),
+                ("whole.asReturned", { JPEGRoute.wholeAsReturned.render($0, edge: edge) }),
+                ("whole.asReturned.uncached", { url in
+                    CGImageSourceCreateWithURL(url as CFURL, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+                }),
+            ]
+            await show(JPEGRoute.thumbnail(cacheImmediately: true).render(urls[0], edge: edge))
+            await show(nil)
+            // time: measurement — writing the originals leaves encoder memory that is let go
+            // shortly after; the footprints compared against are read once it has gone.
+            try await Task.sleep(for: .seconds(1))
+            for (camera, url) in zip(jpegs, urls) {
+                for (name, render) in routes {
+                    for run in 0 ..< 3 {
+                        let before = ImageMemoryFixture.footprintMB()
+                        var held = 0
+                        var shown = "-"
+                        let start = ContinuousClock.now
+                        var ms = 0
+                        let peak = try await FirstLaunchFootprintTests.peakMB {
+                            let image = render(url)
+                            shown = image.map { "\($0.width)x\($0.height)" } ?? "nil"
+                            await show(image)
+                            ms = DiagnosticsTiming.milliseconds(since: start)
+                            held = ImageMemoryFixture.footprintMB() - before
+                        }
+                        await show(nil)
+                        ImageMemoryFixture.record(
+                            "op=paneMemory step=jpegShown camera=\(camera.width)x\(camera.height) route=\(name) run=\(run) "
+                                + "edge=\(edge) shown=\(shown) ms=\(ms) peakAboveStartMB=\(peak) heldMB=\(held) "
+                                + "scale=\(window.backingScaleFactor)\n" + ImageMemoryFixture.regions()
+                        )
+                    }
+                }
+            }
+        }
+
         /// What runs in a phase of the tour test.
         enum Phase: String {
             /// The first enrichment alone: every photo's preview rendered and staged.
@@ -67,9 +182,11 @@ extension AppKitWindowTests {
         }
 
         /// What the tour's photo steps on a new library's originals may add at their peak: the
-        /// three photos held to return to and the one shown, about 20 MB each at 2,560 pixels,
-        /// and the decode of the next, at most a 12 MP JPEG's, which decodes whole (110 MB).
-        static let photoStepsBoundMB = 200
+        /// three photos held to return to, about 20 MB each at 2,560 pixels, and the decode of
+        /// the next, at most a 24 MP JPEG's by the thumbnail decode (59–63 MB); a 12 MP JPEG is
+        /// shown whole as Image I/O returns it (36–37 MB, `OriginalRoute.wholeShown`). Measured
+        /// at +101 MB (`docs/research/2026-11-17-jpeg-decode-routes.md`).
+        static let photoStepsBoundMB = 120
 
         /// The peak above the footprint before `phase` began, in MB.
         private static func measure(_ phase: Phase) async throws -> Int {
@@ -206,6 +323,78 @@ extension AppKitWindowTests {
                 derivedImageDirectory: directory,
                 materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .testMaterialized }
             )
+        }
+
+        /// A way to make a JPEG's rendering at an asked long edge, as a layer would show it.
+        nonisolated enum JPEGRoute {
+            /// Image I/O's thumbnail decode at the asked edge, then drawn into a surface.
+            case thumbnail(cacheImmediately: Bool)
+            /// The thumbnail decode with the largest subsample factor that still covers the edge.
+            case thumbnailSubsampled
+            /// The whole image as Image I/O returns it, decoded at once.
+            case wholeAsReturned
+            /// The whole image decoded at once, then drawn once, scaled, into a surface.
+            case wholeDrawnToSurface
+            /// The whole image not decoded until it is drawn once, scaled, into a surface.
+            case wholeLazyDrawnToSurface
+
+            static let all: [JPEGRoute] = [
+                .thumbnail(cacheImmediately: true), .thumbnail(cacheImmediately: false), .thumbnailSubsampled,
+                .wholeAsReturned, .wholeDrawnToSurface, .wholeLazyDrawnToSurface,
+            ]
+
+            var name: String {
+                switch self {
+                case let .thumbnail(cacheImmediately): cacheImmediately ? "thumbnail.cacheImmediately" : "thumbnail.lazy"
+                case .thumbnailSubsampled: "thumbnail.subsampled"
+                case .wholeAsReturned: "whole.asReturned"
+                case .wholeDrawnToSurface: "whole.drawnToSurface"
+                case .wholeLazyDrawnToSurface: "whole.lazy.drawnToSurface"
+                }
+            }
+
+            func render(_ url: URL, edge: Int) -> CGImage? {
+                guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+                      let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                      let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                      let height = properties[kCGImagePropertyPixelHeight] as? Int
+                else {
+                    return nil
+                }
+                func thumbnail(_ extra: [CFString: Any]) -> CGImage? {
+                    CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                        kCGImageSourceThumbnailMaxPixelSize: edge,
+                    ].merging(extra) { $1 } as CFDictionary)
+                }
+                func drawn(_ whole: CGImage) -> CGImage? {
+                    let scale = Double(edge) / Double(max(width, height))
+                    let out = (Int((Double(width) * scale).rounded()), Int((Double(height) * scale).rounded()))
+                    return DisplayImage.draw(width: out.0, height: out.1, colorSpace: whole.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!) {
+                        $0.interpolationQuality = .high
+                        $0.draw(whole, in: CGRect(x: 0, y: 0, width: out.0, height: out.1))
+                    }
+                }
+                switch self {
+                case let .thumbnail(cacheImmediately):
+                    return thumbnail([kCGImageSourceShouldCacheImmediately: cacheImmediately]).flatMap(DisplayImage.shown)
+                case .thumbnailSubsampled:
+                    var factor = 1
+                    while factor < 8, max(width, height) / (factor * 2) >= edge {
+                        factor *= 2
+                    }
+                    return thumbnail([kCGImageSourceShouldCacheImmediately: true, kCGImageSourceSubsampleFactor: factor])
+                        .flatMap(DisplayImage.shown)
+                case .wholeAsReturned:
+                    return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+                case .wholeDrawnToSurface:
+                    return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+                        .flatMap(drawn)
+                case .wholeLazyDrawnToSurface:
+                    return CGImageSourceCreateImageAtIndex(source, 0, nil).flatMap(drawn)
+                }
+            }
         }
 
         nonisolated static func detail(_ id: MediaAssetID, _ camera: FirstLaunchFootprintTests.Camera) -> MediaTileDetail {

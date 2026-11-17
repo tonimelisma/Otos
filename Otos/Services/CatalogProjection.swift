@@ -1929,6 +1929,18 @@ extension CatalogProjection: QuiescentOwner {
         let owners: [(any QuiescentOwner)?] = [self, duplicatesProjection, peopleAssignment, peopleGallery]
         return owners.compactMap(\.self)
     }
+
+    /// This projection, which takes up the store's changes and asks for each duplicates
+    /// build, and the groups' owner when it runs.
+    func duplicatesOwners() -> [any QuiescentOwner] {
+        let owners: [(any QuiescentOwner)?] = [self, duplicatesProjection]
+        return owners.compactMap(\.self)
+    }
+
+    /// The groups the duplicates owner last built.
+    func builtDuplicates() async -> CatalogDuplicatesState? {
+        await duplicatesProjection?.lastBuilt
+    }
 }
 
 /// The asset IDs `CatalogProjection` holds at one moment, by the structure holding them

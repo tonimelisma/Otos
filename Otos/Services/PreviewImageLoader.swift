@@ -443,16 +443,15 @@ actor PreviewImageLoader: PreviewLoading {
         recipe: EditRecipe
     ) async -> (CGImage, String, CGSize?)? {
         let longEdge = targetLongEdge == fullResolution ? nil : targetLongEdge
-        guard let rendered = try? await ImageRenderer.interactive.render(url, longEdge: longEdge, recipe: recipe) else {
+        // Asked for display: an upright, unedited JPEG that decodes whole is shown as Image I/O
+        // returns it (`OriginalRoute.wholeShown`).
+        guard let rendered = try? await ImageRenderer.interactive.render(url, longEdge: longEdge, recipe: recipe, forDisplay: true) else {
             return nil
         }
-        // Image I/O returns an unedited HEIC's decode in an IOSurface, shown as it is; any other
-        // rendering is in ordinary memory, and is drawn into a surface once rather than copied
-        // by Core Animation and kept twice (`DisplayImage.shown`).
-        let type = UTType(filenameExtension: url.pathExtension)
-        let isSurface = rendered.decoder == .imageIO && recipe.isNeutral
-            && (type?.conforms(to: .heic) == true || type?.conforms(to: .heif) == true)
-        guard let shown = isSurface ? rendered.image : DisplayImage.shown(rendered.image) else {
+        // A rendering in an IOSurface of its own is shown as it is; any other is in ordinary
+        // memory, and is drawn into a surface once rather than copied by Core Animation and
+        // kept twice (`DisplayImage.shown`).
+        guard let shown = rendered.isShownAsIs ? rendered.image : DisplayImage.shown(rendered.image) else {
             return nil
         }
         return (shown, "render-\(rendered.decoder.rawValue)", rendered.nativePixelSize)

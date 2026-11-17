@@ -60,6 +60,11 @@ actor DuplicatesProjection: QuiescentOwner {
     private var memory = SamePhotoMemory.empty
     private var loopTask: Task<Void, Never>?
 
+    /// The groups the last build that changed them yielded on `builds`; nil before the first.
+    var lastBuilt: CatalogDuplicatesState? {
+        published
+    }
+
     /// True when every request has been covered by a successful build and none is running.
     /// Lets a test wait for settlement instead of guessing a sleep duration.
     var isQuiescent: Bool {

@@ -1,6 +1,5 @@
 import Foundation
 import OSLog
-import Synchronization
 
 /// A bounded load a background owner runs that holds a lot of memory or reads a lot of the
 /// catalog at once (plan 0116 bet 6): what `LoadAdmission` runs one at a time.
@@ -147,10 +146,6 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
     /// In the order they run when nothing is wanted.
     private(set) var waiting: [Waiting] = []
     private(set) var wanted: BackgroundLoad?
-    /// Set by the first release after `open` that leaves no load running or waiting: the loads
-    /// the launch asked for have all run. Only a release sets it, so an admission that opens
-    /// before any load has asked is not drained. Never cleared: a load asked later runs after.
-    private(set) var hasDrainedSinceOpen = false
 
     init(isOpen: Bool = false) {
         self.isOpen = isOpen
@@ -183,9 +178,6 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
                 runningForUser.remove(at: index)
             } else {
                 return []
-            }
-            if isOpen, running == nil, runningForUser.isEmpty, waiting.isEmpty {
-                hasDrainedSinceOpen = true
             }
         case let .want(load):
             wanted = load
@@ -232,9 +224,6 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
 /// reads and writes the Store and computes off its actor.
 final nonisolated class LoadAdmission: Sendable {
     private let admission: Admission<LoadAdmissionMachine>
-    /// Who waits for the launch's loads to have run (`untilDrained()`), resumed in the release
-    /// that drains them. Taken only after the admission's own lock is released.
-    private let drainWaiters = Mutex<[UUID: CheckedContinuation<Void, any Error>]>([:])
     /// Reads the process's footprint for the line a release logs: a kernel call
     /// (`task_info`) that can stall under memory pressure.
     private let footprint: @Sendable () -> UInt64?
@@ -248,57 +237,6 @@ final nonisolated class LoadAdmission: Sendable {
     init(isOpen: Bool = false, footprint: @escaping @Sendable () -> UInt64? = ProcessResourceSample.currentFootprintBytes) {
         admission = Admission(LoadAdmissionMachine(isOpen: isOpen))
         self.footprint = footprint
-    }
-
-    /// Returns once the loads the launch asked for have all run (`hasDrainedSinceOpen`): at
-    /// once when they have, else in the release that drains them. Throws `CancellationError`
-    /// when the caller's task is cancelled first, or at shutdown.
-    func untilDrained() async throws {
-        let id = UUID()
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                let resume: Result<Void, any Error>? = drainWaiters.withLock { waiters in
-                    // Read under the waiters' lock, which `settleDrained` also takes after every
-                    // release: a drain before this point is seen here, one after it finds the
-                    // waiter registered.
-                    let machine = admission.machine
-                    if machine.hasDrainedSinceOpen {
-                        return .success(())
-                    }
-                    if machine.isShutDown || Task.isCancelled {
-                        return .failure(CancellationError())
-                    }
-                    waiters[id] = continuation
-                    return nil
-                }
-                if let resume {
-                    continuation.resume(with: resume)
-                }
-            }
-        } onCancel: {
-            drainWaiters.withLock { $0.removeValue(forKey: id) }?.resume(throwing: CancellationError())
-        }
-    }
-
-    /// Resumes the drain's waiters once it has happened, or fails them at shutdown. Called
-    /// after every release and at shutdown, outside the admission's lock.
-    private func settleDrained() {
-        let (resumed, drained): ([CheckedContinuation<Void, any Error>], Bool) = drainWaiters.withLock { waiters in
-            let machine = admission.machine
-            guard machine.hasDrainedSinceOpen || machine.isShutDown, !waiters.isEmpty else {
-                return ([], false)
-            }
-            let all = Array(waiters.values)
-            waiters = [:]
-            return (all, machine.hasDrainedSinceOpen)
-        }
-        for waiter in resumed {
-            if drained {
-                waiter.resume()
-            } else {
-                waiter.resume(throwing: CancellationError())
-            }
-        }
     }
 
     /// The machine as it is now: what a test reads to see which load runs and which wait.
@@ -319,7 +257,6 @@ final nonisolated class LoadAdmission: Sendable {
     /// Teardown: every waiting load is refused and none is granted again.
     func shutdown() {
         admission.perform(.shutdown)
-        settleDrained()
     }
 
     /// Runs `body` once `load` is admitted, and releases the admission when it ends. Throws
@@ -338,7 +275,6 @@ final nonisolated class LoadAdmission: Sendable {
         let started = ContinuousClock.now
         defer {
             admission.release(request)
-            settleDrained()
             // The footprint each load leaves: memory a load freed stays counted until reused,
             // and asking malloc to return it returns nothing on macOS 27
             // (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). Read once the

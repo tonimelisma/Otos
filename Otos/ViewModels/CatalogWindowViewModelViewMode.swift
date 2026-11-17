@@ -187,11 +187,17 @@ extension CatalogWindowViewModel {
         OtosLog.ui.notice("op=viewMode.set mode=grid")
     }
 
-    func focusNext() {
+    /// The arrow key's step to the next photo, resolved against the order on screen at the
+    /// press: the photo the full-size view now focuses, or nil when the step moved nothing
+    /// (the last photo, or Compare, where it slides the pair).
+    @discardableResult
+    func focusNext() -> MediaAssetID? {
         focusNeighbor(delta: 1)
     }
 
-    func focusPrevious() {
+    /// The step back, as `focusNext()`.
+    @discardableResult
+    func focusPrevious() -> MediaAssetID? {
         focusNeighbor(delta: -1)
     }
 
@@ -374,21 +380,25 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private func focusNeighbor(delta: Int) {
+    /// Synchronous from the press to the focus: the neighbour is read from the order the
+    /// window shows in the same step that moves to it, so an order published later (a capture
+    /// date arriving) cannot come between the two.
+    private func focusNeighbor(delta: Int) -> MediaAssetID? {
         if viewMode == .compare {
             slideCompare(delta)
-            return
+            return nil
         }
         guard viewMode == .loupe else {
-            return
+            return nil
         }
         let ordered = parts.mediaGrid.orderedAssetIDs
         let next = BrowserModePolicy.neighbor(of: focusedAssetID, in: ordered, delta: delta)
         guard let next, next != focusedAssetID else {
-            return
+            return nil
         }
         setFocus(next)
         gridSelection = gridSelection.plainClick(next)
+        return next
     }
 
     /// `targetLongEdge` defaults to the screen-sized tier; the loupe passes

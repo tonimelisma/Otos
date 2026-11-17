@@ -165,6 +165,8 @@ def launch(start, events):
         "scopeKind": scope_kind(grid.fields.get("scope", "")) if grid else None,
         "items": grid.num("items") if grid else None,
         "ownersQuiescentMs": quiet.num("ms") if quiet else None,
+        # When the launch first reached each stage of its settlement (`op=owners.settled`).
+        "settledMs": {e.phase: e.num("ms") for e in of(events, "owners.settled")},
     }
 
 
@@ -771,7 +773,7 @@ def session_kind(toured):
     if toured["start"] != "settled":
         return "launch"
     by = (toured["settled"] or {}).get("by")
-    return "settled" if by in ("ownersQuiescent", "loadsDrained") else "settled(deadline)"
+    return "settled" if by in ("launchWork", "ownersQuiescent") else "settled(deadline)"
 
 
 def owners_at_end(events):
@@ -929,6 +931,11 @@ def verdicts(report, targets):
             add("query.resultMs", f"{step['kind']} {step.get('label')}", step_ms(step))
         elif step.get("kind") in PHOTO_STEPS:
             add("photo.stepMs", f"{step['kind']} {step.get('label')}", step_ms(step))
+        elif step.get("label") == "duplicates":
+            # The groups the launch built when the step reached Duplicates (`row=absent`: none,
+            # so the sidebar had no row to click), and how long the step waited for them.
+            add("duplicates.groups", "duplicates groups the launch built", int_or_none(step.get("groups")))
+            add("duplicates.buildWaitMs", "duplicates wait for the launch's build", int_or_none(step.get("buildWaitMs")))
     for act in report["acts"]:
         if act["outcome"] == "shown":
             add("act.resultMs", f"act {act['act']}", act["ms"])
@@ -973,6 +980,9 @@ def print_report(report, rows, out):
           f"(migrations {fmt(launched['catalogMigrationsMs'])} ms), first grid {fmt(launched['firstGridMs'])} "
           f"(catalog {fmt(launched['firstGridCatalogMs'])}) in {launched['scopeKind']}, {fmt(launched['items'])} items, "
           f"owners quiescent {fmt(launched['ownersQuiescentMs'])}\n")
+        stages = launched.get("settledMs") or {}
+        if stages:
+            w("  settled " + ", ".join(f"{stage} at {fmt(ms)} ms" for stage, ms in stages.items()) + "\n")
         at_end = report.get("ownersAtEnd")
         if launched["ownersQuiescentMs"] is None:
             if at_end is None:

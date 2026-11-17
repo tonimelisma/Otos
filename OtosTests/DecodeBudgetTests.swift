@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 @testable import OtosKit
 import Testing
 import UniformTypeIdentifiers
@@ -142,17 +144,109 @@ struct DecodeBudgetMachineTests {
             == 4032 * 3024 * 4 + 2560 * 1920 * 4)
     }
 
-    /// Both lanes together render four HEIC previews at once, three of a 24 MP JPEG, and two
-    /// of a 12 MP JPEG.
+    /// Both lanes together render four HEIC previews at once, three of a 24 MP JPEG, and one 12
+    /// MP JPEG, which decodes whole and is charged what that route was measured to hold.
     @Test func bothLanesHoldFourHEICPreviews() {
         let machine = ImageRenderer.decodeBudgetSnapshot
         #expect(machine.budget == ImageRenderer.decodeBudget)
         let preview = ThumbnailStore.previewMaxPixelSize
         let heic = DecodeCost.renderBytes(width: 8064, height: 6048, longEdge: preview, decoding: .atAskedSize)
         let camera = DecodeCost.renderBytes(width: 6000, height: 4000, longEdge: preview, decoding: .scaledByHalves)
-        let phone = DecodeCost.renderBytes(width: 4032, height: 3024, longEdge: preview, decoding: .scaledByHalves)
+        let phone = DecodeCost.renderBytes(OriginalRouteTests.jpeg(4032, 3024), longEdge: preview, route: .wholeDrawn)
         #expect(4 * heic <= machine.budget)
         #expect(3 * camera <= machine.budget && 4 * camera > machine.budget)
-        #expect(2 * phone <= machine.budget && 3 * phone > machine.budget)
+        #expect(phone <= machine.budget && 2 * phone > machine.budget)
+    }
+}
+
+/// The one decode of an original takes the route that holds least for its format and size
+/// (`OriginalRoute`, measured in `OriginalPaneMemoryTests`): a JPEG that Image I/O decodes
+/// whole for the asked edge anyway is decoded whole, shown as it is in a pane when upright and
+/// unedited, drawn once upright otherwise; everything else keeps Image I/O's thumbnail decode.
+@Suite(.testScope)
+struct OriginalRouteTests {
+    static func jpeg(_ width: Int, _ height: Int, orientation: Int = 1) -> OriginalHeader {
+        OriginalHeader(width: width, height: height, orientation: orientation, decoding: .scaledByHalves)
+    }
+
+    @Test func theRouteFollowsTheFormatAndTheSize() {
+        let preview = ThumbnailStore.previewMaxPixelSize
+        let phone = Self.jpeg(4032, 3024)
+        #expect(OriginalRoute.of(phone, longEdge: preview, recipe: .neutral, forDisplay: false) == .wholeDrawn)
+        #expect(OriginalRoute.of(phone, longEdge: preview, recipe: .neutral, forDisplay: true) == .wholeShown)
+        #expect(OriginalRoute.of(phone, longEdge: nil, recipe: .neutral, forDisplay: true) == .wholeShown)
+        // Turned, or edited, a pane is handed the upright rendering.
+        let turned = Self.jpeg(4032, 3024, orientation: 6)
+        #expect(OriginalRoute.of(turned, longEdge: preview, recipe: .neutral, forDisplay: true) == .wholeDrawn)
+        var edited = EditRecipe.neutral
+        edited.exposure = 1
+        #expect(OriginalRoute.of(phone, longEdge: preview, recipe: edited, forDisplay: true) == .wholeDrawn)
+        // A JPEG whose half covers the edge, a HEIC, an unknown header: the thumbnail decode.
+        #expect(OriginalRoute.of(Self.jpeg(6000, 4000), longEdge: preview, recipe: .neutral, forDisplay: true) == .thumbnail)
+        #expect(OriginalRoute.of(Self.jpeg(6000, 4000), longEdge: 256, recipe: .neutral, forDisplay: false) == .thumbnail)
+        let heic = OriginalHeader(width: 4032, height: 3024, orientation: 1, decoding: .atAskedSize)
+        #expect(OriginalRoute.of(heic, longEdge: preview, recipe: .neutral, forDisplay: true) == .thumbnail)
+        #expect(OriginalRoute.of(nil, longEdge: preview, recipe: .neutral, forDisplay: true) == .thumbnail)
+    }
+
+    /// Each whole route is charged what it was measured to hold: 87 MB drawn, 37 MB shown, for
+    /// a 12 MP JPEG at 2,560 pixels (peaks 86–92 and 36–37 MB).
+    @Test func aWholeRouteIsChargedWhatItHolds() {
+        let preview = ThumbnailStore.previewMaxPixelSize
+        let phone = Self.jpeg(4032, 3024)
+        #expect(DecodeCost.renderBytes(phone, longEdge: preview, route: .wholeDrawn)
+            == 4032 * 3024 * 4 + 4032 * 3024 * 3 / 2 + 2560 * 1920 * 4)
+        #expect(DecodeCost.renderBytes(phone, longEdge: preview, route: .wholeShown) == 4032 * 3024 * 3)
+        #expect(DecodeCost.renderBytes(Self.jpeg(6000, 4000), longEdge: preview, route: .thumbnail)
+            == DecodeCost.renderBytes(width: 6000, height: 4000, longEdge: preview, decoding: .scaledByHalves))
+    }
+
+    /// A turned JPEG drawn whole comes out upright at the asked size, its pixels where Image
+    /// I/O's own upright thumbnail decode puts them, in an IOSurface a layer shows as it is.
+    @Test func aTurnedJPEGDrawnWholeIsUpright() throws {
+        let directory = try makeTestDirectory()
+        let url = directory.appending(path: "turned.jpg")
+        // Stored 400 × 300, its top-left quarter red, tagged to be turned a quarter clockwise.
+        let sRGB = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        let context = try #require(CGContext(
+            data: nil, width: 400, height: 300, bitsPerComponent: 8, bytesPerRow: 0,
+            space: sRGB, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ))
+        context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+        context.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 150, width: 200, height: 150))
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        let stored = try #require(context.makeImage())
+        CGImageDestinationAddImage(destination, stored, [kCGImagePropertyOrientation: 6] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+
+        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let header = try #require(OriginalHeader.read(source, type: .jpeg))
+        #expect(header.orientation == 6)
+        #expect(OriginalRoute.of(header, longEdge: 256, recipe: .neutral, forDisplay: true) == .wholeDrawn)
+        let drawn = try #require(DisplayImage.original(source, header: header, decodeLongEdge: 256, route: .wholeDrawn))
+        let thumbnail = try #require(DisplayImage.original(source, header: header, decodeLongEdge: 256, route: .thumbnail))
+        #expect(drawn.isSurface)
+        #expect(drawn.image.width == thumbnail.image.width && drawn.image.height == thumbnail.image.height)
+        #expect(drawn.image.width == 192 && drawn.image.height == 256)
+        // Probed away from the quarters' edges: each quarter is the same colour in both.
+        for (x, y) in [(40, 40), (150, 40), (40, 210), (150, 210)] {
+            let (a, b) = (Self.red(drawn.image, x, y), Self.red(thumbnail.image, x, y))
+            #expect(abs(a - b) < 40, "pixel \(x),\(y): drawn red \(a), thumbnail red \(b)")
+        }
+    }
+
+    /// The red of the pixel at `x`, `y` from the top-left, drawn into an sRGB bitmap.
+    private static func red(_ image: CGImage, _ x: Int, _ y: Int) -> Int {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        pixel.withUnsafeMutableBytes { buffer in
+            let context = CGContext(
+                data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            )
+            context?.draw(image, in: CGRect(x: -x, y: y - image.height + 1, width: image.width, height: image.height))
+        }
+        return Int(pixel[0])
     }
 }

@@ -520,7 +520,7 @@ class SessionKindTests(unittest.TestCase):
     LAUNCH = SESSION[:-1] + [line(46.6, "op=tour phase=finish outcome=finished")]
 
     @staticmethod
-    def settled(by="loadsDrained"):
+    def settled(by="launchWork"):
         tour = [e for e in SESSION[:-1] if '"op=tour phase=config' not in e]
         return tour + [
             line(1.25, "op=tour phase=config ablated=none deadlineSeconds=120 idleSeconds=60 start=settled steps=full"),
@@ -532,10 +532,33 @@ class SessionKindTests(unittest.TestCase):
         report, _, text = run(self.settled())
         self.assertEqual(report["sessionKind"], "settled")
         self.assertIn("kind=settled", text.splitlines()[0])
-        self.assertIn("the tour waited 41000 ms for the launch to settle: by loadsDrained", text)
+        self.assertIn("the tour waited 41000 ms for the launch to settle: by launchWork", text)
         self.assertEqual(run(self.settled("deadline"))[0]["sessionKind"], "settled(deadline)")
         # A config line without start is an older build's: it toured at launch.
         self.assertEqual(run(self.LAUNCH)[0]["sessionKind"], "launch")
+
+    def test_the_launchs_stages_and_the_duplicates_step_are_reported(self):
+        lines = self.LAUNCH[:-1] + [
+            line(5.0, "op=owners.settled phase=duplicatesBuilt ms=3900"),
+            line(5.5, "op=tour phase=step index=8 kind=scope label=duplicates outcome=reported ms=4100 "
+                      "paintMs=140 scope=duplicates first=true groups=4 buildWaitMs=3950"),
+            line(30.0, "op=owners.settled phase=launchWork ms=28800"),
+            line(46.6, "op=tour phase=finish outcome=finished"),
+        ]
+        report, rows, text = run(lines)
+        self.assertEqual(report["launch"]["settledMs"], {"duplicatesBuilt": 3900, "launchWork": 28800})
+        self.assertIn("settled duplicatesBuilt at 3900 ms, launchWork at 28800 ms", text)
+        by_metric = {row["metric"]: row["value"] for row in rows}
+        self.assertEqual(by_metric["duplicates.groups"], 4)
+        self.assertEqual(by_metric["duplicates.buildWaitMs"], 3950)
+        # A library with no duplicates reports none, rather than a skipped step.
+        none = self.LAUNCH[:-1] + [
+            line(5.5, "op=tour phase=step index=8 kind=scope label=duplicates outcome=reported ms=4000 groups=0 "
+                      "buildWaitMs=3950 row=absent"),
+            line(46.6, "op=tour phase=finish outcome=finished"),
+        ]
+        rows = run(none)[1]
+        self.assertEqual({row["metric"]: row["value"] for row in rows}["duplicates.groups"], 0)
 
     def compare_text(self, current, saved_report):
         report, rows, _ = run(current)

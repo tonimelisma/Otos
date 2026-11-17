@@ -97,13 +97,34 @@ nonisolated struct OwnerQuiescence: Equatable, Sendable {
     let work: OwnerWork
 }
 
-/// How a launch's background work first settled: every owner quiescent at one instant, or the
-/// heavy loads the launch asked for all run (`LoadAdmission.untilDrained()`). On a library
-/// with a long backlog (descriptions, text to read) the owners stay busy for hours, so the
-/// loads' drain is the settlement a person's session meets first.
-nonisolated enum LaunchSettlement: String, Sendable {
+/// How far a launch's background work has settled, each stage reached after the one before
+/// (`BackgroundOwnerSet`): each is a set of owners quiescent at one instant, and each set holds
+/// the one before it.
+///
+/// - `duplicatesBuilt`: what the duplicate groups are built from — enrichment's pass over the
+///   library (the digests), the materializer it feeds, the render signatures, the projection
+///   that takes up the store's changes, and the groups' own owner.
+/// - `launchWork`: every owner but the backlog walkers, the search index's text and the
+///   descriptions, whose one pass walks a model-bound backlog the length of the library: hours
+///   on a large one, so a session never sees them quiescent and a person's session meets the
+///   window with them still walking.
+/// - `ownersQuiescent`: every owner.
+nonisolated enum LaunchSettlement: String, Sendable, Comparable {
+    case duplicatesBuilt
+    case launchWork
     case ownersQuiescent
-    case loadsDrained
+
+    private var stage: Int {
+        switch self {
+        case .duplicatesBuilt: 0
+        case .launchWork: 1
+        case .ownersQuiescent: 2
+        }
+    }
+
+    static func < (lhs: LaunchSettlement, rhs: LaunchSettlement) -> Bool {
+        lhs.stage < rhs.stage
+    }
 }
 
 /// What an owner holds at one instant, quiescent or not: what a session that ends before its
@@ -358,6 +379,13 @@ nonisolated enum BackgroundOwnerQuiescence {
         for status in pending {
             OtosLog.performance.noticeOperation("owners.pending", phase: moment, fields: status.fields)
         }
+    }
+
+    /// `op=owners.settled phase=<stage>`: when the launch first reached `stage`, from the launch.
+    static func logSettled(_ stage: LaunchSettlement, sinceLaunch started: ContinuousClock.Instant) {
+        OtosLog.performance.noticeOperation("owners.settled", phase: stage.rawValue, fields: [
+            "ms": "\(DiagnosticsTiming.milliseconds(since: started))",
+        ])
     }
 
     /// `op=owners.quiescent`: when every owner first owed nothing, from the launch, with each

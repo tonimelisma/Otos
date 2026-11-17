@@ -114,6 +114,35 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(fake.heldPhotoReleases == 1)
     }
 
+    /// Next is the neighbour in the order on screen when the key is pressed, and the step
+    /// names it. A reorder delivered while that photo's decode is in flight (a capture date
+    /// arriving) leaves the focus on it, and the pane shows it.
+    @Test func nextIsTheNeighbourInTheOrderShownAtThePressAndSurvivesAReorder() async throws {
+        let fake = FakePreviewLoader()
+        let model = makeViewModeModel(loader: fake)
+        let ids = makeViewModeIDs(count: 4)
+        model.applyState(makeViewModeState(orderedIDs: ids))
+        model.openLoupe(id: ids[0])
+        // The order moves before the press: next is read from the order now shown.
+        model.applyState(makeViewModeState(orderedIDs: [ids[0], ids[2], ids[1], ids[3]]))
+        await fake.setHold(true)
+        let next = model.focusNext()
+        #expect(next == ids[2])
+        #expect(model.focusedAssetID == ids[2])
+        try await fake.waitUntilPending(id: ids[2])
+
+        // The order moves again at the decode's suspension.
+        model.applyState(makeViewModeState(orderedIDs: [ids[3], ids[1], ids[0], ids[2]]))
+        #expect(model.focusedAssetID == ids[2])
+        let loupeTask = model.paneRequestTasks[.loupe]
+        await fake.release(id: ids[2], with: .image(makeViewModeCGImage(seed: 4), nativePixelSize: nil))
+        await loupeTask?.value
+        #expect(model.panePreviews[.loupe]?.id == ids[2])
+        // The last photo of the order has no next: the step moves nothing and says so.
+        #expect(model.focusNext() == nil)
+        #expect(model.focusedAssetID == ids[2])
+    }
+
     @Test func staleDecodeDiscardedByIdentity() async throws {
         let fake = FakePreviewLoader()
         await fake.setHold(true)

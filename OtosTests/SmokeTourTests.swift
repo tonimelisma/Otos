@@ -89,6 +89,55 @@ struct SmokeTourTests {
         #expect(activity.status(holdsWork: false).isQuiescent)
     }
 
+    /// The launch settles in stages, each holding the one before, and never goes back. The
+    /// Duplicates step's fact is the window showing the groups built when the launch reached
+    /// `duplicatesBuilt`: a stage reached before the window applies that build waits for the
+    /// apply, and a later build changes nothing.
+    @MainActor
+    @Test func theDuplicatesStepWaitsForTheWindowToShowTheLaunchsGroups() throws {
+        #expect(LaunchSettlement.duplicatesBuilt < .launchWork && LaunchSettlement.launchWork < .ownersQuiescent)
+        let viewModel = CatalogWindowViewModel(
+            catalogStore: makeTestStore(location: .inMemory),
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: .suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
+            trashFiles: .refusing
+        )
+        let root = LibraryRootPath(rawValue: "/Pictures")
+        let ids = (0 ..< 2).map { MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "\($0).jpg")) }
+        let copies = ids.enumerated().map { index, id in
+            DuplicateCopy(
+                id: id, libraryDisplayName: "Pictures", libraryKind: .library, kind: .image, captureLocalTime: nil, byteSize: 1,
+                createdAt: Date(timeIntervalSince1970: Double(index)), pixelWidth: 4, pixelHeight: 3,
+                mediaChoice: .notRated, isEdited: false, hasCompanions: false
+            )
+        }
+        let digest = try #require(ContentDigest(data: Data(repeating: 7, count: ContentDigest.byteCount)))
+        let group = DuplicateGroupPolicy.group(id: .identical(digest, library: nil), copies: copies, keptPairs: [])
+        let built = CatalogDuplicatesState(groups: [group])
+        var state = CatalogWindowState.empty
+        state.libraries = [libraryState(path: root.rawValue)]
+        state.duplicates = .empty
+        viewModel.applyState(state)
+
+        // Reached while the window still shows the build before it (no group yet).
+        viewModel.settleLaunch(.duplicatesBuilt, duplicates: built)
+        #expect(viewModel.launchSettlement == .duplicatesBuilt)
+        #expect(!viewModel.showsLaunchDuplicates)
+        state.duplicates = built
+        viewModel.applyState(state)
+        #expect(viewModel.showsLaunchDuplicates)
+        // A later build, and a stage that goes back, change nothing.
+        state.duplicates = .empty
+        viewModel.applyState(state)
+        #expect(viewModel.showsLaunchDuplicates)
+        viewModel.settleLaunch(.launchWork)
+        viewModel.settleLaunch(.duplicatesBuilt, duplicates: nil)
+        #expect(viewModel.launchSettlement == .launchWork)
+    }
+
     /// A tour reads the user's preferences and writes none: its domain is session-only over
     /// the user's own, and every other launch uses the user's own.
     @Test func aTourSessionsPreferencesAreSessionOnly() {
@@ -135,7 +184,7 @@ struct SmokeTourTests {
         let plan = SmokeTour.plan(for: state, configuration: full, today: day)
         #expect(plan.first == .scope(label: "allMedia", selection: .allMedia))
         #expect(plan.contains(.scope(label: "people", selection: .people)))
-        #expect(plan.contains(.duplicatesIfShown))
+        #expect(plan.contains(.duplicates))
         #expect(plan.contains(.openPhoto))
         #expect(plan.last == .idle)
 

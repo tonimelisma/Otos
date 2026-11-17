@@ -167,10 +167,15 @@ real backlog. Three instruments see those:
   first grid, under the launch's own load (the harsh sequence that found real defects), and
   a `settled` tour (`--settled`, `OTOS_TOUR_START=settled`) first waits for the launch's
   background work to settle as a person's session meets it: the window's
-  `launchSettlement`, set by whichever fact the app reports first, every owner quiescent
-  (`op=owners.quiescent`) or the heavy loads the launch asked for all run
-  (`LoadAdmission.untilDrained()`, the first release after the first grid that leaves none
-  running or waiting). It never waits a fixed time; its wait has a deadline (900 s by
+  `launchSettlement` at `launchWork`, every owner quiescent at one instant but the two whose
+  one pass walks a model-bound backlog the length of the library (the search index's text,
+  the descriptions), so a new library's first enrichment, its duplicate groups and its people
+  are done. The launch reaches its stages in turn and logs each (`op=owners.settled
+  phase=duplicatesBuilt|launchWork`, then `op=owners.quiescent` for every owner): the heavy
+  loads the launch asked for draining is no settlement, as on a small library they drain
+  before enrichment has hashed anything. Every tour's Duplicates step, at launch too, waits
+  on `duplicatesBuilt` and the window showing those groups, then clicks the row, or reports
+  `groups=0` when there is none to click. It never waits a fixed time; its wait has a deadline (900 s by
   default) and one that reaches it is `settled(deadline)`. `--compare` compares only a
   session of the same kind and prints the mismatch otherwise; a saved scorecard older than
   the kind is a launch tour's. Every tour ends by logging each owner's status, so a session

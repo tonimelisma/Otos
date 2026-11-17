@@ -23,9 +23,11 @@ import UniformTypeIdentifiers
 /// own queue per lane: up to four at once on `background`, where four measured 2.5× the
 /// throughput of one and eight no more than four (research 2026-10-31-raw9-speed), and
 /// one at a time on `interactive`. On `background` they are also admitted by the pixels
-/// they decode at (`DecodeBudget`): four HEIC or 24 MP JPEG previews at once, but two of a
-/// 12 MP JPEG, which decodes whole, so a new library's first enrichment does not peak at
-/// four whole decodes in flight (research 2026-11-17-first-launch-decodes).
+/// they decode at (`DecodeBudget`): four HEIC or three 24 MP JPEG previews at once, but one
+/// of a 12 MP JPEG, which decodes whole, so a new library's first enrichment does not peak at
+/// four whole decodes in flight (research 2026-11-17-first-launch-decodes). Each still's
+/// original is decoded by the route its format and size call for (`OriginalRoute`,
+/// `DisplayImage.original`; research 2026-11-17-jpeg-decode-routes).
 ///
 /// The caller has already checked that the original's bytes are local; reading a
 /// dataless file here would block on its download.
@@ -40,11 +42,16 @@ final nonisolated class ImageRenderer: Sendable {
     }
 
     struct Rendered: Sendable {
-        /// An immutable 8-bit Display P3 bitmap.
+        /// An immutable 8-bit Display P3 bitmap, or for a pane the image its route shows as
+        /// it is (`OriginalRoute.wholeShown`).
         let image: CGImage
         let decoder: Decoder
         /// The original's oriented full-resolution size, for the loupe's 100% document.
         let nativePixelSize: CGSize
+        /// Whether a layer shows `image` as it is, its pixels in an IOSurface of their own: an
+        /// unedited HEIC's thumbnail decode and a JPEG's whole routes. Any other rendering is
+        /// in ordinary memory, which Core Animation would copy for display and keep.
+        let isShownAsIs: Bool
     }
 
     enum RenderError: Error {
@@ -69,7 +76,7 @@ final nonisolated class ImageRenderer: Sendable {
     static let interactive = ImageRenderer(lane: "interactive", qos: .userInitiated, imageDecodes: 2, waiter: .user)
 
     /// No more Image I/O decodes at once, on both lanes together, than four HEIC previews hold
-    /// (`DecodeBudget`): three 24 MP JPEG previews, two of a 12 MP JPEG, which decodes whole.
+    /// (`DecodeBudget`): three 24 MP JPEG previews, one of a 12 MP JPEG, which decodes whole.
     static let decodeBudget = 4 * 2 * 2560 * 1920 * 4
     /// The one admission both lanes' Image I/O decodes pass (`DecodeBudgetMachine`).
     private static let admission = Admission(DecodeBudgetMachine(budget: decodeBudget))
@@ -114,8 +121,8 @@ final nonisolated class ImageRenderer: Sendable {
     /// Renders `url` with `recipe` applied so the edited photo's long edge is at most
     /// `longEdge`, or at full size when nil. A cropped photo is developed from a frame
     /// large enough for its crop to reach that size.
-    func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral) async throws -> Rendered {
-        try await render(url, longEdge: longEdge, recipe: recipe) { $0 }
+    func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral, forDisplay: Bool = false) async throws -> Rendered {
+        try await render(url, longEdge: longEdge, recipe: recipe, forDisplay: forDisplay) { $0 }
     }
 
     /// Renders `url` as `render(_:longEdge:recipe:)` does and hands the rendering to `finish`
@@ -134,13 +141,20 @@ final nonisolated class ImageRenderer: Sendable {
     /// once and hears `CancellationError`; a render whose every ask left before it began is
     /// withdrawn from the budget, or skipped on the queue, before it reads a byte. A render
     /// that began runs to its end, and its pixels go to whoever still waits.
+    ///
+    /// **The route is the file's.** Its header, read first, names the route that decodes it
+    /// (`OriginalRoute`), which is part of the render asked for: `forDisplay` is a pane's ask
+    /// for what it shows as it is, which for most stills is the same render as the lane's.
     func render<Product: Sendable>(
         _ url: URL,
         longEdge: Int?,
         recipe: EditRecipe = .neutral,
+        forDisplay: Bool = false,
         finish: @escaping @Sendable (Rendered) -> Product
     ) async throws -> Product {
-        let key = RenderKey(url, longEdge: longEdge, recipe: recipe)
+        let header = Self.isRAW(url) ? nil : await OriginalHeader.read(url)
+        let route = OriginalRoute.of(header, longEdge: longEdge, recipe: recipe, forDisplay: forDisplay)
+        let key = RenderKey(url, longEdge: longEdge, recipe: recipe, route: route)
         let ask = Self.nextAsk.withLock { value in
             value &+= 1
             return value
@@ -163,7 +177,7 @@ final nonisolated class ImageRenderer: Sendable {
                         id: ask,
                         waiters: [ask: waiter],
                         runner: Task.detached(priority: user ? .userInitiated : .utility) {
-                            await self.run(key, url: url, render: ask)
+                            await self.run(key, url: url, header: header, render: ask)
                         }
                     )
                     return false
@@ -214,12 +228,12 @@ final nonisolated class ImageRenderer: Sendable {
     /// The render of `key`, once: admitted by the shared budget (an Image I/O decode; a RAW
     /// lane runs one at a time already), then on this lane's queue, or the interactive lane's
     /// when the user waits on it.
-    private func run(_ key: RenderKey, url: URL, render: UInt64) async {
+    private func run(_ key: RenderKey, url: URL, header: OriginalHeader?, render: UInt64) async {
         let enqueued = ContinuousClock.now
         let isRAW = Self.isRAW(url)
         var admitted: AdmissionRequest?
         if !isRAW {
-            let cost = await DecodeCost.of(url, longEdge: key.longEdge) ?? Self.decodeBudget
+            let cost = header.map { DecodeCost.renderBytes($0, longEdge: key.longEdge, route: key.route) } ?? Self.decodeBudget
             let state = Self.pending(key, render: render)
             guard state.pending else { return }
             do {
@@ -275,13 +289,14 @@ final nonisolated class ImageRenderer: Sendable {
         do {
             let source = try StillSource.read(url)
             let developStart = ContinuousClock.now
-            let rendered = try renderNow(source, longEdge: key.longEdge, recipe: key.recipe)
+            let rendered = try renderNow(source, longEdge: key.longEdge, recipe: key.recipe, route: key.route)
             // The lane's time splits into reading the original and developing it, so a slow
             // render says whether its source or its decoder set the pace; `queueWaitMs` is the
             // wait for its turn in the budget and its place on the lane.
             OtosLog.rendering.noticeOperation("render.still", phase: "finish", fields: [
                 "lane": lane,
                 "decoder": rendered.decoder.rawValue,
+                "route": "\(key.route)",
                 "width": "\(rendered.image.width)",
                 "height": "\(rendered.image.height)",
                 "bytes": "\(source.data.count)",
@@ -366,17 +381,19 @@ final nonisolated class ImageRenderer: Sendable {
         UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) == true
     }
 
-    private static func renderNow(_ source: StillSource, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
+    private static func renderNow(_ source: StillSource, longEdge: Int?, recipe: EditRecipe, route: OriginalRoute) throws -> Rendered {
         if isRAW(source.url) {
             return try developRAW(source, longEdge: longEdge, recipe: recipe)
         }
-        let decoded = try decodeImage(source, outputLongEdge: longEdge, recipe: recipe)
+        let decoded = try decodeImage(source, outputLongEdge: longEdge, recipe: recipe, route: route)
         guard !recipe.isNeutral else {
             return decoded
         }
         let developed = applying(recipe, toDevelopedRAW: false, CIImage(cgImage: decoded.image))
         let adjusted = applyingEffects(recipe, applyingGeometry(recipe, developed))
-        return try Rendered(image: bitmap(adjusted), decoder: decoded.decoder, nativePixelSize: decoded.nativePixelSize)
+        return try Rendered(
+            image: bitmap(adjusted), decoder: decoded.decoder, nativePixelSize: decoded.nativePixelSize, isShownAsIs: false
+        )
     }
 
     /// A RAW opened for development, with its oriented full-resolution size: its sensor
@@ -601,36 +618,24 @@ final nonisolated class ImageRenderer: Sendable {
     private static func developRAW(_ source: StillSource, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
         let opened = try openRAW(source, outputLongEdge: longEdge, recipe: recipe)
         let image = try applyingEffects(recipe, applyingGeometry(recipe, developed(opened.filter, recipe: recipe)))
-        return try Rendered(image: bitmap(image), decoder: opened.decoder, nativePixelSize: opened.nativeSize)
+        return try Rendered(image: bitmap(image), decoder: opened.decoder, nativePixelSize: opened.nativeSize, isShownAsIs: false)
     }
 
-    /// Decodes a still that is not a RAW, oriented, large enough for the recipe's edited
-    /// long edge to reach `outputLongEdge` (the whole original when nil).
-    static func decodeImage(_ still: StillSource, outputLongEdge: Int?, recipe: EditRecipe) throws -> Rendered {
-        guard let source = still.imageSource() else {
+    /// Decodes a still that is not a RAW, upright, large enough for the recipe's edited
+    /// long edge to reach `outputLongEdge` (the whole original when nil), by `route`, through
+    /// the one decode of an original (`DisplayImage.original`).
+    static func decodeImage(_ still: StillSource, outputLongEdge: Int?, recipe: EditRecipe, route: OriginalRoute? = nil) throws -> Rendered {
+        guard let source = still.imageSource(), let header = OriginalHeader.read(source, type: still.type) else {
             throw RenderError.unreadable
         }
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-        let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
-        let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0
-        let orientation = properties?[kCGImagePropertyOrientation] as? Int ?? 1
-        let nativeLongEdge = max(width, height)
-        guard nativeLongEdge > 0 else {
-            throw RenderError.unreadable
-        }
-        let native = orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
-        let fraction = recipe.cropLongEdgeFraction(ofOriginal: native)
-        let decodeLongEdge = outputLongEdge.map { Int((Double($0) / fraction).rounded(.up)) } ?? nativeLongEdge
-        let options = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: min(decodeLongEdge, nativeLongEdge),
-        ] as CFDictionary
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+        // A caller with no route of its own (the edit session's decode) takes the one its
+        // header names for a rendering to work from, never one shown as it is.
+        let route = route ?? OriginalRoute.of(header, longEdge: outputLongEdge, recipe: recipe, forDisplay: false)
+        let decodeLongEdge = header.decodeLongEdge(output: outputLongEdge, recipe: recipe)
+        guard let decoded = DisplayImage.original(source, header: header, decodeLongEdge: decodeLongEdge, route: route) else {
             throw RenderError.renderFailed
         }
-        return Rendered(image: image, decoder: .imageIO, nativePixelSize: native)
+        return Rendered(image: decoded.image, decoder: .imageIO, nativePixelSize: header.orientedSize, isShownAsIs: decoded.isSurface)
     }
 
     /// Renders every pixel into an 8-bit Display P3 bitmap. `createCGImage` may return an

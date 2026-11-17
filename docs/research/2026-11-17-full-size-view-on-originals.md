@@ -133,9 +133,9 @@ The on-demand bound: `OriginalPaneMemoryTests.thePhotoStepsOnANewLibraryNeverSta
 JPEG decoding whole), and beside the first enrichment no more than the enrichment alone plus
 that.
 
-Not changed: a 12 MP JPEG still decodes whole at 2,560 (about 110 MB for the length of the
-decode, on either lane). A whole decode Image I/O returns in the JPEG's own YCbCr layout, in an
-IOSurface, holds about 18 MB, a candidate for the pane alone; not measured here.
+Not changed here: a 12 MP JPEG still decoded whole at 2,560 (about 110 MB for the length of
+the decode, on either lane). Measured and changed since, route by route, in
+`2026-11-17-jpeg-decode-routes.md`.
 
 ## Rejected
 

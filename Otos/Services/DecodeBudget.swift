@@ -7,10 +7,11 @@ import UniformTypeIdentifiers
 /// How many Image I/O decodes run at once is a question of memory, not of count. A decode
 /// holds the pixels Image I/O decodes at, which are not the output's: a JPEG decodes at the
 /// smallest of 1, 1/2, 1/4 or 1/8 of its size that still covers the asked long edge, so a
-/// 12 MP JPEG rendered to 2,560 pixels decodes whole (4,032 is less than twice 2,560) and
-/// peaked at 110 MB alone, while a 24 MP JPEG decodes at half and peaked at 50 MB; HEIC
-/// decodes at the asked size (15 to 19 MB); any other format decodes whole
-/// (`docs/research/2026-11-17-first-launch-decodes.md`).
+/// 12 MP JPEG rendered to 2,560 pixels decodes whole (4,032 is less than twice 2,560), while
+/// a 24 MP JPEG decodes at half and peaked at 50 MB; HEIC decodes at the asked size (15 to 19
+/// MB); any other format decodes whole (`docs/research/2026-11-17-first-launch-decodes.md`).
+/// A JPEG that decodes whole takes the route that holds least (`OriginalRoute`): 86–92 MB on
+/// the lane where Image I/O's thumbnail decode peaked at 110, 36–37 MB for a pane.
 ///
 /// **One budget for both lanes.** The background lane (enrichment) and the interactive lane
 /// (the photo the user is looking at) are admitted by one machine, so viewing a new library's
@@ -28,8 +29,9 @@ import UniformTypeIdentifiers
 /// So the decodes running at once hold at most the budget, or the user's decodes beside what
 /// was running when they asked. The lanes' queue widths stay the caps on how many run at once.
 ///
-/// A render's cost is the pixels it decodes at and the rendering it makes, four bytes each,
-/// from the file's header and the asked long edge (`DecodeCost.of(_:longEdge:)`): the
+/// A render's cost is what its route holds: the pixels it decodes at and the rendering it
+/// makes, from the file's header, the asked long edge and the route
+/// (`DecodeCost.renderBytes(_:longEdge:route:)`): the
 /// rendering is held while its preview is encoded and staged on the lane
 /// (`ImageRenderer.render(_:longEdge:recipe:finish:)`). A header that cannot be read costs
 /// the whole budget, so an unknown render runs alone rather than beside others.
@@ -137,24 +139,28 @@ nonisolated enum DecodeWaiter: Sendable, Equatable {
     case background
 }
 
-/// One render as asked of either lane: the file, the long edge (nil for the whole original)
-/// and the recipe. Two asks for the same render share one decode (`ImageRenderer`).
+/// One render as asked of either lane: the file, the long edge (nil for the whole original),
+/// the recipe and the route that decodes it. Two asks for the same render share one decode
+/// (`ImageRenderer`); a pane's ask its route shows as it is (`OriginalRoute.wholeShown`) is
+/// a render of its own.
 nonisolated struct RenderKey: Hashable, Sendable {
     let path: String
     let longEdge: Int?
     let recipe: EditRecipe
+    let route: OriginalRoute
 
-    init(_ url: URL, longEdge: Int?, recipe: EditRecipe) {
+    init(_ url: URL, longEdge: Int?, recipe: EditRecipe, route: OriginalRoute = .thumbnail) {
         path = url.path(percentEncoded: false)
         self.longEdge = longEdge
         self.recipe = recipe
+        self.route = route
     }
 }
 
 /// A decode's cost: the pixels Image I/O decodes a still at, four bytes each.
 nonisolated enum DecodeCost {
     /// How a format's decoder meets an asked long edge.
-    enum Decoding: Equatable, Sendable {
+    enum Decoding: Hashable, Sendable {
         /// At the smallest of 1, 1/2, 1/4, 1/8 of the original that covers it (JPEG).
         case scaledByHalves
         /// At the asked size (HEIC, HEIF).
@@ -203,20 +209,25 @@ nonisolated enum DecodeCost {
             + bytes(width: width, height: height, longEdge: longEdge, decoding: .atAskedSize)
     }
 
-    /// Read from the file's header, which Image I/O reads without decoding, off the caller's
-    /// actor: what a render to `longEdge` holds (`renderBytes`); nil when the header cannot be
-    /// read.
-    @concurrent
-    static func of(_ url: URL, longEdge: Int?) async -> Int? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              width > 0, height > 0
-        else {
-            return nil
+    /// What a render of an original with `header` to `longEdge` holds by `route`, as measured
+    /// (`OriginalRoute`):
+    ///
+    /// - `thumbnail`: its decode and its rendering (`renderBytes`);
+    /// - `wholeDrawn`: the whole decode, four bytes a pixel, the YCbCr image Image I/O decodes
+    ///   it from, a byte and a half, and the rendering drawn from it: 87 MB for a 12 MP JPEG
+    ///   at 2,560 pixels, which peaked at 86–92 MB;
+    /// - `wholeShown`: three bytes a pixel, the YCbCr surface and what fills it: 37 MB for a
+    ///   12 MP JPEG, which peaked at 36–37 MB through its first showing.
+    static func renderBytes(_ header: OriginalHeader, longEdge: Int?, route: OriginalRoute) -> Int {
+        let (width, height) = (header.width, header.height)
+        switch route {
+        case .thumbnail:
+            return renderBytes(width: width, height: height, longEdge: longEdge, decoding: header.decoding)
+        case .wholeDrawn:
+            return width * height * 4 + width * height * 3 / 2
+                + bytes(width: width, height: height, longEdge: longEdge, decoding: .atAskedSize)
+        case .wholeShown:
+            return width * height * 3
         }
-        let decoding = Decoding(type: UTType(filenameExtension: url.pathExtension))
-        return renderBytes(width: width, height: height, longEdge: longEdge, decoding: decoding)
     }
 }

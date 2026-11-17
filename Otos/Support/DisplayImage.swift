@@ -1,8 +1,90 @@
 import CoreGraphics
+import CoreImage
 import CoreVideo
 import Foundation
 import ImageIO
+import UniformTypeIdentifiers
 import VideoToolbox
+
+/// How the one decode of a still's original makes its rendering, chosen per format and size by
+/// what each route holds at its peak and how long it takes (measured on macOS 27,
+/// `docs/research/2026-11-17-jpeg-decode-routes.md`).
+nonisolated enum OriginalRoute: Hashable, Sendable {
+    /// Image I/O's thumbnail decode at the asked size: a HEIC at that size, a JPEG at the
+    /// smallest half of itself that covers it, any other format whole.
+    case thumbnail
+    /// A JPEG that Image I/O would decode whole for the asked size anyway (a half of it falls
+    /// short): decoded whole and drawn once, upright and scaled, into an IOSurface of its own.
+    /// A 12 MP JPEG at 2,560 pixels peaks at 86–92 MB this way, 103–111 MB by the thumbnail
+    /// decode, and takes 58–62 ms rather than 84–89.
+    case wholeDrawn
+    /// The same JPEG, upright and unedited, for a pane to show: the whole image as Image I/O
+    /// returns it, whose pixels are filled in the JPEG's own YCbCr layout in an IOSurface when
+    /// a layer first shows it. A 12 MP JPEG peaks at 36–37 MB through its first showing,
+    /// holds 18–19 MB, and is on screen in 17–19 ms. A preview to encode is drawn from its
+    /// pixels twice (the preview, its thumbnail), so only a pane asks for it.
+    case wholeShown
+
+    /// The route for a rendering of an original with `header`, edited by `recipe`, whose long
+    /// edge is `longEdge` at most (the whole original when nil); `forDisplay` when a pane
+    /// shows the rendering as it is.
+    static func of(_ header: OriginalHeader?, longEdge: Int?, recipe: EditRecipe, forDisplay: Bool) -> OriginalRoute {
+        guard let header, header.decoding == .scaledByHalves else {
+            return .thumbnail
+        }
+        let decodeLongEdge = header.decodeLongEdge(output: longEdge, recipe: recipe)
+        // A JPEG decodes at half of itself only when the half still covers the edge.
+        guard max(header.width, header.height) / 2 < decodeLongEdge else {
+            return .thumbnail
+        }
+        return forDisplay && recipe.isNeutral && header.orientation == 1 ? .wholeShown : .wholeDrawn
+    }
+}
+
+/// What a still original's header says, read without decoding it.
+nonisolated struct OriginalHeader: Hashable, Sendable {
+    let width: Int
+    let height: Int
+    /// The EXIF orientation, 1 (upright) when the file names none.
+    let orientation: Int
+    let decoding: DecodeCost.Decoding
+
+    /// The original's size upright.
+    var orientedSize: CGSize {
+        orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+    }
+
+    /// The long edge to decode for a rendering whose edited long edge is `output` at most: a
+    /// crop needs more of the original to reach it. The whole original when `output` is nil.
+    func decodeLongEdge(output: Int?, recipe: EditRecipe) -> Int {
+        let native = max(width, height)
+        guard let output else { return native }
+        let fraction = recipe.cropLongEdgeFraction(ofOriginal: orientedSize)
+        return Int((Double(output) / fraction).rounded(.up))
+    }
+
+    /// The header of the image `source` holds, of `type`; nil when it names no size.
+    static func read(_ source: CGImageSource, type: UTType?) -> OriginalHeader? {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0
+        else {
+            return nil
+        }
+        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+        return OriginalHeader(width: width, height: height, orientation: orientation, decoding: DecodeCost.Decoding(type: type))
+    }
+
+    /// The header of the file at `url`, read off the caller's actor; nil when it cannot be read.
+    @concurrent
+    static func read(_ url: URL) async -> OriginalHeader? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            return nil
+        }
+        return read(source, type: UTType(filenameExtension: url.pathExtension))
+    }
+}
 
 /// Display image guide
 ///
@@ -28,7 +110,10 @@ import VideoToolbox
 ///   the image independent of what it was cut from (a `CGImage.cropping(to:)` holds the whole
 ///   decode it came from, `docs/research/2026-11-16-image-memory-while-used.md`).
 ///
-/// Both run on their caller's thread, and every caller runs them off the main actor.
+/// - **`original`** is the one decode of a still's original that is not a RAW, for both render
+///   lanes (`ImageRenderer`), by the route its format and size call for (`OriginalRoute`).
+///
+/// They run on their caller's thread, and every caller runs them off the main actor.
 nonisolated enum DisplayImage {
     /// The image file at `url`, at no more than `maxPixelEdge` on its long edge; nil when the
     /// file is missing or unreadable.
@@ -60,6 +145,63 @@ nonisolated enum DisplayImage {
         guard let colorSpace = image.colorSpace, colorSpace.model == .rgb else { return nil }
         return draw(width: image.width, height: image.height, colorSpace: colorSpace) { context in
             context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+    }
+
+    /// A still's original (not a RAW) decoded by `route` for a rendering whose long edge,
+    /// upright, is `decodeLongEdge` at most (the whole original when nil), and whether a layer
+    /// shows it as it is, its pixels in an IOSurface of their own (a HEIC's thumbnail decode,
+    /// either whole route); nil when Image I/O cannot decode it. A `wholeDrawn` original whose
+    /// pixels are not RGB is decoded by the thumbnail route, which converts them.
+    static func original(
+        _ source: CGImageSource,
+        header: OriginalHeader,
+        decodeLongEdge: Int?,
+        route: OriginalRoute
+    ) -> (image: CGImage, isSurface: Bool)? {
+        let native = max(header.width, header.height)
+        let edge = min(decodeLongEdge ?? native, native)
+        func thumbnail() -> (image: CGImage, isSurface: Bool)? {
+            CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: edge,
+            ] as CFDictionary).map { ($0, header.decoding == .atAskedSize) }
+        }
+        switch route {
+        case .thumbnail:
+            return thumbnail()
+        case .wholeShown:
+            return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+                .map { ($0, true) }
+        case .wholeDrawn:
+            guard let whole = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary),
+                  let colorSpace = whole.colorSpace, colorSpace.model == .rgb
+            else {
+                return thumbnail()
+            }
+            return upright(whole, orientation: header.orientation, longEdge: edge, colorSpace: colorSpace).map { ($0, true) }
+        }
+    }
+
+    /// `image` turned upright by its EXIF `orientation` and scaled so its long edge is
+    /// `longEdge`, drawn once into an IOSurface of its own.
+    private static func upright(_ image: CGImage, orientation: Int, longEdge: Int, colorSpace: CGColorSpace) -> CGImage? {
+        let source = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        // Core Image's orientation transform, in the same y-up coordinates as a bitmap context;
+        // making it reads no pixels.
+        let turn = CIImage(cgImage: image).orientationTransform(forExifOrientation: Int32(orientation))
+        let turned = source.applying(turn)
+        let scale = Double(longEdge) / Double(max(turned.width, turned.height))
+        let width = max(1, Int((turned.width * scale).rounded()))
+        let height = max(1, Int((turned.height * scale).rounded()))
+        return draw(width: width, height: height, colorSpace: colorSpace) { context in
+            context.interpolationQuality = .high
+            context.scaleBy(x: CGFloat(width) / turned.width, y: CGFloat(height) / turned.height)
+            context.translateBy(x: -turned.minX, y: -turned.minY)
+            context.concatenate(turn)
+            context.draw(image, in: source)
         }
     }
 

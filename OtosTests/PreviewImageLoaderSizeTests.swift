@@ -91,8 +91,19 @@ struct PreviewImageLoaderSizeTests {
             return
         }
         #expect(native == CGSize(width: 3600, height: 2400))
-        #expect(fit.width == ThumbnailStore.previewMaxPixelSize)
+        // A JPEG this size decodes whole for the preview's size anyway, so the pane shows it
+        // whole, as Image I/O returns it (`OriginalRoute.wholeShown`).
+        #expect(fit.width == 3600)
         #expect(full.width == 3600)
+
+        // One whose half covers the preview's size is decoded at it.
+        try writeJPEG(width: 6000, height: 4000, to: directory.appending(path: "large.jpg"))
+        let large = MediaAssetID(libraryRootPath: id.libraryRootPath, relativePath: MediaRelativePath(rawValue: "large.jpg"))
+        guard case let .image(largeFit, _) = await loader.preview(for: .init(id: large, detail: nil, targetLongEdge: 3024)) else {
+            Issue.record("expected the decode to produce an image")
+            return
+        }
+        #expect(largeFit.width == ThumbnailStore.previewMaxPixelSize)
     }
 
     private func writeJPEG(width: Int, height: Int, to url: URL) throws {

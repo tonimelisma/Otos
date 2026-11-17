@@ -520,11 +520,17 @@ final class CatalogWindowViewModel {
     /// The newest act whose result reached the grid (`op=ui.actToResult phase=finish`), the
     /// fact a sandboxed tour's act step waits on.
     private(set) var lastActResult: ActResultReport?
-    /// How this launch's background work first settled, once it has: every background owner
-    /// quiescent (`op=owners.quiescent`), or the heavy loads the launch asked for all run
-    /// (`LoadAdmission.untilDrained()`), whichever came first. What a tour that starts like a
-    /// person's session waits on (`SmokeTour.Configuration.start`).
+    /// How far this launch's background work has settled, once it has reached the first stage
+    /// (`LaunchSettlement`, `op=owners.settled`). What a tour's Duplicates step waits on
+    /// (`duplicatesBuilt`), and a tour that starts like a person's session
+    /// (`SmokeTour.Configuration.start`, `launchWork`).
     private(set) var launchSettlement: LaunchSettlement?
+    /// Whether the window has shown the groups the duplicates owner had built when the launch
+    /// reached `duplicatesBuilt` (`applyDuplicatesState`): set once, by the step that shows
+    /// them, so a later build changes nothing.
+    var showsLaunchDuplicates = false
+    /// Those groups, from the stage until the window shows them (`.some(nil)`: none built).
+    @ObservationIgnored var launchDuplicates: CatalogDuplicatesState??
     /// Removable-volume and camera monitoring observe hardware attached to the host
     /// machine, so a `true` default would make behavior depend on whatever card or
     /// camera happens to be plugged in. Production starts them; tests that assert on
@@ -680,11 +686,9 @@ final class CatalogWindowViewModel {
     private(set) var waitingFramePresentedScope: SidebarSelection?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
     /// Starts the background owners (`BackgroundOwnerSet`) once the first grid has been
-    /// applied, then waits for every one of them to owe nothing (`op=owners.quiescent`).
+    /// applied, then waits for each stage of the launch's settlement in turn (`op=owners.settled`,
+    /// `op=owners.quiescent`).
     @ObservationIgnored private var ownerStartTask: Task<Void, Never>?
-    /// Waits for the launch's heavy loads to have all run, and records it as the launch's
-    /// settlement unless the owners' quiescence came first.
-    @ObservationIgnored private var loadsDrainedTask: Task<Void, Never>?
     /// The owners started at the first grid, kept so a session's end can report each one's
     /// status (`ownerStatuses()`).
     @ObservationIgnored private var backgroundOwnerSet: BackgroundOwnerSet?
@@ -1130,7 +1134,6 @@ final class CatalogWindowViewModel {
         currentTargetChoiceTask?.cancel()
         viewportForwardingTask?.cancel()
         ownerStartTask?.cancel()
-        loadsDrainedTask?.cancel()
         // Before the owners are told to stop: a heavy load still waiting never starts.
         loadAdmission.shutdown()
         deviceStagingSweepTask?.cancel()
@@ -1395,15 +1398,6 @@ extension CatalogWindowViewModel {
         )
         let launchStartedAt = launchStartedAt ?? .now
         backgroundOwnerSet = owners
-        loadsDrainedTask = Task(priority: .backgroundOwner) { [weak self, loadAdmission] in
-            do {
-                try await loadAdmission.untilDrained()
-            } catch {
-                // Cancelled at teardown, or the admission shut down first.
-                return
-            }
-            self?.settleLaunch(.loadsDrained)
-        }
         // The first grid follows the catalog's load, so each owner's first candidate query
         // sees persisted rows. `store.start()` is idempotent and shared: it returns the load
         // `startCatalog` ran, and a failed load starts no owner.
@@ -1415,7 +1409,15 @@ extension CatalogWindowViewModel {
                 return
             }
             await owners.start()
+            // Each stage's owners hold the one before's, so the stages are reached in turn.
             do {
+                _ = try await BackgroundOwnerQuiescence.untilQuiescent(owners.duplicatesOwners(), store: store)
+                let built = await owners.builtDuplicates()
+                BackgroundOwnerQuiescence.logSettled(.duplicatesBuilt, sinceLaunch: launchStartedAt)
+                self?.settleLaunch(.duplicatesBuilt, duplicates: built)
+                _ = try await BackgroundOwnerQuiescence.untilQuiescent(owners.launchOwners(), store: store)
+                BackgroundOwnerQuiescence.logSettled(.launchWork, sinceLaunch: launchStartedAt)
+                self?.settleLaunch(.launchWork)
                 let facts = try await BackgroundOwnerQuiescence.untilQuiescent(owners.quiescentOwners(), store: store)
                 BackgroundOwnerQuiescence.log(facts, sinceLaunch: launchStartedAt)
                 self?.settleLaunch(.ownersQuiescent)
@@ -1425,9 +1427,17 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Records how the launch first settled; a later settlement changes nothing.
-    private func settleLaunch(_ settlement: LaunchSettlement) {
-        guard launchSettlement == nil else { return }
+    /// Records the stage the launch has settled to, and at `duplicatesBuilt` the groups built
+    /// by then.
+    func settleLaunch(_ settlement: LaunchSettlement, duplicates: CatalogDuplicatesState? = nil) {
+        guard launchSettlement.map({ settlement > $0 }) ?? true else { return }
+        if settlement == .duplicatesBuilt {
+            if parts.duplicates == duplicates {
+                showsLaunchDuplicates = true
+            } else {
+                launchDuplicates = .some(duplicates)
+            }
+        }
         launchSettlement = settlement
     }
 
