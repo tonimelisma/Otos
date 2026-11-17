@@ -44,7 +44,7 @@ nonisolated enum CatalogQueryGateway {
         stacks: AnniversaryStacks = .readWhenNeeded,
         db: Database
     ) throws -> [OrderedAssetIDRow] {
-        guard let clause = try scopeClause(scope, stacks: stacks, db: db) else {
+        guard let clause = try scopeClause(scope, stacks: stacks, ordering: true, db: db) else {
             return []
         }
         return try fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, clause: clause, db: db)
@@ -91,11 +91,13 @@ nonisolated enum CatalogQueryGateway {
     /// stack and row comes from one snapshot (ADR 0052). `held` — every stack of
     /// `stackRootPaths`' roots, which the caller holds while nothing they are built from
     /// moved — is used when given. Otherwise a scope whose reads seek its rows
-    /// (`ScopeClause.Seek`) reads its rows first and builds only the stacks that hold them
-    /// (`PhotoStackSQL.build(rootPaths:holding:db:)`), and a scope whose reads walk the order
-    /// builds every stack of its roots: its rows are a large share of them, and a build from
-    /// tens of thousands of rows' folders costs more than every candidate does
-    /// (`docs/research/2026-11-15-large-narrow-scopes.md`).
+    /// (`ScopeClause.Seek`) reads its rows first and, while they are at most
+    /// `PhotoStackSQL.rowsSpanMostRows`, builds only the stacks that hold them
+    /// (`PhotoStackSQL.build(rootPaths:holding:db:)`); more rows, and a scope whose reads walk
+    /// the order, build every stack of its roots: a build from thousands of rows' folders reads
+    /// about every candidate and costs more than reading them all does
+    /// (`docs/research/2026-11-15-large-narrow-scopes.md`,
+    /// `docs/research/2026-11-17-a-persons-photos-in-order.md`).
     static func readOrder(
         descriptor: CatalogQueryDescriptor,
         scope: CatalogScopePredicate,
@@ -103,11 +105,16 @@ nonisolated enum CatalogQueryGateway {
         held: PhotoStackSQL.Built?,
         db: Database
     ) throws -> (rows: [OrderedAssetIDRow], stacks: PhotoStackSQL.Built) {
-        guard let clause = try scopeClause(scope, stacks: held.map(AnniversaryStacks.built) ?? .readWhenNeeded, db: db) else {
+        guard let clause = try scopeClause(
+            scope, stacks: held.map(AnniversaryStacks.built) ?? .readWhenNeeded, ordering: true, db: db
+        ) else {
             return try ([], held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, holding: [], db: db))
         }
         if held == nil, clause.seek != nil {
             let rows = try fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, clause: clause, db: db)
+            guard rows.count <= PhotoStackSQL.rowsSpanMostRows else {
+                return try (rows, PhotoStackSQL.build(rootPaths: stackRootPaths, db: db))
+            }
             return try (rows, PhotoStackSQL.build(rootPaths: stackRootPaths, holding: rows, db: db))
         }
         let stacks = try held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, db: db)
@@ -137,7 +144,7 @@ nonisolated enum CatalogQueryGateway {
         stacks: AnniversaryStacks = .readWhenNeeded,
         db: Database
     ) throws -> SQLQuery? {
-        try scopeClause(scope, stacks: stacks, db: db).map { clause in
+        try scopeClause(scope, stacks: stacks, ordering: true, db: db).map { clause in
             orderedAssetIDQuery(descriptor: descriptor, scope: scope, clause: clause)
         }
     }
@@ -147,6 +154,9 @@ nonisolated enum CatalogQueryGateway {
         scope: CatalogScopePredicate,
         clause scopeClause: ScopeClause
     ) -> SQLQuery {
+        if case let .personPhotos(person) = scopeClause.seek {
+            return PersonPhotoSQL.orderQuery(descriptor: descriptor, person: person, clause: scopeClause)
+        }
         let order = orderPlan(
             for: descriptor.effectiveSort,
             person: descriptor.scope.person,
@@ -774,7 +784,7 @@ nonisolated enum PhotoFaceSQL {
               ON face.library_root_id = face_copy.library_root_id AND face.relative_path = face_copy.relative_path
             WHERE \(CatalogSchema.isCopy("face_copy", of: row))
               AND \(CatalogVisibilitySQL.isPresent("face_copy"))
-              AND face_copy.rowid <> \(row).rowid
+              AND NOT (face_copy.library_root_id = \(row).library_root_id AND face_copy.relative_path = \(row).relative_path)
               AND \(condition)
         )))
         """
@@ -811,6 +821,97 @@ nonisolated enum PhotoFaceSQL {
     WHERE \(CatalogSchema.isCopy("face_copy", ofDigest: "?"))
       AND \(CatalogVisibilitySQL.isPresent("face_copy"))
     """
+}
+
+/// A person's photos in the window's order (ADR 0047, "A person's photos"; schema v78): the
+/// person's own rows of `person_photo`, read as `media_asset`, and the photos the person is in
+/// only through a copy (ADR 0054), merged in one order.
+///
+/// The person's rows are one range of the table's key, so the read visits only them and
+/// sorts what it finds: a few photos, or the 17,000 of the most photographed person — 803
+/// pages cold, 10–98 ms, on a generated catalog of the owner's shape, where walking the
+/// catalog's order index to test each of its rows read 7,881 pages in 907 ms
+/// (`docs/research/2026-11-17-a-persons-photos-in-order.md`). The photos through a copy are
+/// the present copies of the person's photos that have copies (`idx_person_photo_copies`),
+/// which hold no face of the person themselves: the relation `PhotoFaceSQL.holds` tests, from
+/// the face's side. The two are one compound select, so SQLite merges the two orders; the
+/// copies' rows are few, and a copy found from two of the person's photos is one row.
+nonisolated enum PersonPhotoSQL {
+    /// The table's key, `(person_id, library_root_id, relative_path)`: a person's rows are one
+    /// range of it. SQLite names a constraint's index itself, and `INDEXED BY` accepts that name.
+    static let keyIndexName = "sqlite_autoindex_person_photo_1"
+    static let copiesIndexName = "idx_person_photo_copies"
+
+    /// The copies index's condition. The read through it states it literally: SQLite uses a
+    /// partial index only for a condition it can prove at prepare.
+    static let copiesPredicate = "has_copies = 1"
+
+    fileprivate static func orderQuery(descriptor: CatalogQueryDescriptor, person: PersonID, clause: ScopeClause) -> SQLQuery {
+        let sort = descriptor.effectiveSort
+        let direction = sort.direction.sqlKeyword
+        let filter = filterPredicate(for: descriptor.filter)
+        let filterSQL = filter.sql.map { "\n  AND \($0)" } ?? ""
+        // The likeness of the person's first face on the photo; a photo the person is in only
+        // through a copy holds none, and goes last.
+        let likeness = """
+        (SELECT face.likeness FROM face WHERE face.person_id = ? \
+        AND face.library_root_id = media_asset.library_root_id AND face.relative_path = media_asset.relative_path)
+        """
+        let keys: (columns: String, orderBy: String, arguments: [any DatabaseValueConvertible]) = switch sort.field {
+        case .bestDate:
+            ("media_asset.best_capture_local AS order_key", "order_key \(direction)", [])
+        case .name:
+            ("media_asset.name_sort_key AS order_key", "order_key \(direction)", [])
+        case .size:
+            (
+                "(media_asset.byte_size IS NULL) AS order_absent, media_asset.byte_size AS order_key",
+                "order_absent, order_key \(direction)",
+                []
+            )
+        case .likeness:
+            (
+                "(\(likeness) IS NULL) AS order_absent, \(likeness) AS order_key, media_asset.best_capture_local AS order_tie",
+                "order_absent, order_key \(direction), order_tie DESC",
+                [person.rawValue, person.rawValue]
+            )
+        }
+        let captureColumn = sort.field == .bestDate ? "media_asset.best_capture_local" : "NULL"
+        // Read by position in `fetchOrderedAssetIDRows`, as the other order reads are: the key,
+        // the capture time, the still's burst; the order's keys follow.
+        let columns = """
+        media_asset.library_root_id AS library_root_id, media_asset.relative_path AS relative_path, \(captureColumn), \
+        CASE WHEN media_asset.best_kind IN ('raw', 'image') THEN media_asset.burst_identifier END, \(keys.columns)
+        """
+        var arguments = keys.arguments + clause.arguments + filter.arguments + [person.rawValue]
+        arguments += keys.arguments + [person.rawValue, person.rawValue] + clause.arguments + filter.arguments
+        return SQLQuery(
+            sql: """
+            SELECT \(columns)
+            FROM person_photo AS media_asset INDEXED BY \(keyIndexName)
+            WHERE \(clause.sql)\(filterSQL)
+              AND media_asset.person_id = ?
+            UNION
+            SELECT \(columns)
+            FROM person_photo AS member INDEXED BY \(copiesIndexName)
+            CROSS JOIN media_asset AS member_photo INDEXED BY \(mediaAssetKeyIndexName)
+              ON member_photo.library_root_id = member.library_root_id AND member_photo.relative_path = member.relative_path
+            CROSS JOIN media_asset INDEXED BY \(ContentDigestSQL.indexName)
+              ON \(CatalogSchema.isCopy("member_photo", of: "media_asset"))
+            WHERE member.person_id = ? AND member.\(copiesPredicate)
+              AND \(CatalogVisibilitySQL.isPresent("member_photo"))
+              AND NOT (media_asset.library_root_id = member.library_root_id AND media_asset.relative_path = member.relative_path)
+              AND media_asset.has_copies = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM person_photo AS own
+                  WHERE own.person_id = ? AND own.library_root_id = media_asset.library_root_id
+                    AND own.relative_path = media_asset.relative_path
+              )
+              AND \(clause.sql)\(filterSQL)
+            ORDER BY \(keys.orderBy), library_root_id, relative_path
+            """,
+            arguments: StatementArguments(arguments)
+        )
+    }
 }
 
 /// The map cells a located photo falls in (ADR 0051): a fiftieth of a degree each way,
@@ -1008,6 +1109,14 @@ nonisolated enum PhotoStackSQL {
     /// (v59): what the candidates are read through, and what the filter's options walk
     /// (`CatalogQueryGateway.filterOptionRowsQuery`).
     static let candidateIndexName = "idx_media_asset_stack_candidate"
+
+    /// The most rows a sought order builds only its own rows' stacks for. Past it, the rows'
+    /// folders hold about every candidate of the roots and their build costs more than every
+    /// stack's: on a generated catalog of the owner's shape, warm, 174 ms against 177 for a
+    /// person's 1,856 photos, 193 against 172 for 3,424, 284 against 186 for 17,284 (715 against
+    /// 204 cold), and 27 against 173 for 30
+    /// (`docs/research/2026-11-17-a-persons-photos-in-order.md`).
+    static let rowsSpanMostRows = 2000
 
     /// One read of every root's candidates, and how long the read took, which the order
     /// query reports apart from its own work (`stackReadMs`).
@@ -1557,9 +1666,13 @@ private nonisolated func orderPlan(
 /// its anniversary match in `db`, the caller's read (`anniversaryMatch`), so the match and
 /// the rows it selects come from one snapshot (ADR 0049); `stacks` are what the match judges
 /// a stack's files by.
+///
+/// `ordering` is true for the order read, which reaches a person's photos through their own
+/// rows (`PersonPhotoSQL`); every other read finds them from the person's faces.
 private nonisolated func scopeClause(
     _ scope: CatalogScopePredicate,
     stacks: AnniversaryStacks = .readWhenNeeded,
+    ordering: Bool = false,
     db: Database
 ) throws -> ScopeClause? {
     guard !scope.selectsNothing else {
@@ -1575,13 +1688,13 @@ private nonisolated func scopeClause(
         }
         anniversary = match
     }
-    guard let sought = try scopeClause(scope, anniversary: anniversary, seeks: true) else {
+    guard let sought = try scopeClause(scope, anniversary: anniversary, seeks: true, ordering: ordering) else {
         return nil
     }
     guard let size = sought.size, try !size.seeks(scope: scope, db: db) else {
         return sought
     }
-    return try scopeClause(scope, anniversary: anniversary, seeks: false)
+    return try scopeClause(scope, anniversary: anniversary, seeks: false, ordering: ordering)
 }
 
 /// What decides whether a scope's reads seek its rows or walk the order: the rows its seek
@@ -1654,6 +1767,10 @@ private nonisolated struct ScopeClause {
         /// The located rows of the map cells an area covers (`PlaceCellSQL.indexName`), each
         /// row's `media_asset` found by its key.
         case placeCells
+        /// A person's own rows of `person_photo`, read as `media_asset`: they carry, under the
+        /// same names, every column the scope's and the filter's tests read. Only the order
+        /// read reaches a person this way (`PersonPhotoSQL.orderQuery`).
+        case personPhotos(PersonID)
     }
 
     let join: String
@@ -1672,6 +1789,8 @@ private nonisolated struct ScopeClause {
             nil
         case let .rows(index):
             "media_asset INDEXED BY \(index)" + join
+        case .personPhotos:
+            "person_photo AS media_asset" + join
         case .placeCells:
             """
             asset_metadata INDEXED BY \(PlaceCellSQL.indexName)
@@ -1809,10 +1928,12 @@ private nonisolated func logAnniversaryMatch(day: CalendarDay, unit: Anniversary
 /// (`anniversary` nil: any date), or nil when the scope selects nothing. `seeks` false leaves
 /// out the seeks whose rows can be any share of the catalog (`SeekSize`): a person's photos,
 /// On This Day's day and a map area's cells are then tested on each row the order walks.
+/// `ordering` reaches a person's photos through `person_photo` (`ScopeClause.Seek.personPhotos`).
 private nonisolated func scopeClause(
     _ scope: CatalogScopePredicate,
     anniversary: AnniversaryMatch?,
-    seeks: Bool
+    seeks: Bool,
+    ordering: Bool = false
 ) throws -> ScopeClause? {
     var arguments: [any DatabaseValueConvertible] = []
     let rootPredicate: String
@@ -1838,6 +1959,7 @@ private nonisolated func scopeClause(
     // or an area.
     var keyIndex: String?
     var size: SeekSize?
+    var personPhotos: PersonID?
     if let importBatchUnixMs = scope.importBatchUnixMs {
         arguments.append(importBatchUnixMs)
         predicate += "\n  AND media_asset.import_batch_unix_ms = ?"
@@ -1925,6 +2047,11 @@ private nonisolated func scopeClause(
         keyIndex = mediaAssetKeyIndexName
     case .withPerson:
         predicate += "\n  AND \(PhotoFaceSQL.holds("media_asset", condition: "face.is_not_face = 0 AND face.person_id IS NOT NULL"))"
+    case let .person(person) where ordering:
+        // The order reads the person's own rows, which carry every column the scope and the
+        // filter test, and the photos the person is in through a copy (`PersonPhotoSQL`),
+        // which names the person in each of the two.
+        personPhotos = PersonID(rawValue: person)
     case let .person(person):
         // A person's photos are named by their faces (`idx_face_person_photo`), and so are the
         // copies of those photos (ADR 0054): a face on any copy is the photo's. A person of a
@@ -1974,7 +2101,7 @@ private nonisolated func scopeClause(
             )
         }
     }
-    var seek = keyIndex.map(ScopeClause.Seek.rows(index:))
+    var seek = personPhotos.map(ScopeClause.Seek.personPhotos) ?? keyIndex.map(ScopeClause.Seek.rows(index:))
     var join = ""
     switch scope.location {
     case .any:
@@ -2047,12 +2174,12 @@ private nonisolated func filterPredicate(
     let kinds = filter.kinds.sorted { $0.rawValue < $1.rawValue }
     var mediaClauses: [String] = []
     if !kinds.isEmpty {
-        mediaClauses.append("best_kind IN (\(sqlPlaceholders(count: kinds.count)))")
+        mediaClauses.append("media_asset.best_kind IN (\(sqlPlaceholders(count: kinds.count)))")
         arguments.append(contentsOf: kinds.map(\.rawValue))
     }
     let fileTypes = filter.fileTypes.sorted { ($0.kind.rawValue, $0.format.rawValue) < ($1.kind.rawValue, $1.format.rawValue) }
     for fileType in fileTypes {
-        mediaClauses.append("(best_kind = ? AND best_format = ?)")
+        mediaClauses.append("(media_asset.best_kind = ? AND media_asset.best_format = ?)")
         arguments.append(fileType.kind.rawValue)
         arguments.append(fileType.format.rawValue)
     }
@@ -2061,7 +2188,7 @@ private nonisolated func filterPredicate(
     }
     let choices = filter.choices.sorted { $0.rawValue < $1.rawValue }
     if !choices.isEmpty {
-        clauses.append("media_choice IN (\(sqlPlaceholders(count: choices.count)))")
+        clauses.append("media_asset.media_choice IN (\(sqlPlaceholders(count: choices.count)))")
         arguments.append(contentsOf: choices.map(\.rawValue))
     }
     // The People filter (ADR 0047): a photo holding a face of each person checked, and with

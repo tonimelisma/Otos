@@ -148,9 +148,13 @@ and reads no table row; a person's or Unidentified Faces' test seeks the face in
 place's finds the row's coordinate in the location index and computes its cell there. The
 order read carries a row's capture time only under a date order, whose index holds it as its
 key: the day buckets and a keyed re-read use it there alone. A filter of chosen rows (Liked,
-Disliked) seeks them through `idx_media_asset_chosen` and sorts the few it finds. The
-measurements of every order × scope × filter are in
-`docs/research/2026-11-17-every-order-the-window-asks-for.md`.
+Disliked) seeks them through `idx_media_asset_chosen` and sorts the few it finds. A person's
+order reads the person's own rows of `person_photo` (v78, ADR 0047), which carry those same
+columns under the same names, and sorts them: their pages are in proportion to the person's
+photos at every size, from five to the 17,000 of the most photographed. The measurements of
+every order × scope × filter are in
+`docs/research/2026-11-17-every-order-the-window-asks-for.md` and, for a person,
+`docs/research/2026-11-17-a-persons-photos-in-order.md`.
 
 Rejected: order indexes led by the kind, so a kind filter reads pages in proportion to the
 rows it returns. Two kinds are two ranges SQLite can only merge by sorting, and an

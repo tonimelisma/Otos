@@ -17,25 +17,34 @@ struct ScopeReachPlanTests {
     /// catalog under the global order indexes.
     static let rows = 300
 
-    @Test func aPersonSeeksTheirPhotosUntilTheyAreTooManyAndThenWalksTheOrder() async throws {
+    /// A person's order reads their own rows of `person_photo` at every size (v78), and the
+    /// person's other reads — the filter's options and the count — seek the person's photos
+    /// from their faces until they are too many, and then walk.
+    @Test func aPersonsOrderReadsTheirOwnRowsAndTheirOtherReadsSeekUntilTheyAreTooMany() async throws {
         let seeking = (Self.rows - 1) / SeekSize.personRatio
         let dbQueue = try await Self.catalog { db, rootID in
             try Self.addPerson(1, photos: 0 ..< seeking, rootID: rootID, db: db)
             try Self.addPerson(2, photos: 100 ..< 100 + seeking + 1, rootID: rootID, db: db)
         }
-        let sought = try await Self.problems(
-            dbQueue,
-            seeking: CatalogScopePredicate(rootIDs: [1, 2], content: .person(1)),
-            seekLine: "SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1",
-            rows: seeking
-        )
-        let walked = try await Self.problems(
-            dbQueue,
-            walking: CatalogScopePredicate(rootIDs: [1, 2], content: .person(2)),
-            rows: seeking + 1
-        )
-        #expect(sought.isEmpty, "\(sought)")
-        #expect(walked.isEmpty, "\(walked)")
+        for (person, rows, seeks) in [(Int64(1), seeking, true), (2, seeking + 1, false)] {
+            let read = try await Self.reads(dbQueue, scope: CatalogScopePredicate(rootIDs: [1, 2], content: .person(person)))
+            var problems: [String] = []
+            for plan in read.plans.prefix(Self.sorts.count) where !plan.contains(where: {
+                $0.hasPrefix("SEARCH media_asset USING PRIMARY KEY (person_id=?")
+            }) || !plan.contains(where: { $0.contains(PersonPhotoSQL.copiesIndexName) })
+                || plan.contains(where: { $0.hasPrefix("SCAN media_asset") || $0.hasPrefix("SCAN member") })
+            {
+                problems.append("order does not read the person's rows: \(plan)")
+            }
+            for plan in read.plans.dropFirst(Self.sorts.count) {
+                let sought = plan.contains { $0.hasPrefix("SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1") }
+                if sought != seeks {
+                    problems.append("\(seeks ? "does not seek" : "seeks"): \(plan)")
+                }
+            }
+            problems += read.problems(span: .rows, rows: rows)
+            #expect(problems.isEmpty, "person \(person): \(problems)")
+        }
     }
 
     @Test func onThisDaySeeksItsDayUntilTheDayIsTooLargeAndThenWalksTheOrder() async throws {

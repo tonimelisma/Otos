@@ -17,12 +17,22 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v77's partial index dropped, and its record removed.
-    static let newest = CatalogSchema.noThumbnailComingMigrationIdentifier
+    /// schema before it: v78's table, triggers and indexes dropped, the face index v77 had made
+    /// again, and its record removed.
+    static let newest = CatalogSchema.personPhotoMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
         [
-            "DROP INDEX \(SearchEmbeddingStorage.noThumbnailComingIndexName)",
+            "DROP TRIGGER face_person_photo_inserted",
+            "DROP TRIGGER face_person_photo_deleted",
+            "DROP TRIGGER face_person_photo_updated",
+            "DROP TRIGGER media_asset_person_photo_updated",
+            "DROP TABLE person_photo",
+            "DROP INDEX idx_face_person_photo",
+            """
+            CREATE INDEX idx_face_person_photo
+            ON face(person_id, library_root_id, relative_path, is_not_face) WHERE person_id IS NOT NULL
+            """,
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }
@@ -51,6 +61,7 @@ struct CatalogMigrationCostTests {
         let readsBefore = try WindowReadPages.measure(path: path)
         let indexesBefore = try Self.orderIndexBytes(path)
         let writesBefore = try Self.rowWriteBytes(path)
+        let peopleBefore = try Self.peopleWrites(path, page: CatalogStore.backgroundWritePage)
         let bytesBefore = try Self.size(path)
         let pool = try DatabasePool(path: path)
         let start = ContinuousClock.now
@@ -68,6 +79,7 @@ struct CatalogMigrationCostTests {
         // What the order indexes take on the disk, before and after.
         let indexesAfter = try Self.orderIndexBytes(path)
         let writesAfter = try Self.rowWriteBytes(path)
+        let peopleAfter = try Self.peopleWrites(path, page: CatalogStore.backgroundWritePage / 3)
         let readsAfter = try WindowReadPages.measure(path: path)
         let variants = try WindowReadPages.indexVariants(path: path)
         // The layout v71 does not take, measured on the same rows: the table without a row id.
@@ -81,6 +93,8 @@ struct CatalogMigrationCostTests {
         op=orderIndexes when=after \(indexesAfter)
         op=rowWrites when=before \(writesBefore)
         op=rowWrites when=after \(writesAfter)
+        op=peopleWrites when=before \(peopleBefore)
+        op=peopleWrites when=after \(peopleAfter)
 
         """ + WindowReadPages.report(before: readsBefore, after: readsAfter, withoutRowID: readsWithoutRowID)
             + "\n" + variants.joined(separator: "\n")
@@ -127,6 +141,56 @@ struct CatalogMigrationCostTests {
         return measured.joined(separator: " ")
     }
 
+    /// What People's writes cost: the most photographed person's faces given to the second
+    /// person and back, in pages of `page` faces as a pass writes them (each its own
+    /// transaction, from an emptied log), and a Like on one of the person's photos. Reports
+    /// the faces, the pages, the log bytes of one page, and the time and log of all of them.
+    private static func peopleWrites(_ path: String, page: Int) throws -> String {
+        let queue = try DatabasePool(path: path)
+        defer { try? queue.close() }
+        let faces = try queue.read { db in
+            try Int64.fetchAll(db, sql: "SELECT rowid FROM face WHERE person_id = 1 ORDER BY rowid")
+        }
+        var pageLog: Int64 = 0
+        var totalLog: Int64 = 0
+        let start = ContinuousClock.now
+        for (from, to) in [(1, 2), (2, 1)] {
+            for offset in stride(from: 0, to: faces.count, by: page) {
+                let rowIDs = faces[offset ..< min(offset + page, faces.count)].map(String.init).joined(separator: ",")
+                try queue.writeWithoutTransaction { db in
+                    try db.checkpoint(.truncate)
+                    try db.inTransaction {
+                        try db.execute(sql: "UPDATE face SET person_id = \(to) WHERE person_id = \(from) AND rowid IN (\(rowIDs))")
+                        return .commit
+                    }
+                }
+                let log = try Self.size(path + "-wal")
+                pageLog = max(pageLog, log)
+                totalLog += log
+            }
+        }
+        let elapsed = start.duration(to: .now)
+        let like = try queue.writeWithoutTransaction { db -> Int64 in
+            try db.checkpoint(.truncate)
+            try db.execute(sql: """
+            UPDATE media_asset SET media_choice = 'liked'
+            WHERE rowid = (SELECT m.rowid FROM face f JOIN media_asset m USING (library_root_id, relative_path)
+                           WHERE f.person_id = 1 AND m.library_root_id = 15 LIMIT 1)
+            """)
+            let log = try Self.size(path + "-wal")
+            try db.execute(sql: """
+            UPDATE media_asset SET media_choice = 'notRated'
+            WHERE media_choice = 'liked' AND library_root_id = 15 AND byte_size % 100 <> 0
+            """)
+            try db.checkpoint(.truncate)
+            return log
+        }
+        return """
+        faces=\(faces.count) page=\(page) pages=\(2 * ((faces.count + page - 1) / page)) mostPageLogBytes=\(pageLog) \
+        totalLogBytes=\(totalLog) ms=\(DiagnosticsTiming.milliseconds(elapsed)) likeLogBytes=\(like)
+        """
+    }
+
     /// Each order index's bytes on the disk (`dbstat`), by name.
     private static func orderIndexBytes(_ path: String) throws -> String {
         let queue = try makeTestDatabaseQueue(path: path)
@@ -135,7 +199,7 @@ struct CatalogMigrationCostTests {
             try Row.fetchAll(db, sql: """
             SELECT name, sum(pgsize) AS bytes FROM dbstat
             WHERE name LIKE 'idx_media_asset_best_capture_%' OR name LIKE 'idx_media_asset_name_%'
-               OR name LIKE 'idx_media_asset_size_%'
+               OR name LIKE 'idx_media_asset_size_%' OR name LIKE '%person_photo%'
             GROUP BY name ORDER BY name
             """).map { "\($0["name"] as String)=\($0["bytes"] as Int64)" }.joined(separator: " ")
         }

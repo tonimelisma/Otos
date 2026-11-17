@@ -222,6 +222,29 @@ grouping had put with the right child.
   favourite mark, and a stable row ID. A person is not a media asset, so this is not an asset
   identity, which stays the path. A person is the set of their faces, each with its capture
   date. No average face is stored.
+- **A person's photos** (`person_photo`, v78): one row per person and photo holding a face of
+  theirs that is a face, keyed by person, with the columns the window orders and tests a photo
+  by as `media_asset` holds them (the capture time, name key and size; visibility, kind,
+  format, Live Photo and copy columns; the choice). A person's grid reads their own range of
+  it and sorts the photos it finds: 803 pages cold for the most photographed person
+  (17,284 photos) on a generated catalog of the owner's shape, where the walk of the whole
+  catalog's order index that tested each of its 167,000 rows for one of the person's faces read
+  7,881 pages in 907 ms, and a seek of each photo's table row read 15,305 pages on the owner's
+  catalog (`docs/research/2026-11-17-a-persons-photos-in-order.md`). It is a projection of
+  `face` and `media_asset`, kept by the schema in the write that changes either: triggers on a
+  face's person or not-a-face mark and on the copied asset columns, and foreign keys that carry
+  a move and purge it with the photo or the person (ADR 0008's lifecycle). So no writer holds
+  the rule, People's pass and acts write faces as before, and every snapshot's rows are what
+  the faces say. A photo the person is in only through a copy (ADR 0054) is not a row: the
+  order finds those from the person's photos that have copies (`idx_person_photo_copies`), in
+  one compound select whose two orders SQLite merges. Only the order read uses it; the count
+  and the filter's options still find a person's photos from their faces (`SeekSize`). A
+  People pass's page holds as many faces as fit in 256 changed rows counting the rows the
+  triggers write (a guess changes up to three), so no transaction grows. Rejected: an index
+  per order over the rows (six more, 62 MB, each moved by every assignment and choice), which
+  read more pages, not fewer, because a virtual column and a copy's digest send some rows to
+  the table (3,915 pages for the same person); and a People-owned table written from People's
+  snapshot, which would lag every rename, choice and Trash until the next pass.
 - **Whose word a face's person is** (`face.assignment` beside `face.person_id`): none, Otos's
   guess, a seed (one of the faces a person was first found from), the user's, or held (the
   user removed the name). The user's faces and the seeds are the anchors; every guess is

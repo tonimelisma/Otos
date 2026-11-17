@@ -2772,6 +2772,161 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// Schema v78: `person_photo`, the photos each person is in, each with what the window
+    /// orders and tests a photo by, held together by person (ADR 0047, "A person's photos"). A
+    /// person's order reads their own rows, a contiguous range of the table, and sorts them: on
+    /// a generated catalog of the owner's shape, 803 pages cold for the 17,284 photos
+    /// of the most photographed person, where the walk of the catalog's date index read 7,881
+    /// pages in 907 ms and a seek of each photo's table row 15,305 on the owner's
+    /// (`docs/research/2026-11-17-a-persons-photos-in-order.md`).
+    ///
+    /// A row is a photo holding a face of the person that is a face (`is_not_face = 0`), with
+    /// the photo's own columns as `media_asset` holds them. The schema keeps it in the write
+    /// that changes either: the face triggers below in every write of a face's person or of
+    /// whether it is a face, the asset trigger in every write of a copied column, and the
+    /// foreign keys in a move, a deletion and a person's removal. So no writer holds a second
+    /// copy of the rule, and in every snapshot the table is what `face` and `media_asset` say. A
+    /// photo a person is in only through a copy (ADR 0054) is not a row: the order read finds
+    /// those from the person's photos that have copies (`idx_person_photo_copies`).
+    ///
+    /// The migration writes the rows in key order, then the indexes over them, then the
+    /// triggers. `idx_face_person_photo` is made again with each face's index and likeness
+    /// after its columns, so a person's likeness order reads them from the index.
+    static let personPhotoMigrationIdentifier = "v78_person_photo"
+
+    /// Literal, as v78 builds it (ADR 0002: an applied migration's outcome never changes).
+    static let personPhotoStatements: [String] = [
+        """
+        CREATE TABLE person_photo (
+            person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+            library_root_id INTEGER NOT NULL,
+            relative_path TEXT NOT NULL,
+            parent_path TEXT GENERATED ALWAYS AS (rtrim(relative_path, replace(relative_path, '/', ''))) VIRTUAL,
+            best_capture_local DOUBLE,
+            name_sort_key TEXT NOT NULL,
+            byte_size INTEGER,
+            pending_trash_batch_unix_ms INTEGER,
+            awaiting_presence INTEGER NOT NULL,
+            hidden_by_source INTEGER NOT NULL,
+            best_kind TEXT,
+            best_format TEXT,
+            content_identifier TEXT,
+            burst_identifier TEXT,
+            content_sha1 BLOB,
+            shown_copy_root_id INTEGER,
+            has_copies INTEGER NOT NULL,
+            media_choice TEXT NOT NULL,
+            PRIMARY KEY (person_id, library_root_id, relative_path),
+            FOREIGN KEY (library_root_id, relative_path) REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) WITHOUT ROWID
+        """,
+        """
+        INSERT INTO person_photo (person_id, library_root_id, relative_path, best_capture_local, name_sort_key, \
+        byte_size, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, best_format, \
+        content_identifier, burst_identifier, content_sha1, shown_copy_root_id, has_copies, media_choice)
+        SELECT f.person_id, m.library_root_id, m.relative_path, m.best_capture_local, m.name_sort_key, m.byte_size,
+               m.pending_trash_batch_unix_ms, m.awaiting_presence, m.hidden_by_source, m.best_kind, m.best_format,
+               m.content_identifier, m.burst_identifier, m.content_sha1, m.shown_copy_root_id, m.has_copies,
+               m.media_choice
+        FROM (SELECT DISTINCT person_id, library_root_id, relative_path FROM face
+              WHERE person_id IS NOT NULL AND is_not_face = 0) AS f
+        JOIN media_asset AS m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+        ORDER BY f.person_id, m.library_root_id, m.relative_path
+        """,
+        // A photo's rows, for the asset trigger and the foreign key's actions.
+        "CREATE INDEX idx_person_photo_photo ON person_photo(library_root_id, relative_path)",
+        // A person's photos that have copies: the few a copy of which the person is in.
+        "CREATE INDEX idx_person_photo_copies ON person_photo(person_id) WHERE has_copies = 1",
+        "DROP INDEX idx_face_person_photo",
+        """
+        CREATE INDEX idx_face_person_photo
+        ON face(person_id, library_root_id, relative_path, is_not_face, face_index, likeness) WHERE person_id IS NOT NULL
+        """,
+        // A face given a person, or made a face again, puts its photo in the person's photos.
+        """
+        CREATE TRIGGER face_person_photo_inserted AFTER INSERT ON face
+        WHEN NEW.person_id IS NOT NULL AND NEW.is_not_face = 0
+        BEGIN
+            INSERT OR IGNORE INTO person_photo (person_id, library_root_id, relative_path, best_capture_local, \
+        name_sort_key, byte_size, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        best_format, content_identifier, burst_identifier, content_sha1, shown_copy_root_id, has_copies, media_choice)
+            SELECT NEW.person_id, m.library_root_id, m.relative_path, m.best_capture_local, m.name_sort_key, m.byte_size,
+                   m.pending_trash_batch_unix_ms, m.awaiting_presence, m.hidden_by_source, m.best_kind, m.best_format,
+                   m.content_identifier, m.burst_identifier, m.content_sha1, m.shown_copy_root_id, m.has_copies,
+                   m.media_choice
+            FROM media_asset AS m WHERE m.library_root_id = NEW.library_root_id AND m.relative_path = NEW.relative_path;
+        END
+        """,
+        // The last face of a person on a photo leaving takes the photo out of their photos.
+        """
+        CREATE TRIGGER face_person_photo_deleted AFTER DELETE ON face
+        WHEN OLD.person_id IS NOT NULL AND OLD.is_not_face = 0
+        BEGIN
+            DELETE FROM person_photo
+            WHERE person_id = OLD.person_id
+              AND library_root_id = OLD.library_root_id AND relative_path = OLD.relative_path
+              AND NOT EXISTS (
+                  SELECT 1 FROM face WHERE face.person_id = OLD.person_id
+                    AND face.library_root_id = OLD.library_root_id AND face.relative_path = OLD.relative_path
+                    AND face.is_not_face = 0
+              );
+        END
+        """,
+        """
+        CREATE TRIGGER face_person_photo_updated AFTER UPDATE OF person_id, is_not_face ON face
+        WHEN OLD.person_id IS NOT NEW.person_id OR OLD.is_not_face IS NOT NEW.is_not_face
+        BEGIN
+            DELETE FROM person_photo
+            WHERE OLD.person_id IS NOT NULL AND OLD.is_not_face = 0
+              AND person_id = OLD.person_id
+              AND library_root_id = OLD.library_root_id AND relative_path = OLD.relative_path
+              AND NOT EXISTS (
+                  SELECT 1 FROM face WHERE face.person_id = OLD.person_id
+                    AND face.library_root_id = OLD.library_root_id AND face.relative_path = OLD.relative_path
+                    AND face.is_not_face = 0
+              );
+            INSERT OR IGNORE INTO person_photo (person_id, library_root_id, relative_path, best_capture_local, \
+        name_sort_key, byte_size, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, \
+        best_format, content_identifier, burst_identifier, content_sha1, shown_copy_root_id, has_copies, media_choice)
+            SELECT NEW.person_id, m.library_root_id, m.relative_path, m.best_capture_local, m.name_sort_key, m.byte_size,
+                   m.pending_trash_batch_unix_ms, m.awaiting_presence, m.hidden_by_source, m.best_kind, m.best_format,
+                   m.content_identifier, m.burst_identifier, m.content_sha1, m.shown_copy_root_id, m.has_copies,
+                   m.media_choice
+            FROM media_asset AS m
+            WHERE NEW.person_id IS NOT NULL AND NEW.is_not_face = 0
+              AND m.library_root_id = NEW.library_root_id AND m.relative_path = NEW.relative_path;
+        END
+        """,
+        // A write of a copied column copies it; one that changes none of them writes nothing. A
+        // move's new key is carried by the foreign key, so the rows are found by either key.
+        """
+        CREATE TRIGGER media_asset_person_photo_updated
+        AFTER UPDATE OF capture_wall_compact, capture_instant_unix, created_at_unix, content_modified_at_unix,
+            assumed_utc_offset_seconds, name_sort_key, byte_size, pending_trash_batch_unix_ms, awaiting_presence,
+            hidden_by_source, kind, enriched_kind, format, enriched_format, content_identifier, burst_identifier,
+            content_sha1, shown_copy_root_id, has_copies, media_choice ON media_asset
+        WHEN OLD.best_capture_local IS NOT NEW.best_capture_local OR OLD.name_sort_key IS NOT NEW.name_sort_key
+          OR OLD.byte_size IS NOT NEW.byte_size OR OLD.pending_trash_batch_unix_ms IS NOT NEW.pending_trash_batch_unix_ms
+          OR OLD.awaiting_presence IS NOT NEW.awaiting_presence OR OLD.hidden_by_source IS NOT NEW.hidden_by_source
+          OR OLD.best_kind IS NOT NEW.best_kind OR OLD.best_format IS NOT NEW.best_format
+          OR OLD.content_identifier IS NOT NEW.content_identifier OR OLD.burst_identifier IS NOT NEW.burst_identifier
+          OR OLD.content_sha1 IS NOT NEW.content_sha1 OR OLD.shown_copy_root_id IS NOT NEW.shown_copy_root_id
+          OR OLD.has_copies IS NOT NEW.has_copies OR OLD.media_choice IS NOT NEW.media_choice
+        BEGIN
+            UPDATE person_photo SET best_capture_local = NEW.best_capture_local, name_sort_key = NEW.name_sort_key,
+                byte_size = NEW.byte_size, pending_trash_batch_unix_ms = NEW.pending_trash_batch_unix_ms,
+                awaiting_presence = NEW.awaiting_presence, hidden_by_source = NEW.hidden_by_source,
+                best_kind = NEW.best_kind, best_format = NEW.best_format, content_identifier = NEW.content_identifier,
+                burst_identifier = NEW.burst_identifier, content_sha1 = NEW.content_sha1,
+                shown_copy_root_id = NEW.shown_copy_root_id, has_copies = NEW.has_copies,
+                media_choice = NEW.media_choice
+            WHERE (library_root_id = OLD.library_root_id AND relative_path = OLD.relative_path)
+               OR (library_root_id = NEW.library_root_id AND relative_path = NEW.relative_path);
+        END
+        """,
+    ]
+
     static func indexStoredSearchTexts(_ db: Database) throws {
         let start = ContinuousClock.now
         let rows = try Row.fetchCursor(db, sql: """

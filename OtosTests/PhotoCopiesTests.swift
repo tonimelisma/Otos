@@ -39,10 +39,12 @@ struct PhotoCopiesTests {
                 Self.read(.any, filter: filter, db: db),
             ]
         }
+        // A person's order reads the person's own rows at any size (v78), and finds the photos
+        // through the copies the person's faces are on.
         #expect(reads[0].paths == first)
-        #expect(reads[0].seeks)
+        #expect(reads[0].readsPersonRows)
         #expect(reads[1].paths == all)
-        #expect(!reads[1].seeks)
+        #expect(reads[1].readsPersonRows)
         #expect(reads[2].paths == all)
         #expect(reads[3].paths == first)
         for read in reads {
@@ -69,9 +71,10 @@ struct PhotoCopiesTests {
         #expect(MediaCount(items: [raw, jpeg, accountJPEG].map { (photoOf[$0] ?? $0, false) }).total == 1)
     }
 
-    /// The copies' questions are seeks of the digest index, never a scan, and the order still
-    /// walks its index with no sort: whether a better copy is reachable (the library away), and
-    /// whether a copy holds a person's face (a walked person, People, the People filter).
+    /// The copies' questions are seeks of the digest index, never a scan, and a wide order still
+    /// walks its index with no sort: whether a better copy is reachable (the library away),
+    /// whether a copy holds a person's face (People, the People filter), and which copies of a
+    /// person's photos the person is in (a person's order, which reads the person's own rows).
     @Test func aPhotosCopiesAreAskedThroughTheDigestIndex() async throws {
         let dbQueue = try await Self.catalog { db in
             for index in 1 ... Self.copied {
@@ -88,10 +91,11 @@ struct PhotoCopiesTests {
             let content: CatalogScopePredicate.ContentConstraint
             let filter: MediaFilter
             let alias: String
+            var walks = true
         }
         let reads = [
             Read(roots: [2], content: .any, filter: .all, alias: "better"),
-            Read(roots: [1, 2], content: .person(2), filter: .all, alias: "face_copy"),
+            Read(roots: [1, 2], content: .person(2), filter: .all, alias: "media_asset", walks: false),
             Read(roots: [1, 2], content: .withPerson, filter: .all, alias: "face_copy"),
             Read(roots: [1, 2], content: .any, filter: filter, alias: "face_copy"),
         ]
@@ -104,12 +108,16 @@ struct PhotoCopiesTests {
                 ))
                 let plan = try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(query.sql)", arguments: query.arguments)
                     .map { $0["detail"] as String }
-                return (read.alias, plan)
+                return (read.alias, read.walks, plan)
             }
         }
-        for (alias, plan) in plans {
-            #expect(plan.first?.contains("idx_media_asset_best_capture_") == true, "\(plan)")
-            #expect(!plan.contains { $0.contains("TEMP B-TREE") }, "\(plan)")
+        for (alias, walks, plan) in plans {
+            if walks {
+                #expect(plan.first?.contains("idx_media_asset_best_capture_") == true, "\(plan)")
+                #expect(!plan.contains { $0.contains("TEMP B-TREE") }, "\(plan)")
+            } else {
+                #expect(plan.contains { $0.hasPrefix("SEARCH media_asset USING PRIMARY KEY (person_id=?") }, "\(plan)")
+            }
             #expect(plan.contains { $0.hasPrefix("SEARCH \(alias) USING") && $0.contains(ContentDigestSQL.indexName) }, "\(plan)")
             #expect(!plan.contains { $0.hasPrefix("SCAN \(alias)") }, "\(plan)")
         }
@@ -262,7 +270,8 @@ struct PhotoCopiesTests {
 
     private struct Read {
         let paths: Set<String>
-        let seeks: Bool
+        /// Whether the order reads the person's own rows of `person_photo`.
+        let readsPersonRows: Bool
         let count: Int
     }
 
@@ -282,7 +291,7 @@ struct PhotoCopiesTests {
         #expect(rows.allSatisfy { ($0[0] as Int64) == 1 }, "\(rows)")
         return try Read(
             paths: Set(rows.map { $0[1] as String }),
-            seeks: plan.contains { $0.hasPrefix("SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1") },
+            readsPersonRows: plan.contains { $0.hasPrefix("SEARCH media_asset USING PRIMARY KEY (person_id=?") },
             count: CatalogQueryGateway.countAssets(scope: scope, filter: filter, db: db)
         )
     }

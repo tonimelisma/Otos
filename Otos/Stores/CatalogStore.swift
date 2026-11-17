@@ -1981,26 +1981,28 @@ extension CatalogStore {
     /// re-checking in SQL what it depends on, since another write can land between two pages.
     /// When any page wrote a row, `announcing` is rung once, as the last page commits or as a
     /// later page fails: the pages that committed are catalog changes either way. Returns the
-    /// rows the pages wrote and the state after the last.
+    /// rows the pages wrote and the state after the last. `rowsOf` is the most rows an item's
+    /// write can change, its table's triggers' rows among them, so a page holds as many items
+    /// as fit in `backgroundWritePage` rows.
     func writeInPages<Item: Sendable, State: Sendable>(
         _ items: [Item],
         state: State,
         announcing facts: CatalogChangedFacts,
         naming named: CatalogChangedRows = .unnamed,
         operation: String = #function,
+        rowsOf: (Item) -> Int = { _ in 1 },
         _ write: @escaping @Sendable (Item, inout State, Database) throws -> Int
     ) async throws -> (rows: Int, state: State) {
         let dbWriter = try database()
         var rows = 0
         var state = state
-        var start = 0
         defer {
             if rows > 0 {
                 notifyCatalogChanged(.changed(facts, rows: named))
             }
         }
-        while start < items.count {
-            let page = Array(items[start ..< min(start + Self.backgroundWritePage, items.count)])
+        for bounds in Self.writePages(items.map(rowsOf)) {
+            let page = Array(items[bounds])
             let pageState = state
             let written = try await timedWrite(dbWriter, operation: operation) { db -> (rows: Int, state: State) in
                 var state = pageState
@@ -2012,9 +2014,26 @@ extension CatalogStore {
             }
             rows += written.value.rows
             state = written.value.state
-            start += page.count
         }
         return (rows, state)
+    }
+
+    /// The pages `writeInPages` writes items in, given the most rows each changes: each page as
+    /// many items, in order, as fit in `backgroundWritePage` rows, and at least one.
+    static func writePages(_ rows: [Int]) -> [Range<Int>] {
+        var pages: [Range<Int>] = []
+        var start = 0
+        while start < rows.count {
+            var end = start + 1
+            var pageRows = rows[start]
+            while end < rows.count, pageRows + rows[end] <= backgroundWritePage {
+                pageRows += rows[end]
+                end += 1
+            }
+            pages.append(start ..< end)
+            start = end
+        }
+        return pages
     }
 
     /// The faces of `files` and of their other present copies (ADR 0054) as the photo menus and
@@ -2346,6 +2365,18 @@ extension CatalogStore {
         case guess(FaceRowKey, FaceAssignmentResult.Person?)
         case likeness(FaceRowKey, Float?)
         case emptied(PersonID)
+
+        /// The most rows the write changes: a face given or taken from a person also takes its
+        /// photo out of the person it had and puts it in the one it has (`person_photo`, whose
+        /// triggers write in the face's transaction); a seed may make its person.
+        var mostRows: Int {
+            switch self {
+            case .lapse: 2
+            case .guess: 3
+            case .seed: 4
+            case .likeness, .emptied: 1
+            }
+        }
     }
 
     /// What the pages of one plan carry from one to the next: each person the plan created,
@@ -2392,10 +2423,11 @@ extension CatalogStore {
             add(face) { .likeness($0, likeness) }
         }
         writes += plan.emptied.map(AssignmentWrite.emptied)
-        let pageCount = (writes.count + Self.backgroundWritePage - 1) / Self.backgroundWritePage
         let skippedFaces = skipped
+        let pageCount = Self.writePages(writes.map(\.mostRows)).count
         let (written, _) = try await writeInPages(
-            writes, state: AssignmentPages(), announcing: .faces, naming: .rows(plan.photos)
+            writes, state: AssignmentPages(), announcing: .faces, naming: .rows(plan.photos),
+            rowsOf: \.mostRows
         ) { write, pages, db in
             try Self.apply(write, pages: &pages, db: db)
         }

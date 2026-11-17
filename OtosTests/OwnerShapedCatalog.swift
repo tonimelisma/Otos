@@ -91,10 +91,18 @@ struct OwnerShapedCatalog {
         /// them holding text; the rest is owed.
         static let accountTexts = 60074
         static let descriptions = 5521
-        /// Face rows: 102,979, of which 15,653 are video frames.
-        static let stillFaces = 87326
-        static let frameFaces = 15653
-        static let people = 748
+        /// Face rows on 2026-11-17: 87,476 on 64,756 stills and 15,673 on 10,343 videos'
+        /// frames. A photo holds one face or several: the photos holding at least one, two,
+        /// three and four, the last count making up the faces of the photos holding more.
+        static let stillFacePhotos = [64756, 16578, 3401, 2741]
+        static let frameFacePhotos = [10343, 3687, 1025, 618]
+        /// One face in ten is no one's.
+        static let unassignedFacePermille = 102
+        /// His 745 people by their faces, largest first: eight people of a thousand faces or
+        /// more, then 57 of about 300, 303 of about 28 and 377 of about 5. A person's faces
+        /// are this share of the assigned faces, so a scope of the largest is 17 % of them.
+        static let largestPeopleFaces = [17285, 16932, 8927, 8820, 6858, 3420, 1842, 1203]
+        static let smallerPeople: [(people: Int, faces: Int)] = [(57, 299), (303, 28), (377, 5)]
         static let namedPeople = 6
         static let placeCells = 1435
         /// The account's `asset_metadata` rows: 120,108 of 147,064.
@@ -466,39 +474,7 @@ struct OwnerShapedCatalog {
         SELECT count(*) FROM media_asset AS a WHERE a.library_root_id IN (6, 7, 15) AND a.preview_path IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM search_text AS t WHERE t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path)
         """) ?? 0
-        // People and faces: 2 KB embeddings, most assigned to one of his 748 people.
-        try db.execute(
-            sql: """
-            WITH RECURSIVE n(k) AS (SELECT 1 UNION ALL SELECT k + 1 FROM n WHERE k < ?)
-            INSERT INTO person (id, name) SELECT k, CASE WHEN k <= ? THEN 'Person ' || k END FROM n
-            """,
-            arguments: [scaled(Owner.people, scale), scaled(Owner.namedPeople, scale)]
-        )
-        let people = scaled(Owner.people, scale)
-        let face = """
-        SELECT library_root_id, relative_path, 0, 0.3, 0.3, 0.2, 0.2, zeroblob(40), 0.47, \(FaceAnalyzer.revision),
-               CASE WHEN rowid % 33 = 0 THEN NULL ELSE 1 + rowid % \(people) END, 1
-        """
-        try db.execute(
-            sql: """
-            INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                              landmarks, quality, analysis_revision, person_id, assignment)
-            \(face) FROM media_asset WHERE library_root_id IN (6, 7, 15) AND kind IN ('image', 'raw')
-              AND preview_path IS NOT NULL \(spread) LIMIT ?
-            """,
-            arguments: [scaled(Owner.stillFaces, scale)]
-        )
-        shape.faces = db.changesCount
-        try db.execute(
-            sql: """
-            INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
-                              landmarks, quality, analysis_revision, person_id, assignment, frame_index)
-            \(face), 0 FROM media_asset WHERE library_root_id IN (7, 15) AND kind = 'video'
-              AND faces_source_size IS NOT NULL \(spread) LIMIT ?
-            """,
-            arguments: [scaled(Owner.frameFaces, scale)]
-        )
-        shape.faces += db.changesCount
+        try writePeopleAndFaces(db, scale: scale, spread: spread, shape: &shape)
         try db.execute(sql: """
         INSERT INTO face_embedding (library_root_id, relative_path, face_index, embedding)
         SELECT library_root_id, relative_path, face_index, zeroblob(2048) FROM face
@@ -571,5 +547,65 @@ struct OwnerShapedCatalog {
         shape.descriptions = db.changesCount
         // The account's server holds library 7, not library 6.
         try db.execute(sql: "INSERT INTO immich_mirror (account_root_id, library_root_id, server_prefix) VALUES (15, 7, '/mnt/onedrive/Pictures')")
+    }
+
+    /// People and faces: his people, largest first, each holding his share of the assigned
+    /// faces, and his photos' faces — one on most, several on some — with 2 KB embeddings. A
+    /// face's place in the faces of all people is spread from its photo's row, and a photo's
+    /// later faces are a quarter of the way on, past the largest person's share, so no photo
+    /// holds two faces of one person (none of his does).
+    private static func writePeopleAndFaces(_ db: Database, scale: Double, spread: String, shape: inout Shape) throws {
+        var shares = Owner.largestPeopleFaces
+        for tier in Owner.smallerPeople {
+            shares += Array(repeating: tier.faces, count: scaled(tier.people, scale))
+        }
+        try db.execute(
+            sql: """
+            WITH RECURSIVE n(k) AS (SELECT 1 UNION ALL SELECT k + 1 FROM n WHERE k < ?)
+            INSERT INTO person (id, name) SELECT k, CASE WHEN k <= ? THEN 'Person ' || k END FROM n
+            """,
+            arguments: [shares.count, scaled(Owner.namedPeople, scale)]
+        )
+        try db.execute(sql: "CREATE TEMP TABLE person_share (start INTEGER PRIMARY KEY, person_id INTEGER NOT NULL)")
+        var start = 0
+        for (index, faces) in shares.enumerated() {
+            try db.execute(sql: "INSERT INTO person_share VALUES (?, ?)", arguments: [start, index + 1])
+            start += faces
+        }
+        let total = start
+        func faces(_ k: Int) -> String {
+            let place = "(media_asset.rowid * 7919 + \(k * (total / 4))) % \(total)"
+            return """
+            SELECT library_root_id, relative_path, \(k), 0.3, 0.3, 0.2, 0.2, zeroblob(40), 0.47, \(FaceAnalyzer.revision),
+                   CASE WHEN (media_asset.rowid * 31 + \(k * 389)) % 1000 < \(Owner.unassignedFacePermille) THEN NULL
+                        ELSE (SELECT person_id FROM person_share WHERE start <= \(place) ORDER BY start DESC LIMIT 1) END, 1
+            """
+        }
+        shape.faces = 0
+        for (k, photos) in Owner.stillFacePhotos.enumerated() {
+            try db.execute(
+                sql: """
+                INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                                  landmarks, quality, analysis_revision, person_id, assignment)
+                \(faces(k)) FROM media_asset WHERE library_root_id IN (6, 7, 15) AND kind IN ('image', 'raw')
+                  AND preview_path IS NOT NULL \(spread) LIMIT ?
+                """,
+                arguments: [scaled(photos, scale)]
+            )
+            shape.faces += db.changesCount
+        }
+        for (k, photos) in Owner.frameFacePhotos.enumerated() {
+            try db.execute(
+                sql: """
+                INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                                  landmarks, quality, analysis_revision, person_id, assignment, frame_index)
+                \(faces(k)), 0 FROM media_asset WHERE library_root_id IN (7, 15) AND kind = 'video'
+                  AND faces_source_size IS NOT NULL \(spread) LIMIT ?
+                """,
+                arguments: [scaled(photos, scale)]
+            )
+            shape.faces += db.changesCount
+        }
+        try db.execute(sql: "DROP TABLE person_share")
     }
 }

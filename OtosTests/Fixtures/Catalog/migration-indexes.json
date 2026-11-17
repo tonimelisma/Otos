@@ -497,5 +497,13 @@
     "indexes": {
       "idx_media_asset_no_thumbnail_coming": "CREATE INDEX idx_media_asset_no_thumbnail_coming ON media_asset(library_root_id, relative_path, thumbnail_path, rendered_source_mtime, source_products_absent)\nWHERE thumbnail_path IS NULL AND (rendered_source_mtime IS NOT NULL OR source_products_absent = 1)"
     }
+  },
+  {
+    "migration": "v78_person_photo",
+    "indexes": {
+      "idx_face_person_photo": "CREATE INDEX idx_face_person_photo\nON face(person_id, library_root_id, relative_path, is_not_face, face_index, likeness) WHERE person_id IS NOT NULL",
+      "idx_person_photo_copies": "CREATE INDEX idx_person_photo_copies ON person_photo(person_id) WHERE has_copies = 1",
+      "idx_person_photo_photo": "CREATE INDEX idx_person_photo_photo ON person_photo(library_root_id, relative_path)"
+    }
   }
 ]
