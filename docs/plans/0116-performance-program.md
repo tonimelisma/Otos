@@ -21,7 +21,7 @@ target (`docs/scorecard-targets.json`).
 | Every act's result visible ≤ 0.1 s (Like, Dislike, Move to Trash) | `act.resultMs` ≤ 100, from a tour in a sandbox home | not measured on the owner's library; a sandbox library of 28 generated photos on its own volume (`--seed 28`): Move to Trash 28 to 139 ms, Put Back 12 to 25 ms, five in a row 2 to 48 ms; choices not measured while the window was covered (`windowOccluded`) |
 | No `op=catalog.store.stall` line in a 10-minute session | `stalls.count` = 0 and `stalls.per10Min` = 0 | 62 in 4 minutes (158 per 10 minutes) → 0 in 3 minutes |
 | No main-thread stall over 250 ms in Otos code | `mainThreadStalls.worstMs` ≤ 250 | 0 stalls of any length |
-| Peak app footprint ≤ 700 MB | `memory.peakFootprintMB` ≤ 700 | 3,730 → 3,804 MB (336 MB with every owner off) |
+| Peak app footprint ≤ 700 MB | `memory.peakFootprintMB` ≤ 700 | 3,730 → 3,804 MB (336 MB with every owner off); a new library's first-launch tour (`--seed 28`): 864–930 → 494–519 MB (`docs/research/2026-11-17-full-size-view-on-originals.md`) |
 | `StallReproductionTests` passes with no known-issue marker | the test | no marker: window waits, window read work and walks once per drain asserted; answer times reported |
 | The app's disk growth is measured and explained | `disk.derivedFolderMB` (the launch's census) | measured; 11 MiB of leftovers removed each launch from the next build on; remote previews an owner question |
 

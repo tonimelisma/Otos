@@ -3,6 +3,7 @@ import CoreImage.CIFilterBuiltins
 import Foundation
 import ImageIO
 import OSLog
+import Synchronization
 import UniformTypeIdentifiers
 
 /// Image renderer guide
@@ -62,30 +63,44 @@ final nonisolated class ImageRenderer: Sendable {
     /// decode is tried again once either changes (ENR-029).
     static let decoderIdentity = DecodeVerdict.decoder("otos", revision: decodeRevision)
 
-    /// Four Image I/O renders at most, and no more at once than four HEIC previews hold
+    /// Up to four Image I/O renders at once for enrichment, while the budget holds them.
+    static let background = ImageRenderer(lane: "background", qos: .utility, imageDecodes: 4, waiter: .background)
+    /// The photos on screen: both Compare panes at once.
+    static let interactive = ImageRenderer(lane: "interactive", qos: .userInitiated, imageDecodes: 2, waiter: .user)
+
+    /// No more Image I/O decodes at once, on both lanes together, than four HEIC previews hold
     /// (`DecodeBudget`): three 24 MP JPEG previews, two of a 12 MP JPEG, which decodes whole.
-    static let background = ImageRenderer(
-        lane: "background", qos: .utility, imageDecodes: 4, decodeBudget: backgroundDecodeBudget
-    )
-    static let backgroundDecodeBudget = 4 * 2 * 2560 * 1920 * 4
-    static let interactive = ImageRenderer(lane: "interactive", qos: .userInitiated, imageDecodes: 1, decodeBudget: nil)
+    static let decodeBudget = 4 * 2 * 2560 * 1920 * 4
+    /// The one admission both lanes' Image I/O decodes pass (`DecodeBudgetMachine`).
+    private static let admission = Admission(DecodeBudgetMachine(budget: decodeBudget))
+    /// The renders asked for and not yet rendered, on both lanes: a second ask for one joins it.
+    private static let inFlight = Mutex<[RenderKey: InFlightRender]>([:])
 
     private let lane: String
+    private let waiter: DecodeWaiter
     private let rawQueue: OperationQueue
     private let imageQueue: OperationQueue
-    /// Admits the lane's Image I/O decodes by their cost; nil on a lane that runs one at a time.
-    private let decodeBudget: Admission<DecodeBudgetMachine>?
 
-    private init(lane: String, qos: QualityOfService, imageDecodes: Int, decodeBudget: Int?) {
+    private init(lane: String, qos: QualityOfService, imageDecodes: Int, waiter: DecodeWaiter) {
         self.lane = lane
+        self.waiter = waiter
         rawQueue = Self.queue("net.melisma.Otos.render.\(lane).raw", qos: qos, width: 1)
         imageQueue = Self.queue("net.melisma.Otos.render.\(lane).image", qos: qos, width: imageDecodes)
-        self.decodeBudget = decodeBudget.map { Admission(DecodeBudgetMachine(budget: $0)) }
     }
 
-    /// The lane's decode budget as it is now: what a test reads to see what runs and waits.
-    var decodeBudgetSnapshot: DecodeBudgetMachine? {
-        decodeBudget?.machine
+    /// The shared decode budget as it is now: what a test reads to see what runs and waits.
+    static var decodeBudgetSnapshot: DecodeBudgetMachine {
+        admission.machine
+    }
+
+    /// How many renders of `url` are asked for and not yet rendered, and how many asks wait on
+    /// them: what a test reads to see one decode per photo.
+    static func rendersInFlight(of url: URL) -> (renders: Int, asks: Int) {
+        let path = url.path(percentEncoded: false)
+        return inFlight.withLock { map in
+            let renders = map.filter { $0.key.path == path }.map(\.value)
+            return (renders.count, renders.reduce(0) { $0 + $1.waiters.count })
+        }
     }
 
     private static func queue(_ name: String, qos: QualityOfService, width: Int) -> OperationQueue {
@@ -108,63 +123,204 @@ final nonisolated class ImageRenderer: Sendable {
     /// made from the pixels — a preview encoded and staged — is made on the lane's queue while
     /// they are held, so the lane bounds it with the decode (`DecodeBudget`) and no actor runs
     /// the encode (ADR 0032 rule 6).
+    ///
+    /// **One decode per render.** An ask for a render already asked for on either lane — the
+    /// pane opening the photo enrichment is rendering, or enrichment reaching the photo on
+    /// screen — joins it: the render runs once, and each ask's `finish` runs on the lane, in
+    /// the render's admission, with the same pixels. The user joining a background render that
+    /// still waits for its turn makes it the user's (`DecodeBudgetMachine.promote`).
+    ///
+    /// **An ask nobody waits on any more costs nothing.** A cancelled ask leaves its render at
+    /// once and hears `CancellationError`; a render whose every ask left before it began is
+    /// withdrawn from the budget, or skipped on the queue, before it reads a byte. A render
+    /// that began runs to its end, and its pixels go to whoever still waits.
     func render<Product: Sendable>(
         _ url: URL,
         longEdge: Int?,
         recipe: EditRecipe = .neutral,
         finish: @escaping @Sendable (Rendered) -> Product
     ) async throws -> Product {
-        let lane = lane
+        let key = RenderKey(url, longEdge: longEdge, recipe: recipe)
+        let ask = Self.nextAsk.withLock { value in
+            value &+= 1
+            return value
+        }
+        let user = waiter == .user
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Product, any Error>) in
+                let waiter = InFlightRender.Waiter(user: user) { result in
+                    continuation.resume(with: result.map(finish))
+                }
+                // Decided under the lock `onCancel` takes: a cancellation before this point is
+                // seen here, one after it finds the ask waiting and resumes it.
+                let joined: Bool? = Self.inFlight.withLock { map in
+                    guard !Task.isCancelled else { return nil }
+                    if map[key] != nil {
+                        map[key]?.waiters[ask] = waiter
+                        return true
+                    }
+                    map[key] = InFlightRender(
+                        id: ask,
+                        waiters: [ask: waiter],
+                        runner: Task.detached(priority: user ? .userInitiated : .utility) {
+                            await self.run(key, url: url, render: ask)
+                        }
+                    )
+                    return false
+                }
+                switch joined {
+                case nil:
+                    continuation.resume(throwing: CancellationError())
+                case true?:
+                    if user {
+                        Self.admission.perform(.promote(key))
+                    }
+                    OtosLog.rendering.debugOperation("render.still", phase: "joined", fields: [
+                        "lane": lane, "path": key.path,
+                    ])
+                case false?:
+                    break
+                }
+            }
+        } onCancel: {
+            Self.leave(ask, from: key)
+        }
+    }
+
+    private static let nextAsk = Mutex<UInt64>(0)
+
+    /// A cancelled ask leaves its render and hears `CancellationError`; the last ask to leave a
+    /// render that has not begun withdraws it.
+    private static func leave(_ ask: UInt64, from key: RenderKey) {
+        let left: (waiter: InFlightRender.Waiter, abandoned: Task<Void, Never>?)? = inFlight.withLock { map in
+            guard let waiter = map[key]?.waiters.removeValue(forKey: ask) else { return nil }
+            guard let render = map[key], render.waiters.isEmpty, !render.began else { return (waiter, nil) }
+            map[key] = nil
+            return (waiter, render.runner)
+        }
+        guard let left else { return }
+        left.abandoned?.cancel()
+        left.waiter.deliver(.failure(CancellationError()))
+    }
+
+    /// Whether `render` is still the one asked for `key`, and whether the user waits on it.
+    private static func pending(_ key: RenderKey, render: UInt64) -> (pending: Bool, user: Bool) {
+        inFlight.withLock { map in
+            guard let current = map[key], current.id == render else { return (false, false) }
+            return (true, current.wantedByUser)
+        }
+    }
+
+    /// The render of `key`, once: admitted by the shared budget (an Image I/O decode; a RAW
+    /// lane runs one at a time already), then on this lane's queue, or the interactive lane's
+    /// when the user waits on it.
+    private func run(_ key: RenderKey, url: URL, render: UInt64) async {
         let enqueued = ContinuousClock.now
         let isRAW = Self.isRAW(url)
-        let queue = isRAW ? rawQueue : imageQueue
-        // An Image I/O decode waits for room in the lane's budget before it is queued, and
-        // gives it back however it ends; a RAW lane runs one at a time already.
         var admitted: AdmissionRequest?
-        if !isRAW, let decodeBudget {
-            let cost = await DecodeCost.of(url, longEdge: longEdge) ?? decodeBudget.machine.budget
-            admitted = try await decodeBudget.admit(cost)
+        if !isRAW {
+            let cost = await DecodeCost.of(url, longEdge: key.longEdge) ?? Self.decodeBudget
+            let state = Self.pending(key, render: render)
+            guard state.pending else { return }
+            do {
+                admitted = try await Self.admission.admit(
+                    DecodeBudgetMachine.Ask(cost: cost, waiter: state.user ? .user : waiter, render: key)
+                )
+            } catch {
+                // Withdrawn: every ask left before its turn came.
+                return
+            }
         }
         defer {
             if let admitted {
-                decodeBudget?.release(admitted)
+                Self.admission.release(admitted)
             }
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            queue.addOperation {
-                let start = ContinuousClock.now
-                let signpost = OtosSignpost.rendering.beginInterval("ImageRender")
-                defer { OtosSignpost.rendering.endInterval("ImageRender", signpost) }
-                do {
-                    let source = try StillSource.read(url)
-                    let developStart = ContinuousClock.now
-                    let rendered = try Self.renderNow(source, longEdge: longEdge, recipe: recipe)
-                    // The lane's time splits into reading the original and developing it, so
-                    // a slow render says whether its source or its decoder set the pace;
-                    // `queueWaitMs` is the backlog in front of it on this lane.
-                    OtosLog.rendering.noticeOperation("render.still", phase: "finish", fields: [
-                        "lane": lane,
-                        "decoder": rendered.decoder.rawValue,
-                        "width": "\(rendered.image.width)",
-                        "height": "\(rendered.image.height)",
-                        "bytes": "\(source.data.count)",
-                        "queueWaitMs": "\(DiagnosticsTiming.milliseconds(from: enqueued, to: start))",
-                        "readMs": "\(DiagnosticsTiming.milliseconds(source.readDuration))",
-                        "developMs": "\(DiagnosticsTiming.milliseconds(since: developStart))",
-                        "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
-                        "path": url.path(percentEncoded: false),
-                    ])
-                    continuation.resume(returning: finish(rendered))
-                } catch {
-                    OtosLog.rendering.errorOperation("render.still", phase: "failed", fields: [
-                        "lane": lane,
-                        "decoder": Self.decoderIdentity,
-                        "path": url.path(percentEncoded: false),
-                        "error": String(describing: error),
-                    ])
-                    continuation.resume(throwing: error)
+        let state = Self.pending(key, render: render)
+        guard state.pending else { return }
+        let lane = state.user ? Self.interactive : self
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            (isRAW ? lane.rawQueue : lane.imageQueue).addOperation {
+                defer { done.resume() }
+                // Begins only for asks still waiting; with none left, nothing is read.
+                let begun: Bool = Self.inFlight.withLock { map in
+                    guard map[key]?.id == render, map[key]?.waiters.isEmpty == false else { return false }
+                    map[key]?.began = true
+                    return true
+                }
+                guard begun else { return }
+                let result = Self.renderOnQueue(url, key: key, lane: lane.lane, enqueued: enqueued)
+                // Taken out under the lock: an ask arriving after this starts its own render.
+                let waiters = Self.inFlight.withLock { map -> [InFlightRender.Waiter] in
+                    let waiters = map[key]?.waiters ?? [:]
+                    map[key] = nil
+                    return waiters.sorted { $0.key < $1.key }.map(\.value)
+                }
+                for waiter in waiters {
+                    waiter.deliver(result)
                 }
             }
+        }
+    }
+
+    private static func renderOnQueue(
+        _ url: URL,
+        key: RenderKey,
+        lane: String,
+        enqueued: ContinuousClock.Instant
+    ) -> Result<Rendered, any Error> {
+        let start = ContinuousClock.now
+        let signpost = OtosSignpost.rendering.beginInterval("ImageRender")
+        defer { OtosSignpost.rendering.endInterval("ImageRender", signpost) }
+        do {
+            let source = try StillSource.read(url)
+            let developStart = ContinuousClock.now
+            let rendered = try renderNow(source, longEdge: key.longEdge, recipe: key.recipe)
+            // The lane's time splits into reading the original and developing it, so a slow
+            // render says whether its source or its decoder set the pace; `queueWaitMs` is the
+            // wait for its turn in the budget and its place on the lane.
+            OtosLog.rendering.noticeOperation("render.still", phase: "finish", fields: [
+                "lane": lane,
+                "decoder": rendered.decoder.rawValue,
+                "width": "\(rendered.image.width)",
+                "height": "\(rendered.image.height)",
+                "bytes": "\(source.data.count)",
+                "queueWaitMs": "\(DiagnosticsTiming.milliseconds(from: enqueued, to: start))",
+                "readMs": "\(DiagnosticsTiming.milliseconds(source.readDuration))",
+                "developMs": "\(DiagnosticsTiming.milliseconds(since: developStart))",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
+                "path": url.path(percentEncoded: false),
+            ])
+            return .success(rendered)
+        } catch {
+            OtosLog.rendering.errorOperation("render.still", phase: "failed", fields: [
+                "lane": lane,
+                "decoder": decoderIdentity,
+                "path": url.path(percentEncoded: false),
+                "error": String(describing: error),
+            ])
+            return .failure(error)
+        }
+    }
+
+    /// One render asked for and not yet rendered, and the asks waiting on it, as
+    /// `ImageRenderer.inFlight` holds it.
+    private nonisolated struct InFlightRender: Sendable {
+        struct Waiter: Sendable {
+            let user: Bool
+            /// Runs the ask's `finish` with the result, on the lane, and resumes the ask.
+            let deliver: @Sendable (Result<Rendered, any Error>) -> Void
+        }
+
+        /// The first ask's number: which render of this key it is.
+        let id: UInt64
+        var waiters: [UInt64: Waiter]
+        /// The task that admits and queues it, cancelled when every ask left before it began.
+        let runner: Task<Void, Never>
+        var began = false
+
+        var wantedByUser: Bool {
+            waiters.values.contains(where: \.user)
         }
     }
 

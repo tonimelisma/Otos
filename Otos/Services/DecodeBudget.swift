@@ -4,34 +4,48 @@ import UniformTypeIdentifiers
 
 /// Decode budget guide
 ///
-/// How many Image I/O decodes a render lane runs at once is a question of memory, not of
-/// count. A decode holds the pixels Image I/O decodes at, which are not the output's: a JPEG
-/// decodes at the smallest of 1, 1/2, 1/4 or 1/8 of its size that still covers the asked
-/// long edge, so a 12 MP JPEG rendered to 2,560 pixels decodes whole (4,032 is less than
-/// twice 2,560) and peaked at 110 MB alone, while a 24 MP JPEG decodes at half and peaked at
-/// 50 MB; HEIC decodes at the asked size (15 to 19 MB); any other format decodes whole. A new
-/// library's first enrichment renders every still's preview on the background lane at once,
-/// and four whole decodes in flight took a first launch to 625 MB of footprint with no other
-/// view open (`docs/research/2026-11-17-first-launch-decodes.md`). The lane therefore admits
-/// a decode by its cost (`DecodeBudgetMachine`, through the shared `Admission` shell): in
-/// the order asked, while the decodes running cost no more than the budget together, and
-/// always one when none runs, so a decode larger than the whole budget still runs, alone.
-/// The lane's queue width stays the cap on how many run at once.
+/// How many Image I/O decodes run at once is a question of memory, not of count. A decode
+/// holds the pixels Image I/O decodes at, which are not the output's: a JPEG decodes at the
+/// smallest of 1, 1/2, 1/4 or 1/8 of its size that still covers the asked long edge, so a
+/// 12 MP JPEG rendered to 2,560 pixels decodes whole (4,032 is less than twice 2,560) and
+/// peaked at 110 MB alone, while a 24 MP JPEG decodes at half and peaked at 50 MB; HEIC
+/// decodes at the asked size (15 to 19 MB); any other format decodes whole
+/// (`docs/research/2026-11-17-first-launch-decodes.md`).
+///
+/// **One budget for both lanes.** The background lane (enrichment) and the interactive lane
+/// (the photo the user is looking at) are admitted by one machine, so viewing a new library's
+/// originals while its first enrichment renders them never stacks the two lanes' peaks
+/// (`docs/research/2026-11-17-full-size-view-on-originals.md`). The rule is `LoadAdmission`'s:
+///
+/// - a decode the user waits on (`DecodeWaiter.user`) is granted at once, whatever runs or
+///   waits, and while one runs no background decode starts;
+/// - a background decode is granted in the order asked, while nothing the user waits on runs
+///   and the decodes running cost no more than the budget together — always one when none
+///   runs, so a decode larger than the whole budget still runs, alone;
+/// - a background decode the user comes to wait on (the pane asks for the photo the lane is
+///   about to render, `promote`) is the user's from then on.
+///
+/// So the decodes running at once hold at most the budget, or the user's decodes beside what
+/// was running when they asked. The lanes' queue widths stay the caps on how many run at once.
 ///
 /// A render's cost is the pixels it decodes at and the rendering it makes, four bytes each,
 /// from the file's header and the asked long edge (`DecodeCost.of(_:longEdge:)`): the
 /// rendering is held while its preview is encoded and staged on the lane
-/// (`ImageRenderer.render(_:longEdge:recipe:finish:)`), and those encodes, run beside one
-/// another off the lane, took 28 stills' first enrichment from about 230 MB to 550 MB in a
-/// test process. A header that cannot be read costs the whole budget, so an unknown render
-/// runs alone rather than beside others.
+/// (`ImageRenderer.render(_:longEdge:recipe:finish:)`). A header that cannot be read costs
+/// the whole budget, so an unknown render runs alone rather than beside others.
 nonisolated struct DecodeBudgetMachine: AdmissionMachine, Equatable {
     typealias Request = AdmissionRequest
-    /// A decode's cost in bytes.
-    typealias Ask = Int
+
+    /// One decode's ask: what it costs in bytes, who waits on it, and the render it is, so the
+    /// user can come to wait on one already asked for.
+    struct Ask: Equatable, Sendable {
+        let cost: Int
+        let waiter: DecodeWaiter
+        let render: RenderKey
+    }
 
     static func requested(_ request: Request, _ ask: Ask) -> Event {
-        .request(request, cost: ask)
+        .request(request, ask)
     }
 
     static func withdrawn(_ request: Request) -> Event {
@@ -50,9 +64,11 @@ nonisolated struct DecodeBudgetMachine: AdmissionMachine, Equatable {
     }
 
     enum Event: Equatable, Sendable {
-        case request(Request, cost: Int)
+        case request(Request, Ask)
         case withdraw(Request)
         case release(Request)
+        /// The user now waits on `render`: a waiting ask for it is the user's from now on.
+        case promote(RenderKey)
     }
 
     enum Effect: Equatable, Sendable {
@@ -62,38 +78,76 @@ nonisolated struct DecodeBudgetMachine: AdmissionMachine, Equatable {
 
     struct Waiting: Equatable, Sendable {
         let request: Request
-        let cost: Int
+        var ask: Ask
     }
 
     let budget: Int
-    private(set) var running: [Request: Int] = [:]
-    /// In the order asked: the first waits for room before any behind it runs, so a large
-    /// decode is never passed over by small ones forever.
+    private(set) var running: [Request: Ask] = [:]
+    /// In the order asked: the first background decode waits for room before any behind it
+    /// runs, so a large decode is never passed over by small ones forever.
     private(set) var waiting: [Waiting] = []
 
     /// What the running decodes cost together.
     var inUse: Int {
-        running.values.reduce(0, +)
+        running.values.reduce(0) { $0 + $1.cost }
+    }
+
+    /// What the running background decodes cost together.
+    var backgroundInUse: Int {
+        running.values.filter { $0.waiter == .background }.reduce(0) { $0 + $1.cost }
     }
 
     mutating func handle(_ event: Event) -> [Effect] {
         switch event {
-        case let .request(request, cost):
-            waiting.append(Waiting(request: request, cost: max(0, cost)))
+        case let .request(request, ask):
+            waiting.append(Waiting(request: request, ask: Ask(cost: max(0, ask.cost), waiter: ask.waiter, render: ask.render)))
         case let .withdraw(request):
             guard let index = waiting.firstIndex(where: { $0.request == request }) else { return [] }
             waiting.remove(at: index)
             return [.refuse(request)]
         case let .release(request):
             guard running.removeValue(forKey: request) != nil else { return [] }
+        case let .promote(render):
+            for index in waiting.indices where waiting[index].ask.render == render {
+                waiting[index].ask = Ask(cost: waiting[index].ask.cost, waiter: .user, render: render)
+            }
         }
         var granted: [Effect] = []
-        while let next = waiting.first, running.isEmpty || inUse + next.cost <= budget {
+        // The user's decodes first, each at once.
+        while let index = waiting.firstIndex(where: { $0.ask.waiter == .user }) {
+            let next = waiting.remove(at: index)
+            running[next.request] = next.ask
+            granted.append(.grant(next.request))
+        }
+        // Then enrichment's, in order, while nothing the user waits on runs and they fit.
+        while let next = waiting.first, !running.values.contains(where: { $0.waiter == .user }),
+              running.isEmpty || inUse + next.ask.cost <= budget
+        {
             waiting.removeFirst()
-            running[next.request] = next.cost
+            running[next.request] = next.ask
             granted.append(.grant(next.request))
         }
         return granted
+    }
+}
+
+/// Who waits on a decode: the photo on screen, or enrichment.
+nonisolated enum DecodeWaiter: Sendable, Equatable {
+    case user
+    case background
+}
+
+/// One render as asked of either lane: the file, the long edge (nil for the whole original)
+/// and the recipe. Two asks for the same render share one decode (`ImageRenderer`).
+nonisolated struct RenderKey: Hashable, Sendable {
+    let path: String
+    let longEdge: Int?
+    let recipe: EditRecipe
+
+    init(_ url: URL, longEdge: Int?, recipe: EditRecipe) {
+        path = url.path(percentEncoded: false)
+        self.longEdge = longEdge
+        self.recipe = recipe
     }
 }
 

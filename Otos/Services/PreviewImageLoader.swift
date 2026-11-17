@@ -377,16 +377,18 @@ actor PreviewImageLoader: PreviewLoading {
         // ImageIO thumbnail creation waits on Default-QoS internal workers; matching
         // that QoS avoids the Thread Performance Checker priority-inversion hang risk
         // that fires when this path runs at .userInitiated.
-        let target = request.targetLongEdge
+        // A still is shown short of full resolution at the stored preview's size, whether its
+        // preview is stored yet or not: the same photo at fit, from the preview or from the
+        // original. Zooming past it asks for full resolution (APP-040).
+        let target = isVideo || request.targetLongEdge == Self.fullResolution
+            ? request.targetLongEdge
+            : min(request.targetLongEdge, ThumbnailStore.previewMaxPixelSize)
         let recipe = request.detail?.editRecipe ?? .neutral
         let decoded = await Self.offActor { () async -> DecodedImage? in
             if isVideo {
                 return await Self.decodeVideoPoster(url: url, targetLongEdge: target).map(DecodedImage.init)
             }
-            if ImageRenderer.isRAW(url) || !recipe.isNeutral {
-                return await Self.render(url: url, targetLongEdge: target, recipe: recipe).map(DecodedImage.init)
-            }
-            return Self.decodeImage(url: url, targetLongEdge: target).map(DecodedImage.init)
+            return await Self.render(url: url, targetLongEdge: target, recipe: recipe).map(DecodedImage.init)
         }.map { ($0.image, $0.source, $0.nativePixelSize) }
         guard !Task.isCancelled else {
             return .unavailable
@@ -429,9 +431,12 @@ actor PreviewImageLoader: PreviewLoading {
         DisplayImage.decode(url, maxPixelEdge: targetLongEdge)
     }
 
-    /// A RAW, or an edited still, is rendered by the interactive renderer with its saved
-    /// recipe — a RAW never shown as the camera's embedded JPEG, so the loupe matches the
-    /// grid (ADR 0035, ADR 0036).
+    /// A still's original is rendered by the interactive renderer with its saved recipe — a
+    /// RAW never shown as the camera's embedded JPEG, so the loupe matches the grid (ADR 0035,
+    /// ADR 0036). The renderer admits it by the memory it holds in the budget enrichment's
+    /// renders share, ahead of them, and a render of the same photo at the same size that
+    /// enrichment has already asked for is the one the pane is given: one decode per photo
+    /// (`docs/research/2026-11-17-full-size-view-on-originals.md`).
     private nonisolated static func render(
         url: URL,
         targetLongEdge: Int,
@@ -441,66 +446,16 @@ actor PreviewImageLoader: PreviewLoading {
         guard let rendered = try? await ImageRenderer.interactive.render(url, longEdge: longEdge, recipe: recipe) else {
             return nil
         }
-        return (rendered.image, "render-\(rendered.decoder.rawValue)", rendered.nativePixelSize)
-    }
-
-    private nonisolated static func decodeImage(url: URL, targetLongEdge: Int) -> (CGImage, String, CGSize?)? {
-        let options: [CFString: Any] = [
-            kCGImageSourceShouldCache: false,
-        ]
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, options as CFDictionary) else {
+        // Image I/O returns an unedited HEIC's decode in an IOSurface, shown as it is; any other
+        // rendering is in ordinary memory, and is drawn into a surface once rather than copied
+        // by Core Animation and kept twice (`DisplayImage.shown`).
+        let type = UTType(filenameExtension: url.pathExtension)
+        let isSurface = rendered.decoder == .imageIO && recipe.isNeutral
+            && (type?.conforms(to: .heic) == true || type?.conforms(to: .heif) == true)
+        guard let shown = isSurface ? rendered.image : DisplayImage.shown(rendered.image) else {
             return nil
         }
-        let nativePixelSize = Self.nativePixelSize(of: source)
-        let nativeLongEdge = nativePixelSize.map { Int(max($0.width, $0.height)) }
-        // A full-resolution request is the source's own long edge; a smaller image
-        // never upsamples.
-        let target: Int = if targetLongEdge == fullResolution {
-            nativeLongEdge ?? 16384
-        } else {
-            targetLongEdge
-        }
-        // Prefer an embedded thumbnail when it is already large enough (common for RAW);
-        // for the full tier only an embedded image at native size qualifies.
-        let embeddedFloor = targetLongEdge == fullResolution ? (nativeLongEdge ?? Int.max) : min(target, 1024)
-        if let embedded = CGImageSourceCreateThumbnailAtIndex(
-            source,
-            0,
-            [
-                kCGImageSourceCreateThumbnailFromImageIfAbsent: false,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: target,
-            ] as CFDictionary
-        ), max(embedded.width, embedded.height) >= embeddedFloor {
-            return (embedded, "embedded", nativePixelSize)
-        }
-        guard let image = CGImageSourceCreateThumbnailAtIndex(
-            source,
-            0,
-            [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: target,
-            ] as CFDictionary
-        ) else {
-            return nil
-        }
-        return (image, "imageio", nativePixelSize)
-    }
-
-    /// Oriented pixel size from the source's properties — a header read, no decode.
-    /// EXIF orientations 5–8 swap width and height.
-    private nonisolated static func nativePixelSize(of source: CGImageSource) -> CGSize? {
-        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              width > 0, height > 0
-        else {
-            return nil
-        }
-        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
-        let swapped = orientation >= 5
-        return swapped ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+        return (shown, "render-\(rendered.decoder.rawValue)", rendered.nativePixelSize)
     }
 
     private nonisolated static func decodeVideoPoster(

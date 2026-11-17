@@ -58,10 +58,13 @@ scale × window long edge). It:
    the loader returns the decoded image, or `.unavailable` when the file is genuinely
    absent or the request was cancelled. It then checks `FileMaterialization.status`
    again immediately before the byte read.
-3. Decodes images via Image I/O
-   `CGImageSourceCreateThumbnailAtIndex` with
-   `kCGImageSourceThumbnailMaxPixelSize` (bounded memory; embedded RAW previews
-   preferred when large enough).
+3. Decodes a still with no stored preview from its original through the interactive
+   `ImageRenderer` (ADR 0035), at the stored preview's size short of full resolution, so a
+   photo at fit is the same whether its preview is stored yet or not; the renderer shares
+   its budget and any render of the same photo already asked for with enrichment. A
+   rendering Image I/O did not return in an IOSurface (a JPEG's scaled decode, a developed
+   RAW, an edited still) is drawn into one once (`DisplayImage.shown`), so Core Animation
+   keeps no second copy (`docs/research/2026-11-17-full-size-view-on-originals.md`).
 4. Decodes video posters via `QLThumbnailGenerator` at the same target; loupe
    video playback after 0069 is via `VideoPreviewLoader` → `AVPlayerView` (not here).
 5. Coalesces per-id in-flight work and holds only what a pane can come back to: the
@@ -151,5 +154,5 @@ placeholder).
 - Requirements APP-020 / APP-021 / APP-022 / APP-023 record loupe/compare entry,
   strip scroll loading, and preview decode policy.
 - Instrumentation: `MediaIO` signposts + `op=preview.decode` notice logs with
-  `decodeMs`, `source` (imageio / embedded / quicklook), and materialization
+  `decodeMs`, `source` (storedPreview / render-<decoder> / quicklook), and materialization
   outcome.

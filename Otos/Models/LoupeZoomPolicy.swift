@@ -71,8 +71,14 @@ nonisolated enum LoupeZoomPolicy {
     }
 }
 
-/// What the zoom view last measured: its magnification and the fit for its pane.
+/// What the zoom view last measured: its magnification and the fit for its pane, for the
+/// photo it measured them on. A magnification is a fact about one photo's document: the
+/// loupe keeps showing the photo it has until the next one's decode lands, and the view
+/// reports while it swaps one document for the next, so a report taken on one photo and
+/// applied to another sizes the other wrongly (a 4:3 photo's fit applied to a 3:2 one asked
+/// for a whole-image decode at fit, `docs/research/2026-11-17-full-size-view-on-originals.md`).
 nonisolated struct LoupeZoomReport: Equatable, Sendable {
+    var asset: MediaAssetID
     var magnification: CGFloat
     var fit: CGFloat
 

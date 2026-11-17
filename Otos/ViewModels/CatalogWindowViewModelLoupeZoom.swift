@@ -19,8 +19,18 @@ import OSLog
 /// The info overlay reads facts the catalog already holds; nothing is fetched for it.
 extension CatalogWindowViewModel {
     /// What the zoom view measured; `nil` outside loupe or before its first layout.
+    /// A report measured on another photo than the focused one — the photo the loupe still
+    /// shows while the next one decodes — says nothing about the focused photo's document,
+    /// and is not taken.
     func reportLoupeZoom(_ report: LoupeZoomReport) {
         guard viewMode == .loupe else { return }
+        guard report.asset == focusedAssetID else {
+            OtosLog.ui.debugOperation("loupe.zoomReport", phase: "otherPhoto", fields: [
+                "measured": report.asset.relativePath.rawValue,
+                "focused": focusedAssetID?.relativePath.rawValue ?? "none",
+            ])
+            return
+        }
         if loupeZoomReport != report {
             loupeZoomReport = report
         }
@@ -149,7 +159,7 @@ extension CatalogWindowViewModel {
               let id = focusedAssetID,
               let preview = panePreviews[.loupe], preview.id == id,
               let native = preview.nativePixelSize,
-              let report = loupeZoomReport
+              let report = loupeZoomReport, report.asset == id
         else { return }
         let decodedLongEdge = max(preview.image.width, preview.image.height)
         let nativeLongEdge = Int(max(native.width, native.height))

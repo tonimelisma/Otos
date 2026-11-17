@@ -70,6 +70,31 @@ struct PreviewImageLoaderSizeTests {
         #expect(max(largeImage.width, largeImage.height) > 256)
     }
 
+    /// A still with no stored preview yet is shown at the stored preview's size, whatever the
+    /// screen asks: its original is decoded scaled to that edge, not whole, and only a
+    /// full-resolution request decodes it whole.
+    @Test func anOriginalIsDecodedAtTheStoredPreviewsSizeShortOfFullResolution() async throws {
+        let directory = try makeTestDirectory()
+        try writeJPEG(width: 3600, height: 2400, to: directory.appending(path: "camera.jpg"))
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: directory.path(percentEncoded: false)),
+            relativePath: MediaRelativePath(rawValue: "camera.jpg")
+        )
+        let loader = PreviewImageLoader(
+            status: { _ in .materialized },
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .testMaterialized }
+        )
+        guard case let .image(fit, native) = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: 3024)),
+              case let .image(full, _) = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: PreviewImageLoader.fullResolution))
+        else {
+            Issue.record("expected both decodes to produce images")
+            return
+        }
+        #expect(native == CGSize(width: 3600, height: 2400))
+        #expect(fit.width == ThumbnailStore.previewMaxPixelSize)
+        #expect(full.width == 3600)
+    }
+
     private func writeJPEG(width: Int, height: Int, to url: URL) throws {
         let context = CGContext(
             data: nil,

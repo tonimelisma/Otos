@@ -25,17 +25,17 @@ struct CatalogWindowViewModelLoupeZoomTests {
         model.zoomIn()
         #expect(model.loupeZoomCommand == nil)
 
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.5, fit: 0.5))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 0.5, fit: 0.5))
         #expect(model.canZoomIn)
         #expect(!model.canZoomOut)
         model.zoomIn()
         #expect(model.loupeZoomCommand?.target == .magnification(0.625))
         #expect(model.gridColumnCount == columns - 1)
 
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.9, fit: 0.5))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 0.9, fit: 0.5))
         model.zoomIn()
         #expect(model.loupeZoomCommand?.target == .magnification(1))
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.55, fit: 0.5))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 0.55, fit: 0.5))
         model.zoomOut()
         #expect(model.loupeZoomCommand?.target == .fit)
     }
@@ -45,14 +45,14 @@ struct CatalogWindowViewModelLoupeZoomTests {
         let ids = makeIDs(count: 1)
         model.applyState(zoomWindowState(ids: ids))
         model.openLoupe(id: ids[0])
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.5, fit: 0.5))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 0.5, fit: 0.5))
 
         model.toggleLoupeZoom(at: CGPoint(x: 10, y: 20))
         #expect(model.loupeZoomCommand?.target == .magnification(1))
         #expect(model.loupeZoomCommand?.anchor == CGPoint(x: 10, y: 20))
         let first = model.loupeZoomCommand?.generation
 
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.5))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 1, fit: 0.5))
         model.toggleLoupeZoom()
         #expect(model.loupeZoomCommand?.target == .fit)
         #expect(model.loupeZoomCommand?.generation != first)
@@ -63,13 +63,13 @@ struct CatalogWindowViewModelLoupeZoomTests {
         let ids = makeIDs(count: 1)
         model.applyState(zoomWindowState(ids: ids))
         model.openLoupe(id: ids[0])
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.5))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 1, fit: 0.5))
 
         model.loupeEscape()
         #expect(model.viewMode == .loupe)
         #expect(model.loupeZoomCommand?.target == .fit)
 
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.5, fit: 0.5))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 0.5, fit: 0.5))
         model.loupeEscape()
         #expect(model.viewMode == .grid)
         #expect(model.loupeZoomReport == nil)
@@ -87,20 +87,40 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(model.panePreviews[.loupe]?.nativePixelSize == CGSize(width: 6000, height: 4500))
 
         // At fit the 400-px decode covers a 0.05 magnification; nothing more is asked.
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.05, fit: 0.05))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 0.05, fit: 0.05))
         #expect(await fake.requestedEdges().count == 1)
 
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.05))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 1, fit: 0.05))
         await model.paneRequestTasks[.loupe]?.value
         let edges = await fake.requestedEdges()
         #expect(edges.count == 2)
         #expect(edges.last == PreviewImageLoader.fullResolution)
 
         // A second report at the same magnification does not ask again.
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.05))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 1, fit: 0.05))
         #expect(await fake.requestedEdges().count == 2)
         // The fit-size decode was never blanked while the sharper one was pending.
         #expect(model.panePreviews[.loupe]?.id == ids[0])
+    }
+
+    /// The loupe shows the photo it has until the next one's decode lands, and the zoom view
+    /// reports while it swaps documents: a report measured on the photo just left is not the
+    /// focused photo's, so it neither becomes the zoom state nor asks for a full decode.
+    @Test func aReportMeasuredOnAnotherPhotoIsNotTaken() async {
+        let fake = FakePreviewLoader()
+        await fake.setDefaultOutcome(.image(makeZoomImage(width: 400, height: 300), nativePixelSize: CGSize(width: 6000, height: 4000)))
+        let model = makeZoomModel(loader: fake)
+        let ids = makeIDs(count: 2)
+        model.applyState(zoomWindowState(ids: ids))
+        model.openLoupe(id: ids[0])
+        await model.paneRequestTasks[.loupe]?.value
+        model.focusNext()
+        await model.paneRequestTasks[.loupe]?.value
+        #expect(model.panePreviews[.loupe]?.id == ids[1])
+
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 1, fit: 1))
+        #expect(model.loupeZoomReport == nil)
+        #expect(await fake.requestedEdges().allSatisfy { $0 != PreviewImageLoader.fullResolution })
     }
 
     @Test func focusChangeResetsZoom() {
@@ -108,7 +128,7 @@ struct CatalogWindowViewModelLoupeZoomTests {
         let ids = makeIDs(count: 2)
         model.applyState(zoomWindowState(ids: ids))
         model.openLoupe(id: ids[0])
-        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.5))
+        model.reportLoupeZoom(LoupeZoomReport(asset: ids[0], magnification: 1, fit: 0.5))
         model.toggleLoupeZoom()
         #expect(model.loupeZoomCommand != nil)
 

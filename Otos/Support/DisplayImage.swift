@@ -51,6 +51,18 @@ nonisolated enum DisplayImage {
         ] as CFDictionary)
     }
 
+    /// A rendering of an original — Image I/O's scaled decode of a JPEG, a developed RAW, an
+    /// edited still: pixels in ordinary memory, which Core Animation would copy for display
+    /// and keep with the image — drawn once into an IOSurface of its own, shown as it is
+    /// (`docs/research/2026-11-17-full-size-view-on-originals.md`). Nil when `image` has no
+    /// RGB color space or no surface can be made.
+    static func shown(_ image: CGImage) -> CGImage? {
+        guard let colorSpace = image.colorSpace, colorSpace.model == .rgb else { return nil }
+        return draw(width: image.width, height: image.height, colorSpace: colorSpace) { context in
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+    }
+
     /// A `width` × `height` image of what `body` draws, in `colorSpace` (an RGB one).
     static func draw(width: Int, height: Int, colorSpace: CGColorSpace, _ body: (CGContext) -> Void) -> CGImage? {
         guard width > 0, height > 0, colorSpace.model == .rgb else { return nil }

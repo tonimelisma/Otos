@@ -63,14 +63,14 @@ struct CatalogWindowViewModelDetailReadFailureTests {
             try #require(model.panePreviews[.loupe]?.id == id)
             let hidden = try await HiddenCatalogTable("asset_metadata", in: library.databaseURL)
 
-            model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.05))
+            model.reportLoupeZoom(LoupeZoomReport(asset: id, magnification: 1, fit: 0.05))
             await model.paneRequestTasks[.loupe]?.value
             #expect(await loader.requestedEdges().count == 1)
             #expect(model.panePreviews[.loupe]?.image === small)
             #expect(!model.downloadingSlots.contains(.loupe))
 
             try await hidden.restore()
-            model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.05))
+            model.reportLoupeZoom(LoupeZoomReport(asset: id, magnification: 1, fit: 0.05))
             await model.paneRequestTasks[.loupe]?.value
             let edges = await loader.requestedEdges()
             #expect(edges.count == 2)

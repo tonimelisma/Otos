@@ -201,8 +201,12 @@ final class LoupeZoomScrollView: NSScrollView {
         report(force: true)
     }
 
+    /// Reports what it measures on the photo whose document it holds. While `setContent`
+    /// resizes the document for the next photo, `currentAssetID` still names the photo the
+    /// magnification bounds were set for, so a report the resize sets off names that photo.
     private func report(force: Bool) {
-        let next = LoupeZoomReport(magnification: magnification, fit: minMagnification)
+        guard let currentAssetID else { return }
+        let next = LoupeZoomReport(asset: currentAssetID, magnification: magnification, fit: minMagnification)
         if !force, let last = lastReported,
            abs(last.magnification - next.magnification) <= next.fit * LoupeZoomPolicy.fitTolerance,
            last.fit == next.fit
