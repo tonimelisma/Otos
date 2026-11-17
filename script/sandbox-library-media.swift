@@ -3,8 +3,9 @@
 // a few short videos, all made here from code, so a tour or a survey has a library that is no
 // one's photos. The photos come from a person's cameras in turn (48 MP and 12 MP HEIC, 24 MP
 // and 12 MP JPEG), so a first launch decodes what a real library holds. Some carry rendered words (search's text reading finds them), some are
-// skies (the tour's "sky" query), a few are near-duplicates of the photo before them (the
-// Duplicates steps), some carry GPS (Places) and some fall on today's day in past years (On
+// skies (the tour's "sky" query), a few have an exact copy or a re-encoded version beside them
+// (the Duplicates steps: ADR 0042 groups identical bytes, and versions of one capture whose
+// camera, instant and sub-seconds agree and whose pixels match), some carry GPS (Places) and some fall on today's day in past years (On
 // This Day). Every name starts with the run's prefix, so the script can find each file by
 // name wherever it went.
 //
@@ -71,8 +72,8 @@ struct Generator {
         String(format: "%@-%05d%@.%@", prefix, index, suffix, ext)
     }
 
-    /// One photo's pixels. `shift` nudges brightness and framing, for a near-duplicate.
-    func draw(_ index: Int, shift: CGFloat = 0) -> CGImage {
+    /// One photo's pixels.
+    func draw(_ index: Int) -> CGImage {
         var random = Random(state: UInt64(index) &* 7919 &+ 17)
         let width = camera(index).width, height = camera(index).height
         // Sizes are drawn for a 1600-pixel-wide frame and scaled to the camera's.
@@ -82,12 +83,8 @@ struct Generator {
             space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
         )!
         let bounds = CGRect(x: 0, y: 0, width: width, height: height)
-        if shift != 0 {
-            context.translateBy(x: CGFloat(width) * shift, y: CGFloat(height) * shift)
-            context.scaleBy(x: 1 - 2 * shift, y: 1 - 2 * shift)
-        }
         func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CGColor {
-            CGColor(srgbRed: min(1, r + shift), green: min(1, g + shift), blue: min(1, b + shift), alpha: 1)
+            CGColor(srgbRed: r, green: g, blue: b, alpha: 1)
         }
         switch index % 10 {
         case 0:
@@ -145,7 +142,9 @@ struct Generator {
         return now.addingTimeInterval(-Double(1 + index % 3650) * 86400 - Double(index % 86400))
     }
 
-    func writePhoto(_ index: Int, suffix: String = "", shift: CGFloat = 0) throws -> String {
+    /// Writes photo `index`. A version (`suffix` non-empty, `quality` lower) is the same capture
+    /// re-encoded: the same pixels and the same camera, instant and sub-seconds, other bytes.
+    func writePhoto(_ index: Int, suffix: String = "", quality: Double = 0.8) throws -> String {
         let fileName = name(index, suffix, ext: camera(index).ext)
         let url = folder.appending(path: fileName)
         guard let destination = CGImageDestinationCreateWithURL(url as CFURL, camera(index).type.identifier as CFString, 1, nil) else {
@@ -155,8 +154,12 @@ struct Generator {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
         var properties: [CFString: Any] = [
-            kCGImageDestinationLossyCompressionQuality: 0.8,
-            kCGImagePropertyExifDictionary: [kCGImagePropertyExifDateTimeOriginal: formatter.string(from: captureDate(index))],
+            kCGImageDestinationLossyCompressionQuality: quality,
+            kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFMake: "Sandbox", kCGImagePropertyTIFFModel: "Camera \(index % Self.cameras.count)"],
+            kCGImagePropertyExifDictionary: [
+                kCGImagePropertyExifDateTimeOriginal: formatter.string(from: captureDate(index)),
+                kCGImagePropertyExifSubsecTimeOriginal: String(format: "%03d", index % 1000),
+            ],
         ]
         if index % 5 == 3 {
             let (lat, lon) = Self.places[(index / 5) % Self.places.count]
@@ -165,7 +168,7 @@ struct Generator {
                 kCGImagePropertyGPSLongitude: abs(lon), kCGImagePropertyGPSLongitudeRef: lon >= 0 ? "E" : "W",
             ]
         }
-        CGImageDestinationAddImage(destination, draw(index, shift: shift), properties as CFDictionary)
+        CGImageDestinationAddImage(destination, draw(index), properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw CocoaError(.fileWriteUnknown)
         }
@@ -235,11 +238,17 @@ guard arguments.count == 5, let photos = Int(arguments[3]), let videos = Int(arg
 let generator = Generator(folder: URL(fileURLWithPath: arguments[1], isDirectory: true), prefix: arguments[2])
 var index = 0
 while index < photos {
-    print(try generator.writePhoto(index))
-    // Every 50th photo is followed by a near-duplicate of it: the same scene, a little
-    // brighter and reframed.
-    if index % 50 == 7, index + 1 < photos {
-        print(try generator.writePhoto(index, suffix: "-similar", shift: 0.02))
+    let written = try generator.writePhoto(index)
+    print(written)
+    // Of every 50 photos, one is followed by an exact copy of its file and one by a version of
+    // it re-encoded at a lower quality: an identical group and a same-photo group.
+    if index % 50 == 3, index + 1 < photos {
+        let copy = generator.name(index, "-copy", ext: generator.camera(index).ext)
+        try FileManager.default.copyItem(at: generator.folder.appending(path: written), to: generator.folder.appending(path: copy))
+        print(copy)
+        index += 1
+    } else if index % 50 == 7, index + 1 < photos {
+        print(try generator.writePhoto(index, suffix: "-version", quality: 0.5))
         index += 1
     }
     index += 1

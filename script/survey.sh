@@ -175,6 +175,43 @@ stop_recorder() {
   wait "$pid" 2>/dev/null || true
 }
 
+# An xctrace recorder finishes its file on SIGINT, but only once it records: a background
+# job of a non-interactive shell starts with SIGINT ignored, and xctrace takes the signal
+# only after it installs its own handler, which it reports by printing its "Ctrl-C to stop"
+# line. An INT sent before that line is lost, and a `wait` on the recorder never returns.
+# So the stop waits for that line, sends INT, and waits for the recorder to exit; a recorder
+# that has not done either by the deadline is terminated, its trace reported lost and
+# removed (a half-written trace would stall its export), and the survey goes on.
+TRACE_STOP_DEADLINE_TENTHS=1800
+stop_trace() {
+  local pid="$1" log="$2" trace="$3"
+  [[ -n "$pid" ]] || return 0
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null && ! grep -q 'Ctrl-C to stop' "$log" 2>/dev/null \
+    && (( waited < TRACE_STOP_DEADLINE_TENTHS )); do
+    # time: deadline — an attach that never reports recording is given up after 180 s
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  kill -INT "$pid" 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null && (( waited < TRACE_STOP_DEADLINE_TENTHS )); do
+    # time: deadline — saving a session's trace is given 180 s in all before it counts as lost
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    rm -rf -- "$trace"
+    fail_note "trace=$(basename "$trace") reason=recorderDidNotStop waitedS=$((waited / 10))"
+    echo "op=survey.trace phase=lost trace=$(basename "$trace") reason=recorderDidNotStop" >&2
+    return 0
+  fi
+  wait "$pid" 2>/dev/null || true
+  echo "op=survey.trace phase=saved trace=$(basename "$trace") stopS=$((waited / 10))"
+}
+
 quit_launched_app() {
   [[ "$LAUNCHED" == 1 && -n "$APP_PID" ]] || return 0
   kill -0 "$APP_PID" 2>/dev/null || return 0
@@ -255,8 +292,8 @@ cleanup() {
   trap - EXIT INT TERM
   # xctrace finishes its file on SIGINT; it stops before the app does, so the trace does
   # not end with the quit.
-  stop_recorder "$XCTRACE_PID" INT
-  stop_recorder "$ALLOC_PID" INT
+  stop_trace "$XCTRACE_PID" "$RAW/xctrace.log" "$RAW/cpu.trace"
+  stop_trace "$ALLOC_PID" "$RAW/xctrace-allocations.log" "$RAW/allocations.trace"
   quit_launched_app || status=1
   stop_recorder "$IOSTAT_PID" TERM
   stop_recorder "$LOG_PID" TERM
@@ -526,8 +563,8 @@ SESSION_END="$(date +%s)"
 
 # Recorders stop before sizing and summarizing; cleanup's pass then finds them stopped
 # and still quits the app if this run launched it.
-stop_recorder "$XCTRACE_PID" INT; XCTRACE_PID=""
-stop_recorder "$ALLOC_PID" INT; ALLOC_PID=""
+stop_trace "$XCTRACE_PID" "$RAW/xctrace.log" "$RAW/cpu.trace"; XCTRACE_PID=""
+stop_trace "$ALLOC_PID" "$RAW/xctrace-allocations.log" "$RAW/allocations.trace"; ALLOC_PID=""
 quit_launched_app || true
 stop_recorder "$IOSTAT_PID" TERM; IOSTAT_PID=""
 stop_recorder "$LOG_PID" TERM; LOG_PID=""
