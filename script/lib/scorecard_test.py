@@ -571,8 +571,8 @@ def pressure_session(launch_level, *changes, helpers=()):
     ]
     for second, level in changes:
         lines.append(line(second, f"op=system.pressure phase=changed level={level} systemLevel=2 availablePercent=29"))
-    for second, cpu, peak in helpers:
-        lines.append(line(second, f"op=process.usage phase=helper role=textReader helperPid=7 cpuMs={cpu} "
+    for second, cpu, peak, pid in helpers:
+        lines.append(line(second, f"op=process.usage phase=helper role=textReader helperPid={pid} cpuMs={cpu} "
                                   f"peakFootprintMB={peak} readings=3 reason=ended"))
     lines.append(line(59.9, "op=process.usage phase=sample event=tourFinish cpuMs=9000 diskReadMB=2 diskWrittenMB=0"))
     return lines
@@ -612,8 +612,14 @@ class MachineTests(unittest.TestCase):
         self.assertEqual(self.row(rows)["verdict"], "NO-DATA")
         self.assertTrue(any("op=system.pressure" in item for item in report["notMeasured"]))
 
-    def test_the_process_tree_adds_each_helper_to_the_app(self):
-        report, rows, out = run(pressure_session("normal", helpers=[(10.0, 4000, 130), (30.0, 2500, 90)]))
+    def test_an_owner_the_room_held_says_why(self):
+        held = scorecard.describe_pending({"owner": "descriptions", "runningPasses": "1", "written": "4",
+                                           "heldBy": "userInApp", "backlog": "true"})
+        self.assertIn("held by userInApp", held)
+        self.assertNotIn("held by", scorecard.describe_pending({"owner": "x", "heldBy": "none"}))
+
+    def test_the_process_tree_adds_each_helpers_last_line_to_the_app(self):
+        report, rows, out = run(pressure_session("normal", helpers=[(5.0, 1000, 60, 7), (10.0, 4000, 130, 7), (30.0, 2500, 90, 8)]))
         tree = report["machine"]["tree"]
         self.assertEqual((tree["appCpuMs"], tree["helperCpuMs"], tree["cpuMs"]), (9000, 6500, 15500))
         self.assertEqual((tree["helpers"], tree["helperPeakFootprintMB"]), (2, 130))

@@ -128,6 +128,40 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    /// ADR 0057: while the person is in the app no request is made, and the writer's status
+    /// names the hold; once the app is left the still is described, with one request.
+    @Test func noRequestIsMadeWhileThePersonIsInTheApp() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        let still = library.id("a.jpg")
+        let store = library.store
+        let directory = try makeTestDirectory().appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try writeSubjectJPEG(to: directory.appending(path: "preview-a.jpg.heic"), center: CGPoint(x: 0.5, y: 0.5))
+        try await library.readFaces([library.result(for: "a.jpg", faces: [])])
+        try await Self.readText([], in: store)
+        try await Self.readLabels([], in: store)
+        var inApp = MachineConditions.roomy
+        inApp.userInApp = true
+        let room = BackgroundRoom(conditions: inApp)
+        let requests = Mutex(0)
+        let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory, describe: { _, _ in
+            requests.withLock { $0 += 1 }
+            return .written("A lake.")
+        }, room: room)
+
+        await writer.start()
+        try await waitUntil { await writer.status.heldBy == BackgroundHold.userInApp.rawValue }
+        #expect(requests.withLock { $0 } == 0)
+
+        room.deliver(.roomy)
+        try await waitUntil { try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("A lake.") }
+        #expect(requests.withLock { $0 } == 1)
+        #expect(room.counts.admitted[.description] == 1)
+        #expect(await writer.status.heldBy == nil)
+        await writer.shutdown()
+        await store.shutdown()
+    }
+
     /// One drain is one newest-first walk (ADR 0009), and a fact change during it restarts the
     /// walk from the newest still at its next page: a still made owed while an older one is
     /// described comes next, before the rest of the backlog.

@@ -123,6 +123,8 @@ actor PhotoSearchIndex: QuiescentOwner {
     }
 
     private let textReader: SearchTextReader
+    /// Whether a page of text may be read now (ADR 0057); the reader asks before each reading.
+    private let room: BackgroundRoom
     /// Names the vector file in the catalog: the Store's, unless a test suspends a naming to
     /// answer a query at that await.
     private let nameVectorFile: NameVectorFile
@@ -192,10 +194,12 @@ actor PhotoSearchIndex: QuiescentOwner {
         nameVectorFile: NameVectorFile? = nil,
         compactionFloor: Int = PhotoSearchIndex.compactionFloor,
         availableBytes: @escaping SearchVectorFile.AvailableBytes = FreeSpaceFloor.availableBytes(onVolumeOf:),
-        admission: LoadAdmission = LoadAdmission(isOpen: true)
+        admission: LoadAdmission = LoadAdmission(isOpen: true),
+        room: BackgroundRoom = BackgroundRoom()
     ) {
         self.availableBytes = availableBytes
         self.admission = admission
+        self.room = room
         self.nameVectorFile = nameVectorFile ?? { [store] state in try await store.setSearchVectorFileState(state) }
         self.compactionFloor = compactionFloor
         self.store = store
@@ -1119,16 +1123,32 @@ actor PhotoSearchIndex: QuiescentOwner {
 
     /// Reads `candidates` for text in the reading session and writes what it read where the
     /// preview is still the one read, with its words in the catalog's text index.
+    ///
+    /// While the background room holds text reading (ADR 0057), the pass waits for the room to
+    /// open, its status naming the hold, and then reads the candidates not yet asked.
     private func readPreviews(_ candidates: [SearchTextCandidate], tally: inout TextTally) async throws {
-        guard !candidates.isEmpty else { return }
-        let results: [SearchTextResult]
-        switch await textReader.read(candidates, directory: thumbnailDirectory) {
-        case let .read(page):
-            results = page
-        case let .sessionEnded(before):
-            results = before
-            tally.sessionEnded = true
+        var results: [SearchTextResult] = []
+        var unasked = candidates[...]
+        while !unasked.isEmpty {
+            if let hold = room.hold(for: .textReading) {
+                activity.heldBy = hold.rawValue
+                defer { activity.heldBy = nil }
+                try await room.untilOpen(for: .textReading)
+            }
+            switch await textReader.read(Array(unasked), directory: thumbnailDirectory) {
+            case let .read(page):
+                results += page
+                unasked = []
+            case let .sessionEnded(before):
+                results += before
+                tally.sessionEnded = true
+                unasked = []
+            case let .held(before, attempted):
+                results += before
+                unasked = unasked.dropFirst(attempted)
+            }
         }
+        guard !candidates.isEmpty else { return }
         let written = results.isEmpty ? [] : try await store.applySearchTexts(results)
         activity.wrote(results.count)
         tally.unread.formUnion(Set(candidates.map(\.id)).subtracting(written.map(\.id)))

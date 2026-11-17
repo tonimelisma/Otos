@@ -14,6 +14,8 @@ nonisolated struct MaterializationAdmissionPolicy: Equatable, Sendable {
         case rootBackgroundCap
         case providerBreakerOpen
         case interactivePriority
+        /// The background room holds background downloads now (ADR 0057).
+        case machineHeld
     }
 
     struct Snapshot: Equatable, Sendable {

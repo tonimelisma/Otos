@@ -511,6 +511,9 @@ final class CatalogWindowViewModel {
     /// window's first grid (`op=launch.firstGrid`), told what each query's view needs, and
     /// shut at teardown, all synchronously from here.
     @ObservationIgnored let loadAdmission: LoadAdmission
+    /// Whether heavy background work may start now (ADR 0057): the machine's conditions,
+    /// delivered by the app's `MachineConditionsMonitor`, asked by every owner of heavy work.
+    @ObservationIgnored let backgroundRoom: BackgroundRoom
     /// The newest scope paint (`op=ui.sidebarSelectionToPaint phase=finish`), the fact a
     /// tour's sidebar step waits on.
     private(set) var lastSidebarPaint: SidebarPaintReport?
@@ -792,7 +795,8 @@ final class CatalogWindowViewModel {
     init(
         catalogStore: CatalogStore,
         catalogProjection: CatalogProjection? = nil,
-        loadAdmission: LoadAdmission = LoadAdmission(),
+        loadAdmission: LoadAdmission? = nil,
+        backgroundRoom: BackgroundRoom = BackgroundRoom(),
         enrichmentCoordinator: EnrichmentCoordinator? = nil,
         metadataRefresher: MetadataRefresher? = nil,
         immichAccounts: ImmichAccounts? = nil,
@@ -890,7 +894,9 @@ final class CatalogWindowViewModel {
         importPreferences = ImportPreferencesStore.load(defaults: preferences)
         exportSettings = ExportSettingsStore.load(defaults: preferences)
         self.catalogStore = catalogStore
+        let loadAdmission = loadAdmission ?? LoadAdmission(room: backgroundRoom)
         self.loadAdmission = loadAdmission
+        self.backgroundRoom = backgroundRoom
         // A projection a test makes keeps its own admission; the window's shares this one, so
         // its duplicates builds and People passes take turns with the owners started here.
         self.catalogProjection = catalogProjection
@@ -931,7 +937,8 @@ final class CatalogWindowViewModel {
                     return await FileMaterialization.materialize(request)
                 }
             },
-            volumeCapacity: volumeCapacity
+            volumeCapacity: volumeCapacity,
+            room: backgroundRoom
         )
         self.materializationCoordinator = materializationCoordinator
         handOffPreparer = HandOffPreparer(
@@ -989,8 +996,9 @@ final class CatalogWindowViewModel {
                     thumbnailDirectory: catalogStore.thumbnailDirectory,
                     vectorDirectory: vectorDirectory,
                     bundle: Bundle(for: CatalogWindowViewModel.self),
-                    textReader: SearchTextReader(startSession: SearchTextChild.start),
-                    admission: loadAdmission
+                    textReader: SearchTextReader(startSession: SearchTextChild.start, room: backgroundRoom),
+                    admission: loadAdmission,
+                    room: backgroundRoom
                 )
             }
             : nil
@@ -998,7 +1006,8 @@ final class CatalogWindowViewModel {
             ? PhotoDescriptionWriter(
                 store: catalogStore,
                 thumbnailDirectory: catalogStore.thumbnailDirectory,
-                describe: PhotoDescriber.live
+                describe: PhotoDescriber.live,
+                room: backgroundRoom
             )
             : nil
         anniversaryTitleWriter = photoDescriptionWriter.map { writer in

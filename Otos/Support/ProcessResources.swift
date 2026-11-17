@@ -245,56 +245,6 @@ nonisolated enum ResourceCheckpoint {
     }
 }
 
-/// The system's memory-pressure reports, for the session: the platform reports the fact, so
-/// nothing samples for it. Each report is a checkpoint carrying its level.
-///
-/// The machine's level is also logged on a line of its own (`op=system.pressure`), which the
-/// scorecard reads as the level over the session (ADR 0015): `phase=launch` when the reporter
-/// starts, from the kernel's level (`kern.memorystatus_vm_pressure_level`), since the source
-/// reports only changes; `phase=changed` at each report, with the kernel's level read in the
-/// same step beside the source's. A session that never logs `changed` stayed at its launch
-/// level.
-final nonisolated class MemoryPressureReporter: Sendable {
-    private let source: any DispatchSourceMemoryPressure
-
-    init(storeUse: (@Sendable () -> CatalogStoreUse)?) {
-        let source = DispatchSource.makeMemoryPressureSource(
-            eventMask: [.normal, .warning, .critical],
-            queue: .global(qos: .utility)
-        )
-        self.source = source
-        var launch = SystemPressure.kernelFields()
-        launch["level"] = SystemPressure.kernelLevelName(launch["systemLevel"])
-        launch["thermal"] = SystemPressure.thermalName(ProcessInfo.processInfo.thermalState)
-        launch["lowPower"] = "\(ProcessInfo.processInfo.isLowPowerModeEnabled)"
-        OtosLog.performance.noticeOperation("system.pressure", phase: "launch", fields: launch)
-        source.setEventHandler { [weak source] in
-            guard let event = source?.data else {
-                return
-            }
-            var changed = SystemPressure.kernelFields()
-            changed["level"] = Self.level(event)
-            OtosLog.performance.noticeOperation("system.pressure", phase: "changed", fields: changed)
-            ResourceCheckpoint.record("memoryPressure", fields: ["level": Self.level(event)], storeUse: storeUse)
-        }
-        source.activate()
-    }
-
-    deinit {
-        source.cancel()
-    }
-
-    static func level(_ event: DispatchSource.MemoryPressureEvent) -> String {
-        if event.contains(.critical) {
-            return "critical"
-        }
-        if event.contains(.warning) {
-            return "warning"
-        }
-        return "normal"
-    }
-}
-
 /// What the kernel says of the machine's memory now: its pressure level and the share of
 /// memory it counts available. Two `sysctl` reads, no sampling.
 nonisolated enum SystemPressure {

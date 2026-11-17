@@ -59,8 +59,10 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
         )
     }()
 
-    /// The system's memory-pressure reports, checkpointed for the session.
-    private var memoryPressure: MemoryPressureReporter?
+    /// The platform's reports about room for background work (memory pressure, thermal state,
+    /// Low Power Mode, the app being active), delivered to the window's background room and
+    /// checkpointed for the session.
+    private var machineConditions: MachineConditionsMonitor?
 
     func applicationWillFinishLaunching(_: Notification) {
         backgroundReading = BackgroundReading.begin()
@@ -68,7 +70,7 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
         OtosLog.app.notice(
             "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"
         )
-        memoryPressure = MemoryPressureReporter(storeUse: catalogViewModel.storeUse)
+        machineConditions = MachineConditionsMonitor(room: catalogViewModel.backgroundRoom, storeUse: catalogViewModel.storeUse)
         ResourceCheckpoint.record("sessionStart")
     }
 

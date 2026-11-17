@@ -667,7 +667,11 @@ def machine(start, events):
     result["changes"] = [{"atMs": ms_since(start.time, c), "level": c.fields.get("level"),
                           "systemLevel": c.num("systemLevel"), "availablePercent": c.num("availablePercent")}
                          for c in changes]
-    helpers = [e for e in of(events, "process.usage", "helper")]
+    # A helper's lines are cumulative (one after each page, one as it ends): its last counts.
+    last_by_helper = {}
+    for line in of(events, "process.usage", "helper"):
+        last_by_helper[line.fields.get("helperPid") or id(line)] = line
+    helpers = list(last_by_helper.values())
     usages = [e for e in of(events, "process.usage") if e.phase != "helper"]
     app_cpu = usages[-1].num("cpuMs") if usages else None
     helper_cpu = sum(h.num("cpuMs", 0) for h in helpers)
@@ -992,6 +996,9 @@ def describe_pending(owner):
         parts.append("all of it its backlog")
     if owner.get("wake") not in (None, "none"):
         parts.append(f"wake {owner['wake']}")
+    if owner.get("heldBy") not in (None, "none"):
+        # The background room held its next unit (ADR 0057).
+        parts.append(f"held by {owner['heldBy']}")
     return f"{owner.get('owner')}: " + ", ".join(parts or ["not quiescent"])
 
 

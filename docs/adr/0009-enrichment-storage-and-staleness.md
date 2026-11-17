@@ -637,6 +637,12 @@ Rejected with the walk cursor (`docs/research/2026-11-16-plan-0116-due-diligence
 - Local disk grows as the library materializes until macOS evicts uploaded, idle
   files, and never below the free-space floor; this is an accepted, deliberate cost of
   complete coverage, not a leak.
+- Background downloads start only while the machine has room for them (ADR 0057): under
+  memory pressure, a serious thermal state or Low Power Mode, no new background download
+  starts, and the waiting ones start in the step the room opens. Whether the backlog is
+  hashed is unchanged; how fast it runs follows the machine. **Decision for the owner to
+  confirm:** descriptions (ADR 0053), whose model service holds about 450 MB more while it
+  answers, run only while Otos is not the active app.
 - A future metadata-driven feature (sort, filter, inspector) must use the scalar
   columns/detail JSON on demand or propose its own measured index/resident structure
   in a new spec; it cannot assume metadata is resident in the grid path.

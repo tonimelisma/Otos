@@ -302,14 +302,25 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
     private let breakerThreshold = 2
     private let breakerCooldown: Duration = .seconds(60)
 
+    /// Whether a background download may start now (ADR 0057). A download a person, a command
+    /// or a device waits on is never held. A transfer already running is not stopped: the
+    /// provider's download goes on whatever Otos holds (see `cancelWaiter`).
+    private let room: BackgroundRoom?
+    private var roomObservation: BackgroundRoomObservation?
+    /// Rings from the room's observer, counted as they ring, and the count a pass took up.
+    private nonisolated let roomRings = RequestCount()
+    private var roomRingsTaken: UInt64 = 0
+
     init(
         store: CatalogStore,
         executor: @escaping Executor,
         volumeCapacity: @escaping VolumeCapacityReader,
         policy: MaterializationAdmissionPolicy = .production,
         diagnosticSink: DiagnosticSink? = nil,
-        status: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:)
+        status: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
+        room: BackgroundRoom? = nil
     ) {
+        self.room = room
         self.store = store
         self.executor = executor
         self.status = status
@@ -327,6 +338,12 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
         }
         supervisor = Task { [weak self] in
             await self?.runSupervisor()
+        }
+        // A change of the room's conditions is a ring of this owner's doorbell, from the
+        // thread that delivers it: the next pass reads the room's hold again.
+        roomObservation = room?.observe { [roomRings, wakeContinuation] in
+            roomRings.record()
+            wakeContinuation.yield()
         }
         wake()
     }
@@ -448,6 +465,7 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
     /// A transfer in flight, or a request pending that no open breaker holds back.
     var holdsWork: Bool {
         !inFlightByID.isEmpty || (!pendingByID.isEmpty && breakerOpenUntilByRoot.isEmpty)
+            || roomRings.value != roomRingsTaken
     }
 
     /// Its backlog is enrichment's: background downloads of the originals the walk owes. Every
@@ -599,6 +617,11 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
             if Task.isCancelled || isShuttingDown {
                 break
             }
+            let rings = roomRings.value
+            if rings != roomRingsTaken {
+                roomRingsTaken = rings
+                activity.request()
+            }
             schedulePass()
             settleQuiescence()
         }
@@ -613,6 +636,8 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
         activity.endPass(covering: activity.beginPass())
         var admitted = 0
         var rejections: [MaterializationAdmissionPolicy.Rejection: Int] = [:]
+        var held: BackgroundHold?
+        defer { activity.heldBy = held?.rawValue }
         let selectedPriority = selectedPendingPriority()
 
         if let selectedPriority {
@@ -633,6 +658,12 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
                    isBreakerOpen(for: entry.request.id.libraryRootPath)
                 {
                     rejections[.providerBreakerOpen, default: 0] += 1
+                    index += 1
+                    continue
+                }
+                if entry.effectivePriority == .background, let hold = room?.hold(for: .download) {
+                    rejections[.machineHeld, default: 0] += 1
+                    held = hold
                     index += 1
                     continue
                 }

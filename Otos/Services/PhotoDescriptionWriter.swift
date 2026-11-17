@@ -20,6 +20,11 @@ import ImageIO
 /// drain until `retryPacing` or `busyPacing` passes, since nothing reports when it would
 /// answer.
 ///
+/// Each request first waits for the background room (ADR 0057): while the person is in the
+/// app, or the machine is short of memory, hot, or in Low Power Mode, the walk waits there,
+/// its status naming the hold (`heldBy`), and goes on in the step that opens the room. The
+/// model's service holds about 450 MB more than at rest while it answers.
+///
 /// One loop, woken by a doorbell (ADR 0032 rule 3) that two sources ring: a Store change of a
 /// kind its walk reads (`inputs`: a still's faces and people, place names, capture time,
 /// preview, and the search embedding and text reading it waits for, which search's writes
@@ -47,6 +52,10 @@ actor PhotoDescriptionWriter: QuiescentOwner {
     private let pageSize: Int
     private let retryPacing: Duration
     private let busyPacing: Duration
+    /// Whether a request may be made now (ADR 0057): each request runs the system language
+    /// model's service beside the app, so it waits while the person is in the app or the
+    /// machine is short of room.
+    private let room: BackgroundRoom
     /// Stills whose last request failed, and when they may be offered again.
     private var failedUntil: [MediaAssetID: ContinuousClock.Instant] = [:]
     /// When requests may be made again after the model was unavailable or busy.
@@ -97,8 +106,10 @@ actor PhotoDescriptionWriter: QuiescentOwner {
         describe: @escaping PhotoDescribing,
         pageSize: Int = 16,
         retryPacing: Duration = PhotoDescriptionWriter.retryPacing,
-        busyPacing: Duration = PhotoDescriptionWriter.busyPacing
+        busyPacing: Duration = PhotoDescriptionWriter.busyPacing,
+        room: BackgroundRoom = BackgroundRoom()
     ) {
+        self.room = room
         self.store = store
         self.thumbnailDirectory = thumbnailDirectory
         self.describe = describe
@@ -250,14 +261,13 @@ actor PhotoDescriptionWriter: QuiescentOwner {
         }
         modelNotBefore = nil
         failedUntil = failedUntil.filter { $0.value > now }
-        var written = 0, declined = 0, failed = 0
-        var stopped = false
+        var tally = DrainTally()
         // The request and the owed walk the walk answers; a newer owed walk restarts it from the
         // newest still. A walk that fails covers nothing, so the next ring walks again.
         var walking = (request: activity.requested, walk: walksOwed)
         var answered: UInt64?
         var cursor: CaptureOrderCursor?
-        while !Task.isCancelled, !stopped {
+        while !Task.isCancelled, !tally.stopped {
             if walksOwed != walking.walk {
                 walking = (activity.requested, walksOwed)
                 cursor = nil
@@ -291,32 +301,8 @@ actor PhotoDescriptionWriter: QuiescentOwner {
                 ])
                 break
             }
-            var results: [PhotoDescriptionResult] = []
-            for candidate in candidates where !stopped {
-                let start = ContinuousClock.now
-                switch await read(candidate) {
-                case let .written(text):
-                    results.append(PhotoDescriptionResult(id: candidate.id, source: candidate.source, text: text))
-                    written += 1
-                    OtosLog.metadata.debugOperation("description", phase: "written", fields: [
-                        "relativePath": candidate.id.relativePath.rawValue,
-                        "faces": "\(candidate.facts.faces.count)",
-                        "ms": "\((ContinuousClock.now - start).milliseconds)",
-                    ])
-                case .declined:
-                    results.append(PhotoDescriptionResult(id: candidate.id, source: candidate.source, text: nil))
-                    declined += 1
-                case .failed:
-                    failedUntil[candidate.id] = ContinuousClock.now.advanced(by: retryPacing)
-                    failed += 1
-                case .modelUnavailable:
-                    modelNotBefore = ContinuousClock.now.advanced(by: retryPacing)
-                    stopped = true
-                case .busy:
-                    modelNotBefore = ContinuousClock.now.advanced(by: busyPacing)
-                    stopped = true
-                }
-            }
+            let results = await describe(candidates, tally: &tally)
+            let stopped = tally.stopped
             do {
                 if !results.isEmpty, try await !store.applyPhotoDescriptions(results).isEmpty {
                     announce()
@@ -349,13 +335,64 @@ actor PhotoDescriptionWriter: QuiescentOwner {
             cursor = next
         }
         armWake(after: ContinuousClock.now)
-        if written > 0 || declined > 0 || failed > 0 || stopped {
+        if tally.written > 0 || tally.declined > 0 || tally.failed > 0 || tally.stopped {
             OtosLog.metadata.noticeOperation("description", phase: "drained", fields: [
-                "written": "\(written)", "declined": "\(declined)", "failed": "\(failed)",
-                "stopped": "\(stopped)", "paced": "\(failedUntil.count)", "drain": "\(drains)",
+                "written": "\(tally.written)", "declined": "\(tally.declined)", "failed": "\(tally.failed)",
+                "stopped": "\(tally.stopped)", "paced": "\(failedUntil.count)", "drain": "\(drains)",
             ])
         }
         return answered
+    }
+
+    /// What one drain did, for its log line, and whether the model stopped it.
+    private struct DrainTally {
+        var written = 0
+        var declined = 0
+        var failed = 0
+        var stopped = false
+    }
+
+    /// Asks the model for each candidate in turn, each request once the background room lets
+    /// it start (ADR 0057), until the model stops answering; returns what to write.
+    private func describe(_ candidates: [PhotoDescriptionCandidate], tally: inout DrainTally) async -> [PhotoDescriptionResult] {
+        var results: [PhotoDescriptionResult] = []
+        for candidate in candidates where !tally.stopped {
+            // The room's fact ends the wait; the candidate is still the one read, and its
+            // write lands only while its facts are those described.
+            activity.heldBy = room.hold(for: .description)?.rawValue
+            do {
+                try await room.untilOpen(for: .description)
+            } catch {
+                activity.heldBy = nil
+                tally.stopped = true
+                break
+            }
+            activity.heldBy = nil
+            let start = ContinuousClock.now
+            switch await read(candidate) {
+            case let .written(text):
+                results.append(PhotoDescriptionResult(id: candidate.id, source: candidate.source, text: text))
+                tally.written += 1
+                OtosLog.metadata.debugOperation("description", phase: "written", fields: [
+                    "relativePath": candidate.id.relativePath.rawValue,
+                    "faces": "\(candidate.facts.faces.count)",
+                    "ms": "\((ContinuousClock.now - start).milliseconds)",
+                ])
+            case .declined:
+                results.append(PhotoDescriptionResult(id: candidate.id, source: candidate.source, text: nil))
+                tally.declined += 1
+            case .failed:
+                failedUntil[candidate.id] = ContinuousClock.now.advanced(by: retryPacing)
+                tally.failed += 1
+            case .modelUnavailable:
+                modelNotBefore = ContinuousClock.now.advanced(by: retryPacing)
+                tally.stopped = true
+            case .busy:
+                modelNotBefore = ContinuousClock.now.advanced(by: busyPacing)
+                tally.stopped = true
+            }
+        }
+        return results
     }
 
     private func announce() {

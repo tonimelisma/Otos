@@ -30,10 +30,10 @@ import Synchronization
 /// descriptor. `end` returns once the child's exit is reported (`Process.terminationHandler`),
 /// so a shutdown that awaits it leaves no child behind.
 ///
-/// What a child cost is logged once, as its session ends however it ends
+/// What a child cost so far is logged after each page and as its session ends however it ends
 /// (`op=process.usage phase=helper role=textReader`): the child's own CPU and peak footprint,
-/// read from the kernel (`proc_pid_rusage`) at its last answer, or at its end while it still
-/// runs, so the scorecard counts the process tree Otos runs, not the app alone.
+/// read from the kernel (`proc_pid_rusage`) at its last answer, or now while it still runs,
+/// so the scorecard counts the process tree Otos runs, not the app alone.
 ///
 /// The child is the app's executable in the installed app, beside the `OtosKit` framework it
 /// embeds, and the built `Otos.app` beside the framework when tests load it from the build's
@@ -102,6 +102,20 @@ final nonisolated class SearchTextChild: SearchTextSession {
     var end: @Sendable () async -> Void {
         let lifetime = lifetime
         return { await lifetime.end() }
+    }
+
+    func reportUsage() {
+        lifetime.reportUsage(reason: "page", final: false)
+    }
+
+    /// Closes the child's input: it exits at once, mid-reading or not, and a reading in it
+    /// comes back unanswered (`.exited`).
+    var closeNow: @Sendable () -> Void {
+        let lifetime = lifetime
+        return {
+            lifetime.reportUsage(reason: "released")
+            lifetime.closeInput()
+        }
     }
 
     /// A child's first reading loads the system's text model, which takes 0.2 s warm and many
@@ -268,12 +282,17 @@ final nonisolated class SearchTextChildLifetime: Sendable {
         }
     }
 
-    /// Logs, once, what the child cost (`op=process.usage phase=helper role=textReader`): its
+    /// Logs what the child cost so far (`op=process.usage phase=helper role=textReader`): its
     /// CPU and peak footprint at its last answer, or now while it still runs; at least those.
-    func reportUsage(reason: String) {
+    /// Cumulative, so a reader keeps each helper's last line: one after each page (`final:
+    /// false`, since a helper alive at the app's quit logs nothing more) and one, the last, as
+    /// its session ends.
+    func reportUsage(reason: String, final: Bool = true) {
         let report = state.withLock { state -> (pid: pid_t, usage: ProcessResourceSample.Usage?, answers: Int)? in
             guard !state.usageReported, let pid = state.pid else { return nil }
-            state.usageReported = true
+            if final {
+                state.usageReported = true
+            }
             if !state.exited, let usage = ProcessResourceSample.rusage(of: pid) {
                 state.usage = usage
             }

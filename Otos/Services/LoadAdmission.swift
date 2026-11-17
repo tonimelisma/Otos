@@ -80,7 +80,9 @@ nonisolated extension TaskPriority {
 /// goes behind every other waiting one, whenever it asked. The load the window's current view
 /// needs (`want`) goes before every other waiting one; it does not stop the one running. A load
 /// the user waits on (`requestForUser`) is granted at once, before the first grid and beside
-/// the one running, and while one runs no waiting load is granted. `shutdown` refuses
+/// the one running, and while one runs no waiting load is granted. While the background room
+/// holds heavy loads (`room(held:)`, ADR 0057), only the load the view needs is granted; the
+/// rest start, in their order, in the step that opens it. `shutdown` refuses
 /// every waiting load and every later request, and grants nothing again.
 nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
     typealias Request = AdmissionRequest
@@ -124,6 +126,9 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
         case release(Request)
         /// The load the window's current view needs, or none.
         case want(BackgroundLoad?)
+        /// Whether the background room holds heavy loads now (ADR 0057): while it does, only
+        /// the load the current view needs is granted.
+        case room(held: Bool)
         case shutdown
     }
 
@@ -146,6 +151,9 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
     /// In the order they run when nothing is wanted.
     private(set) var waiting: [Waiting] = []
     private(set) var wanted: BackgroundLoad?
+    private(set) var roomHeld = false
+    /// Loads granted, by kind: what a test counts to see a held load start exactly once.
+    private(set) var granted: [BackgroundLoad: Int] = [:]
 
     init(isOpen: Bool = false) {
         self.isOpen = isOpen
@@ -181,6 +189,8 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
             }
         case let .want(load):
             wanted = load
+        case let .room(held):
+            roomHeld = held
         case .shutdown:
             guard !isShutDown else { return [] }
             isShutDown = true
@@ -193,10 +203,13 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
 
     private mutating func grantIfIdle() -> [Effect] {
         guard isOpen, !isShutDown, running == nil, runningForUser.isEmpty, !waiting.isEmpty else { return [] }
-        let index = wanted.flatMap { load in waiting.firstIndex { $0.load == load } }
-            ?? waiting.firstIndex { !$0.load.runsLast } ?? 0
+        let wantedIndex = wanted.flatMap { load in waiting.firstIndex { $0.load == load } }
+        // A held room lets only the load the view cannot show its answer without start.
+        guard !roomHeld || wantedIndex != nil else { return [] }
+        let index = wantedIndex ?? waiting.firstIndex { !$0.load.runsLast } ?? 0
         let next = waiting.remove(at: index)
         running = next
+        granted[next.load, default: 0] += 1
         return [.grant(next.request, next.load)]
     }
 }
@@ -232,11 +245,31 @@ final nonisolated class LoadAdmission: Sendable {
     /// owners' QoS class, never below it (PR 895).
     private static let releaseSampling = DispatchQueue(label: "net.melisma.Otos.loadAdmission.released", qos: .default)
 
+    /// Tells the machine each time the background room's hold on heavy loads changes.
+    private let roomObservation: BackgroundRoomObservation?
+
     /// Closed until `open()`. An owner a test makes alone gets an open admission of its own.
-    /// `footprint` is the process's own unless a test scripts it.
-    init(isOpen: Bool = false, footprint: @escaping @Sendable () -> UInt64? = ProcessResourceSample.currentFootprintBytes) {
-        admission = Admission(LoadAdmissionMachine(isOpen: isOpen))
+    /// `footprint` is the process's own unless a test scripts it. With a `room`, a background
+    /// load waits while the room holds heavy loads (ADR 0057), except the one the current view
+    /// needs; it starts in the step that delivers the conditions that open the room.
+    init(
+        isOpen: Bool = false,
+        room: BackgroundRoom? = nil,
+        footprint: @escaping @Sendable () -> UInt64? = ProcessResourceSample.currentFootprintBytes
+    ) {
+        let admission = Admission(LoadAdmissionMachine(isOpen: isOpen))
+        self.admission = admission
         self.footprint = footprint
+        roomObservation = room.map { room in
+            room.observe { [weak room] in
+                guard let room else { return }
+                admission.perform(.room(held: room.hold(for: .heavyLoad) != nil))
+            }
+        }
+        // Read after the observer is in place, so no change falls between the two.
+        if let room {
+            admission.perform(.room(held: room.hold(for: .heavyLoad) != nil))
+        }
     }
 
     /// The machine as it is now: what a test reads to see which load runs and which wait.

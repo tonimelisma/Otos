@@ -106,9 +106,10 @@ real backlog. Three instruments see those:
   (`kern.memorystatus_vm_pressure_level`, with `kern.memorystatus_level`, the share it
   counts available, the thermal state and Low Power Mode), since the pressure source
   reports changes only; `phase=changed` is each report of that source, with the kernel's
-  level read in the same step. Each text-reading helper logs what it cost once, as its
-  session ends (`op=process.usage phase=helper role=textReader`: its CPU and peak footprint
-  from `proc_pid_rusage` at its last answer). The scorecard prints the level over the
+  level read in the same step. Each text-reading helper logs what it cost so far after each
+  page and as its session ends (`op=process.usage phase=helper role=textReader`: its CPU and
+  peak footprint from `proc_pid_rusage`, cumulative, so a helper alive at the app's quit is
+  still counted); the scorecard keeps each helper's last line. The scorecard prints the level over the
   session (`MACHINE`: the level at launch, each change, seconds at each level) and the
   process tree's CPU and footprints, and judges `machine.pressureCaused`: from a launch at
   `normal`, a level that left `normal` came while Otos was the new workload (FAIL); from

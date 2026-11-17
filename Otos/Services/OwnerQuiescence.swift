@@ -181,6 +181,9 @@ nonisolated struct OwnerStatus: Equatable, Sendable {
     var worksBacklog = false
     let wake: OwnerWake?
     let work: OwnerWork
+    /// What the background room holds this owner's next unit for, when it waits on it
+    /// (`BackgroundHold`, ADR 0057).
+    var heldBy: String?
 
     var isQuiescent: Bool {
         owedRequests == 0 && runningPasses == 0 && unactedChanges == 0 && !holdsWork
@@ -192,7 +195,7 @@ nonisolated struct OwnerStatus: Equatable, Sendable {
             "owner": owner, "owedRequests": "\(owedRequests)", "runningPasses": "\(runningPasses)",
             "unactedChanges": "\(unactedChanges)", "holdsWork": "\(holdsWork)", "backlog": "\(worksBacklog)",
             "wake": wake.map(\.description) ?? "none", "passes": "\(work.passes)", "reads": "\(work.reads)",
-            "rows": "\(work.rows)", "written": "\(work.written)",
+            "rows": "\(work.rows)", "written": "\(work.written)", "heldBy": heldBy ?? "none",
         ]
     }
 }
@@ -216,6 +219,8 @@ final nonisolated class OwnerActivity {
     private var changesActedOn: UInt64 = 0
     /// The wake the owner keeps armed while it owes nothing now.
     var wake: OwnerWake?
+    /// The background room's hold its next unit waits on, while it waits (ADR 0057).
+    var heldBy: String?
     var work = OwnerWork()
     private var waiters: [UUID: (wait: OwnerWait, continuation: CheckedContinuation<OwnerQuiescence?, any Error>)] = [:]
 
@@ -325,7 +330,8 @@ final nonisolated class OwnerActivity {
             holdsWork: holdsWork,
             worksBacklog: worksBacklog,
             wake: wake,
-            work: work
+            work: work,
+            heldBy: heldBy
         )
     }
 

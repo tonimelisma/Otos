@@ -106,6 +106,13 @@ ready) stops the drain for 15 minutes and a busy one (rate-limited in the backgr
 minute (`time: backoff`: nothing reports when it would answer). The model call is injected
 (`PhotoDescribing`), the live one `PhotoDescriber.live` on `SystemLanguageModel.default`.
 
+**Only while the person is elsewhere, and the machine has room** (ADR 0057). Each request
+first waits for the background room: no request is made while Otos is the active app, under
+memory pressure, a serious thermal state or Low Power Mode, and the walk goes on in the step
+that opens it. The model's service held 411 MB at rest and 857–925 MB while describing on the
+owner's Mac. This is a decision for the owner to confirm: a library whose window is always in
+front is not described.
+
 **On-device, not Private Cloud Compute.** The owner accepted PCC, but its daily quota is the
 user's and is counted per request: describing a library of ~19,000 photos would spend days of
 it and then stop. The on-device model is unlimited, offline and free.

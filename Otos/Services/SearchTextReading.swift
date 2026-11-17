@@ -284,6 +284,21 @@ nonisolated protocol SearchTextSession: AnyObject {
     /// Ends the session from any thread, a reading in it or not, and returns once its process
     /// is gone: a reading in it then comes back without an answer (`.exited`).
     var end: @Sendable () async -> Void { get }
+    /// Lets the session's process go from any thread without waiting for it to exit: what the
+    /// reader does when the background room holds text reading (ADR 0057).
+    var closeNow: @Sendable () -> Void { get }
+    /// Logs what the session's process cost so far: the reader asks after each page.
+    func reportUsage()
+}
+
+nonisolated extension SearchTextSession {
+    /// A session in the test's own process has no process to let go.
+    var closeNow: @Sendable () -> Void {
+        {}
+    }
+
+    /// A session in the test's own process has no process whose cost to report.
+    func reportUsage() {}
 }
 
 /// What reading a page of previews came to.
@@ -293,6 +308,10 @@ nonisolated enum SearchTextPageReading: Equatable, Sendable {
     /// The session reading the page ended: `before`, what the page read before it; nothing
     /// after it was attempted, and the next page is read by a new session.
     case sessionEnded(before: [SearchTextResult])
+    /// The background room held text reading before the page's `attempted`-th candidate
+    /// (ADR 0057): `before`, what it read until then; the rest were not asked, and the
+    /// session was let go.
+    case held(before: [SearchTextResult], attempted: Int)
 }
 
 /// Reads stored previews for text, on its own serial queue: each reading waits on its session,
@@ -308,6 +327,13 @@ nonisolated enum SearchTextPageReading: Equatable, Sendable {
 /// own backoff paces the next page (`PhotoSearchIndex`), so a disk whose purges empty the
 /// cache every few minutes starts a session at most once a backoff.
 ///
+/// The background room (ADR 0057) decides whether a reading may start: before each reading
+/// the reader asks it, and while it holds text reading the page stops there (`.held`) and the
+/// live session is let go, its helper process exiting at its input's end. A helper idle
+/// between pages is let go in the step the room's hold is delivered, and one mid-reading only
+/// at `memoryCritical`, whose reading comes back unanswered and stays owed. One helper at a
+/// time, never more: each holds its own copy of the system's text model.
+///
 /// `shutdown` ends the reader from outside its queue, which a reading holds for as long as it
 /// takes: it ends the live session, so the reading in it comes back unanswered and its still
 /// stays owed, and no session starts after it. The session is started and recorded under one
@@ -321,14 +347,36 @@ actor SearchTextReader {
     private var session: (any SearchTextSession)?
     /// What `shutdown` reads beside a reading in progress: whether it came, and how to end
     /// the live session.
-    private let lifetime = Mutex(Lifetime())
+    private let lifetime: LockedLifetime
+
+    /// The lifetime behind its lock, shared with the room's observer.
+    private final nonisolated class LockedLifetime: Sendable {
+        private let state = Mutex(Lifetime())
+
+        func withLock<Result>(_ body: (inout Lifetime) -> Result) -> Result {
+            state.withLock { body(&$0) }
+        }
+    }
+
     /// How many sessions this reader has started.
     private(set) var sessionsStarted = 0
 
     private struct Lifetime {
         var shutDown = false
         var endSession: (@Sendable () async -> Void)?
+        var closeNow: (@Sendable () -> Void)?
+        /// A reading is in the live session now.
+        var reading = false
+        /// The room's observer let the live session go: the reader drops it at its next
+        /// reading.
+        var released = false
     }
+
+    /// Whether text reading may start a reading now (ADR 0057).
+    private let room: BackgroundRoom
+    /// Lets the live session go when the room holds text reading: at once while no reading
+    /// runs in it, and mid-reading at `memoryCritical`, whose reading stays owed.
+    private let roomObservation: BackgroundRoomObservation
 
     private enum Start {
         case started(any SearchTextSession)
@@ -336,8 +384,24 @@ actor SearchTextReader {
         case shutDown
     }
 
-    init(startSession: @escaping StartSession) {
+    init(startSession: @escaping StartSession, room: BackgroundRoom = BackgroundRoom()) {
         self.startSession = startSession
+        self.room = room
+        let lifetime = LockedLifetime()
+        self.lifetime = lifetime
+        roomObservation = room.observe { [weak room] in
+            guard let hold = room?.hold(for: .textReading) else { return }
+            let close = lifetime.withLock { lifetime -> (@Sendable () -> Void)? in
+                guard let close = lifetime.closeNow, !lifetime.reading || hold == .memoryCritical else { return nil }
+                lifetime.closeNow = nil
+                lifetime.endSession = nil
+                lifetime.released = true
+                return close
+            }
+            guard let close else { return }
+            close()
+            OtosLog.thumbnails.noticeOperation("search.text", phase: "sessionReleased", fields: ["hold": hold.rawValue])
+        }
     }
 
     nonisolated var unownedExecutor: UnownedSerialExecutor {
@@ -364,6 +428,8 @@ actor SearchTextReader {
             do {
                 let session = try startSession()
                 lifetime.endSession = session.end
+                lifetime.closeNow = session.closeNow
+                lifetime.released = false
                 return .started(session)
             } catch {
                 return .failed(error)
@@ -374,7 +440,28 @@ actor SearchTextReader {
     /// The live session ended by itself: nothing is left for `shutdown` to end.
     private func sessionGone() {
         session = nil
-        lifetime.withLock { $0.endSession = nil }
+        lifetime.withLock { lifetime in
+            lifetime.endSession = nil
+            lifetime.closeNow = nil
+        }
+    }
+
+    /// The room holds text reading before a reading: the live session is let go (its child
+    /// exits at its input's end), and the page stops there.
+    private func held(_ hold: BackgroundHold) {
+        let close = lifetime.withLock { lifetime in
+            defer {
+                lifetime.closeNow = nil
+                lifetime.endSession = nil
+                lifetime.released = false
+            }
+            return lifetime.closeNow
+        }
+        if session != nil || close != nil {
+            close?()
+            OtosLog.thumbnails.noticeOperation("search.text", phase: "sessionReleased", fields: ["hold": hold.rawValue])
+        }
+        session = nil
     }
 
     /// Reads `page` in order. A preview that does not decode, or a recognition that fails
@@ -383,9 +470,21 @@ actor SearchTextReader {
     /// session that ends, or cannot start, ends the page there, and so does the reader's
     /// shutdown. A failure is never a still with no text: it stamps nothing.
     func read(_ page: [SearchTextCandidate], directory: URL?) -> SearchTextPageReading {
+        // What the helper cost so far, whichever way the page ends.
+        defer { session?.reportUsage() }
         guard let directory else { return .read([]) }
         var results: [SearchTextResult] = []
-        for candidate in page {
+        for (attempted, candidate) in page.enumerated() {
+            if let hold = room.hold(for: .textReading) {
+                held(hold)
+                return .held(before: results, attempted: attempted)
+            }
+            // The room's observer let the live session go while no reading ran.
+            if lifetime.withLock({ lifetime in defer { lifetime.released = false }
+                return lifetime.released })
+            {
+                session = nil
+            }
             let session: any SearchTextSession
             if let current = self.session {
                 session = current
@@ -407,7 +506,10 @@ actor SearchTextReader {
                 self.session = session
                 sessionsStarted += 1
             }
-            switch session.read(directory.appending(path: candidate.previewPath)) {
+            lifetime.withLock { $0.reading = true }
+            let reading = session.read(directory.appending(path: candidate.previewPath))
+            lifetime.withLock { $0.reading = false }
+            switch reading {
             case let .lines(lines):
                 results.append(SearchTextResult(id: candidate.id, source: candidate.source, lines: lines))
             case .undecodable:

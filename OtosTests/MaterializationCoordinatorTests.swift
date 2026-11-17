@@ -512,6 +512,33 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// ADR 0057: while the background room holds downloads, a background download waits,
+    /// the owner's status names the hold, and the photo on screen does not wait; the waiting
+    /// download starts once, in the step that opens the room.
+    @Test func aBackgroundDownloadWaitsForTheRoomAndTheOnScreenOneDoesNot() async throws {
+        let room = BackgroundRoom(conditions: MachineConditions(memory: .warning, thermal: .nominal, lowPower: false, userInApp: false))
+        let started = Mutex<[String]>([])
+        let coordinator = MaterializationCoordinator(
+            store: makeTestStore(location: .inMemory),
+            executor: { request in
+                started.withLock { $0.append(request.id.relativePath.rawValue) }
+                return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 0)
+            },
+            volumeCapacity: { _ in nil },
+            room: room
+        )
+        let background = Task { await coordinator.materialize(request("backlog.jpg", priority: .background)) }
+        try await waitUntil { await coordinator.status.heldBy == BackgroundHold.memoryWarning.rawValue }
+        #expect(await coordinator.materialize(request("on-screen.jpg", priority: .interactive)).isMaterialized)
+        #expect(started.withLock { $0 } == ["on-screen.jpg"])
+
+        room.deliver(.roomy)
+        #expect(await background.value.isMaterialized)
+        #expect(started.withLock { $0 } == ["on-screen.jpg", "backlog.jpg"])
+        #expect(await coordinator.status.heldBy == nil)
+        await coordinator.shutdown()
+    }
+
     private func request(
         _ name: String,
         root: String = "/library",
