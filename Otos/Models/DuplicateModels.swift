@@ -1013,72 +1013,163 @@ nonisolated enum SamePhotoPolicy {
     /// A file without capture metadata is tested against every member of its aspect bucket —
     /// hundreds of thousands of tests on a real library — so those loops walk indices and
     /// test the hash from a flat array before they touch a candidate.
+    ///
+    /// The pass works on positions in `candidates`, never on copies of them: a bucket is a run
+    /// of one array of positions laid out bucket by bucket (a counting sort), and the stills of
+    /// one capture instant are a chain of positions through one array, so neither the buckets
+    /// nor the instants build an array, or copy a candidate and its strings, per group.
     static func candidatePairs(
         _ candidates: [SamePhotoCandidate],
         excluding excluded: Set<MediaAssetID>,
         reach: DuplicatesReach
     ) -> [SamePhotoPair] {
-        let eligible = candidates.filter { !excluded.contains($0.id) && $0.aspectRatio != nil }
-        // A bucket is one library's while Duplicates compares within each library, so no
-        // pair, and no group joined through pairs, spans two.
-        let buckets = Dictionary(exactlyGrouping: eligible) { candidate in
-            AspectBucket(
-                library: reach.library(of: candidate.id),
-                isRaw: candidate.isRaw,
-                drawnBy: candidate.drawnBy,
-                aspect: Int(((candidate.aspectRatio ?? 0) * 100).rounded())
+        candidates.withUnsafeBufferPointer { all in
+            let (order, runs) = bucketRuns(all, excluding: excluded, reach: reach)
+            var pairs: [SamePhotoPair] = []
+            // One set of buffers for every bucket, each made once at the largest bucket's size.
+            let largest = runs.map(\.count).max() ?? 0
+            var captured: [Int] = []
+            var stripped: [Int] = []
+            var capturedHashes: [UInt64] = []
+            var strippedHashes: [UInt64] = []
+            var nextOfInstant: [Int] = []
+            var firstOfInstant: [Double: Int] = [:]
+            captured.reserveCapacity(largest)
+            stripped.reserveCapacity(largest)
+            capturedHashes.reserveCapacity(largest)
+            strippedHashes.reserveCapacity(largest)
+            nextOfInstant.reserveCapacity(largest)
+            firstOfInstant.reserveCapacity(largest)
+            for run in runs where run.count > 1 {
+                captured.removeAll(keepingCapacity: true)
+                stripped.removeAll(keepingCapacity: true)
+                capturedHashes.removeAll(keepingCapacity: true)
+                strippedHashes.removeAll(keepingCapacity: true)
+                for member in order[run] {
+                    if all[member].hasCaptureMetadata {
+                        captured.append(member)
+                        capturedHashes.append(all[member].differenceHash)
+                    } else {
+                        stripped.append(member)
+                        strippedHashes.append(all[member].differenceHash)
+                    }
+                }
+                // Stills that both name their capture pair only within one instant: each
+                // instant's stills are a chain through `nextOfInstant`, by position in `captured`.
+                firstOfInstant.removeAll(keepingCapacity: true)
+                nextOfInstant.removeAll(keepingCapacity: true)
+                for position in captured.indices {
+                    let instant = all[captured[position]].captureInstant ?? 0
+                    nextOfInstant.append(firstOfInstant[instant] ?? -1)
+                    firstOfInstant[instant] = position
+                }
+                for first in firstOfInstant.values where nextOfInstant[first] >= 0 {
+                    var left = first
+                    while left >= 0 {
+                        var right = nextOfInstant[left]
+                        while right >= 0 {
+                            if isCandidate(all[captured[left]], all[captured[right]]) {
+                                pairs.append(SamePhotoPair(left: all[captured[left]], right: all[captured[right]]))
+                            }
+                            right = nextOfInstant[right]
+                        }
+                        left = nextOfInstant[left]
+                    }
+                }
+                // These loops run hundreds of thousands of times, so they read the hashes from
+                // unsafe buffers and test the distance inline before they touch a candidate.
+                let limit = RenderSignature.candidateHammingDistance
+                capturedHashes.withUnsafeBufferPointer { capturedHash in
+                    strippedHashes.withUnsafeBufferPointer { strippedHash in
+                        var position = 0
+                        while position < strippedHash.count {
+                            let hash = strippedHash[position]
+                            let left = stripped[position]
+                            var other = 0
+                            while other < capturedHash.count {
+                                if (hash ^ capturedHash[other]).nonzeroBitCount <= limit {
+                                    let right = captured[other]
+                                    if isCandidate(all[left], all[right]) {
+                                        pairs.append(SamePhotoPair(left: all[left], right: all[right]))
+                                    }
+                                }
+                                other += 1
+                            }
+                            other = position + 1
+                            while other < strippedHash.count {
+                                if (hash ^ strippedHash[other]).nonzeroBitCount <= limit {
+                                    let right = stripped[other]
+                                    if isCandidate(all[left], all[right]) {
+                                        pairs.append(SamePhotoPair(left: all[left], right: all[right]))
+                                    }
+                                }
+                                other += 1
+                            }
+                            position += 1
+                        }
+                    }
+                }
+            }
+            return pairs
+        }
+    }
+
+    /// The positions of `candidates` that can pair — not excluded, with a display aspect —
+    /// laid out bucket by bucket, each bucket in candidate order, with each bucket's run of
+    /// that array. A bucket is one library's while Duplicates compares within each library,
+    /// so no pair, and no group joined through pairs, spans two; the library is told by its
+    /// root's number in the identity table (`MediaAssetID.rootNumber`), read for the whole
+    /// pass under one lock.
+    private static func bucketRuns(
+        _ candidates: UnsafeBufferPointer<SamePhotoCandidate>,
+        excluding excluded: Set<MediaAssetID>,
+        reach: DuplicatesReach
+    ) -> (order: [Int], runs: [Range<Int>]) {
+        let roots: [UInt32]? = switch reach {
+        case .withinEachLibrary: MediaAssetID.rootNumbers(of: candidates.lazy.map(\.id))
+        case .acrossLibraries: nil
+        }
+        var numbers: [AspectBucket: Int] = [:]
+        var bucketOf = [Int](repeating: -1, count: candidates.count)
+        var sizes: [Int] = []
+        for position in candidates.indices {
+            guard let aspect = candidates[position].aspectRatio,
+                  excluded.isEmpty || !excluded.contains(candidates[position].id)
+            else {
+                continue
+            }
+            let bucket = AspectBucket(
+                root: roots?[position],
+                isRaw: candidates[position].isRaw,
+                drawnBy: candidates[position].drawnBy,
+                aspect: Int((aspect * 100).rounded())
             )
-        }
-        var pairs: [SamePhotoPair] = []
-        for members in buckets.values where members.count > 1 {
-            let hashes = members.map(\.differenceHash)
-            let captured = members.indices.filter { members[$0].hasCaptureMetadata }
-            let stripped = members.indices.filter { !members[$0].hasCaptureMetadata }
-            for group in Dictionary(exactlyGrouping: captured, by: { members[$0].captureInstant ?? 0 }).values {
-                for (position, left) in group.enumerated() {
-                    for right in group[(position + 1)...] where isCandidate(members[left], members[right]) {
-                        pairs.append(SamePhotoPair(left: members[left], right: members[right]))
-                    }
-                }
+            let number: Int
+            if let found = numbers[bucket] {
+                number = found
+            } else {
+                number = sizes.count
+                numbers[bucket] = number
+                sizes.append(0)
             }
-            // The installed app is a Debug build (ADR 0030): these loops run hundreds of
-            // thousands of times, so they read the hashes from unsafe buffers and test the
-            // distance inline before they touch a candidate.
-            let capturedHashes = captured.map { hashes[$0] }
-            let strippedHashes = stripped.map { hashes[$0] }
-            let limit = RenderSignature.candidateHammingDistance
-            capturedHashes.withUnsafeBufferPointer { capturedHash in
-                strippedHashes.withUnsafeBufferPointer { strippedHash in
-                    var position = 0
-                    while position < strippedHash.count {
-                        let hash = strippedHash[position]
-                        let left = stripped[position]
-                        var other = 0
-                        while other < capturedHash.count {
-                            if (hash ^ capturedHash[other]).nonzeroBitCount <= limit {
-                                let right = captured[other]
-                                if isCandidate(members[left], members[right]) {
-                                    pairs.append(SamePhotoPair(left: members[left], right: members[right]))
-                                }
-                            }
-                            other += 1
-                        }
-                        other = position + 1
-                        while other < strippedHash.count {
-                            if (hash ^ strippedHash[other]).nonzeroBitCount <= limit {
-                                let right = stripped[other]
-                                if isCandidate(members[left], members[right]) {
-                                    pairs.append(SamePhotoPair(left: members[left], right: members[right]))
-                                }
-                            }
-                            other += 1
-                        }
-                        position += 1
-                    }
-                }
-            }
+            sizes[number] += 1
+            bucketOf[position] = number
         }
-        return pairs
+        var starts: [Int] = []
+        starts.reserveCapacity(sizes.count)
+        var total = 0
+        for size in sizes {
+            starts.append(total)
+            total += size
+        }
+        let runs = sizes.indices.map { starts[$0] ..< starts[$0] + sizes[$0] }
+        var order = [Int](repeating: 0, count: total)
+        for position in candidates.indices where bucketOf[position] >= 0 {
+            let number = bucketOf[position]
+            order[starts[number]] = position
+            starts[number] += 1
+        }
+        return (order, runs)
     }
 
     private static func isNear(_ left: UInt64, _ right: UInt64) -> Bool {
@@ -1212,7 +1303,8 @@ nonisolated enum SamePhotoPolicy {
     }
 
     private struct AspectBucket: Hashable {
-        let library: LibraryRootPath?
+        /// The library's root number while Duplicates compares within each library.
+        let root: UInt32?
         let isRaw: Bool
         let drawnBy: EnrichedRendering.Origin
         let aspect: Int

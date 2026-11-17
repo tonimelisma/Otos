@@ -1501,14 +1501,12 @@ private extension CatalogProjection {
         guard let held, let tally = held.tally, held.row == owed.row,
               held.availableLibraryPaths == owed.availableLibraryPaths, held.placeNameLanguages == owed.placeNameLanguages
         else {
-            return .whole(capacity: held?.row == owed.row ? held?.tally?.rowCount ?? 0 : 0)
+            return .whole
         }
         guard let keyed = changeLog.keyedOptionRows(since: held.sequence, for: owed.row) else {
-            return .whole(capacity: tally.rowCount)
+            return .whole
         }
-        return .keyed(
-            rows: keyed.rows, names: keyed.names ? tally.language : nil, patching: held.sequence, capacity: tally.rowCount
-        )
+        return .keyed(rows: keyed.rows, names: keyed.names ? tally.language : nil, patching: held.sequence)
     }
 
     /// Keeps a read's options and republishes the window with them, then reads the newest

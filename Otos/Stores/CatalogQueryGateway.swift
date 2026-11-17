@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import GRDB
 import MediaMetadata
+import SQLite3
 
 /// Catalog query gateway guide
 ///
@@ -205,8 +206,12 @@ nonisolated enum CatalogQueryGateway {
 
     /// Counts each row of `scope` into `tally` (`CatalogFilterOptionTally`): its id, its file
     /// type and the map cell of its coordinate. False for a scope that selects nothing, which
-    /// counts no row. Each row is read by position, and its fact is held in a mapped region
-    /// until the tally is counted, so no copy of a row is made in the heap.
+    /// counts no row. Each row is read from the statement by position, with no GRDB row value
+    /// per column (`FilterOptionColumns`), its type compared by its bytes with the last row's,
+    /// and its id and slots appended to the tally's columns, built in mapped regions; runs of one
+    /// type or cell are counted at their end. A row makes no string and no heap copy, and All
+    /// Media's read costs about what SQLite's walk does
+    /// (`docs/research/2026-11-17-bench-flag-filter-options-and-pairs.md`).
     static func tallyFilterOptionRows(
         scope: CatalogScopePredicate,
         into tally: inout CatalogFilterOptionTally,
@@ -215,19 +220,49 @@ nonisolated enum CatalogQueryGateway {
         guard let query = try filterOptionRowsQuery(scope: scope, db: db) else {
             return false
         }
-        // Read in mapped regions first, so the tally's columns are made once at their length
+        let statement = try db.cachedStatement(sql: query.sql)
+        let sqlite = statement.sqliteStatement
+        // The tally's columns, built in mapped regions and made once at their length
         // (`MappedArrayBuilder`).
-        let rows = try Row.fetchCursor(db.cachedStatement(sql: query.sql), arguments: query.arguments)
-        var read = MappedArrayBuilder<(rowID: Int64, fact: CatalogFilterOptionTally.Fact)>()
-        while let row = try rows.next() {
-            read.append((row[0], filterOptionFact(row)))
-        }
-        tally.reserveCapacity(read.count)
-        read.withElements { read in
-            for row in read {
-                tally.append(rowID: row.rowID, fact: row.fact)
+        var rowIDs = MappedArrayBuilder<Int64>()
+        var typeOfRow = MappedArrayBuilder<UInt16>()
+        var cellOfRow = MappedArrayBuilder<UInt32>()
+        var types = FilterOptionColumns.Types()
+        var typeSlots: [UInt16] = []
+        // Rows of one type and of one cell come in runs (the walk is by folder), so a row takes
+        // the last row's slots unless its own differ, and each run is counted once, at its end.
+        var lastSeen = -1
+        var type = CatalogFilterOptionTally.TypeRun(slot: tally.typeSlot(nil))
+        var cell: PlaceCell?
+        var cellRun = CatalogFilterOptionTally.CellRun(slot: tally.cellSlot(nil))
+        // `forEach` steps the statement with GRDB's checks, and makes no value of a row.
+        try Row.fetchCursor(statement, arguments: query.arguments).forEach { _ in
+            let seen = types.index(of: sqlite)
+            if seen != lastSeen {
+                while typeSlots.count <= seen {
+                    typeSlots.append(tally.typeSlot(types.type(at: typeSlots.count)))
+                }
+                lastSeen = seen
+                if typeSlots[seen] != type.slot {
+                    tally.count(type)
+                    type = CatalogFilterOptionTally.TypeRun(slot: typeSlots[seen])
+                }
             }
+            let rowCell = FilterOptionColumns.cell(sqlite)
+            if rowCell != cell {
+                cell = rowCell
+                tally.count(cellRun)
+                cellRun = CatalogFilterOptionTally.CellRun(slot: tally.cellSlot(rowCell))
+            }
+            type.rows += 1
+            cellRun.rows += 1
+            rowIDs.append(FilterOptionColumns.rowID(sqlite))
+            typeOfRow.append(type.slot)
+            cellOfRow.append(cellRun.slot)
         }
+        tally.count(type)
+        tally.count(cellRun)
+        tally.take(rowIDs: rowIDs.finish(), types: typeOfRow.finish(), cells: cellOfRow.finish())
         return true
     }
 
@@ -237,30 +272,26 @@ nonisolated enum CatalogQueryGateway {
         guard let query = try filterOptionRowsQuery(scope: scope, db: db) else {
             return []
         }
-        return try Array(Row.fetchCursor(db.cachedStatement(sql: query.sql), arguments: query.arguments).map { row in
-            CatalogFilterOptionTally.Row(rowID: row[0], fact: filterOptionFact(row))
-        })
-    }
-
-    /// The fact of one row of `filterOptionRowsQuery`, by column position.
-    private static func filterOptionFact(_ row: Row) -> CatalogFilterOptionTally.Fact {
-        let kind = (row[1] as String?).flatMap(MediaKind.init(rawValue:))
-        let format = (row[2] as String?).map(MediaFormatToken.init(rawValue:))
-        let cell: PlaceCell? = if let latitude: Int = row[3], let longitude: Int = row[4] {
-            PlaceCell(latitude: latitude, longitude: longitude)
-        } else {
-            nil
+        let statement = try db.cachedStatement(sql: query.sql)
+        let sqlite = statement.sqliteStatement
+        var types = FilterOptionColumns.Types()
+        var rows: [CatalogFilterOptionTally.Row] = []
+        try Row.fetchCursor(statement, arguments: query.arguments).forEach { _ in
+            let seen = types.index(of: sqlite)
+            rows.append(CatalogFilterOptionTally.Row(
+                rowID: FilterOptionColumns.rowID(sqlite),
+                fact: CatalogFilterOptionTally.Fact(type: types.type(at: seen), cell: FilterOptionColumns.cell(sqlite))
+            ))
         }
-        return CatalogFilterOptionTally.Fact(
-            type: kind.map { CatalogFilterOptionTally.FileType(kind: $0, format: format) },
-            cell: cell
-        )
+        return rows
     }
 
     /// The options' read: every row of the scope with its row id, its kind and format, and the
-    /// cell of its coordinate when it is located, computed with the expression the stored cell
-    /// columns are generated by (`PlaceCellSQL.cell`) from the coordinate found by the row's key
-    /// in `LocationIndexSQL`'s index, so no table row of either table is read. A narrow scope
+    /// coordinate found by the row's key in `LocationIndexSQL`'s index when it is located, so no
+    /// table row of either table is read. The coordinate's cell is the one the stored cell
+    /// columns are generated by (`PlaceCellSQL.cell`), computed as the row is read
+    /// (`FilterOptionColumns.cell`): evaluated by SQLite, the expression was a third of All
+    /// Media's read (`docs/research/2026-11-17-bench-flag-filter-options-and-pairs.md`). A narrow scope
     /// (`ScopeClause.Seek`) reaches its rows through its seek; a wide scope walks
     /// `idx_media_asset_stack_candidate`, led by the root, which holds the kind, the format, the
     /// key and what tests a row's visibility: the date order index holds no format, so walking
@@ -278,8 +309,7 @@ nonisolated enum CatalogQueryGateway {
         return SQLQuery(
             sql: """
             SELECT media_asset.rowid, media_asset.best_kind, media_asset.best_format,
-                   \(PlaceCellSQL.cell("place_metadata.primary_latitude", cells: PlaceCellSQL.latitudeCells)),
-                   \(PlaceCellSQL.cell("place_metadata.primary_longitude", cells: PlaceCellSQL.longitudeCells))
+                   place_metadata.primary_latitude, place_metadata.primary_longitude
             FROM \(rows)
             LEFT JOIN asset_metadata AS place_metadata INDEXED BY \(LocationIndexSQL.indexName)
               ON place_metadata.library_root_id = media_asset.library_root_id
@@ -779,6 +809,97 @@ nonisolated enum PhotoFaceSQL {
 /// `asset_metadata.place_cell_latitude` and `place_cell_longitude`, generated from the
 /// primary location (schema v43). The cells are what Maps names, and an area's rows are
 /// sought through their index.
+/// The columns of a row of `CatalogQueryGateway.filterOptionRowsQuery`, read from the stepped
+/// statement by position. The read walks every row of the shown scope — All Media's 159,000 —
+/// so a row makes no GRDB value and no string: the row id and coordinate are C reads, and the
+/// kind and format are compared by their bytes with the few types already seen, a string made
+/// once per distinct type (`Types`).
+nonisolated enum FilterOptionColumns {
+    static func rowID(_ statement: SQLiteStatement) -> Int64 {
+        sqlite3_column_int64(statement, 0)
+    }
+
+    /// The cell of the row's coordinate, when it is located: the cell the stored cell columns'
+    /// expression gives (`PlaceCellSQL.cell(of:cells:)`).
+    static func cell(_ statement: SQLiteStatement) -> PlaceCell? {
+        guard sqlite3_column_type(statement, 3) != SQLITE_NULL, sqlite3_column_type(statement, 4) != SQLITE_NULL else {
+            return nil
+        }
+        return PlaceCell(
+            latitude: PlaceCellSQL.cell(of: sqlite3_column_double(statement, 3), cells: PlaceCellSQL.latitudeCells),
+            longitude: PlaceCellSQL.cell(of: sqlite3_column_double(statement, 4), cells: PlaceCellSQL.longitudeCells)
+        )
+    }
+
+    /// The file types one read has seen, each by its kind's and format's bytes. A library holds
+    /// a few dozen, and rows of one type come in runs, so a row is compared with the last row's
+    /// type first: its kind and format, each held as up to 8 bytes in an integer (every kind
+    /// and every format MediaMetadata names fits), compared by `memcmp`. Only a row whose type
+    /// differs looks among the types seen, and a type is decoded into strings once.
+    struct Types {
+        private struct Seen {
+            let kind: [UInt8]?
+            let format: [UInt8]?
+            let type: CatalogFilterOptionTally.FileType?
+        }
+
+        private var seen: [Seen] = []
+        private var last = 0
+        /// The last row's kind and format bytes and their lengths: -1 for NULL, and -2 before
+        /// the first row and for a value longer than 8 bytes, which never matches.
+        private var lastKind: UInt64 = 0
+        private var lastKindCount = -2
+        private var lastFormat: UInt64 = 0
+        private var lastFormatCount = -2
+
+        /// The index of the current row's type among those seen, made seen when it is new.
+        mutating func index(of statement: SQLiteStatement) -> Int {
+            let kind = sqlite3_column_text(statement, 1)
+            let kindCount = kind == nil ? -1 : Int(sqlite3_column_bytes(statement, 1))
+            let format = sqlite3_column_text(statement, 2)
+            let formatCount = format == nil ? -1 : Int(sqlite3_column_bytes(statement, 2))
+            if kindCount == lastKindCount, formatCount == lastFormatCount,
+               kindCount <= 0 || memcmp(kind, &lastKind, kindCount) == 0,
+               formatCount <= 0 || memcmp(format, &lastFormat, formatCount) == 0
+            {
+                return last
+            }
+            let kindBytes = kind.map { Array(UnsafeBufferPointer(start: $0, count: kindCount)) }
+            let formatBytes = format.map { Array(UnsafeBufferPointer(start: $0, count: formatCount)) }
+            if let found = seen.firstIndex(where: { $0.kind == kindBytes && $0.format == formatBytes }) {
+                last = found
+            } else {
+                let mediaKind = kindBytes.flatMap { MediaKind(rawValue: String(decoding: $0, as: UTF8.self)) }
+                seen.append(Seen(
+                    kind: kindBytes,
+                    format: formatBytes,
+                    type: mediaKind.map { kind in
+                        CatalogFilterOptionTally.FileType(
+                            kind: kind,
+                            format: formatBytes.map { MediaFormatToken(rawValue: String(decoding: $0, as: UTF8.self)) }
+                        )
+                    }
+                ))
+                last = seen.count - 1
+            }
+            lastKindCount = kindCount <= 8 ? kindCount : -2
+            lastFormatCount = formatCount <= 8 ? formatCount : -2
+            if kindCount > 0, kindCount <= 8 {
+                memcpy(&lastKind, kind, kindCount)
+            }
+            if formatCount > 0, formatCount <= 8 {
+                memcpy(&lastFormat, format, formatCount)
+            }
+            return last
+        }
+
+        /// The type seen at `index`; nil for a row of no known kind, which gives no type.
+        func type(at index: Int) -> CatalogFilterOptionTally.FileType? {
+            seen[index].type
+        }
+    }
+}
+
 nonisolated enum PlaceCellSQL {
     static let indexName = "idx_asset_metadata_place_cell"
 

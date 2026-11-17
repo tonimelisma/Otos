@@ -57,22 +57,10 @@ nonisolated struct CatalogFilterOptionTally: Sendable {
     /// The language the places are offered in; nil offers none (`CatalogFilterOptions`).
     let language: PlaceNameLanguage?
 
-    /// An empty tally, room made for `capacity` rows: a read again of the same row reserves
-    /// what the last read held, so the arrays are not regrown row by row.
-    init(names: [PlaceCell: PlaceNames], language: PlaceNameLanguage?, capacity: Int = 0) {
+    /// An empty tally, which a whole read fills (`take(rowIDs:types:cells:)`).
+    init(names: [PlaceCell: PlaceNames], language: PlaceNameLanguage?) {
         self.names = names
         self.language = language
-        rowIDs.reserveCapacity(capacity)
-        typeOfRow.reserveCapacity(capacity)
-        cellOfRow.reserveCapacity(capacity)
-    }
-
-    /// Room for `count` rows in all: what a whole read reserves once it knows how many rows it
-    /// read, so no column outgrows a buffer (`MappedArrayBuilder`).
-    mutating func reserveCapacity(_ count: Int) {
-        rowIDs.reserveCapacity(count)
-        typeOfRow.reserveCapacity(count)
-        cellOfRow.reserveCapacity(count)
     }
 
     /// How many rows the tally counts.
@@ -89,12 +77,37 @@ nonisolated struct CatalogFilterOptionTally: Sendable {
         cellCounts.count { $0 > 0 }
     }
 
-    /// Counts one more row of the scope: what a whole read does for each row it walks.
-    mutating func append(rowID: Int64, fact: Fact) {
-        rowIDs.append(rowID)
-        typeOfRow.append(Self.noType)
-        cellOfRow.append(Self.noCell)
-        set(fact, at: rowIDs.count - 1)
+    /// A run of consecutive rows of a whole read of one type, or of one cell: its slot in this
+    /// tally (`typeSlot(_:)`, `cellSlot(_:)`) and how many rows it holds. A read walking every
+    /// row of the scope counts a run once, at its end (`count(_:)`), not a count per row.
+    struct TypeRun {
+        let slot: UInt16
+        var rows = 0
+    }
+
+    struct CellRun {
+        let slot: UInt32
+        var rows = 0
+    }
+
+    mutating func count(_ run: TypeRun) {
+        if run.slot != Self.noType {
+            typeCounts[Int(run.slot)] += run.rows
+        }
+    }
+
+    mutating func count(_ run: CellRun) {
+        if run.slot != Self.noCell {
+            cellCounts[Int(run.slot)] += run.rows
+        }
+    }
+
+    /// The columns of every row a whole read walked, in its order, each made once at its length
+    /// (`MappedArrayBuilder`); the read counted the rows by runs as it walked them.
+    mutating func take(rowIDs: [Int64], types: [UInt16], cells: [UInt32]) {
+        self.rowIDs = rowIDs
+        typeOfRow = types
+        cellOfRow = cells
     }
 
     /// Replaces what each of `rows` gave by what it gives now, in place. False, with the tally
@@ -125,14 +138,8 @@ nonisolated struct CatalogFilterOptionTally: Sendable {
     }
 
     private mutating func set(_ fact: Fact, at position: Int) {
-        var type = Self.noType
-        if let fileType = fact.type {
-            type = typeSlot(fileType)
-        }
-        var cell = Self.noCell
-        if let placeCell = fact.cell {
-            cell = cellSlot(placeCell)
-        }
+        let type = typeSlot(fact.type)
+        let cell = cellSlot(fact.cell)
         let oldType = typeOfRow[position]
         if oldType != type {
             if oldType != Self.noType {
@@ -155,7 +162,11 @@ nonisolated struct CatalogFilterOptionTally: Sendable {
         }
     }
 
-    private mutating func typeSlot(_ type: FileType) -> UInt16 {
+    /// The slot of `type` in this tally, made when it is new; the no-type slot for none.
+    mutating func typeSlot(_ type: FileType?) -> UInt16 {
+        guard let type else {
+            return Self.noType
+        }
         if let slot = typeIndex[type] {
             return slot
         }
@@ -167,7 +178,11 @@ nonisolated struct CatalogFilterOptionTally: Sendable {
         return slot
     }
 
-    private mutating func cellSlot(_ cell: PlaceCell) -> UInt32 {
+    /// The slot of `cell` in this tally, made when it is new; the no-cell slot for none.
+    mutating func cellSlot(_ cell: PlaceCell?) -> UInt32 {
+        guard let cell else {
+            return Self.noCell
+        }
         if let slot = cellIndex[cell] {
             return slot
         }

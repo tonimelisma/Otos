@@ -90,6 +90,27 @@ struct MediaAssetIdentityTableTests {
         #expect(faces.sorted(by: FaceAssignmentPolicy.pathOrder).map(\.asset.relativePath.rawValue) == decoded)
     }
 
+    /// A pass that tells libraries apart over a whole grouping — Duplicates' same-photo buckets
+    /// — reads every ID's root number under one lock acquisition and decodes nothing, however
+    /// many IDs it reads; the numbers are equal exactly where the roots are.
+    @Test func aPassReadsEveryRootNumberUnderOneLock() {
+        let table = MediaAssetIdentityTable(countingSteps: true)
+        let roots = ["/Roots/A", "/Roots/B", "/Roots/C"].map(LibraryRootPath.init(rawValue:))
+        let pairs = (0 ..< 5000).map { (root: roots[$0 % roots.count], path: MediaRelativePath(rawValue: "IMG_\($0).HEIC")) }
+        let places = pairs.map { table.place(of: $0.root, $0.path) }
+        let before = table.steps
+        let numbers = table.rootNumbers(of: places)
+        let after = table.steps
+        #expect(after.lockAcquisitions - before.lockAcquisitions == 1 && after.decodes == before.decodes, "\(before) → \(after)")
+        let disagreeing = pairs.indices.filter { index in
+            roots.indices.contains { other in
+                (numbers[index] == numbers[other]) != (pairs[index].root == pairs[other].root)
+            }
+        }
+        #expect(numbers.count == pairs.count && disagreeing.isEmpty, "\(disagreeing.prefix(5))")
+        #expect(Set(numbers).count == roots.count)
+    }
+
     /// The pause a maker of an ID can wait behind, counted as the slots one rebuild of the
     /// index moves under the lock: without sizing, crossing half the index rebuilds every
     /// place already made; sized at open from the catalog's rows, making that many IDs never

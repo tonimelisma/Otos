@@ -201,6 +201,55 @@ struct SamePhotoTests {
         #expect(SamePhotoPolicy.candidatePairs(inOne.map(\.candidate), excluding: [], reach: .withinEachLibrary).count == 1)
     }
 
+    /// The proposed pairs are exactly the pairs of eligible stills in one bucket — library while
+    /// compared within each, kind, pipeline and display aspect — that pass the column checks,
+    /// each once: the pass's buckets and instants are a layout of positions, so this holds
+    /// against a test of every pair on a random library of two roots, an exclusion included.
+    @Test func theProposedPairsAreEveryCandidatePairOfABucket() {
+        let mirror = LibraryRootPath(rawValue: "/Users/me/Mirror")
+        var random = SplitMix64(seed: 0x5A11)
+        let candidates = (0 ..< 400).map { index in
+            let raw = random.next() % 5 == 0
+            let instant: Double? = random.next() % 4 == 0 ? nil : Double(random.next() % 12)
+            let aspect: Double? = random.next() % 20 == 0 ? nil : [4.0 / 3.0, 3.0 / 2.0, 16.0 / 9.0][Int(random.next() % 3)]
+            return SamePhotoCandidate(
+                id: MediaAssetID(
+                    libraryRootPath: index % 3 == 0 ? mirror : Self.root,
+                    relativePath: MediaRelativePath(rawValue: "IMG_\(index).JPG")
+                ),
+                isRaw: raw,
+                drawnBy: random.next() % 6 == 0 ? .source : .otos,
+                captureInstant: instant,
+                cameraModel: instant == nil ? nil : ["A", "B"][Int(random.next() % 2)],
+                serialNumber: random.next() % 2 == 0 ? nil : "S",
+                aspectRatio: aspect,
+                differenceHash: 0xF0F0 ^ (UInt64(1) << (random.next() % 16)) ^ (random.next() % 3 == 0 ? UInt64.max << 40 : 0),
+                evidenceStamp: SamePhotoEvidenceStamp(signatureSource: "\(index)", recordSize: nil, recordMTime: nil, recordRevision: nil)
+            )
+        }
+        let excluded: Set<MediaAssetID> = [candidates[7].id, candidates[8].id]
+        for reach in [DuplicatesReach.withinEachLibrary, .acrossLibraries] {
+            func key(_ pair: SamePhotoPair) -> Set<String> {
+                [pair.left.id.relativePath.rawValue, pair.right.id.relativePath.rawValue]
+            }
+            let proposed = SamePhotoPolicy.candidatePairs(candidates, excluding: excluded, reach: reach).map(key)
+            let eligible = candidates.filter { $0.aspectRatio != nil && !excluded.contains($0.id) }
+            var expected: [Set<String>] = []
+            for (position, left) in eligible.enumerated() {
+                for right in eligible[(position + 1)...]
+                    where reach.library(of: left.id) == reach.library(of: right.id)
+                    && Int(((left.aspectRatio ?? 0) * 100).rounded()) == Int(((right.aspectRatio ?? 0) * 100).rounded())
+                    && SamePhotoPolicy.isCandidate(left, right)
+                {
+                    expected.append(key(SamePhotoPair(left: left, right: right)))
+                }
+            }
+            #expect(proposed.count == Set(proposed).count, "\(reach): a pair proposed twice")
+            #expect(Set(proposed) == Set(expected), "\(reach)")
+            #expect(!expected.isEmpty)
+        }
+    }
+
     @Test func farHashesAreNotEvenCompared() {
         let candidates = [
             Self.still("a.jpg", subsecond: "1", hash: 0),

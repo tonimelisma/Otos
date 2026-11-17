@@ -240,6 +240,15 @@ nonisolated struct MediaAssetID: Hashable, CustomReflectable {
         MediaAssetIdentityTable.shared.relativePath(at: place)
     }
 
+    /// The number of each ID's library root in the identity table, in the order of `ids`,
+    /// read under one lock acquisition for the whole sequence: equal for IDs of one root and
+    /// different for IDs of two, never persisted. What a pass that only tells libraries
+    /// apart — a grouping or a bucket by library — reads instead of each ID's root path, which
+    /// takes the lock and copies the path per row.
+    static func rootNumbers(of ids: some Sequence<MediaAssetID>) -> [UInt32] {
+        MediaAssetIdentityTable.shared.rootNumbers(of: ids.map(\.place))
+    }
+
     /// Derived from both paths' FNV-1a fingerprints (`PathFingerprint.mediaAsset`), never
     /// persisted or logged as identity.
     var fingerprint: UInt64 {
@@ -511,6 +520,18 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
             storage.noteLock()
             return storage.roots[Int(storage.entry(at: place).root)]
         }
+    }
+
+    /// The root number of each of `places`, in order, under one lock acquisition.
+    func rootNumbers(of places: [UInt32]) -> [UInt32] {
+        var roots = places
+        storage.withLock { storage in
+            storage.noteLock()
+            for index in roots.indices {
+                roots[index] = storage.entry(at: roots[index]).root
+            }
+        }
+        return roots
     }
 
     func relativePath(at place: UInt32) -> MediaRelativePath {

@@ -3331,12 +3331,11 @@ extension CatalogStore {
     /// The options of `selection`'s sidebar row as each of its rows gives them
     /// (`CatalogFilterOptionTally`), with the cells' names in the one language the catalog holds
     /// names in, when it holds them in one: the whole read, which a keyed re-read then patches
-    /// (`filterOptionsOfRows`). `capacity` is the rows the last read of the row counted.
+    /// (`filterOptionsOfRows`).
     func filterOptionTally(
         for selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>,
         placeNameLanguages: Set<PlaceNameLanguage>,
-        capacity: Int = 0,
         lane: CatalogReadLane
     ) async throws -> CatalogFilterOptionTally {
         let row = selection.sidebarRow
@@ -3347,8 +3346,7 @@ extension CatalogStore {
         let timed = try await timedRead(reader(for: lane), operation: "filterOptions") { db in
             var tally = try CatalogFilterOptionTally(
                 names: language.map { try CatalogQueryGateway.placeCellNames(language: $0, db: db) } ?? [:],
-                language: language,
-                capacity: capacity
+                language: language
             )
             // A scope that turns out to select nothing (a day with no photos) offers nothing.
             guard try CatalogQueryGateway.tallyFilterOptionRows(scope: scope, into: &tally, db: db) else {

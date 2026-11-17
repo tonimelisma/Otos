@@ -324,12 +324,12 @@ extension CatalogProjection {
         return (patched.holdingArrays(of: held.answer), DiagnosticsTiming.milliseconds(since: start))
     }
 
-    /// How an options read reads (`plan(forOptions:)`): the row's whole scope, room made for
-    /// the rows the last read of it counted, or only the rows the changes since the held tally
-    /// was read name, with the cells' names when they moved, to patch that tally in place.
+    /// How an options read reads (`plan(forOptions:)`): the row's whole scope, or only the rows
+    /// the changes since the held tally was read name, with the cells' names when they moved,
+    /// to patch that tally in place.
     enum FilterOptionsPlan: Equatable, Sendable {
-        case whole(capacity: Int)
-        case keyed(rows: Set<MediaAssetID>, names: PlaceNameLanguage?, patching: UInt64, capacity: Int)
+        case whole
+        case keyed(rows: Set<MediaAssetID>, names: PlaceNameLanguage?, patching: UInt64)
     }
 
     /// What an options read gave and the Store change it started after.
@@ -372,7 +372,7 @@ extension CatalogProjection {
     /// change the read starts after.
     func readFilterOptions(
         _ owed: OwedFilterOptions,
-        plan: FilterOptionsPlan = .whole(capacity: 0),
+        plan: FilterOptionsPlan = .whole,
         sequence: UInt64 = 0,
         store: CatalogStore
     ) async throws -> FilterOptionsRead {
@@ -382,10 +382,7 @@ extension CatalogProjection {
             let options = try await filterOptionsReader(owed)
             return FilterOptionsRead(outcome: .answered(options), sequence: sequence, ms: DiagnosticsTiming.milliseconds(since: start))
         }
-        let capacity: Int
-        switch plan {
-        case let .keyed(rows, names, patching, held):
-            capacity = held
+        if case let .keyed(rows, names, patching) = plan {
             // Nothing a change named moved what the options count: the held tally stands.
             guard !rows.isEmpty || names != nil else {
                 return FilterOptionsRead(
@@ -401,15 +398,12 @@ extension CatalogProjection {
                     outcome: .keyed(read, patching: patching), sequence: sequence, ms: DiagnosticsTiming.milliseconds(since: start)
                 )
             }
-        case let .whole(held):
-            capacity = held
         }
         filterOptionsQueryCount &+= 1
         let tally = try await store.windowReads.filterOptionTally(
             for: owed.row,
             availableLibraryPaths: owed.availableLibraryPaths,
-            placeNameLanguages: owed.placeNameLanguages,
-            capacity: capacity
+            placeNameLanguages: owed.placeNameLanguages
         )
         return FilterOptionsRead(outcome: .whole(tally), sequence: sequence, ms: DiagnosticsTiming.milliseconds(since: start))
     }

@@ -268,12 +268,10 @@ extension CatalogReads where Lane == WindowLane {
     func filterOptionTally(
         for selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>,
-        placeNameLanguages: Set<PlaceNameLanguage>,
-        capacity: Int
+        placeNameLanguages: Set<PlaceNameLanguage>
     ) async throws -> CatalogFilterOptionTally {
         try await store.filterOptionTally(
-            for: selection, availableLibraryPaths: availableLibraryPaths, placeNameLanguages: placeNameLanguages,
-            capacity: capacity, lane: lane
+            for: selection, availableLibraryPaths: availableLibraryPaths, placeNameLanguages: placeNameLanguages, lane: lane
         )
     }
 
