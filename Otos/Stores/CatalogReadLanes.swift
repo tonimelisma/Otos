@@ -401,8 +401,8 @@ extension CatalogReads where Lane == WindowLane {
         try await store.metadata(for: id, lane: lane)
     }
 
-    func searchEmbeddingPendingCount() async throws -> Int {
-        try await store.searchEmbeddingPendingCount(lane: lane)
+    func assetsWithNoThumbnailComing() async throws -> [MediaAssetID] {
+        try await store.assetsWithNoThumbnailComing(lane: lane)
     }
 
     func namedPeople() async throws -> [SearchPerson] {

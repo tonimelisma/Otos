@@ -2753,6 +2753,25 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// Schema v77: `idx_media_asset_no_thumbnail_coming`, the rows that hold no thumbnail and
+    /// will get none from Otos's own work: rendering ran and found none (ENR-004), or the
+    /// source said it holds none (`source_products_absent`, ADR 0046 §7). Search never reads
+    /// them, so an empty search answer leaves them out of the items it says it is still
+    /// reading (`PhotoSearchIndex.unreadCount`), and that read visits only these rows' index
+    /// entries, which carry the columns its condition tests (so no table row is read): 221 of
+    /// 167,250 on the owner's catalog. A new partial index over existing rows: the migration
+    /// reads the table once and writes no row.
+    static let noThumbnailComingMigrationIdentifier = "v77_media_asset_no_thumbnail_coming"
+
+    /// Literal, as v77 builds it (ADR 0002: an applied migration's outcome never changes).
+    static let noThumbnailComingStatements: [String] = [
+        """
+        CREATE INDEX idx_media_asset_no_thumbnail_coming ON media_asset(library_root_id, relative_path, \
+        thumbnail_path, rendered_source_mtime, source_products_absent)
+        WHERE thumbnail_path IS NULL AND (rendered_source_mtime IS NOT NULL OR source_products_absent = 1)
+        """,
+    ]
+
     static func indexStoredSearchTexts(_ db: Database) throws {
         let start = ContinuousClock.now
         let rows = try Row.fetchCursor(db, sql: """

@@ -621,6 +621,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.noThumbnailComingMigrationIdentifier) { db in
+            for statement in CatalogSchema.noThumbnailComingStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

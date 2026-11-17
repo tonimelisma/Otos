@@ -143,7 +143,18 @@ The projection publishes which state the shown query is in
   or Maps take. A reading takes about 40 ms in English and 0.35 s translated. Ending the
   search publishes at once; a scope, filter or catalog change under the same query waits
   for its reading, still marked as searching.
-- **Read** (`read`): the matches, or `No Results`.
+- **Read** (`read`): the matches, or `No Results`. An answer that matches nothing says how
+  many of the scope's items search has not read yet, so it never reads as empty while some
+  are unread: the index's answer (`PhotoSearchIndex.unreadCount`), the scope's assets memory
+  holds no embedding for — owed one, or waiting for the thumbnail it is read from — but for
+  those that will get no thumbnail (rendering found none, or the source holds none), which
+  search never reads. The index knows the first of the scope it just searched; the second is
+  one read of a partial index over only those rows (v77, 221 of 167,250 on the owner's
+  catalog). The empty state is the search's own, so the scope's cataloged and unfiltered
+  counts, which the other empty states are told by, are not read. Rejected: counting every
+  owed row of the available roots per empty answer (about 320 ms at 160,000 photos, and a
+  number for the whole library under any scope), and reading the scope's cataloged count,
+  which its held order already answers (334 ms there).
 - **Could not be read** (`failed`): the scope shows none of its items and the empty state
   says the search could not be made, until a retry reads it. A failed reading is read again
   after a backoff, 2 s doubling to a minute (`time: backoff`), not by the window's cadence,

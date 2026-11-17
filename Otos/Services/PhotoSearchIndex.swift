@@ -554,6 +554,22 @@ actor PhotoSearchIndex: QuiescentOwner {
         )
     }
 
+    /// How many of `scope`'s assets search has not read yet and will: what an empty answer
+    /// says it is still reading (ADR 0048, DES-108). Those memory holds no embedding for — owed
+    /// one, or waiting for the thumbnail it is read from — but for the ones that will get no
+    /// thumbnail (`CatalogStore.assetsWithNoThumbnailComing`), which search never reads. The
+    /// scope's rows are the ones its answer was just computed from, so a scope searched again
+    /// hashes nothing; the one read visits only the rows with no thumbnail coming, and is made
+    /// only while memory lacks some of the scope.
+    func unreadCount(among scope: [MediaAssetID]) async throws -> Int {
+        let unrowed = scopedRows(scope).unrowed
+        guard !unrowed.isEmpty else {
+            return 0
+        }
+        let neverRead = try await store.windowReads.assetsWithNoThumbnailComing()
+        return unrowed.count - neverRead.reduce(0) { $0 + (unrowed.contains($1) ? 1 : 0) }
+    }
+
     /// `scope`'s assets as the slots memory holds them, and those it holds none for: the last
     /// answer while the scope and memory are what they were (`revision`), else read again.
     private func scopedRows(_ scope: [MediaAssetID]) -> ScopedRows {

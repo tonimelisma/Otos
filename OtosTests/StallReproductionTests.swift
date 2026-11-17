@@ -58,7 +58,8 @@ struct StallReproductionTests {
 
         let shape = catalog.shape
         #expect(try await store.windowReads.catalogedAssetCount(for: .allMedia) > 0)
-        #expect(try await store.windowReads.searchEmbeddingPendingCount() == shape.embeddingsOwed)
+        #expect(try await store.owedSearchEmbeddingCount() == shape.embeddingsOwed)
+        #expect(try await store.windowReads.assetsWithNoThumbnailComing().count == shape.noThumbnailComing)
         #expect(try await store.backgroundReads.renderSignatureCandidates(limit: 1000).candidates.count == shape.renderSignaturesOwed)
         #expect(try await store.backgroundReads.searchTextCandidates(limit: shape.assets).candidates.count == shape.textsOwed)
         #expect(try await store.backgroundReads.metadataRefreshCandidates(after: nil, limit: shape.assets).count == shape.metadataStaleInLibraries)
@@ -80,6 +81,10 @@ struct StallReproductionTests {
         let renderSignatures = try #require(report.quiet.first { $0.name == "renderSignatureCandidates" })
         #expect(renderSignatures.returned == catalog.shape.renderSignaturesOwed)
         #expect(renderSignatures.visitedRows >= Int64(catalog.shape.renderSignaturesOwed), "SQLite counted the rows it visited")
+        // An empty search answer's one read visits the rows with no thumbnail coming, not the library.
+        let neverRead = try #require(report.quiet.first { $0.name == "assetsWithNoThumbnailComing" })
+        #expect(neverRead.returned == catalog.shape.noThumbnailComing)
+        #expect(neverRead.visitedRows <= Int64(Self.visitsPerOwedRow * neverRead.returned), "visited \(neverRead.visitedRows)")
         #expect(report.live.count == StallReproduction.scopeCount * 4)
         let unanswered = report.live.filter { !$0.answered }
         #expect(unanswered.isEmpty, "\(unanswered.count) window reads failed: \(report.summary(catalog))")
@@ -302,6 +307,8 @@ enum StallReproduction {
             try await walk { try await store.backgroundReads.searchEmbeddingRows(after: $0, limit: PhotoSearchIndex.loadPageSize) }
         }
         try await replay("currentSearchEmbeddingIDs") { try await store.backgroundReads.currentSearchEmbeddingIDs().ids.count }
+        // What an empty search answer leaves out of the photos it is still reading (ADR 0048).
+        try await replay("assetsWithNoThumbnailComing") { try await store.windowReads.assetsWithNoThumbnailComing().count }
         // A query's words, from the text index (ADR 0048): a word, and a prefix many readings hold.
         for word in ["open", "ca"] {
             try await replay("searchTextMatches.\(word)") { try await store.windowReads.searchTextMatches([SearchTextQuery(word)]).ids.count }

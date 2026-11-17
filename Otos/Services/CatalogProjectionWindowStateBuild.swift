@@ -207,11 +207,13 @@ extension CatalogProjection {
                 )
                 reads.search = matches.made
                 reuse.search = matches.reused
+                let searchedScope = unsearched.scopedAssetIDs
                 let unsearchedCount = Self.narrow(&unsearched, to: matches.made.matches, order: search.order)
-                // Only an empty answer says how many photos search has not read yet.
+                // Only an empty answer says how many of the scope's photos search has not read
+                // yet, which the index knows of the scope it just searched.
                 unsearched.search = try await .read(
                     unsearchedScopeCount: unsearchedCount,
-                    stillReadingCount: unsearched.scopedAssetIDs.isEmpty ? store.windowReads.searchEmbeddingPendingCount() : 0
+                    stillReadingCount: unsearched.scopedAssetIDs.isEmpty ? unreadCount(among: searchedScope) : 0
                 )
             case let .refining(encoding):
                 // A first reading shows its matches while the full one is read, still marked as
@@ -549,6 +551,15 @@ extension CatalogProjection {
         return (made, false)
     }
 
+    /// How many of `scope`'s assets search has not read yet: the index's answer
+    /// (`PhotoSearchIndex.unreadCount`), for the scope its matches were just computed among.
+    private func unreadCount(among scope: [MediaAssetID]) async throws -> Int {
+        guard let searchIndex else {
+            throw CatalogProjectionSearchUnavailable()
+        }
+        return try await searchIndex.unreadCount(among: scope)
+    }
+
     /// Narrows the scope to `matches` (ADR 0048), among the scope's own assets, and returns how
     /// many the scope held before.
     private static func narrow(
@@ -669,12 +680,17 @@ extension CatalogProjection {
     }
 
     /// Cataloged assets in scope ignoring the filter; only asked when the filtered scope
-    /// is empty and a filter is active, so the empty state can say "no matches".
+    /// is empty and a filter is active, so the empty state can say "no matches". An empty
+    /// search answer says why it is empty itself, so it asks for neither this nor the scope's
+    /// cataloged count, each a count of the whole scope (`searchSaysWhyEmpty`); the counts
+    /// it passes on are then read by nothing.
     private func unfilteredVisibleAssetCount(
         _ facts: CatalogProjectionBuildFacts,
         store: CatalogStore
     ) async throws -> Int {
-        guard facts.resolvedDescriptor.filter.isActive, facts.scopedAssetIDs.isEmpty else {
+        guard facts.resolvedDescriptor.filter.isActive, facts.scopedAssetIDs.isEmpty,
+              !CatalogWindowPolicy.searchSaysWhyEmpty(facts.search)
+        else {
             return facts.scopedAssetIDs.count
         }
         return try await store.windowReads.visibleAssetCount(
@@ -687,7 +703,7 @@ extension CatalogProjection {
         _ facts: CatalogProjectionBuildFacts,
         store: CatalogStore
     ) async throws -> Int {
-        guard facts.scopedAssetIDs.isEmpty else {
+        guard facts.scopedAssetIDs.isEmpty, !CatalogWindowPolicy.searchSaysWhyEmpty(facts.search) else {
             return facts.orderedAssetIDs.count
         }
         return try await store.windowReads.catalogedAssetCount(for: facts.resolvedDescriptor.scope)

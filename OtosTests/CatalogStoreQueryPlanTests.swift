@@ -390,6 +390,34 @@ struct CatalogStoreQueryPlanTests {
         #expect(cells["c.jpg"] == PlaceCell(latitude: 4499, longitude: 8999))
     }
 
+    /// ADR 0048: what an empty search answer leaves out of the items it is still reading — the
+    /// rows that will get no thumbnail — is one seek of `idx_media_asset_no_thumbnail_coming` per
+    /// root, visiting only those rows: never a row awaiting its thumbnail, one holding one, or a
+    /// table row.
+    @Test func theRowsWithNoThumbnailComingAreReadFromTheirIndex() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        try await dbQueue.write { db in
+            // a.jpg: rendering found no thumbnail. c.jpg: its source holds none. b.jpg: awaiting one.
+            try db.execute(sql: "UPDATE media_asset SET rendered_source_mtime = 1000 WHERE relative_path = 'a.jpg'")
+            try db.execute(sql: "UPDATE media_asset SET source_products_absent = 1 WHERE relative_path = 'c.jpg'")
+        }
+        let sql = SearchEmbeddingStorage.noThumbnailComingSQL(rootCount: 2)
+        let (plan, rows) = try await dbQueue.read { db in
+            try (
+                explainPlan(db, sql: sql, arguments: [rootID1, rootID2]),
+                Row.fetchAll(db, sql: sql, arguments: [rootID1, rootID2]).map { $0["relative_path"] as String }
+            )
+        }
+        #expect(plan.contains("SEARCH media_asset USING COVERING INDEX idx_media_asset_no_thumbnail_coming (library_root_id=?)"), "\(plan)")
+        #expect(!plan.contains("SCAN"), "\(plan)")
+        #expect(Set(rows) == ["a.jpg", "c.jpg"])
+    }
+
     @Test func enrichmentClaimUpdateReturningClaimsRows() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")

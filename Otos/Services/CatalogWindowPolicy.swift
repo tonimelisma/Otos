@@ -316,6 +316,13 @@ nonisolated enum CatalogWindowPolicy {
         }
     }
 
+    /// Whether an empty window's state is the search's own (`searchEmptyState`): the search
+    /// narrowed a scope that held items. Then the scope's cataloged and unfiltered counts,
+    /// which the other empty states are told by, are not asked for.
+    static func searchSaysWhyEmpty(_ search: CatalogSearchOutcome?) -> Bool {
+        (search?.unsearchedScopeCount ?? 0) > 0
+    }
+
     /// What the window says about an empty scope, and nil when the scope holds items: a
     /// scope with items has no empty state to draw.
     static func mediaEmptyState(
@@ -327,7 +334,7 @@ nonisolated enum CatalogWindowPolicy {
         search: CatalogSearchOutcome? = nil
     ) -> CatalogMediaEmptyState? {
         guard selectedAssetCount == 0 else { return nil }
-        if let search, let text = descriptor.search?.text, search.unsearchedScopeCount > 0 {
+        if let search, let text = descriptor.search?.text, searchSaysWhyEmpty(search) {
             return searchEmptyState(search, text: text)
         }
         if descriptor.filter.isActive, unfilteredVisibleAssetCount > 0 {

@@ -17,17 +17,14 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v76's twelve order indexes made again as v64 (date) and v69 (name,
-    /// size) left them, and its record removed.
-    static let newest = CatalogSchema.orderFilterColumnsMigrationIdentifier
+    /// schema before it: v77's partial index dropped, and its record removed.
+    static let newest = CatalogSchema.noThumbnailComingMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
-        let dateIndexes = CatalogSchema.photoTestedIndexes.prefix(4).map { index in
-            "CREATE INDEX \(index.name) ON media_asset(\(index.columns), \(CatalogSchema.photoTestedColumns))"
-        }
-        let creates = dateIndexes + CatalogSchema.sortOrderTestedColumnsStatements.filter { $0.hasPrefix("CREATE") }
-        let drops = CatalogSchema.orderFilterColumnsStatements.filter { $0.hasPrefix("DROP") }
-        return drops + creates + ["DELETE FROM grdb_migrations WHERE identifier = '\(newest)'"]
+        [
+            "DROP INDEX \(SearchEmbeddingStorage.noThumbnailComingIndexName)",
+            "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
+        ]
     }
 
     @Test(.enabled(if: StallReproductionTests.ownerSize))
@@ -68,7 +65,7 @@ struct CatalogMigrationCostTests {
         let compaction = try CatalogStore.compactIfOwed(pool, fileURL: URL(filePath: path)) {}
         try pool.close()
         #expect(run.applied == 1)
-        // What v76's indexes take on the disk, before and after.
+        // What the order indexes take on the disk, before and after.
         let indexesAfter = try Self.orderIndexBytes(path)
         let writesAfter = try Self.rowWriteBytes(path)
         let readsAfter = try WindowReadPages.measure(path: path)

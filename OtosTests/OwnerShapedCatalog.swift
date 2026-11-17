@@ -32,6 +32,7 @@ struct OwnerShapedCatalog {
         var renderSignaturesOwed = 0
         var textsOwed = 0
         var stillsAwaitingPreview = 0
+        var noThumbnailComing = 0
         var videosOwingFaces = 0
         var metadataStaleInLibraries = 0
         var unhashable = 0
@@ -102,6 +103,10 @@ struct OwnerShapedCatalog {
         static let staleMetadataPermille = 197
         static let videosOwingFaces = 896
         static let stillsAwaitingPreview = 43
+        /// Rows that will get no thumbnail (v77's index), his on 2026-11-17: 26 stills rendering
+        /// found none in, and 152 account videos whose server holds none.
+        static let stillsWithNoThumbnail = 26
+        static let accountVideosWithNoThumbnail = 152
         /// Import batches in the libraries: 11,401 rows in 45 batches.
         static let importedRows = 11401
         static let importBatches = 45
@@ -332,6 +337,28 @@ struct OwnerShapedCatalog {
             """,
             arguments: [shape.stillsAwaitingPreview]
         )
+        // The rows that will get no thumbnail: library stills rendering found none in, and
+        // account videos whose server holds none.
+        let unrendered = scaled(Owner.stillsWithNoThumbnail, scale)
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET thumbnail_path = NULL, preview_path = NULL
+            WHERE rowid IN (SELECT rowid FROM media_asset WHERE library_root_id = 7 AND kind = 'image'
+                            ORDER BY rowid DESC LIMIT ?)
+            """,
+            arguments: [unrendered]
+        )
+        let sourceless = scaled(Owner.accountVideosWithNoThumbnail, scale)
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET thumbnail_path = NULL, preview_path = NULL,
+                source_products_size = NULL, source_products_mtime = NULL, source_products_absent = 1
+            WHERE rowid IN (SELECT rowid FROM media_asset WHERE library_root_id = 15 AND kind = 'video'
+                            ORDER BY rowid DESC LIMIT ?)
+            """,
+            arguments: [sourceless]
+        )
+        shape.noThumbnailComing = unrendered + sourceless
         shape.videosOwingFaces = scaled(Owner.videosOwingFaces, scale)
         try db.execute(
             sql: """

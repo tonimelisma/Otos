@@ -56,6 +56,27 @@ nonisolated enum SearchEmbeddingStorage {
       AND e.source IS NOT \(currentSource("a"))
     """
 
+    /// The rows that hold no thumbnail and will get none from Otos's own work, so search never
+    /// reads them: rendering ran and found none (ENR-004), or the source said it holds none
+    /// (`source_products_absent`, ADR 0046 §7). The condition of `noThumbnailComingIndexName`
+    /// (v77), unqualified as the index's condition is.
+    static let noThumbnailComingIndexName = "idx_media_asset_no_thumbnail_coming"
+
+    static let noThumbnailComingPredicate = """
+    thumbnail_path IS NULL AND (rendered_source_mtime IS NOT NULL OR source_products_absent = 1)
+    """
+
+    /// Those rows' keys in `rootCount` roots (bound in order): one seek of the partial index per
+    /// root, visiting only them.
+    static func noThumbnailComingSQL(rootCount: Int) -> String {
+        """
+        SELECT library_root_id, relative_path
+        FROM media_asset INDEXED BY \(noThumbnailComingIndexName)
+        WHERE library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
+          AND \(noThumbnailComingPredicate)
+        """
+    }
+
     /// One asset, by its key (binds the root and the path), when it is owed an embedding: what
     /// the index embeds for a change that names its rows, one seek of the asset's own row.
     static let keyedCandidateSQL = """

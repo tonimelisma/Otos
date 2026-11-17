@@ -491,5 +491,11 @@
       "idx_media_asset_size_root_asc": "CREATE INDEX idx_media_asset_size_root_asc ON media_asset(library_root_id, (byte_size IS NULL), byte_size ASC, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)",
       "idx_media_asset_size_root_desc": "CREATE INDEX idx_media_asset_size_root_desc ON media_asset(library_root_id, (byte_size IS NULL), byte_size DESC, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, content_identifier, shown_copy_root_id, has_copies, best_format, media_choice)"
     }
+  },
+  {
+    "migration": "v77_media_asset_no_thumbnail_coming",
+    "indexes": {
+      "idx_media_asset_no_thumbnail_coming": "CREATE INDEX idx_media_asset_no_thumbnail_coming ON media_asset(library_root_id, relative_path, thumbnail_path, rendered_source_mtime, source_products_absent)\nWHERE thumbnail_path IS NULL AND (rendered_source_mtime IS NOT NULL OR source_products_absent = 1)"
+    }
   }
 ]

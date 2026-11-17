@@ -7,6 +7,21 @@ import Synchronization
 import Testing
 import UniformTypeIdentifiers
 
+extension CatalogStore {
+    /// How many assets are owed a search embedding, as the index's own backlog walk finds
+    /// them, page after page from the newest capture.
+    func owedSearchEmbeddingCount() async throws -> Int {
+        var owed = 0
+        var cursor: CaptureOrderCursor?
+        repeat {
+            let page = try await backgroundReads.searchEmbeddingCandidates(after: cursor, limit: 256)
+            owed += page.candidates.count
+            cursor = page.next
+        } while cursor != nil
+        return owed
+    }
+}
+
 /// ADR 0048: a search embedding is read from the stored thumbnail it names, is stale when
 /// that thumbnail changes, and the index answers a query from what it has read.
 // Serialized: every case builds its own index, which loads the image and text models
@@ -69,7 +84,7 @@ struct PhotoSearchIndexTests {
     }
 
     private func enrich(
-        _ store: CatalogStore, _ asset: MediaAsset, thumbnail: String, captured: Date? = nil, preview: String? = nil
+        _ store: CatalogStore, _ asset: MediaAsset, thumbnail: String?, captured: Date? = nil, preview: String? = nil
     ) async throws {
         _ = await store.applyEnrichmentBatch([EnrichmentResult(
             id: asset.id,
@@ -205,7 +220,7 @@ struct PhotoSearchIndexTests {
         let store = catalog.store
         let candidates = try await store.backgroundReads.searchEmbeddingCandidates(limit: 10).candidates
         #expect(Set(candidates.map(\.id)) == [catalog.red, catalog.blue])
-        #expect(try await store.windowReads.searchEmbeddingPendingCount() == 2)
+        #expect(try await store.owedSearchEmbeddingCount() == 2)
         let red = try #require(candidates.first { $0.id == catalog.red })
         let vector = [Float](repeating: 0.5, count: SearchEmbedding.dimensions)
 
@@ -215,7 +230,7 @@ struct PhotoSearchIndexTests {
         #expect(written.map(\.id) == [catalog.red])
 
         #expect(try await store.backgroundReads.searchEmbeddingCandidates(limit: 10).candidates.map(\.id) == [catalog.blue])
-        #expect(try await store.windowReads.searchEmbeddingPendingCount() == 1)
+        #expect(try await store.owedSearchEmbeddingCount() == 1)
         let current = try await store.backgroundReads.currentSearchEmbeddings(for: [catalog.red, catalog.blue])
         #expect(current.map(\.id) == [catalog.red])
         #expect(current.first.flatMap { SearchEmbeddingStorage.embedding(from: $0.vector) } == vector)
@@ -278,9 +293,11 @@ struct PhotoSearchIndexTests {
         try await enrich(store, asset, thumbnail: "red-thumb-2.jpg")
         try await waitUntil {
             let passes = await index.passesFinished
-            let owed = try await store.windowReads.searchEmbeddingPendingCount()
+            // Both current again, read by key: the backlog's walk and the index's keyed reads are
+            // what this test counts.
+            let current = try await store.backgroundReads.currentSearchEmbeddings(for: [catalog.red, catalog.blue])
             let answered = await index.answeredEveryRequest
-            return passes > settled && owed == 0 && answered
+            return passes > settled && current.count == 2 && answered
         }
 
         for operation in wholeReads {
@@ -593,7 +610,7 @@ struct PhotoSearchIndexTests {
         try await waitUntil { await index.retriesScheduled > 0 }
         #expect(await index.embeddedCount == 2)
         #expect(try await store.backgroundReads.searchEmbeddingCandidates(limit: 10).candidates.map(\.id) == [broken.id])
-        #expect(try await store.windowReads.searchEmbeddingPendingCount() == 1)
+        #expect(try await store.owedSearchEmbeddingCount() == 1)
         #expect(try await store.windowReads.photoInfoOverlay(for: broken.id)?.sceneLabels == nil)
         await index.shutdown()
         await store.shutdown()
@@ -767,7 +784,7 @@ struct PhotoSearchIndexTests {
             return passes > settled && answered
         }
 
-        #expect(try await catalog.store.windowReads.searchEmbeddingPendingCount() == 0)
+        #expect(try await catalog.store.owedSearchEmbeddingCount() == 0)
         #expect(await index.embeddedCount == 2)
         #expect(await index.vectorFileSlots?.id == before.id)
         #expect(await index.vectorFileSlots?.slots == before.slots + 1)
@@ -932,7 +949,7 @@ struct PhotoSearchIndexTests {
         let red = try #require(matches.scores?[catalog.red])
         let blue = try #require(matches.scores?[catalog.blue])
         #expect(red > blue)
-        #expect(try await catalog.store.windowReads.searchEmbeddingPendingCount() == 0)
+        #expect(try await catalog.store.owedSearchEmbeddingCount() == 0)
         await index.shutdown()
         await catalog.store.shutdown()
     }
@@ -1574,10 +1591,10 @@ struct PhotoSearchIndexTests {
         }
         defer { recording.cancel() }
         let unsearched = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
-        func owedCounts() -> Int {
-            store.use().connections.holds.filter { $0.operation.hasPrefix("searchEmbeddingPendingCount") }.reduce(0) { $0 + $1.count }
+        func unreadCounts() -> Int {
+            store.use().connections.holds.filter { $0.operation.hasPrefix("assetsWithNoThumbnailComing") }.reduce(0) { $0 + $1.count }
         }
-        let before = owedCounts()
+        let before = unreadCounts()
 
         await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "zebra")))
         // The words reading is matched while the load is held; then the load ends, and the
@@ -1587,8 +1604,69 @@ struct PhotoSearchIndexTests {
         await load.open()
         let states = await recorder.waitForValues { $0.last?.searchPhase == .read }
         #expect(await projection.searchMatchCount == 2)
-        #expect(owedCounts() == before, "no pass read the owed count")
+        #expect(unreadCounts() == before, "no pass read what search has not read")
         #expect(states[unsearched.count...].allSatisfy { $0.mediaGrid.orderedAssetIDs.count == 2 }, "the grid kept what it showed")
+
+        await index.shutdown()
+        await store.shutdown()
+    }
+
+    /// DES-108, ADR 0048: an answer that matches nothing says how many of the scope's photos
+    /// search has not read yet — one whose thumbnail does not decode, still owed — and not the
+    /// one that will get no thumbnail, which search never reads. The index knows the first of
+    /// the scope it just searched; the one read made visits only the rows with no thumbnail
+    /// coming. No count of the whole scope is read: neither its cataloged count nor its
+    /// unfiltered one, which only the other empty states are told by (1.05 s for both at
+    /// 160,000 photos).
+    @Test func anEmptyAnswerReadsNoCountOfTheWholeScope() async throws {
+        let catalog = try await makeCatalog(broken: true, green: true, onDisk: true)
+        let store = catalog.store
+        let green = try #require(catalog.assets.first { $0.id.relativePath.rawValue == "green.jpg" })
+        let broken = try #require(catalog.assets.first { $0.id.relativePath.rawValue == "broken.jpg" })
+        // Rendering ran and found no thumbnail.
+        try await enrich(store, green, thumbnail: nil)
+        #expect(try await store.windowReads.assetsWithNoThumbnailComing() == [green.id])
+        let bundle = Bundle(for: CatalogWindowViewModel.self)
+        let encoder = SearchQueryEncoder(bundle: bundle)
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
+            // No photo scores above the floor: every answer is empty.
+            cutoff: SearchCutoff(floor: 2, margin: 0),
+            backoff: (.seconds(86400), .seconds(86400)),
+            queries: SearchQueryReader { try await encoder.englishEncoding(of: $0.text) },
+            textReader: .readingNoText()
+        )
+        await index.start()
+        try await waitUntil {
+            let embedded = await index.embeddedCount
+            let retries = await index.retriesScheduled
+            return embedded == 2 && retries > 0
+        }
+        #expect(try await store.backgroundReads.searchEmbeddingCandidates(limit: 10).candidates.map(\.id) == [broken.id])
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
+        await projection.attachSearchIndex(index)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recorder = AsyncValueRecorder<CatalogWindowState>()
+        let recording = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer { recording.cancel() }
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 4 }
+        func reads(_ operation: String) -> Int {
+            store.use().connections.holds.filter { $0.operation.hasPrefix(operation) }.reduce(0) { $0 + $1.count }
+        }
+        let wholeScopeCounts = ["catalogedAssetCount", "visibleAssetCount"]
+        let before = wholeScopeCounts.map(reads)
+        let neverReadBefore = reads("assetsWithNoThumbnailComing")
+
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "a dog")))
+        let empty = await recorder.waitForValues { $0.last?.searchPhase == .read }.last
+        #expect(empty?.mediaGrid.orderedAssetIDs.isEmpty == true)
+        #expect(empty?.mediaEmptyState == .noSearchResults("a dog", stillReading: 1))
+        #expect(wholeScopeCounts.map(reads) == before, "an empty answer read a count of the whole scope")
+        #expect(reads("assetsWithNoThumbnailComing") > neverReadBefore)
 
         await index.shutdown()
         await store.shutdown()

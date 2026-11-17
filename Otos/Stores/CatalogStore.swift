@@ -10660,19 +10660,26 @@ extension CatalogStore {
         let path: String
     }
 
-    /// How many assets are owed a search embedding: what the empty search result says
-    /// search has not read yet.
-    func searchEmbeddingPendingCount(lane: CatalogReadLane) async throws -> Int {
+    /// The available roots' assets that hold no thumbnail and will get none from Otos's own
+    /// work (`SearchEmbeddingStorage.noThumbnailComingSQL`): what search never reads, so an
+    /// empty answer does not count them among the items it is still reading
+    /// (`PhotoSearchIndex.unreadCount`). Visits only those rows.
+    func assetsWithNoThumbnailComing(lane: CatalogReadLane) async throws -> [MediaAssetID] {
         let rootIDs = availableRootRowIDs()
         guard !rootIDs.isEmpty else {
-            return 0
+            return []
         }
+        let pathsByRowID = roots.pathsByRowID
         return try await reader(for: lane).readFreeingConnection { db in
-            try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) \(SearchEmbeddingStorage.owedFrom(rootCount: rootIDs.count))",
-                arguments: StatementArguments(rootIDs)
-            ) ?? 0
+            let rows = try Row.fetchCursor(
+                db, sql: SearchEmbeddingStorage.noThumbnailComingSQL(rootCount: rootIDs.count), arguments: StatementArguments(rootIDs)
+            )
+            var ids: [MediaAssetID] = []
+            while let row = try rows.next() {
+                guard let root = pathsByRowID[row[0]] else { continue }
+                ids.append(MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])))
+            }
+            return ids
         }
     }
 

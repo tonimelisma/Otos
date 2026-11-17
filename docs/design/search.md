@@ -54,8 +54,10 @@ field, menu item and empty state, and Lightroom's two orders. It adds nothing of
   search leaves the scope's own sort as it was.
 - **Empty:** the empty state (`CatalogMediaEmptyStateView`) reads `No Results for “dog”`
   (`magnifyingglass`), and under it either `Check the spelling or try a new search.` or,
-  while some items have not been read for search yet, `Otos is still reading 1,204 items for
-  search. They appear here if they match.` (the honest-numbers principle: a count, never a percentage). A
+  while some of the scope's items have not been read for search yet, `Otos is still reading
+  1,204 items for search. They appear here if they match.` (the honest-numbers principle: a
+  count, never a percentage; it counts the scope searched, and leaves out an item that will
+  get no thumbnail, which search never reads). A
   scope that holds nothing keeps its own empty state.
 
 ## What a query can say
