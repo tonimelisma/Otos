@@ -184,6 +184,46 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    /// A change that names its rows owes those stills alone: the writer reads them by key and
+    /// walks nothing, so a backlog's described stills are never visited again for each reading
+    /// written (plan 0116). A change that names none still walks.
+    @Test func aNamedChangeIsDescribedByKeyWithoutAWalk() async throws {
+        // A file-backed catalog: its connections account each transaction to its operation.
+        let root = try makeTestDirectory()
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(
+            in: root, files: ["a.jpg", "b.jpg"], database: root.appending(path: "db/catalog.sqlite")
+        )
+        let store = library.store
+        let directory = try makeTestDirectory().appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try await library.readFaces(["a.jpg", "b.jpg"].map { library.result(for: $0, faces: []) })
+        try await Self.readLabels([], in: store)
+        // Only a.jpg's text is read: b.jpg is not describable yet.
+        let owedText = try await store.backgroundReads.searchTextCandidates(limit: 10).candidates
+        let first = try #require(owedText.first { $0.id == library.id("a.jpg") })
+        let second = try #require(owedText.first { $0.id == library.id("b.jpg") })
+        _ = try await store.applySearchTexts([SearchTextResult(id: first.id, source: first.source, lines: [])])
+        for path in ["a.jpg", "b.jpg"] {
+            try writeSubjectJPEG(to: directory.appending(path: "preview-\(path).heic"), center: CGPoint(x: 0.5, y: 0.5))
+        }
+        let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory) { _, _ in .written("Described.") }
+        await writer.start()
+        try await waitUntil { try await store.backgroundReads.currentPhotoDescriptions(for: [first.id]).count == 1 }
+        _ = try await writer.untilQuiescent()
+        func transactions(_ operation: String) -> Int {
+            store.use().connections.holds.filter { $0.operation == operation }.reduce(0) { $0 + $1.count }
+        }
+        let walksBefore = transactions("photoDescriptionCandidates")
+
+        _ = try await store.applySearchTexts([SearchTextResult(id: second.id, source: second.source, lines: [])])
+        try await waitUntil { try await store.backgroundReads.currentPhotoDescriptions(for: [second.id]).count == 1 }
+        _ = try await writer.untilQuiescent()
+        #expect(transactions("photoDescriptionCandidates") == walksBefore)
+        #expect(transactions("photoDescriptionCandidatesByKey") >= 1)
+        await writer.shutdown()
+        await store.shutdown()
+    }
+
     /// A model that is not available writes nothing and stops the drain; the still stays owed.
     @Test func anUnavailableModelWritesNothing() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])

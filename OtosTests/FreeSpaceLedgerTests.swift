@@ -1,4 +1,6 @@
+import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// ADR 0027: the free space a multi-write owner checks the floor against is the lesser of
@@ -118,5 +120,68 @@ struct FreeSpaceLedgerTests {
         #expect(admitted15, "projected from floor + 1500 less the 100 already committed")
         let admitted16 = ledger.admit(1000, reported: nil)
         #expect(!admitted16, "the projection, floor + 400, is still known")
+    }
+}
+
+/// The volume figure the floor reads (`VolumeCapacityHold`): one CacheDelete calculation per
+/// volume per refresh, lowered at once by every byte the volume's own free count loses, and
+/// never raised before the next calculation.
+struct VolumeCapacityHoldTests {
+    private final class Volume: Sendable {
+        private let state = Mutex((important: Int64(100_000), free: Int64(60000), calculations: 0, now: ContinuousClock.now))
+
+        var calculations: Int {
+            state.withLock { $0.calculations }
+        }
+
+        func set(important: Int64? = nil, free: Int64? = nil, advancedBy: Duration = .zero) {
+            state.withLock { state in
+                state.important = important ?? state.important
+                state.free = free ?? state.free
+                state.now = state.now.advanced(by: advancedBy)
+            }
+        }
+
+        func hold() -> VolumeCapacityHold {
+            VolumeCapacityHold(
+                readImportant: { _ in self.state.withLock { $0.calculations += 1
+                    return $0.important
+                } },
+                readFree: { _ in VolumeCapacityHold.Free(volume: [1, 2], bytes: self.state.withLock(\.free)) },
+                now: { self.state.withLock(\.now) },
+                refresh: .seconds(60)
+            )
+        }
+    }
+
+    @Test func aWriteShowsAtOnceAndFreedSpaceAtTheNextCalculation() {
+        let volume = Volume()
+        let hold = volume.hold()
+        let url = URL(fileURLWithPath: "/volume/file")
+        #expect(hold.available(onVolumeOf: url) == 100_000)
+        // A write lands: the free count drops, and the figure with it, with no calculation.
+        volume.set(free: 55000, advancedBy: .seconds(10))
+        #expect(hold.available(onVolumeOf: url) == 95000)
+        // Space is freed: the held figure does not rise before the next calculation.
+        volume.set(important: 120_000, free: 75000, advancedBy: .seconds(10))
+        #expect(hold.available(onVolumeOf: url) == 100_000)
+        #expect(volume.calculations == 1)
+        volume.set(advancedBy: .seconds(41))
+        #expect(hold.available(onVolumeOf: url) == 120_000)
+        #expect(volume.calculations == 2)
+    }
+
+    /// A volume `statfs` cannot read is calculated every time, as before.
+    @Test func aVolumeWithoutAFreeCountIsCalculatedEachTime() {
+        let calculations = Mutex(0)
+        let hold = VolumeCapacityHold(
+            readImportant: { _ in calculations.withLock { $0 += 1
+                return 7
+            } }, readFree: { _ in nil }
+        )
+        let url = URL(fileURLWithPath: "/volume/file")
+        #expect(hold.available(onVolumeOf: url) == 7)
+        #expect(hold.available(onVolumeOf: url) == 7)
+        #expect(calculations.withLock { $0 } == 2)
     }
 }

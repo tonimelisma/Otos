@@ -10712,7 +10712,9 @@ extension CatalogStore {
             return (written, changesOnThisDay)
         }
         if !applied.isEmpty {
-            notifyCatalogChanged(.changed(changesOnThisDay ? [.searchContent, .searchReadings] : .searchContent))
+            notifyCatalogChanged(.changed(
+                changesOnThisDay ? [.searchContent, .searchReadings] : .searchContent, rows: .rows(Set(applied.map(\.id)))
+            ))
         }
         return applied
     }
@@ -10961,7 +10963,7 @@ extension CatalogStore {
             return written
         }
         if !applied.isEmpty {
-            notifyCatalogChanged(.changed(.searchContent))
+            notifyCatalogChanged(.changed(.searchContent, rows: .rows(Set(applied.map(\.id)))))
         }
         return applied
     }
@@ -10986,33 +10988,70 @@ extension CatalogStore {
             ) { position, order in
                 PhotoDescriptionStorage.candidatesSQL(rootCount: rootIDs.count, position: position, order: order)
             }
-            var candidates: [PhotoDescriptionCandidate] = []
-            candidates.reserveCapacity(rows.count)
-            for row in rows {
-                guard let root = pathsByRowID[row["library_root_id"]] else { continue }
-                let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
-                guard !excluding.contains(id) else { continue }
-                let renderedRevision: Int64 = row["rendered_revision"]
-                let recipe: EditRecipe
-                do {
-                    recipe = renderedRevision == 0 ? .neutral : try Self.editRecipe(json: row["edit_recipe_json"]) ?? .neutral
-                } catch {
-                    OtosLog.metadata.errorOperation("description", phase: "recipeUnreadable", fields: [
-                        "relativePath": id.relativePath.rawValue, "error": String(describing: error),
-                    ])
-                    continue
-                }
-                let key: StatementArguments = [row["library_root_id"] as Int64, id.relativePath.rawValue]
-                try candidates.append(PhotoDescriptionCandidate(
-                    id: id,
-                    previewPath: row["preview_path"],
-                    source: row["source"],
-                    recipe: recipe,
-                    facts: Self.photoDescriptionFacts(db, key: key)
-                ))
-            }
+            let candidates = try Self.photoDescriptionCandidates(rows, pathsByRowID: pathsByRowID, excluding: excluding, db: db)
             return CandidatePage(candidates: candidates, next: next)
         }
+    }
+
+    /// Those of `ids` owed a description now, by the walk's rule, each read by its own key
+    /// (`PhotoDescriptionStorage.keyedCandidateSQL`), but those in `excluding`: the stills a
+    /// change named, which the writer describes without walking the backlog again.
+    func photoDescriptionCandidatesByKey(
+        of ids: Set<MediaAssetID>,
+        excluding: some Collection<MediaAssetID> & Sendable = Set<MediaAssetID>(),
+        lane: CatalogReadLane
+    ) async throws -> [PhotoDescriptionCandidate] {
+        let rowIDs = roots.values.filter(\.root.kind.readsFaces).reduce(into: [LibraryRootPath: Int64]()) { $0[$1.root.path] = $1.rowID }
+        let keys = ids.compactMap { id in rowIDs[id.libraryRootPath].map { (rootID: $0, path: id.relativePath.rawValue) } }
+            .sorted { ($0.rootID, $0.path) < ($1.rootID, $1.path) }
+        guard !keys.isEmpty else { return [] }
+        let pathsByRowID = roots.pathsByRowID
+        return try await reader(for: lane).readFreeingConnection { db in
+            let statement = try db.cachedStatement(sql: PhotoDescriptionStorage.keyedCandidateSQL)
+            var rows: [Row] = []
+            for key in keys {
+                if let row = try Row.fetchOne(statement, arguments: [key.rootID, key.path]) {
+                    rows.append(row)
+                }
+            }
+            return try Self.photoDescriptionCandidates(rows, pathsByRowID: pathsByRowID, excluding: excluding, db: db)
+        }
+    }
+
+    /// The candidates `rows` name, with the facts the model is told, but those in `excluding`.
+    /// A row whose edit cannot be read is passed over and logged.
+    private nonisolated static func photoDescriptionCandidates(
+        _ rows: [Row],
+        pathsByRowID: [Int64: LibraryRootPath],
+        excluding: some Collection<MediaAssetID>,
+        db: Database
+    ) throws -> [PhotoDescriptionCandidate] {
+        var candidates: [PhotoDescriptionCandidate] = []
+        candidates.reserveCapacity(rows.count)
+        for row in rows {
+            guard let root = pathsByRowID[row["library_root_id"]] else { continue }
+            let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
+            guard !excluding.contains(id) else { continue }
+            let renderedRevision: Int64 = row["rendered_revision"]
+            let recipe: EditRecipe
+            do {
+                recipe = renderedRevision == 0 ? .neutral : try editRecipe(json: row["edit_recipe_json"]) ?? .neutral
+            } catch {
+                OtosLog.metadata.errorOperation("description", phase: "recipeUnreadable", fields: [
+                    "relativePath": id.relativePath.rawValue, "error": String(describing: error),
+                ])
+                continue
+            }
+            let key: StatementArguments = [row["library_root_id"] as Int64, id.relativePath.rawValue]
+            try candidates.append(PhotoDescriptionCandidate(
+                id: id,
+                previewPath: row["preview_path"],
+                source: row["source"],
+                recipe: recipe,
+                facts: photoDescriptionFacts(db, key: key)
+            ))
+        }
+        return candidates
     }
 
     /// What the model is told about one still: its faces with their people, when and where it

@@ -574,6 +574,7 @@ struct CatalogStoreQueryPlanTests {
                     ),
                     arguments: [1, 2, 0.0, 16]
                 )),
+                ("keyed", explainPlan(db, sql: PhotoDescriptionStorage.keyedCandidateSQL, arguments: [1, "a.jpg"])),
                 ("faces", explainPlan(db, sql: PhotoDescriptionStorage.facesSQL, arguments: [1, "a.jpg"])),
                 ("readings", explainPlan(db, sql: PhotoDescriptionStorage.readingsSQL, arguments: [1, "a.jpg"])),
                 ("current", explainPlan(db, sql: PhotoDescriptionStorage.currentRowSQL, arguments: [1, "a.jpg"])),
@@ -583,6 +584,11 @@ struct CatalogStoreQueryPlanTests {
             let scans = plan.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.hasPrefix("SCAN ") }
             #expect(scans.allSatisfy { $0.hasPrefix("SCAN (subquery") }, "\(name): \(plan)")
         }
+        // A named still is one seek of its own row: the key, never a walk of the capture order.
+        let keyed = try #require(plans.first { $0.0 == "keyed" }?.1)
+        #expect(keyed.split(separator: "\n").contains { line in
+            line.trimmingCharacters(in: .whitespaces).hasPrefix("SEARCH a USING") && line.hasSuffix("(library_root_id=? AND relative_path=?)")
+        }, "\(keyed)")
     }
 
     /// v53's one-time cleanup visits each text reading once, as it must to find the empty ones,

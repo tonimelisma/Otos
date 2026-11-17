@@ -234,8 +234,9 @@ struct CatalogOnThisDayScopeTests {
             SearchEmbeddingResult(id: screen.id, source: screen.source, embedding: vector, confidentLabels: ["screenshot"]),
         ])
         #expect(written.count == 1)
-        // The label takes the photo out of On This Day, so the scope is read again.
-        #expect(await changes.next() == .changed([.searchContent, .searchReadings]))
+        // The label takes the photo out of On This Day, so the scope is read again; the write
+        // names the row it read.
+        #expect(await changes.next() == .changed([.searchContent, .searchReadings], rows: .rows([screen.id])))
 
         let ordered = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .onThisDay(Self.today)),
@@ -325,7 +326,7 @@ struct CatalogOnThisDayScopeTests {
         _ = try await store.applySearchEmbeddings([
             SearchEmbeddingResult(id: reread.id, source: reread.source, embedding: vector, confidentLabels: ["screenshot"]),
         ])
-        #expect(await changes.next() == .changed([.searchContent, .searchReadings]))
+        #expect(await changes.next() == .changed([.searchContent, .searchReadings], rows: .rows([reread.id])))
         #expect(try await onThisDay() == [id("unread.jpg"), id("photo.jpg")])
         await store.shutdown()
     }

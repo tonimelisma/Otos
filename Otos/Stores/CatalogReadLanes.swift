@@ -584,6 +584,13 @@ extension CatalogReads where Lane == BackgroundLane {
         try await store.photoDescriptionCandidates(after: cursor, limit: limit, excluding: excluding, lane: lane)
     }
 
+    func photoDescriptionCandidatesByKey(
+        of ids: Set<MediaAssetID>,
+        excluding: some Collection<MediaAssetID> & Sendable = Set<MediaAssetID>()
+    ) async throws -> [PhotoDescriptionCandidate] {
+        try await store.photoDescriptionCandidatesByKey(of: ids, excluding: excluding, lane: lane)
+    }
+
     func currentPhotoDescriptions(for ids: [MediaAssetID]) async throws -> [MediaAssetID: String] {
         try await store.currentPhotoDescriptions(for: ids, lane: lane)
     }

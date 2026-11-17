@@ -107,6 +107,20 @@ nonisolated enum PhotoDescriptionStorage {
         """
     }
 
+    /// One still, by its key (binds the root and the path), when it is owed a description by
+    /// the walk's rule: a seek of its own row, for the stills a change named
+    /// (`CatalogStore.photoDescriptionCandidatesByKey(of:excluding:lane:)`).
+    static let keyedCandidateSQL = """
+    SELECT a.best_capture_local, a.library_root_id, a.relative_path, a.preview_path, a.edit_recipe_json,
+           a.rendered_revision, \(currentSource("a")) AS source
+    FROM media_asset AS a
+    LEFT JOIN photo_description AS d INDEXED BY \(sourceIndexName)
+        ON d.library_root_id = a.library_root_id AND d.relative_path = a.relative_path
+    WHERE a.library_root_id = ? AND a.relative_path = ?
+      AND \(describableStill)
+      AND d.source IS NOT \(currentSource("a"))
+    """
+
     /// One asset's current description row, by its key: the text (NULL when declined), or no
     /// row while one is owed.
     static let currentRowSQL = """

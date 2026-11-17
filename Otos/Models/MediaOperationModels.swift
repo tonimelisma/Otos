@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import Synchronization
 import UniformTypeIdentifiers
 
 // Media operation planning models (ARC-046).
@@ -243,14 +245,14 @@ typealias VolumeCapacityReader = @Sendable (URL) -> Int64?
 nonisolated enum FreeSpaceFloor {
     static let bytes: Int64 = 5 * 1024 * 1024 * 1024
 
-    /// CacheDelete's figure for important usage on `url`'s volume: it counts purgeable
-    /// space and can lag the truth in either direction (research 2026-09-09, finding 4),
-    /// which the floor tolerates in the conservative direction only — a stale-low figure
-    /// stops a little early and the work is offered again; a stale-high one is caught by
-    /// the write's own `ENOSPC`. `nil` when the volume does not answer.
+    /// CacheDelete's figure for important usage on `url`'s volume, through the app's one
+    /// hold (`VolumeCapacityHold`): it counts purgeable space and can lag the truth in either
+    /// direction (research 2026-09-09, finding 4), which the floor tolerates in the
+    /// conservative direction only — a stale-low figure stops a little early and the work is
+    /// offered again; a stale-high one is caught by the write's own `ENOSPC`. `nil` when the
+    /// volume does not answer.
     static func availableBytes(onVolumeOf url: URL) -> Int64? {
-        (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
-            .volumeAvailableCapacityForImportantUsage
+        VolumeCapacityHold.shared.available(onVolumeOf: url)
     }
 
     /// The volume `url` lies on, which keys a `FreeSpaceLedger`: one volume's projection
@@ -287,6 +289,93 @@ nonisolated enum FreeSpaceFloor {
             return refusedForSpace(underlying)
         }
         return false
+    }
+}
+
+/// The free space each volume reports for important use (`FreeSpaceFloor.availableBytes`),
+/// at the cost of one CacheDelete calculation per volume per `refresh` rather than per
+/// decision: the calculation takes about 15 ms of CPU, and a session asked for it once per
+/// background download and once per page of People's vectors, about a second in every two
+/// minutes (`docs/research/2026-11-16-idle-disk-read-attribution.md`).
+///
+/// Between two calculations, the figure held is lowered at once by every byte the volume's
+/// own free count (`statfs`, microseconds) has lost since it was read, so a write that
+/// reaches the disk, Otos's or anyone's, shows in the next decision as it did with a fresh
+/// figure. Space freed since — a file deleted, a purge — shows only at the next calculation:
+/// the held figure can be low for up to `refresh`, never high, which is the direction the
+/// floor tolerates (ADR 0027).
+final nonisolated class VolumeCapacityHold: Sendable {
+    /// What `statfs` says of the volume a URL lies on: which volume, and its free bytes.
+    struct Free: Equatable, Sendable {
+        let volume: [Int32]
+        let bytes: Int64
+    }
+
+    /// The app's one hold, which every owner's floor reads through.
+    static let shared = VolumeCapacityHold()
+
+    /// How long a calculation is used before the next. time: poll — CacheDelete reports no
+    /// change of the purgeable space it counts, so the figure is asked again this often.
+    static let refresh: Duration = .seconds(60)
+
+    private struct Held {
+        let important: Int64
+        let free: Int64
+        let at: ContinuousClock.Instant
+    }
+
+    private let held = Mutex<[[Int32]: Held]>([:])
+    private let readImportant: @Sendable (URL) -> Int64?
+    private let readFree: @Sendable (URL) -> Free?
+    private let now: @Sendable () -> ContinuousClock.Instant
+    private let refresh: Duration
+
+    init(
+        readImportant: @escaping @Sendable (URL) -> Int64? = VolumeCapacityHold.importantUsage,
+        readFree: @escaping @Sendable (URL) -> Free? = VolumeCapacityHold.statfsFree,
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
+        refresh: Duration = VolumeCapacityHold.refresh
+    ) {
+        self.readImportant = readImportant
+        self.readFree = readFree
+        self.now = now
+        self.refresh = refresh
+    }
+
+    /// The figure for `url`'s volume: the held calculation less what the volume's free count
+    /// has lost since, or a new calculation once the held one is `refresh` old. A volume
+    /// `statfs` cannot read is asked directly every time; nil when it does not answer.
+    func available(onVolumeOf url: URL) -> Int64? {
+        guard let free = readFree(url) else {
+            return readImportant(url)
+        }
+        let instant = now()
+        if let figure = held.withLock({ held -> Int64? in
+            guard let last = held[free.volume], instant - last.at < refresh else { return nil }
+            return last.important + min(0, free.bytes - last.free)
+        }) {
+            return figure
+        }
+        guard let important = readImportant(url) else {
+            return nil
+        }
+        held.withLock { $0[free.volume] = Held(important: important, free: free.bytes, at: instant) }
+        return important
+    }
+
+    /// CacheDelete's figure for important usage on `url`'s volume.
+    @Sendable static func importantUsage(_ url: URL) -> Int64? {
+        (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage
+    }
+
+    /// The volume's free bytes as the file system counts them, and its identity.
+    @Sendable static func statfsFree(_ url: URL) -> Free? {
+        var status = statfs()
+        guard statfs(url.path(percentEncoded: false), &status) == 0 else {
+            return nil
+        }
+        return Free(volume: [status.f_fsid.val.0, status.f_fsid.val.1], bytes: Int64(status.f_bavail) * Int64(status.f_bsize))
     }
 }
 

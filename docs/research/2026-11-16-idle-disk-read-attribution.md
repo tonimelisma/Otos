@@ -69,3 +69,29 @@ capacity figure (`volumeAvailableCapacityForImportantUsage`) costs 15.5 ms of CP
 - The scorecard prints `DISK READ BY OWNER` for the session and the idle window.
 - Still not attributed: bytes read by image decoders (originals for metadata and renders,
   previews for faces, descriptions and search), and CPU by owner.
+
+## Waste found and removed
+
+- **Descriptions re-walked the described stills.** `photoDescriptionCandidates` took 11.4 s of
+  reader time in 10 reads (1.1 to 3.4 s each). Every text reading and every embedding
+  written (`.searchContent`, 118 in the session) restarted the walk from the newest still.
+  Each restart visited every still at the top again, both the described ones and the ones
+  not yet describable, before it reached the owed ones. Those writes now name their rows, and a named change owes only those stills, read by key
+  (`PhotoDescriptionStorage.keyedCandidateSQL`, one seek of the row's key). A change that
+  names no rows (a person, a place name) still restarts the walk.
+- **Free space was calculated per decision.** `VolumeCapacityHold` keeps one CacheDelete
+  calculation per volume for 60 s and lowers it live by the volume's `statfs` free count (ADR 0027).
+
+## Owed, or left as they are
+
+- `searchTextCandidates` (116 reads, 12 ms each) is the text reader's backlog of about 43 h,
+  paged; owed.
+- `mirrorPairsOwed` (56 reads in 3 passes) and `sourceProductCandidates` (20 reads) are the
+  Immich account's mirror and product walks, run once per 5-minute poll even when its listing
+  changed nothing (`listed=0 deleted=0`). The library side also moves pairs: a renamed library
+  file is paired under its new path, and no listing reports that to the sync. So the
+  account's own listing cannot be what holds the walks. Not changed here.
+- `mediaAssets` (1,084 reads, 2 ms each) is enrichment re-reading the rows on screen at every
+  dispatch, to find the ones owed a priority claim. Not changed here.
+- `currentSearchEmbeddingIDs` (2 reads, 1.45 s each) and `peopleSnapshot` (2 reads) are the
+  launch's loads; owed once a session.

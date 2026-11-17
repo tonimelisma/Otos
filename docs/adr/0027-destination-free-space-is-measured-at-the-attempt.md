@@ -11,8 +11,15 @@ volume to keep at least the free-space floor after that entry lands:
 `available − entryBytes ≥ FreeSpaceFloor.bytes`. `available` is the run's
 `FreeSpaceLedger` view, the lesser of two figures:
 
-- the capacity read fresh from `volumeAvailableCapacityForImportantUsage` for this
-  entry, which shows every write that has reached the disk;
+- the capacity for important usage for this entry, which shows every write that has
+  reached the disk. CacheDelete's calculation (`volumeAvailableCapacityForImportantUsage`)
+  costs about 15 ms of CPU, and a session asked for it once per background download and per
+  page of People's vectors, so the app holds one calculation per volume for up to 60 s
+  (`VolumeCapacityHold`, `time: poll`: nothing reports a change of purgeable space) and
+  lowers it at once by every byte the volume's own free count (`statfs`, microseconds) has
+  lost since. Every write that reaches the disk still shows in the next decision; space freed
+  shows at the next calculation, so the held figure can only be low, which the floor
+  tolerates (Consequences);
 - the run's first reading less every byte the run has committed since: entries in
   flight and the bytes entries landed, with a refused, failed or cancelled entry's
   bytes, and a download's whose file was already local, returned (a write settles with
@@ -64,7 +71,8 @@ Trash's downloads, by `MaterializationCoordinator` for every background and devi
 download, by export, and by an Immich account's products. Each of those owners takes the
 volume's free space from a `VolumeCapacityReader` passed as `volumeCapacity:`, a required
 parameter with no default. The composition root (`OtosApp`) is the one place that names
-the real disk's reading, `FreeSpaceFloor.availableBytes(onVolumeOf:)`, and
+the real disk's reading, `FreeSpaceFloor.availableBytes(onVolumeOf:)` (through the app's one
+`VolumeCapacityHold`), and
 `CatalogWindowViewModel` hands that one reader to every owner it builds. A test therefore
 states the figure it runs under — ample, unless it tests the floor — and no outcome depends
 on the disk of the machine that runs it: a defaulted reader once let suites that omitted it

@@ -91,10 +91,16 @@ kind its walk reads — faces and people, place names and locations, capture tim
 the search embedding and text reading a still waits for (`.searchContent`, which the Store
 announces with every search write); a row only added is not one — derived from its own SQL
 (`CatalogOwnerInputs`), and by its retry wake; newest capture first, one request at a time,
-sixteen to a page. Each wake is a request answered by one newest-first walk (`CandidateWalk`)
-that a newer request restarts from the top, read from indexes (v65): a page of sixteen read
-4.9k pages on the owner-shaped catalog, against 17 s for the whole-set query it replaced on
-the owner's. A failed preview or request is
+sixteen to a page. A change that names its rows (a text reading or an embedding written, a
+still's faces read) owes those stills alone, read by their keys
+(`PhotoDescriptionStorage.keyedCandidateSQL`) ahead of the walk's next page: a still's
+description is written from its own rows and from people and place cells, whose writes name
+no photo, so a named change makes no other still owed. Restarting the walk for each of them
+re-read the described stills at the top on every page, 1.1 to 3.4 s a page on the owner's
+library (`docs/research/2026-11-16-idle-disk-read-attribution.md`). A change that names no
+rows, and a wake, owe one newest-first walk (`CandidateWalk`) that a newer one restarts from
+the top, read from indexes (v65): a page of sixteen read 4.9k pages on the owner-shaped
+catalog, against 17 s for the whole-set query it replaced on the owner's. A failed preview or request is
 passed over for 15 minutes; an unavailable model (Apple Intelligence off, not eligible, not
 ready) stops the drain for 15 minutes and a busy one (rate-limited in the background) for a
 minute (`time: backoff`: nothing reports when it would answer). The model call is injected
