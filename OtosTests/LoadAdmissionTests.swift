@@ -76,6 +76,32 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.release(4)) == [.grant(1, .searchPrepare)])
     }
 
+    /// A load the user waits on (a query's encoder) is granted at once beside the running one,
+    /// ahead of the loads waiting, and none of them starts while it runs.
+    @Test func aLoadTheUserWaitsOnRunsAtOnceAndHoldsTheWaitingOnesBack() {
+        var machine = LoadAdmissionMachine(isOpen: true)
+        #expect(machine.handle(.request(1, .people)) == [.grant(1, .people)])
+        #expect(machine.handle(.request(2, .duplicates)).isEmpty)
+        #expect(machine.handle(.request(3, .searchPrepare)).isEmpty)
+        #expect(machine.handle(.requestForUser(4, .searchPrepare)) == [.grant(4, .searchPrepare)])
+        #expect(machine.running?.request == 1)
+        #expect(machine.runningForUser.map(\.request) == [4])
+        #expect(machine.handle(.release(1)).isEmpty, "nothing waiting starts beside the user's load")
+        #expect(machine.handle(.release(4)) == [.grant(2, .duplicates)])
+        #expect(machine.runningForUser.isEmpty)
+    }
+
+    /// The user's load does not wait for the first grid; shutdown refuses it like any other.
+    @Test func aLoadTheUserWaitsOnRunsBeforeTheFirstGridAndNeverAfterShutdown() {
+        var machine = LoadAdmissionMachine()
+        #expect(machine.handle(.requestForUser(1, .searchPrepare)) == [.grant(1, .searchPrepare)])
+        #expect(machine.handle(.request(2, .people)).isEmpty)
+        #expect(machine.handle(.open).isEmpty)
+        #expect(machine.handle(.release(1)) == [.grant(2, .people)])
+        _ = machine.handle(.shutdown)
+        #expect(machine.handle(.requestForUser(3, .searchPrepare)) == [.refuse(3)])
+    }
+
     @Test func aWithdrawnRequestNeverRuns() {
         var machine = LoadAdmissionMachine(isOpen: true)
         _ = machine.handle(.request(1, .people))

@@ -39,8 +39,12 @@ nonisolated enum SearchQueryStatus: Sendable, Equatable {
 ///   loop to load what every reading needs (the text encoder, `SearchQueryEncoder.prepare`)
 ///   before any query is typed: a request revision the loop covers in turn with the readings
 ///   (ADR 0032 rule 2), so a query typed while the load is in flight waits for that load
-///   rather than starting a second, and nothing is published for it. A load that fails is
-///   logged and stays asked; the query's own reading loads what it needs anyway.
+///   rather than starting a second, and nothing is published for it. A query read while
+///   that is not ready (`isPrepared`) asks for the same load first. Both are loads the user
+///   waits on (`LoadWaiter.user`): admitted at once, ahead of the background loads waiting,
+///   never behind them. The window's first grid readies it too, as a background load that
+///   holds its turn (`prepareWhileAdmitted`). A load that fails is logged and stays asked;
+///   the query's own reading loads what it needs anyway.
 /// - **No deadline.** A reading reports when it ends, so a query is `reading` until it does,
 ///   however long Translation or Maps take; no timer stands in for that report (ADR 0033).
 /// - **A failed reading** is an error, not a fact (ADR 0032 rule 4): it is reported `failed`,
@@ -55,10 +59,15 @@ actor SearchQueryReader {
     typealias FirstReading = @Sendable (SearchQueryRequest) async throws -> SearchQueryEncoding?
     /// Loads what every reading needs, ahead of the first.
     typealias Prepare = @Sendable () async throws -> Void
+    /// Whether everything `Prepare` loads is loaded.
+    typealias IsPrepared = @Sendable () async -> Bool
 
     private let encode: Encode
     private let first: FirstReading?
     private let prepareReadings: Prepare?
+    private let isPrepared: IsPrepared?
+    /// Where a load the user waits on is admitted; nil runs it unadmitted (a test's reader).
+    private let admission: LoadAdmission?
     /// Preparations asked for and the one the last finished load answered (ADR 0032 rule 2).
     private var prepareRequested: UInt64 = 0
     private var prepareCovered: UInt64 = 0
@@ -86,9 +95,13 @@ actor SearchQueryReader {
         backoff: (first: Duration, last: Duration) = (.seconds(2), .seconds(60)),
         first: FirstReading? = nil,
         prepare: Prepare? = nil,
+        isPrepared: IsPrepared? = nil,
+        admission: LoadAdmission? = nil,
         encode: @escaping Encode
     ) {
         prepareReadings = prepare
+        self.isPrepared = isPrepared
+        self.admission = admission
         self.backoff = backoff
         nextRetry = backoff.first
         self.first = first
@@ -214,14 +227,47 @@ actor SearchQueryReader {
         }
     }
 
-    /// Covers the preparation asked for, before the query wanted is read: the query then finds
-    /// the encoder loaded. Publishes nothing.
+    /// Covers the preparation asked for, and the one a query to read needs when the readings
+    /// are not ready, before the query wanted is read: the query then finds the encoder
+    /// loaded. A load the user waits on, admitted at once (`LoadWaiter.user`). Publishes
+    /// nothing.
     private func prepareIfAsked() async {
-        guard let prepareReadings, prepareRequested != prepareCovered else { return }
+        guard let prepareReadings else { return }
+        if prepareRequested == prepareCovered {
+            guard wanted != nil, let isPrepared, await !isPrepared() else { return }
+            prepareRequested &+= 1
+        } else if let isPrepared, await isPrepared() {
+            prepareCovered = prepareRequested
+            return
+        }
         let asked = prepareRequested
         do {
-            try await prepareReadings()
+            if let admission {
+                try await admission.run(.searchPrepare, for: .user) { try await prepareReadings() }
+            } else {
+                try await prepareReadings()
+            }
             prepareCovered = asked
+            preparationsLoaded += 1
+        } catch {
+            let failure = error as NSError
+            OtosLog.catalog.errorOperation("search.query", phase: "prepareFailed", fields: [
+                "domain": failure.domain, "code": "\(failure.code)", "error": String(describing: error),
+            ])
+        }
+    }
+
+    /// Loads what every reading needs for a caller that holds the background admission for it
+    /// (`BackgroundLoad.searchPrepare`, the first grid's readying): awaited, so the load runs
+    /// inside that turn and no other load runs beside it. Nothing when it is ready. Publishes
+    /// nothing.
+    func prepareWhileAdmitted() async {
+        guard let prepareReadings else { return }
+        if let isPrepared, await isPrepared() {
+            return
+        }
+        do {
+            try await prepareReadings()
             preparationsLoaded += 1
         } catch {
             let failure = error as NSError

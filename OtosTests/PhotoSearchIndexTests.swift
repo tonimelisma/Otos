@@ -341,8 +341,6 @@ struct PhotoSearchIndexTests {
         #expect(await encoder.loads == 0, "nothing is readied before the first grid")
         admission.open()
         try await waitUntil { await index.preparationsMade == 1 }
-        // The index's preparation asks the reader to prepare and returns: the reader's own loop
-        // loads the encoder, so the load is waited on, never assumed done with the preparation.
         try await waitUntil { await encoder.loads == 1 }
 
         let dog = SearchQueryRequest(text: "dog")
@@ -350,6 +348,40 @@ struct PhotoSearchIndexTests {
         try await waitUntil { await index.queries.status(for: dog) == .read(SearchQueryReaderTests.encoding("dog")) }
         #expect(await encoder.loadedBeforeEncoding == [true])
         #expect(await encoder.loads == 1)
+        await index.shutdown()
+        admission.shutdown()
+        await catalog.store.shutdown()
+    }
+
+    /// The first grid's readying loads the encoder inside its own turn: while it loads, the
+    /// admission runs it and grants no other load beside it.
+    @Test func theFirstGridsReadyingLoadsTheEncoderInsideItsTurn() async throws {
+        let catalog = try await makeCatalog()
+        let admission = LoadAdmission()
+        let seenByLoads = Mutex<[LoadAdmissionMachine]>([])
+        let prepared = Mutex(false)
+        let index = PhotoSearchIndex(
+            store: catalog.store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            queries: SearchQueryReader(
+                prepare: {
+                    seenByLoads.withLock { $0.append(admission.snapshot) }
+                    prepared.withLock { $0 = true }
+                },
+                isPrepared: { prepared.withLock { $0 } },
+                admission: admission
+            ) { SearchQueryReaderTests.encoding($0.text) },
+            textReader: .readingNoText(), admission: admission
+        )
+        await index.start()
+        index.prepareWhenAdmitted(among: [catalog.red, catalog.blue])
+        try await waitUntil { admission.snapshot.waiting.contains { $0.load == .searchPrepare } }
+        admission.open()
+        try await waitUntil { await index.preparationsMade == 1 }
+        let seen = seenByLoads.withLock { $0 }
+        #expect(seen.count == 1)
+        #expect(seen.first?.running?.load == .searchPrepare)
+        #expect(seen.first?.runningForUser.isEmpty == true)
         await index.shutdown()
         admission.shutdown()
         await catalog.store.shutdown()

@@ -1,5 +1,6 @@
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// ADR 0048: what the user searches for is read by its own owner, so the window never waits on
@@ -209,6 +210,59 @@ struct SearchQueryReaderTests {
         #expect(await encoder.loadedBeforeEncoding == [true])
         #expect(await reader.preparationsLoaded == 1)
         #expect(await reader.readingsEnded == 1)
+        await reader.shutdown()
+    }
+
+    /// Plan 0116: the first query, typed while a People pass runs and a duplicates build and
+    /// the first grid's readying wait their turn, is served without waiting for them. Its
+    /// encoder load is admitted for the user at once, beside the running pass, and nothing
+    /// waiting starts while it runs; a second query loads nothing. Admissions are counted, not
+    /// timed.
+    @Test func theFirstQueryIsServedWithoutWaitingForTheBackgroundLoads() async throws {
+        let admission = LoadAdmission(isOpen: true)
+        let people = ArrivalGate()
+        let pass = Task { try await admission.run(.people) { await people.arrive() } }
+        await people.waitForArrivals(1)
+        let duplicates = Task { try await admission.run(.duplicates) {} }
+        let readying = Task { try await admission.run(.searchPrepare) {} }
+        try await waitUntil { admission.snapshot.waiting.count == 2 }
+
+        let seenByLoads = Mutex<[LoadAdmissionMachine]>([])
+        let prepared = Mutex(false)
+        let reader = SearchQueryReader(
+            prepare: {
+                seenByLoads.withLock { $0.append(admission.snapshot) }
+                prepared.withLock { $0 = true }
+            },
+            isPrepared: { prepared.withLock { $0 } },
+            admission: admission
+        ) { request in
+            #expect(prepared.withLock { $0 }, "the query is read with the encoder its own need loaded")
+            return Self.encoding(request.text)
+        }
+        let dog = SearchQueryRequest(text: "dog")
+        _ = await reader.status(for: dog)
+        try await waitUntil { await reader.status(for: dog) == .read(Self.encoding("dog")) }
+
+        let seen = seenByLoads.withLock { $0 }
+        #expect(seen.count == 1)
+        #expect(seen.first?.running?.load == .people)
+        #expect(seen.first?.runningForUser.map(\.load) == [.searchPrepare])
+        #expect(seen.first?.waiting.map(\.load) == [.duplicates, .searchPrepare])
+        #expect(admission.snapshot.running?.load == .people)
+        #expect(admission.snapshot.runningForUser.isEmpty)
+        #expect(admission.snapshot.waiting.map(\.load) == [.duplicates, .searchPrepare])
+        #expect(await reader.preparationsLoaded == 1)
+
+        let cat = SearchQueryRequest(text: "cat")
+        _ = await reader.status(for: cat)
+        try await waitUntil { await reader.status(for: cat) == .read(Self.encoding("cat")) }
+        #expect(seenByLoads.withLock { $0.count } == 1, "a prepared encoder is not loaded again")
+
+        await people.open()
+        try await pass.value
+        try await duplicates.value
+        try await readying.value
         await reader.shutdown()
     }
 

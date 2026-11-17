@@ -211,7 +211,8 @@ actor PhotoSearchIndex: QuiescentOwner {
         embedder = SearchImageEmbedder(bundle: bundle)
         let encoder = SearchQueryEncoder(bundle: bundle)
         self.queries = queries ?? SearchQueryReader(
-            first: { try await encoder.firstReading($0) }, prepare: { try await encoder.prepare() }
+            first: { try await encoder.firstReading($0) }, prepare: { try await encoder.prepare() },
+            isPrepared: { await encoder.isPrepared }, admission: admission
         ) { try await encoder.encode($0) }
         self.pageSize = pageSize
         let (preparations, continuation) = AsyncStream<Preparation>.makeStream(bufferingPolicy: .unbounded)
@@ -259,9 +260,12 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// The window's first grid painted over `scope`: the same preparation, without waiting for
     /// the user's intent, as the last of the heavy loads the admission grants
     /// (`BackgroundLoad.searchPrepare`, which runs behind every other), so the first query of a
-    /// session is quick even when typed at once. One mapped model, released under memory
-    /// pressure (`SearchQueryEncoder`). The intent to search, if it comes first, prepares at
-    /// once and this one withdraws; a shutdown while it waits starts nothing.
+    /// session is quick even when typed at once. The encoder loads inside that turn, so no other
+    /// heavy load runs beside it. One mapped model, released under memory pressure
+    /// (`SearchQueryEncoder`). The intent to search, if it comes first, prepares at once and
+    /// this one withdraws; a query typed while this one still waits loads the encoder at once
+    /// as a load the user waits on (`SearchQueryReader`), so it never waits behind the queue.
+    /// A shutdown while it waits starts nothing.
     nonisolated func prepareWhenAdmitted(among scope: [MediaAssetID]) {
         preparationsAsked.record()
         preparationsContinuation.yield(.admitted(scope))
@@ -288,14 +292,14 @@ actor PhotoSearchIndex: QuiescentOwner {
         case let .now(scope):
             admittedPreparation?.cancel()
             admittedPreparation = nil
-            await prepare(among: scope)
+            await prepare(among: scope, admitted: false)
         case let .admitted(scope):
             guard preparationsMade == 0, admittedPreparation == nil else { return }
             admittedPreparationRunning = true
             admittedPreparation = Task { [weak self, admission] in
                 do {
                     try await admission.run(.searchPrepare) {
-                        await self?.prepare(among: scope)
+                        await self?.prepare(among: scope, admitted: true)
                     }
                 } catch {
                     // Withdrawn (the intent prepared first) or refused at shutdown: nothing ran.
@@ -316,9 +320,16 @@ actor PhotoSearchIndex: QuiescentOwner {
         preparationsHandled != preparationsAsked.value || admittedPreparationRunning
     }
 
-    private func prepare(among scope: [MediaAssetID]) async {
+    /// `admitted`: the caller holds the background admission, so the encoder loads inside that
+    /// turn (`prepareWhileAdmitted`); otherwise the intent asks the reader, which admits the load
+    /// for the user.
+    private func prepare(among scope: [MediaAssetID], admitted: Bool) async {
         let start = ContinuousClock.now
-        await queries.prepare()
+        if admitted {
+            await queries.prepareWhileAdmitted()
+        } else {
+            await queries.prepare()
+        }
         memory.vectors?.adviseWillNeed()
         let rows = scopedRows(scope)
         preparationsMade += 1

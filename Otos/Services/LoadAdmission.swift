@@ -17,8 +17,11 @@ nonisolated enum BackgroundLoad: String, CaseIterable, Sendable {
     /// The launch's look at the derived folder, and its reconciliation when one is owed
     /// (`CatalogStore.reconcileDerivedFilesIfOwed`): after every load a view shows.
     case derivedFolder
-    /// Readying the first query (`PhotoSearchIndex.prepareWhenAdmitted`): the text encoder's
-    /// load, the vectors read ahead, the shown scope's slots. It runs last (`runsLast`).
+    /// Readying search's queries: the text encoder's load and first prediction, and, for the
+    /// first query the window's first grid readies (`PhotoSearchIndex.prepareWhenAdmitted`),
+    /// the vectors read ahead and the shown scope's slots. Asked by the first grid it runs
+    /// last (`runsLast`); asked by a query or the intent to search, the user waits on it
+    /// (`LoadWaiter.user`).
     case searchPrepare
 
     /// The order loads asked for before the window's first grid run in once it paints: the
@@ -49,6 +52,14 @@ nonisolated enum BackgroundLoad: String, CaseIterable, Sendable {
     }
 }
 
+/// Who waits on a load. A background owner's load takes its turn; a load the user is waiting
+/// on (a query's text encoder) runs at once, whatever runs or waits, and no waiting load
+/// starts while it runs: the user's wait is never spent behind loads nobody asked for.
+nonisolated enum LoadWaiter: String, Sendable {
+    case background
+    case user
+}
+
 nonisolated extension TaskPriority {
     /// What every background owner's tasks run at: below the window's `.userInitiated`, so
     /// eight owner steps on the cooperative pool never hold back a visible tile's read (ADR
@@ -67,13 +78,23 @@ nonisolated extension TaskPriority {
 /// so a load that asks again (a People pass after each batch of faces) goes behind the loads
 /// already waiting and never starves them. A load that runs last (`BackgroundLoad.runsLast`)
 /// goes behind every other waiting one, whenever it asked. The load the window's current view
-/// needs (`want`) goes before every other waiting one; it does not stop the one running. `shutdown` refuses
+/// needs (`want`) goes before every other waiting one; it does not stop the one running. A load
+/// the user waits on (`requestForUser`) is granted at once, before the first grid and beside
+/// the one running, and while one runs no waiting load is granted. `shutdown` refuses
 /// every waiting load and every later request, and grants nothing again.
 nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
     typealias Request = AdmissionRequest
 
-    static func requested(_ request: Request, _ load: BackgroundLoad) -> Event {
-        .request(request, load)
+    struct Ask: Equatable, Sendable {
+        let load: BackgroundLoad
+        let waiter: LoadWaiter
+    }
+
+    static func requested(_ request: Request, _ ask: Ask) -> Event {
+        switch ask.waiter {
+        case .background: .request(request, ask.load)
+        case .user: .requestForUser(request, ask.load)
+        }
     }
 
     static func withdrawn(_ request: Request) -> Event {
@@ -95,6 +116,8 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
         /// The window's first grid painted.
         case open
         case request(Request, BackgroundLoad)
+        /// A load the user waits on: granted at once.
+        case requestForUser(Request, BackgroundLoad)
         /// The asker stopped waiting (its task was cancelled): a waiting request is dropped.
         case withdraw(Request)
         /// A granted load ended, however it ended.
@@ -118,6 +141,8 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
     private(set) var isOpen = false
     private(set) var isShutDown = false
     private(set) var running: Waiting?
+    /// The loads the user waits on that run now: no waiting load is granted beside them.
+    private(set) var runningForUser: [Waiting] = []
     /// In the order they run when nothing is wanted.
     private(set) var waiting: [Waiting] = []
     private(set) var wanted: BackgroundLoad?
@@ -138,13 +163,22 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
         case let .request(request, load):
             guard !isShutDown else { return [.refuse(request)] }
             waiting.append(Waiting(request: request, load: load))
+        case let .requestForUser(request, load):
+            guard !isShutDown else { return [.refuse(request)] }
+            runningForUser.append(Waiting(request: request, load: load))
+            return [.grant(request, load)]
         case let .withdraw(request):
             guard let index = waiting.firstIndex(where: { $0.request == request }) else { return [] }
             waiting.remove(at: index)
             return [.refuse(request)]
         case let .release(request):
-            guard running?.request == request else { return [] }
-            running = nil
+            if running?.request == request {
+                running = nil
+            } else if let index = runningForUser.firstIndex(where: { $0.request == request }) {
+                runningForUser.remove(at: index)
+            } else {
+                return []
+            }
         case let .want(load):
             wanted = load
         case .shutdown:
@@ -158,7 +192,7 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
     }
 
     private mutating func grantIfIdle() -> [Effect] {
-        guard isOpen, !isShutDown, running == nil, !waiting.isEmpty else { return [] }
+        guard isOpen, !isShutDown, running == nil, runningForUser.isEmpty, !waiting.isEmpty else { return [] }
         let index = wanted.flatMap { load in waiting.firstIndex { $0.load == load } }
             ?? waiting.firstIndex { !$0.load.runsLast } ?? 0
         let next = waiting.remove(at: index)
@@ -174,7 +208,8 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
 /// holds hundreds of megabytes or reads much of the catalog, and on a 16 GB Mac with little
 /// free memory, two at once pushed the footprint to 3.8 GB and paid every read cold. They
 /// run one at a time, none before the window's first grid, and the one the current view
-/// needs goes first (`LoadAdmissionMachine`).
+/// needs goes first (`LoadAdmissionMachine`). A load the user waits on (`LoadWaiter.user`)
+/// runs at once and holds the waiting ones back while it runs.
 ///
 /// An owner wraps its load in `run(_:_:)`, which waits for the grant, runs the body on the
 /// caller's actor, and releases when the body returns or throws, so a load can never keep
@@ -217,12 +252,12 @@ final nonisolated class LoadAdmission: Sendable {
 
     /// Runs `body` once `load` is admitted, and releases the admission when it ends. Throws
     /// `CancellationError` without running it when the caller's task is cancelled while it
-    /// waits, or the admission shuts down first.
-    func run<T>(_ load: BackgroundLoad, _ body: () async throws -> T) async throws -> T {
+    /// waits, or the admission shuts down first. A load `for: .user` is admitted at once.
+    func run<T>(_ load: BackgroundLoad, for waiter: LoadWaiter = .background, _ body: () async throws -> T) async throws -> T {
         let asked = ContinuousClock.now
-        let request = try await admission.admit(load)
+        let request = try await admission.admit(LoadAdmissionMachine.Ask(load: load, waiter: waiter))
         OtosLog.performance.noticeOperation("load.admission", phase: "granted", fields: [
-            "load": load.rawValue, "request": "\(request)",
+            "load": load.rawValue, "request": "\(request)", "waiter": waiter.rawValue,
             "waitMs": "\(DiagnosticsTiming.milliseconds(since: asked))",
         ])
         let started = ContinuousClock.now

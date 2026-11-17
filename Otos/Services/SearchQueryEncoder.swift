@@ -114,15 +114,19 @@ nonisolated struct SearchPerson: Hashable, Sendable {
 /// names (`SearchDate`), so a pack the user installs counts on the next reading and "today"
 /// is the day the query is answered. `SearchQueryReader` calls it, one query at a time.
 ///
-/// **Load and release.** Nothing loads at launch. The user's intent to search loads the
-/// tokenizer, the model and the list of Translation's languages and runs one prediction
-/// (`prepare`), so the first query pays none of it. Under memory pressure an idle encoder lets
+/// **Load and release.** Nothing loads before the window's first grid. Then, as the last
+/// background load, or at once when the user's intent to search or a query asks first
+/// (`SearchQueryReader`, `LoadWaiter.user`), `prepare` loads the list of Translation's
+/// languages, the tokenizer (a mapped file, nothing built) and the model, and runs one
+/// prediction, so the first query pays none of it. Under memory pressure an idle encoder lets
 /// the tokenizer and the model go (`releaseIfIdle`); the next reading loads them again.
 actor SearchQueryEncoder {
     private let queue = DispatchSerialQueue(label: "net.melisma.Otos.search.query", qos: .userInitiated)
     private let bundle: Bundle
     private var tokenizer: SearchTextTokenizer?
     private var model: SearchTextModel?
+    /// Whether the loaded model has made its first prediction, which Core ML makes slower.
+    private var warmed = false
     private var supported: [NLLanguage: Locale.Language]?
     private var places: [String: SearchPlace?] = [:]
     private var glossaries: [String: SearchGlossary?] = [:]
@@ -419,14 +423,19 @@ actor SearchQueryEncoder {
     /// Loads what every reading needs — Translation's languages, the tokenizer, the model — and
     /// runs one prediction, which Core ML makes slower the first time: what the user's intent to
     /// search asks for (`SearchQueryReader.prepare`), so the first query pays none of it.
+    /// Does nothing once everything is ready (`isPrepared`).
     func prepare() async throws {
+        guard !isPrepared else { return }
         let start = ContinuousClock.now
         if supported == nil {
             supported = await Self.supportedLanguages()
         }
+        // Another preparation may have finished at that suspension.
+        guard !isPrepared else { return }
         let before = ProcessResourceSample.current().footprintBytes
         let (tokenizer, model) = try loaded()
         _ = try model.embedding(of: tokenizer.tokenIDs(for: "a photo"))
+        warmed = true
         OtosLog.catalog.noticeOperation("search.encoder", phase: "prepared", fields: [
             "footprintDeltaMB": "\((Int64(ProcessResourceSample.current().footprintBytes) - Int64(before)) / 1_048_576)",
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
@@ -438,12 +447,19 @@ actor SearchQueryEncoder {
         tokenizer != nil && model != nil
     }
 
+    /// Whether a reading would wait on nothing `prepare` does: Translation's languages are
+    /// known, the tokenizer and the model are loaded, and the model has predicted once.
+    var isPrepared: Bool {
+        supported != nil && isLoaded && warmed
+    }
+
     /// Lets the tokenizer and the model go when no reading holds them: memory pressure's
     /// answer. The next reading, or the next intent to search, loads them again.
     func releaseIfIdle() {
         guard readingsInFlight == 0, tokenizer != nil || model != nil else { return }
         tokenizer = nil
         model = nil
+        warmed = false
         OtosLog.catalog.noticeOperation("search.encoder", phase: "released", fields: [:])
         ResourceCheckpoint.record("searchEncoderReleased")
     }

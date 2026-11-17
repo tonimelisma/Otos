@@ -321,7 +321,14 @@ against 77.3, 85 in English for both), and every asset has one.
     first grid paints (`prepareWhenAdmitted`), it is asked of the load admission as its last
     load (`BackgroundLoad.searchPrepare`, `runsLast`). It waits behind every other heavy
     load, whenever that load asked: People, Duplicates, the index's own build, a mirror
-    pairing, the derived folder's reconciliation.
+    pairing, the derived folder's reconciliation. The encoder loads inside that turn
+    (`SearchQueryReader.prepareWhileAdmitted`), so no other heavy load runs beside it.
+    - A query read while the encoder is not prepared, and the intent to search, load it as a
+      load the user waits on (`LoadWaiter.user`, ADR 0055): admitted at once, never behind
+      the loads waiting.
+    - The tokenizer is its file: `SigLIP2Tokenizer.bin` holds its tables sorted and is
+      searched mapped, so loading it builds nothing (395 ms and 37 MB before;
+      `docs/research/2026-11-16-first-search-after-launch.md`).
     - If the intent comes first, the preparation runs at once and the admitted request
       withdraws.
     - A shutdown while it waits starts nothing.

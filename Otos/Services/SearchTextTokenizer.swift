@@ -16,7 +16,26 @@ import Foundation
 ///    until no ranked pair is left.
 /// 4. **Frame:** at most 63 tokens, then `<eos>`, padded with `<pad>` to 64.
 ///
-/// A value: built once off the main actor and read concurrently.
+/// **The file is the lookup.** `SigLIP2Tokenizer.bin` holds the tables already sorted, and the
+/// tokenizer maps it and searches it in place: loading builds nothing, so it costs a mapping
+/// and no heap (building hash tables of the vocabulary and merges took about 400 ms and 37 MB
+/// at every encoder load; `docs/research/2026-11-16-first-search-after-launch.md`). Little
+/// endian, each table 8-byte aligned:
+///
+/// | Bytes | Holds |
+/// | --- | --- |
+/// | 8 | `OTBPE2\0\0` |
+/// | 4 × 4 | the vocabulary's size, its distinct byte strings (E), the merges (M), the string bytes |
+/// | 8 × M | each merge's pair, `left << 32 \| right`, ascending |
+/// | 8 × M | the same merge's `rank << 32 \| merged id` |
+/// | 4 × (E + 1) | where each string starts in the string bytes, the strings in ascending byte order |
+/// | 4 × E | each string's id: the first id the trained vocabulary gives it |
+/// | the string bytes | the strings, in that order |
+///
+/// Strings compare as UTF-8 bytes, not as `String`: Swift compares strings by canonical
+/// equivalence, and 77 of the vocabulary's tokens are decomposed forms of others.
+///
+/// A value: mapped once off the main actor and read concurrently.
 nonisolated struct SearchTextTokenizer: Sendable {
     /// The text tower's fixed sequence length.
     static let contextLength = 64
@@ -29,59 +48,47 @@ nonisolated struct SearchTextTokenizer: Sendable {
         case malformed
     }
 
-    /// Keyed by UTF-8 bytes, not `String`: Swift compares strings by canonical equivalence,
-    /// and 77 of the vocabulary's tokens are decomposed forms of others.
-    private let vocabulary: [[UInt8]: Int32]
-    private let byteIDs: [Int32]
-    /// `(left << 32 | right)` → `(rank << 32 | merged id)`.
-    private let merges: [UInt64: UInt64]
+    private static let magic = Array("OTBPE2\0\0".utf8)
+    private static let headerLength = 24
+
+    /// The mapped file.
+    private let file: Data
+    private let entryCount: Int
+    private let mergeCount: Int
+    private let mergeKeysOffset: Int
+    private let mergeValuesOffset: Int
+    private let startsOffset: Int
+    private let idsOffset: Int
+    private let stringsOffset: Int
 
     init(bundle: Bundle) throws {
         guard let url = bundle.url(forResource: "SigLIP2Tokenizer", withExtension: "bin") else {
             throw LoadError.missingResource
         }
-        try self.init(data: Data(contentsOf: url, options: .mappedIfSafe))
+        try self.init(data: Data(contentsOf: url, options: .alwaysMapped))
     }
 
     init(data: Data) throws {
-        var reader = ByteReader(data: data)
-        guard try reader.bytes(8) == Array("OTBPE1\0\0".utf8) else {
+        guard data.count >= Self.headerLength, data.prefix(8).elementsEqual(Self.magic) else {
             throw LoadError.malformed
         }
-        let vocabularyCount = try Int(reader.uint32())
-        let mergeCount = try Int(reader.uint32())
-        var tokens: [[UInt8]] = []
-        tokens.reserveCapacity(vocabularyCount)
-        var vocabulary: [[UInt8]: Int32] = [:]
-        vocabulary.reserveCapacity(vocabularyCount)
-        for id in 0 ..< vocabularyCount {
-            let length = try Int(reader.uint16())
-            let token = try reader.bytes(length)
-            tokens.append(token)
-            // The first id wins, as in the trained vocabulary's map.
-            if vocabulary[token] == nil {
-                vocabulary[token] = Int32(id)
-            }
+        let header = data.withUnsafeBytes { raw in
+            (1 ... 4).map { Int(UInt32(littleEndian: raw.loadUnaligned(fromByteOffset: 4 + 4 * $0, as: UInt32.self))) }
         }
-        var merges: [UInt64: UInt64] = [:]
-        merges.reserveCapacity(mergeCount)
-        for rank in 0 ..< mergeCount {
-            let left = try reader.uint32()
-            let right = try reader.uint32()
-            guard Int(left) < vocabularyCount, Int(right) < vocabularyCount,
-                  let merged = vocabulary[tokens[Int(left)] + tokens[Int(right)]]
-            else {
-                throw LoadError.malformed
-            }
-            merges[UInt64(left) << 32 | UInt64(right)] = UInt64(rank) << 32 | UInt64(UInt32(merged))
+        let (vocabularyCount, entryCount, mergeCount, stringsLength) = (header[0], header[1], header[2], header[3])
+        file = data
+        self.entryCount = entryCount
+        self.mergeCount = mergeCount
+        mergeKeysOffset = Self.headerLength
+        mergeValuesOffset = mergeKeysOffset + 8 * mergeCount
+        startsOffset = mergeValuesOffset + 8 * mergeCount
+        idsOffset = startsOffset + 4 * (entryCount + 1)
+        stringsOffset = idsOffset + 4 * entryCount
+        guard entryCount <= vocabularyCount, stringsOffset + stringsLength == data.count,
+              Self.load(UInt32.self, at: startsOffset + 4 * entryCount, in: data) == stringsLength
+        else {
+            throw LoadError.malformed
         }
-        // The vocabulary has no `<0x09>`: a tab is its own token, and canonical text has none.
-        let byteIDs = (0 ... 255).map { byte in
-            vocabulary[Array(String(format: "<0x%02X>", byte).utf8)] ?? Self.unknownID
-        }
-        self.vocabulary = vocabulary
-        self.byteIDs = byteIDs
-        self.merges = merges
     }
 
     /// The 64 token ids the text tower reads for `text`.
@@ -98,10 +105,10 @@ nonisolated struct SearchTextTokenizer: Sendable {
         var ids: [Int32] = []
         for scalar in text.unicodeScalars {
             let piece = Array((scalar == " " ? "▁" : String(scalar)).utf8)
-            if let id = vocabulary[piece] {
+            if let id = id(of: piece) {
                 ids.append(id)
             } else {
-                ids.append(contentsOf: piece.map { byteIDs[Int($0)] })
+                ids.append(contentsOf: piece.map(byteID))
             }
         }
         return ids
@@ -112,7 +119,7 @@ nonisolated struct SearchTextTokenizer: Sendable {
             var best: (index: Int, rank: UInt64, merged: Int32)?
             for index in 0 ..< ids.count - 1 {
                 let key = UInt64(UInt32(bitPattern: ids[index])) << 32 | UInt64(UInt32(bitPattern: ids[index + 1]))
-                guard let entry = merges[key] else { continue }
+                guard let entry = mergeEntry(key) else { continue }
                 let rank = entry >> 32
                 if best == nil || rank < best!.rank {
                     best = (index, rank, Int32(bitPattern: UInt32(truncatingIfNeeded: entry)))
@@ -122,6 +129,60 @@ nonisolated struct SearchTextTokenizer: Sendable {
             ids[best.index] = best.merged
             ids.remove(at: best.index + 1)
         }
+    }
+
+    /// A byte's own token, `<0xNN>`. The vocabulary has no `<0x09>`: a tab is its own token,
+    /// and canonical text has none.
+    private func byteID(_ byte: UInt8) -> Int32 {
+        id(of: Array(String(format: "<0x%02X>", byte).utf8)) ?? Self.unknownID
+    }
+
+    /// The id the vocabulary gives `piece`'s bytes, by binary search of the sorted strings.
+    private func id(of piece: [UInt8]) -> Int32? {
+        file.withUnsafeBytes { raw in
+            var low = 0, high = entryCount
+            while low < high {
+                let middle = (low + high) / 2
+                let start = Int(Self.load(UInt32.self, at: startsOffset + 4 * middle, in: raw))
+                let end = Int(Self.load(UInt32.self, at: startsOffset + 4 * middle + 4, in: raw))
+                let string = UnsafeRawBufferPointer(rebasing: raw[stringsOffset + start ..< stringsOffset + end])
+                if string.lexicographicallyPrecedes(piece) {
+                    low = middle + 1
+                } else if piece.lexicographicallyPrecedes(string) {
+                    high = middle
+                } else {
+                    return Int32(bitPattern: Self.load(UInt32.self, at: idsOffset + 4 * middle, in: raw))
+                }
+            }
+            return nil
+        }
+    }
+
+    /// The merge of the pair `key`, `rank << 32 | merged id`, by binary search of the sorted pairs.
+    private func mergeEntry(_ key: UInt64) -> UInt64? {
+        file.withUnsafeBytes { raw in
+            var low = 0, high = mergeCount
+            while low < high {
+                let middle = (low + high) / 2
+                let candidate = Self.load(UInt64.self, at: mergeKeysOffset + 8 * middle, in: raw)
+                if candidate < key {
+                    low = middle + 1
+                } else if candidate > key {
+                    high = middle
+                } else {
+                    return Self.load(UInt64.self, at: mergeValuesOffset + 8 * middle, in: raw)
+                }
+            }
+            return nil
+        }
+    }
+
+    private static func load<T: FixedWidthInteger>(_: T.Type, at offset: Int, in data: Data) -> T {
+        data.withUnsafeBytes { load(T.self, at: offset, in: $0) }
+    }
+
+    private static func load<T: FixedWidthInteger>(_: T.Type, at offset: Int, in raw: UnsafeRawBufferPointer) -> T {
+        T(littleEndian: raw.loadUnaligned(fromByteOffset: offset, as: T.self))
     }
 
     /// open_clip's SigLIP cleaning: ftfy's default fixes that apply to typed text, then
@@ -159,27 +220,4 @@ nonisolated struct SearchTextTokenizer: Sendable {
 
     /// Python's `string.punctuation`.
     private static let asciiPunctuation = Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
-}
-
-private nonisolated struct ByteReader {
-    let data: Data
-    var offset = 0
-
-    mutating func bytes(_ count: Int) throws -> [UInt8] {
-        guard offset + count <= data.count else {
-            throw SearchTextTokenizer.LoadError.malformed
-        }
-        defer { offset += count }
-        return [UInt8](data[data.startIndex + offset ..< data.startIndex + offset + count])
-    }
-
-    mutating func uint16() throws -> UInt16 {
-        let b = try bytes(2)
-        return UInt16(b[0]) | UInt16(b[1]) << 8
-    }
-
-    mutating func uint32() throws -> UInt32 {
-        let b = try bytes(4)
-        return UInt32(b[0]) | UInt32(b[1]) << 8 | UInt32(b[2]) << 16 | UInt32(b[3]) << 24
-    }
 }

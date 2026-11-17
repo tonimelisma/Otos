@@ -48,6 +48,14 @@ publication to ADR 0005.
    load that asks again goes behind those already waiting and never starves them. Readying
    the first search query (`searchPrepare`, ADR 0048) runs last (`runsLast`): behind every other
    waiting load, whenever it asked.
+   - **A load the user waits on does not take a turn.** A query's or the intent to search's
+     encoder load (`run(_:for: .user)`, `LoadWaiter.user`) is granted at once, before the first
+     grid and beside the load running, and no waiting load is granted while it runs. On the
+     owner's library the first search, typed about 6 s after launch, waited 1,306 ms for an
+     encoder load that had itself waited 2.7 s behind six background loads
+     (`docs/research/2026-11-16-first-search-after-launch.md`). Rejected: letting the user's
+     load take the next turn, which still waits for the load running (a People pass ran 8.9 s
+     in that session); and stopping the running load, which ADR 0032 rule 3 forbids.
 3. **The view's load goes first.** Every query the window applies says which load its view
    cannot answer without (`BackgroundLoad.needed(by:)`: a search needs the index, People and
    a person need People, Duplicates and a group need the duplicates build), and that load runs
