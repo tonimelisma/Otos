@@ -1930,16 +1930,10 @@ extension CatalogProjection: QuiescentOwner {
         return owners.compactMap(\.self)
     }
 
-    /// This projection, which takes up the store's changes and asks for each duplicates
-    /// build, and the groups' owner when it runs.
-    func duplicatesOwners() -> [any QuiescentOwner] {
-        let owners: [(any QuiescentOwner)?] = [self, duplicatesProjection]
-        return owners.compactMap(\.self)
-    }
-
-    /// The groups the duplicates owner last built.
-    func builtDuplicates() async -> CatalogDuplicatesState? {
-        await duplicatesProjection?.lastBuilt
+    /// Returns once the duplicates owner has built and published the groups this projection's
+    /// first loaded pass asked for, at once when the owner does not run.
+    func untilLaunchDuplicatesBuilt() async throws {
+        try await duplicatesProjection?.untilLaunchBuildPublished()
     }
 }
 

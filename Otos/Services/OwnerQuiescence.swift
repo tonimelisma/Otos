@@ -15,6 +15,19 @@ import Synchronization
 // retry pacing, a poll, a cadence — is still quiescent, and says which wake and when
 // (`OwnerWake`): a caller asserts "quiet until that deadline" rather than waiting it out.
 //
+// An owner that works a backlog — a walk over the library's owed rows, such as enrichment's
+// hashing and downloads of rows off screen, the search index's embeddings and texts, the
+// descriptions — reports so itself (`QuiescentOwner.worksBacklog`): everything it owes, runs
+// and holds is that walk, and no request waits on anything else. On a large cloud library the
+// walk lasts hours, so a session may never see the owner quiescent; it is settled
+// (`untilSettled()`): quiescent, or working only its backlog. That is what a launch's
+// settlement waits for (`LaunchSettlement.launchWork`). Quiescence is never relaxed by it.
+//
+// A request covered is the third fact (`untilCovered(_:)`, ADR 0032 rule 2): the pass that
+// answered that request succeeded, whatever was asked since. It is monotone, so a caller that
+// needs one build — the duplicate groups the launch owed — waits on it rather than on the
+// owner owing nothing, which a stream of later requests can put off for the whole session.
+//
 // What an owner did is counted in its own units (`OwnerWork`): passes started, reads it
 // issued, rows those reads returned, rows it wrote. A caller compares two facts to see what
 // one more round of its wake path cost.
@@ -87,6 +100,8 @@ nonisolated struct OwnerWork: Equatable, Sendable, CustomStringConvertible {
 }
 
 /// An owner's quiescence: it owes nothing and runs nothing, as of the step that reported it.
+/// As a settled fact (`untilSettled()`) it may instead say the owner was working only its
+/// backlog (`backlog`).
 nonisolated struct OwnerQuiescence: Equatable, Sendable {
     let owner: String
     /// The wake still armed, if any: the owner is quiet until it rings.
@@ -95,20 +110,26 @@ nonisolated struct OwnerQuiescence: Equatable, Sendable {
     /// facts with one revision say nothing reached it between them.
     let revision: UInt64
     let work: OwnerWork
+    /// The owner was not quiescent but working only its backlog (`QuiescentOwner.worksBacklog`):
+    /// its revision moves with that work, so it says nothing about the instant. Only a settled
+    /// fact is one.
+    var backlog = false
 }
 
 /// How far a launch's background work has settled, each stage reached after the one before
-/// (`BackgroundOwnerSet`): each is a set of owners quiescent at one instant, and each set holds
-/// the one before it.
+/// (`CatalogWindowViewModel`'s owner start): each names only what its consumer needs, and each
+/// is reachable on a library whose enrichment, search index and descriptions work a backlog
+/// for hours.
 ///
-/// - `duplicatesBuilt`: what the duplicate groups are built from — enrichment's pass over the
-///   library (the digests), the materializer it feeds, the render signatures, the projection
-///   that takes up the store's changes, and the groups' own owner.
-/// - `launchWork`: every owner but the backlog walkers, the search index's text and the
-///   descriptions, whose one pass walks a model-bound backlog the length of the library: hours
-///   on a large one, so a session never sees them quiescent and a person's session meets the
-///   window with them still walking.
-/// - `ownersQuiescent`: every owner.
+/// - `duplicatesBuilt`: the duplicate groups the launch owed are built and published — the
+///   duplicates owner covered its launch request (`DuplicatesProjection.untilLaunchBuildPublished`),
+///   whatever enrichment's digests ask of it later. What the tour's Duplicates step waits on,
+///   with the window showing them.
+/// - `launchWork`: every owner settled at one instant — quiescent, or working only its own
+///   backlog (`QuiescentOwner.worksBacklog`): the launch's own requests are covered, while a
+///   backlog may still be owed. What a settled tour waits on: a person's session meets the
+///   window with the backlogs still walking.
+/// - `ownersQuiescent`: every owner quiescent at one instant: nothing is owed anywhere.
 nonisolated enum LaunchSettlement: String, Sendable, Comparable {
     case duplicatesBuilt
     case launchWork
@@ -141,6 +162,8 @@ nonisolated struct OwnerStatus: Equatable, Sendable {
     let unactedChanges: UInt64
     /// Work in flight of its own beyond its passes (a claim being read, a transfer, an apply).
     let holdsWork: Bool
+    /// Everything it owes, runs and holds is its backlog (`QuiescentOwner.worksBacklog`).
+    var worksBacklog = false
     let wake: OwnerWake?
     let work: OwnerWork
 
@@ -152,7 +175,7 @@ nonisolated struct OwnerStatus: Equatable, Sendable {
     var fields: [String: String] {
         [
             "owner": owner, "owedRequests": "\(owedRequests)", "runningPasses": "\(runningPasses)",
-            "unactedChanges": "\(unactedChanges)", "holdsWork": "\(holdsWork)",
+            "unactedChanges": "\(unactedChanges)", "holdsWork": "\(holdsWork)", "backlog": "\(worksBacklog)",
             "wake": wake.map(\.description) ?? "none", "passes": "\(work.passes)", "reads": "\(work.reads)",
             "rows": "\(work.rows)", "written": "\(work.written)",
         ]
@@ -179,10 +202,30 @@ final nonisolated class OwnerActivity {
     /// The wake the owner keeps armed while it owes nothing now.
     var wake: OwnerWake?
     var work = OwnerWork()
-    private var waiters: [UUID: CheckedContinuation<OwnerQuiescence, any Error>] = [:]
+    private var waiters: [UUID: (wait: OwnerWait, continuation: CheckedContinuation<OwnerQuiescence?, any Error>)] = [:]
+
+    /// The first request an owner takes: what an owner whose launch asks it once names as the
+    /// launch's request.
+    static let firstRequest: UInt64 = 1
 
     init(owner: String) {
         self.owner = owner
+    }
+
+    /// Nothing owed or running and every delivered Store change acted on: quiescent but for
+    /// the work an owner holds beyond its passes.
+    var owesNothing: Bool {
+        requested == covered && running == 0 && actedOnEveryChange
+    }
+
+    /// Every Store change delivered to this owner has been acted on.
+    var actedOnEveryChange: Bool {
+        changesActedOn == deliveries.delivered
+    }
+
+    /// Whether the pass that answered `request` succeeded.
+    func hasCovered(_ request: UInt64) -> Bool {
+        covered >= request
     }
 
     /// Records a request and returns its revision.
@@ -236,14 +279,28 @@ final nonisolated class OwnerActivity {
     /// The fact, when the owner holds no other work (`holdsWork`) and this bookkeeping owes
     /// nothing.
     func quiescence(holdsWork: Bool) -> OwnerQuiescence? {
-        guard !holdsWork, requested == covered, running == 0, changesActedOn == deliveries.delivered else {
+        guard !holdsWork, owesNothing else {
             return nil
         }
         return OwnerQuiescence(owner: owner, wake: wake, revision: requested &+ inputs &+ changesActedOn, work: work)
     }
 
+    /// The settled fact: quiescence, or, when the owner says everything it owes, runs and
+    /// holds is its backlog (`worksBacklog`), a fact that says so.
+    func settled(holdsWork: Bool, worksBacklog: Bool) -> OwnerQuiescence? {
+        if let fact = quiescence(holdsWork: holdsWork) {
+            return fact
+        }
+        guard worksBacklog else {
+            return nil
+        }
+        return OwnerQuiescence(
+            owner: owner, wake: wake, revision: requested &+ inputs &+ changesActedOn, work: work, backlog: true
+        )
+    }
+
     /// What the owner holds now, quiescent or not.
-    func status(holdsWork: Bool) -> OwnerStatus {
+    func status(holdsWork: Bool, worksBacklog: Bool = false) -> OwnerStatus {
         let delivered = deliveries.delivered
         return OwnerStatus(
             owner: owner,
@@ -251,29 +308,52 @@ final nonisolated class OwnerActivity {
             runningPasses: running,
             unactedChanges: delivered > changesActedOn ? delivered - changesActedOn : 0,
             holdsWork: holdsWork,
+            worksBacklog: worksBacklog,
             wake: wake,
             work: work
         )
     }
 
-    /// Resumes every waiter when the fact holds. The owner calls it after each step that can
-    /// make it hold: a pass ends, a change is acted on, work in flight returns.
-    func settle(holdsWork: Bool) {
-        guard !waiters.isEmpty, let fact = quiescence(holdsWork: holdsWork) else { return }
-        let resumed = waiters
-        waiters = [:]
-        for waiter in resumed.values {
-            waiter.resume(returning: fact)
+    /// Resumes every waiter whose fact holds. The owner calls it after each step that can
+    /// make one hold: a pass ends, a change is acted on, work in flight returns, a backlog
+    /// walk begins.
+    func settle(holdsWork: Bool, worksBacklog: Bool = false) {
+        for (id, waiter) in waiters {
+            guard let fact = fact(for: waiter.wait, holdsWork: holdsWork, worksBacklog: worksBacklog) else { continue }
+            waiters[id] = nil
+            waiter.continuation.resume(returning: fact)
         }
     }
 
-    func addWaiter(_ id: UUID, _ continuation: CheckedContinuation<OwnerQuiescence, any Error>) {
-        waiters[id] = continuation
+    /// The fact `wait` asks for now, if it holds: `.some(nil)` for a request covered.
+    func fact(for wait: OwnerWait, holdsWork: Bool, worksBacklog: Bool) -> OwnerQuiescence?? {
+        switch wait {
+        case .quiescent:
+            quiescence(holdsWork: holdsWork).map { .some($0) }
+        case .settled:
+            settled(holdsWork: holdsWork, worksBacklog: worksBacklog).map { .some($0) }
+        case let .covered(request):
+            hasCovered(request) ? .some(nil) : nil
+        }
+    }
+
+    func addWaiter(_ id: UUID, for wait: OwnerWait, _ continuation: CheckedContinuation<OwnerQuiescence?, any Error>) {
+        waiters[id] = (wait, continuation)
     }
 
     func cancelWaiter(_ id: UUID) {
-        waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+        waiters.removeValue(forKey: id)?.continuation.resume(throwing: CancellationError())
     }
+}
+
+/// What a caller waits for an owner to report (see the guide).
+nonisolated enum OwnerWait: Equatable, Sendable {
+    /// It owes nothing and runs nothing.
+    case quiescent
+    /// It is quiescent, or working only its backlog.
+    case settled
+    /// The pass answering this request succeeded.
+    case covered(UInt64)
 }
 
 /// A background owner that reports its quiescence (see the guide).
@@ -282,6 +362,12 @@ nonisolated protocol QuiescentOwner: Actor {
     /// Work in flight the owner holds beyond its passes (a claim being read, a transfer, an
     /// apply). False for an owner whose passes are all its work.
     var holdsWork: Bool { get }
+    /// Whether everything the owner owes, runs and holds now is its backlog: a walk over the
+    /// library's owed rows that a session on a large library may never see end, with no
+    /// request waiting on anything else (see the guide). The owner says so from its own state,
+    /// and calls `settleQuiescence()` in the step that makes it true. False for an owner with
+    /// no backlog: all its work is what it was asked.
+    var worksBacklog: Bool { get }
     /// Rings the owner's wake path once, as an input it reads would, with no input changed:
     /// what a caller runs to see that a wake with nothing new costs nothing. An owner with no
     /// wake path (one pass a launch) does nothing.
@@ -293,25 +379,52 @@ extension QuiescentOwner {
         false
     }
 
+    var worksBacklog: Bool {
+        false
+    }
+
     /// The fact now, or nil while the owner owes or runs something.
     var quiescence: OwnerQuiescence? {
         activity.quiescence(holdsWork: holdsWork)
     }
 
-    /// What the owner holds now, quiescent or not.
-    var status: OwnerStatus {
-        activity.status(holdsWork: holdsWork)
+    /// The settled fact now: quiescence, or one that says the owner works only its backlog.
+    var settledFact: OwnerQuiescence? {
+        activity.settled(holdsWork: holdsWork, worksBacklog: worksBacklog)
     }
 
-    /// Resumes the waiters when the fact now holds.
+    /// What the owner holds now, quiescent or not.
+    var status: OwnerStatus {
+        activity.status(holdsWork: holdsWork, worksBacklog: worksBacklog)
+    }
+
+    /// Resumes the waiters whose fact now holds.
     func settleQuiescence() {
-        activity.settle(holdsWork: holdsWork)
+        activity.settle(holdsWork: holdsWork, worksBacklog: worksBacklog)
     }
 
     /// Returns once the owner is quiescent: at once when it is, else in the step that makes it
     /// so. Throws `CancellationError` when the caller's task is cancelled first.
     func untilQuiescent() async throws -> OwnerQuiescence {
-        if let fact = quiescence {
+        try await until(.quiescent) ?? quiescenceMissing()
+    }
+
+    /// Returns once the owner is settled: quiescent, or working only its backlog.
+    func untilSettled() async throws -> OwnerQuiescence {
+        try await until(.settled) ?? quiescenceMissing()
+    }
+
+    /// Returns once the pass answering `request` has succeeded, whatever was asked since.
+    func untilCovered(_ request: UInt64) async throws {
+        _ = try await until(.covered(request))
+    }
+
+    private func quiescenceMissing() -> OwnerQuiescence {
+        preconditionFailure("a quiescent or settled wait resumes with its fact")
+    }
+
+    private func until(_ wait: OwnerWait) async throws -> OwnerQuiescence? {
+        if let fact = activity.fact(for: wait, holdsWork: holdsWork, worksBacklog: worksBacklog) {
             return fact
         }
         let id = UUID()
@@ -321,7 +434,7 @@ extension QuiescentOwner {
                     continuation.resume(throwing: CancellationError())
                     return
                 }
-                activity.addWaiter(id, continuation)
+                activity.addWaiter(id, for: wait, continuation)
             }
         } onCancel: {
             Task { await self.cancelQuiescenceWaiter(id) }
@@ -358,6 +471,35 @@ nonisolated enum BackgroundOwnerQuiescence {
         }
     }
 
+    /// Returns every owner's settled fact once all of them are settled at one instant: each
+    /// quiescent, or working only its backlog. The round is `untilQuiescent`'s, but an owner
+    /// working its backlog moves its revision, and writes to the Store, with that work, so it
+    /// says nothing about the instant: only the other owners' revisions are compared. While
+    /// one works its backlog the Store's announcements are not compared either — the backlog's
+    /// writes move them — and need not be: every owner counts a change it was delivered in the
+    /// step the Store yields it, so one that took a change between the readings is unsettled
+    /// at the second or has moved its revision.
+    static func untilSettled(_ owners: [any QuiescentOwner], store: CatalogStore) async throws -> [OwnerQuiescence] {
+        while true {
+            let changes = store.use().changes.notifications
+            var first: [OwnerQuiescence] = []
+            for owner in owners {
+                try await first.append(owner.untilSettled())
+            }
+            var second: [OwnerQuiescence] = []
+            for owner in owners {
+                guard let fact = await owner.settledFact else { break }
+                second.append(fact)
+            }
+            guard second.count == first.count else { continue }
+            let backlog = zip(first, second).contains { $0.backlog || $1.backlog }
+            let still = zip(first, second).allSatisfy { $0.backlog || $1.backlog || $0.revision == $1.revision }
+            if still, backlog || store.use().changes.notifications == changes {
+                return second
+            }
+        }
+    }
+
     /// Every owner's status now, read in turn.
     static func statuses(of owners: [any QuiescentOwner]) async -> [OwnerStatus] {
         var statuses: [OwnerStatus] = []
@@ -381,10 +523,12 @@ nonisolated enum BackgroundOwnerQuiescence {
         }
     }
 
-    /// `op=owners.settled phase=<stage>`: when the launch first reached `stage`, from the launch.
-    static func logSettled(_ stage: LaunchSettlement, sinceLaunch started: ContinuousClock.Instant) {
+    /// `op=owners.settled phase=<stage>`: when the launch first reached `stage`, from the launch,
+    /// and which owners were still working their backlog then (`backlog=`, `none` when none).
+    static func logSettled(_ stage: LaunchSettlement, sinceLaunch started: ContinuousClock.Instant, backlog: [String]) {
         OtosLog.performance.noticeOperation("owners.settled", phase: stage.rawValue, fields: [
             "ms": "\(DiagnosticsTiming.milliseconds(since: started))",
+            "backlog": backlog.isEmpty ? "none" : backlog.joined(separator: ","),
         ])
     }
 

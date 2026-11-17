@@ -60,9 +60,12 @@ actor DuplicatesProjection: QuiescentOwner {
     private var memory = SamePhotoMemory.empty
     private var loopTask: Task<Void, Never>?
 
-    /// The groups the last build that changed them yielded on `builds`; nil before the first.
-    var lastBuilt: CatalogDuplicatesState? {
-        published
+    /// Returns once the launch's build is published: the first request this owner takes is
+    /// the launch's (`CatalogProjection` asks once on its first loaded pass), and the pass that
+    /// covers it has yielded its groups on `builds` (a first build always differs from none).
+    /// Later requests — enrichment's digests asking for more — never put it off.
+    func untilLaunchBuildPublished() async throws {
+        try await untilCovered(OwnerActivity.firstRequest)
     }
 
     /// True when every request has been covered by a successful build and none is running.

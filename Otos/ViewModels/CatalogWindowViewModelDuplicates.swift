@@ -62,8 +62,7 @@ extension CatalogWindowViewModel {
     /// is the list's, so leaving the list ends it. Unchanged groups are the last
     /// publication's own (`CatalogWindowState.sharingUnchanged`), so telling them unchanged costs nothing.
     func applyDuplicatesState(previous: CatalogWindowState, next: CatalogWindowState) {
-        if let launch = launchDuplicates, next.duplicates == launch {
-            launchDuplicates = nil
+        if !showsLaunchDuplicates, launchSettlement != nil, next.duplicates != nil {
             showsLaunchDuplicates = true
         }
         if let duplicates = next.duplicates, duplicates != previous.duplicates {

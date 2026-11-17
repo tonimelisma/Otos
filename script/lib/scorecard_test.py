@@ -547,6 +547,8 @@ class SessionKindTests(unittest.TestCase):
         ]
         report, rows, text = run(lines)
         self.assertEqual(report["launch"]["settledMs"], {"duplicatesBuilt": 3900, "launchWork": 28800})
+        # A build older than the backlog field says when, not who.
+        self.assertEqual(report["launch"]["settledBacklog"], {})
         self.assertIn("settled duplicatesBuilt at 3900 ms, launchWork at 28800 ms", text)
         by_metric = {row["metric"]: row["value"] for row in rows}
         self.assertEqual(by_metric["duplicates.groups"], 4)
@@ -559,6 +561,32 @@ class SessionKindTests(unittest.TestCase):
         ]
         rows = run(none)[1]
         self.assertEqual({row["metric"]: row["value"] for row in rows}["duplicates.groups"], 0)
+
+    def test_each_stage_says_which_owners_were_still_working_a_backlog(self):
+        lines = self.LAUNCH[:-1] + [
+            line(5.0, "op=owners.settled phase=duplicatesBuilt ms=3900 backlog=enrichment,materialization"),
+            line(5.5, "op=tour phase=step index=8 kind=scope label=duplicates outcome=reported ms=4100 "
+                      "paintMs=140 scope=duplicates first=true groups=18 buildWaitMs=45"),
+            line(30.0, "op=owners.settled phase=launchWork ms=28800 backlog=enrichment,materialization,descriptions"),
+            line(46.0, "op=owners.status phase=sessionEnd owners=14 quiescent=12 pending=enrichment,descriptions"),
+            line(46.0, "op=owners.pending phase=sessionEnd owner=enrichment owedRequests=0 runningPasses=0 "
+                      "unactedChanges=0 holdsWork=true backlog=true wake=none passes=900 reads=1 rows=1 written=468"),
+            line(46.0, "op=owners.pending phase=sessionEnd owner=descriptions owedRequests=243 runningPasses=1 "
+                      "unactedChanges=0 holdsWork=false backlog=true wake=none passes=2 reads=1 rows=1 written=16"),
+            line(46.6, "op=tour phase=finish outcome=finished"),
+        ]
+        report, rows, text = run(lines)
+        self.assertEqual(report["launch"]["settledBacklog"], {
+            "duplicatesBuilt": ["enrichment", "materialization"],
+            "launchWork": ["enrichment", "materialization", "descriptions"],
+        })
+        self.assertIn("settled duplicatesBuilt at 3900 ms (working a backlog: enrichment, materialization), "
+                      "launchWork at 28800 ms (working a backlog: enrichment, materialization, descriptions)", text)
+        self.assertIn("enrichment: holding work in flight, all of it its backlog", text)
+        # The Duplicates step measured: no deadline while the backlog runs.
+        self.assertNotIn("deadline", text.split("USER-FELT NUMBERS")[1].split("LAUNCH")[0])
+        # A launch that reached no stage says so.
+        self.assertIn("settled: no stage reached", run(self.LAUNCH)[2])
 
     def compare_text(self, current, saved_report):
         report, rows, _ = run(current)

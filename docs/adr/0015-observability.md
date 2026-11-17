@@ -167,15 +167,22 @@ real backlog. Three instruments see those:
   first grid, under the launch's own load (the harsh sequence that found real defects), and
   a `settled` tour (`--settled`, `OTOS_TOUR_START=settled`) first waits for the launch's
   background work to settle as a person's session meets it: the window's
-  `launchSettlement` at `launchWork`, every owner quiescent at one instant but the two whose
-  one pass walks a model-bound backlog the length of the library (the search index's text,
-  the descriptions), so a new library's first enrichment, its duplicate groups and its people
-  are done. The launch reaches its stages in turn and logs each (`op=owners.settled
-  phase=duplicatesBuilt|launchWork`, then `op=owners.quiescent` for every owner): the heavy
-  loads the launch asked for draining is no settlement, as on a small library they drain
-  before enrichment has hashed anything. Every tour's Duplicates step, at launch too, waits
-  on `duplicatesBuilt` and the window showing those groups, then clicks the row, or reports
-  `groups=0` when there is none to click. It never waits a fixed time; its wait has a deadline (900 s by
+  `launchSettlement` at `launchWork`, every owner settled at one instant: quiescent, or
+  working only its own backlog. An owner says itself when all it owes, runs and holds is its
+  backlog (`QuiescentOwner.worksBacklog`): enrichment's hashing and downloads of rows off
+  screen with the background transfers it hands the materializer, the search index's
+  embeddings and readings once its memory is in line with the catalog, the descriptions'
+  walk. On a cloud library those last hours, and a person's session meets the window with
+  them still walking, so "the launch's own requests are covered" is the stage and "nothing
+  is owed anywhere" (`op=owners.quiescent`) is the last one. The launch reaches its stages
+  in turn and logs each with the owners still on a backlog then (`op=owners.settled
+  phase=duplicatesBuilt|launchWork backlog=<owners>|none`), and the scorecard prints them
+  (`settled: no stage reached` when none was). `duplicatesBuilt` is the duplicates owner's
+  own covered request: the build the launch asked for, the first request it takes, has
+  succeeded and been published, whatever enrichment's digests ask of it later. Every tour's
+  Duplicates step, at launch too, waits on it and the window showing groups, then clicks the
+  row, or reports `groups=0` when there is none to click; on a small library enrichment may
+  not have hashed anything by then, so the step shows the groups the catalog already holds. It never waits a fixed time; its wait has a deadline (900 s by
   default) and one that reaches it is `settled(deadline)`. `--compare` compares only a
   session of the same kind and prints the mismatch otherwise; a saved scorecard older than
   the kind is a launch tour's. Every tour ends by logging each owner's status, so a session

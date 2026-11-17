@@ -525,12 +525,12 @@ final class CatalogWindowViewModel {
     /// (`duplicatesBuilt`), and a tour that starts like a person's session
     /// (`SmokeTour.Configuration.start`, `launchWork`).
     private(set) var launchSettlement: LaunchSettlement?
-    /// Whether the window has shown the groups the duplicates owner had built when the launch
-    /// reached `duplicatesBuilt` (`applyDuplicatesState`): set once, by the step that shows
-    /// them, so a later build changes nothing.
+    /// Whether the window shows the groups the launch owed: the launch has reached
+    /// `duplicatesBuilt` and the window has applied groups. Every build answers a request no
+    /// older than the launch's, the first the duplicates owner takes, so any groups the window
+    /// shows then are that build's or a newer one's. Set once (`settleLaunch`,
+    /// `applyDuplicatesState`), so a later build changes nothing.
     var showsLaunchDuplicates = false
-    /// Those groups, from the stage until the window shows them (`.some(nil)`: none built).
-    @ObservationIgnored var launchDuplicates: CatalogDuplicatesState??
     /// Removable-volume and camera monitoring observe hardware attached to the host
     /// machine, so a `true` default would make behavior depend on whatever card or
     /// camera happens to be plugged in. Production starts them; tests that assert on
@@ -1408,15 +1408,21 @@ extension CatalogWindowViewModel {
                 OtosLog.persistence.error("Background owners skipped because catalog start failed")
                 return
             }
-            await owners.start()
-            // Each stage's owners hold the one before's, so the stages are reached in turn.
+            // The duplicates stage is the groups owner's own covered request, so it is waited
+            // on beside the owners' start, which runs the metadata pass to its end. The
+            // settled stages list every owner, so they wait for every owner to have started.
+            async let started: Void = owners.start()
             do {
-                _ = try await BackgroundOwnerQuiescence.untilQuiescent(owners.duplicatesOwners(), store: store)
-                let built = await owners.builtDuplicates()
-                BackgroundOwnerQuiescence.logSettled(.duplicatesBuilt, sinceLaunch: launchStartedAt)
-                self?.settleLaunch(.duplicatesBuilt, duplicates: built)
-                _ = try await BackgroundOwnerQuiescence.untilQuiescent(owners.launchOwners(), store: store)
-                BackgroundOwnerQuiescence.logSettled(.launchWork, sinceLaunch: launchStartedAt)
+                try await owners.untilLaunchDuplicatesBuilt()
+                let backlog = await BackgroundOwnerQuiescence.statuses(of: owners.quiescentOwners())
+                    .filter(\.worksBacklog).map(\.owner)
+                BackgroundOwnerQuiescence.logSettled(.duplicatesBuilt, sinceLaunch: launchStartedAt, backlog: backlog)
+                self?.settleLaunch(.duplicatesBuilt)
+                await started
+                let settled = try await BackgroundOwnerQuiescence.untilSettled(owners.quiescentOwners(), store: store)
+                BackgroundOwnerQuiescence.logSettled(
+                    .launchWork, sinceLaunch: launchStartedAt, backlog: settled.filter(\.backlog).map(\.owner)
+                )
                 self?.settleLaunch(.launchWork)
                 let facts = try await BackgroundOwnerQuiescence.untilQuiescent(owners.quiescentOwners(), store: store)
                 BackgroundOwnerQuiescence.log(facts, sinceLaunch: launchStartedAt)
@@ -1427,16 +1433,12 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Records the stage the launch has settled to, and at `duplicatesBuilt` the groups built
-    /// by then.
-    func settleLaunch(_ settlement: LaunchSettlement, duplicates: CatalogDuplicatesState? = nil) {
+    /// Records the stage the launch has settled to; at `duplicatesBuilt`, whether the window
+    /// already shows groups.
+    func settleLaunch(_ settlement: LaunchSettlement) {
         guard launchSettlement.map({ settlement > $0 }) ?? true else { return }
-        if settlement == .duplicatesBuilt {
-            if parts.duplicates == duplicates {
-                showsLaunchDuplicates = true
-            } else {
-                launchDuplicates = .some(duplicates)
-            }
+        if parts.duplicates != nil {
+            showsLaunchDuplicates = true
         }
         launchSettlement = settlement
     }

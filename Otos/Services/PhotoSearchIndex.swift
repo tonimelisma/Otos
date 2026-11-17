@@ -138,6 +138,9 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// (`LoadAdmission`).
     private let admission: LoadAdmission
     private var loaded = false
+    /// The first whole reconcile succeeded: the launch's own request of the index is answered
+    /// (`worksBacklog`).
+    private var launchReconciled = false
     /// Whether the next pass must reconcile the whole library: the first pass, a change that
     /// named no rows, and a pass that failed while it owed one.
     private var reconcileOwed = true
@@ -317,6 +320,15 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// A preparation asked for and not yet handled, or the admitted one waiting or running.
     var holdsWork: Bool {
         preparationsHandled != preparationsAsked.value || admittedPreparationRunning
+    }
+
+    /// The launch asks the index for its memory in line with the catalog and its first query
+    /// readied; everything after — embeddings and readings of the rows enrichment's walk keeps
+    /// making owed, and the reconciles by key of the rows each change names — is a model-bound
+    /// backlog the length of the library. Once the first whole reconcile has succeeded, with no
+    /// preparation owed and every change acted on, all it owes and runs is that backlog.
+    var worksBacklog: Bool {
+        launchReconciled && !holdsWork && activity.actedOnEveryChange
     }
 
     /// `admitted`: the caller holds the background admission, so the encoder loads inside that
@@ -661,6 +673,10 @@ actor PhotoSearchIndex: QuiescentOwner {
                 }
                 embeddingWalk = BacklogWalk()
                 textWalk = BacklogWalk()
+                if !launchReconciled {
+                    launchReconciled = true
+                    settleQuiescence()
+                }
             } else {
                 try await reconcile(rows)
             }

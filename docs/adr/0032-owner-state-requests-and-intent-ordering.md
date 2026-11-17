@@ -123,6 +123,16 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    (`op=owners.status phase=sessionEnd`, one `op=owners.pending` line for each owner that is
    not quiescent), which the scorecard prints under the launch.
 
+   Two weaker facts answer callers that need less than quiescence, each reported by the
+   owner the same way and resumed in the step that makes it hold. **Settled**
+   (`untilSettled()`): quiescent, or everything it owes, runs and holds is its backlog, which
+   the owner says from its own state (`worksBacklog`); several owners are settled at one
+   instant when the round above holds for every owner not on its backlog (a backlog's
+   revision and writes move with its work, and each owner counts a change in the step it is
+   delivered). **Covered** (`untilCovered(_:)`): the pass answering one request succeeded,
+   whatever was asked since; monotone, so one build a caller needs is never put off by later
+   requests. A launch's settlement stages are built from them (`LaunchSettlement`).
+
    A request covers what the owner owes, not a fresh look. An owner that cannot make progress
    on a row now — a still paced after a failed read, a model that would not load — holds
    that fact with the deadline or event that ends it, arms its wake on that alone, and reads

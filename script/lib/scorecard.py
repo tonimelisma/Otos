@@ -167,6 +167,10 @@ def launch(start, events):
         "ownersQuiescentMs": quiet.num("ms") if quiet else None,
         # When the launch first reached each stage of its settlement (`op=owners.settled`).
         "settledMs": {e.phase: e.num("ms") for e in of(events, "owners.settled")},
+        # Which owners were still working their backlog when each stage was reached (`backlog=`:
+        # owner names, `none`); a build older than the field reports no entry.
+        "settledBacklog": {e.phase: [] if e.fields["backlog"] == "none" else e.fields["backlog"].split(",")
+                           for e in of(events, "owners.settled") if "backlog" in e.fields},
     }
 
 
@@ -807,6 +811,8 @@ def describe_pending(owner):
         parts.append(f"{owner['unactedChanges']} store changes not acted on")
     if owner.get("holdsWork") == "true":
         parts.append("holding work in flight")
+    if owner.get("backlog") == "true":
+        parts.append("all of it its backlog")
     if owner.get("wake") not in (None, "none"):
         parts.append(f"wake {owner['wake']}")
     return f"{owner.get('owner')}: " + ", ".join(parts or ["not quiescent"])
@@ -981,8 +987,17 @@ def print_report(report, rows, out):
           f"(catalog {fmt(launched['firstGridCatalogMs'])}) in {launched['scopeKind']}, {fmt(launched['items'])} items, "
           f"owners quiescent {fmt(launched['ownersQuiescentMs'])}\n")
         stages = launched.get("settledMs") or {}
+        backlogs = launched.get("settledBacklog") or {}
+
+        def reached(stage, ms):
+            if stage not in backlogs:
+                return f"{stage} at {fmt(ms)} ms"
+            return f"{stage} at {fmt(ms)} ms (working a backlog: {', '.join(backlogs[stage]) or 'none'})"
+
         if stages:
-            w("  settled " + ", ".join(f"{stage} at {fmt(ms)} ms" for stage, ms in stages.items()) + "\n")
+            w("  settled " + ", ".join(reached(stage, ms) for stage, ms in stages.items()) + "\n")
+        else:
+            w("  settled: no stage reached\n")
         at_end = report.get("ownersAtEnd")
         if launched["ownersQuiescentMs"] is None:
             if at_end is None:

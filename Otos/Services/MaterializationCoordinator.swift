@@ -450,6 +450,15 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
         !inFlightByID.isEmpty || (!pendingByID.isEmpty && breakerOpenUntilByRoot.isEmpty)
     }
 
+    /// Its backlog is enrichment's: background downloads of the originals the walk owes. Every
+    /// wake handled and every pending or in-flight transfer at background priority — none a
+    /// person waits on, a command needs or a device stages.
+    var worksBacklog: Bool {
+        activity.owesNothing
+            && pendingByID.values.allSatisfy { $0.effectivePriority == .background }
+            && inFlightByID.values.allSatisfy { $0.effectivePriority == .background }
+    }
+
     /// Nothing outside a request rings admission: a wake with nothing pending admits nothing.
     func ringIdle() {
         wake()

@@ -596,6 +596,20 @@ extension EnrichmentCoordinator {
             || !pendingDeviceSeeds.isEmpty
     }
 
+    /// Enrichment's backlog is its walk over the library's rows that owe a product — metadata,
+    /// a thumbnail, a digest — with the downloads it hands off: on a cloud library, hours of
+    /// hashing. Everything it holds is that walk when every signal is answered, no device seed
+    /// waits, and no row the window shows is claimed, downloading or being written: a visible
+    /// row is the window's work, not the backlog's.
+    var worksBacklog: Bool {
+        guard activity.owesNothing, pendingDeviceSeeds.isEmpty else {
+            return false
+        }
+        return !viewport.contains { id in
+            readyClaims[id] != nil || pendingApplyClaimIDs.contains(id) || schedule.materializations[id] != nil
+        }
+    }
+
     func ringIdle() {
         signal()
     }

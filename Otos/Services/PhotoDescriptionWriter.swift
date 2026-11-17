@@ -178,11 +178,20 @@ actor PhotoDescriptionWriter: QuiescentOwner {
     private func subscribed() {
         subscribing = false
         oweWalk()
+        settleQuiescence()
     }
 
     /// Started, with the forwarder not yet subscribed.
     var holdsWork: Bool {
         subscribing
+    }
+
+    /// Every pass is the walk over the library's owed stills, with the stills a change named
+    /// read ahead of its next page: model-bound, a second or more a still, so on a large
+    /// library the walk lasts hours. Once subscribed, with every change acted on, all it owes
+    /// and runs is that backlog.
+    var worksBacklog: Bool {
+        !subscribing && activity.actedOnEveryChange
     }
 
     private func pass() async {

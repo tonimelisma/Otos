@@ -545,9 +545,9 @@ extension PreferencesDomain {
         }
 
         /// A settled tour's first step waits for the launch's work to settle
-        /// (`LaunchSettlement.launchWork`: every owner quiescent but the backlog walkers, so
-        /// enrichment's first pass over a new library, its duplicates and its people are done),
-        /// up to the settle deadline; either way it says what it met
+        /// (`LaunchSettlement.launchWork`: every owner settled at one instant — quiescent, or
+        /// working only its own backlog, as enrichment's hashing of a cloud library does for
+        /// hours), up to the settle deadline; either way it says what it met
         /// (`op=tour phase=settled by=launchWork|ownersQuiescent|deadline`), and the scorecard
         /// labels the session by it.
         private func waitForSettlement() async {
@@ -695,8 +695,10 @@ extension PreferencesDomain {
             return .reported(fields)
         }
 
-        /// Duplicates once the groups the launch owes are built and shown
-        /// (`LaunchSettlement.duplicatesBuilt`, then `showsLaunchDuplicates`), timed from
+        /// Duplicates once the groups the launch owed are built and shown
+        /// (`LaunchSettlement.duplicatesBuilt`, then `showsLaunchDuplicates`) — not once
+        /// enrichment's digests stop asking for more builds, which a backlog puts off for the
+        /// whole session — timed from
         /// the click to its paint like any scope. With no active group the sidebar has no row
         /// to click, and the step reports `groups=0` rather than a click.
         private func duplicates() async -> Outcome {

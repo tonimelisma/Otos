@@ -90,9 +90,9 @@ struct SmokeTourTests {
     }
 
     /// The launch settles in stages, each holding the one before, and never goes back. The
-    /// Duplicates step's fact is the window showing the groups built when the launch reached
-    /// `duplicatesBuilt`: a stage reached before the window applies that build waits for the
-    /// apply, and a later build changes nothing.
+    /// Duplicates step's fact is the stage and the window showing groups: every build answers a
+    /// request no older than the launch's, so a stage reached before the window applies a build
+    /// waits for the apply, and a later build changes nothing.
     @MainActor
     @Test func theDuplicatesStepWaitsForTheWindowToShowTheLaunchsGroups() throws {
         #expect(LaunchSettlement.duplicatesBuilt < .launchWork && LaunchSettlement.launchWork < .ownersQuiescent)
@@ -119,11 +119,10 @@ struct SmokeTourTests {
         let built = CatalogDuplicatesState(groups: [group])
         var state = CatalogWindowState.empty
         state.libraries = [libraryState(path: root.rawValue)]
-        state.duplicates = .empty
         viewModel.applyState(state)
 
-        // Reached while the window still shows the build before it (no group yet).
-        viewModel.settleLaunch(.duplicatesBuilt, duplicates: built)
+        // Reached while the window shows no groups yet: the publication is still on its way.
+        viewModel.settleLaunch(.duplicatesBuilt)
         #expect(viewModel.launchSettlement == .duplicatesBuilt)
         #expect(!viewModel.showsLaunchDuplicates)
         state.duplicates = built
@@ -134,8 +133,30 @@ struct SmokeTourTests {
         viewModel.applyState(state)
         #expect(viewModel.showsLaunchDuplicates)
         viewModel.settleLaunch(.launchWork)
-        viewModel.settleLaunch(.duplicatesBuilt, duplicates: nil)
+        viewModel.settleLaunch(.duplicatesBuilt)
         #expect(viewModel.launchSettlement == .launchWork)
+    }
+
+    /// Groups the window applied before the stage was reached are the launch's build or a newer
+    /// one's: the stage alone then shows them.
+    @MainActor
+    @Test func groupsShownBeforeTheStageAreTheLaunchsOnceItIsReached() {
+        let viewModel = CatalogWindowViewModel(
+            catalogStore: makeTestStore(location: .inMemory),
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: .suite(UUID().uuidString),
+            volumeCapacity: ampleVolumeCapacity,
+            trashFiles: .refusing
+        )
+        var state = CatalogWindowState.empty
+        state.libraries = [libraryState(path: "/Pictures")]
+        state.duplicates = .empty
+        viewModel.applyState(state)
+        #expect(!viewModel.showsLaunchDuplicates)
+        viewModel.settleLaunch(.duplicatesBuilt)
+        #expect(viewModel.showsLaunchDuplicates)
     }
 
     /// A tour reads the user's preferences and writes none: its domain is session-only over
