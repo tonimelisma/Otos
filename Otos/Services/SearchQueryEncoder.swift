@@ -718,11 +718,29 @@ actor SearchTextTower {
     }
 
     /// `text`'s embedding, loading the tokenizer and the model first when they are not loaded.
+    /// Each prediction says what it took and what the process read from disk while it ran
+    /// (`op=search.tower phase=predicted`): the process's page-ins and disk reads over the
+    /// prediction, which tell a prediction that waited for memory the system had pushed out
+    /// from one that computed.
     func embedding(of text: String) throws -> [Float] {
         let (tokenizer, model) = try loaded()
+        let before = ProcessResourceSample.current()
+        let start = ContinuousClock.now
         let embedding = try predict(text, tokenizer: tokenizer, model: model)
+        let after = ProcessResourceSample.current()
+        OtosLog.catalog.noticeOperation("search.tower", phase: "predicted", fields: [
+            "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+            "pageIns": Self.delta(before.pageIns, after.pageIns),
+            "diskReadMB": Self.delta(before.diskBytesRead, after.diskBytesRead, scale: 1_048_576),
+            "cpuMs": Self.delta(before.cpuMilliseconds, after.cpuMilliseconds),
+        ])
         warmed = true
         return embedding
+    }
+
+    private static func delta(_ before: UInt64?, _ after: UInt64?, scale: UInt64 = 1) -> String {
+        guard let before, let after, after >= before else { return "unknown" }
+        return "\((after - before) / scale)"
     }
 
     /// Predictions made since the tower was made, the warm-up included: what a test counts.

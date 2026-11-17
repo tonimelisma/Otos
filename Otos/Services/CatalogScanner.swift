@@ -244,6 +244,7 @@ private nonisolated enum LiveCatalogScanner {
         var scanState = ScanState()
         let clock = ContinuousClock()
         var lastFlush = clock.now
+        let walkStart = lastFlush
         var flushedAny = false
 
         let state = OtosSignpost.fileAccess.beginInterval("CatalogScanEnumerate")
@@ -289,8 +290,20 @@ private nonisolated enum LiveCatalogScanner {
             let firstBatchFull = !flushedAny && scanState.pending.count >= CatalogScanner.firstBatchCount
             if firstBatchFull || lastFlush.duration(to: clock.now) >= cadence {
                 flushedAny = flushedAny || !scanState.pending.isEmpty
+                let walked = walkStart.duration(to: clock.now)
+                let files = scanState.pending.count
                 try await flush(&scanState.pending, batchHandler: batchHandler)
                 lastFlush = clock.now
+                // The first batch's two waits, apart: the walk to its files, and the Store's
+                // taking them (its actor and its write).
+                if firstBatchFull {
+                    OtosLog.catalog.noticeOperation("catalog.scan.firstBatch", phase: "handed", fields: [
+                        "rootPath": rootPath.rawValue,
+                        "files": "\(files)",
+                        "walkMs": "\(DiagnosticsTiming.milliseconds(walked))",
+                        "handedMs": "\(DiagnosticsTiming.milliseconds(walkStart.duration(to: clock.now) - walked))",
+                    ])
+                }
             }
         }
 

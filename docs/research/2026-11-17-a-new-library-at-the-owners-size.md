@@ -50,6 +50,45 @@ and the rest on the cadence, and a change of which rows exist (`.membership`) pu
 while the window shows no item (`CatalogProjection.publishesAtOnce`): the cadence spares the
 main actor a shown grid's reorder, and an empty window has none.
 
+## 2. The first search
+
+The tour's first search ("searchMany") showed its first results at 1,401 ms on the baseline
+tour, 1,359 ms on the diagnostic tour and 1,118 ms on a tour after #915 and #916. In every
+run the order was the same:
+
+- The words reading answered in 67–128 ms (`search.words phase=shown`). It matched nothing,
+  because no photo of a new library has had its text read yet (`textMatches=0`). A words
+  answer that matches nothing changes nothing on screen (ADR 0048), so the window kept
+  searching.
+- The tower's reading as typed came next and gave the first results. It took 1,202 ms,
+  1,146 ms and 913 ms (`search.encode depth=asTyped first=true`). The next query's reading
+  took 25 ms.
+- The step read 343 MB, 425 MB and 346 MB from disk (`process.usage diskReadMB`) with
+  21,299, 22,002 and 21,346 page-ins.
+
+The prediction now reports what the process read while it ran (`op=search.tower
+phase=predicted`). On the third tour:
+
+`op=search.tower phase=predicted cpuMs=3516 diskReadMB=332 ms=860 pageIns=21058`
+
+So the tower's first query prediction spent its time reading back about 330 MB. The tower had
+been loaded and warmed 112 s earlier (`search.encoder phase=prepared warmUpMs=41`), and its
+pages were evicted in between. The Mac had 65–170 MB free, 3.7–4.0 GB compressed and
+5.2–5.7 GB of swap in use, with other worktrees' builds and tests running. Otos's own footprint
+was 343 MB. The same query against the owner's settled library, on a Mac not under this
+pressure, showed first results in 253–278 ms (`2026-11-16-performance-baseline.md`).
+
+**What is Otos's.** Nothing in this wait is a read or an owner Otos can change while keeping
+its memory target. A tower kept resident would add its ~330 MB to the footprint. The words
+reading cannot answer a library whose text is unread. The CPU figure (3.5 s across about 4
+cores in 0.86 s) is enrichment's backlog beside the prediction. The tower's queue runs at user
+priority, and the next prediction took 25 ms under the same backlog.
+
+**Floor.** On this Mac, a first search after an idle of about two minutes waits about 0.9 s
+for the tower's pages, plus about 0.25 s for the reading, publication and paint. The nearest
+achievable figure is about 1.1 s while the system evicts the tower's pages, and 25 ms plus
+about 0.25 s once they are resident.
+
 ## 3. The peak footprint
 
 On the baseline tour the peak, 657 MB, came at the end of the second whole-root walk. That
@@ -83,3 +122,35 @@ A diagnostic tour took `heap` and `vmmap -summary` the first time the app's own 
   bytes are candidates. No allocation backtraces were recorded.
 
 After #915 and the digest, a tour peaked at 480 MB (`peak footprint MB 480 700 PASS`).
+
+## After the changes
+
+The same command was run on main after #915 (the change journal), #916 (the first batch and
+an empty window's first rows) and #917 (the baseline digest). The fourth and fifth tours also
+ran this note's two new lines (`op=search.tower phase=predicted`,
+`op=catalog.scan.firstBatch phase=handed`).
+
+| Tour | First library | First search, first results | Tower prediction | Peak footprint |
+| --- | --- | --- | --- | --- |
+| baseline (72d6ca52) | 4,220 ms FAIL | 1,401 ms FAIL | 1,202 ms (encode) | 657 MB |
+| 3 | 1,203 ms FAIL | 1,118 ms FAIL | 860 ms, 21,058 page-ins, 332 MB read | 480 MB |
+| 4 | 239 ms | 374 ms | 47 ms, 9 page-ins | 595 MB |
+| 5 | 233 ms | 1,468 ms FAIL | 1,175 ms, 20,986 page-ins, 330 MB read | 671 MB |
+
+- **First paint.** On tours 4 and 5 the walk reached its first 256 files in 31 ms and the
+  Store took them in 80 and 74 ms. The grid's first apply of them took about 120 ms
+  (`commitMs` about 88). On tour 3 the 256-file batch committed 1,063 ms after the selection,
+  with the text tower's 905 ms load reading beside it. That tour ran before the first-batch
+  line existed, so which of the walk and the hand-off waited is not established.
+- **First search.** It follows the tower's pages exactly. With them resident (tour 4) the
+  first results took 374 ms. Evicted (tours 3 and 5), the prediction read about 330 MB back
+  and took 0.86–1.18 s.
+- **Peak footprint.** 480–671 MB, under 700. Tour 5's peak came during the act steps, with
+  the grid's tile images at 84 MB.
+- **Other FAIL lines.** Tour 4 had `return library 313 300 FAIL`, an order read of
+  235 ms (`sql=163 map=71`) against 158–198 ms on the other tours. It also had
+  `search again searchFew first results 1052 1000 FAIL`. That search matched nothing, so its
+  empty answer read two whole-scope counts before it was published: the photos still owed an
+  embedding (`searchEmbeddingPendingCount`, about 320 ms, inferred from the gap between the
+  match and the count) and the scope's cataloged count (`catalogedCount execMs=334`). The
+  scope's own order already held the second. Neither was changed here.

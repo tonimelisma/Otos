@@ -249,7 +249,11 @@ A tour never runs while Otos is running and quits the app itself.
 - **Not established.**
   - Why Core ML compiled the text tower again in one session of an install, and why that
     compile took 3 s (`2026-11-16-first-search-while-the-encoder-loads.md`).
-  - What made the 1.1 s second prediction of 2026-11-17 (`2026-11-17-first-search-after-the-warm-up.md`).
+  - What made the 1.1 s second prediction of 2026-11-17 on the owner's Mac
+    (`2026-11-17-first-search-after-the-warm-up.md`). On a sandbox library on this Mac
+    under pressure, a slow prediction read about 330 MB back (`op=search.tower
+    phase=predicted`, `2026-11-17-a-new-library-at-the-owners-size.md` §2). That session
+    has no such line.
   - An act's presented frame: every sandbox run so far read `occluded` (display asleep).
   - Part of a sandbox first launch's 889 MB before #899 and #903: the loupe step's 200 MB
     inside the process (`2026-11-17-first-launch-decodes.md`).
