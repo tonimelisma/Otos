@@ -101,6 +101,23 @@ real backlog. Three instruments see those:
   beside its line, so the line keeps its waiter and wait; a named write that waited 100 ms
   for the writer logs `op=catalog.store.writeWait`; the order read splits its SQL
   (`orderSqlMs`) from making the window's IDs (`mapMs`).
+- **The machine's level and Otos's process tree.** `op=system.pressure phase=launch` gives
+  the machine's memory-pressure level when the app starts, read once from the kernel
+  (`kern.memorystatus_vm_pressure_level`, with `kern.memorystatus_level`, the share it
+  counts available, the thermal state and Low Power Mode), since the pressure source
+  reports changes only; `phase=changed` is each report of that source, with the kernel's
+  level read in the same step. Each text-reading helper logs what it cost once, as its
+  session ends (`op=process.usage phase=helper role=textReader`: its CPU and peak footprint
+  from `proc_pid_rusage` at its last answer). The scorecard prints the level over the
+  session (`MACHINE`: the level at launch, each change, seconds at each level) and the
+  process tree's CPU and footprints, and judges `machine.pressureCaused`: from a launch at
+  `normal`, a level that left `normal` came while Otos was the new workload (FAIL); from
+  any other launch level the machine was not quiet and the row is `NOT-JUDGED`. The log
+  cannot say whether another workload started after Otos, so a FAIL is Otos's on a machine
+  kept otherwise quiet. `script/survey.sh`'s summary prints the same from its live capture,
+  and counts the text readers alive at each moment apart from those seen so far. The system
+  language model's service and the indexing daemons run as other users, so only the
+  survey's `top` columns see them.
 - **The tour** (`SmokeTour`, debug builds, which the installed app is). `OTOS_TOUR=1` makes
   a session walk the sidebar, scroll, open four neighbouring stills the loupe can show
   without a download (an original on this Mac, or a stored preview), step through them,

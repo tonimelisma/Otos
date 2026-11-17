@@ -103,8 +103,8 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
         return (info.phys_footprint, info.resident_size)
     }
 
-    /// What `proc_pid_rusage` reports for this process since launch.
-    private struct Usage {
+    /// What `proc_pid_rusage` reports for a process since its launch.
+    struct Usage: Equatable, Sendable {
         let peakFootprint: UInt64
         let cpuMilliseconds: UInt64
         let diskRead: UInt64
@@ -112,11 +112,13 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
         let pageIns: UInt64
     }
 
-    private static func rusage() -> Usage? {
+    /// What the kernel reports for `pid` since its launch: a helper process Otos started (the
+    /// same user's, so readable), or this process. Nil once the process is gone.
+    static func rusage(of pid: pid_t = getpid()) -> Usage? {
         var info = rusage_info_v4()
         let result = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
-                proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0)
+                proc_pid_rusage(pid, RUSAGE_INFO_V4, $0)
             }
         }
         guard result == 0 else {
@@ -245,6 +247,13 @@ nonisolated enum ResourceCheckpoint {
 
 /// The system's memory-pressure reports, for the session: the platform reports the fact, so
 /// nothing samples for it. Each report is a checkpoint carrying its level.
+///
+/// The machine's level is also logged on a line of its own (`op=system.pressure`), which the
+/// scorecard reads as the level over the session (ADR 0015): `phase=launch` when the reporter
+/// starts, from the kernel's level (`kern.memorystatus_vm_pressure_level`), since the source
+/// reports only changes; `phase=changed` at each report, with the kernel's level read in the
+/// same step beside the source's. A session that never logs `changed` stayed at its launch
+/// level.
 final nonisolated class MemoryPressureReporter: Sendable {
     private let source: any DispatchSourceMemoryPressure
 
@@ -254,10 +263,18 @@ final nonisolated class MemoryPressureReporter: Sendable {
             queue: .global(qos: .utility)
         )
         self.source = source
+        var launch = SystemPressure.kernelFields()
+        launch["level"] = SystemPressure.kernelLevelName(launch["systemLevel"])
+        launch["thermal"] = SystemPressure.thermalName(ProcessInfo.processInfo.thermalState)
+        launch["lowPower"] = "\(ProcessInfo.processInfo.isLowPowerModeEnabled)"
+        OtosLog.performance.noticeOperation("system.pressure", phase: "launch", fields: launch)
         source.setEventHandler { [weak source] in
             guard let event = source?.data else {
                 return
             }
+            var changed = SystemPressure.kernelFields()
+            changed["level"] = Self.level(event)
+            OtosLog.performance.noticeOperation("system.pressure", phase: "changed", fields: changed)
             ResourceCheckpoint.record("memoryPressure", fields: ["level": Self.level(event)], storeUse: storeUse)
         }
         source.activate()
@@ -275,5 +292,47 @@ final nonisolated class MemoryPressureReporter: Sendable {
             return "warning"
         }
         return "normal"
+    }
+}
+
+/// What the kernel says of the machine's memory now: its pressure level and the share of
+/// memory it counts available. Two `sysctl` reads, no sampling.
+nonisolated enum SystemPressure {
+    /// `systemLevel` (the kernel's level: 1 normal, 2 warning, 4 critical) and
+    /// `availablePercent` (`kern.memorystatus_level`), each `unknown` when unread.
+    static func kernelFields() -> [String: String] {
+        [
+            "systemLevel": sysctlInt("kern.memorystatus_vm_pressure_level").map { "\($0)" } ?? "unknown",
+            "availablePercent": sysctlInt("kern.memorystatus_level").map { "\($0)" } ?? "unknown",
+        ]
+    }
+
+    /// The kernel's level by the source's names; `unknown` for a value it does not define.
+    static func kernelLevelName(_ value: String?) -> String {
+        switch value {
+        case "1": "normal"
+        case "2": "warning"
+        case "4": "critical"
+        default: "unknown"
+        }
+    }
+
+    static func thermalName(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: "nominal"
+        case .fair: "fair"
+        case .serious: "serious"
+        case .critical: "critical"
+        @unknown default: "unknown"
+        }
+    }
+
+    private static func sysctlInt(_ name: String) -> Int32? {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname(name, &value, &size, nil, 0) == 0 else {
+            return nil
+        }
+        return value
     }
 }

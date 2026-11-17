@@ -561,6 +561,67 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual((peak["afterStep"], peak["duringStep"]), (None, "1:scope/allMedia"))
 
 
+def pressure_session(launch_level, *changes, helpers=()):
+    """A short session: a launch level, then `(second, level)` changes, ending at 59.9 s."""
+    lines = [
+        line(0.0, "op=sessionStart session=S1 kind=prod"),
+        line(0.1, f"op=system.pressure phase=launch level={launch_level} systemLevel=1 availablePercent=61 "
+                  "thermal=nominal lowPower=false"),
+        line(0.2, "op=process.usage phase=sample event=firstGrid cpuMs=1000 diskReadMB=1 diskWrittenMB=0"),
+    ]
+    for second, level in changes:
+        lines.append(line(second, f"op=system.pressure phase=changed level={level} systemLevel=2 availablePercent=29"))
+    for second, cpu, peak in helpers:
+        lines.append(line(second, f"op=process.usage phase=helper role=textReader helperPid=7 cpuMs={cpu} "
+                                  f"peakFootprintMB={peak} readings=3 reason=ended"))
+    lines.append(line(59.9, "op=process.usage phase=sample event=tourFinish cpuMs=9000 diskReadMB=2 diskWrittenMB=0"))
+    return lines
+
+
+class MachineTests(unittest.TestCase):
+    """The machine's pressure level over a session and the load of Otos's process tree."""
+
+    def row(self, rows):
+        return next(r for r in rows if r["metric"] == "machine.pressureCaused")
+
+    def test_a_level_that_stays_normal_from_a_normal_launch_passes(self):
+        report, rows, out = run(pressure_session("normal"))
+        machine = report["machine"]
+        self.assertEqual((machine["atLaunch"], machine["worst"], machine["pressureCaused"]), ("normal", "normal", "normal"))
+        self.assertEqual(machine["seconds"]["normal"], 59.8)
+        self.assertEqual((self.row(rows)["verdict"], self.row(rows)["value"]), ("PASS", 0.0))
+        self.assertIn("pressure at launch normal", out)
+
+    def test_a_level_that_leaves_normal_after_a_normal_launch_fails_with_its_seconds(self):
+        report, rows, out = run(pressure_session("normal", (20.1, "warning"), (40.1, "normal")))
+        machine = report["machine"]
+        self.assertEqual(machine["seconds"], {"normal": 39.8, "warning": 20.0, "critical": 0.0})
+        self.assertEqual((machine["worst"], machine["pressureCaused"]), ("warning", "caused"))
+        self.assertEqual([c["level"] for c in machine["changes"]], ["warning", "normal"])
+        row = self.row(rows)
+        self.assertEqual((row["verdict"], row["value"], row["state"]), ("FAIL", 20.0, "caused"))
+        self.assertIn("warning at 20100 ms", out)
+
+    def test_a_launch_under_pressure_is_not_judged(self):
+        report, rows, _ = run(pressure_session("warning", (30.0, "critical")))
+        self.assertEqual(report["machine"]["worst"], "critical")
+        self.assertEqual(self.row(rows)["verdict"], "NOT-JUDGED")
+
+    def test_a_build_without_the_line_has_no_data_and_says_so(self):
+        report, rows, _ = run(SESSION)
+        self.assertEqual(self.row(rows)["verdict"], "NO-DATA")
+        self.assertTrue(any("op=system.pressure" in item for item in report["notMeasured"]))
+
+    def test_the_process_tree_adds_each_helper_to_the_app(self):
+        report, rows, out = run(pressure_session("normal", helpers=[(10.0, 4000, 130), (30.0, 2500, 90)]))
+        tree = report["machine"]["tree"]
+        self.assertEqual((tree["appCpuMs"], tree["helperCpuMs"], tree["cpuMs"]), (9000, 6500, 15500))
+        self.assertEqual((tree["helpers"], tree["helperPeakFootprintMB"]), (2, 130))
+        self.assertEqual(tree["byRole"]["textReader"], {"count": 2, "cpuMs": 6500, "peakFootprintMB": 130})
+        self.assertEqual(next(r for r in rows if r["metric"] == "machine.treeCpuMs")["value"], 15500)
+        self.assertIn("textReader: 2 processes", out)
+
+
 class SessionKindTests(unittest.TestCase):
     """A launch tour's numbers are under the launch's own load; a settled tour's are what a
     person's session meets. The scorecard labels which, and compares only like with like."""

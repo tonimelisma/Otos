@@ -21,6 +21,11 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
+# No __pycache__ under script/: every file there is a script (script/ci-repo-shape.sh).
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scorecard  # noqa: E402  (the scorecard's reading of the pressure and helper lines)
+
 OTOS_BINARIES = {"Otos", "OtosKit", "Otos.debug.dylib"}
 OWNER_PREFIXES = re.compile(
     r"^(?:(?:closure #\d+ in |implicit closure #\d+ in |partial apply for |specialized |"
@@ -98,7 +103,10 @@ def rusage_by_snapshot(raw, app_pid):
         for row in rows:
             if row["pid"] != app_pid:
                 readers_last[row["pid"]] = row
-        result[n] = {"app": app, "readers": dict(readers_last)}
+        # `readers` keeps every reader seen so far, so a reader that ended still counts in
+        # the CPU and disk deltas; `alive` is only those this snapshot found running.
+        result[n] = {"app": app, "readers": dict(readers_last),
+                     "alive": [r for r in rows if r["pid"] != app_pid]}
     return result
 
 
@@ -470,6 +478,21 @@ def parse_log(raw):
     }
 
 
+def parse_machine(raw):
+    """The pressure level over the session and Otos's process tree, read from the app's own
+    lines exactly as the scorecard reads them (`scorecard.machine`)."""
+    path = os.path.join(raw, "log.ndjson")
+    if not os.path.exists(path):
+        return None
+    with open(path, errors="replace") as handle:
+        events = scorecard.read_events(handle)
+    if not events:
+        return None
+    report = scorecard.machine(events[0], events)
+    return {key: report[key] for key in ("atLaunch", "systemLevelAtLaunch", "availablePercentAtLaunch",
+                                         "worst", "pressureCaused", "seconds", "changes", "tree")}
+
+
 # ── Files ────────────────────────────────────────────────────────────────────
 def parse_files(path):
     rows = {}
@@ -515,8 +538,9 @@ def summarize(out_dir):
                 "otos_phys_footprint_mb": mb(app["phys_footprint_bytes"]),
                 "otos_lifetime_max_footprint_mb": mb(app["lifetime_max_phys_footprint_bytes"]),
                 "otos_resident_mb": mb(app["resident_bytes"]),
-                "readers": len(entry["readers"]),
-                "readers_footprint_mb": mb(sum(r["phys_footprint_bytes"] for r in entry["readers"].values())),
+                "readers_alive": len(entry["alive"]),
+                "readers_seen": len(entry["readers"]),
+                "readers_alive_footprint_mb": mb(sum(r["phys_footprint_bytes"] for r in entry["alive"])),
                 "cpu_s": round((delta["cpu_user_ns"] + delta["cpu_system_ns"]) / 1e9, 2),
                 "disk_read_mb": mb(delta["diskio_read_bytes"]),
                 "disk_written_mb": mb(delta["diskio_written_bytes"]),
@@ -658,6 +682,7 @@ def summarize(out_dir):
         "heap": heaps,
         "heap_capture": heap_seconds,
         "log": parse_log(raw),
+        "machine": parse_machine(raw),
         "language_model": language_model,
         "disk_io": {"iostat": parse_iostat(os.path.join(raw, "iostat.txt"))},
         "other_processes": {
@@ -686,13 +711,27 @@ def markdown(s):
         s["session"]["bundle_id"], s["session"]["tour_steps"], s["session"]["sandbox_home"], s["session"]["end"]))
     lines.append("## Otos by phase (app + text readers)\n")
     lines.append(table(s["phases"], ["phase", "at_s", "otos_phys_footprint_mb", "otos_lifetime_max_footprint_mb",
-                                     "otos_resident_mb", "readers", "readers_footprint_mb", "cpu_s",
+                                     "otos_resident_mb", "readers_alive", "readers_seen",
+                                     "readers_alive_footprint_mb", "cpu_s",
                                      "disk_read_mb", "disk_written_mb", "energy_j"]))
     lines.append("## System memory by phase\n")
     lines.append(table([{"phase": p["phase"], **p.get("system", {})} for p in s["phases"]],
                        ["phase", "free_mb", "compressor_mb", "swap_used_mb", "swap_growth_mb",
                         "pageouts_since_previous", "swapouts_since_previous", "pressure_level",
                         "memorystatus_free_percent"]))
+    machine = s.get("machine")
+    lines.append("## Memory pressure over the session (the app's own lines)\n")
+    if not machine or machine.get("atLaunch") is None:
+        lines.append("No `op=system.pressure` line: a build older than the pressure line.\n")
+    else:
+        tree = machine["tree"]
+        lines.append("At launch %s (kernel level %s, %s %% available); worst %s; caused %s; seconds %s.\n" % (
+            machine["atLaunch"], machine["systemLevelAtLaunch"], machine["availablePercentAtLaunch"],
+            machine["worst"], machine["pressureCaused"], machine["seconds"]))
+        lines.append("Changes: %s.\n" % (", ".join("%s at %s ms" % (c["level"], c["atMs"]) for c in machine["changes"]) or "none"))
+        lines.append("Process tree: CPU %s ms (app %s, helpers %s over %s processes); peak app %s MB, largest helper %s MB.\n" % (
+            tree["cpuMs"], tree["appCpuMs"], tree["helperCpuMs"], tree["helpers"], tree["appPeakFootprintMB"],
+            tree["helperPeakFootprintMB"]))
     lines.append("## Otos memory by region (dirty + swapped), each phase\n")
     for p in s["phases"]:
         lines.append("**%s**: " % p["phase"] + ", ".join("%s %s MB" % (r["region"], r["footprint_mb"]) for r in p["top_regions_mb"]) + "\n")

@@ -612,6 +612,83 @@ def memory(start, events, tour_steps, click_list):
     }
 
 
+PRESSURE_LEVELS = ("normal", "warning", "critical")
+
+
+def machine(start, events):
+    """The machine's memory-pressure level over the session, and the load of Otos's own
+    process tree (the app and its text-reading helpers).
+
+    The level comes from `op=system.pressure` lines: `phase=launch` is the level when the app
+    started, read once from the kernel (`kern.memorystatus_vm_pressure_level`), and each
+    `phase=changed` is a report of the system's memory-pressure source
+    (`DispatchSource.makeMemoryPressureSource`). Seconds at each level run from the launch line
+    to the session's last event. The judgement (`pressureCaused`) holds only when the machine
+    was at `normal` at launch: then a level that left `normal` came while Otos was the new
+    workload (`caused`), one that stayed is `normal`; a launch at another level is `notJudged`,
+    since the machine was not quiet before Otos. Whether another workload started during the
+    session is not in the app's log, so a caused level is Otos's or a neighbour's started
+    after it; a quiet machine (nothing else started) makes it Otos's.
+
+    A helper's line (`op=process.usage phase=helper`) is its last sample before it ended:
+    CPU and peak footprint at least those, never more."""
+    lines = of(events, "system.pressure")
+    launch_line = next((e for e in lines if e.phase == "launch"), None)
+    changes = [e for e in lines if e.phase == "changed"]
+    end = events[-1].time if events else None
+    result = {"atLaunch": None, "systemLevelAtLaunch": None, "availablePercentAtLaunch": None,
+              "thermalAtLaunch": None, "lowPowerAtLaunch": None, "changes": [], "seconds": None,
+              "worst": None, "pressureCaused": None, "secondsOutsideNormal": None}
+    if launch_line is not None:
+        result.update({
+            "atLaunch": launch_line.fields.get("level"),
+            "systemLevelAtLaunch": launch_line.num("systemLevel"),
+            "availablePercentAtLaunch": launch_line.num("availablePercent"),
+            "thermalAtLaunch": launch_line.fields.get("thermal"),
+            "lowPowerAtLaunch": launch_line.fields.get("lowPower"),
+        })
+        seconds = {level: 0.0 for level in PRESSURE_LEVELS}
+        level, since = launch_line.fields.get("level"), launch_line.time
+        for change in (c for c in changes if c.time >= launch_line.time):
+            if level in seconds:
+                seconds[level] += (change.time - since).total_seconds()
+            level, since = change.fields.get("level"), change.time
+        if level in seconds and end is not None:
+            seconds[level] += max(0.0, (end - since).total_seconds())
+        result["seconds"] = {k: round(v, 1) for k, v in seconds.items()}
+        seen = [result["atLaunch"]] + [c.fields.get("level") for c in changes]
+        ranked = [PRESSURE_LEVELS.index(s) for s in seen if s in PRESSURE_LEVELS]
+        result["worst"] = PRESSURE_LEVELS[max(ranked)] if ranked else None
+        result["secondsOutsideNormal"] = round(seconds["warning"] + seconds["critical"], 1)
+        if result["atLaunch"] != "normal":
+            result["pressureCaused"] = "notJudged"
+        else:
+            result["pressureCaused"] = "normal" if result["worst"] == "normal" else "caused"
+    result["changes"] = [{"atMs": ms_since(start.time, c), "level": c.fields.get("level"),
+                          "systemLevel": c.num("systemLevel"), "availablePercent": c.num("availablePercent")}
+                         for c in changes]
+    helpers = [e for e in of(events, "process.usage", "helper")]
+    usages = [e for e in of(events, "process.usage") if e.phase != "helper"]
+    app_cpu = usages[-1].num("cpuMs") if usages else None
+    helper_cpu = sum(h.num("cpuMs", 0) for h in helpers)
+    result["tree"] = {
+        "appCpuMs": app_cpu,
+        "appPeakFootprintMB": max((s.num("peakFootprintMB", 0) for s in of(events, "process.memory")), default=None),
+        "helpers": len(helpers),
+        "helperCpuMs": helper_cpu if helpers else 0,
+        "helperPeakFootprintMB": max((h.num("peakFootprintMB", 0) for h in helpers), default=None),
+        "cpuMs": None if app_cpu is None else app_cpu + helper_cpu,
+        "byRole": {},
+    }
+    for helper in helpers:
+        role = helper.fields.get("role", "unknown")
+        entry = result["tree"]["byRole"].setdefault(role, {"count": 0, "cpuMs": 0, "peakFootprintMB": 0})
+        entry["count"] += 1
+        entry["cpuMs"] += helper.num("cpuMs", 0)
+        entry["peakFootprintMB"] = max(entry["peakFootprintMB"], helper.num("peakFootprintMB", 0))
+    return result
+
+
 def step_name(step):
     return f"{step.get('index')}:{step.get('kind')}/{step.get('label')}"
 
@@ -946,6 +1023,7 @@ def analyse(events, session_start):
         "background": background(events),
         "rootScans": root_scans(events),
         "memory": memory(start, events, toured["steps"], click_list),
+        "machine": machine(start, events),
         "resources": resources(events),
         "tour": toured,
         "sessionKind": session_kind(toured),
@@ -966,6 +1044,9 @@ def analyse(events, session_start):
                        "lines: a build older than the paint's start checkpoint)")
     if not of(events, "catalog.store.use"):
         missing.append("connection busy time and store changes by kind (no op=catalog.store.use lines)")
+    if not of(events, "system.pressure"):
+        missing.append("the machine's memory-pressure level over the session (no op=system.pressure lines: "
+                       "a build older than the pressure line)")
     if of(events, "catalog.store.stall") and not of(events, "catalog.store.stall.holders"):
         missing.append("the waiting read of each stall and its full holder list (stall lines cut at about "
                        "1,017 characters; this build logs holders inside the line)")
@@ -1059,6 +1140,15 @@ def verdicts(report, targets):
     add("mainThreadStalls.worstMs", "worst main-thread stall ms", report["stalls"]["mainThread"]["worstMs"] or 0)
     add("memory.peakFootprintMB", "peak footprint MB", report["memory"]["peakFootprintMB"])
     add("disk.derivedFolderMB", "derived folder MB", (report.get("disk") or {}).get("folderMB"))
+    caused = (report.get("machine") or {}).get("pressureCaused")
+    # Not a number against a limit: the level is judged only from a quiet start (`machine`).
+    verdict = {"normal": "PASS", "caused": "FAIL", "notJudged": "NOT-JUDGED"}.get(caused, "NO-DATA")
+    # The value is the seconds spent above `normal`; the state names the judgement.
+    rows.append({"metric": "machine.pressureCaused", "label": "memory pressure caused: s above normal",
+                 "value": (report.get("machine") or {}).get("secondsOutsideNormal"), "target": "normal",
+                 "state": caused, "verdict": verdict})
+    tree = (report.get("machine") or {}).get("tree") or {}
+    add("machine.treeCpuMs", "CPU ms of Otos and its helpers", tree.get("cpuMs"))
     return rows
 
 
@@ -1202,6 +1292,7 @@ def print_report(report, rows, out):
     for event in mem["pressure"]:
         w(f"    memory pressure {event['level']} at {event['atMs']} ms: footprint {fmt(event['footprintMB'])} MB, free "
           f"{fmt(event['freeMB'])} MB, last click {event['lastClick']}, tour step {event['tourStep']}\n")
+    print_machine(report.get("machine"), w)
     res = report["resources"]
     d = report.get("disk")
     w("\nDISK (derived folder, from its counters or a reconciliation's census)\n")
@@ -1235,6 +1326,27 @@ def print_report(report, rows, out):
     w("\nNOT MEASURED\n")
     for item in report["notMeasured"]:
         w(f"  - {item}\n")
+
+
+def print_machine(m, w):
+    w("\nMACHINE (memory pressure over the session; Otos's process tree)\n")
+    if not m or m.get("atLaunch") is None:
+        w("  - (no op=system.pressure phase=launch line)\n")
+    else:
+        w(f"  pressure at launch {m['atLaunch']} (kernel level {fmt(m['systemLevelAtLaunch'])}, "
+          f"{fmt(m['availablePercentAtLaunch'])} % available, thermal {fmt(m['thermalAtLaunch'])}, "
+          f"low power {fmt(m['lowPowerAtLaunch'])}); worst {m['worst']}; caused {m['pressureCaused']}\n")
+        seconds = m["seconds"] or {}
+        w("  seconds at each level " + ", ".join(f"{k} {fmt(seconds.get(k))}" for k in PRESSURE_LEVELS) + "\n")
+        for change in m["changes"]:
+            w(f"    {change['level']} at {change['atMs']} ms (kernel level {fmt(change['systemLevel'])}, "
+              f"{fmt(change['availablePercent'])} % available)\n")
+    tree = (m or {}).get("tree") or {}
+    w(f"  process tree CPU {fmt(tree.get('cpuMs'))} ms: app {fmt(tree.get('appCpuMs'))} ms, helpers "
+      f"{fmt(tree.get('helperCpuMs'))} ms over {fmt(tree.get('helpers'))} helper processes; peak footprint app "
+      f"{fmt(tree.get('appPeakFootprintMB'))} MB, largest helper {fmt(tree.get('helperPeakFootprintMB'))} MB\n")
+    for role, entry in (tree.get("byRole") or {}).items():
+        w(f"    {role}: {entry['count']} processes, {entry['cpuMs']} ms CPU, largest {entry['peakFootprintMB']} MB\n")
 
 
 def print_disk_by_owner(windows, w):

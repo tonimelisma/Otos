@@ -38,6 +38,39 @@ struct ProcessResourcesTests {
         #expect(sample(pageIns: nil).memoryFields["assetIdentityLargestRebuild"] == "4096")
     }
 
+    /// The pressure line's level comes from the kernel's own numbers, and a value the kernel
+    /// does not define is unknown, never normal.
+    @Test func theKernelPressureLevelIsNamedAsTheSourceNamesItAndReadsAsANumber() throws {
+        #expect(SystemPressure.kernelLevelName("1") == "normal")
+        #expect(SystemPressure.kernelLevelName("2") == "warning")
+        #expect(SystemPressure.kernelLevelName("4") == "critical")
+        #expect(SystemPressure.kernelLevelName("unknown") == "unknown")
+        #expect(SystemPressure.kernelLevelName(nil) == "unknown")
+        let fields = SystemPressure.kernelFields()
+        let level = try #require(fields["systemLevel"].flatMap(Int.init))
+        #expect([1, 2, 4].contains(level))
+        let available = try #require(fields["availablePercent"].flatMap(Int.init))
+        #expect((0 ... 100).contains(available))
+    }
+
+    /// A helper's usage is the kernel's for that process: readable while it runs, gone once
+    /// it has exited and been reaped.
+    @Test func aHelperProcessUsageIsReadWhileItRunsAndNotAfter() async throws {
+        let process = Process()
+        process.executableURL = URL(filePath: "/bin/cat")
+        let input = Pipe()
+        process.standardInput = input
+        let exited = AsyncStream<Void>.makeStream()
+        process.terminationHandler = { _ in exited.continuation.finish() }
+        try process.run()
+        let usage = try #require(ProcessResourceSample.rusage(of: process.processIdentifier))
+        #expect(usage.peakFootprint > 0)
+        try input.fileHandleForWriting.close()
+        for await _ in exited.stream {}
+        process.waitUntilExit()
+        #expect(ProcessResourceSample.rusage(of: process.processIdentifier) == nil)
+    }
+
     /// Each notification counts once, and once for each kind of fact it names.
     @Test func theChangeTallyCountsNotificationsByKindOfFact() {
         let tally = CatalogChangeTally()

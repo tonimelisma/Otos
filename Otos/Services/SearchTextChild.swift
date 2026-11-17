@@ -30,6 +30,11 @@ import Synchronization
 /// descriptor. `end` returns once the child's exit is reported (`Process.terminationHandler`),
 /// so a shutdown that awaits it leaves no child behind.
 ///
+/// What a child cost is logged once, as its session ends however it ends
+/// (`op=process.usage phase=helper role=textReader`): the child's own CPU and peak footprint,
+/// read from the kernel (`proc_pid_rusage`) at its last answer, or at its end while it still
+/// runs, so the scorecard counts the process tree Otos runs, not the app alone.
+///
 /// The child is the app's executable in the installed app, beside the `OtosKit` framework it
 /// embeds, and the built `Otos.app` beside the framework when tests load it from the build's
 /// products. It reads the same previews from Application Support the app does, and reads
@@ -76,6 +81,7 @@ final nonisolated class SearchTextChild: SearchTextSession {
         process.standardError = FileHandle.nullDevice
         process.terminationHandler = { _ in lifetime.reportExit() }
         try process.run()
+        lifetime.started(pid: process.processIdentifier)
         answers = output.fileHandleForReading
         OtosLog.thumbnails.noticeOperation("search.text", phase: "sessionStarted", fields: [
             "pid": "\(process.processIdentifier)",
@@ -84,6 +90,7 @@ final nonisolated class SearchTextChild: SearchTextSession {
 
     deinit {
         // Its input's end ends the child, mid-reading or not.
+        lifetime.reportUsage(reason: "dropped")
         lifetime.closeInput()
     }
 
@@ -123,13 +130,20 @@ final nonisolated class SearchTextChild: SearchTextSession {
             try lifetime.write(request)
             switch nextAnswer(by: ContinuousClock.now + answerDeadline) {
             case let .line(answer):
-                return try JSONDecoder().decode(SearchTextPreviewReading.self, from: answer)
+                lifetime.answered()
+                let reading = try JSONDecoder().decode(SearchTextPreviewReading.self, from: answer)
+                if case .ended = reading {
+                    lifetime.reportUsage(reason: "ended")
+                }
+                return reading
             case .closed:
+                lifetime.reportUsage(reason: "exited")
                 return .exited("the reading process exited before it answered")
             case .overran:
                 // Ended here, so the reader's next page starts a new child. A child stuck in
                 // Vision still reads its input's end, but a stand-in that never reads its input
                 // does not, so this one is terminated.
+                lifetime.reportUsage(reason: "overran")
                 process.terminate()
                 OtosLog.thumbnails.errorOperation("search.text", phase: "sessionOverran", fields: [
                     "pid": "\(process.processIdentifier)", "deadlineSeconds": "\(answerDeadline.components.seconds)",
@@ -216,6 +230,12 @@ final nonisolated class SearchTextChildLifetime: Sendable {
         var input: FileHandle?
         var exited = false
         var exitWaiters: [CheckedContinuation<Void, Never>] = []
+        var pid: pid_t?
+        /// The child's own counters at its last answer: what its usage line reports, since a
+        /// process that has exited can no longer be asked.
+        var usage: ProcessResourceSample.Usage?
+        var answers = 0
+        var usageReported = false
     }
 
     private let state: Mutex<State>
@@ -232,6 +252,40 @@ final nonisolated class SearchTextChildLifetime: Sendable {
             }
             try input.write(contentsOf: request)
         }
+    }
+
+    func started(pid: pid_t) {
+        state.withLock { $0.pid = pid }
+    }
+
+    /// The child answered a reading: its counters are read while it still runs.
+    func answered() {
+        state.withLock { state in
+            state.answers += 1
+            if let pid = state.pid, let usage = ProcessResourceSample.rusage(of: pid) {
+                state.usage = usage
+            }
+        }
+    }
+
+    /// Logs, once, what the child cost (`op=process.usage phase=helper role=textReader`): its
+    /// CPU and peak footprint at its last answer, or now while it still runs; at least those.
+    func reportUsage(reason: String) {
+        let report = state.withLock { state -> (pid: pid_t, usage: ProcessResourceSample.Usage?, answers: Int)? in
+            guard !state.usageReported, let pid = state.pid else { return nil }
+            state.usageReported = true
+            if !state.exited, let usage = ProcessResourceSample.rusage(of: pid) {
+                state.usage = usage
+            }
+            return (pid, state.usage, state.answers)
+        }
+        guard let report else { return }
+        OtosLog.performance.noticeOperation("process.usage", phase: "helper", fields: [
+            "role": "textReader", "helperPid": "\(report.pid)", "readings": "\(report.answers)", "reason": reason,
+            "cpuMs": report.usage.map { "\($0.cpuMilliseconds)" } ?? "unknown",
+            "peakFootprintMB": report.usage.map { ProcessResourceSample.megabytes($0.peakFootprint) } ?? "unknown",
+            "diskReadMB": report.usage.map { ProcessResourceSample.megabytes($0.diskRead) } ?? "unknown",
+        ])
     }
 
     /// Closes the child's input, once: the child exits at its end.
@@ -251,6 +305,7 @@ final nonisolated class SearchTextChildLifetime: Sendable {
 
     /// Ends the child and returns once its exit is reported.
     func end() async {
+        reportUsage(reason: "closed")
         closeInput()
         await withCheckedContinuation { continuation in
             let exited = state.withLock { state in
