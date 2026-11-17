@@ -154,6 +154,7 @@ public struct OtosApp: App {
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
                     ResourceCheckpoint.record("windowAttached")
                     #if DEBUG
+                        SandboxLibrary.applyIfPresent(to: catalogViewModel)
                         SmokeLibrarySelection.applyIfPresent(to: catalogViewModel)
                         SmokeWindowCapture.applyIfPresent(to: catalogViewModel)
                         SmokeTour.applyIfPresent(to: catalogViewModel)

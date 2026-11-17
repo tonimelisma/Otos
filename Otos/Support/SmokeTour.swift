@@ -127,9 +127,11 @@ extension PreferencesDomain {
     ///
     /// The one exception is the act steps (Like, Dislike, Not Rated, Move to Trash), which
     /// time an act to its result on the grid. They run only in a sandbox home
-    /// (`CFFIXED_USER_HOME`, not the user's own) whose every source lies inside it, put each
-    /// photo back as it was (the last choice is its own, Undo puts the trashed photo back),
-    /// and are skipped with `reason=notSandboxHome` everywhere else.
+    /// (`CFFIXED_USER_HOME`, not the user's own) whose every source lies inside it on a volume
+    /// mounted inside it, so Move to Trash moves into that volume's own Trash and never into
+    /// the account's (`SmokeTour.trashStays`). They put each photo back as it was (the last
+    /// choice is its own, Undo puts the trashed photo back), and are skipped with the reason
+    /// (`notSandboxHome`, `sourceOutsideSandbox`, `trashOutsideSandbox`) everywhere else.
     ///
     /// Each step logs `op=tour phase=step`; the session opens with `op=tour phase=config`
     /// and ends with `op=tour phase=finish`, after which the app quits itself.
@@ -317,8 +319,52 @@ extension PreferencesDomain {
         /// Whether every source the window lists lies inside `sandbox`, so an act there
         /// touches only files the sandbox holds.
         static func sourcesLie(_ state: CatalogWindowState, inside sandbox: String) -> Bool {
-            let roots = state.libraries.map(\.path) + state.removableSources.map(\.path)
-            return !roots.isEmpty && roots.allSatisfy { resolved($0.rawValue).hasPrefix(sandbox + "/") }
+            let roots = sources(of: state)
+            return !roots.isEmpty && roots.allSatisfy { lies($0.rawValue, inside: sandbox) }
+        }
+
+        /// Whether the Trash that Move to Trash uses for every source lies inside `sandbox`.
+        ///
+        /// `FileManager.trashItem` keeps an item on its own volume: on the volume that holds the
+        /// account's home it moves it into that account's `~/.Trash`, found from the user
+        /// database and not from `HOME` or `CFFIXED_USER_HOME`, and on any other volume into
+        /// that volume's `.Trashes/<uid>` (measured on macOS 27:
+        /// `docs/research/2026-11-16-trash-destination-by-volume.md`). So a sandbox home on the
+        /// boot volume still trashes into the account's own Trash, and only a source whose
+        /// volume is mounted inside the sandbox (`script/sandbox-library.sh`) trashes into a
+        /// Trash the sandbox holds. `volumeRoot` names a folder's volume mount point; a volume
+        /// it cannot name never passes.
+        static func trashStays(
+            _ state: CatalogWindowState,
+            inside sandbox: String,
+            volumeRoot: (String) -> String? = SmokeTour.volumeRoot(of:)
+        ) -> Bool {
+            let roots = sources(of: state)
+            return !roots.isEmpty && roots.allSatisfy { root in
+                volumeRoot(root.rawValue).map { lies($0, inside: sandbox) } ?? false
+            }
+        }
+
+        /// Whether any of the app's windows is on screen and not covered entirely by others.
+        @MainActor
+        static func windowIsVisible() -> Bool {
+            NSApp?.windows.contains { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
+        }
+
+        /// The mount point of the volume holding `path`, resolved; nil when the system does
+        /// not say.
+        static func volumeRoot(of path: String) -> String? {
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            return (try? url.resourceValues(forKeys: [.volumeURLKey]))?.volume.map { resolved($0.path(percentEncoded: false)) }
+        }
+
+        /// Whether `path`, resolved, lies strictly inside `folder`.
+        static func lies(_ path: String, inside folder: String) -> Bool {
+            resolved(path).hasPrefix(resolved(folder) + "/")
+        }
+
+        private static func sources(of state: CatalogWindowState) -> [LibraryRootPath] {
+            state.libraries.map(\.path) + state.removableSources.map(\.path)
         }
 
         /// The account's own home from the user database, which `CFFIXED_USER_HOME` does not
@@ -433,8 +479,24 @@ extension PreferencesDomain {
                 OtosLog.performance.errorOperation("tour", phase: "config", fields: fields.merging(["ownersOff": "true"]) { $1 })
             }
             // The first grid is the first state applied after the catalog's load.
-            guard await until({ $0.state.isCatalogLoaded }), let viewModel else {
+            guard await until({ $0.state.isCatalogLoaded }), viewModel != nil else {
                 OtosLog.performance.errorOperation("tour", phase: "failed", fields: ["reason": "catalogNeverLoaded"])
+                finish(outcome: "failed")
+                return
+            }
+            // A sandbox library this launch registers (`SandboxLibrary`) is toured once its
+            // first scan has delivered, so the plan sees it.
+            if let library = SandboxLibrary.requestedPath(environment: environment) {
+                guard await until({ SandboxLibrary.isScanned(library, in: $0.state) }) else {
+                    OtosLog.performance.errorOperation("tour", phase: "failed", fields: [
+                        "reason": "sandboxLibraryNeverScanned", "rootPath": library.rawValue,
+                    ])
+                    finish(outcome: "failed")
+                    return
+                }
+                OtosLog.performance.noticeOperation("tour", phase: "library", fields: ["rootPath": library.rawValue])
+            }
+            guard let viewModel else {
                 finish(outcome: "failed")
                 return
             }
@@ -739,7 +801,8 @@ extension PreferencesDomain {
         }
 
         /// Why the act steps may not run here, or nil when they may: a sandbox home whose
-        /// every source lies inside it.
+        /// every source lies inside it, on a volume mounted inside it, so the Trash the acts
+        /// use is the sandbox's own.
         private func actsRefusal() -> String? {
             guard let viewModel else {
                 return "windowGone"
@@ -749,6 +812,11 @@ extension PreferencesDomain {
             }
             guard SmokeTour.sourcesLie(viewModel.state, inside: sandbox) else {
                 return "sourceOutsideSandbox"
+            }
+            // A source inside the sandbox home but on the account's own volume trashes into
+            // the account's Trash: the acts would put the tour's files among the user's.
+            guard SmokeTour.trashStays(viewModel.state, inside: sandbox) else {
+                return "trashOutsideSandbox"
             }
             guard !openablePhotos.isEmpty, originalChoice != nil else {
                 return "noOpenablePhotos"
@@ -769,6 +837,16 @@ extension PreferencesDomain {
             if viewModel.viewMode != .grid {
                 viewModel.exitToGrid()
             }
+            // A choice's result is its tile drawn again, which only a tile on screen is: the
+            // photo is brought into view first, as a person sees the tile they act on. A window
+            // other windows cover entirely is drawn by nobody (AppKit's occlusion state), so
+            // there the act has no result to time and is skipped as such.
+            guard SmokeTour.windowIsVisible() else {
+                return ("act", WindowAct.choice(choice).name, .skipped("windowOccluded"))
+            }
+            guard await onScreen(photo) else {
+                return ("act", WindowAct.choice(choice).name, coveredOr(Outcome(result: "deadline", fields: ["reason": "notOnScreen"])))
+            }
             viewModel.selectAssets([photo])
             // Each act is timed on its own: the one before has written its choice, so this
             // one does not queue behind that write's publication.
@@ -777,7 +855,7 @@ extension PreferencesDomain {
             }
             let before = viewModel.lastActResult?.revision ?? 0
             viewModel.submitMediaChoice(choice)
-            return await ("act", WindowAct.choice(choice).name, actResult(after: before))
+            return await ("act", WindowAct.choice(choice).name, coveredOr(actResult(after: before)))
         }
 
         /// Move to Trash on the first photo, timed from the intent to the grid without it, then
@@ -854,6 +932,30 @@ extension PreferencesDomain {
                 "putBackMs": putBackMs.joined(separator: ","),
                 "allBack": "\(back)",
             ])
+        }
+
+        /// A choice step that reached its deadline while the window was covered had no drawn
+        /// tile to wait for: it is skipped as `windowOccluded`, not failed. Any other outcome
+        /// stands.
+        private func coveredOr(_ outcome: Outcome) -> Outcome {
+            outcome.result == "deadline" && !SmokeTour.windowIsVisible() ? .skipped("windowOccluded") : outcome
+        }
+
+        /// Moves the grid's focus to `photo` and waits for a visible-thumbnails report whose
+        /// set holds it: a newer one, or the one that still settles the set shown now when it
+        /// was already on screen. False at the deadline.
+        private func onScreen(_ photo: MediaAssetID) async -> Bool {
+            guard let viewModel else {
+                return false
+            }
+            let before = viewModel.lastVisibleThumbnails?.revision ?? 0
+            viewModel.setFocus(photo)
+            return await until { model in
+                guard let report = model.lastVisibleThumbnails, report.ids.contains(photo) else {
+                    return false
+                }
+                return report.revision > before || model.tileContentStore.settledVisible == report
+            }
         }
 
         /// True once every choice the window submitted has been written or refused and applied.

@@ -146,6 +146,72 @@ struct SmokeTourTests {
         #expect(!SmokeTour.sourcesLie(.empty, inside: sandbox))
     }
 
+    /// Move to Trash keeps an item on its volume, so the acts run only when every source's
+    /// volume is mounted inside the sandbox home: a source inside the home but on the boot
+    /// volume would trash into the account's Trash.
+    @Test func actsTrashOnlyOnAVolumeMountedInsideTheSandbox() {
+        let sandbox = "/private/tmp/otos-sandbox-home"
+        let mounted = sandbox + "/TourLibrary"
+        var state = CatalogWindowState.empty
+        state.libraries = [libraryState(path: mounted + "/Photos")]
+        #expect(SmokeTour.trashStays(state, inside: sandbox) { _ in mounted })
+        // The boot volume, the sandbox home itself, a volume elsewhere, an unnamed volume.
+        for volume in ["/", sandbox, "/Volumes/Card", nil] as [String?] {
+            #expect(!SmokeTour.trashStays(state, inside: sandbox) { _ in volume })
+        }
+        // Every source must pass, and a window with none never does.
+        state.libraries.append(libraryState(path: sandbox + "/Pictures"))
+        #expect(!SmokeTour.trashStays(state, inside: sandbox) { $0.hasPrefix(mounted) ? mounted : "/" })
+        #expect(!SmokeTour.trashStays(.empty, inside: sandbox) { _ in mounted })
+    }
+
+    /// A tour session in a sandbox home on the account's own volume: the Trash the system names
+    /// for a file there is the account's, not the sandbox's, so its acts are refused. The
+    /// volume is read from the filesystem, the way the tour reads it; nothing is trashed.
+    @Test func aSandboxHomeOnTheAccountsVolumeKeepsTheActsFromItsTrash() throws {
+        let sandbox = try makeTestDirectory()
+        let library = sandbox.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: false)
+        let file = library.appending(path: "photo.jpg")
+        try Data([0xFF, 0xD8]).write(to: file)
+        let sandboxPath = sandbox.path(percentEncoded: false)
+        var state = CatalogWindowState.empty
+        state.libraries = [libraryState(path: library.path(percentEncoded: false))]
+
+        #expect(SmokeTour.sourcesLie(state, inside: sandboxPath))
+        let volume = try #require(SmokeTour.volumeRoot(of: library.path(percentEncoded: false)))
+        #expect(!SmokeTour.lies(volume, inside: sandboxPath))
+        #expect(!SmokeTour.trashStays(state, inside: sandboxPath))
+        // The system's Trash for this file is the account's own, outside the sandbox.
+        let trash = try FileManager.default.url(for: .trashDirectory, in: .userDomainMask, appropriateFor: file, create: false)
+        let account = try #require(SmokeTour.accountHome())
+        #expect(SmokeTour.lies(trash.path(percentEncoded: false), inside: account))
+        #expect(!SmokeTour.lies(trash.path(percentEncoded: false), inside: sandboxPath))
+    }
+
+    /// The sandbox library seam registers a folder only in a sandbox home whose catalog and
+    /// folder both lie inside it; anywhere else it is refused with the reason.
+    @Test func aSandboxLibraryIsRegisteredOnlyInsideASandboxHome() throws {
+        let sandbox = try makeTestDirectory()
+        let home = sandbox.path(percentEncoded: false)
+        let folder = sandbox.appending(path: "TourLibrary", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let user = "/Users/someone"
+        let catalog = home + "/Library/Application Support"
+        let asked = ["CFFIXED_USER_HOME": home, SandboxLibrary.variable: folder.path(percentEncoded: false)]
+        func request(_ environment: [String: String], catalog: String? = catalog, processHome: String = home) -> SandboxLibrary.Request? {
+            SandboxLibrary.request(environment: environment, catalogFolder: catalog, processHome: processHome, userHome: user)
+        }
+
+        #expect(try request(asked) == .add(CatalogPath.normalizedDirectoryPath(for: folder)))
+        #expect(request(["CFFIXED_USER_HOME": home]) == nil)
+        #expect(request([SandboxLibrary.variable: folder.path(percentEncoded: false)], processHome: user) == .refused("notSandboxHome"))
+        #expect(request(asked, catalog: user + "/Library/Application Support") == .refused("catalogOutsideSandbox"))
+        #expect(request(asked, catalog: nil) == .refused("catalogOutsideSandbox"))
+        let outside = try makeTestDirectory()
+        #expect(request(asked.merging([SandboxLibrary.variable: outside.path(percentEncoded: false)]) { $1 }) == .refused("folderOutsideSandbox"))
+    }
+
     /// The three choices each change what the tile shows, and the last puts the photo's own
     /// choice back.
     @Test func theChoiceStepsEndOnThePhotosOwnChoice() {

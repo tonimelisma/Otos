@@ -464,6 +464,65 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual((peak["afterStep"], peak["duringStep"]), (None, "1:scope/allMedia"))
 
 
+class SandboxTrashTests(unittest.TestCase):
+    """A sandbox library's teardown tests the account's Trash for each generated file by name
+    (script/sandbox-library.sh check-trash). A folder stands in for the Trash here."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp(prefix="otos-scorecard-test-")
+        self.trash = os.path.join(self.folder, "Trash")
+        os.mkdir(self.trash)
+        self.names = os.path.join(self.folder, "names")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.folder)
+        self.assertFalse(os.path.exists(self.folder))
+
+    def check(self, names):
+        with open(self.names, "w", encoding="utf-8") as handle:
+            handle.write("".join(n + "\n" for n in names))
+        out = io.StringIO()
+        status = scorecard.report_trash_leftovers(self.names, self.trash, out)
+        return status, out.getvalue()
+
+    def test_a_clean_trash_passes_without_touching_anything_else(self):
+        other = os.path.join(self.trash, "someone-elses.jpg")
+        open(other, "w").close()
+        status, text = self.check(["otos-tour-abc-00000.jpg", "otos-tour-abc-00001.jpg"])
+        self.assertEqual(status, 0)
+        self.assertIn("phase=clean tested=2 leftovers=0 unknown=0", text)
+        self.assertTrue(os.path.exists(other))
+
+    def test_a_leftover_is_removed_named_and_fails_the_teardown(self):
+        leftover = os.path.join(self.trash, "otos-tour-abc-00001.jpg")
+        open(leftover, "w").close()
+        status, text = self.check(["otos-tour-abc-00000.jpg", "otos-tour-abc-00001.jpg"])
+        self.assertEqual(status, 1)
+        self.assertIn("phase=leftover name=otos-tour-abc-00001.jpg removed=true", text)
+        self.assertIn("phase=FAILED tested=2 leftovers=1", text)
+        self.assertFalse(os.path.exists(leftover))
+
+    def test_a_trash_that_cannot_be_tested_is_never_read_as_clean(self):
+        def denied(_path):
+            raise PermissionError("denied")
+        self.assertEqual(scorecard.trash_presence("otos-tour-abc-00000.jpg", self.trash, lstat=denied), "unknown")
+        removed, unknown = scorecard.trash_leftovers(["otos-tour-abc-00000.jpg"], self.trash, lstat=denied)
+        self.assertEqual((removed, unknown), ([], ["otos-tour-abc-00000.jpg"]))
+        # A name that is not a plain file name is never joined onto the Trash's path.
+        for name in ("../escape.jpg", "a/b.jpg", "..", ""):
+            self.assertEqual(scorecard.trash_presence(name, self.trash), "unknown")
+
+    def test_a_leftover_that_cannot_be_removed_is_reported_not_cleaned(self):
+        leftover = os.path.join(self.trash, "otos-tour-abc-00002.jpg")
+        open(leftover, "w").close()
+
+        def refuse(_path):
+            raise PermissionError("denied")
+        removed, unknown = scorecard.trash_leftovers(["otos-tour-abc-00002.jpg"], self.trash, remove=refuse)
+        self.assertEqual((removed, unknown), ([], ["otos-tour-abc-00002.jpg"]))
+
+
 if __name__ == "__main__":
     result = unittest.main(exit=False, verbosity=0).result
     if result.wasSuccessful():

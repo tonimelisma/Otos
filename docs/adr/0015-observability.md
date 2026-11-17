@@ -107,8 +107,26 @@ real backlog. Three instruments see those:
   their requester refuses every download for the session (`PaneOriginalDownloads.never`,
   `ReadOnlyOriginals`), so a cloud-only photo shows its stored preview and nothing more.
   The act steps (Like, Dislike, Not Rated, Move to Trash then Undo, then five of each in a row, each issued once the one before shows its result) run only in a sandbox
-  home (`CFFIXED_USER_HOME`, not the account's home) whose every source lies inside it, and
-  are skipped as `notSandboxHome` elsewhere. Each act is timed from its intent to the grid
+  home (`CFFIXED_USER_HOME`, not the account's home) whose every source lies inside it on a
+  volume mounted inside it, and are skipped elsewhere with the reason (`notSandboxHome`,
+  `sourceOutsideSandbox`, `trashOutsideSandbox`). The volume is what keeps a tour's files out
+  of the account's Trash: `FileManager.trashItem` moves an item into its own volume's Trash,
+  which on the boot volume is the account's `~/.Trash` whatever `HOME` says
+  (`docs/research/2026-11-16-trash-destination-by-volume.md`). So a tour trashes through the
+  same system Trash a user's Move to Trash uses, on a sandbox library
+  (`script/sandbox-library.sh`, `script/scorecard.sh --seed <photos>`): a sparse APFS image
+  mounted inside the sandbox home holding generated photos (words, skies, near-duplicates,
+  GPS, anniversaries) and two short videos, registered by the app itself through the
+  window's Add Library intent (`OTOS_SANDBOX_LIBRARY`, `SandboxLibrary`, ADR 0020). After
+  every tour in it the account's Trash is tested by path for each generated file; one found
+  there is removed and the run fails, and the run's end detaches the volume (never forced)
+  and removes the home, which takes a cut-short tour's trashed files with it. Rejected: a
+  tour-only Trash folder injected into `MediaTrashCoordinator.FileOperations`, which would
+  time a move the user's Move to Trash never makes. A choice's result is its tile drawn again,
+  so its photo is first brought on screen (the grid's focus, waited on by a visible-thumbnails
+  report holding it), and a window other windows cover entirely draws nothing: a choice step
+  that finds the window covered, or reaches its deadline while it is, is skipped as
+  `windowOccluded` rather than failed. Each act is timed from its intent to the grid
   change that shows it, `op=ui.actToResult` (the grid drawing the act's tile, now or when it
   is next laid out; committing an order without the trashed items; or, for Undo's Put Back,
   with them again), in every session, toured or not. The scorecard reports a Move to Trash's

@@ -67,7 +67,9 @@ Options:
 
 A session ends when the app exits by itself (a tour quits it), at --duration when no
 `op=tour` line arrived, or at --tour-deadline. Refuses to start while an Otos it would
-not own is running, except with --attach.
+not own is running, except with --attach. A --home that script/sandbox-library.sh made
+launches with its library (OTOS_SANDBOX_LIBRARY), which the app registers on its first
+launch: a first launch of a new library, surveyed on generated media.
 EOF
 }
 
@@ -366,6 +368,11 @@ case "$MODE" in
   installed|dev)
     launch_env=()
     if [[ "$MODE" == "dev" ]]; then launch_env+=("HOME=$HOME_DIR" "CFFIXED_USER_HOME=$HOME_DIR"); fi
+    # A home script/sandbox-library.sh made: the app registers its library through its own
+    # Add Library intent on the first launch (`SandboxLibrary`).
+    if [[ "$MODE" == "dev" && -f "$HOME_DIR/.otos-sandbox-library" ]]; then
+      launch_env+=("OTOS_SANDBOX_LIBRARY=$(/usr/bin/sed -n 's/^library=//p' "$HOME_DIR/.otos-sandbox-library")")
+    fi
     launch_env+=(${APP_ENV[@]+"${APP_ENV[@]}"})
     env ${launch_env[@]+"${launch_env[@]}"} "$APP_BUNDLE/Contents/MacOS/$APP_NAME" > "$RAW/app-stdout.log" 2>&1 &
     APP_PID=$!

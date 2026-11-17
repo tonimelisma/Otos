@@ -27,20 +27,27 @@ usage:
       The newest session of the installed app (--dev: the dev build) in the last hour.
   script/scorecard.sh --input <log.ndjson> [--dev] [--session <id>] [--json <out>] [--compare <saved.json>]
       A saved `log show --style ndjson` capture.
-  script/scorecard.sh --tour [--dev [--optimized] [--home <dir>]] [--ablate none|all|<owner>[,<owner>…]] [--steps full|scopes]
-                      [--idle <seconds>] [--deadline <seconds a step>] [--compare <saved.json>]
+  script/scorecard.sh --tour [--dev [--optimized] [--home <dir>] [--seed <photos>]] [--ablate none|all|<owner>[,<owner>…]]
+                      [--steps full|scopes] [--idle <seconds>] [--deadline <seconds a step>] [--compare <saved.json>]
       Launches the app with OTOS_TOUR=1, waits for it to finish its read-only tour and quit,
       prints that session's scorecard and saves it under build/scorecards/.
-  script/scorecard.sh --ablation-matrix [--dev [--home <dir>]]
+  script/scorecard.sh --ablation-matrix [--dev [--home <dir>] [--seed <photos>]]
       Short tours with every background owner off (the floor), with each owner alone
       running, and with none off; prints one table.
 
 Owners: enrichment metadataRefresh renderSignatures previewFaces placeNames searchIndex
 descriptions duplicates people immich. --home gives the dev build a sandbox home
-(CFFIXED_USER_HOME and HOME). --optimized first builds the dev app with the installed app's
-settings (-O, no coverage, no debug dylib; ADR 0030) into build/OptimizedDerivedData and
-tours that build: the dev bundle id, never /Applications. The tour never runs while Otos is
-already running.
+(CFFIXED_USER_HOME and HOME). --seed <photos> makes a fresh sandbox home (at --home, which
+must not exist, or under build/sandbox-homes/) with a library of that many generated photos
+on a volume of its own (script/sandbox-library.sh), has the app register it through its own
+Add Library intent, and removes all of it when the run ends, however it ends. The tour's act
+steps (Move to Trash and Put Back among them) run only on such a library: on any other the
+app skips them (`trashOutsideSandbox`), because a sandbox home on the account's volume
+trashes into the account's own Trash. After every tour in a sandbox library the account's
+Trash is tested for each generated file by name; one found there is removed and the run
+fails. --optimized first builds the dev app with the installed app's settings (-O, no
+coverage, no debug dylib; ADR 0030) into build/OptimizedDerivedData and tours that build:
+the dev bundle id, never /Applications. The tour never runs while Otos is already running.
 EOF
 }
 
@@ -59,6 +66,7 @@ STEPS="full"
 IDLE=""
 DEADLINE=""
 HOME_DIR=""
+SEED=""
 OPTIMIZED=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,6 +84,7 @@ while [[ $# -gt 0 ]]; do
     --idle) IDLE="${2:?}"; shift 2 ;;
     --deadline) DEADLINE="${2:?}"; shift 2 ;;
     --home) HOME_DIR="${2:?}"; shift 2 ;;
+    --seed) SEED="${2:?}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -113,6 +122,60 @@ build_optimized_dev_app() {
   echo "op=scorecard.build phase=finish app=$DEV_APP" >&2
 }
 [[ "$OPTIMIZED" == 1 ]] && build_optimized_dev_app
+
+# ── A sandbox library ───────────────────────────────────────────────────────────
+# With --seed the run makes the sandbox home and its library, and its EXIT trap removes them
+# once no process of the toured app remains. A --home that script/sandbox-library.sh made is
+# toured with its library and kept. Either way every tour in it ends with the Trash check.
+SANDBOX_LIBRARY_SCRIPT="$ROOT_DIR/script/sandbox-library.sh"
+SANDBOX_LIBRARY=""
+SANDBOX_OWNED=0
+TRASH_DIRTY=0
+if [[ -n "$SEED" ]]; then
+  if [[ "$DEV" != 1 || "$TOUR$MATRIX" == "00" ]]; then
+    echo "--seed is for a dev tour (--tour or --ablation-matrix with --dev)." >&2
+    exit 2
+  fi
+  [[ -n "$HOME_DIR" ]] || HOME_DIR="$ROOT_DIR/build/sandbox-homes/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir -p "$(dirname "$HOME_DIR")"
+  # Refuses, and makes nothing, when it cannot give the library a volume of its own.
+  "$SANDBOX_LIBRARY_SCRIPT" create --home "$HOME_DIR" --count "$SEED" >&2
+  HOME_DIR="$(cd "$HOME_DIR" && pwd -P)"
+  SANDBOX_OWNED=1
+fi
+if [[ -n "$HOME_DIR" && -f "$HOME_DIR/.otos-sandbox-library" ]]; then
+  SANDBOX_LIBRARY="$(/usr/bin/sed -n 's/^library=//p' "$HOME_DIR/.otos-sandbox-library")"
+elif [[ -n "$HOME_DIR" ]]; then
+  echo "op=scorecard.sandbox phase=noLibraryVolume home=$HOME_DIR — not a sandbox library (script/sandbox-library.sh): the app skips every act step (trashOutsideSandbox)" >&2
+fi
+
+# Tests the account's Trash for every file the sandbox library generated; remembers a failure.
+check_sandbox_trash() {
+  [[ -n "$SANDBOX_LIBRARY" ]] || return 0
+  if ! "$SANDBOX_LIBRARY_SCRIPT" check-trash --home "$HOME_DIR" >&2; then
+    TRASH_DIRTY=1
+    echo "op=scorecard.sandbox phase=FAILED reason=filesInAccountTrash — removed and named above; this is a defect: no tour file may reach the account's Trash" >&2
+  fi
+}
+
+# The EXIT trap of a --seed run: never while the toured app runs, so a volume is never pulled
+# from under it. A run whose app will not quit leaves the home and says so.
+remove_seeded_home() {
+  local status=$?
+  [[ "$TRASH_DIRTY" == 1 ]] && status=1
+  [[ "$SANDBOX_OWNED" == 1 ]] || exit "$status"
+  local executable="$DEV_APP/Contents/MacOS/$APP_NAME"
+  if pgrep -f "^$executable" >/dev/null; then
+    echo "op=scorecard.sandbox phase=kept home=$HOME_DIR reason=appStillRunning — quit it, then: script/sandbox-library.sh destroy --home $HOME_DIR" >&2
+    exit 1
+  fi
+  if ! "$SANDBOX_LIBRARY_SCRIPT" destroy --home "$HOME_DIR" >&2; then
+    status=1
+  fi
+  [[ "$TRASH_DIRTY" == 1 ]] && status=1
+  exit "$status"
+}
+trap remove_seeded_home EXIT
 
 parser_args() {
   local args=(--targets "$TARGETS")
@@ -175,6 +238,7 @@ run_one_tour() {
   local env_args=(OTOS_TOUR=1 "OTOS_TOUR_ABLATE=$ablate" "OTOS_TOUR_STEPS=$steps"
     "OTOS_TOUR_IDLE_SECONDS=$idle" "OTOS_TOUR_STEP_DEADLINE_SECONDS=$deadline")
   [[ -n "$HOME_DIR" ]] && env_args+=("CFFIXED_USER_HOME=$HOME_DIR" "HOME=$HOME_DIR")
+  [[ -n "$SANDBOX_LIBRARY" ]] && env_args+=("OTOS_SANDBOX_LIBRARY=$SANDBOX_LIBRARY")
   # The dev build's saved window state is the account's, not the sandbox home's (AppKit keeps
   # it per bundle id through its restoration service), and every worktree's dev build shares
   # that id. A session that last quit with the window closed restores no window, so the
@@ -195,7 +259,7 @@ run_one_tour() {
   # margin: `tour_silence_limit` in scorecard.py) means the tour is stuck. time: deadline
   # Only this run's process: another Otos touring at the same time (another worktree's dev
   # build, or the installed app) logs the same lines under its own pid (`Otos[pid:tid]`).
-  local own_tour_line="\\[${TOUR_PID}:[^]]*\\].*op=tour (phase=(finish|step|config|failed|plan|restored))"
+  local own_tour_line="\\[${TOUR_PID}:[^]]*\\].*op=tour (phase=(finish|step|config|failed|plan|restored|library))"
   while kill -0 "$TOUR_PID" 2>/dev/null; do
     if ! line="$(otos_log_stream_await "$own_tour_line" 10)"; then
       quiet=$((quiet + 10))
@@ -243,6 +307,7 @@ run_one_tour() {
   else
     echo "op=scorecard.tour phase=quit pid=$TOUR_PID confirmed=noProcessOf=$executable" >&2
   fi
+  check_sandbox_trash
   TOUR_NDJSON="$(mktemp -t otos-tour)"
   capture "$TOUR_NDJSON" --start "$started"
 }

@@ -54,6 +54,20 @@ is no path in the seam that registers, removes, or edits a root. The whole seam 
 `#if DEBUG`: a release build contains no way for an environment variable to steer
 the catalog.
 
+**A sandbox home may be given a library; nothing else may.** A tour or a survey of a
+generated library (`script/sandbox-library.sh`) launches the dev build with
+`OTOS_SANDBOX_LIBRARY=<folder>`, and `SandboxLibrary` adds that folder once the catalog's
+first load has applied, through the window's own `addLibrary` intent, the one Settings ▸
+Libraries' Add button calls. It registers only when the process runs in a sandbox home
+(`CFFIXED_USER_HOME`, the process's own home, neither the account's home nor a folder
+holding it), the catalog's folder lies inside that home, and so does the folder; anywhere
+else it registers nothing and logs `op=sandboxLibrary phase=refused` with the reason. The
+user's configuration is out of its reach by construction, which is what the read-only
+smoke seam above guarantees for the user's catalog, and the catalog it changes is removed
+with the sandbox home. `#if DEBUG` as well. Rejected: a raw insert into the sandbox
+catalog's root table, which skips the scan, the watcher and the owners a person's Add
+Library starts.
+
 **A smoke run may capture the window's own rendering, and nothing else.**
 `SmokeWindowCapture` (`OTOS_SMOKE_CAPTURE_PATH`, `OTOS_SMOKE_APPEARANCE`) writes the
 main window's `cacheDisplay` to a PNG once the selection has something to show — the

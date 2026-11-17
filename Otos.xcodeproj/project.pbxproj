@@ -230,6 +230,7 @@
 				Support/ProcessResources.swift,
 				Support/RelativeDateText.swift,
 				Support/RunContext.swift,
+				Support/SandboxLibrary.swift,
 				Support/ScratchBuffer.swift,
 				Support/SmokeLibrarySelection.swift,
 				Support/SmokeTour.swift,

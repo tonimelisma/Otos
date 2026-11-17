@@ -534,6 +534,62 @@ def tour_silence_limit(idle_seconds, deadline_seconds):
 
 TOUR_SILENCE_MARGIN_SECONDS = 60
 
+
+# ── A sandbox library's files in the account's Trash ────────────────────────────
+
+def trash_presence(name, trash_dir, lstat=None):
+    """Whether a generated file named `name` is in `trash_dir`: "absent", "present", or
+    "unknown" when the path cannot be tested (no permission, a name that is not a plain file
+    name). Tested by path, never by listing the Trash. Unknown is never read as absent."""
+    import os
+    lstat = lstat or os.lstat
+    if not name or "/" in name or name in (".", ".."):
+        return "unknown"
+    try:
+        lstat(os.path.join(trash_dir, name))
+        return "present"
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unknown"
+
+
+def trash_leftovers(names, trash_dir, lstat=None, remove=None):
+    """Every generated name found in the account's Trash, removed, and every name that could
+    not be tested: `(removed, unknown)`. A sandbox library's files are its own (each name
+    carries its run's prefix), so one found there is the tour's and is removed. A name whose
+    removal fails stays in `unknown`, so it is reported, not counted as cleaned."""
+    import os
+    remove = remove or os.remove
+    removed, unknown = [], []
+    for name in names:
+        state = trash_presence(name, trash_dir, lstat)
+        if state == "present":
+            try:
+                remove(os.path.join(trash_dir, name))
+                removed.append(name)
+            except OSError:
+                unknown.append(name)
+        elif state == "unknown":
+            unknown.append(name)
+    return removed, unknown
+
+
+def report_trash_leftovers(names_file, trash_dir, out):
+    """`--trash-leftovers`: 0 when no generated file is in the Trash, 1 when one was (it is
+    removed and named) or could not be tested."""
+    with open(names_file, encoding="utf-8") as handle:
+        names = [line.strip() for line in handle if line.strip()]
+    removed, unknown = trash_leftovers(names, trash_dir)
+    for name in removed:
+        out.write(f"op=sandboxLibrary.trash phase=leftover name={name} removed=true\n")
+    for name in unknown:
+        out.write(f"op=sandboxLibrary.trash phase=unknown name={name} — could not test or remove it\n")
+    clean = not removed and not unknown
+    out.write(f"op=sandboxLibrary.trash phase={'clean' if clean else 'FAILED'} tested={len(names)} "
+              f"leftovers={len(removed)} unknown={len(unknown)}\n")
+    return 0 if clean else 1
+
 USAGE_KEYS = ("cpuMs", "diskReadMB", "diskWrittenMB", "pageIns")
 
 
@@ -904,7 +960,11 @@ def main(argv=None):
     parser.add_argument("--labels", help="the matrix rows' names, |-separated")
     parser.add_argument("--tour-silence-limit", nargs=2, type=int, metavar=("IDLE", "DEADLINE"),
                         help="print the seconds without a tour line after which a tour with this idle and step deadline is stuck")
+    parser.add_argument("--trash-leftovers", nargs=2, metavar=("NAMES", "TRASH"),
+                        help="test the Trash for each generated file name in NAMES; remove and report any found")
     args = parser.parse_args(argv)
+    if args.trash_leftovers:
+        return report_trash_leftovers(*args.trash_leftovers, sys.stdout)
     if args.tour_silence_limit:
         print(tour_silence_limit(*args.tour_silence_limit))
         return 0

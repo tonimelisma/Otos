@@ -18,7 +18,7 @@ target (`docs/scorecard-targets.json`).
 | First visit to All Media ≤ 2 s | `click.allMedia.firstMs` ≤ 2,000 | not visited first; 14,456 ms before stage 1 |
 | Return to any view ≤ 0.3 s | `click.returnMs` ≤ 300 | 545 → 385 ms |
 | A search, sort or filter result ≤ 1 s | `query.resultMs` ≤ 1,000 | 9.3 to 41.8 → 1.7 to 27.9 s; filter not measured |
-| Every act's result visible ≤ 0.1 s (Like, Dislike, Move to Trash) | `act.resultMs` ≤ 100, from a tour in a sandbox home | not measured on the owner's library; a sandbox of 28 photos: choices 22 to 23 ms, Move to Trash 515 ms |
+| Every act's result visible ≤ 0.1 s (Like, Dislike, Move to Trash) | `act.resultMs` ≤ 100, from a tour in a sandbox home | not measured on the owner's library; a sandbox library of 28 generated photos on its own volume (`--seed 28`): Move to Trash 28 to 139 ms, Put Back 12 to 25 ms, five in a row 2 to 48 ms; choices not measured while the window was covered (`windowOccluded`) |
 | No `op=catalog.store.stall` line in a 10-minute session | `stalls.count` = 0 and `stalls.per10Min` = 0 | 62 in 4 minutes (158 per 10 minutes) → 0 in 3 minutes |
 | No main-thread stall over 250 ms in Otos code | `mainThreadStalls.worstMs` ≤ 250 | 0 stalls of any length |
 | Peak app footprint ≤ 700 MB | `memory.peakFootprintMB` ≤ 700 | 3,730 → 3,804 MB (336 MB with every owner off) |
