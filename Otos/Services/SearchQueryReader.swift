@@ -52,6 +52,16 @@ nonisolated enum SearchQueryStatus: Sendable, Equatable {
 ///   reading is reported (`refining`) before the full one is asked for, so the picture's first
 ///   result never waits on them; the full reading replaces it when it ends. A query whose full
 ///   reading is as quick has no first reading and is reported once.
+/// - **The intent to search warms a prepared tower.** The search field taking focus comes
+///   well before a query: on a prepared tower it starts one prediction whose answer nobody
+///   reads (`warm`, a named task of this owner), so the model's pages macOS evicted under
+///   memory pressure (about 330 MB of clean, mapped weights, outside the footprint) are read
+///   back while the person types. At most one runs: an intent that comes while it or a load
+///   runs starts none, since that one's end answers it. A query read meanwhile races as above:
+///   its words answer never waits on the warm prediction, and its tower reading queues behind
+///   it on the tower's own queue, for the page-in it would have paid itself. It is not a load
+///   the admission or the background room grants: a prediction is what the person is about to
+///   wait on, like the query's own.
 /// - **The load.** One at a time, a named task of this owner (`loading`), which applies its
 ///   end synchronously and rings the loop. It is asked for by the user's intent to search
 ///   (`prepare`, a request revision the load covers, ADR 0032 rule 2) and by a query read while
@@ -78,6 +88,8 @@ actor SearchQueryReader {
     typealias Prepare = @Sendable () async throws -> Void
     /// Whether everything `Prepare` loads is loaded.
     typealias IsPrepared = @Sendable () async -> Bool
+    /// One prediction on the prepared tower, its answer unread (`SearchQueryEncoder.warm`).
+    typealias Warm = @Sendable () async throws -> Void
 
     /// How far an answer's reading went: a full one replaces the others.
     private enum Stage {
@@ -91,6 +103,7 @@ actor SearchQueryReader {
     private let words: WordsReading?
     private let prepareReadings: Prepare?
     private let isPrepared: IsPrepared?
+    private let warmTower: Warm?
     /// Where a load the user waits on is admitted; nil runs it unadmitted (a test's reader).
     private let admission: LoadAdmission?
     /// Preparations asked for and the one the last finished load answered (ADR 0032 rule 2).
@@ -98,6 +111,12 @@ actor SearchQueryReader {
     private var prepareCovered: UInt64 = 0
     /// The load in flight; nil when none runs.
     private var loading: Task<Void, Never>?
+    /// The intent's warm prediction in flight; nil when none runs.
+    private var warming: Task<Void, Never>?
+    /// Warm predictions started: what a test counts.
+    private(set) var warmsStarted = 0
+    /// Callers waiting for the intents asked so far to be readied (`intentReadied`).
+    private var readiedWaiters: [CheckedContinuation<Void, Never>] = []
     /// Preparations that loaded: what a test waits on.
     private(set) var preparationsLoaded = 0
     private let backoff: (first: Duration, last: Duration)
@@ -130,11 +149,13 @@ actor SearchQueryReader {
         first: FirstReading? = nil,
         prepare: Prepare? = nil,
         isPrepared: IsPrepared? = nil,
+        warm: Warm? = nil,
         admission: LoadAdmission? = nil,
         encode: @escaping Encode
     ) {
         prepareReadings = prepare
         self.isPrepared = isPrepared
+        warmTower = warm
         self.admission = admission
         self.backoff = backoff
         nextRetry = backoff.first
@@ -155,7 +176,8 @@ actor SearchQueryReader {
         return .reading
     }
 
-    /// The user showed intent to search: load what every reading needs before a query comes.
+    /// The user showed intent to search: load what every reading needs before a query comes,
+    /// or, when it is loaded, warm the tower once.
     func prepare() {
         guard prepareReadings != nil else { return }
         prepareRequested &+= 1
@@ -185,12 +207,35 @@ actor SearchQueryReader {
         return stream
     }
 
+    /// Returns once every intent to search asked before it is readied: the warm prediction or
+    /// the load it started has ended, however it ended, or the tower was found ready with no
+    /// warm prediction to make. What the tour's search step waits on when it submits its query
+    /// after the warm-up: a fact this owner reports, not a delay.
+    func intentReadied() async {
+        guard !isIntentReadied else { return }
+        await withCheckedContinuation { readiedWaiters.append($0) }
+    }
+
+    private var isIntentReadied: Bool {
+        prepareReadings == nil || loading == nil && warming == nil && prepareRequested == prepareCovered
+    }
+
+    private func resumeReadiedWaiters() {
+        let waiters = readiedWaiters
+        readiedWaiters = []
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
     /// Ends the loop, the load's wait for its turn and the retry now — a test's teardown; in
     /// the app they end with the actor.
     func shutdown() {
         loop?.cancel()
         loading?.cancel()
+        warming?.cancel()
         retry?.cancel()
+        resumeReadiedWaiters()
         loop = nil
         retry = nil
         ring = nil
@@ -247,7 +292,9 @@ actor SearchQueryReader {
             await readWords(request)
             return
         }
-        if let isPrepared, prepareReadings != nil, await !isPrepared() {
+        // A warm prediction in flight started on a prepared tower: the query races it rather
+        // than asking the tower, whose queue answers only once that prediction has ended.
+        if warming == nil, let isPrepared, prepareReadings != nil, await !isPrepared() {
             await readWords(request)
             guard !Task.isCancelled else { return }
             guard wanted == request else {
@@ -311,28 +358,65 @@ actor SearchQueryReader {
         }
     }
 
-    /// Starts the load the intent to search asked for, unless everything is ready or a load
-    /// runs. Never waits for the load.
+    /// Readies the tower the intent to search asked for: the load when it is not prepared, one
+    /// warm prediction when it is. Nothing while a load or a warm prediction runs: its end
+    /// covers the intent. Never waits for either.
     private func startLoadIfAsked() async {
-        guard prepareReadings != nil, prepareRequested != prepareCovered, loading == nil else { return }
+        guard prepareReadings != nil, prepareRequested != prepareCovered, loading == nil, warming == nil else { return }
         if let isPrepared, await isPrepared() {
-            prepareCovered = prepareRequested
+            guard loading == nil, warming == nil else { return }
+            startWarm()
             return
         }
         guard loading == nil else { return }
         startLoad(admitted: false)
     }
 
+    /// One warm prediction for the intents asked so far; with nothing to warm, they are covered.
+    private func startWarm() {
+        guard let warmTower else {
+            prepareCovered = prepareRequested
+            resumeReadiedWaiters()
+            return
+        }
+        warmsStarted += 1
+        warming = Task { [weak self] in
+            var failure: (any Error)?
+            do {
+                try await warmTower()
+            } catch {
+                failure = error
+            }
+            await self?.warmEnded(failure: failure)
+        }
+    }
+
+    /// The warm prediction ended. It covers every intent asked until now, since each asked for
+    /// the pages its prediction read in. One that failed is logged and covers them too: nothing
+    /// reads its answer, and a query's own prediction reports such a failure as its reading's
+    /// and retries it on the backoff.
+    private func warmEnded(failure: (any Error)?) {
+        warming = nil
+        prepareCovered = prepareRequested
+        if let failure, !(failure is CancellationError) {
+            let error = failure as NSError
+            OtosLog.catalog.errorOperation("search.tower", phase: "warmFailed", fields: [
+                "domain": error.domain, "code": "\(error.code)", "error": String(describing: failure),
+            ])
+        }
+        resumeReadiedWaiters()
+        ring?.yield()
+    }
+
     /// The load in flight, or a new one: for the user (`LoadWaiter.user`), or unadmitted for a
-    /// caller that holds the background admission. It covers the preparation asked for when it
-    /// started; its end is applied here and rings the loop.
+    /// caller that holds the background admission. Its end is applied here (`loadEnded`) and
+    /// rings the loop.
     @discardableResult
     private func startLoad(admitted: Bool) -> Task<Void, Never>? {
         guard let prepareReadings else { return nil }
         if let loading {
             return loading
         }
-        let asked = prepareRequested
         let admission = admitted ? nil : admission
         let task = Task { [weak self] in
             var failure: (any Error)?
@@ -345,15 +429,16 @@ actor SearchQueryReader {
             } catch {
                 failure = error
             }
-            await self?.loadEnded(covering: asked, failure: failure)
+            await self?.loadEnded(failure: failure)
         }
         loading = task
         return task
     }
 
-    /// A load ended: it covers what it was asked for, or, failed, is logged, and a query
+    /// A load ended: it covers what it was asked for and every intent asked while it ran, since
+    /// its warm-up is the prediction they asked for; or, failed, it is logged, and a query
     /// wanted now that has no full answer is reported failed and read again on its backoff.
-    private func loadEnded(covering asked: UInt64, failure: (any Error)?) {
+    private func loadEnded(failure: (any Error)?) {
         loading = nil
         if failure is CancellationError {
             // Teardown: the load's wait for its turn ended; nothing was loaded or failed.
@@ -369,13 +454,16 @@ actor SearchQueryReader {
                 announce()
             }
         } else {
-            prepareCovered = asked
+            prepareCovered = prepareRequested
             preparationsLoaded += 1
             // A query reported failed because a load failed is read now that one succeeded.
             if let answer, answer.request == wanted, answer.encoding == nil {
                 retryDue = true
             }
         }
+        // A waiter is answered by the load's end however it ended: one that failed leaves the
+        // intent outstanding for the loop's next turn.
+        resumeReadiedWaiters()
         ring?.yield()
     }
 

@@ -486,6 +486,14 @@ actor SearchQueryEncoder {
         try await tower.prepare()
     }
 
+    /// The user's intent to search, on a prepared tower: one warm prediction
+    /// (`SearchTextTower.warm`); nothing when the tower is not prepared. Returns whether it
+    /// predicted.
+    @discardableResult
+    func warm() async throws -> Bool {
+        try await tower.warm()
+    }
+
     /// The tower's predictions so far, its warm-up included: what a test counts.
     var towerPredictions: Int {
         get async {
@@ -694,6 +702,9 @@ nonisolated extension SearchQueryPicture {
 /// words reading never asks this actor anything.
 ///
 /// - **Prepared** is loaded and predicted once, the first prediction being the slow one.
+/// - **Warm.** The user's intent to search asks a prepared tower for one more prediction
+///   (`warm`), so pages macOS evicted are read back before the query comes; a query asked
+///   meanwhile waits behind it on this queue, for the page-in it would have paid itself.
 /// - **Holds.** A reading that will embed holds the tower while it runs (`hold`, `letGo`), so
 ///   memory pressure does not take the model from a reading suspended on Translation or Maps.
 /// - **Release.** Under memory pressure an unheld tower lets the tokenizer and the model go
@@ -724,19 +735,49 @@ actor SearchTextTower {
     /// from one that computed.
     func embedding(of text: String) throws -> [Float] {
         let (tokenizer, model) = try loaded()
+        let embedding = try measuredPrediction(text, tokenizer: tokenizer, model: model, phase: "predicted", fields: [:])
+        warmed = true
+        return embedding
+    }
+
+    /// The user's intent to search, on a prepared tower: one prediction whose answer nobody
+    /// reads, made so that the model's pages macOS evicted under memory pressure are read back
+    /// while the person types, not inside their first query (ADR 0048, "The intent to search").
+    /// The weights are a mapped file (clean pages, outside the footprint), so only this fact
+    /// that a query is coming, and not a residency Otos holds, brings them back. Logged as
+    /// `op=search.tower phase=warmed cause=focus` with the page-ins it paid. A tower that is
+    /// not prepared (never loaded, or let go under pressure) is not loaded here: the next
+    /// query's own load, warm-up included, answers it. Returns whether it predicted.
+    @discardableResult
+    func warm() throws -> Bool {
+        guard isPrepared, let tokenizer, let model else {
+            OtosLog.catalog.noticeOperation("search.tower", phase: "warmSkipped", fields: ["reason": "notPrepared"])
+            return false
+        }
+        _ = try measuredPrediction(Self.warmUpText, tokenizer: tokenizer, model: model, phase: "warmed", fields: ["cause": "focus"])
+        return true
+    }
+
+    /// One prediction, logged with what it took and what the process read from disk while it
+    /// ran: the page-ins tell a prediction that waited for evicted pages from one that computed.
+    private func measuredPrediction(
+        _ text: String, tokenizer: SearchTextTokenizer, model: SearchTextModel, phase: String, fields: [String: String]
+    ) throws -> [Float] {
         let before = ProcessResourceSample.current()
         let start = ContinuousClock.now
         let embedding = try predict(text, tokenizer: tokenizer, model: model)
         let after = ProcessResourceSample.current()
-        OtosLog.catalog.noticeOperation("search.tower", phase: "predicted", fields: [
+        OtosLog.catalog.noticeOperation("search.tower", phase: phase, fields: fields.merging([
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
             "pageIns": Self.delta(before.pageIns, after.pageIns),
             "diskReadMB": Self.delta(before.diskBytesRead, after.diskBytesRead, scale: 1_048_576),
             "cpuMs": Self.delta(before.cpuMilliseconds, after.cpuMilliseconds),
-        ])
-        warmed = true
+        ]) { _, measured in measured })
         return embedding
     }
+
+    /// What the warm-ups predict: a query's answer is never read from them.
+    private static let warmUpText = "a photo"
 
     private static func delta(_ before: UInt64?, _ after: UInt64?, scale: UInt64 = 1) -> String {
         guard let before, let after, after >= before else { return "unknown" }
@@ -755,7 +796,7 @@ actor SearchTextTower {
         let before = ProcessResourceSample.current().footprintBytes
         let (tokenizer, model) = try loaded()
         let warmUpStart = ContinuousClock.now
-        _ = try predict("a photo", tokenizer: tokenizer, model: model)
+        _ = try predict(Self.warmUpText, tokenizer: tokenizer, model: model)
         warmed = true
         OtosLog.catalog.noticeOperation("search.encoder", phase: "prepared", fields: [
             "footprintDeltaMB": "\((Int64(ProcessResourceSample.current().footprintBytes) - Int64(before)) / 1_048_576)",

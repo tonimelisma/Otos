@@ -215,7 +215,7 @@ actor PhotoSearchIndex: QuiescentOwner {
         self.queries = queries ?? SearchQueryReader(
             words: { try await encoder.wordsReading($0) },
             first: { try await encoder.firstReading($0) }, prepare: { try await encoder.prepare() },
-            isPrepared: { await encoder.isPrepared }, admission: admission
+            isPrepared: { await encoder.isPrepared }, warm: { try await encoder.warm() }, admission: admission
         ) { try await encoder.encode($0) }
         self.pageSize = pageSize
         let (preparations, continuation) = AsyncStream<Preparation>.makeStream(bufferingPolicy: .unbounded)
@@ -231,6 +231,8 @@ actor PhotoSearchIndex: QuiescentOwner {
         case now
         /// The window's first grid painted: when the admission grants it, last of the loads.
         case admitted
+        /// A caller waits for the intents asked before it to be readied (`searchIntentReadied`).
+        case readied(AsyncStream<Void>.Continuation)
     }
 
     private let preparations: AsyncStream<Preparation>
@@ -250,7 +252,8 @@ actor PhotoSearchIndex: QuiescentOwner {
 
     /// The user showed intent to search (the search field took focus, Edit ▸ Find), so the
     /// first query they type finds its cold work done (ADR 0048, "The first query"): the text
-    /// encoder starts loading (`SearchQueryReader.prepare`) and the kernel is asked to read the
+    /// encoder starts loading, or, already prepared, makes one warm prediction that reads back
+    /// pages evicted since (`SearchQueryReader.prepare`), and the kernel is asked to read the
     /// mapped vectors ahead (`SearchVectorFile.adviseWillNeed`). No scope is read ahead: a
     /// query's scope is the projection's, its stacks' members included, so its slots are read
     /// with its first match (`scopedRows`, milliseconds over the owner's 165,000 photos) and
@@ -261,6 +264,19 @@ actor PhotoSearchIndex: QuiescentOwner {
     nonisolated func prepareForSearch() {
         preparationsAsked.record()
         preparationsContinuation.yield(.now)
+    }
+
+    /// Returns once every intent to search asked before it has reached the reader and the
+    /// readying it started there has ended (`SearchQueryReader.intentReadied`: the tower's warm
+    /// prediction, or its load). What the tour's search step waits on to submit its query after
+    /// the warm-up, as a person who types does. Asked through the preparations' own stream, so
+    /// it comes after them; that loop waits with it, and the intents behind it are answered by
+    /// the readying it waits for.
+    nonisolated func searchIntentReadied() async {
+        let (ended, end) = AsyncStream<Void>.makeStream()
+        preparationsAsked.record()
+        preparationsContinuation.yield(.readied(end))
+        for await _ in ended {}
     }
 
     /// The window's first grid painted: the same preparation, without waiting for
@@ -313,6 +329,9 @@ actor PhotoSearchIndex: QuiescentOwner {
                 }
                 await self?.admittedPreparationEnded()
             }
+        case let .readied(end):
+            await queries.intentReadied()
+            end.finish()
         }
     }
 

@@ -283,6 +283,35 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual(by_label["sort name"], (500, "1000", "PASS"))
         self.assertIn("search first searchMany first resu", text)
 
+    def test_a_search_typed_after_the_warm_up_is_labelled_apart_with_its_focus_to_query_time(self):
+        immediate = SESSION[:-1] + [
+            line(40.6, "op=tour phase=step index=25 kind=search label=searchMany outcome=reported ms=1470 "
+                       "firstMs=1468 firstItems=11 resultMs=1468 items=433 focusMs=0 submit=immediate"),
+            SESSION[-1],
+        ]
+        _, rows, _ = run(immediate)
+        by_label = {r["label"]: (r["value"], r["target"], r["verdict"]) for r in rows}
+        self.assertEqual(by_label["search first searchMany first results"], (1468, "1000", "FAIL"))
+        self.assertEqual(by_label["search first searchMany focus to query"], (0, "none", "NO-TARGET"))
+        self.assertNotIn("search first searchMany after warm first results", by_label)
+
+        warmed = SESSION[:-1] + [
+            line(40.6, "op=tour phase=step index=25 kind=search label=searchMany outcome=reported ms=1590 "
+                       "firstMs=390 firstItems=11 resultMs=402 items=433 focusMs=1188 submit=afterWarm"),
+            line(40.7, "op=tour phase=step index=26 kind=search label=searchFew outcome=reported ms=330 "
+                       "firstMs=280 firstItems=3 resultMs=280 items=3 focusMs=46 submit=afterWarm"),
+            SESSION[-1],
+        ]
+        _, rows, text = run(warmed)
+        by_label = {r["label"]: (r["value"], r["target"], r["verdict"]) for r in rows}
+        # Held to the same target, timed from the query, never shown as the immediate number.
+        self.assertEqual(by_label["search first searchMany after warm first results"], (390, "1000", "PASS"))
+        self.assertEqual(by_label["search first searchMany after warm complete"], (402, "none", "NO-TARGET"))
+        self.assertEqual(by_label["search first searchMany after warm focus to query"], (1188, "none", "NO-TARGET"))
+        self.assertEqual(by_label["search again searchFew after warm first results"], (280, "1000", "PASS"))
+        self.assertNotIn("search first searchMany first results", by_label)
+        self.assertIn("after warm", text)
+
     def test_a_step_that_reached_its_deadline_fails_and_a_scroll_counts_tiles_without_thumbnails(self):
         steps = SESSION[:-1] + [
             line(40.5, "op=tour phase=step index=10 kind=scroll label=down outcome=deadline ms=120060 position=300"),

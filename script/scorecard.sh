@@ -32,7 +32,7 @@ usage:
                       [--ablate none|all|<owner>[,<owner>…]]
                       [--steps full|scopes] [--idle <seconds>] [--deadline <seconds a step>]
                       [--settled [--settle-deadline <seconds>]] [--library-deadline <seconds>]
-                      [--compare <saved.json>]
+                      [--search-after-warm] [--compare <saved.json>]
       Launches the app with OTOS_TOUR=1, waits for it to finish its read-only tour and quit,
       prints that session's scorecard and saves it under build/scorecards/. A tour starts at
       the first grid, under the launch's own load (a `launch` session). With --settled it
@@ -43,6 +43,11 @@ usage:
       library's first walk first, up to --library-deadline (default 900 s), and a settled tour
       then waits for the work that walk raised (`by=libraryWork`), not for the launch's.
       The scorecard labels each session's kind and --compare compares only like with like.
+      A search step focuses the field and types its query in the same instant; with
+      --search-after-warm it types it once the app reports that the focus's readying of the
+      text tower (its warm prediction, or its load) has ended, as a person who types does,
+      and the scorecard labels those numbers `after warm`. Each prints the time from the
+      focus to the query (`focus to query`).
       The session is captured live (`log stream`, info and above, started before the launch and
       closed once a marker logged after the app's exit has come through), so lines the log's
       store rotates out are not lost; the scorecard says how many lines the capture and
@@ -90,10 +95,12 @@ HOME_DIR=""
 SEED=""
 SEED_MEDIA=camera
 OPTIMIZED=0
+SEARCH_SUBMIT=immediate
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dev) DEV=1; shift ;;
     --optimized) OPTIMIZED=1; shift ;;
+    --search-after-warm) SEARCH_SUBMIT=afterWarm; shift ;;
     --last) LAST="${2:?}"; shift 2 ;;
     --session) SESSION="${2:?}"; shift 2 ;;
     --input) INPUT="${2:?}"; shift 2 ;;
@@ -335,7 +342,7 @@ run_one_tour() {
   local env_args=(OTOS_TOUR=1 "OTOS_TOUR_ABLATE=$ablate" "OTOS_TOUR_STEPS=$steps"
     "OTOS_TOUR_IDLE_SECONDS=$idle" "OTOS_TOUR_STEP_DEADLINE_SECONDS=$deadline"
     "OTOS_TOUR_START=$start" "OTOS_TOUR_SETTLE_DEADLINE_SECONDS=$settle"
-    "OTOS_TOUR_LIBRARY_DEADLINE_SECONDS=$LIBRARY_DEADLINE")
+    "OTOS_TOUR_LIBRARY_DEADLINE_SECONDS=$LIBRARY_DEADLINE" "OTOS_TOUR_SEARCH_SUBMIT=$SEARCH_SUBMIT")
   [[ -n "$HOME_DIR" ]] && env_args+=("CFFIXED_USER_HOME=$HOME_DIR" "HOME=$HOME_DIR")
   [[ -n "$SANDBOX_LIBRARY" ]] && env_args+=("OTOS_SANDBOX_LIBRARY=$SANDBOX_LIBRARY")
   # The dev build's saved window state is the account's, not the sandbox home's (AppKit keeps

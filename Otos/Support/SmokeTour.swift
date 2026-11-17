@@ -155,6 +155,10 @@ extension PreferencesDomain {
         /// walk before it fails (`sandboxLibraryNeverScanned`): a walk of the owner's library
         /// size takes minutes, more than a step's deadline, on a loaded Mac.
         static let libraryDeadlineVariable = "OTOS_TOUR_LIBRARY_DEADLINE_SECONDS"
+        /// When a search step types its query after focusing the field: `immediate` (default),
+        /// in the same instant, or `afterWarm`, once the focus's readying of the text tower has
+        /// ended (`CatalogWindowViewModel.searchIntentReadied`), as a person who types does.
+        static let searchSubmitVariable = "OTOS_TOUR_SEARCH_SUBMIT"
         /// Fixed queries: a common word with many matches, a rarer one with few.
         static let manyResultsQuery = "sky"
         static let fewResultsQuery = "lighthouse"
@@ -180,10 +184,17 @@ extension PreferencesDomain {
             let start: Start
             let settleDeadline: Duration
             let libraryDeadline: Duration
+            /// When a search step types its query (`SmokeTour.searchSubmitVariable`).
+            let searchSubmit: SearchSubmit
 
             enum Start: String, Sendable {
                 case launch
                 case settled
+            }
+
+            enum SearchSubmit: String, Sendable {
+                case immediate
+                case afterWarm
             }
 
             /// Nil unless `OTOS_TOUR=1`: without it nothing here, the owner list included, is read.
@@ -200,6 +211,7 @@ extension PreferencesDomain {
                 start = Start(rawValue: environment[SmokeTour.startVariable] ?? "launch") ?? .launch
                 settleDeadline = .seconds(Int(environment[SmokeTour.settleDeadlineVariable] ?? "") ?? 900)
                 libraryDeadline = .seconds(Int(environment[SmokeTour.libraryDeadlineVariable] ?? "") ?? 900)
+                searchSubmit = SearchSubmit(rawValue: environment[SmokeTour.searchSubmitVariable] ?? "immediate") ?? .immediate
             }
         }
 
@@ -484,6 +496,7 @@ extension PreferencesDomain {
                 "idleSeconds": "\(configuration.idle.components.seconds)",
                 "deadlineSeconds": "\(configuration.stepDeadline.components.seconds)",
                 "start": configuration.start.rawValue,
+                "searchSubmit": configuration.searchSubmit.rawValue,
             ]
             guard configuration.unknownOwners.isEmpty else {
                 OtosLog.performance.errorOperation("tour", phase: "failed", fields: fields.merging([
@@ -722,12 +735,7 @@ extension PreferencesDomain {
             case .trashRun:
                 return await ("act", "trashRun", trashRun())
             case let .search(label, text):
-                // The field takes focus and the query is typed at once: the least time the
-                // focus's preparation can have before the first query (`searchFieldFocused`).
-                return await ("search", label, query {
-                    $0.searchFieldFocused()
-                    $0.setSearchText(text)
-                })
+                return await ("search", label, search(text))
             case .filterByOfferedKind:
                 return await filterByOfferedKind()
             case .sortByName:
@@ -1167,6 +1175,50 @@ extension PreferencesDomain {
                 return ("filter", kind.rawValue, outcome)
             }
             return ("filter", "kind", .skipped("queryUnchanged"))
+        }
+
+        /// A search: the field takes focus, then the query is typed, at once (the least time the
+        /// focus's readying of the text tower can have, `searchFieldFocused`) or, `afterWarm`, once
+        /// that readying has ended, a fact the app reports. `focusMs` is how long after the focus
+        /// the query came; `firstMs` and `resultMs` are timed from the query, as for any query.
+        private func search(_ text: String) async -> Outcome {
+            guard let viewModel else {
+                return .skipped("windowGone")
+            }
+            let focused = ContinuousClock.now
+            viewModel.searchFieldFocused()
+            if configuration.searchSubmit == .afterWarm, await !intentReadied(viewModel) {
+                return .deadline
+            }
+            let focusMs = DiagnosticsTiming.milliseconds(since: focused)
+            var outcome = await query { $0.setSearchText(text) }
+            outcome.fields["focusMs"] = "\(focusMs)"
+            outcome.fields["submit"] = configuration.searchSubmit.rawValue
+            return outcome
+        }
+
+        /// True once what the field's focus readied has ended; false at the step's deadline.
+        private func intentReadied(_ viewModel: CatalogWindowViewModel) async -> Bool {
+            let (answers, answer) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+            let waiter = Task { [weak viewModel] in
+                await viewModel?.searchIntentReadied()
+                answer.yield(true)
+            }
+            let deadline = configuration.stepDeadline
+            let timer = Task {
+                // time: deadline — a readying that never ends must not hang the tour
+                try? await Task.sleep(for: deadline)
+                answer.yield(false)
+            }
+            var met = false
+            for await first in answers {
+                met = first
+                break
+            }
+            waiter.cancel()
+            timer.cancel()
+            answer.finish()
+            return met
         }
 
         /// A query intent (search, filter, sort) and the published states that answer it, timed

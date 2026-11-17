@@ -1119,10 +1119,18 @@ def verdicts(report, targets):
             # Each is reported twice: when its first results were on screen (its first matches
             # while still searching, or its answer), held to the target, and when it was
             # complete, a number. A build older than `firstMs` has no first-results number.
+            # A tour run with --search-after-warm types each query once the focus's readying of
+            # the text tower has ended (`submit=afterWarm`), as a person who types does; its
+            # numbers say so (`after warm`), so they are never read as the immediate ones. Both
+            # are timed from the query; `focus to query` is how long after the focus it came.
             searches += 1
             name = f"search {'first' if searches == 1 else 'again'} {step.get('label')}"
+            if step.get("submit") == "afterWarm":
+                name += " after warm"
             add("search.firstResultsMs", f"{name} first results", int_or_none(step.get("firstMs")))
             add("search.completeMs", f"{name} complete", step_ms(step))
+            if step.get("focusMs") is not None:
+                add("search.focusToQueryMs", f"{name} focus to query", int_or_none(step.get("focusMs")))
         elif step.get("kind") in QUERY_STEPS:
             add("query.resultMs", f"{step['kind']} {step.get('label')}", step_ms(step))
         elif step.get("kind") in PHOTO_STEPS:

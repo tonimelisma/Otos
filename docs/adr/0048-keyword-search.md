@@ -351,7 +351,8 @@ against 77.3, 85 in English for both), and every asset has one.
     publishes nothing:
     - starts the encoder's load (`SearchQueryReader.prepare`, a request revision its reading
       loop covers before the next query, so a query typed meanwhile waits for that load
-      rather than starting a second);
+      rather than starting a second), or, when the tower is prepared, asks it for **one warm
+      prediction** (`SearchTextTower.warm`, below);
     - asks the kernel to read the mapped vectors ahead (`MADV_WILLNEED`).
     - It reads no scope ahead. A query is matched among the projection's scope, its stacks'
       members included, which the window's grid does not hold: on the owner's library the
@@ -359,6 +360,45 @@ against 77.3, 85 in English for both), and every asset has one.
       reused. A query's slots are read with its first match, 7 ms over 164,979 photos on that
       catalog, and reused while the scope and memory hold
       (`docs/research/2026-11-16-first-search-words-answer.md`).
+  - **The intent to search warms a prepared tower.** On a brand-new library, whose text is
+    not read yet so the words answer matches nothing, the first results wait on the tower's
+    prediction. With its pages resident that is about 40 ms. When macOS has evicted them
+    under memory pressure it reads about 330 MB back from disk: 860 and 1,175 ms on two tours
+    (`op=search.tower phase=predicted pageIns=21058 diskReadMB=332`,
+    `docs/research/2026-11-17-a-new-library-at-the-owners-size.md`). The focus comes well
+    before the query, so on a prepared tower it starts one prediction whose answer nobody
+    reads, and the page-in happens while the person types
+    (`op=search.tower phase=warmed cause=focus ms= pageIns= diskReadMB=`).
+    - Before this, a focus on a prepared tower touched no model page: the reader asked the
+      tower whether it was prepared and stopped.
+    - **What was measured about the footprint.** A hosted probe of the real tower on a 16 GB
+      Mac read `vmmap --summary` and `phys_footprint` before the load, after it, and after
+      the first and second predictions
+      (`docs/research/2026-11-17-the-text-towers-pages-are-not-footprint.md`). The load added
+      about 20 MB of footprint and the predictions none (41.8, 61.3, 61.6 and 61.6 MB). The
+      first prediction took the process's `mapped file` regions from 14 MB resident to 341 MB,
+      with 0 KB dirty and none swapped. So the ~330 MB a prediction reads back is the model's
+      clean, file-backed weights, which are outside the footprint the 700 MB target counts.
+      Keeping them resident would cost no footprint, but the only way to keep them is to wire
+      them (`mlock`), and wiring 330 MB on a 16 GB Mac under the very pressure that evicts them
+      takes it from every other process: rejected. Residency stays the OS's; the intent is the
+      fact that brings the pages back.
+    - **One at a time.** At most one warm prediction runs, a named task of the reader. A
+      focus while it runs, or while the tower loads, starts none: that one's end answers the
+      intent, a load's own warm-up being the prediction it asked for. Each focus of the
+      field later starts one: about 40 ms of CPU when the pages are resident.
+    - **A query typed meanwhile.** Its words answer never waits on the warm prediction
+      (the reader does not ask the busy tower whether it is prepared), and its tower reading
+      queues behind it on the tower's serial queue, for the page-in it would have paid
+      itself. The race between the two readings is unchanged.
+    - **Not a load.** The warm prediction is not admitted (ADR 0055) and the background room
+      (ADR 0057) does not hold it: it is what the person is about to wait on, like the query's
+      own prediction. A tower that is not prepared (never loaded, or let go under pressure)
+      is not loaded by it: the load the intent starts, or the next query's, answers that.
+    - **What stays true.** A query submitted in the same instant as the focus, as the tour
+      types it, still pays the page-in inside its first search; only a person who types
+      slower than the warm-up gains. The tour reports both
+      (`script/scorecard.sh --search-after-warm`).
   - A blur cancels nothing, and a query with no intent before it is answered as before.
   - **The same preparation runs without the intent**, so the first query is quick even when
     it is typed at once, which is what the 1 s target is checked against. When the window's

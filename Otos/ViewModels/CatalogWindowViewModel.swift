@@ -1983,6 +1983,13 @@ extension CatalogWindowViewModel {
         photoSearchIndex?.prepareForSearch()
     }
 
+    /// Returns once what the search field's focus readied has ended: the text tower's warm
+    /// prediction or its load (`PhotoSearchIndex.searchIntentReadied`). What the tour waits on
+    /// to submit a query as a person who types does; nothing waits when there is no index.
+    func searchIntentReadied() async {
+        await photoSearchIndex?.searchIntentReadied()
+    }
+
     /// The window's title, the one every scope is named by: the person a person's photos
     /// show, else the selected scope's (`CatalogWindowPolicy.title(for:libraries:)`) — the
     /// one Projection published once the scope's state is applied, and the same policy's

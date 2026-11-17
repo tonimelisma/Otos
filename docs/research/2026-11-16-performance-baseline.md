@@ -223,7 +223,10 @@ backlog; harder than the owner's settled library;
   measured; the nearest achievable is about 0.4 s resident and about 1.1–1.5 s evicted
   (#919). It has not occurred on the owner's library: 0.23–0.94 s across the last seven
   tours there by #919, 0.29 / 0.19 s in the two tours of f2bee3f8, and 0.35 / 0.19 s in the
-  two final tours of 3fa7ee1b.
+  two final tours of 3fa7ee1b. The search field's focus now warms a prepared tower, so for a
+  person who types the page-in comes before the query; for a query submitted with the focus,
+  as the tour's immediate step does, it can still land in the first search ("What
+  remains").
 - The peak before #920 reads 595–671 MB in #919's tours and 582–671 MB in #923's note, which
   counts a further tour. The rise after #920 was the grid's tile store keeping every tile it
   decoded; #923 bounds it to the visible tiles and sixteen screens off screen.
@@ -355,7 +358,15 @@ A tour never runs while Otos is running and quits the app itself.
   warning, so the source may report late or never (ADR 0057).
 - **One target unreachable in one condition.** A new library's first search while macOS has
   evicted the text tower's pages: about 1.1–1.5 s against 1,000 ms (about 0.4 s resident),
-  after three measured designs. Not seen on the owner's library.
+  after three measured designs. Not seen on the owner's library. Since then the search
+  field's focus asks a prepared tower for one warm prediction
+  (`op=search.tower phase=warmed cause=focus`), so a person who types after focusing the field
+  has the pages read back while typing. The ~330 MB is the model's clean, mapped weights and
+  is not in the footprint (`2026-11-17-the-text-towers-pages-are-not-footprint.md`). Still
+  true: a query submitted in the same instant as the focus, as the harsh tour types it, can
+  still pay the page-in inside its first search. `script/scorecard.sh --search-after-warm`
+  reports the number for a person who types (`after warm`) beside the immediate one. Eviction
+  was not reproduced for either number.
 - **Not established.**
   - Why Core ML compiled the text tower again in one session of an install, and why that
     compile took 3 s (`2026-11-16-first-search-while-the-encoder-loads.md`).

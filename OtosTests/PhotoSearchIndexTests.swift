@@ -480,6 +480,11 @@ struct PhotoSearchIndexTests {
         try await waitUntil { await index.preparationsMade == 1 }
         try await waitUntil { await index.queries.preparationsLoaded == 1 }
         #expect(await index.scopeRowsRead == read, "the intent reads no scope")
+        // The next focus finds the tower prepared and warms it once, a fact the index reports.
+        index.prepareForSearch()
+        await index.searchIntentReadied()
+        #expect(await index.queries.warmsStarted == 1)
+        #expect(await index.queries.preparationsLoaded == 1)
 
         let scope = [catalog.red, catalog.blue]
         let encoder = SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self))
