@@ -476,9 +476,16 @@ nonisolated struct OwedFilterOptions: Equatable, Sendable {
     let revisions: CatalogFactRevisions
 }
 
-/// The Store changes the projection heard, numbered, with the rows each named (ADR 0005,
+/// The catalog changes the projection knows of, numbered, with the rows each named (ADR 0005,
 /// "Keyed re-reads"): what tells a pass which rows of a held order a change can have moved.
 /// Bounded: a held order read before the oldest change kept is read again whole.
+///
+/// It also counts every change by kind (`revisions`), which says whether a held read still
+/// answers. One `record` keeps both, so a kind that moved is always a kept change that names
+/// the rows it moved. A write the window learns of from its own act (a Move to Trash's mark,
+/// a Put Back, a choice) before the Store's change for it arrives is recorded here too: a
+/// revision no entry explained would read as a change of no rows, and a keyed re-read would
+/// answer with the held order, the write missing from it.
 nonisolated struct CatalogChangeLog: Sendable {
     struct Entry: Sendable {
         let sequence: UInt64
@@ -499,9 +506,13 @@ nonisolated struct CatalogChangeLog: Sendable {
     /// The most rows a keyed re-read reads: past it, a full read costs no more.
     static let rowCapacity = 5000
 
-    mutating func record(_ change: CatalogStoreChange) {
+    /// How many times each kind of fact changed, by every change recorded.
+    private(set) var revisions = CatalogFactRevisions()
+
+    mutating func record(_ facts: CatalogChangedFacts, rows: CatalogChangedRows) {
+        revisions.record(facts)
         sequence &+= 1
-        entries.append(Entry(sequence: sequence, facts: change.facts, rows: change.rows))
+        entries.append(Entry(sequence: sequence, facts: facts, rows: rows))
         if entries.count > Self.capacity {
             let dropped = entries.count - Self.capacity
             keptAfter = entries[dropped - 1].sequence

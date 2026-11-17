@@ -169,7 +169,13 @@ direction with NULL the least value, then root row ID, then path by its bytes. T
 owns the order; the merge places rows the SQL itself sorted, so there is no second rule.
 Anything else is read whole: another kind of fact, a change that names no rows, a stack fact,
 more than 5,000 rows, changes older than the 256 kept, and a scope by place, day, batch or
-content. Before this, the earlier rejection of patching held. On the owner's catalog, while
+content. The log also counts the changes by kind (`revisions`, what says a held read is stale),
+and one `record` keeps both, so a kind can move only with an entry that names its rows. A
+write the window learns of from its own act — a Move to Trash's mark, a Put Back's Store work,
+a choice — often lands before the Store's change for it reaches the projection; the act's
+report records it there as that change would, with the rows it wrote, so the pass that retires
+the act's hold reads the write whole instead of patching the held order with no rows. On the
+owner's catalog, while
 a sync brought metadata for 152 rows, the order was read whole 125 times, 33.7 s of reader
 time (installed 66153b4a; `docs/research/2026-11-16-window-reads-owner-catalog.md`).
 

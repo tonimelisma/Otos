@@ -20,7 +20,8 @@ import OSLog
 ///
 /// A pass repeats a catalog read only when its answer can have changed (ADR 0005). Each Store
 /// change says which kinds of fact it touched (`CatalogChangedFacts`), and `storeDidChange`
-/// counts them in `factRevisions`. `reads` keeps the last answer of each held read — the
+/// records it in `changeLog`, which counts them (`revisions`) beside the rows each named; a
+/// write an act of the window's reports landed is recorded there the same way. `reads` keeps the last answer of each held read — the
 /// order, the stack collapse, the whole-roots stacks, the filter's options, the import
 /// batches, the place-name languages and the search (the list is `CatalogProjectionReads`'s)
 /// — each with what it was read for and the revisions its pass started from; a pass reuses
@@ -115,9 +116,9 @@ actor CatalogProjection {
     private var requested: UInt64 = 0
     /// The `requested` value the last *successful* pass started from.
     private var covered: UInt64 = 0
-    /// How many times each kind of catalog fact changed, by the Store's own account.
-    private var factRevisions = CatalogFactRevisions()
-    /// The Store's recent changes with the rows each named, for keyed re-reads.
+    /// The catalog's recent changes with the rows each named, for keyed re-reads, and how many
+    /// times each kind of fact changed: the Store's changes, and the writes the window's own
+    /// acts report landed before the Store's change for them arrives.
     private var changeLog = CatalogChangeLog()
     /// The last published pass's reads, which the next pass answers from while they hold.
     private var reads = CatalogProjectionReads.none
@@ -651,9 +652,11 @@ private nonisolated enum WindowHoldKey: Hashable {
 /// item back at once.
 ///
 /// `landed(_:fact:)` is the Store's own report that the write is done, relayed by the act's
-/// stream consumer after the write returns. It records the kind of fact the write is
-/// (`CatalogChangedFacts.membership` for a mark, `.choices` for a choice), so no held read
-/// answers from before it, and rings the loop; the hold retires once a pass started after that
+/// stream consumer after the write returns, often before the Store's own change for it reaches
+/// `storeDidChange`. It records the write in `changeLog` as that change would — its kind
+/// (`CatalogChangedFacts.membership` for a mark, `.choices` for a choice) and the rows it
+/// wrote — so no held read answers from before it and no keyed re-read takes it for a change
+/// of no rows, and rings the loop; the hold retires once a pass started after that
 /// report covers its request — that pass read the catalog with the write in it, so what it
 /// builds already lacks the items and its publication shares the held one's grid content:
 /// nothing is applied twice. A held answer covers nothing, so it never retires a hold.
@@ -879,7 +882,7 @@ extension CatalogProjection {
         guard holds[key] != nil else {
             return
         }
-        factRevisions.record(fact)
+        changeLog.record(fact, rows: Self.rows(of: holds[key]))
         requestPublication(ringNow: true)
         holds[key]?.retiresAt = requested
         OtosLog.catalog.noticeOperation("projection.hold", phase: "landed", fields: [
@@ -892,12 +895,17 @@ extension CatalogProjection {
     /// `key`'s act is not held after all: its write failed, or its undo put the items back in
     /// the Store (`storeChanged`).
     private func withdrawn(_ key: WindowHoldKey, storeChanged: Bool) {
-        let withdrawn = holds.removeValue(forKey: key) != nil
+        let removed = holds.removeValue(forKey: key)
         if storeChanged {
-            factRevisions.record(.membership)
+            // A Put Back dropped its Move to Trash's hold; its own hold names the rows.
+            var undone = removed
+            if undone == nil, case let .trash(batch) = key {
+                undone = holds[.putBack(batch)]
+            }
+            changeLog.record(.membership, rows: Self.rows(of: undone))
             requestPublication(ringNow: true)
         }
-        guard withdrawn else {
+        guard removed != nil else {
             return
         }
         republish()
@@ -906,6 +914,17 @@ extension CatalogProjection {
             "hold": key.diagnosticDescription,
             "storeChanged": "\(storeChanged)",
         ])
+    }
+
+    /// The rows `hold`'s act wrote, as a change names them; unnamed when no hold says.
+    private static func rows(of hold: WindowHold?) -> CatalogChangedRows {
+        let ids: Set<MediaAssetID> = switch hold?.content {
+        case let .items(ids): ids
+        case let .choices(choices): Set(choices.keys)
+        case let .putBack(removal): removal.ids
+        case nil: []
+        }
+        return CatalogNamedRows(ids).map(CatalogChangedRows.named) ?? .unnamed
     }
 
     /// Every item the holds keep off a window showing `descriptor`: every held Move to Trash's
@@ -1148,8 +1167,7 @@ private extension CatalogProjection {
             }
         }
         detailRefreshGeneration &+= 1
-        factRevisions.record(change.facts)
-        changeLog.record(change)
+        changeLog.record(change.facts, rows: change.rows)
         // Rows that were only added carry nothing the groups or the assignment are built
         // from; they change the People gallery's unchecked tally alone. Any other change asks
         // each owner whose answer is built from a kind of fact it touched.
@@ -1263,7 +1281,7 @@ private extension CatalogProjection {
         let peopleStartedFrom = peopleRequested
         let galleryStartedFrom = galleryRequested
         let startedReads = reads
-        let startedRevisions = factRevisions
+        let startedRevisions = changeLog.revisions
         let startedChanges = changeLog
         let selectedRequest = queryRequest
         OtosLog.catalog.noticeOperation("projection.publish", phase: "start", fields: [

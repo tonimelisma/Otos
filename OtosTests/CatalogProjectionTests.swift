@@ -695,6 +695,66 @@ struct CatalogProjectionTests {
         }
     }
 
+    /// An act reports its write landed before the Store's change for it reaches the projection
+    /// (`hideLanded`, `hideWithdrawn` after a Put Back): the pass that retires the act's hold
+    /// reads the catalog with the write in it, so a Move to Trash's item stays off and a Put
+    /// Back's stays shown, through every publication. The Store's change is kept from the
+    /// projection at that suspension by writing through a second store on the same catalog,
+    /// whose changes go only to its own subscribers.
+    @Test func anActsLandingIsReadBeforeTheStoresChangeArrives() async throws {
+        let root = try makeTestDirectory()
+        for index in 0 ..< 3 {
+            try Data([0]).write(to: root.appending(path: "landing-\(index).jpg"))
+        }
+        let databaseURL = try makeTestDirectory().appending(path: "catalog.sqlite")
+        let store = makeTestStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(5))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
+        let writer = makeTestStore(location: .databaseFile(databaseURL))
+        try await writer.start(scansSavedLibraries: false)
+        let rootPath = try CatalogPath.normalizedExistingDirectoryPath(for: root)
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
+        let recorder = StateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: CatalogQueryDescriptor(scope: .library(rootPath)))
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer { recordingTask.cancel() }
+        let first = try #require(await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs.count == 3 }.last)
+        try await waitForProjectionQuiescence(projection)
+        let order = first.mediaGrid.orderedAssetIDs
+        let batch = MediaTrashBatchID(unixMilliseconds: 21)
+
+        // Marked and landed: the item stays off.
+        await projection.hide([order[1]], batch: batch)
+        let hidden = await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs == [order[0], order[2]] }
+        #expect(try await writer.markPendingTrash([order[1]], batch: batch) == [order[1]])
+        await projection.hideLanded(batch)
+        let landed = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
+        #expect(await projection.holdsNothing, "the read of the mark retired the hide")
+        for state in landed.dropFirst(hidden.count - 1) {
+            #expect(!state.mediaGrid.orderedAssetIDs.contains(order[1]), "the Move to Trash's item came back")
+        }
+
+        // Put back and its Store work landed: the item stays shown, the grid the one shown.
+        await projection.putBack(batch)
+        let back = await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs == order }
+        let shownGrid = try #require(back.last).mediaGrid
+        #expect(try await writer.clearPendingTrash([order[1]]) == [order[1]])
+        await projection.hideWithdrawn(batch, storeChanged: true)
+        let settled = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
+        #expect(await projection.holdsNothing, "the read of the Put Back retired its hold")
+        for state in settled.dropFirst(back.count - 1) {
+            #expect(state.mediaGrid.orderedAssetIDs == order, "the Put Back's item left again")
+        }
+        #expect(try #require(settled.last).mediaGrid.sharesContent(with: shownGrid))
+        await writer.shutdown()
+        await store.shutdown()
+    }
+
     private static func recordedProjection(
         _ fixture: CatalogedLibrary
     ) async -> (CatalogProjection, StateRecorder, Task<Void, Never>) {
