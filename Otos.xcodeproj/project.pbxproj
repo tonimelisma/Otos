@@ -138,6 +138,7 @@
 				Services/CatalogWindowPolicy.swift,
 				Services/ContentHasher.swift,
 				Services/CopyfileTransfer.swift,
+				Services/DecodeBudget.swift,
 				Services/DeviceCameraSessionError.swift,
 				Services/StagingLocation.swift,
 				Services/RemoteByteSource.swift,

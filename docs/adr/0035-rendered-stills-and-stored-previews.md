@@ -30,7 +30,11 @@ and is never shown at full size except when zoomed to 100%.
   bitmap, produced on one of two serial lanes: background for enrichment, interactive
   for the loupe. Each lane develops one RAW at a time, so at most two RAW developments,
   160–340 MB each, are in memory at once. Each lane also has its own queue of Image I/O
-  decodes, four at once on the background lane. Enrichment never queues in front of the
+  decodes, up to four at once on the background lane, admitted by the memory each render
+  holds (the pixels its format decodes at and the rendering it makes, `DecodeBudget`) so
+  that together they hold no more than four HEIC previews: a 12 MP JPEG decodes whole and
+  two run at once. Enrichment stages a still's preview and thumbnail on the lane, inside
+  that admission (`docs/research/2026-11-17-first-launch-decodes.md`). Enrichment never queues in front of the
   photo on screen. A RAW's oriented native
   size is read once, when its filter is made (`OpenedRAW`), and every scale factor and
   reported size comes from that value: under RAW9 the filter's `nativeSize` changes once

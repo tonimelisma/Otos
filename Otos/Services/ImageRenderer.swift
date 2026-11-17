@@ -19,9 +19,12 @@ import UniformTypeIdentifiers
 /// front of the photo on screen. Each lane develops one RAW at a time — a RAW9
 /// development takes about a second, gains nothing from running beside another, and
 /// holds 160–340 MB — so at most two are in memory at once. Image I/O decodes have their
-/// own queue per lane: four at once on `background`, where four measured 2.5× the
+/// own queue per lane: up to four at once on `background`, where four measured 2.5× the
 /// throughput of one and eight no more than four (research 2026-10-31-raw9-speed), and
-/// one at a time on `interactive`.
+/// one at a time on `interactive`. On `background` they are also admitted by the pixels
+/// they decode at (`DecodeBudget`): four HEIC or 24 MP JPEG previews at once, but two of a
+/// 12 MP JPEG, which decodes whole, so a new library's first enrichment does not peak at
+/// four whole decodes in flight (research 2026-11-17-first-launch-decodes).
 ///
 /// The caller has already checked that the original's bytes are local; reading a
 /// dataless file here would block on its download.
@@ -59,17 +62,30 @@ final nonisolated class ImageRenderer: Sendable {
     /// decode is tried again once either changes (ENR-029).
     static let decoderIdentity = DecodeVerdict.decoder("otos", revision: decodeRevision)
 
-    static let background = ImageRenderer(lane: "background", qos: .utility, imageDecodes: 4)
-    static let interactive = ImageRenderer(lane: "interactive", qos: .userInitiated, imageDecodes: 1)
+    /// Four Image I/O renders at most, and no more at once than four HEIC previews hold
+    /// (`DecodeBudget`): three 24 MP JPEG previews, two of a 12 MP JPEG, which decodes whole.
+    static let background = ImageRenderer(
+        lane: "background", qos: .utility, imageDecodes: 4, decodeBudget: backgroundDecodeBudget
+    )
+    static let backgroundDecodeBudget = 4 * 2 * 2560 * 1920 * 4
+    static let interactive = ImageRenderer(lane: "interactive", qos: .userInitiated, imageDecodes: 1, decodeBudget: nil)
 
     private let lane: String
     private let rawQueue: OperationQueue
     private let imageQueue: OperationQueue
+    /// Admits the lane's Image I/O decodes by their cost; nil on a lane that runs one at a time.
+    private let decodeBudget: Admission<DecodeBudgetMachine>?
 
-    private init(lane: String, qos: QualityOfService, imageDecodes: Int) {
+    private init(lane: String, qos: QualityOfService, imageDecodes: Int, decodeBudget: Int?) {
         self.lane = lane
         rawQueue = Self.queue("net.melisma.Otos.render.\(lane).raw", qos: qos, width: 1)
         imageQueue = Self.queue("net.melisma.Otos.render.\(lane).image", qos: qos, width: imageDecodes)
+        self.decodeBudget = decodeBudget.map { Admission(DecodeBudgetMachine(budget: $0)) }
+    }
+
+    /// The lane's decode budget as it is now: what a test reads to see what runs and waits.
+    var decodeBudgetSnapshot: DecodeBudgetMachine? {
+        decodeBudget?.machine
     }
 
     private static func queue(_ name: String, qos: QualityOfService, width: Int) -> OperationQueue {
@@ -84,9 +100,36 @@ final nonisolated class ImageRenderer: Sendable {
     /// `longEdge`, or at full size when nil. A cropped photo is developed from a frame
     /// large enough for its crop to reach that size.
     func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral) async throws -> Rendered {
+        try await render(url, longEdge: longEdge, recipe: recipe) { $0 }
+    }
+
+    /// Renders `url` as `render(_:longEdge:recipe:)` does and hands the rendering to `finish`
+    /// on the lane, inside the render's admission, returning what `finish` makes. What is
+    /// made from the pixels — a preview encoded and staged — is made on the lane's queue while
+    /// they are held, so the lane bounds it with the decode (`DecodeBudget`) and no actor runs
+    /// the encode (ADR 0032 rule 6).
+    func render<Product: Sendable>(
+        _ url: URL,
+        longEdge: Int?,
+        recipe: EditRecipe = .neutral,
+        finish: @escaping @Sendable (Rendered) -> Product
+    ) async throws -> Product {
         let lane = lane
         let enqueued = ContinuousClock.now
-        let queue = Self.isRAW(url) ? rawQueue : imageQueue
+        let isRAW = Self.isRAW(url)
+        let queue = isRAW ? rawQueue : imageQueue
+        // An Image I/O decode waits for room in the lane's budget before it is queued, and
+        // gives it back however it ends; a RAW lane runs one at a time already.
+        var admitted: AdmissionRequest?
+        if !isRAW, let decodeBudget {
+            let cost = await DecodeCost.of(url, longEdge: longEdge) ?? decodeBudget.machine.budget
+            admitted = try await decodeBudget.admit(cost)
+        }
+        defer {
+            if let admitted {
+                decodeBudget?.release(admitted)
+            }
+        }
         return try await withCheckedThrowingContinuation { continuation in
             queue.addOperation {
                 let start = ContinuousClock.now
@@ -111,7 +154,7 @@ final nonisolated class ImageRenderer: Sendable {
                         "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: start))",
                         "path": url.path(percentEncoded: false),
                     ])
-                    continuation.resume(returning: rendered)
+                    continuation.resume(returning: finish(rendered))
                 } catch {
                     OtosLog.rendering.errorOperation("render.still", phase: "failed", fields: [
                         "lane": lane,

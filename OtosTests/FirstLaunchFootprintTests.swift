@@ -1,8 +1,11 @@
 import AVFoundation
+import CoreGraphics
 import CoreML
 import Foundation
+import ImageIO
 @testable import OtosKit
 import Testing
+import UniformTypeIdentifiers
 import VideoToolbox
 
 /// Plan 0116, peak footprint ≤ 700 MB: what the heavy reads of a launch cost the process at
@@ -75,6 +78,100 @@ struct FirstLaunchFootprintTests {
         )
         #expect(warmPeak <= coldPeak)
     }
+
+    /// A new library's first enrichment renders every still's preview on the background lane
+    /// at once, as many as the lane admits: 28 photos from a person's cameras (48 MP and 12 MP
+    /// HEIC, 24 MP and 12 MP JPEG), every one asked for together, as the enrichment backlog
+    /// asks. Their peak stays within the bound.
+    @Test func aNewLibrarysStillRendersStayWithinTheBound() async throws {
+        let directory = try makeTestDirectory()
+        var photos: [URL] = []
+        for index in 0 ..< 28 {
+            let camera = Self.cameras[index % Self.cameras.count]
+            let url = directory.appending(path: "photo-\(index).\(camera.ext)")
+            try Self.writePhoto(to: url, width: camera.width, height: camera.height, type: camera.type, seed: index)
+            photos.append(url)
+        }
+        let staging = directory.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        // Each still as enrichment makes it: rendered, staged as its HEIC preview and its JPEG
+        // thumbnail.
+        let peak = try await Self.peakMB {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for (index, url) in photos.enumerated() {
+                    group.addTask {
+                        // Staged on the lane, as `MediaEnricher` stages a still.
+                        let staged = try await ImageRenderer.background.render(
+                            url, longEdge: ThumbnailStore.previewMaxPixelSize
+                        ) { rendered in
+                            (try? ThumbnailStore.stagePreview(rendered.image, finalRelativeName: "\(index).heic", in: staging)) != nil
+                                && (try? ThumbnailStore.stage(
+                                    ThumbnailStore.scaled(rendered.image, toLongEdge: ThumbnailStore.maxPixelSize),
+                                    finalRelativeName: "\(index).jpg", in: staging
+                                )) != nil
+                        }
+                        #expect(staged)
+                    }
+                }
+                try await group.waitForAll()
+            }
+        }
+        ImageMemoryFixture.record("op=footprint step=newLibraryStillRenders photos=\(photos.count) peakAboveStartMB=\(peak)")
+        #expect(peak <= Self.stillRendersBoundMB, "28 stills rendered on the background lane: \(peak) MB")
+    }
+
+    /// One still of each camera rendered alone: what one decode on the lane costs at its peak,
+    /// recorded for the research note.
+    @Test func eachCamerasStillRenderedAlone() async throws {
+        let directory = try makeTestDirectory()
+        for (index, camera) in Self.cameras.enumerated() {
+            let url = directory.appending(path: "alone-\(index).\(camera.ext)")
+            try Self.writePhoto(to: url, width: camera.width, height: camera.height, type: camera.type, seed: index)
+            let peak = try await Self.peakMB {
+                _ = try await ImageRenderer.background.render(url, longEdge: ThumbnailStore.previewMaxPixelSize)
+            }
+            ImageMemoryFixture.record(
+                "op=footprint step=stillRenderAlone camera=\(camera.width)x\(camera.height).\(camera.ext) peakAboveStartMB=\(peak)"
+            )
+            #expect(peak <= Self.stillRendersBoundMB)
+        }
+    }
+
+    /// The cameras a new library's photos come from (as `script/sandbox-library-media.swift`).
+    struct Camera {
+        let width: Int
+        let height: Int
+        let type: UTType
+        let ext: String
+    }
+
+    static let cameras = [
+        Camera(width: 8064, height: 6048, type: .heic, ext: "heic"), Camera(width: 4032, height: 3024, type: .heic, ext: "heic"),
+        Camera(width: 6000, height: 4000, type: .jpeg, ext: "jpg"), Camera(width: 4032, height: 3024, type: .jpeg, ext: "jpg"),
+    ]
+
+    /// A photo of `width` × `height`: shapes on a gradient, drawn from `seed`.
+    static func writePhoto(to url: URL, width: Int, height: Int, type: UTType, seed: Int) throws {
+        let context = try #require(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ))
+        for shape in 0 ..< 24 {
+            let value = CGFloat((seed * 31 + shape * 17) % 100) / 100
+            context.setFillColor(CGColor(srgbRed: value, green: 1 - value, blue: CGFloat(shape) / 24, alpha: 1))
+            context.fillEllipse(in: CGRect(
+                x: CGFloat((seed * 397 + shape * 211) % width), y: CGFloat((seed * 211 + shape * 397) % height),
+                width: CGFloat(width) / 4, height: CGFloat(height) / 4
+            ))
+        }
+        let image = try #require(context.makeImage())
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+    }
+
+    /// What a new library's still renders may add at their peak (measured; see the research note).
+    static let stillRendersBoundMB = 300
 
     /// What two 4K videos read for faces at once may add at their peak (measured; see the
     /// research note).

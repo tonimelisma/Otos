@@ -1,7 +1,8 @@
 #!/usr/bin/env xcrun swift
-// Generates the media of a sandbox library (script/sandbox-library.sh): N distinct JPEGs and a
-// few short videos, all made here from code, so a tour or a survey has a library that is no
-// one's photos. Some photos carry rendered words (search's text reading finds them), some are
+// Generates the media of a sandbox library (script/sandbox-library.sh): N distinct photos and
+// a few short videos, all made here from code, so a tour or a survey has a library that is no
+// one's photos. The photos come from a person's cameras in turn (48 MP and 12 MP HEIC, 24 MP
+// and 12 MP JPEG), so a first launch decodes what a real library holds. Some carry rendered words (search's text reading finds them), some are
 // skies (the tour's "sky" query), a few are near-duplicates of the photo before them (the
 // Duplicates steps), some carry GPS (Places) and some fall on today's day in past years (On
 // This Day). Every name starts with the run's prefix, so the script can find each file by
@@ -44,8 +45,26 @@ struct Generator {
 
     let folder: URL
     let prefix: String
-    let width = 1600
-    let height = 1200
+    /// The cameras the photos come from, in turn: an iPhone's 48 MP and 12 MP HEIC, a camera's
+    /// 24 MP JPEG and a 12 MP JPEG, so a launch decodes what a person's library holds.
+    struct Camera {
+        let width: Int
+        let height: Int
+        let type: UTType
+        let ext: String
+    }
+
+    static let cameras = [
+        Camera(width: 8064, height: 6048, type: .heic, ext: "heic"),
+        Camera(width: 4032, height: 3024, type: .heic, ext: "heic"),
+        Camera(width: 6000, height: 4000, type: .jpeg, ext: "jpg"),
+        Camera(width: 4032, height: 3024, type: .jpeg, ext: "jpg"),
+    ]
+
+    func camera(_ index: Int) -> Camera {
+        Self.cameras[index % Self.cameras.count]
+    }
+
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
 
     func name(_ index: Int, _ suffix: String = "", ext: String) -> String {
@@ -55,6 +74,9 @@ struct Generator {
     /// One photo's pixels. `shift` nudges brightness and framing, for a near-duplicate.
     func draw(_ index: Int, shift: CGFloat = 0) -> CGImage {
         var random = Random(state: UInt64(index) &* 7919 &+ 17)
+        let width = camera(index).width, height = camera(index).height
+        // Sizes are drawn for a 1600-pixel-wide frame and scaled to the camera's.
+        let unit = CGFloat(width) / 1600
         let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
@@ -73,14 +95,14 @@ struct Generator {
             context.setFillColor(color(0.96, 0.95, 0.9))
             context.fill(bounds)
             let word = Self.words[(index / 10) % Self.words.count]
-            let font = CTFontCreateWithName("Helvetica-Bold" as CFString, 150, nil)
+            let font = CTFontCreateWithName("Helvetica-Bold" as CFString, 150 * unit, nil)
             let attributes: [NSAttributedString.Key: Any] = [
                 NSAttributedString.Key(kCTFontAttributeName as String): font,
                 NSAttributedString.Key(kCTForegroundColorAttributeName as String): color(0.08, 0.08, 0.1),
             ]
             let line = CTLineCreateWithAttributedString(NSAttributedString(string: word, attributes: attributes))
             let lineWidth = CTLineGetTypographicBounds(line, nil, nil, nil)
-            context.textPosition = CGPoint(x: max(40, (CGFloat(width) - lineWidth) / 2), y: CGFloat(height) / 2 - 50)
+            context.textPosition = CGPoint(x: max(40 * unit, (CGFloat(width) - lineWidth) / 2), y: CGFloat(height) / 2 - 50 * unit)
             CTLineDraw(line, context)
         case 1, 2:
             // A sky over land, with the sun somewhere in it.
@@ -89,8 +111,8 @@ struct Generator {
             context.setFillColor(color(0.2 + random.unit() * 0.2, 0.45 + random.unit() * 0.2, 0.2))
             context.fill(CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height) * (0.2 + random.unit() * 0.15)))
             context.setFillColor(color(1, 0.97, 0.85))
-            let sun = 80 + random.unit() * 80
-            context.fillEllipse(in: CGRect(x: random.unit() * CGFloat(width - 200), y: CGFloat(height) * 0.6, width: sun, height: sun))
+            let sun = (80 + random.unit() * 80) * unit
+            context.fillEllipse(in: CGRect(x: random.unit() * (CGFloat(width) - 200 * unit), y: CGFloat(height) * 0.6, width: sun, height: sun))
         default:
             // Shapes on a gradient, drawn from the index alone.
             let ground = CGGradient(
@@ -102,7 +124,7 @@ struct Generator {
             for _ in 0 ..< 12 {
                 context.setFillColor(color(random.unit(), random.unit(), random.unit()))
                 let rect = CGRect(x: random.unit() * CGFloat(width), y: random.unit() * CGFloat(height),
-                                  width: 60 + random.unit() * 400, height: 60 + random.unit() * 400)
+                                  width: (60 + random.unit() * 400) * unit, height: (60 + random.unit() * 400) * unit)
                 if random.next() % 2 == 0 {
                     context.fillEllipse(in: rect)
                 } else {
@@ -124,9 +146,9 @@ struct Generator {
     }
 
     func writePhoto(_ index: Int, suffix: String = "", shift: CGFloat = 0) throws -> String {
-        let fileName = name(index, suffix, ext: "jpg")
+        let fileName = name(index, suffix, ext: camera(index).ext)
         let url = folder.appending(path: fileName)
-        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, camera(index).type.identifier as CFString, 1, nil) else {
             throw CocoaError(.fileWriteUnknown)
         }
         let formatter = DateFormatter()

@@ -630,11 +630,14 @@ nonisolated struct MediaEnricher {
         guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
             return StillRendering(rendering: nil, verdict: nil)
         }
-        let rendered: ImageRenderer.Rendered
+        // Staged on the lane while its pixels are held: the encodes are bounded with the decodes.
+        let staged: (thumbnail: StagedDerivedImage, preview: StagedDerivedImage)?
         do {
-            rendered = try await ImageRenderer.background.render(
+            staged = try await ImageRenderer.background.render(
                 url, longEdge: ThumbnailStore.previewMaxPixelSize, recipe: recipe
-            )
+            ) { rendered in
+                StagedRendering(Self.stage(rendered, id: id, directory: directory))
+            }.value
         } catch is ImageRenderer.RenderError {
             // The decoder's verdict, not the photo's: it is stored with the decoder that
             // gave it, and a later decoder tries again (ENR-029).
@@ -647,7 +650,16 @@ nonisolated struct MediaEnricher {
             ])
             return nil
         }
-        return StillRendering(rendering: stage(rendered, id: id, directory: directory), verdict: .decoded)
+        return StillRendering(rendering: staged, verdict: .decoded)
+    }
+
+    /// A staged rendering as the render lane hands it back (a tuple is not `Sendable`).
+    private struct StagedRendering: Sendable {
+        let value: (thumbnail: StagedDerivedImage, preview: StagedDerivedImage)?
+
+        init(_ value: (thumbnail: StagedDerivedImage, preview: StagedDerivedImage)?) {
+            self.value = value
+        }
     }
 
     /// Stages a rendering as the loupe preview and the grid thumbnail drawn from it; nil

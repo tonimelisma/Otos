@@ -35,7 +35,7 @@ usage() {
 usage:
   script/sandbox-library.sh create --home <dir> --count <photos> [--videos <n>]
       Makes <dir> (it must not exist), a sparse APFS image inside it mounted at
-      <dir>/TourLibrary without Finder seeing it, and <photos> generated JPEGs (some with
+      <dir>/TourLibrary without Finder seeing it, and <photos> generated photos (48/12 MP HEIC, 24/12 MP JPEG; some with
       words, some skies, a few near-duplicates) and <n> short videos (default 2) in
       <dir>/TourLibrary/Photos. Prints the environment the dev build needs.
   script/sandbox-library.sh check-trash --home <dir>
@@ -107,8 +107,8 @@ create() {
     echo "library=$library"
   } > "$HOME_DIR/$MARKER"
   : > "$HOME_DIR/$FILES"
-  # About a megabyte a photo, with room; a sparse image takes only what is written.
-  local size_mb=$(( COUNT + VIDEOS * 4 + 256 ))
+  # Two megabytes a photo, with room; a sparse image takes only what is written.
+  local size_mb=$(( COUNT * 2 + VIDEOS * 4 + 256 ))
   mkdir -p "$mount"
   if ! /usr/bin/hdiutil create -quiet -type SPARSE -fs APFS -volname OtosTourLibrary -size "${size_mb}m" "$image" \
     || ! /usr/sbin/diskutil image attach --mountOptions nobrowse --mountPoint "$mount" "$image" >/dev/null; then
