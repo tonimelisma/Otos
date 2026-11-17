@@ -49,3 +49,37 @@ enrichment rendered; the paint's own reads read 7 ms of index.
 and the rest on the cadence, and a change of which rows exist (`.membership`) publishes at once
 while the window shows no item (`CatalogProjection.publishesAtOnce`): the cadence spares the
 main actor a shown grid's reorder, and an empty window has none.
+
+## 3. The peak footprint
+
+On the baseline tour the peak, 657 MB, came at the end of the second whole-root walk. That
+walk (`reason=events`) was the change journal replaying the generator's own writes, which
+#915 removed. The footprint fell 213 MB in the second after the walk ended (616 → 403 MB).
+
+A diagnostic tour took `heap` and `vmmap -summary` the first time the app's own samples passed
+450, 550 and 620 MB. Those captures pause the app, so that tour's timings are not results.
+
+| At | Footprint | Malloc allocated | Of which | IOSurface |
+| --- | --- | --- | --- | --- |
+| 450 MB, during the second walk | 464 MB | 312 MB | the walk's `ScanBaseline`: its dictionary 48 MB and 816,868 strings 79 MB | 44 MB, 2,328 surfaces |
+| 550 MB, after it | 572 MB | 248 MB | non-object 130 MB | 81 MB, 4,750 surfaces |
+| 620 MB | 625 MB | 329 MB | non-object 158 MB; six `[MediaAssetID: Int]` 20 MB | 106 MB, 6,437 surfaces |
+
+- **A whole-root walk holds its baseline.** For each settled row it held five strings: the
+  path key, the name sort key, the name, the content type and the kind/format. At 160,000
+  rows that is 127 MB for the walk's length. Any whole-root walk of a library this size pays
+  it: an integrity walk, or a root whose change journal cannot replay. The baseline now holds each row's facts as one SHA-256 of their bytes
+  (`ScanFactValues.digest`, 32 bytes inline), which is equal exactly when the facts are
+  equal byte for byte.
+- **The grid's tile images grow during a backlog.** The surfaces are the grid tile store's
+  decoded 64 × 64 thumbnails: `AppleJPEGReadPlugin`, `IIOImageRead`, `CGImage` and
+  `IOSurface` each counted about 6,300. While the scan inserted rows and enrichment
+  re-rendered and re-dated them, the grid decoded about 75 tiles a second with about 50 on
+  screen: 5,933 decodes in the tour's first three minutes. The store keeps every decode under
+  its 256 MB budget (ADR 0009), and it reported 99 MB (`tileCacheMB=99`) at the tour's first
+  step. That budget is what makes a scrolled-back tile keep its painted image (APP-015), so
+  it is left as it is. This note records it as the holder that grows with a long backlog.
+- **Not attributed.** 130–158 MB of non-object malloc. Core ML buffers, Vision and string
+  bytes are candidates. No allocation backtraces were recorded.
+
+After #915 and the digest, a tour peaked at 480 MB (`peak footprint MB 480 700 PASS`).

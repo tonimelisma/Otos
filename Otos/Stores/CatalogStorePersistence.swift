@@ -1835,7 +1835,7 @@ extension CatalogStore {
     ) throws -> ScanBaseline {
         let scope = underSubtree.map { _ in " AND \(Self.subtreeSQL)" } ?? ""
         let arguments: StatementArguments = [libraryRootID] + (underSubtree.map(Self.subtreeArguments) ?? [])
-        var media: [MediaRelativePath: ScanFactValues] = [:]
+        var media: [MediaRelativePath: ScanFactDigest] = [:]
         let rows = try Row.fetchCursor(
             db,
             sql: """
@@ -1860,7 +1860,7 @@ extension CatalogStore {
                 createdSecond: ScanFactValues.wholeSecond(created),
                 modifiedSecond: ScanFactValues.wholeSecond(modified),
                 fileIdentifier: row["file_identifier"]
-            )
+            ).digest
         }
         var companions: [MediaRelativePath: ScanCompanionFactValues] = [:]
         let companionRows = try Row.fetchCursor(

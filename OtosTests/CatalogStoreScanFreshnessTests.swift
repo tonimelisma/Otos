@@ -7,6 +7,34 @@ import Testing
 /// also republishes (ARC-038).
 @Suite(.testScope)
 struct CatalogStoreScanFreshnessTests {
+    /// A scan's baseline holds each row's facts as their digest, which is equal exactly when
+    /// the upsert's `WHERE` would find the facts equal: text byte for byte (a precomposed and a
+    /// decomposed name differ), a missing value apart from an empty one, and no two facts run
+    /// together (each text carries its length).
+    @Test func aRowsFactDigestIsEqualExactlyWhenItsFactsAre() {
+        func facts(
+            pathKey: String? = "a/b.jpg",
+            name: String? = "b.jpg",
+            format: String? = "jpeg",
+            byteSize: Int64? = 10
+        ) -> ScanFactValues {
+            ScanFactValues(
+                pathKey: pathKey, nameSortKey: "b", name: name, contentTypeIdentifier: "public.jpeg", kind: "image",
+                format: format, byteSize: byteSize, createdSecond: 1, modifiedSecond: 2, fileIdentifier: 3
+            )
+        }
+        #expect(facts().digest == facts().digest)
+        #expect(facts(name: "Caf\u{E9}.jpg").digest != facts(name: "Cafe\u{301}.jpg").digest)
+        #expect(facts(name: nil).digest != facts(name: "").digest)
+        #expect(facts(pathKey: "ab", name: "c").digest != facts(pathKey: "a", name: "bc").digest)
+        #expect(facts(format: nil, byteSize: 10).digest != facts(format: "jpeg", byteSize: nil).digest)
+        #expect(facts(byteSize: 10).digest != facts(byteSize: 11).digest)
+        // What a baseline holds of a row besides its path: 32 bytes inline, no heap storage.
+        // Its five strings were 127 MB of a 160,000-row root's walk.
+        #expect(MemoryLayout<ScanFactDigest>.size == 32)
+        #expect(_isPOD(ScanFactDigest.self))
+    }
+
     @Test func reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

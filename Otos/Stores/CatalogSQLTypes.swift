@@ -1,4 +1,5 @@
 import CoreGraphics
+import CryptoKit
 import Foundation
 import GRDB
 
@@ -558,17 +559,41 @@ nonisolated struct ScanFactValues: Sendable {
         seconds.flatMap { Int64(exactly: $0.rounded(.towardZero)) }
     }
 
-    func matches(_ other: ScanFactValues) -> Bool {
-        Self.sameBytes(pathKey, other.pathKey)
-            && Self.sameBytes(nameSortKey, other.nameSortKey)
-            && Self.sameBytes(name, other.name)
-            && Self.sameBytes(contentTypeIdentifier, other.contentTypeIdentifier)
-            && Self.sameBytes(kind, other.kind)
-            && Self.sameBytes(format, other.format)
-            && byteSize == other.byteSize
-            && createdSecond == other.createdSecond
-            && modifiedSecond == other.modifiedSecond
-            && fileIdentifier == other.fileIdentifier
+    /// The facts as one SHA-256 of their bytes: equal exactly when every fact is, text compared
+    /// byte for byte and a missing value apart from every present one (each value is written
+    /// with whether it is present and, for text, its length). What a scan's baseline holds of
+    /// a row: 32 bytes, where the values themselves held five strings
+    /// (`docs/research/2026-11-17-a-new-library-at-the-owners-size.md`).
+    var digest: ScanFactDigest {
+        var hasher = SHA256()
+        for text in [pathKey, nameSortKey, name, contentTypeIdentifier, kind, format] {
+            Self.feed(text, to: &hasher)
+        }
+        for number in [byteSize, createdSecond, modifiedSecond, fileIdentifier] {
+            Self.feed(number, to: &hasher)
+        }
+        return ScanFactDigest(hasher.finalize())
+    }
+
+    private static func feed(_ text: String?, to hasher: inout SHA256) {
+        guard let text else {
+            hasher.update(data: [0])
+            return
+        }
+        var length = UInt64(text.utf8.count).littleEndian
+        hasher.update(data: [1])
+        withUnsafeBytes(of: &length) { hasher.update(bufferPointer: $0) }
+        hasher.update(data: Array(text.utf8))
+    }
+
+    private static func feed(_ number: Int64?, to hasher: inout SHA256) {
+        guard let number else {
+            hasher.update(data: [0])
+            return
+        }
+        var value = number.littleEndian
+        hasher.update(data: [1])
+        withUnsafeBytes(of: &value) { hasher.update(bufferPointer: $0) }
     }
 
     static func sameBytes(_ lhs: String?, _ rhs: String?) -> Bool {
@@ -579,6 +604,23 @@ nonisolated struct ScanFactValues: Sendable {
             lhs.utf8.elementsEqual(rhs.utf8)
         default:
             false
+        }
+    }
+}
+
+/// A row's scan facts as one SHA-256 (`ScanFactValues.digest`).
+nonisolated struct ScanFactDigest: Hashable, Sendable {
+    /// The digest's 32 bytes as four words, in order.
+    let words: SIMD4<UInt64>
+
+    init(_ digest: SHA256.Digest) {
+        words = digest.withUnsafeBytes { raw in
+            SIMD4(
+                raw.loadUnaligned(fromByteOffset: 0, as: UInt64.self),
+                raw.loadUnaligned(fromByteOffset: 8, as: UInt64.self),
+                raw.loadUnaligned(fromByteOffset: 16, as: UInt64.self),
+                raw.loadUnaligned(fromByteOffset: 24, as: UInt64.self)
+            )
         }
     }
 }
@@ -621,7 +663,9 @@ nonisolated struct ScanCompanionFactValues: Sendable {
 nonisolated struct ScanBaseline: Sendable {
     /// Settled rows only: a row awaiting presence or held in the Trash is absent, so
     /// observing it always writes.
-    let media: [MediaRelativePath: ScanFactValues]
+    /// Each row's facts as their digest (`ScanFactValues.digest`): a whole root's baseline at
+    /// the owner's library size is held for the walk's length.
+    let media: [MediaRelativePath: ScanFactDigest]
     let companions: [MediaRelativePath: ScanCompanionFactValues]
     let capabilities: VolumeNamespaceCapabilities
 
@@ -631,7 +675,7 @@ nonisolated struct ScanBaseline: Sendable {
             guard let stored = media[file.relativePath] else {
                 return true
             }
-            return !stored.matches(ScanFactValues(file, capabilities: capabilities))
+            return stored != ScanFactValues(file, capabilities: capabilities).digest
         }
     }
 

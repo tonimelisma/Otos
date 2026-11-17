@@ -481,7 +481,10 @@ cadence is time-based, not a scanned-file threshold.
 
 A pass reads, before it walks, what the catalog holds for its scope (`ScanBaseline`:
 each settled row's filesystem facts as the upsert compares them, and each companion's)
-on a background read lane. Each batch is compared with it off the Store actor, and only
+on a background read lane. A row's facts are held as one SHA-256 of their bytes
+(`ScanFactValues.digest`: each value with whether it is present and, for text, its
+length), equal exactly when the facts are byte for byte. A whole root's baseline is held for
+the walk's length, and the five strings a row held were 127 MB of a 160,000-row root's walk. Each batch is compared with it off the Store actor, and only
 files whose row is missing or differs reach the writer; companions are written only when
 the pass changed a media row or observed companions that differ. A pass over an
 unchanged scope therefore takes no write transaction. Measured on the owner's library
