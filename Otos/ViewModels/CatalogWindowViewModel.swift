@@ -1918,7 +1918,7 @@ extension CatalogWindowViewModel {
     var windowSubtitle: String {
         let ignoresFilter = detailPane.surface == .duplicates || detailPane.surface == .people
         let filtered = queryDescriptor.filter.isActive && !ignoresFilter
-        let searching = parts.searchPhase == .reading && queryDescriptor.search != nil
+        let searching = parts.searchPhase?.isSearching == true && queryDescriptor.search != nil
         return [filtered ? "Filtered" : nil, searching ? "Searching\u{2026}" : nil]
             .compactMap(\.self)
             .joined(separator: " \u{00B7} ")

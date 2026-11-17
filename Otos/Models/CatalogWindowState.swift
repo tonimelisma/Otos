@@ -84,16 +84,23 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
 /// Where a shown search's query stands (ADR 0048, DES-108). Projection publishes it; the
 /// window renders it and derives nothing.
 nonisolated enum CatalogSearchPhase: Equatable {
-    /// The query is being read: the state is the last one shown, kept, or the matches of the
-    /// query's first reading, as typed, while its full reading waits on Translation or Maps;
-    /// the window says it is searching. Nothing ends this but the reader's report that the
-    /// full reading ended.
+    /// The query is being read: the state is the last one shown, kept, and the window says it
+    /// is searching. Nothing ends this but the reader's report that a reading ended.
     case reading
+    /// The query's first matches are shown — its words while the text tower loads, or its
+    /// first reading, as typed, while Translation or Maps are asked — and the window still says
+    /// it is searching, until the full reading replaces them.
+    case refining
     /// Read: the grid holds the matches, or `noSearchResults` when none matched.
     case read
     /// The query could not be read: the grid holds `searchFailed`, never the scope
     /// unsearched, until a reading succeeds.
     case failed
+
+    /// Whether the window says it is searching.
+    var isSearching: Bool {
+        self == .reading || self == .refining
+    }
 }
 
 nonisolated struct CatalogDeviceConnectionBanner: Equatable {

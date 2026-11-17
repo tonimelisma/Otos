@@ -211,6 +211,7 @@ actor PhotoSearchIndex: QuiescentOwner {
         embedder = SearchImageEmbedder(bundle: bundle)
         let encoder = SearchQueryEncoder(bundle: bundle)
         self.queries = queries ?? SearchQueryReader(
+            words: { try await encoder.wordsReading($0) },
             first: { try await encoder.firstReading($0) }, prepare: { try await encoder.prepare() },
             isPrepared: { await encoder.isPrepared }, admission: admission
         ) { try await encoder.encode($0) }
@@ -483,18 +484,23 @@ actor PhotoSearchIndex: QuiescentOwner {
         var matched: [MediaAssetID: Float]?
         var named: [String] = []
         var textMatches = 0
-        if let query = encoding.embedding {
-            let scores = vectors?.scores(query) ?? []
-            let best = rows.rows.lazy.map { scores[Int($0)] }.max() ?? 0
-            let threshold = cutoff.threshold(best: best)
-            named = vocabulary?.labels(namedBy: query) ?? []
+        if encoding.picture != .none {
+            // The words reading (`SearchQueryPicture.unread`) compares no picture: only the
+            // photos showing its words match, until a reading that embeds them replaces it.
+            let query = encoding.embedding
+            let scores = query.flatMap { vectors?.scores($0) } ?? []
             var picture: [MediaAssetID: Float] = [:]
-            if let vectors {
-                for row in rows.rows.lazy.map({ Int($0) })
-                    where scores[row] >= threshold
-                    && SearchLabelGate.keeps(score: scores[row], best: best, named: named, confidence: { vectors.confidence(slot: row, of: $0) })
-                {
-                    picture[vectors.keys.slotIDs[row]] = scores[row]
+            if let query {
+                let best = rows.rows.lazy.map { scores[Int($0)] }.max() ?? 0
+                let threshold = cutoff.threshold(best: best)
+                named = vocabulary?.labels(namedBy: query) ?? []
+                if let vectors {
+                    for row in rows.rows.lazy.map({ Int($0) })
+                        where scores[row] >= threshold
+                        && SearchLabelGate.keeps(score: scores[row], best: best, named: named, confidence: { vectors.confidence(slot: row, of: $0) })
+                    {
+                        picture[vectors.keys.slotIDs[row]] = scores[row]
+                    }
                 }
             }
             // A photo showing the words matches, whatever the cut. A query naming no scene label
@@ -511,7 +517,7 @@ actor PhotoSearchIndex: QuiescentOwner {
                 where (typed.matches(folded: folded) || (englishDiffers && english.matches(folded: folded)))
                 && rows.contains(id, rowOf: rowOf)
             {
-                picture[id] = lift + (rowOf?[id].map { scores[Int($0)] } ?? 0)
+                picture[id] = lift + (scores.isEmpty ? 0 : rowOf?[id].map { scores[Int($0)] } ?? 0)
                 textMatches += 1
             }
             matched = picture
@@ -528,6 +534,7 @@ actor PhotoSearchIndex: QuiescentOwner {
             "allowed": "\(allowed.map { "\($0.count)" } ?? "unnarrowed")",
             "labels": "\(named.count)",
             "textMatches": "\(textMatches)",
+            "picture": encoding.picture.diagnosticName,
             "reading": encoding.reading.rawValue,
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
         ])

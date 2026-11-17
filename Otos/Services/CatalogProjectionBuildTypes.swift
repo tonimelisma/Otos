@@ -450,7 +450,7 @@ nonisolated enum CatalogSearchOutcome: Equatable {
     var phase: CatalogSearchPhase {
         switch self {
         case .read: .read
-        case .refining: .reading
+        case .refining: .refining
         case .failed: .failed
         }
     }

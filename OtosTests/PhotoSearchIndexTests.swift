@@ -1145,7 +1145,7 @@ struct PhotoSearchIndexTests {
 
         await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "järvi")))
         let firstShown = await recorder.waitForValues {
-            $0.last?.mediaGrid.orderedAssetIDs == [blue] && $0.last?.searchPhase == .reading
+            $0.last?.mediaGrid.orderedAssetIDs == [blue] && $0.last?.searchPhase == .refining
         }
         open.yield()
         let fullShown = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [red] && $0.last?.searchPhase == .read }
@@ -1329,6 +1329,105 @@ struct PhotoSearchIndexTests {
         let scores = try #require(matches.scores)
         #expect(try #require(scores[catalog.blue]) > PhotoSearchIndex.textMatchScore - 1)
         #expect(try #require(scores[catalog.blue]) > (scores[catalog.red] ?? -1))
+        await index.shutdown()
+        await store.shutdown()
+    }
+
+    /// ADR 0048, "The words first": the words reading is made with no text tower loaded, and
+    /// matches only the photo showing its words: the picture it has not read narrows to them,
+    /// never to every photo.
+    @Test func theWordsReadingMatchesOnlyThePhotosShowingItsWordsWithNoTowerLoaded() async throws {
+        let catalog = try await makeCatalog()
+        let store = catalog.store
+        let blue = try #require(catalog.assets.first { $0.id == catalog.blue })
+        try await giveReading(store, blue, preview: "blue-preview.heic", text: "Proof of Insurance")
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
+            textReader: .readingNoText()
+        )
+        let changes = await index.changes()
+        await index.start()
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        let encoder = SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self))
+        let words = try #require(try await encoder.wordsReading(SearchQueryRequest(text: "insurance")))
+        #expect(words.picture == .unread)
+        #expect(await !encoder.isLoaded, "the words reading asks the text tower nothing")
+        let matches = try await index.matches(words, facts: nil, among: [catalog.red, catalog.blue])
+        #expect(matches.scores == [catalog.blue: PhotoSearchIndex.textMatchScore])
+        await index.shutdown()
+        await store.shutdown()
+    }
+
+    /// Plan 0116, the first search while the text tower loads: a query typed while the first
+    /// grid's readying holds the tower's load at its suspension publishes the photo showing its
+    /// words at once, still searching, and the picture's answer when the load is let go: the
+    /// first publication never waits on the load, and the grid never empties between them.
+    @Test func aQueryTypedWhileTheTowerLoadsShowsItsWordsFirst() async throws {
+        let catalog = try await makeCatalog()
+        let store = catalog.store
+        let blue = try #require(catalog.assets.first { $0.id == catalog.blue })
+        try await giveReading(store, blue, preview: "blue-preview.heic", text: "Proof of Insurance")
+        let bundle = Bundle(for: CatalogWindowViewModel.self)
+        let encoder = SearchQueryEncoder(bundle: bundle)
+        let load = ArrivalGate()
+        let prepared = Mutex(false)
+        let encodings = Mutex(0)
+        let reader = SearchQueryReader(
+            words: { try await encoder.wordsReading($0) },
+            prepare: {
+                await load.arrive()
+                prepared.withLock { $0 = true }
+            },
+            isPrepared: { prepared.withLock { $0 } }
+        ) { request in
+            encodings.withLock { $0 += 1 }
+            return try await encoder.englishEncoding(of: request.text)
+        }
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
+            cutoff: SearchCutoff(floor: -1, margin: 0.0001), queries: reader, textReader: .readingNoText()
+        )
+        let changes = await index.changes()
+        await index.start()
+        for await _ in changes where await index.embeddedCount == 2 {
+            break
+        }
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
+        await projection.attachSearchIndex(index)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recorder = AsyncValueRecorder<CatalogWindowState>()
+        let recording = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer { recording.cancel() }
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
+
+        // The first grid's readying: its load is held at its suspension.
+        let readying = Task { await reader.prepareWhileAdmitted() }
+        await load.waitForArrivals(1)
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "insurance")))
+        let wordsShown = await recorder.waitForValues {
+            $0.last?.mediaGrid.orderedAssetIDs == [catalog.blue] && $0.last?.searchPhase == .refining
+        }
+        #expect(!prepared.withLock { $0 }, "the words were published while the load was held")
+        #expect(encodings.withLock { $0 } == 0)
+        #expect(await reader.wordsReadings == 1)
+
+        await load.open()
+        await readying.value
+        let pictureShown = await recorder.waitForValues {
+            $0.last?.mediaGrid.orderedAssetIDs.contains(catalog.blue) == true && $0.last?.searchPhase == .read
+        }
+        for state in pictureShown[wordsShown.count - 1 ..< pictureShown.count] {
+            #expect(!state.mediaGrid.orderedAssetIDs.isEmpty, "the grid emptied between the two readings")
+        }
+        #expect(encodings.withLock { $0 } == 1)
+        #expect(await reader.preparationsLoaded == 1)
         await index.shutdown()
         await store.shutdown()
     }

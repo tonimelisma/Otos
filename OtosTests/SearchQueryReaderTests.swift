@@ -46,7 +46,7 @@ struct SearchQueryReaderTests {
     static func encoding(_ text: String) -> SearchQueryEncoding {
         SearchQueryEncoding(
             text: text, language: "en", reading: .english, modelText: text, facts: SearchFacts(), pictureText: text,
-            embedding: nil
+            picture: .none
         )
     }
 
@@ -210,6 +210,105 @@ struct SearchQueryReaderTests {
         #expect(await encoder.loadedBeforeEncoding == [true])
         #expect(await reader.preparationsLoaded == 1)
         #expect(await reader.readingsEnded == 1)
+        await reader.shutdown()
+    }
+
+    static func words(_ text: String) -> SearchQueryEncoding {
+        SearchQueryEncoding(
+            text: text, language: "en", reading: .english, modelText: text, facts: SearchFacts(), pictureText: text,
+            picture: .unread
+        )
+    }
+
+    /// Plan 0116: a query issued while the text tower's load is in flight — the first grid's
+    /// readying, held at its suspension — publishes its words reading without awaiting the
+    /// load, and so does a query typed after it while the load still runs; neither is read
+    /// with the tower until the load ends, and then the newest is, once. Publications counted,
+    /// no time.
+    @Test func aQueryIssuedWhileTheLoadIsInFlightPublishesItsWordsWithoutAwaitingIt() async {
+        let load = ArrivalGate()
+        let prepared = Mutex(false)
+        let encoded = Mutex<[String]>([])
+        let reader = SearchQueryReader(
+            words: { Self.words($0.text) },
+            prepare: {
+                await load.arrive()
+                prepared.withLock { $0 = true }
+            },
+            isPrepared: { prepared.withLock { $0 } }
+        ) { request in
+            encoded.withLock { $0.append(request.text) }
+            return Self.encoding(request.text)
+        }
+        let readings = await reader.readings()
+        let readying = Task { await reader.prepareWhileAdmitted() }
+        await load.waitForArrivals(1)
+
+        let dog = SearchQueryRequest(text: "dog")
+        #expect(await reader.status(for: dog) == .reading)
+        for await _ in readings where await reader.status(for: dog) == .refining(Self.words("dog")) {
+            break
+        }
+        #expect(await reader.announcements == 1)
+        let dogs = SearchQueryRequest(text: "dogs")
+        #expect(await reader.status(for: dogs) == .reading)
+        for await _ in readings where await reader.status(for: dogs) == .refining(Self.words("dogs")) {
+            break
+        }
+        // Both answered while the load is held: nothing was read with the tower.
+        #expect(await reader.announcements == 2)
+        #expect(await reader.wordsReadings == 2)
+        #expect(encoded.withLock { $0 }.isEmpty)
+        #expect(!prepared.withLock { $0 })
+
+        await load.open()
+        await readying.value
+        for await _ in readings where await reader.status(for: dogs) == .read(Self.encoding("dogs")) {
+            break
+        }
+        #expect(encoded.withLock { $0 } == ["dogs"])
+        #expect(await reader.announcements == 3)
+        #expect(await load.arrivalCount == 1, "one load, whoever asked")
+        #expect(await reader.preparationsLoaded == 1)
+        await reader.shutdown()
+    }
+
+    /// A query read when the tower is ready has no words reading: its picture answer is the
+    /// first thing published, so the grid does not change twice.
+    @Test func aQueryReadWithTheTowerReadyHasNoWordsReading() async throws {
+        let reader = SearchQueryReader(
+            words: { Self.words($0.text) }, prepare: {}, isPrepared: { true }
+        ) { Self.encoding($0.text) }
+        let lake = SearchQueryRequest(text: "lake")
+        _ = await reader.status(for: lake)
+        try await waitUntil { await reader.status(for: lake) == .read(Self.encoding("lake")) }
+        #expect(await reader.wordsReadings == 0)
+        #expect(await reader.announcements == 1)
+        await reader.shutdown()
+    }
+
+    /// A load that fails is not a fact: the query whose words are shown is reported failed and
+    /// read again on its backoff, which loads again.
+    @Test func aLoadThatFailsReportsTheQueryFailedAndRetries() async throws {
+        let attempts = Mutex(0)
+        let prepared = Mutex(false)
+        let reader = SearchQueryReader(
+            backoff: (.zero, .zero),
+            words: { Self.words($0.text) },
+            prepare: {
+                let attempt = attempts.withLock { $0 += 1
+                    return $0
+                }
+                guard attempt > 1 else { throw ReadingFailed() }
+                prepared.withLock { $0 = true }
+            },
+            isPrepared: { prepared.withLock { $0 } }
+        ) { Self.encoding($0.text) }
+        let koira = SearchQueryRequest(text: "koira")
+        _ = await reader.status(for: koira)
+        try await waitUntil { await reader.status(for: koira) == .read(Self.encoding("koira")) }
+        #expect(attempts.withLock { $0 } == 2)
+        #expect(await reader.preparationsLoaded == 1)
         await reader.shutdown()
     }
 

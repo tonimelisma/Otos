@@ -27,7 +27,10 @@ field, menu item and empty state, and Lightroom's two orders. It adds nothing of
   - **Being read** (about 40 ms, 0.35 s translated, or as long as Translation or Maps take):
     the grid keeps what it shows, and the window's subtitle reads `Searching…`
     (`Filtered · Searching…` under a filter). It lasts until the reading ends; no timer
-    replaces it with anything else.
+    replaces it with anything else. While it lasts, the grid may already show the query's
+    first matches — the photos showing its words while search's text model loads, or its
+    reading as typed while Translation or Maps answer — still under `Searching…`; a query
+    whose first reading matches nothing keeps what the grid showed.
   - **Read:** the matches, or `No Results for “…”` (below). The subtitle says nothing of
     search.
   - **Could not be read** (a reading that failed; Otos reads it again on its own, 2 s

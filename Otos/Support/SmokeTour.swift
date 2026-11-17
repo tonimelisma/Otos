@@ -890,8 +890,9 @@ extension PreferencesDomain {
             return ("filter", "kind", .skipped("queryUnchanged"))
         }
 
-        /// A query intent (search, filter, sort) and the published state that answers it,
-        /// timed from the intent (`resultMs`).
+        /// A query intent (search, filter, sort) and the published states that answer it, timed
+        /// from the intent: the first results on screen (`firstMs`, a search's first matches
+        /// while it is still searching, else the answer) and the complete answer (`resultMs`).
         private func query(_ act: (CatalogWindowViewModel) -> Void) async -> Outcome {
             guard let viewModel else {
                 return .skipped("windowGone")
@@ -904,14 +905,27 @@ extension PreferencesDomain {
                 // The intent left the query as it was (a filter the descriptor already holds).
                 return .skipped("queryUnchanged")
             }
-            let answered = await until { model in
+            // The first results on screen: a search's first matches (`refining`, still searching),
+            // or its answer; a query that is not a search has only its answer.
+            let shown = await until { model in
                 model.parts.queryGeneration >= generation && model.parts.searchPhase != .reading
+            }
+            let firstMs = DiagnosticsTiming.milliseconds(since: started)
+            let firstItems = self.viewModel?.parts.mediaGrid.orderedAssetIDs.count ?? 0
+            let answered = if shown {
+                await until { model in
+                    model.parts.queryGeneration >= generation && model.parts.searchPhase?.isSearching != true
+                }
+            } else {
+                false
             }
             guard answered, let viewModel = self.viewModel else {
                 return .deadline
             }
             return .reported([
                 "items": "\(viewModel.parts.mediaGrid.orderedAssetIDs.count)",
+                "firstItems": "\(firstItems)",
+                "firstMs": "\(firstMs)",
                 "resultMs": "\(DiagnosticsTiming.milliseconds(since: started))",
             ])
         }
@@ -945,7 +959,7 @@ extension PreferencesDomain {
             if scopeChanges {
                 _ = await until { ($0.lastSidebarPaint?.revision ?? 0) > before }
             } else if queryChanges {
-                _ = await until { $0.state.queryGeneration >= generation && $0.state.searchPhase != .reading }
+                _ = await until { $0.state.queryGeneration >= generation && $0.state.searchPhase?.isSearching != true }
             }
             guard let viewModel = self.viewModel else {
                 return

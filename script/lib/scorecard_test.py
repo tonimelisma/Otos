@@ -23,6 +23,8 @@ TARGETS = {
     "click.allMedia.firstMs": {"metric": "click.allMedia.firstMs", "maxMs": None},
     "click.returnMs": {"metric": "click.returnMs", "maxMs": 300},
     "query.resultMs": {"metric": "query.resultMs", "maxMs": 1000},
+    "search.firstResultsMs": {"metric": "search.firstResultsMs", "maxMs": 1000},
+    "search.completeMs": {"metric": "search.completeMs", "maxMs": None},
     "photo.stepMs": {"metric": "photo.stepMs", "maxMs": 1000},
     "act.resultMs": {"metric": "act.resultMs", "maxMs": 100},
     "stalls.count": {"metric": "stalls.count", "max": 0},
@@ -218,10 +220,34 @@ class ScorecardTests(unittest.TestCase):
         _, rows, _ = run(steps)
         by_label = {r["label"]: (r["value"], r["verdict"]) for r in rows}
         self.assertEqual(by_label["photo open"], (300, "PASS"))
-        self.assertEqual(by_label["search first searchMany"], (1400, "FAIL"))
+        # A build older than the first-results number: the complete answer is still reported,
+        # and the first results are no data, never the complete time renamed.
+        self.assertEqual(by_label["search first searchMany complete"], (1400, "NO-TARGET"))
+        self.assertEqual(by_label["search first searchMany first results"], (None, "NO-DATA"))
         # The filter is timed from its intent, not from the wait for the options it chose from.
         self.assertEqual(by_label["filter video"], (800, "PASS"))
         self.assertNotIn("act liked", by_label)
+
+    def test_a_search_reports_its_first_results_against_the_target_and_its_complete_time_apart(self):
+        steps = SESSION[:-1] + [
+            line(40.6, "op=tour phase=step index=25 kind=search label=searchMany outcome=reported ms=2600 "
+                       "firstMs=420 firstItems=11 resultMs=2582 items=433"),
+            line(40.7, "op=tour phase=step index=26 kind=search label=searchFew outcome=reported ms=300 "
+                       "firstMs=1200 firstItems=3 resultMs=1200 items=3"),
+            line(40.8, "op=tour phase=step index=28 kind=sort label=name outcome=reported ms=500 "
+                       "firstMs=500 resultMs=500 items=900"),
+            SESSION[-1],
+        ]
+        _, rows, text = run(steps)
+        by_label = {r["label"]: (r["value"], r["target"], r["verdict"]) for r in rows}
+        self.assertEqual(by_label["search first searchMany first results"], (420, "1000", "PASS"))
+        self.assertEqual(by_label["search first searchMany complete"], (2582, "none", "NO-TARGET"))
+        # A later search's first results are its answer when nothing came before it.
+        self.assertEqual(by_label["search again searchFew first results"], (1200, "1000", "FAIL"))
+        self.assertEqual(by_label["search again searchFew complete"], (1200, "none", "NO-TARGET"))
+        # A sort has one number, held to the query target.
+        self.assertEqual(by_label["sort name"], (500, "1000", "PASS"))
+        self.assertIn("search first searchMany first resu", text)
 
     def test_a_step_that_reached_its_deadline_fails_and_a_scroll_counts_tiles_without_thumbnails(self):
         steps = SESSION[:-1] + [

@@ -88,12 +88,27 @@ at a time on one loop woken by a doorbell (ADR 0032): the newest query is read n
 reading in flight is never cancelled, because a Translation session killed mid-request can
 stall Translation for many minutes. `CatalogProjection` only asks it what it holds for the
 query shown (`status(for:)`), so the window's publication never waits on Translation or Maps.
-The projection publishes which of three states the shown query is in
+The projection publishes which state the shown query is in
 (`CatalogWindowState.searchPhase`), and the window only renders it:
-- **Being read** (`reading`): the pass builds nothing and republishes the last state as it
+- **Being read** (`reading`, or `refining` while a short reading's matches are shown): the pass builds nothing and republishes the last state as it
   is, marked as searching, so the window keeps what it shows and its subtitle says
   `Searching…`. Nothing is covered: the reader's report that the reading ended rings the
   projection, and that pass builds the answer.
+  - **The words first.** A query that comes while the text tower (`SearchTextTower`, the
+    model on its own queue) is not prepared — its load in flight or not started — is first
+    read without it (`SearchQueryEncoder.wordsReading`): as typed, its facts from the typed
+    text and no new place looked up, its picture words compared only with the words Vision
+    read in photos (`SearchQueryPicture.unread`). Those matches are shown at once, still
+    searching (`refining`), and the reader starts the load as one the user waits on without
+    waiting for it; the load's end rings the reader, which reads the query with the tower. So
+    the first answer never waits on the load, which a fresh Core ML compile after an install
+    stretched to 3 s (`docs/research/2026-11-16-first-search-while-the-encoder-loads.md`), and
+    a query typed while it runs is read for its words at once too. With the tower ready there
+    is no words reading: the picture's answer comes as quickly. A query whose words match
+    nothing keeps what the window shows, still searching. Rejected: readying the tower ahead
+    of People's and duplicates' loads (it delays People by the load's 0.4–3 s while the first
+    answer no longer waits on it), and keeping Core ML's compiled program in Application
+    Support (no public API places or loads it).
   - **A first reading.** A query whose full reading waits on Translation or Maps is first
     read as typed (`SearchQueryEncoder.firstReading`, about 40 ms: SigLIP 2's multilingual
     tower, its facts from the typed text, no place looked up). The window shows that

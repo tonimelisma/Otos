@@ -707,8 +707,13 @@ def verdicts(report, targets):
         elif step.get("kind") == "search":
             # The session's first search pays the cold start (the encoder's load, the vectors'
             # first read); every later one does not, so they are reported apart.
+            # Each is reported twice: when its first results were on screen (its first matches
+            # while still searching, or its answer), held to the target, and when it was
+            # complete, a number. A build older than `firstMs` has no first-results number.
             searches += 1
-            add("query.resultMs", f"search {'first' if searches == 1 else 'again'} {step.get('label')}", step_ms(step))
+            name = f"search {'first' if searches == 1 else 'again'} {step.get('label')}"
+            add("search.firstResultsMs", f"{name} first results", int_or_none(step.get("firstMs")))
+            add("search.completeMs", f"{name} complete", step_ms(step))
         elif step.get("kind") in QUERY_STEPS:
             add("query.resultMs", f"{step['kind']} {step.get('label')}", step_ms(step))
         elif step.get("kind") in PHOTO_STEPS:
