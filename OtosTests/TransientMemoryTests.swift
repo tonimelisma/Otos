@@ -9,10 +9,15 @@ import Testing
 /// the app held 460 MB of dirty malloc regions at idle against a live heap of 324 MB. These
 /// run the launch and the tour's scope visits on a catalog of the owner's shape, with every
 /// background owner running, and measure malloc's dirty bytes less its live bytes (vmmap's
-/// `FRAG SIZE` total) after each step; at the owner's size (`OTOS_SCALE_TEST=1`, run alone)
-/// they record which call stacks made and freed the blocks of 4 KB and up
-/// (`MallocSiteProbe`) and write both to `build/transient-memory/`.
-@Suite(.testScope, .serialized)
+/// `FRAG SIZE` total) after each step, record which call stacks made and freed the blocks of
+/// 4 KB and up (`MallocSiteProbe`), and write both to `build/transient-memory/`.
+///
+/// On demand only (`OTOS_SCALE_TEST=1`), and run alone: the probe hooks every allocation in the
+/// process and `vmmap` suspends it at each step, so beside other tests it would slow every one
+/// of them and count their allocations as the tour's. What always runs for the same rule is
+/// deterministic and process-local: the builder's own tests (`MappedArrayBuilderTests`) and the
+/// lint that keeps a grouping from growing its groups (`grouping_grows_arrays`).
+@Suite(.testScope, .serialized, .enabled(if: StallReproductionTests.ownerSize))
 struct TransientMemoryTests {
     @Test func theTourSequenceOnASmallCatalog() async throws {
         let directory = try makeTestDirectory()
@@ -47,8 +52,7 @@ struct TransientMemoryTests {
         "fetchSamePhotoCandidates", "candidatePairs", "peopleSnapshot", "PeopleFaces", "fetchExistingAssetRows", "namedRows",
     ]
 
-    @Test(.enabled(if: StallReproductionTests.ownerSize))
-    func theTourSequenceAtTheOwnersSize() async throws {
+    @Test func theTourSequenceAtTheOwnersSize() async throws {
         let directory = try makeTestDirectory()
         let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
         let (run, sites, overflowed) = try await MallocSiteProbe.record {

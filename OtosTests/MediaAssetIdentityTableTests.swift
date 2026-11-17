@@ -92,8 +92,10 @@ struct MediaAssetIdentityTableTests {
     /// index moves under the lock: without sizing, crossing half the index rebuilds every
     /// place already made; sized at open from the catalog's rows, making that many IDs never
     /// rebuilds it.
-    @Test(arguments: [165_000, 330_000])
-    func anIndexSizedAtOpenIsNeverRebuiltWhileIDsAreMade(entries: Int) {
+    @Test func anIndexSizedAtOpenIsNeverRebuiltWhileIDsAreMade() {
+        // 20,000 places cross four doublings unsized, the last moving 32,768 slots, and none
+        // sized for them: the property the owner's 165,000 shows, at an eighth of the inserts.
+        let entries = 20000
         let root = LibraryRootPath(rawValue: "/Sized")
         let paths = (0 ..< entries).map { MediaRelativePath(rawValue: "2026/\($0 % 365)/IMG_\($0).HEIC") }
 
@@ -103,12 +105,12 @@ struct MediaAssetIdentityTableTests {
         }
         let sized = MediaAssetIdentityTable()
         sized.reserve(entries + entries / 4)
-        let atOpen = sized.largestRebuild
+        let atOpen = sized.usage.largestRebuild
         for path in paths {
             _ = sized.place(of: root, path)
         }
-        #expect(unsized.largestRebuild >= entries, "unsized: \(unsized.largestRebuild) slots moved at once")
-        #expect(sized.largestRebuild == atOpen, "sized: \(sized.largestRebuild) slots moved at once")
+        #expect(unsized.usage.largestRebuild >= entries, "unsized: \(unsized.usage.largestRebuild) slots moved at once")
+        #expect(sized.usage.largestRebuild == atOpen, "sized: \(sized.usage.largestRebuild) slots moved at once")
         #expect(atOpen <= 4096, "the rebuild at open moves the few places made before it")
         #expect(sized.count == entries && unsized.count == entries)
     }

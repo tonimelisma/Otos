@@ -47,13 +47,14 @@ import OSLog
 /// **No room for the vectors** (ADR 0027, ADR 0032 rule 8). When the vectors a pass owes would
 /// take the volume below the free-space floor, or their write finds it full, the owner holds
 /// that fact (`spaceHold`), logs it once (`op=people.vectors phase=floorHeld`) and arms one
-/// wake, a backoff (`time: backoff`: nothing reports when space comes back). Until the wake
-/// finds room, a pass reads nothing and assigns nothing: a change only adds the photos it names
-/// to what the next read owes. What People shows meanwhile is what the catalog holds — the
-/// guesses and gallery facts last written, and the read held (`lastRead`), so ranking goes on
-/// over the vectors held and a face whose vector is not held is offered no candidates. Nothing
-/// is published as empty. When the wake finds room it says so (`phase=floorCleared`) and owes
-/// one pass, which reads by key what changed since and assigns.
+/// wake, a backoff (`time: backoff`: nothing reports when space comes back). The hold gates only
+/// what needs the disk: until the wake finds room, a pass reads the snapshot and writes the
+/// gallery facts as always (steps 1 and 2), so a photo moved to the Trash or a root removed is
+/// out of every count and cover, and it reads no vector and assigns nothing. Ranking goes on
+/// over the vectors held; a face whose vector is not held is left out of the ranking, so it
+/// has no entry, which the window reads as not ranked (`SelectionFaces.candidates`), never as no
+/// candidates. When the wake finds room it says so (`phase=floorCleared`) and owes one pass,
+/// which assigns over the read held. `stop()` ends the hold's wake with the loop.
 actor PeopleAssignment: QuiescentOwner {
     /// What the People snapshot reads (`CatalogStore.peopleSnapshot`), so `CatalogProjection`
     /// asks for a pass only when one of these moved: the faces, who they are and the people;
@@ -79,8 +80,11 @@ actor PeopleAssignment: QuiescentOwner {
         vectorStore.vectors
     }
 
-    /// The volume had no room for the vectors owed: no pass reads until the wake finds room.
+    /// The volume had no room for the vectors owed: no pass reads a vector or assigns until the
+    /// wake finds room.
     private var spaceHold: SpaceHold?
+    /// The loop has ended (`stop()`): no wake is armed again.
+    private var stopped = false
     private var spaceRetry: Task<Void, Never>?
     private let spaceBackoff: (first: Duration, last: Duration)
 
@@ -121,7 +125,8 @@ actor PeopleAssignment: QuiescentOwner {
         (bell, doorbell) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
-    /// Starts the loop. It holds this owner weakly and ends when the doorbell finishes.
+    /// Starts the loop. It holds this owner weakly and ends when the doorbell finishes, and
+    /// as it ends it cancels the wake that looks for room (`ended()`).
     func start() {
         guard loopTask == nil else {
             return
@@ -134,7 +139,17 @@ actor PeopleAssignment: QuiescentOwner {
                 }
                 await pass()
             }
+            await self?.ended()
         }
+    }
+
+    /// The loop's last step: no pass follows, so no wake may look for room or ring again.
+    private func ended() {
+        stopped = true
+        spaceRetry?.cancel()
+        spaceRetry = nil
+        activity.wake = nil
+        settleQuiescence()
     }
 
     /// The catalog may have changed: People is owed a pass. `rows` are the photos the change
@@ -160,8 +175,8 @@ actor PeopleAssignment: QuiescentOwner {
     /// exist, copies, stacks, choices) can move what other photos stand for, so it is read whole.
     static let incrementalInputs: CatalogChangedFacts = [.faces, .faceTiles]
 
-    /// Teardown, callable from anywhere: ends the loop. A wake waiting for room holds this
-    /// owner weakly and is cancelled when it goes.
+    /// Teardown, callable from anywhere: ends the doorbell, so the loop ends after the pass it
+    /// runs, and its end cancels a wake waiting for room (`ended()`).
     nonisolated func stop() {
         doorbell.finish()
     }
@@ -178,7 +193,8 @@ actor PeopleAssignment: QuiescentOwner {
         guard let read = lastRead else {
             return [:]
         }
-        // At the floor the vectors held are ranked: a face whose vector is not held gets none.
+        // At the floor the vectors held are ranked: a face whose vector is not held is left out,
+        // so it has no entry (not ranked), never an empty list.
         if spaceHold == nil {
             do {
                 try await syncVectors(for: read)
@@ -208,12 +224,6 @@ actor PeopleAssignment: QuiescentOwner {
         defer {
             activity.endPass(covering: answered)
             settleQuiescence()
-        }
-        // No room for the vectors: the wake that finds room owes the pass; this one reads
-        // nothing, and the photos a change named wait in `owedRows`.
-        guard spaceHold == nil else {
-            answered = startedFrom
-            return
         }
         do {
             // Before the catalog's first load there is nothing to read; the load is a catalog
@@ -281,8 +291,10 @@ actor PeopleAssignment: QuiescentOwner {
             let stored = try await store.backgroundReads.settledPeopleAssignment()
             settled = settled ?? stored.map(AssignmentInputs.init(digest:))
         }
-        guard inputs != settled else {
-            OtosLog.catalog.debugOperation("people.pass", phase: "read", fields: [
+        // No room for the vectors: the read and the gallery facts stand, and the pass the wake
+        // owes assigns over this read.
+        guard inputs != settled, spaceHold == nil else {
+            OtosLog.catalog.debugOperation("people.pass", phase: spaceHold == nil ? "read" : "floorHeld", fields: [
                 "faces": "\(read.faces.count)", "people": "\(read.people.count)", "readMs": "\(readMs)",
                 "galleryRows": "\(galleryRows)", "assigned": "false",
             ])
@@ -364,7 +376,7 @@ extension PeopleAssignment {
 
     /// One wake at a time; each waits twice as long as the last, up to `spaceBackoff.last`.
     private func armSpaceRetry() {
-        guard var hold = spaceHold, spaceRetry == nil else { return }
+        guard !stopped, var hold = spaceHold, spaceRetry == nil else { return }
         let delay = hold.next
         hold.next = min(hold.next * 2, spaceBackoff.last)
         spaceHold = hold
@@ -384,7 +396,7 @@ extension PeopleAssignment {
     func spaceRetryFired() {
         spaceRetry = nil
         activity.wake = nil
-        guard spaceHold != nil else { return }
+        guard !stopped, spaceHold != nil else { return }
         do {
             try vectorStore.space.admit(bytes: FaceVectorStore.pageSize * FaceVector.byteCount)
         } catch {

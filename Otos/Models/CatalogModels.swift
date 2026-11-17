@@ -322,12 +322,14 @@ nonisolated struct MediaAssetID: Hashable, CustomReflectable {
 ///   made its pairs: an intern table of `String`s kept every read's first string for each
 ///   path and raised the footprint by about 90 MB that way
 ///   (`docs/research/2026-11-16-shared-path-strings.md`).
-/// - **One lock, never held for a rebuild in a session.** Finding or adding a pair, reading a
-///   place's paths or fingerprint, and comparing two places' paths each take the lock once,
-///   for a lookup, a copy or a byte comparison. The index that finds a pair's place is sized at
-///   catalog open from the catalog's rows (`reserve(_:)`), so a session that names no more pairs
-///   than that never rebuilds it while it holds the lock; past that it doubles into a new
-///   mapping, and the old one is unmapped.
+/// - **One lock, held for a rebuild only past the catalog's size.** Finding or adding a pair,
+///   reading a place's paths or fingerprint, and comparing two places' paths each take the lock
+///   once, for a lookup, a copy or a byte comparison. The index that finds a pair's place is
+///   sized at catalog open from the catalog's rows plus a quarter (`reserve(_:)`), so a session
+///   that names no more pairs than that never rebuilds it while it holds the lock. Past that —
+///   a first Immich sync into an empty catalog, a reorganization of most of a library — it
+///   doubles into a new mapping under the lock each time it fills half, moving every place made
+///   so far, and the old one is unmapped (ADR 0005).
 /// - **Never persisted.** A place is this process's alone; the catalog's key is the pair.
 final nonisolated class MediaAssetIdentityTable: Sendable {
     static let shared = MediaAssetIdentityTable()
@@ -548,20 +550,18 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
         storage.withLock { Int($0.count) }
     }
 
-    /// What the table holds, for `op=process.memory`: its pairs and the bytes its entries,
-    /// path bytes and index occupy.
-    var usage: (pairs: Int, bytes: Int) {
+    /// What the table holds, for `op=process.memory`: its pairs, the bytes its entries, path
+    /// bytes and index occupy, and the most slots one rebuild of the index has moved under the
+    /// lock, the longest anyone waited behind it (a session past the catalog's size shows it).
+    var usage: (pairs: Int, bytes: Int, largestRebuild: Int) {
         storage.withLock { storage in
             let entries = Int(storage.count) * MemoryLayout<Entry>.stride
             let regions = storage.regions.reduce(0) { $0 + $1.count }
-            return (Int(storage.count), entries + regions + storage.slotCapacity * MemoryLayout<UInt32>.stride)
+            return (
+                Int(storage.count), entries + regions + storage.slotCapacity * MemoryLayout<UInt32>.stride,
+                storage.largestRebuild
+            )
         }
-    }
-
-    /// The most slots one rebuild of the index has moved under the lock: what anyone could
-    /// wait behind. Internal for the test that bounds it.
-    var largestRebuild: Int {
-        storage.withLock { $0.largestRebuild }
     }
 
     private static func addRoot(_ root: LibraryRootPath, to storage: inout Storage) -> UInt32 {

@@ -1708,7 +1708,7 @@ extension CatalogStore {
                 SELECT CASE WHEN best_kind IN ('raw', 'image') THEN burst_identifier END FROM media_asset
                 WHERE library_root_id = ? AND relative_path = ?
                 """)
-                let rows = try MappedArrayBuilder.collect(asked) { rootID, photo in
+                let rows = try Array(page: asked, atMost: asked.count) { rootID, photo in
                     try allFaceRootIDs.contains(rootID) ? CatalogQueryGateway.OrderedAssetIDRow(
                         libraryRootID: rootID, relativePath: photo.relativePath, captureLocalTime: nil, coordinate: nil,
                         burstIdentifier: String.fetchOne(burst, arguments: [rootID, photo.relativePath.rawValue])
@@ -1899,10 +1899,10 @@ extension CatalogStore {
     /// embedding (not 512 values of unit length) comes back without one.
     func faceEmbeddings(after vector: Int64, limit: Int, lane: CatalogReadLane) async throws -> [FaceVectorStore.Read] {
         try await reader(for: lane).readFreeingConnection { db in
-            try MappedArrayBuilder.collect(Row.fetchCursor(
+            try Array(page: Row.fetchCursor(
                 db.cachedStatement(sql: "SELECT id, embedding FROM face_embedding WHERE id > ? ORDER BY id LIMIT ?"),
                 arguments: [vector, limit]
-            )) { row in
+            ), atMost: limit) { row in
                 FaceVectorStore.Read(vector: row[0], embedding: FaceStorage.embedding(from: row[1]))
             }
         }
@@ -5207,9 +5207,9 @@ extension CatalogStore {
             roots[cursor.libraryRootPath].map { AssetKeyCursor(rootID: $0.rowID, relativePath: cursor.relativePath.rawValue) }
         }
         return try await reader(for: lane).readFreeingConnection { db in
-            try MappedArrayBuilder.collect(CandidateWalk.keyPage(
+            try Array(page: CandidateWalk.keyPage(
                 sql: Self.metadataRefreshCandidatesSQL, rootIDs: rootIDs, after: after, limit: limit, db: db
-            ).rows) { row -> MetadataRefreshCandidate? in
+            ).rows, atMost: limit) { row -> MetadataRefreshCandidate? in
                 let rootID: Int64 = row["library_root_id"]
                 guard let rootPath = rootsByID[rootID] else { return nil }
                 return MetadataRefreshCandidate(
@@ -10302,7 +10302,7 @@ extension CatalogStore {
                     }
                 }
                 let statement = try db.cachedStatement(sql: sql)
-                return try MappedArrayBuilder.collect(asked) { key -> (id: MediaAssetID, capture: Double?, candidate: Candidate)? in
+                return try Array(page: asked, atMost: asked.count) { key -> (id: MediaAssetID, capture: Double?, candidate: Candidate)? in
                     guard let root = pathsByRowID[key.rootID],
                           let row = try Row.fetchOne(statement, arguments: [key.rootID, key.path])
                     else { return nil }
@@ -10456,7 +10456,7 @@ extension CatalogStore {
             let (rows, next) = try CandidateWalk.keyPage(
                 sql: SearchEmbeddingStorage.storedRowsSQL, rootIDs: rootIDs, after: cursor, limit: limit, db: db
             )
-            let embeddings = MappedArrayBuilder.collect(rows) { row -> StoredSearchEmbeddingRow? in
+            let embeddings = Array(page: rows, atMost: rows.count) { row -> StoredSearchEmbeddingRow? in
                 guard let root = pathsByRowID[row[0]], let vector: Data = row[2],
                       vector.count == SearchEmbedding.dimensions * MemoryLayout<Float32>.size
                 else { return nil }
@@ -10482,7 +10482,7 @@ extension CatalogStore {
             start += batch.count
             found += try await reader(for: lane).readFreeingConnection(operation: "currentSearchEmbeddings") { db in
                 let statement = try db.cachedStatement(sql: SearchEmbeddingStorage.currentEmbeddingByKeySQL)
-                return try MappedArrayBuilder.collect(batch) { key -> StoredSearchEmbeddingRow? in
+                return try Array(page: batch, atMost: batch.count) { key -> StoredSearchEmbeddingRow? in
                     guard let row = try Row.fetchOne(statement, arguments: [key.rootID, key.id.relativePath.rawValue]),
                           let vector: Data = row[0], vector.count == SearchEmbedding.dimensions * MemoryLayout<Float32>.size
                     else { return nil }
@@ -10614,7 +10614,7 @@ extension CatalogStore {
             ) { position, order in
                 SearchTextStorage.candidatesSQL(rootCount: rootIDs.count, position: position, order: order)
             }
-            let candidates = MappedArrayBuilder.collect(rows) { row -> SearchTextCandidate? in
+            let candidates = Array(page: rows, atMost: rows.count) { row -> SearchTextCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
                 let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
                 return SearchTextCandidate(id: id, previewPath: row["preview_path"], source: row["source"])
@@ -10834,7 +10834,7 @@ extension CatalogStore {
             let (rows, next) = try CandidateWalk.keyPage(
                 sql: SearchTextStorage.storedLinesSQL, rootIDs: rootIDs, after: cursor, limit: limit, db: db
             )
-            let texts = try MappedArrayBuilder.collect(rows) { row -> StoredSearchText? in
+            let texts = try Array(page: rows, atMost: rows.count) { row -> StoredSearchText? in
                 guard let root = pathsByRowID[row[0]] else { return nil }
                 return try StoredSearchText(
                     id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])),

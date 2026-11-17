@@ -234,19 +234,28 @@ makers, for the reasons above.
   acquisition of the table's lock and decodes no string, so no comparator or per-row loop
   decodes a string from the table. Each comparison used to take the lock twice and allocate
   two strings.
-- **One lock, never held for a rebuild in a session.** Every read and every comparison takes
-  the table's lock once, for a copy or one byte comparison, and waits at most behind another
-  caller's lookup or one new entry, because the index is sized at open (below). Rejected:
+- **One lock, held for a rebuild only past the catalog's rows plus a quarter.** Every read and
+  every comparison takes the table's lock once, for a copy or one byte comparison, and waits
+  behind another caller's lookup or one new entry, because the index is sized at open (below).
+  A session that names more pairs than the catalog held at open plus a quarter rebuilds the
+  index under the lock each time it fills half: a first Immich sync into an empty catalog
+  (147,000 assets) and a reorganization of all 165,000 files are the two that do, each a few
+  doublings whose last moves every place made so far. Rejected:
   reading entries without a lock (they never change once published, but the reads go through
   a raw pointer shared across threads, which ARC-042's gate forbids); and a second lock for
   the index alone, which needs every place's key copied beside the index (about 5 MB of heap
   on the owner's catalog) to probe without the entries, for a rebuild that sizing at open
-  already keeps out of the session.
-- **No rebuild in a session.** The catalog sizes the index when it opens (`reserve`), from its
+  keeps out of every session within the catalog's size; and sizing again before a bulk add
+  from its count, since the Immich sync stream announces no total, and a reorganization's
+  plan, whose size is known, would still rebuild under the lock at its start, moving every
+  place made so far: it moves the pause, it does not remove it.
+- **No rebuild within the catalog's size.** The catalog sizes the index when it opens (`reserve`), from its
   rows plus a quarter, before its first read makes their IDs. Making IDs then never rebuilds the
-  index. Counted as slots moved in one rebuild: 262,144 unsized at 165,000 entries and 524,288
-  at 330,000, against none after sizing (`MediaAssetIdentityTableTests`). A session that names
-  more pairs than that doubles the index each time it fills half.
+  index. Counted as slots moved in one rebuild: unsized, 20,000 entries move 32,768 at once (at
+  165,000, 262,144), against none after sizing (`MediaAssetIdentityTableTests`). A session that
+  names more pairs than that doubles the index each time it fills half, and every
+  `op=process.memory` sample carries the largest rebuild so far
+  (`assetIdentityLargestRebuild`).
 
 **One copy of an order.** A read makes its own arrays, so two reads of one order are two
 copies. When an order read again, whole or by key,

@@ -27,9 +27,11 @@ import UniformTypeIdentifiers
 /// `stage` normalizes QuickLook output to an opaque 8-bit sRGB JPEG without making
 /// it visible to the grid. `CatalogStore` promotes that staged file only after the
 /// matching SQLite row validates, so stale enrichment work cannot overwrite the last
-/// good thumbnail. `load` decodes synchronously on its caller's thread (callers run it off the main actor) and
-/// returns an immutable `CGImage` a layer shows without a copy (`DisplayImage`); the caller
-/// only assigns it on the main actor.
+/// good thumbnail. `load` reads the file on its caller's thread (callers run it off the main
+/// actor) and returns an immutable `CGImage` a layer shows without a copy (`DisplayImage`); its
+/// pixels are not filled yet: Image I/O fills them when Core Animation first shows the image,
+/// in the window's commit (measured, `docs/research/2026-11-16-tile-images-shown-once.md`).
+/// The caller only assigns it on the main actor.
 /// `delete`/`deleteAll` are the purge side for proven deletion and library removal.
 /// Staged files live in their own `.staging` subdirectory, on the same volume so promotion
 /// is an atomic rename; `clearStaging` is startup hygiene for staged files abandoned by a
@@ -299,12 +301,14 @@ nonisolated enum ThumbnailStore {
         }
     }
 
-    /// Decodes a stored image for display (`DisplayImage.decode`) at its stored size,
-    /// synchronously on the calling thread; callers run it off the main actor. `nil` if the
-    /// file is missing or unreadable (the tile then shows its placeholder). A stored thumbnail
-    /// is never larger than a grid tile shows it, so it is decoded whole, as Image I/O returns
-    /// it, and never drawn again: that is the one form a layer shows without a copy, and it
-    /// costs less than any smaller decode of the same file would
+    /// A stored image for display (`DisplayImage.decode`) at its stored size, its file read
+    /// on the calling thread; callers run it off the main actor. `nil` if the file is missing
+    /// or unreadable (the tile then shows its placeholder). A stored thumbnail is never larger
+    /// than a grid tile shows it, so it is taken whole, as Image I/O returns it, and never drawn
+    /// again: that is the one form a layer shows without a copy. Its pixels are filled when Core
+    /// Animation first shows it, in the window's commit, not here: measured, the commit that
+    /// first showed 300 such images took as long as with the drawn form, so this form moves no
+    /// decode onto the main thread that was not there before
     /// (`docs/research/2026-11-16-tile-images-shown-once.md`).
     static func load(_ relativeName: String, in directory: URL) -> CGImage? {
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailLoad")

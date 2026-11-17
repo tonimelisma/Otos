@@ -16,8 +16,10 @@ import VideoToolbox
 ///
 /// - **`decode`** reads a stored image file — a thumbnail, a loupe preview — at no more than
 ///   the pixels it is shown at. A file no larger than that is decoded whole by Image I/O,
-///   which returns a JPEG in an IOSurface as its decoder wrote it (YCbCr, about 1.6 bytes a
-///   pixel), never drawn again. A larger one is scaled by Image I/O's thumbnail decode, which
+///   which returns a JPEG in an IOSurface as its decoder writes it (YCbCr, about 1.6 bytes a
+///   pixel), never drawn again. Neither form's pixels are filled when this returns: they are
+///   filled when Core Animation first shows the image, in the window's commit (measured,
+///   `docs/research/2026-11-16-tile-images-shown-once.md`). A larger one is scaled by Image I/O's thumbnail decode, which
 ///   returns a HEIC in an IOSurface. The pixels are as stored: `ThumbnailStore` writes every
 ///   derived image upright.
 /// - **`draw`** gives `body` a context over a new IOSurface's pixels, 8-bit premultiplied

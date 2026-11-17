@@ -301,12 +301,12 @@ nonisolated enum DerivedFileReconciliation {
     /// The rows after `rowID`, at most `limit`, in rowid order: one short read.
     static func namedRows(after rowID: Int64, limit: Int, db: Database) throws -> [NamedRow] {
         // A walk of the whole library a page at a time: one statement per connection, each page
-        // built as `MappedArrayBuilder` says.
-        try MappedArrayBuilder.collect(Row.fetchCursor(db.cachedStatement(sql: """
+        // one buffer reserved at its limit.
+        try Array(page: Row.fetchCursor(db.cachedStatement(sql: """
         SELECT a.rowid, r.path, a.relative_path, a.thumbnail_path, a.preview_path, a.face_frames_path
         FROM media_asset a JOIN library_root r ON r.id = a.library_root_id
         WHERE a.rowid > ? ORDER BY a.rowid LIMIT ?
-        """), arguments: [rowID, limit])) { row in
+        """), arguments: [rowID, limit]), atMost: limit) { row in
             NamedRow(
                 rowID: row[0],
                 id: MediaAssetID(

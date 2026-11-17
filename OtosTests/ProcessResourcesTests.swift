@@ -25,7 +25,7 @@ struct ProcessResourcesTests {
                 footprintBytes: 1, peakFootprintBytes: nil, residentBytes: 1, sqliteBytes: nil,
                 systemFreeBytes: nil, systemCompressorBytes: nil, swapUsedBytes: nil,
                 cpuMilliseconds: 451, diskBytesRead: 23 * 1_048_576, diskBytesWritten: nil, pageIns: pageIns,
-                assetIdentities: 165_000, assetIdentityBytes: 18 * 1_048_576
+                assetIdentities: 165_000, assetIdentityBytes: 18 * 1_048_576, assetIdentityLargestRebuild: 4096
             )
         }
         #expect(sample(pageIns: 1480).usageFields == [
@@ -35,6 +35,7 @@ struct ProcessResourcesTests {
         // The identity table never frees, so the memory line carries its pairs and bytes.
         #expect(sample(pageIns: nil).memoryFields["assetIdentities"] == "165000")
         #expect(sample(pageIns: nil).memoryFields["assetIdentityMB"] == "18")
+        #expect(sample(pageIns: nil).memoryFields["assetIdentityLargestRebuild"] == "4096")
     }
 
     /// Each notification counts once, and once for each kind of fact it names.

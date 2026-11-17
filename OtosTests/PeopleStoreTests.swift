@@ -563,9 +563,10 @@ struct PeopleStoreTests {
     }
 
     /// At the free-space floor People holds "no room for the vectors": its pass writes the
-    /// gallery facts it read and assigns nothing, says so once, and arms one backoff wake; the
-    /// changes rung while it holds read nothing; People shows what the catalog holds (the named
-    /// face, no guesses), never an empty gallery. When the wake finds room, one pass assigns.
+    /// gallery facts it read and assigns nothing, says so once, and arms one backoff wake; a
+    /// change while it holds is read and moves the gallery facts — the hold gates only the
+    /// vectors and assignment — and reads no vector; a face whose vector is not held is not
+    /// ranked (no entry), never offered an empty list. When the wake finds room, one pass assigns.
     @Test func atTheFloorPeopleHoldsUntilTheWakeFindsRoom() async throws {
         let (library, _) = try await Self.lookalikes(4, in: makeTestDirectory())
         let libraries = try #require(await library.store.loadedLibraries())
@@ -575,6 +576,9 @@ struct PeopleStoreTests {
             vectorSpace: FaceVectorFile.Space(directory: FileManager.default.temporaryDirectory, availableBytes: room.read),
             spaceBackoff: (.seconds(86400), .seconds(86400))
         )
+        func operations(_ name: String) -> Int {
+            library.store.use().connections.holds.filter { $0.operation == name }.reduce(0) { $0 + $1.count }
+        }
         await owner.start()
         defer { owner.stop() }
         await owner.request()
@@ -583,13 +587,22 @@ struct PeopleStoreTests {
         #expect(held.wake?.kind == .backoff, "quiet until the wake that looks for room")
         let sam = try #require(try await library.store.gallery(libraries: libraries).people.first)
         #expect(sam.media.total == 1, "the named face stands; nothing assigned, nothing emptied")
+        let vectorReads = operations("faceEmbeddings")
 
-        // Changes while held read nothing.
-        for _ in 0 ..< 3 {
-            await owner.request()
-        }
+        // A change while held is read and its gallery facts written: the user names a second
+        // face, and the count follows without a vector.
+        let named = FaceID(asset: library.id("1.jpg"), index: 0)
+        _ = try await library.store.perform(.move([named], to: sam.id))
+        await owner.request()
         let rung = try await owner.untilQuiescent()
-        #expect((rung.work - held.work).reads == 0, "\(rung.work - held.work)")
+        #expect((rung.work - held.work).reads == 1, "\(rung.work - held.work)")
+        #expect(try await library.store.gallery(libraries: libraries).person(sam.id)?.media.total == 2)
+        #expect(operations("faceEmbeddings") == vectorReads, "no vector is read while held")
+        #expect(operations("applyAssignment") == 0, "nothing is assigned while held")
+
+        // No vector is held: the faces are not ranked, which is no entry, not an empty list.
+        let unranked = try #require(await owner.candidates(for: [library.id("2.jpg")]))
+        #expect(unranked[FaceID(asset: library.id("2.jpg"), index: 0)] == nil, "\(unranked)")
 
         // The wake with the volume still at the floor reads nothing and arms again.
         await owner.spaceRetryFired()
@@ -603,6 +616,31 @@ struct PeopleStoreTests {
         #expect(assigned.wake == nil && assigned.work.reads > rung.work.reads)
         try await owner.settle()
         #expect(try await library.store.gallery(libraries: libraries).person(sam.id)?.media.total == 4)
+        await library.store.shutdown()
+    }
+
+    /// Teardown ends the wake that looks for room with the loop: after `stop()` no wake is
+    /// armed, and a wake delivered late neither arms another nor owes a pass.
+    @Test func stopEndsTheWakeThatLooksForRoom() async throws {
+        let (library, _) = try await Self.lookalikes(2, in: makeTestDirectory())
+        let room = ReportedCapacity(FreeSpaceFloor.bytes)
+        let owner = PeopleAssignment(
+            store: library.store,
+            vectorSpace: FaceVectorFile.Space(directory: FileManager.default.temporaryDirectory, availableBytes: room.read),
+            spaceBackoff: (.seconds(86400), .seconds(86400))
+        )
+        await owner.start()
+        await owner.request()
+        #expect(try await owner.untilQuiescent().wake?.kind == .backoff)
+        owner.stop()
+        try await waitUntil { await owner.quiescence.map { $0.wake == nil } ?? false }
+
+        await owner.spaceRetryFired()
+        let late = try #require(await owner.quiescence)
+        #expect(late.wake == nil, "a late wake at the floor arms none")
+        room.set(1 << 40)
+        await owner.spaceRetryFired()
+        #expect(await owner.quiescence != nil, "a late wake with room owes no pass")
         await library.store.shutdown()
     }
 

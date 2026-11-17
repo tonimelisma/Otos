@@ -52,6 +52,9 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
     /// (`MediaAssetIdentityTable.usage`): it never frees, so a long session's growth shows here.
     let assetIdentities: Int
     let assetIdentityBytes: Int
+    /// The most places one rebuild of the table's index moved under its lock: 4,096 or less
+    /// while the session names no more pairs than the catalog sized it for (ADR 0005).
+    let assetIdentityLargestRebuild: Int
 
     static func current() -> ProcessResourceSample {
         let task = taskVMInfo()
@@ -71,7 +74,8 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
             diskBytesWritten: usage?.diskWritten,
             pageIns: usage?.pageIns,
             assetIdentities: identities.pairs,
-            assetIdentityBytes: identities.bytes
+            assetIdentityBytes: identities.bytes,
+            assetIdentityLargestRebuild: identities.largestRebuild
         )
     }
 
@@ -169,6 +173,7 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
         fields["swapUsedMB"] = swapUsedBytes.map(Self.megabytes) ?? "unknown"
         fields["assetIdentities"] = "\(assetIdentities)"
         fields["assetIdentityMB"] = Self.megabytes(UInt64(assetIdentityBytes))
+        fields["assetIdentityLargestRebuild"] = "\(assetIdentityLargestRebuild)"
         return fields
     }
 

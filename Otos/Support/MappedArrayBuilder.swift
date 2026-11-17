@@ -12,29 +12,51 @@ import GRDB
 /// exactly its length, so the only malloc block the build leaves is the result itself.
 ///
 /// - **What belongs here:** a cursor's rows mapped to values (`collect`), and any loop that
-///   appends an unknown number of values of an owner-scale result.
-/// - **What does not:** a result whose length is known before it is built (`reserveCapacity`
-///   or `Array(unsafeUninitializedCapacity:)` says it once), and a small one: the first region
-///   is a page, so a bounded read (a page of a walk, a few rows by key) costs a page.
+///   appends an unknown number of values of a result that can be owner-scale. A build that
+///   stays small never maps: its first elements go in one heap buffer of 2 KB, well under
+///   the 4 KB from which a freed block stays in the footprint (`smallBytes`), and only a build that outgrows
+///   it moves to mapped regions, so a result whose scale varies (a root of ten photos or of
+///   160,000) pays for a mapping only when it is large.
+/// - **What does not:** a result whose length, or bound, is known before it is built. A
+///   bounded page (a page of a walk, a batch of keys, a `LIMIT`) is one buffer reserved at its
+///   bound (`Array(page:atMost:)`), and a result of known length says it once
+///   (`reserveCapacity`, `Array(unsafeUninitializedCapacity:)`).
 /// - **Use:** one builder per build, by one task, never shared; `finish()` ends it. Elements
 ///   may be any type: they are moved, never copied bitwise, and a builder dropped unfinished
-///   releases what it holds.
+///   releases what it holds. A mapping that fails is the process out of address space, where an
+///   array's own allocation traps too, so it traps (as `ScratchBuffer` and
+///   `MediaAssetIdentityTable` do).
 nonisolated struct MappedArrayBuilder<Element>: ~Copyable {
+    /// The elements: a small heap buffer (`bytes == 0`) until the build outgrows it, then a
+    /// mapped region of `bytes`.
     private var base: UnsafeMutablePointer<Element>?
     private var capacity = 0
     private var bytes = 0
     private(set) var count = 0
+
+    /// The most a small build's heap buffer holds: 2 KB, half the size from which a freed block
+    /// stays dirty in the footprint whole, so malloc's size classes never round it up to one.
+    static var smallBytes: Int {
+        2048
+    }
+
+    private static var smallCapacity: Int {
+        max(1, smallBytes / max(MemoryLayout<Element>.stride, 1))
+    }
 
     init() {}
 
     deinit {
         guard let base else { return }
         base.deinitialize(count: count)
-        munmap(UnsafeMutableRawPointer(base), bytes)
+        Self.release(base, bytes: bytes)
     }
 
     mutating func append(_ element: consuming Element) {
-        if count == capacity {
+        if base == nil {
+            base = .allocate(capacity: Self.smallCapacity)
+            capacity = Self.smallCapacity
+        } else if count == capacity {
             grow()
         }
         (base! + count).initialize(to: element)
@@ -48,8 +70,8 @@ nonisolated struct MappedArrayBuilder<Element>: ~Copyable {
         try body(UnsafeBufferPointer(start: base, count: count))
     }
 
-    /// The elements in the order appended, in an array of exactly `count`; the regions are
-    /// unmapped.
+    /// The elements in the order appended, in an array of exactly `count`; the small buffer or
+    /// the regions are released.
     consuming func finish() -> [Element] {
         let (base, count, bytes) = (base, count, bytes)
         discard self
@@ -58,16 +80,25 @@ nonisolated struct MappedArrayBuilder<Element>: ~Copyable {
             buffer.baseAddress!.moveInitialize(from: base, count: count)
             initialized = count
         }
-        munmap(UnsafeMutableRawPointer(base), bytes)
+        Self.release(base, bytes: bytes)
         return result
     }
 
-    /// Doubles into a new mapping, moves the elements over and unmaps the old one: what an
-    /// array would free into malloc goes back to the system.
+    /// The small buffer goes back to malloc, a region to the system.
+    private static func release(_ base: UnsafeMutablePointer<Element>, bytes: Int) {
+        if bytes == 0 {
+            base.deallocate()
+        } else {
+            munmap(UnsafeMutableRawPointer(base), bytes)
+        }
+    }
+
+    /// Doubles into a new mapping, moves the elements over and releases the old buffer: what
+    /// an array would free into malloc goes back to the system.
     private mutating func grow() {
         let page = Int(getpagesize())
         let stride = max(MemoryLayout<Element>.stride, 1)
-        let wanted = max(capacity * 2 * stride, page)
+        let wanted = max(count * 2 * stride, page)
         let newBytes = (wanted + page - 1) / page * page
         let region = mmap(nil, newBytes, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0)
         guard let region, region != MAP_FAILED else {
@@ -76,7 +107,7 @@ nonisolated struct MappedArrayBuilder<Element>: ~Copyable {
         let newBase = region.bindMemory(to: Element.self, capacity: newBytes / stride)
         if let base {
             newBase.moveInitialize(from: base, count: count)
-            munmap(UnsafeMutableRawPointer(base), bytes)
+            Self.release(base, bytes: bytes)
         }
         base = newBase
         bytes = newBytes
@@ -110,26 +141,67 @@ nonisolated extension MappedArrayBuilder {
     }
 }
 
+nonisolated extension Array {
+    /// A bounded page's values — `transform` of each of `elements`, a nil one left out — in one
+    /// buffer reserved for `bound` (the guide's "what does not belong here").
+    init<S: Sequence>(page elements: S, atMost bound: Int, _ transform: (S.Element) throws -> Element?) rethrows {
+        self.init()
+        reserveCapacity(bound)
+        for element in elements {
+            if let value = try transform(element) {
+                append(value)
+            }
+        }
+    }
+
+    /// A bounded read's values — `transform` of each of `cursor`'s rows, a nil one left out —
+    /// in one buffer reserved for `bound`, the read's `LIMIT`.
+    init<C: Cursor>(page cursor: C, atMost bound: Int, _ transform: (C.Element) throws -> Element?) throws {
+        self.init()
+        reserveCapacity(bound)
+        while let row = try cursor.next() {
+            if let value = try transform(row) {
+                append(value)
+            }
+        }
+    }
+}
+
 nonisolated extension Dictionary {
     /// `elements` grouped by `key`, each group an array made at its length: what
     /// `Dictionary(grouping:by:)` builds by appending, group by group, without the buffers each
-    /// group outgrows (`MappedArrayBuilder`).
+    /// group outgrows (`MappedArrayBuilder`). `key` is asked once per element, and each
+    /// element's group is kept in one array of the elements' length. The index of the groups
+    /// grows with the groups found, since how many there are is known only once every key is
+    /// read; the result is that index's own table (`mapValues` keeps its layout).
     init<S: Collection>(exactlyGrouping elements: S, by key: (S.Element) throws -> Key) rethrows
         where Value == [S.Element]
     {
-        var counts: [Key: Int] = [:]
+        var groupOf: [Int] = []
+        groupOf.reserveCapacity(elements.count)
+        var index: [Key: Int] = [:]
+        var sizes: [Int] = []
         for element in elements {
-            try counts[key(element), default: 0] += 1
+            let group = try key(element)
+            let number: Int
+            if let found = index[group] {
+                number = found
+            } else {
+                number = sizes.count
+                index[group] = number
+                sizes.append(0)
+            }
+            sizes[number] += 1
+            groupOf.append(number)
         }
-        var groups: [Key: [S.Element]] = Dictionary(minimumCapacity: counts.count)
-        for (group, count) in counts {
-            var members: [S.Element] = []
-            members.reserveCapacity(count)
-            groups[group] = members
+        var members = sizes.map { size in
+            var group: [S.Element] = []
+            group.reserveCapacity(size)
+            return group
         }
-        for element in elements {
-            try groups[key(element)]?.append(element)
+        for (element, number) in zip(elements, groupOf) {
+            members[number].append(element)
         }
-        self = groups
+        self = index.mapValues { members[$0] }
     }
 }
