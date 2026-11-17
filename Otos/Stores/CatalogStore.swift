@@ -1214,7 +1214,7 @@ extension CatalogStore {
             let companions = try await reader(for: lane).readFreeingConnection { db in
                 try Self.fetchCompanions(libraryRootID: state.rowID, db: db)
             }
-            let companionsByPrimary = Dictionary(grouping: companions) {
+            let companionsByPrimary = Dictionary(exactlyGrouping: companions) {
                 $0.primaryRelativePath?.rawValue ?? ""
             }
             let unreadable = unreadableSourceIDs
@@ -1256,7 +1256,7 @@ extension CatalogStore {
         let companions = try await reader(for: lane).readFreeingConnection { db in
             try Self.fetchCompanions(libraryRootID: sourceRowID, db: db)
         }
-        let companionsByPrimary = Dictionary(grouping: companions) {
+        let companionsByPrimary = Dictionary(exactlyGrouping: companions) {
             $0.primaryRelativePath?.rawValue ?? ""
         }
         let unreadable = unreadableSourceIDs
@@ -1590,7 +1590,8 @@ extension CatalogStore {
             for row in try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, face_index, person_id FROM face_rejection") {
                 rejections[FaceRowKey(row), default: []].insert(PersonID(rawValue: row["person_id"]))
             }
-            var faces = PeopleFaces()
+            // Every face, built as `MappedArrayBuilder` says, then its columns at their length.
+            var collected = MappedArrayBuilder<PeopleSnapshot.Face>()
             var keyPhotos: [PersonID: FaceID] = [:]
             // The digests of the files with a face and a present copy, whose copies follow.
             var copiedDigests: Set<Data> = []
@@ -1609,7 +1610,7 @@ extension CatalogStore {
             """
             // One path value per photo: a photo's faces come together in this order.
             var lastAsset: MediaAssetID?
-            func take(_ row: Row) {
+            func take(_ row: Row) -> PeopleSnapshot.Face? {
                 let rootID: Int64 = row[PeopleFaceColumn.rootID.rawValue]
                 let pathText: String = row[PeopleFaceColumn.path.rawValue]
                 if let digest = row[PeopleFaceColumn.copiedDigest.rawValue] as Data? {
@@ -1618,7 +1619,7 @@ extension CatalogStore {
                 let path = lastAsset.flatMap { $0.relativePath.rawValue == pathText ? $0.relativePath : nil }
                     ?? MediaRelativePath(rawValue: pathText)
                 let key = FaceRowKey(rootID: rootID, path: path, index: row[PeopleFaceColumn.faceIndex.rawValue])
-                guard let rootPath = pathsByRowID[key.rootID], !malformed.contains(key.photo) else { return }
+                guard let rootPath = pathsByRowID[key.rootID], !malformed.contains(key.photo) else { return nil }
                 let asset = lastAsset.flatMap { $0.libraryRootPath == rootPath && $0.relativePath == path ? $0 : nil }
                     ?? MediaAssetID(libraryRootPath: rootPath, relativePath: path)
                 lastAsset = asset
@@ -1630,10 +1631,13 @@ extension CatalogStore {
                       )
                 else {
                     malformed.insert(key.photo)
-                    return
+                    return nil
                 }
                 let id = FaceID(asset: asset, index: key.index)
-                faces.append(PeopleSnapshot.Face(
+                if let person, (row[PeopleFaceColumn.isKeyPhoto.rawValue] as Int) != 0 {
+                    keyPhotos[PersonID(rawValue: person)] = id
+                }
+                return PeopleSnapshot.Face(
                     id: id,
                     captureSeconds: row[PeopleFaceColumn.captureLocal.rawValue],
                     vector: vector,
@@ -1641,17 +1645,16 @@ extension CatalogStore {
                     rejected: rejections[key] ?? [],
                     isInVideo: (row[PeopleFaceColumn.isVideo.rawValue] as Int) != 0,
                     likeness: (row[PeopleFaceColumn.likeness.rawValue] as Double?).map(Float.init)
-                ))
-                if let person, (row[PeopleFaceColumn.isKeyPhoto.rawValue] as Int) != 0 {
-                    keyPhotos[PersonID(rawValue: person)] = id
-                }
+                )
             }
             if let asked {
                 let ofPhoto = try db.cachedStatement(sql: faceSQL + "\n  AND f.library_root_id = ? AND f.relative_path = ?\nORDER BY f.face_index")
                 for (rootID, photo) in asked {
                     let rows = try Row.fetchCursor(ofPhoto, arguments: [rootID, photo.relativePath.rawValue])
                     while let row = try rows.next() {
-                        take(row)
+                        if let face = take(row) {
+                            collected.append(face)
+                        }
                     }
                 }
                 // Every key photo, not only the asked photos': they are few, from their index.
@@ -1670,7 +1673,9 @@ extension CatalogStore {
             } else {
                 let rows = try Row.fetchCursor(db, sql: faceSQL + "\nORDER BY f.library_root_id, f.relative_path, f.face_index")
                 while let row = try rows.next() {
-                    take(row)
+                    if let face = take(row) {
+                        collected.append(face)
+                    }
                 }
             }
             // The present copies of each photo with a face, by the digest they share (ADR 0054).
@@ -1703,11 +1708,11 @@ extension CatalogStore {
                 SELECT CASE WHEN best_kind IN ('raw', 'image') THEN burst_identifier END FROM media_asset
                 WHERE library_root_id = ? AND relative_path = ?
                 """)
-                let rows = try asked.filter { allFaceRootIDs.contains($0.rootID) }.map { rootID, photo in
-                    try CatalogQueryGateway.OrderedAssetIDRow(
+                let rows = try MappedArrayBuilder.collect(asked) { rootID, photo in
+                    try allFaceRootIDs.contains(rootID) ? CatalogQueryGateway.OrderedAssetIDRow(
                         libraryRootID: rootID, relativePath: photo.relativePath, captureLocalTime: nil, coordinate: nil,
                         burstIdentifier: String.fetchOne(burst, arguments: [rootID, photo.relativePath.rawValue])
-                    )
+                    ) : nil
                 }
                 stacks = try PhotoStackSQL.build(rootPaths: stackRoots, holding: rows, db: db).stacks
             } else {
@@ -1720,7 +1725,7 @@ extension CatalogStore {
                 rowIDs[id.asset.libraryRootPath].map { !malformed.contains(FaceRowKey.Photo(rootID: $0, path: id.asset.relativePath)) } ?? true
             }
             var snapshot = PeopleSnapshot(
-                faces: malformed.isEmpty ? faces : PeopleFaces(faces.filter { left($0.id) }),
+                faces: PeopleFaces(collected: collected) { malformed.isEmpty || left($0.id) },
                 people: people,
                 keyPhotos: keyPhotos.filter { left($0.value) },
                 galleryFacts: galleryFacts,
@@ -1870,13 +1875,12 @@ extension CatalogStore {
             rowIDs[photo.libraryRootPath].map { FaceRowKey.Photo(rootID: $0, path: photo.relativePath) }
         }
         let (cleared, _) = try await writeInPages(keys, state: 0, announcing: [.faces, .detail], naming: .rows(photos)) { photo, _, db in
-            try db.execute(
-                sql: """
-                UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL
-                WHERE library_root_id = ? AND relative_path = ? AND faces_source_size IS NOT NULL
-                """,
-                arguments: [photo.rootID, photo.path.rawValue]
-            )
+            // One statement per photo: prepared once per connection, not once per photo (its
+            // program, with every index of `media_asset` it keeps, is about 150 KB).
+            try db.cachedStatement(sql: """
+            UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL
+            WHERE library_root_id = ? AND relative_path = ? AND faces_source_size IS NOT NULL
+            """).execute(arguments: [photo.rootID, photo.path.rawValue])
             return db.changesCount
         }
         for photo in photos {
@@ -1895,10 +1899,10 @@ extension CatalogStore {
     /// embedding (not 512 values of unit length) comes back without one.
     func faceEmbeddings(after vector: Int64, limit: Int, lane: CatalogReadLane) async throws -> [FaceVectorStore.Read] {
         try await reader(for: lane).readFreeingConnection { db in
-            try Row.fetchAll(
+            try MappedArrayBuilder.collect(Row.fetchCursor(
                 db.cachedStatement(sql: "SELECT id, embedding FROM face_embedding WHERE id > ? ORDER BY id LIMIT ?"),
                 arguments: [vector, limit]
-            ).map { row in
+            )) { row in
                 FaceVectorStore.Read(vector: row[0], embedding: FaceStorage.embedding(from: row[1]))
             }
         }
@@ -3191,7 +3195,7 @@ extension CatalogStore {
         // its RAW twin or its burst's other frames leave with it (`OnThisDayPicks.shows`, the
         // rule its years-or-months match asks too).
         if scope.isAnniversary, !stacks.stacks.isEmpty {
-            let kept = ids.indices.filter { OnThisDayPicks.shows(ids[$0], stacks: stacks) }
+            let kept = MappedArrayBuilder.collect(ids.indices) { OnThisDayPicks.shows(ids[$0], stacks: stacks) ? $0 : nil }
             if kept.count != ids.count {
                 ids = kept.map { ids[$0] }
                 // Each is empty or index-paired with the order.
@@ -3422,7 +3426,7 @@ extension CatalogStore {
     /// located record.
     func unnamedPlaceCells(language: PlaceNameLanguage, of ids: Set<MediaAssetID>, lane: CatalogReadLane) async throws -> [PlaceCell] {
         let rootIDs = roots.rowIDSnapshot()
-        let byRoot = Dictionary(grouping: ids, by: \.libraryRootPath).compactMap { path, rows in
+        let byRoot = Dictionary(exactlyGrouping: ids, by: \.libraryRootPath).compactMap { path, rows in
             rootIDs[path].map { (rootID: $0, paths: rows.map(\.relativePath.rawValue)) }
         }
         guard !byRoot.isEmpty else {
@@ -5203,9 +5207,9 @@ extension CatalogStore {
             roots[cursor.libraryRootPath].map { AssetKeyCursor(rootID: $0.rowID, relativePath: cursor.relativePath.rawValue) }
         }
         return try await reader(for: lane).readFreeingConnection { db in
-            try CandidateWalk.keyPage(
+            try MappedArrayBuilder.collect(CandidateWalk.keyPage(
                 sql: Self.metadataRefreshCandidatesSQL, rootIDs: rootIDs, after: after, limit: limit, db: db
-            ).rows.compactMap { row -> MetadataRefreshCandidate? in
+            ).rows) { row -> MetadataRefreshCandidate? in
                 let rootID: Int64 = row["library_root_id"]
                 guard let rootPath = rootsByID[rootID] else { return nil }
                 return MetadataRefreshCandidate(
@@ -10298,7 +10302,7 @@ extension CatalogStore {
                     }
                 }
                 let statement = try db.cachedStatement(sql: sql)
-                return try asked.compactMap { key -> (id: MediaAssetID, capture: Double?, candidate: Candidate)? in
+                return try MappedArrayBuilder.collect(asked) { key -> (id: MediaAssetID, capture: Double?, candidate: Candidate)? in
                     guard let root = pathsByRowID[key.rootID],
                           let row = try Row.fetchOne(statement, arguments: [key.rootID, key.path])
                     else { return nil }
@@ -10452,7 +10456,7 @@ extension CatalogStore {
             let (rows, next) = try CandidateWalk.keyPage(
                 sql: SearchEmbeddingStorage.storedRowsSQL, rootIDs: rootIDs, after: cursor, limit: limit, db: db
             )
-            let embeddings = rows.compactMap { row -> StoredSearchEmbeddingRow? in
+            let embeddings = MappedArrayBuilder.collect(rows) { row -> StoredSearchEmbeddingRow? in
                 guard let root = pathsByRowID[row[0]], let vector: Data = row[2],
                       vector.count == SearchEmbedding.dimensions * MemoryLayout<Float32>.size
                 else { return nil }
@@ -10478,7 +10482,7 @@ extension CatalogStore {
             start += batch.count
             found += try await reader(for: lane).readFreeingConnection(operation: "currentSearchEmbeddings") { db in
                 let statement = try db.cachedStatement(sql: SearchEmbeddingStorage.currentEmbeddingByKeySQL)
-                return try batch.compactMap { key -> StoredSearchEmbeddingRow? in
+                return try MappedArrayBuilder.collect(batch) { key -> StoredSearchEmbeddingRow? in
                     guard let row = try Row.fetchOne(statement, arguments: [key.rootID, key.id.relativePath.rawValue]),
                           let vector: Data = row[0], vector.count == SearchEmbedding.dimensions * MemoryLayout<Float32>.size
                     else { return nil }
@@ -10610,7 +10614,7 @@ extension CatalogStore {
             ) { position, order in
                 SearchTextStorage.candidatesSQL(rootCount: rootIDs.count, position: position, order: order)
             }
-            let candidates = rows.compactMap { row -> SearchTextCandidate? in
+            let candidates = MappedArrayBuilder.collect(rows) { row -> SearchTextCandidate? in
                 guard let root = pathsByRowID[row["library_root_id"]] else { return nil }
                 let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
                 return SearchTextCandidate(id: id, previewPath: row["preview_path"], source: row["source"])
@@ -10657,13 +10661,13 @@ extension CatalogStore {
 
     /// Stills owed a description (ADR 0053), newest capture first, each with the facts the
     /// model is told, but those in `excluding`, which a pass already tried and could not
-    /// describe. Read from the roots whose stills are read for faces, since a still is
+    /// describe: the writer's own held keys, passed without a copy per page. Read from the roots whose stills are read for faces, since a still is
     /// described only once its faces are read. A row whose edit cannot be read is passed over
     /// and logged.
     func photoDescriptionCandidates(
         after cursor: CaptureOrderCursor? = nil,
         limit: Int,
-        excluding: Set<MediaAssetID> = [],
+        excluding: some Collection<MediaAssetID> & Sendable = Set<MediaAssetID>(),
         lane: CatalogReadLane
     ) async throws -> CandidatePage<PhotoDescriptionCandidate, CaptureOrderCursor> {
         let rootIDs = roots.values.filter(\.root.kind.readsFaces).map(\.rowID).sorted()
@@ -10676,6 +10680,7 @@ extension CatalogStore {
                 PhotoDescriptionStorage.candidatesSQL(rootCount: rootIDs.count, position: position, order: order)
             }
             var candidates: [PhotoDescriptionCandidate] = []
+            candidates.reserveCapacity(rows.count)
             for row in rows {
                 guard let root = pathsByRowID[row["library_root_id"]] else { continue }
                 let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row["relative_path"]))
@@ -10708,7 +10713,8 @@ extension CatalogStore {
     /// person is never named. The description eval reads its sample's facts through it too
     /// (`script/description-eval.sh`), so it scores exactly what the app tells the model.
     nonisolated static func photoDescriptionFacts(_ db: Database, key: StatementArguments) throws -> PhotoDescriptionFacts {
-        let faces = try Row.fetchAll(db, sql: PhotoDescriptionStorage.facesSQL, arguments: key).map { row in
+        // Asked once per still of a page: each statement is prepared once per connection.
+        let faces = try Row.fetchAll(db.cachedStatement(sql: PhotoDescriptionStorage.facesSQL), arguments: key).map { row in
             let hidden: Bool = row["hidden"]
             let name: String? = row["name"]
             let birthday: String? = row["birthday"]
@@ -10721,7 +10727,7 @@ extension CatalogStore {
                 birthday: hidden ? nil : birthday.flatMap(PersonBirthday.init)
             )
         }
-        let readings = try Row.fetchOne(db, sql: PhotoDescriptionStorage.readingsSQL, arguments: key)
+        let readings = try Row.fetchOne(db.cachedStatement(sql: PhotoDescriptionStorage.readingsSQL), arguments: key)
         let captured: Double? = readings?["best_capture_local"]
         let lines: String? = readings?["lines"]
         let labels: String? = readings?["confident_labels"]
@@ -10828,7 +10834,7 @@ extension CatalogStore {
             let (rows, next) = try CandidateWalk.keyPage(
                 sql: SearchTextStorage.storedLinesSQL, rootIDs: rootIDs, after: cursor, limit: limit, db: db
             )
-            let texts = try rows.compactMap { row -> StoredSearchText? in
+            let texts = try MappedArrayBuilder.collect(rows) { row -> StoredSearchText? in
                 guard let root = pathsByRowID[row[0]] else { return nil }
                 return try StoredSearchText(
                     id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])),

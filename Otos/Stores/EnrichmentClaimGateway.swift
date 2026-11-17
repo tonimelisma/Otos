@@ -307,7 +307,7 @@ nonisolated enum EnrichmentClaimGateway {
         db: Database
     ) throws -> [DemandSource] {
         var sources: [DemandSource] = []
-        for (rootPath, rootIDs) in Dictionary(grouping: ids, by: \.libraryRootPath) {
+        for (rootPath, rootIDs) in Dictionary(exactlyGrouping: ids, by: \.libraryRootPath) {
             guard let rootID = rootIDsByPath[rootPath] else {
                 continue
             }

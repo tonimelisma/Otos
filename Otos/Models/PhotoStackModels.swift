@@ -145,15 +145,16 @@ nonisolated enum PhotoStackRule {
         candidates: [PhotoStackCandidate],
         libraryRootPath: LibraryRootPath
     ) -> [PhotoStack] {
-        let stills = candidates.filter { $0.kind != .video }
+        // Built as `MappedArrayBuilder` says: a root's candidates are owner-scale.
+        let stills = MappedArrayBuilder.collect(candidates) { $0.kind != .video ? $0 : nil }
         let pairs = pairs(stills, libraryRootPath: libraryRootPath)
         return pairs + bursts(stills, pairs: pairs, libraryRootPath: libraryRootPath)
     }
 
     private static func pairs(_ stills: [PhotoStackCandidate], libraryRootPath: LibraryRootPath) -> [PhotoStack] {
         // The stem key is cut from the stored name key, never normalized again here.
-        let byStem = Dictionary(grouping: stills) { FilesystemNamespaceSemantics.stemKey(of: $0.nameKey) }
-        return byStem.compactMap { stem, group -> PhotoStack? in
+        let byStem = Dictionary(exactlyGrouping: stills) { FilesystemNamespaceSemantics.stemKey(of: $0.nameKey) }
+        return MappedArrayBuilder.collect(byStem) { stem, group -> PhotoStack? in
             guard group.count == 2,
                   let raw = group.first(where: { $0.kind == .raw }),
                   let processed = group.first(where: { $0.kind == .image })
@@ -183,7 +184,7 @@ nonisolated enum PhotoStackRule {
         pairs: [PhotoStack],
         libraryRootPath: LibraryRootPath
     ) -> [PhotoStack] {
-        let carriers = stills.filter { $0.burstIdentifier != nil }
+        let carriers = MappedArrayBuilder.collect(stills) { $0.burstIdentifier != nil ? $0 : nil }
         // Most libraries hold no burst at all; the lookups below are built only for one that does.
         guard !carriers.isEmpty else { return [] }
         var pairOfFile: [MediaRelativePath: PhotoStack] = [:]
@@ -193,7 +194,7 @@ nonisolated enum PhotoStackRule {
             }
         }
         let byPath = Dictionary(stills.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
-        return Dictionary(grouping: carriers) { $0.burstIdentifier ?? "" }
+        return Dictionary(exactlyGrouping: carriers) { $0.burstIdentifier ?? "" }
             .compactMap { identifier, group in
                 stack(
                     identifier: identifier,

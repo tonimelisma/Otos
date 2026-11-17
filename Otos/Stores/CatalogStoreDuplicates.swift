@@ -478,7 +478,8 @@ nonisolated extension DuplicatesGateway {
             static let isSourceDrawn = 10, signatureSource = 11, recordSize = 12, recordMTime = 13
             static let recordRevision = 14
         }
-        var candidates: [SamePhotoCandidate] = []
+        // Every compared still of the library: built in mapped regions (`MappedArrayBuilder`).
+        var candidates = MappedArrayBuilder<SamePhotoCandidate>()
         while let row = try rows.next() {
             guard let root = pathsByRowID[row[Column.rootID]] else {
                 continue
@@ -511,7 +512,7 @@ nonisolated extension DuplicatesGateway {
                 )
             ))
         }
-        return candidates
+        return candidates.finish()
     }
 
     /// One still's evidence, through a cached statement. Nil when the still has no stored

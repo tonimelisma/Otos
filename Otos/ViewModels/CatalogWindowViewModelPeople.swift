@@ -335,7 +335,7 @@ nonisolated extension CatalogPeopleState {
     func moveRefusal(_ faces: [PhotoFace], to person: PersonID) -> String? {
         let photos = faces.map(\.id.asset)
         if Set(photos).count < photos.count {
-            let shared = Dictionary(grouping: faces.map(\.tile), by: \.id.asset).values.filter { $0.count > 1 }
+            let shared = Dictionary(exactlyGrouping: faces.map(\.tile), by: \.id.asset).values.filter { $0.count > 1 }
             return "\(photos.count - Set(photos).count + 1) of these faces are in the same \(MediaCount(tiles: shared.flatMap(\.self)).noun)"
         }
         guard let target = self.person(person) else { return "Choose another person" }

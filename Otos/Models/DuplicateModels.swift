@@ -196,7 +196,7 @@ nonisolated struct DuplicateGroup: Equatable, Sendable, Identifiable {
         case .keep:
             false
         case .kept:
-            Dictionary(grouping: copies, by: \.id.libraryRootPath).values
+            Dictionary(exactlyGrouping: copies, by: \.id.libraryRootPath).values
                 .contains { DuplicateGroupPolicy.workConflict($0) != nil }
         }
     }
@@ -419,7 +419,7 @@ nonisolated enum DuplicateGroupPolicy {
         keptPairs: Set<DuplicateKeptPair>,
         reach: DuplicatesReach
     ) -> [DuplicateGroup] {
-        let byGroup = Dictionary(grouping: copies) { copy in
+        let byGroup = Dictionary(exactlyGrouping: copies) { copy in
             DuplicateGroupID.identical(copy.digest, library: reach.library(of: copy.copy.id))
         }
         var groups: [DuplicateGroup] = []
@@ -515,7 +515,7 @@ nonisolated enum DuplicateGroupPolicy {
     ) -> DuplicateDefault {
         var keep: Set<MediaAssetID> = []
         var decidingCriterion: DuplicateKeeperCriterion?
-        let byLibrary = Dictionary(grouping: copies.indices, by: { copies[$0].id.libraryRootPath })
+        let byLibrary = Dictionary(exactlyGrouping: copies.indices, by: { copies[$0].id.libraryRootPath })
         for (library, members) in byLibrary.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             if let kind = workConflict(members.map { copies[$0] }) {
                 return .waits(DuplicateWorkConflict(kind: kind, library: library))
@@ -1021,7 +1021,7 @@ nonisolated enum SamePhotoPolicy {
         let eligible = candidates.filter { !excluded.contains($0.id) && $0.aspectRatio != nil }
         // A bucket is one library's while Duplicates compares within each library, so no
         // pair, and no group joined through pairs, spans two.
-        let buckets = Dictionary(grouping: eligible) { candidate in
+        let buckets = Dictionary(exactlyGrouping: eligible) { candidate in
             AspectBucket(
                 library: reach.library(of: candidate.id),
                 isRaw: candidate.isRaw,
@@ -1034,7 +1034,7 @@ nonisolated enum SamePhotoPolicy {
             let hashes = members.map(\.differenceHash)
             let captured = members.indices.filter { members[$0].hasCaptureMetadata }
             let stripped = members.indices.filter { !members[$0].hasCaptureMetadata }
-            for group in Dictionary(grouping: captured, by: { members[$0].captureInstant ?? 0 }).values {
+            for group in Dictionary(exactlyGrouping: captured, by: { members[$0].captureInstant ?? 0 }).values {
                 for (position, left) in group.enumerated() {
                     for right in group[(position + 1)...] where isCandidate(members[left], members[right]) {
                         pairs.append(SamePhotoPair(left: members[left], right: members[right]))
@@ -1180,7 +1180,7 @@ nonisolated enum SamePhotoPolicy {
                 parent[right] = left
             }
         }
-        let joined = Dictionary(grouping: parent.keys, by: root).values.filter { $0.count > 1 }
+        let joined = Dictionary(exactlyGrouping: parent.keys, by: root).values.filter { $0.count > 1 }
         let originals = Set(pairs.flatMap { [$0.left, $0.right] }.filter(\.hasCaptureMetadata).map(\.id))
         return SamePhotoMembers(
             groups: joined.map { $0.sorted { $0.pathPrecedes($1) } }

@@ -312,7 +312,7 @@ struct MediaImportRecovery {
     /// or a card that is not mounted (`SourceEraser` refuses it), keeps its rows for the
     /// next launch.
     private func recoverSourceErases(_ operations: [ActiveSourceEraseOperation]) async {
-        let byRoot = Dictionary(grouping: operations, by: \.sourceRootPath)
+        let byRoot = Dictionary(exactlyGrouping: operations, by: \.sourceRootPath)
         for (root, rootOperations) in byRoot.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             let acquisition = await store.acquireNamespaceMutationLease(for: root, owner: .sourceErase)
             guard case let .acquired(lease) = acquisition else {

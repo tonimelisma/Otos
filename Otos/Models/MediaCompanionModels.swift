@@ -71,7 +71,7 @@ nonisolated enum MediaCompanionPairing {
         primaries: [ScannedMediaFile],
         capabilities: VolumeNamespaceCapabilities
     ) -> [MediaCompanion] {
-        let primariesByStem = Dictionary(grouping: primaries) {
+        let primariesByStem = Dictionary(exactlyGrouping: primaries) {
             FilesystemNamespaceSemantics.stemKey(relativePath: $0.relativePath, capabilities: capabilities)
         }
         return companions.map { companion in

@@ -126,6 +126,7 @@ Each bet names the scorecard number it moves. "Building" means a PR is in progre
 | 7 | **Wake on inputs.** Each owner wakes only on the facts its own SQL reads. | stall lines; CPU; disk reads | done (#807) |
 | 8 | **Split tables in the file, and one `VACUUM`.** `render_gray` and face embeddings move to their own tables. | disk reads; catalog size | face embeddings moved (#810); `render_gray` and the `VACUUM` not started (one-way, needs the owner's go) |
 | 9 | **Disk.** Remove orphaned thumbnails; stop the test temp-folder leak; decide whether remote-library previews exist at full size (owner question). | disk growth | not started |
+| 9b | **Freed memory the footprint keeps.** On the owner's library malloc held about 136 MB of freed blocks at idle. | footprint | building: owner-scale reads build in mapped regions and return arrays of their length, groupings make groups at their length, per-row statements are prepared once; on a generated owner-size sequence the freed-and-held bytes after it went 92 → 51 MB on main with the 4-byte identities (82 → 27 MB before them) (`2026-11-16-freed-memory-after-the-tour.md`). Replaced orders' own arrays remain (identity structures) |
 | 10 | **The description and text-reading backlog.** About 43 h of text readings and 66 h of descriptions. Whether it runs while the window is in use is an owner question. | footprint; CPU while in use | not started |
 
 **Bet 5's measurement.** On a generated owner-size catalog, window waits were about 1.9 s at

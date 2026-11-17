@@ -187,7 +187,7 @@ final class RemovableVolumeMonitor {
     nonisolated static func disambiguatedAttachments(
         _ attachments: [RemovableVolumeAttachment]
     ) -> [RemovableVolumeAttachment] {
-        let grouped = Dictionary(grouping: attachments, by: \.identity)
+        let grouped = Dictionary(exactlyGrouping: attachments, by: \.identity)
         return attachments.map { attachment in
             guard let duplicates = grouped[attachment.identity],
                   duplicates.count > 1,

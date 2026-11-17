@@ -1714,10 +1714,11 @@ extension CatalogStore {
         underSubtree: MediaRelativePath? = nil,
         db: Database
     ) throws -> [ExistingAssetRow] {
-        let rows: [Row] = if let underSubtree {
+        // A root's rows are owner-scale: read from the cursor as `MappedArrayBuilder` says.
+        let rows: RowCursor = if let underSubtree {
             // Component-safe: `a/b` matches itself and `a/b/...`, never `a/b2`.
             // Cached: a listing reads one subtree per folder it completes.
-            try Row.fetchAll(
+            try Row.fetchCursor(
                 db.cachedStatement(sql: """
                 SELECT relative_path, thumbnail_path, preview_path, face_frames_path, metadata_source_size,
                     metadata_source_mtime, trash_path
@@ -1728,7 +1729,7 @@ extension CatalogStore {
                 arguments: [libraryRootID] + Self.subtreeArguments(underSubtree)
             )
         } else {
-            try Row.fetchAll(
+            try Row.fetchCursor(
                 db,
                 sql: """
                 SELECT relative_path, thumbnail_path, preview_path, face_frames_path, metadata_source_size,
@@ -1739,7 +1740,7 @@ extension CatalogStore {
                 arguments: [libraryRootID]
             )
         }
-        return rows.map { row in
+        return try MappedArrayBuilder.collect(rows) { row in
             ExistingAssetRow(
                 relativePath: MediaRelativePath(rawValue: row["relative_path"]),
                 derivedImagePaths: derivedImagePaths(of: row),
@@ -2010,7 +2011,7 @@ extension CatalogStore {
         db: Database
     ) throws -> Int {
         var changedCount = 0
-        let byDirectory = Dictionary(grouping: companions) {
+        let byDirectory = Dictionary(exactlyGrouping: companions) {
             MediaCompanionPairing.directoryKey(of: $0.relativePath)
         }
         for (directoryKey, directoryCompanions) in byDirectory {

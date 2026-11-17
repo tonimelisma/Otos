@@ -710,7 +710,7 @@ nonisolated enum StallStackReport {
                 ]))
             }
         }
-        let partTotals = Dictionary(grouping: lines) { [$0.fields["kind"], $0.fields["stack"]] }.mapValues(\.count)
+        let partTotals = Dictionary(exactlyGrouping: lines) { [$0.fields["kind"], $0.fields["stack"]] }.mapValues(\.count)
         return lines.map { line in
             var fields = line.fields
             fields["parts"] = "\(partTotals[[line.fields["kind"], line.fields["stack"]]]!)"

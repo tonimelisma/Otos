@@ -602,7 +602,7 @@ private nonisolated struct TrashRemoval {
             return nil
         }
         let taken = Set(positions)
-        let hiddenMembers = Dictionary(grouping: content.stacks.shownForHiddenMember.filter { ids.contains($0.value) }, by: \.value)
+        let hiddenMembers = Dictionary(exactlyGrouping: content.stacks.shownForHiddenMember.filter { ids.contains($0.value) }, by: \.value)
         items = positions.map { position in
             let id = order[position]
             let predecessor = (0 ..< position).reversed().first { !taken.contains($0) }.map { order[$0] }

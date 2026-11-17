@@ -67,6 +67,14 @@ nonisolated struct CatalogFilterOptionTally: Sendable {
         cellOfRow.reserveCapacity(capacity)
     }
 
+    /// Room for `count` rows in all: what a whole read reserves once it knows how many rows it
+    /// read, so no column outgrows a buffer (`MappedArrayBuilder`).
+    mutating func reserveCapacity(_ count: Int) {
+        rowIDs.reserveCapacity(count)
+        typeOfRow.reserveCapacity(count)
+        cellOfRow.reserveCapacity(count)
+    }
+
     /// How many rows the tally counts.
     var rowCount: Int {
         rowIDs.count

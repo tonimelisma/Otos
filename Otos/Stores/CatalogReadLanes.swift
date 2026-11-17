@@ -575,7 +575,7 @@ extension CatalogReads where Lane == BackgroundLane {
     func photoDescriptionCandidates(
         after cursor: CaptureOrderCursor? = nil,
         limit: Int,
-        excluding: Set<MediaAssetID> = []
+        excluding: some Collection<MediaAssetID> & Sendable = Set<MediaAssetID>()
     ) async throws -> CandidatePage<PhotoDescriptionCandidate, CaptureOrderCursor> {
         try await store.photoDescriptionCandidates(after: cursor, limit: limit, excluding: excluding, lane: lane)
     }

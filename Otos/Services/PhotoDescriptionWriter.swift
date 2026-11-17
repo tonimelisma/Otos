@@ -240,7 +240,7 @@ actor PhotoDescriptionWriter: QuiescentOwner {
             let page: CandidatePage<PhotoDescriptionCandidate, CaptureOrderCursor>
             do {
                 page = try await store.backgroundReads.photoDescriptionCandidates(
-                    after: cursor, limit: pageSize, excluding: Set(failedUntil.keys)
+                    after: cursor, limit: pageSize, excluding: failedUntil.keys
                 )
             } catch {
                 OtosLog.metadata.errorOperation("description", phase: "readFailed", fields: [

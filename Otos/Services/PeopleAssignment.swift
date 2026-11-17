@@ -346,7 +346,7 @@ actor PeopleAssignment: QuiescentOwner {
         try vectorStore.keep(read.vectors, through: read.vectorHorizon)
         guard !malformed.isEmpty else { return }
         let bad = Set(malformed)
-        try await store.oweFacesAgain(Set(read.faces.filter { bad.contains($0.vector) }.map(\.id.asset)))
+        try await store.oweFacesAgain(Set(MappedArrayBuilder.collect(read.faces) { bad.contains($0.vector) ? $0.id.asset : nil }))
     }
 }
 

@@ -58,14 +58,15 @@ nonisolated enum CatalogQueryGateway {
         let query = orderedAssetIDQuery(descriptor: descriptor, scope: scope, clause: clause)
         // Read by position, in `orderedAssetIDQuery`'s column order: a name lookup per column
         // per row is the read's own cost on a large order. Each row is mapped as the cursor
-        // reaches it, so no copy of every row is made first.
+        // reaches it, so no copy of every row is made first, and the order is built in mapped
+        // regions (`MappedArrayBuilder`).
         let likedColumn = scope.requiresLocation ? 5 : 3
         let burstColumn: Int? = clause.seek != nil ? likedColumn + (scope.isAnniversary ? 1 : 0) : nil
-        return try Array(Row.fetchCursor(
+        return try MappedArrayBuilder.collect(Row.fetchCursor(
             db,
             sql: query.sql,
             arguments: query.arguments
-        ).map { row in
+        )) { row in
             let coordinate: PlaceCoordinate? = if scope.requiresLocation,
                                                   let latitude: Double = row[3],
                                                   let longitude: Double = row[4]
@@ -82,7 +83,7 @@ nonisolated enum CatalogQueryGateway {
                 isLiked: scope.isAnniversary ? row[likedColumn] : false,
                 burstIdentifier: burstColumn.flatMap { row[$0] }
             )
-        })
+        }
     }
 
     /// The order's rows and the stacks that judge them, in the caller's read (`db`), so every
@@ -204,8 +205,8 @@ nonisolated enum CatalogQueryGateway {
 
     /// Counts each row of `scope` into `tally` (`CatalogFilterOptionTally`): its id, its file
     /// type and the map cell of its coordinate. False for a scope that selects nothing, which
-    /// counts no row. Each row is counted as the cursor reaches it, read by position, so no copy
-    /// of every row is made first.
+    /// counts no row. Each row is read by position, and its fact is held in a mapped region
+    /// until the tally is counted, so no copy of a row is made in the heap.
     static func tallyFilterOptionRows(
         scope: CatalogScopePredicate,
         into tally: inout CatalogFilterOptionTally,
@@ -214,9 +215,18 @@ nonisolated enum CatalogQueryGateway {
         guard let query = try filterOptionRowsQuery(scope: scope, db: db) else {
             return false
         }
+        // Read in mapped regions first, so the tally's columns are made once at their length
+        // (`MappedArrayBuilder`).
         let rows = try Row.fetchCursor(db.cachedStatement(sql: query.sql), arguments: query.arguments)
+        var read = MappedArrayBuilder<(rowID: Int64, fact: CatalogFilterOptionTally.Fact)>()
         while let row = try rows.next() {
-            tally.append(rowID: row[0], fact: filterOptionFact(row))
+            read.append((row[0], filterOptionFact(row)))
+        }
+        tally.reserveCapacity(read.count)
+        read.withElements { read in
+            for row in read {
+                tally.append(rowID: row.rowID, fact: row.fact)
+            }
         }
         return true
     }
@@ -414,7 +424,7 @@ nonisolated enum CatalogQueryGateway {
         guard !ids.isEmpty else {
             return []
         }
-        let idsByRootPath = Dictionary(grouping: ids, by: \.libraryRootPath)
+        let idsByRootPath = Dictionary(exactlyGrouping: ids, by: \.libraryRootPath)
         var assets: [StoredAsset] = []
         assets.reserveCapacity(ids.count)
 
@@ -424,9 +434,11 @@ nonisolated enum CatalogQueryGateway {
             }
             let relativePaths = idsForRoot.map(\.relativePath.rawValue)
             let placeholders = sqlPlaceholders(count: relativePaths.count)
-            var argumentValues: [any DatabaseValueConvertible] = [rootID]
+            var argumentValues: [any DatabaseValueConvertible] = []
+            argumentValues.reserveCapacity(relativePaths.count + 1)
+            argumentValues.append(rootID)
             argumentValues.append(contentsOf: relativePaths)
-            let rows = try Row.fetchAll(
+            let rows = try Row.fetchCursor(
                 db,
                 sql: """
                 SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
@@ -442,7 +454,9 @@ nonisolated enum CatalogQueryGateway {
                 """,
                 arguments: StatementArguments(argumentValues)
             )
-            assets.append(contentsOf: rows.map(storedAsset(from:)))
+            while let row = try rows.next() {
+                assets.append(storedAsset(from: row))
+            }
         }
         return assets
     }
@@ -455,7 +469,7 @@ nonisolated enum CatalogQueryGateway {
         guard !ids.isEmpty else {
             return []
         }
-        let idsByRootPath = Dictionary(grouping: ids, by: \.libraryRootPath)
+        let idsByRootPath = Dictionary(exactlyGrouping: ids, by: \.libraryRootPath)
         var details: [StoredTileDetail] = []
         details.reserveCapacity(ids.count)
 
@@ -465,9 +479,11 @@ nonisolated enum CatalogQueryGateway {
             }
             let relativePaths = idsForRoot.map(\.relativePath.rawValue)
             let placeholders = sqlPlaceholders(count: relativePaths.count)
-            var argumentValues: [any DatabaseValueConvertible] = [rootID]
+            var argumentValues: [any DatabaseValueConvertible] = []
+            argumentValues.reserveCapacity(relativePaths.count + 1)
+            argumentValues.append(rootID)
             argumentValues.append(contentsOf: relativePaths)
-            let rows = try Row.fetchAll(
+            let rows = try Row.fetchCursor(
                 db,
                 sql: """
                 SELECT m.library_root_id, m.relative_path, m.byte_size,
@@ -483,7 +499,9 @@ nonisolated enum CatalogQueryGateway {
                 """,
                 arguments: StatementArguments(argumentValues)
             )
-            try details.append(contentsOf: rows.map(storedTileDetail(from:)))
+            while let row = try rows.next() {
+                try details.append(storedTileDetail(from: row))
+            }
         }
         return details
     }
@@ -576,7 +594,12 @@ nonisolated enum CatalogQueryGateway {
             assetRow.burstIdentifier = row[3]
             rowsByBatch[ImportBatchID(unixMilliseconds: row[0]), default: []].append(assetRow)
         }
-        let stacks = try PhotoStackSQL.build(rootPaths: rootPaths, holding: rowsByBatch.values.flatMap(\.self), db: db).stacks
+        var held: [OrderedAssetIDRow] = []
+        held.reserveCapacity(rowsByBatch.values.reduce(0) { $0 + $1.count })
+        for rows in rowsByBatch.values {
+            held += rows
+        }
+        let stacks = try PhotoStackSQL.build(rootPaths: rootPaths, holding: held, db: db).stacks
         return ids.map { id in
             guard let rows = rowsByBatch[id] else {
                 return ImportBatchSummary(batchID: id, photoCount: nil)
@@ -950,9 +973,12 @@ nonisolated enum PhotoStackSQL {
         let ruleStart = ContinuousClock.now
         var stacks = stacks(of: candidates, rootPaths: rootPaths)
         if !stacks.isEmpty {
-            let held = Set(rows.compactMap { row in
-                rootPaths[row.libraryRootID].map { MediaAssetID(libraryRootPath: $0, relativePath: row.relativePath) }
-            })
+            var held = Set<MediaAssetID>(minimumCapacity: rows.count)
+            for row in rows {
+                if let rootPath = rootPaths[row.libraryRootID] {
+                    held.insert(MediaAssetID(libraryRootPath: rootPath, relativePath: row.relativePath))
+                }
+            }
             stacks.removeAll { stack in !stack.members.contains(where: held.contains) }
         }
         return Built(
@@ -977,8 +1003,29 @@ nonisolated enum PhotoStackSQL {
             try row.encode(name)
         }
 
-        static func json(_ names: Set<Self>) throws -> String {
-            try String(decoding: JSONEncoder().encode(Array(names)), as: UTF8.self)
+        /// `[[rootID, "name"], …]`, written into one string sized for it: a scope's folders are
+        /// thousands of names, and an encoder's growing buffers were freed into malloc
+        /// (`MappedArrayBuilder`). A name's quote, backslash and control characters are
+        /// escaped; every other character is JSON as it stands.
+        static func json(_ names: Set<Self>) -> String {
+            var json = "["
+            json.reserveCapacity(names.reduce(2) { $0 + $1.name.utf8.count + 26 })
+            for (offset, name) in names.enumerated() {
+                json += offset == 0 ? "[" : ",["
+                json += String(name.rootID)
+                json += ",\""
+                for scalar in name.name.unicodeScalars {
+                    switch scalar {
+                    case "\"": json += "\\\""
+                    case "\\": json += "\\\\"
+                    case _ where scalar.value < 0x20: json += String(format: "\\u%04x", scalar.value)
+                    default: json.unicodeScalars.append(scalar)
+                    }
+                }
+                json += "\"]"
+            }
+            json += "]"
+            return json
         }
     }
 
@@ -997,14 +1044,16 @@ nonisolated enum PhotoStackSQL {
     }
 
     static func stacks(of candidates: Candidates, rootPaths: [Int64: LibraryRootPath]) -> [PhotoStack] {
-        var stacks: [PhotoStack] = []
+        var stacks = MappedArrayBuilder<PhotoStack>()
         for (rowID, rootCandidates) in candidates.byRoot {
             guard let rootPath = rootPaths[rowID] else {
                 continue
             }
-            stacks += PhotoStackRule.stacks(candidates: rootCandidates, libraryRootPath: rootPath)
+            for stack in PhotoStackRule.stacks(candidates: rootCandidates, libraryRootPath: rootPath) {
+                stacks.append(stack)
+            }
         }
-        return stacks
+        return stacks.finish()
     }
 
     /// The columns `candidateQuery` selects, in order: each row is read by position.
@@ -1026,16 +1075,16 @@ nonisolated enum PhotoStackSQL {
         // Prepared once per connection: the text depends only on the root count, and a narrow
         // scope's read runs on every publication of a batch while it imports.
         let rows = try Row.fetchCursor(db.cachedStatement(sql: query.sql), arguments: query.arguments)
-        var byRoot: [Int64: [PhotoStackCandidate]] = [:]
-        var count = 0
+        // Read in mapped regions, then each root's candidates into an array of its exact
+        // count, in the order read (`MappedArrayBuilder`).
+        var read = MappedArrayBuilder<(rootID: Int64, candidate: PhotoStackCandidate)>()
         while let row = try rows.next() {
             let kindValue: String = row[Column.bestKind.rawValue]
             guard let kind = MediaKind(rawValue: kindValue) else {
                 continue
             }
-            count += 1
             let choice: String = row[Column.choice.rawValue]
-            byRoot[row[Column.libraryRootID.rawValue], default: []].append(PhotoStackCandidate(
+            read.append((row[Column.libraryRootID.rawValue], PhotoStackCandidate(
                 relativePath: MediaRelativePath(rawValue: row[Column.relativePath.rawValue]),
                 kind: kind,
                 nameKey: FilesystemNameKey(rawValue: row[Column.nameKey.rawValue]),
@@ -1045,7 +1094,23 @@ nonisolated enum PhotoStackSQL {
                 choice: MediaChoice(rawValue: choice) ?? .default,
                 keyChosenAtUnixMs: row[Column.keyChosenAt.rawValue],
                 burstKeyChosenAtUnixMs: row[Column.burstKeyChosenAt.rawValue]
-            ))
+            )))
+        }
+        let count = read.count
+        let byRoot = read.withElements { read in
+            var counts: [Int64: Int] = [:]
+            for element in read {
+                counts[element.rootID, default: 0] += 1
+            }
+            var byRoot = counts.mapValues { count in
+                var candidates: [PhotoStackCandidate] = []
+                candidates.reserveCapacity(count)
+                return candidates
+            }
+            for element in read {
+                byRoot[element.rootID]?.append(element.candidate)
+            }
+            return byRoot
         }
         return Candidates(byRoot: byRoot, count: count, readDuration: ContinuousClock.now - start)
     }

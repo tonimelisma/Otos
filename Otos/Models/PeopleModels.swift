@@ -99,6 +99,33 @@ nonisolated struct PeopleFaces: RandomAccessCollection, Equatable, Sendable {
         }
     }
 
+    /// The faces a read collected (`MappedArrayBuilder`), each column made at its length once:
+    /// no column outgrows a buffer while an owner-scale snapshot is read.
+    /// Those `isIncluded` keeps; room is made for all of them.
+    init(
+        collected faces: borrowing MappedArrayBuilder<PeopleSnapshot.Face>,
+        where isIncluded: (PeopleSnapshot.Face) -> Bool = { _ in true }
+    ) {
+        reserveCapacity(faces.count)
+        faces.withElements { faces in
+            for face in faces where isIncluded(face) {
+                append(face)
+            }
+        }
+    }
+
+    /// Room for `count` faces in every column; the photo table holds at most one per face.
+    mutating func reserveCapacity(_ count: Int) {
+        photos.reserveCapacity(count)
+        photo.reserveCapacity(count)
+        index.reserveCapacity(count)
+        capture.reserveCapacity(count)
+        vector.reserveCapacity(count)
+        kind.reserveCapacity(count)
+        person.reserveCapacity(count)
+        likeness.reserveCapacity(count)
+    }
+
     var startIndex: Int {
         0
     }
@@ -243,6 +270,7 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
             return Self.isBefore(left, right)
         }
         var merged = PeopleFaces()
+        merged.reserveCapacity(faces.count + partial.faces.count)
         var kept = faces.lazy.filter { !photos.contains($0.id.asset) }.makeIterator()
         var read = partial.faces.makeIterator()
         var nextKept = kept.next()
@@ -1015,7 +1043,7 @@ nonisolated struct SelectionFaces: Equatable, Sendable {
     /// The people most likely to be `faces`, most likely first: each person scored by their
     /// mean best similarity over the photos holding one of the faces.
     func likelyPeople(for faces: [PhotoFace]) -> [PersonID] {
-        let byPhoto = Dictionary(grouping: faces, by: \.id.asset)
+        let byPhoto = Dictionary(exactlyGrouping: faces, by: \.id.asset)
         var total: [PersonID: Float] = [:]
         for photoFaces in byPhoto.values {
             var best: [PersonID: Float] = [:]
@@ -1038,7 +1066,7 @@ nonisolated struct SelectionFaces: Equatable, Sendable {
     /// in each photo that holds one. A photo whose unidentified faces are not ranked gives its
     /// first one.
     func unidentifiedFacesToName(as person: PersonID) -> [FaceID] {
-        Dictionary(grouping: unidentified, by: \.id.asset).values.compactMap { faces in
+        Dictionary(exactlyGrouping: unidentified, by: \.id.asset).values.compactMap { faces in
             let ranked = faces.compactMap { face in
                 candidates[face.id]?.first { $0.person == person }.map { (face: face.id, similarity: $0.similarity) }
             }

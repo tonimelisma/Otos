@@ -167,6 +167,14 @@ custom_rules:
     excluded_match_kinds: [comment, doccomment]
     message: "URL(fileURLWithPath:) without isDirectory: stats the disk, and its answer becomes a trailing slash in the path: a file that became a directory then names a different path. Pass isDirectory:, or work on the text (CatalogPath.relativePath(rootPath:absolutePath:), MediaRelativePath's components)."
     severity: error
+  grouping_grows_arrays:
+    name: "A grouping makes each group at its length"
+    included: 'Otos/.*\.swift'
+    excluded: 'OtosTests/'
+    regex: '\bDictionary\(grouping:'
+    excluded_match_kinds: [comment, doccomment]
+    message: "Dictionary(grouping:by:) grows every group by appending, and on macOS 27 each buffer a group outgrows stays in the footprint: a 32 MB group of duplicates candidates left 32 MB behind. Use Dictionary(exactlyGrouping:by:) (MappedArrayBuilder.swift)."
+    severity: error
   read_outside_lane:
     name: "A Store read enters the pool through its lane"
     included: 'Otos/Stores/.*\.swift'

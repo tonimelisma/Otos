@@ -425,15 +425,11 @@ nonisolated enum CandidateWalk {
         db: Database
     ) throws -> (rows: [Row], next: AssetKeyCursor?) {
         var rows: [Row] = []
+        rows.reserveCapacity(limit)
         for rootID in rootIDs.sorted() where rootID >= (cursor?.rootID ?? Int64.min) {
             let after = cursor?.rootID == rootID ? cursor?.relativePath ?? "" : ""
-            let page = try Row.fetchAll(
-                db,
-                sql: sql,
-                arguments: [rootID, after] + arguments + [limit - rows.count]
-            )
-            rows += page
-            if rows.count == limit, let last = page.last {
+            try appendPage(sql: sql, arguments: [rootID, after] + arguments + [limit - rows.count], to: &rows, db: db)
+            if rows.count == limit, let last = rows.last {
                 return (rows, AssetKeyCursor(rootID: rootID, relativePath: last["relative_path"]))
             }
         }
@@ -472,12 +468,9 @@ nonisolated enum CandidateWalk {
             ]
         }
         var rows: [Row] = []
+        rows.reserveCapacity(limit)
         for phase in phases {
-            rows += try Row.fetchAll(
-                db,
-                sql: sql(phase.position, phase.order),
-                arguments: arguments + phase.arguments + [limit - rows.count]
-            )
+            try appendPage(sql: sql(phase.position, phase.order), arguments: arguments + phase.arguments + [limit - rows.count], to: &rows, db: db)
             if rows.count == limit, let last = rows.last {
                 return (rows, CaptureOrderCursor(
                     captureLocal: last["best_capture_local"], rootID: last["library_root_id"], relativePath: last["relative_path"]
@@ -485,5 +478,15 @@ nonisolated enum CandidateWalk {
             }
         }
         return (rows, nil)
+    }
+
+    /// Appends one page's rows to `rows`, which holds room for the whole page: no array is
+    /// grown and none made per page. Each walk's few statement texts are prepared once per
+    /// connection.
+    private static func appendPage(sql: String, arguments: StatementArguments, to rows: inout [Row], db: Database) throws {
+        let cursor = try Row.fetchCursor(db.cachedStatement(sql: sql), arguments: arguments)
+        while let row = try cursor.next() {
+            rows.append(row.copy())
+        }
     }
 }
