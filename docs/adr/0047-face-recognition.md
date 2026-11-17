@@ -381,8 +381,10 @@ grouping had put with the right child.
   exists only there), the People filter, whose several people are photos of them together,
   the face acts in
   the photo menus and the Info pane (`docs/design/people.md`).
-- **A face tile holds its own pixels:** a tile is drawn from the uncached preview, so Image I/O
-  decodes only the part of the preview the face covers. It is drawn at the cell's backing size
+- **A face tile holds its own pixels:** a tile is drawn from the uncached preview, so nothing a
+  decode makes outlives the draw: measured on a 2560 × 1920 preview, a JPEG's tile peaks at
+  1 MB, a HEIC's at 2 MB in most decodes and at a whole preview's 25 MB in about one in six
+  (`FaceTileDecodeMemoryTests`). It is drawn at the cell's backing size
   into an IOSurface of its own (`DisplayImage.draw`, ADR 0016), which the tile shows without
   a copy and which leaves the footprint when the tile goes. `FaceTileImages` costs each tile at what it holds, up to
   48 MB. Rejected: `CGImage.cropping(to:)` of a scaled decode. A crop keeps the whole image it

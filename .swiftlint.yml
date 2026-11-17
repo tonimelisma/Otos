@@ -126,6 +126,15 @@ custom_rules:
     message: "Error text is localized and unstable: matching it silently stops working on another language or OS release. Classify by domain and code, or by the API's typed status."
     severity: error
 
+  preferences_outside_their_domain:
+    name: "Preferences go through the window's preference domain"
+    included: 'Otos/.*\.swift'
+    excluded: 'Otos/Models/PreferenceStore\.swift'
+    regex: '@AppStorage\b|\bUserDefaults\.standard\b'
+    match_kinds: [attribute.builtin, attribute.id, identifier, keyword, typeidentifier]
+    message: "Every persisted preference has one owner: the PreferenceStore a PreferencesDomain makes (ADR 0020). @AppStorage and UserDefaults.standard write the user's own domain whatever domain the window was given, so a tour or a test writes the owner's settings. Read and write through the injected preferences."
+    severity: error
+
   relative_path_through_url:
     name: "Relative path through URL"
     included: 'Otos/.*\.swift'

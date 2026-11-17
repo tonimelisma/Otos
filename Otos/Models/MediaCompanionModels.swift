@@ -115,8 +115,8 @@ nonisolated enum MediaCompanionPairing {
     }
 }
 
-/// User preferences for import behavior. Persisted via `@AppStorage` keys owned by
-/// Settings; this type is the typed owner (ARC-047).
+/// User preferences for import behavior, persisted in the window's preference domain under
+/// these keys (`ImportPreferencesStore`); this type is the typed owner (ARC-047).
 nonisolated struct ImportPreferences: Equatable, Sendable {
     static let sidecarImportKey = "import.sidecarFiles"
     static let deleteSourceAfterImportKey = "import.deleteSourceAfterImport"

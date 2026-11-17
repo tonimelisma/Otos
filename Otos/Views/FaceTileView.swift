@@ -134,10 +134,13 @@ nonisolated enum FaceCrop {
     static let enlargement: CGFloat = 1.6
 
     /// The tile for `box`, cut from the preview at no more than `pixelEdge` on a side. An
-    /// upright preview, as every one Otos writes is, is never decoded whole: the cut is drawn
-    /// from the uncached image, so Image I/O decodes only the part of the preview the face
-    /// covers (`docs/research/2026-11-16-image-memory-while-used.md`). A turned one is first
-    /// decoded upright at the tile's scale.
+    /// upright preview, as every one Otos writes is, is not decoded into an image of its own:
+    /// the cut is drawn from the uncached image, so what a decode holds goes when the draw
+    /// ends. Measured on a 2560 × 1920 preview (`FaceTileDecodeMemoryTests`,
+    /// `docs/research/2026-11-16-image-memory-while-used.md` §1): a JPEG's tile costs at most
+    /// 1 MB at its peak; a HEIC's at most 2 MB in most decodes and, in about one in six, as much
+    /// as decoding the whole preview (25 MB) for the length of the draw; a whole decode held as
+    /// an image costs 49–61 MB. A turned preview is first decoded upright at the tile's scale.
     @concurrent
     static func decode(_ box: CGRect, from preview: FacePreview, in directory: URL, pixelEdge: Int) async -> CGImage? {
         let signpost = OtosSignpost.thumbnails.beginInterval("FaceTileDecode")

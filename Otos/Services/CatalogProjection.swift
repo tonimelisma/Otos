@@ -116,9 +116,9 @@ actor CatalogProjection {
     /// How many times each kind of catalog fact changed, by the Store's own account.
     private var factRevisions = CatalogFactRevisions()
     /// The Store's recent changes with the rows each named, for keyed re-reads.
-    private(set) var changeLog = CatalogChangeLog()
+    private var changeLog = CatalogChangeLog()
     /// The last published pass's reads, which the next pass answers from while they hold.
-    private(set) var reads = CatalogProjectionReads.none
+    private var reads = CatalogProjectionReads.none
     /// Passes between their first and last line. Not request state: a count rather than
     /// a flag so a cancelled pass finishing after a re-subscribe cannot mask a live one.
     private var runningPasses = 0
@@ -233,6 +233,32 @@ actor CatalogProjection {
     /// running. Lets a test wait for settlement instead of guessing a sleep duration.
     var isQuiescent: Bool {
         requested == covered && runningPasses == 0 && optionsRequested == optionsCovered && optionsInFlight == nil
+    }
+
+    /// The asset IDs the projection holds now, by the structure that holds them: the window
+    /// published last, each held order and collapse, the stacks' members and the IDs the
+    /// change log's entries name. Each array is the held one itself, so its storage is the
+    /// structure's own (two structures sharing one order show one storage); the diagnostic
+    /// read of what the projection's memory is made of (ADR 0005, "One copy of an order").
+    var heldAssetIDs: CatalogProjectionHeldIDs {
+        var held = CatalogProjectionHeldIDs()
+        held.add("window", lastPublishedState.map { [$0.mediaGrid.orderedAssetIDs] } ?? [])
+        for slot in [CatalogProjectionReads.Slot.allMedia, .other] {
+            held.add("order.\(slot)", reads.orders[slot].map { [$0.answer.ids] } ?? [])
+            for searched in [false, true] {
+                let collapse = reads.collapses.first { $0.key.slot == slot && $0.key.searched == searched }?.value
+                held.add("collapse.\(slot)\(searched ? ".searched" : "")", collapse.map { [$0.ids, $0.result.ids] } ?? [])
+            }
+        }
+        held.add("stacks", reads.stacks.map { $0.built.stacks.stacks.values.map(\.members) } ?? [])
+        held.add("changeLog", sets: changeLog.entries.compactMap { entry in
+            if case let .named(named) = entry.rows {
+                named.ids
+            } else {
+                nil
+            }
+        })
+        return held
     }
 
     /// Whether the duplicates owner has built every request it was given. With `isQuiescent`,
@@ -1867,5 +1893,22 @@ extension CatalogProjection: QuiescentOwner {
     func quiescentOwners() -> [any QuiescentOwner] {
         let owners: [(any QuiescentOwner)?] = [self, duplicatesProjection, peopleAssignment, peopleGallery]
         return owners.compactMap(\.self)
+    }
+}
+
+/// The asset IDs `CatalogProjection` holds at one moment, by the structure holding them
+/// (`CatalogProjection.heldAssetIDs`). An array here is the structure's own, so comparing
+/// storages says which structures share one copy.
+nonisolated struct CatalogProjectionHeldIDs: Sendable {
+    nonisolated struct Structure: Sendable {
+        let name: String
+        let arrays: [[MediaAssetID]]
+        let sets: [Set<MediaAssetID>]
+    }
+
+    private(set) var structures: [Structure] = []
+
+    mutating func add(_ name: String, _ arrays: [[MediaAssetID]] = [], sets: [Set<MediaAssetID>] = []) {
+        structures.append(Structure(name: name, arrays: arrays, sets: sets))
     }
 }

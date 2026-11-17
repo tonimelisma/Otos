@@ -19,8 +19,10 @@ import Foundation
 /// **The file is the lookup.** `SigLIP2Tokenizer.bin` holds the tables already sorted, and the
 /// tokenizer maps it and searches it in place: loading builds nothing, so it costs a mapping
 /// and no heap (building hash tables of the vocabulary and merges took about 400 ms and 37 MB
-/// at every encoder load; `docs/research/2026-11-16-first-search-after-launch.md`). Little
-/// endian, each table 8-byte aligned:
+/// at every encoder load; `docs/research/2026-11-16-first-search-after-launch.md`). Loading
+/// reads every table once to check it (`tablesAreWellFormed`): a file whose offsets, order or
+/// ids are not what the searches assume is `LoadError.malformed`, never a trap or an id the
+/// text tower cannot read. Little endian, each table 8-byte aligned:
 ///
 /// | Bytes | Holds |
 /// | --- | --- |
@@ -84,10 +86,54 @@ nonisolated struct SearchTextTokenizer: Sendable {
         startsOffset = mergeValuesOffset + 8 * mergeCount
         idsOffset = startsOffset + 4 * (entryCount + 1)
         stringsOffset = idsOffset + 4 * entryCount
-        guard entryCount <= vocabularyCount, stringsOffset + stringsLength == data.count,
-              Self.load(UInt32.self, at: startsOffset + 4 * entryCount, in: data) == stringsLength
+        guard vocabularyCount <= Int(Int32.max), entryCount <= vocabularyCount,
+              stringsOffset + stringsLength == data.count, tablesAreWellFormed(vocabularyCount: vocabularyCount)
         else {
             throw LoadError.malformed
+        }
+    }
+
+    /// Whether every table holds what the searches assume, checked once at load so no
+    /// corrupt file can trap a search or answer with an id the text tower cannot read:
+    /// - each string starts where the one before it ended, the first at 0 and the last
+    ///   ending at the strings' length, and the strings ascend strictly by bytes;
+    /// - every string's id is below the vocabulary's size;
+    /// - the merge pairs ascend strictly, and both halves of each pair and its merged id
+    ///   are below the vocabulary's size.
+    /// One pass over the tables reads every page of the mapping once; nothing is built.
+    private func tablesAreWellFormed(vocabularyCount: Int) -> Bool {
+        let vocabulary = UInt64(vocabularyCount)
+        return file.withUnsafeBytes { raw in
+            var previous: UnsafeRawBufferPointer?
+            var end = 0
+            guard Self.load(UInt32.self, at: startsOffset, in: raw) == 0 else { return false }
+            for entry in 0 ..< entryCount {
+                let start = end
+                end = Int(Self.load(UInt32.self, at: startsOffset + 4 * (entry + 1), in: raw))
+                guard start <= end, stringsOffset + end <= raw.count,
+                      UInt64(Self.load(UInt32.self, at: idsOffset + 4 * entry, in: raw)) < vocabulary
+                else {
+                    return false
+                }
+                let string = UnsafeRawBufferPointer(rebasing: raw[stringsOffset + start ..< stringsOffset + end])
+                if let previous, !previous.lexicographicallyPrecedes(string) {
+                    return false
+                }
+                previous = string
+            }
+            guard stringsOffset + end == raw.count else { return false }
+            var previousKey: UInt64?
+            for merge in 0 ..< mergeCount {
+                let key = Self.load(UInt64.self, at: mergeKeysOffset + 8 * merge, in: raw)
+                let merged = Self.load(UInt64.self, at: mergeValuesOffset + 8 * merge, in: raw) & 0xFFFF_FFFF
+                guard key >> 32 < vocabulary, key & 0xFFFF_FFFF < vocabulary, merged < vocabulary,
+                      previousKey.map({ $0 < key }) ?? true
+                else {
+                    return false
+                }
+                previousKey = key
+            }
+            return true
         }
     }
 

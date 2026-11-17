@@ -117,10 +117,11 @@ extension PreferencesDomain {
     /// this Mac (`OriginalLocality.local`) or its preview is stored (ADR 0035) — and the
     /// panes' requester refuses every download for the session (`PaneOriginalDownloads.never`),
     /// so a full-resolution decode of a cloud-only photo is never asked of its provider. A
-    /// tour session writes no preference: its domain is `.sessionOnly(.standard)`
+    /// tour session writes no preference of Otos's: its domain is `.sessionOnly(.standard)`
     /// (`PreferencesDomain.configured`), so the place saved at quit, the grid's zoom and every
     /// other setting stay in memory and the owner's stored ones are untouched however the
-    /// session ends. The window is still put back as it was — scope, filter, sort, search,
+    /// session ends (AppKit's own frame autosave writes only when the window or the sidebar's
+    /// divider moves, which no step does; ADR 0020). The window is still put back as it was — scope, filter, sort, search,
     /// mode, focus, selection, inspector — before the app quits, for the visible session and
     /// so the tour's last steps time a return to where it started.
     ///

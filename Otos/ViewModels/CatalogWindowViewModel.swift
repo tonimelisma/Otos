@@ -125,6 +125,13 @@ final class CatalogWindowViewModel {
     /// `@AppStorage`, which would silently fall back to `UserDefaults.standard`
     /// regardless of the ViewModel's own injected `preferences` (ADR 0020).
     private(set) var dismissedCameraBannerIdentities: Set<DeviceIdentity>
+    /// The Info pane's and the Edit pane's sections the person folded, remembered across
+    /// launches. Same persistence pattern as `gridColumnCount`: the panes are handed these
+    /// and fold through `toggleInfoSectionFold` and `toggleEditSectionFold`, never through
+    /// `@AppStorage`, which writes `UserDefaults.standard` whatever domain the window was
+    /// given (ADR 0020).
+    private(set) var foldedInfoSections: Set<PhotoInfo.SectionID>
+    private(set) var foldedEditSections: Set<EditSection>
     /// Ephemeral mouse-selection truth (selection, ⇧-range anchor, base islands). Owned
     /// here so grid and filmstrip renderers share one model across mode switches; mutated
     /// only through the intents in `CatalogWindowViewModelSelection.swift`. Not
@@ -860,6 +867,8 @@ final class CatalogWindowViewModel {
         dismissedCameraBannerIdentities = Set(
             (storedDismissedIdentities ?? "").split(separator: "\n").map { DeviceIdentity(rawValue: String($0)) }
         )
+        foldedInfoSections = Self.foldedSections(stored: preferences.string(forKey: Self.foldedInfoSectionsDefaultsKey))
+        foldedEditSections = Self.foldedSections(stored: preferences.string(forKey: Self.foldedEditSectionsDefaultsKey))
         importPreferences = ImportPreferencesStore.load(defaults: preferences)
         exportSettings = ExportSettingsStore.load(defaults: preferences)
         self.catalogStore = catalogStore
@@ -2175,6 +2184,8 @@ extension CatalogWindowViewModel {
     static let searchLanguagesDefaultsKey = "search.languages"
     static let findsDuplicatesAcrossLibrariesDefaultsKey = "duplicates.acrossLibraries"
     static let dismissedCameraBannersDefaultsKey = "dismissedCameraConnectionBannerIdentities"
+    static let foldedInfoSectionsDefaultsKey = "infoPane.foldedSections"
+    static let foldedEditSectionsDefaultsKey = "editPanel.foldedSections"
 
     /// Clamps into 3–9, persists, and publishes; a no-op re-request does not re-persist.
     func setGridColumnCount(_ requested: Int) {
@@ -2212,6 +2223,28 @@ extension CatalogWindowViewModel {
             MediaGridPresentation.maxStripTileEdge,
             max(MediaGridPresentation.minStripTileEdge, requested)
         )
+    }
+
+    /// Folds the Info pane's `section`, or opens it when folded, and persists the folded set.
+    func toggleInfoSectionFold(_ section: PhotoInfo.SectionID) {
+        foldedInfoSections.formSymmetricDifference([section])
+        preferences.set(Self.storedFolds(foldedInfoSections), forKey: Self.foldedInfoSectionsDefaultsKey)
+    }
+
+    /// Folds the Edit pane's `section`, or opens it when folded, and persists the folded set.
+    func toggleEditSectionFold(_ section: EditSection) {
+        foldedEditSections.formSymmetricDifference([section])
+        preferences.set(Self.storedFolds(foldedEditSections), forKey: Self.foldedEditSectionsDefaultsKey)
+    }
+
+    /// The stored form: the sections' names, sorted, comma-separated.
+    private static func storedFolds(_ folded: Set<some RawRepresentable<String>>) -> String {
+        folded.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    /// The folded sections a stored value names; a name no section has any more is dropped.
+    static func foldedSections<Section: RawRepresentable<String> & Hashable>(stored: String?) -> Set<Section> {
+        Set((stored ?? "").split(separator: ",").compactMap { Section(rawValue: String($0)) })
     }
 
     /// A no-op re-dismiss does not re-persist, matching `setGridColumnCount`'s pattern.

@@ -8,12 +8,16 @@ import SwiftUI
 ///
 /// Passive: it renders the `PhotoInfo` it is given. Its rows keep their place for every item
 /// of a kind (DES-053); with no single item they read `—`. Which sections are folded is the
-/// person's, remembered across launches like the Edit pane's. A scene label in In This Photo
+/// person's, remembered across launches like the Edit pane's by the window's view model. A scene label in In This Photo
 /// is a button that searches for its label, and the toolbar field shows its name (`search`).
 struct InfoPaneView: View, Equatable {
     let info: PhotoInfo?
     let people: InfoPanePeople?
     let search: (String) -> Void
+    /// The sections the person folded, and the intent that folds or opens one
+    /// (`CatalogWindowViewModel.toggleInfoSectionFold`).
+    let folded: Set<PhotoInfo.SectionID>
+    let toggleFold: (PhotoInfo.SectionID) -> Void
 
     /// What the pane shows. The window rebuilds its inspector for every state it applies,
     /// and closures never compare equal, so without this every publication — a one-tile hide,
@@ -23,11 +27,9 @@ struct InfoPaneView: View, Equatable {
     /// (`docs/research/2026-11-16-window-state-turns.md`). An equal pane is not rendered again
     /// (`.equatable()` where `ContentView` hosts it); its intents are not part of what it shows.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.info == rhs.info && InfoPanePeople.showSame(lhs.people, rhs.people)
+        lhs.info == rhs.info && lhs.folded == rhs.folded && InfoPanePeople.showSame(lhs.people, rhs.people)
     }
 
-    /// Section IDs the person folded, comma-separated.
-    @AppStorage("infoPane.foldedSections") private var foldedSections = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var shown: PhotoInfo {
@@ -62,20 +64,14 @@ struct InfoPaneView: View, Equatable {
     }
 
     private func isOpen(_ section: PhotoInfo.SectionID) -> Bool {
-        !foldedSections.split(separator: ",").contains(Substring(section.rawValue))
+        !folded.contains(section)
     }
 
-    private func toggleFold(_ section: PhotoInfo.SectionID) {
-        var folded = Set(foldedSections.split(separator: ",").map(String.init))
-        if folded.contains(section.rawValue) {
-            folded.remove(section.rawValue)
-        } else {
-            folded.insert(section.rawValue)
-        }
+    private func fold(_ section: PhotoInfo.SectionID) {
         // DES-070 for content appearing; DES-075 under Reduce Motion. The content fades in
         // place either way, so nothing translates.
         withAnimation(.easeOut(duration: reduceMotion ? 0.15 : 0.25)) {
-            foldedSections = folded.sorted().joined(separator: ",")
+            toggleFold(section)
         }
     }
 
@@ -83,7 +79,7 @@ struct InfoPaneView: View, Equatable {
         let open = isOpen(section.id)
         return VStack(alignment: .leading, spacing: 8) {
             Button {
-                toggleFold(section.id)
+                fold(section.id)
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")

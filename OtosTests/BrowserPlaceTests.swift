@@ -493,6 +493,8 @@ struct BrowserPlaceTests {
         ownersPlace.save(to: stored)
         stored.set(5, forKey: CatalogWindowViewModel.gridColumnCountDefaultsKey)
         stored.set(126.5, forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey)
+        stored.set("file", forKey: CatalogWindowViewModel.foldedInfoSectionsDefaultsKey)
+        stored.set("color,light", forKey: CatalogWindowViewModel.foldedEditSectionsDefaultsKey)
         let before = stored.serialized()
 
         let session = PreferencesDomain.sessionOnly(base)
@@ -501,6 +503,7 @@ struct BrowserPlaceTests {
         model.applyState(loadedState(descriptor: ownersPlace.descriptor, ids: ids))
         #expect(model.pendingPlaceRestore == nil, "the stored place was restored, so quit saves")
         #expect(model.gridColumnCount == 5, "the session reads the user's settings")
+        #expect(model.foldedInfoSections == [.file] && model.foldedEditSections == [.color, .light])
 
         tourIntents(on: model, ids: ids)
         if restoresFirst {
@@ -515,6 +518,8 @@ struct BrowserPlaceTests {
         // The session saw its own writes.
         let sessionStore = session.makeDefaults()
         #expect(sessionStore.integer(forKey: CatalogWindowViewModel.gridColumnCountDefaultsKey) == 9)
+        #expect(sessionStore.string(forKey: CatalogWindowViewModel.foldedInfoSectionsDefaultsKey) == "camera,file")
+        #expect(sessionStore.string(forKey: CatalogWindowViewModel.foldedEditSectionsDefaultsKey) == "color")
         let saved = try #require(BrowserPlace.load(from: sessionStore, today: Self.today))
         #expect(saved.descriptor == model.queryDescriptor)
         if !restoresFirst {
@@ -536,6 +541,8 @@ struct BrowserPlaceTests {
         model.persistBrowserPlace()
 
         #expect(stored.integer(forKey: CatalogWindowViewModel.gridColumnCountDefaultsKey) == 9)
+        #expect(stored.string(forKey: CatalogWindowViewModel.foldedInfoSectionsDefaultsKey) == "camera")
+        #expect(stored.string(forKey: CatalogWindowViewModel.foldedEditSectionsDefaultsKey) == "light")
         #expect(BrowserPlace.load(from: stored, today: Self.today)?.descriptor.filter.kinds == [.video])
     }
 
@@ -553,6 +560,9 @@ struct BrowserPlaceTests {
         model.setSortOrder(.filenameAscending)
         model.setGridColumnCount(9)
         model.setStripTileEdge(150)
+        // A section folded in each inspector pane: the panes' folds are preferences too.
+        model.toggleInfoSectionFold(.camera)
+        model.toggleEditSectionFold(.light)
     }
 }
 

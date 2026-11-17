@@ -62,9 +62,11 @@ never a timer. It reads no screen and needs no permission, so a design pass (lig
 dark, grayscale) is agent-owned; a Metal-backed layer such as map tiles may be blank
 in it, which the run's log states. `#if DEBUG` as well.
 
-**A read-only tour reads the user's preferences and writes none.** The preference domain
-is the one owner of everything Otos persists in `UserDefaults` (the browser place it saves
-at quit, the grid's and strip's zoom, search languages, import and export settings), and a
+**A read-only tour reads the user's preferences and writes none of Otos's.** The preference
+domain is the one owner of everything Otos persists in `UserDefaults` (the browser place it
+saves at quit, the grid's and strip's zoom, the Info and Edit panes' folded sections, search
+languages, import and export settings): no view uses `@AppStorage` and no code but the domain
+names `UserDefaults.standard` (lint `preferences_outside_their_domain`). A
 tour session (`SmokeTour`, `OTOS_TOUR=1`) runs on `PreferencesDomain.sessionOnly(.standard)`,
 chosen once at the entry point by `PreferencesDomain.configured`. A session-only store reads
 the user's values until the session writes or removes a key, and holds every write in the
@@ -74,9 +76,17 @@ restore step leaves the stored place and settings byte for byte as they were. Th
 restore step still puts the window back, for the session and its timed return. Nothing a
 tour step does is persisted outside the domain: the inspector, search text and Compare
 are not stored, and a map position is stored only as a `mapArea` scope in the browser
-place. Two writers sit outside it and no tour step reaches them: AppKit's own window and
-split-view autosave, and the Info and Edit panes' folded sections (`@AppStorage`), which
-change only when the user folds a section.
+place. One writer sits outside the domain, and it is AppKit's, not Otos's: the main
+`Window` autosaves its frame (`NSWindow Frame main`) and the sidebar's split view its
+dividers (`NSSplitView Subview Frames main, SidebarNavigationSplitView`) into the user's
+domain whenever they move. The inspector is a split of its own with no autosave name, so
+showing or hiding it writes neither (a SwiftUI `Window` with a `NavigationSplitView` and an
+`.inspector`, probed on macOS 27: the two keys above and no other). No tour step moves the
+window, a divider or the sidebar, so a tour leaves those frames as the user left them; what
+is guaranteed byte for byte is every key Otos writes, and the frames only as long as no one
+moves the window while a tour runs. Rejected: clearing the window's and split view's
+autosave names in a tour session, an AppKit bridge reaching into SwiftUI's own windows for
+keys no tour step changes.
 
 The environment variable was renamed from its previous spelling rather than reused,
 so an exported value left over in a shell cannot silently keep the old

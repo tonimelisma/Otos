@@ -40,7 +40,7 @@ struct PhotoDescriptionRenderingTests {
             ))
             for scheme in [ColorScheme.light, .dark] {
                 // The inspector's own background, as the window draws it behind the pane.
-                let view = InfoPaneView(info: info, people: nil, search: { _ in })
+                let view = InfoPaneView(info: info, people: nil, search: { _ in }, folded: [], toggleFold: { _ in })
                     .frame(width: 300, height: 360)
                     .background(Color(nsColor: .windowBackgroundColor))
                     .environment(\.colorScheme, scheme)

@@ -693,7 +693,9 @@ struct InspectorColumn: View {
                     perform: viewModel.performMediaItemCommand,
                     hover: viewModel.outlineFaces
                 ),
-                search: viewModel.searchForLabel
+                search: viewModel.searchForLabel,
+                folded: viewModel.foldedInfoSections,
+                toggleFold: viewModel.toggleInfoSectionFold
             )
             .equatable()
         case .edit:
@@ -743,7 +745,9 @@ struct InspectorColumn: View {
                 pair: viewModel.shownPair.flatMap { pair in
                     viewModel.editTarget.map { (stack: pair, shown: $0.id) }
                 },
-                showPairMember: { viewModel.showPairMember($0) }
+                showPairMember: { viewModel.showPairMember($0) },
+                folded: viewModel.foldedEditSections,
+                toggleFold: viewModel.toggleEditSectionFold
             )
         }
     }

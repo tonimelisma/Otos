@@ -9,7 +9,8 @@ import SwiftUI
 ///
 /// Each section folds under its heading's disclosure triangle (`hig-validation.md` F-16).
 /// Which sections are folded is the person's own arrangement of the panel, kept across
-/// launches in `@AppStorage`; the crop tool's section is shown while the tool is on.
+/// launches by the window's view model (`toggleEditSectionFold`); the crop tool's section is
+/// shown while the tool is on.
 ///
 /// Under the photo's name sit the histogram (DES-100) and the edit as a whole: Show
 /// Original and Revert to Original. The adjustment the keyboard moves (, . = -) is marked
@@ -38,9 +39,9 @@ struct EditPanelView: View {
     /// nil for any other photo.
     var pair: (stack: PhotoStack, shown: MediaAssetID)?
     var showPairMember: @MainActor (MediaAssetID) -> Void = { _ in }
-
-    /// Section IDs the person folded, comma-separated.
-    @AppStorage("editPanel.foldedSections") private var foldedSections = ""
+    /// The sections the person folded, and the intent that folds or opens one.
+    let folded: Set<EditSection>
+    let toggleFold: @MainActor (EditSection) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -121,23 +122,17 @@ struct EditPanelView: View {
     }
 
     private func isOpen(_ section: EditSection) -> Bool {
-        (section == .crop && crop.isCropping) || !foldedSections.split(separator: ",").contains(Substring(section.id))
+        (section == .crop && crop.isCropping) || !folded.contains(section)
     }
 
-    private func toggleFold(_ section: EditSection) {
+    private func fold(_ section: EditSection) {
         // The crop tool's section stays open while the tool is on. Its heading is not
         // disabled for that: the section in use must not read as unavailable.
         guard !(section == .crop && crop.isCropping) else { return }
-        var folded = Set(foldedSections.split(separator: ",").map(String.init))
-        if folded.contains(section.id) {
-            folded.remove(section.id)
-        } else {
-            folded.insert(section.id)
-        }
         // DES-070 for content appearing; DES-075 under Reduce Motion. The content fades
         // in place either way, so nothing translates.
         withAnimation(.easeOut(duration: reduceMotion ? 0.15 : 0.25)) {
-            foldedSections = folded.sorted().joined(separator: ",")
+            toggleFold(section)
         }
     }
 
@@ -149,7 +144,7 @@ struct EditPanelView: View {
                 // down while open (Disclosure controls). Photos' section heading: the
                 // triangle, the section's symbol and its name, larger than a control's.
                 Button {
-                    toggleFold(section)
+                    fold(section)
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.right")

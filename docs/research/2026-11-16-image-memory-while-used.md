@@ -43,8 +43,22 @@ The probe ran 48 tiles with faces of 4 to 14 % of the preview's width:
 | thumbnail, then the cut drawn into its own mapped pixels | 24 MB | 10 MB | 2.62 s | 48 MB |
 | the cut drawn from the uncached image into its own mapped pixels (after) | 27 MB | 10 MB | 0.77 s | 9 MB |
 
-Drawing a cut of the uncached image decodes only the part of the HEIC the cut covers, so a
-tile costs a fraction of a decode and is 3.4 times faster.
+Drawing a cut of the uncached image is 3.4 times faster, and it leaves nothing held but the
+tile. What it costs while it runs depends on the format. That was first assumed to be "only the
+part of the HEIC the cut covers", and was then measured.
+`FaceTileDecodeMemoryTests` (`OTOS_SCALE_TEST=1`, alone, 2026-11-16) decodes one tile of a
+4 % face twelve times from the same 2560 × 1920 preview, sampling the footprint every
+millisecond. A control decodes the whole preview through the same sampler:
+
+| Preview | Peak above the decode's start, per tile | Whole preview decoded (control) |
+| --- | --- | --- |
+| HEIC, 8-bit Display P3 | 0–2 MB in ten decodes; 24 and 25 MB in two | 54–61 MB |
+| JPEG, quality 0.8 | 0–1 MB in all twelve | 49–52 MB |
+
+So a JPEG's tile never needs the whole decode. A HEIC's tile usually needs only the tiles of
+the image grid under the cut, but now and then Image I/O decodes a buffer the size of the
+whole preview for the length of the draw. Either way the peak is transient, at most one
+preview's worth per decode in flight, and none of it outlives the draw.
 
 The test process says the same. `ImageMemoryTests.thePeopleGalleryHoldsOnlyItsTiles` opens a
 gallery of 200 people in a 1200 × 800 window at a backing scale of 2, over 24 generated

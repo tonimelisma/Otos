@@ -152,43 +152,16 @@ struct WindowMemoryTests {
     }
 
     private static func census(_ projection: CatalogProjection) async throws -> Census {
-        let reads = await projection.reads
-        let changeLog = await projection.changeLog
-        let window = try #require(await projection.lastPublishedState)
+        let held = await projection.heldAssetIDs
         var census = Census()
         // Read before the census builds its own sets.
         census.footprint = ProcessResourceSample.current().footprintBytes
         census.identityTableEntries = MediaAssetIdentityTable.shared.count
-        func count(_ name: String, _ fill: (inout IDStorageCensus) -> Void) {
-            var structure = IDStorageCensus()
-            fill(&structure)
-            census.structures.append((name, structure))
-        }
-        count("window") { $0.add(window.mediaGrid.orderedAssetIDs) }
-        for slot in [CatalogProjectionReads.Slot.allMedia, .other] {
-            count("order.\(slot)") { $0.add(reads.orders[slot]?.answer.ids ?? []) }
-            for searched in [false, true] {
-                count("collapse.\(slot)\(searched ? ".searched" : "")") { structure in
-                    guard let collapse = reads.collapses.first(where: { $0.key.slot == slot && $0.key.searched == searched })?.value
-                    else {
-                        return
-                    }
-                    structure.add(collapse.ids)
-                    structure.add(collapse.result.ids)
-                }
-            }
-        }
-        count("stacks") { structure in
-            for stack in reads.stacks?.built.stacks.stacks.values ?? [:].values {
-                structure.add(stack.members)
-            }
-        }
-        count("changeLog") { structure in
-            for entry in changeLog.entries {
-                if case let .named(named) = entry.rows {
-                    structure.add(named.ids)
-                }
-            }
+        for structure in held.structures {
+            var counted = IDStorageCensus()
+            structure.arrays.forEach { counted.add($0) }
+            structure.sets.forEach { counted.add($0) }
+            census.structures.append((structure.name, counted))
         }
         var assets = Set<MediaAssetID>()
         for (_, structure) in census.structures {
