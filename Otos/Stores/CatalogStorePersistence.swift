@@ -93,6 +93,18 @@ extension CatalogStore {
             .count { LibraryRootKind(rawValue: $0)?.isMemberOfAllMedia == true }
     }
 
+    /// The catalog an in-memory location starts as: empty, at the current schema, migrated
+    /// once per process by the migrator, so it is always the schema a migrated file has. An
+    /// in-memory catalog is a test's or a preview's (ADR 0002) and has no history to migrate;
+    /// each open copies this one (SQLite's backup) rather than running every migration again.
+    /// A test host opens hundreds of them at once, and every migration pass of each ran on
+    /// the cooperative pool ahead of every test's next step.
+    nonisolated static let emptyCatalogAtCurrentSchema = Result<DatabaseQueue, any Error> {
+        let queue = try DatabaseQueue()
+        try migrator.migrate(queue)
+        return queue
+    }
+
     /// What one open's migrations cost, for `op=catalog.start`'s finish line.
     struct MigrationRun: Equatable {
         let applied: Int

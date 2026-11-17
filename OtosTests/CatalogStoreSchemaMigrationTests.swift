@@ -163,6 +163,32 @@ struct CatalogStoreSchemaMigrationTests {
         }
     }
 
+    /// A new catalog file opens through every migration from the baseline, and what it holds
+    /// then is what every other test's store starts from: the test support's current-schema
+    /// copy and the in-memory catalog's.
+    @Test func aNewCatalogOpensToTheSchemaTestStoresStartFrom() async throws {
+        let directory = try makeTestDirectory()
+        func schema(_ reader: some DatabaseReader) throws -> [String] {
+            try reader.read { db in
+                try String.fetchAll(db, sql: "SELECT type || ' ' || name || ' ' || IFNULL(sql, '') FROM sqlite_master ORDER BY name")
+                    + String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
+            }
+        }
+        let newURL = directory.appending(path: "new/catalog.sqlite")
+        let new = makeTestStore(location: .databaseFile(newURL), startingFrom: .nothing)
+        try await new.start(scansSavedLibraries: false)
+        await new.shutdown()
+        let copyURL = directory.appending(path: "copy/catalog.sqlite")
+        let copy = makeTestStore(location: .databaseFile(copyURL))
+        try await copy.start(scansSavedLibraries: false)
+        await copy.shutdown()
+
+        let opened = try schema(DatabaseQueue(path: newURL.path(percentEncoded: false)))
+        #expect(opened.count > CatalogStore.knownMigrationIdentifiers.count)
+        #expect(try schema(DatabaseQueue(path: copyURL.path(percentEncoded: false))) == opened)
+        #expect(try schema(CatalogStore.emptyCatalogAtCurrentSchema.get()) == opened)
+    }
+
     /// The open reports the libraries and accounts it holds, read before any migration runs,
     /// and finishes its reports when the catalog has opened (DES-121).
     @Test func theOpenReportsTheLibrariesItHoldsBeforeUpdating() async throws {

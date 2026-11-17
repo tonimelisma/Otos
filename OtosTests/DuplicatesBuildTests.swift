@@ -10,9 +10,10 @@ import Testing
 /// from nothing publishes.
 @Suite(.testScope, .serialized)
 struct DuplicatesBuildTests {
-    /// The generated library the benchmarks build from, at a size a test can afford: versions
-    /// of one photo, identical copies and unrelated stills.
-    private static let stills = 1200
+    /// The generated library the benchmarks build from, at the smallest size that holds what
+    /// the build is about: versions of one photo, identical copies (one in forty) and
+    /// unrelated stills.
+    private static let stills = 120
 
     private func build(
         _ library: BenchmarkLibrary,

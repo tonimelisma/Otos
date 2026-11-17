@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import GRDB
 @testable import OtosKit
 import Synchronization
 import Testing
@@ -133,10 +134,23 @@ func makeTestDirectory() throws -> URL {
     return url
 }
 
+/// What a store made on a database file that does not exist yet opens.
+enum TestCatalogStart {
+    /// A copy of the empty catalog at the current schema (`TestCatalogTemplate`): the open
+    /// has nothing to migrate.
+    case currentSchema
+    /// No file: the open creates it and runs every migration from the baseline, for a test
+    /// about that open.
+    case nothing
+}
+
 /// A `CatalogStore` the running test case owns: the `.testScope` trait shuts it down when
-/// the test ends. Its parameters are `CatalogStore.init`'s.
+/// the test ends. Its other parameters are `CatalogStore.init`'s. A `.databaseFile` location
+/// with no file yet starts as `start` says; an existing file is opened as it is, and an
+/// in-memory location starts at the current schema in the Store itself.
 func makeTestStore(
     location: CatalogStore.Location,
+    startingFrom start: TestCatalogStart = .currentSchema,
     scanner: CatalogScanner = .live,
     filesystemWatcher: CatalogFilesystemWatcher = .liveWithoutHistory(),
     scanCadence: Duration = .seconds(1),
@@ -148,6 +162,15 @@ func makeTestStore(
     stallThreshold: Duration = CatalogConnectionActivity.defaultStallThreshold,
     sourceLocation: SourceLocation = #_sourceLocation
 ) -> CatalogStore {
+    if case let .databaseFile(url) = location, start == .currentSchema,
+       !FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+    {
+        do {
+            try TestCatalogTemplate.copy(to: url)
+        } catch {
+            Issue.record(error, "the current-schema catalog could not be copied to \(url.path)", sourceLocation: sourceLocation)
+        }
+    }
     // swiftlint:disable:next test_store_owned_by_scope
     let store = CatalogStore(
         location: location,
@@ -167,6 +190,39 @@ func makeTestStore(
         Issue.record(TestScope.OutsideScope(made: "makeTestStore(...)"), sourceLocation: sourceLocation)
     }
     return store
+}
+
+/// One empty catalog file at the current schema per test process, which every store a test
+/// makes on a new database file starts as. A full run opened about 750 new catalogs (about 280
+/// of them files) within 15 s; each ran every migration from the baseline, about 100 ms of a
+/// cooperative thread, and no store's first read resumed until the burst was over. The
+/// template is built by the first test that needs one, with the migrator the Store runs and
+/// the pool it opens a file with (WAL), so it is always the schema a store would have
+/// migrated to; nothing about it is checked in. Each test gets its own copy, an APFS clone
+/// (`COPYFILE_CLONE`, a plain copy where cloning is not supported), and its store opens it
+/// with nothing to migrate. The folder is the process's (`TestTemporaryFolders`), removed at
+/// exit.
+nonisolated enum TestCatalogTemplate {
+    private static let file = Result<URL, any Error> {
+        let root = TestTemporaryFolders.makeRoot()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appending(path: "catalog.sqlite", directoryHint: .notDirectory)
+        let pool = try DatabasePool(path: url.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(pool)
+        // Everything in the main file, so the copy needs no log beside it.
+        try pool.writeWithoutTransaction { db in try db.checkpoint(.truncate) }
+        try pool.close()
+        return url
+    }
+
+    /// Copies the template to `url`, creating its folder.
+    static func copy(to url: URL) throws {
+        let template = try file.get()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard copyfile(template.path(percentEncoded: false), url.path(percentEncoded: false), nil, copyfile_flags_t(COPYFILE_CLONE)) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
 }
 
 /// The test process's own temporary folders: every root it named, removed again at exit,

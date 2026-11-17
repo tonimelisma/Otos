@@ -498,9 +498,10 @@ struct PeopleStoreTests {
     /// A People pass writes in pages: on a library whose every face is owed a guess and a
     /// likeness, no transaction of the pass changes more than `backgroundWritePage` rows, so a
     /// write the user is waiting on never queues behind all of it. The guard over every People
-    /// write: a pass writing in one transaction again fails it.
+    /// write: a pass writing in one transaction again fails it. One face more than a page is
+    /// the fewest that a pass writing in one transaction would put in one transaction too many.
     @Test func noPeopleWriteTransactionChangesMoreThanAPage() async throws {
-        let count = 3 * CatalogStore.backgroundWritePage
+        let count = CatalogStore.backgroundWritePage + 1
         let (library, databaseURL) = try await Self.lookalikes(count, in: makeTestDirectory())
         await library.store.shutdown()
         // A store opened on the catalog afresh counts only the pass's transactions.

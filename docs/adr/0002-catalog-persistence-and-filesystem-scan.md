@@ -152,7 +152,13 @@ recovery.
 
 Use `DatabasePool` with WAL for file-backed locations so Store-owned projection,
 grid-detail, and enrichment reads can run alongside serialized writes. Keep
-`.inMemory` test locations on `DatabaseQueue`, because GRDB pools require files.
+`.inMemory` test locations on `DatabaseQueue`, because GRDB pools require files. An
+in-memory catalog has no history: it starts as a copy (SQLite's backup) of one empty catalog
+the migrator brought to the current schema once in the process
+(`CatalogStore.emptyCatalogAtCurrentSchema`), so a test host that opens hundreds of them does
+not run every migration for each. A test's store on a new file starts the same way, from a
+file template the test support migrates once per process; tests about migrations open from
+nothing.
 File-backed pools use `maximumReaderCount = 8` (`CatalogStore.readerCount`), in two lanes
 (plan 0116 bet 5, `CatalogReadLanes`). A window read — a scope's order, counts and filter
 options, the visible tiles' details, the Info pane, a user's act — enters the pool at once.

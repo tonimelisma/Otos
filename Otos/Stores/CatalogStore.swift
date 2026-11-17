@@ -7560,8 +7560,10 @@ private extension CatalogStore {
                 openedFileURL: url
             )
         case .inMemory:
-            return try DatabaseOpenResult(
-                dbWriter: DatabaseQueue(),
+            let queue = try DatabaseQueue()
+            try Self.emptyCatalogAtCurrentSchema.get().backup(to: queue)
+            return DatabaseOpenResult(
+                dbWriter: queue,
                 storageKind: "memory",
                 openedFileURL: nil
             )
