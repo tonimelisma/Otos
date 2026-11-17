@@ -49,7 +49,7 @@ struct FilterOptionsKeyedReadTests {
         ]
         // A write that leaves a row where it was changes no fact and reads nothing, so the reads
         // owed are the writes that move a row's coordinate, read from the catalog beside the Store.
-        let queue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         defer { try? queue.close() }
         func coordinate(of id: MediaAssetID) async throws -> [Double?] {
             try await queue.read { db in

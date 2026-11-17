@@ -218,7 +218,7 @@ struct DerivedFileLifecycleTests {
             ]
         }
         let folder = try #require(store.derivedFolder)
-        let journal = try DatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
+        let journal = try makeTestDatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
         try await journal.write { db in
             try folder.journalRenames(moves, db: db)
         }

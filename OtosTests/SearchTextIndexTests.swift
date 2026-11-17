@@ -223,7 +223,7 @@ struct SearchTextIndexTests {
 
         /// The folded readings the index holds, read from the file.
         func indexedRows() throws -> Int {
-            try DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
                 let folded = try Int.fetchOne(db, sql: "SELECT count(*) FROM search_text_folded") ?? -1
                 let words = try Int.fetchOne(db, sql: "SELECT count(*) FROM search_text_word") ?? -1
                 #expect(words == folded, "every folded row has its words, and no words outlive theirs")

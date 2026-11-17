@@ -181,7 +181,7 @@ private struct EnrichmentClaimScanFixture {
 }
 
 private func enrichmentClaimedRowCount(databaseURL: URL) async throws -> Int {
-    try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+    try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
         try Int.fetchOne(
             db,
             sql: """

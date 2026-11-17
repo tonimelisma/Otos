@@ -17,7 +17,7 @@ struct OrderReadPhaseTests {
     @Test(.enabled(if: StallReproductionTests.ownerSize))
     func eachPhaseOfAllMediasOrderReadIsMeasured() async throws {
         let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 1)
-        let queue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         defer { try? queue.close() }
         var lines: [String] = []
         for round in 1 ... 3 {

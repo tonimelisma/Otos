@@ -192,6 +192,19 @@ func makeTestStore(
     return store
 }
 
+/// A test's own connection to a database file, which waits on another connection's lock on the
+/// file as the Store's connections do (`ConnectionLockWait`). GRDB's default for a queue is no
+/// wait at all, and a test's connection meets a store's: the last connection of a store the
+/// test released closes on its own time, holding the file's exclusive lock while it
+/// checkpoints the log and removes it, and a store's writer holds the log's write lock while
+/// it commits. `configuration`'s own busy mode is replaced.
+func makeTestDatabaseQueue(path: String, configuration: Configuration = Configuration()) throws -> DatabaseQueue {
+    var configuration = configuration
+    configuration.busyMode = ConnectionLockWait.busyMode()
+    // swiftlint:disable:next test_connection_waits_on_locks
+    return try DatabaseQueue(path: path, configuration: configuration)
+}
+
 /// One empty catalog file at the current schema per test process, which every store a test
 /// makes on a new database file starts as. A full run opened about 750 new catalogs (about 280
 /// of them files) within 15 s; each ran every migration from the baseline, about 100 ms of a

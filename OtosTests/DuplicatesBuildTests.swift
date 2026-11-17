@@ -101,7 +101,7 @@ struct DuplicatesBuildTests {
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
-        let dbQueue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         let plan = try await dbQueue.read { db in
             try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(SamePhotoSQL.candidatesSQL(rootCount: 3))", arguments: [6, 7, 15])
                 .map { $0["detail"] as String }

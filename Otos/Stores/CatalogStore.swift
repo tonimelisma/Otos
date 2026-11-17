@@ -735,7 +735,7 @@ actor CatalogStore {
     /// that hold every connection show in `waitMs` alone; a pool with no thread free at the
     /// caller's priority, or a busy Store, in `resumeMs`
     /// (`docs/research/2026-11-15-cooperative-pool-holders.md`). `lockMs` is the part of a
-    /// read's `waitMs` spent on SQLite's locks once it had a connection (`ReaderLockWait`);
+    /// read's `waitMs` spent on SQLite's locks once it had a connection (`ConnectionLockWait`);
     /// the rest of `waitMs` is the wait for the connection. Writes do not log it: the writer
     /// never waits on a lock, it fails.
     private struct DatabaseTimedValue<Value: Sendable> {
@@ -7373,7 +7373,7 @@ private extension CatalogStore {
         let start = ContinuousClock.now
         let (timed, left) = try await laneReader.readFreeingConnection(operation: operation, askedAt: askedAt) { db in
             let entered = ContinuousClock.now
-            let lockMs = ReaderLockWait.takeWaitMs(from: db, askedAt: start)
+            let lockMs = ConnectionLockWait.takeWaitMs(from: db, askedAt: start)
             let value = try body(db)
             let left = ContinuousClock.now
             return (

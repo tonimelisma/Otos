@@ -184,11 +184,22 @@ not a cache: every read is a SQLite read of the current WAL snapshot. A read rea
 connection through the Store actor, so the Store keeps O(rows) work off itself: an order read turns
 its rows into the window's IDs inside the read, on the connection's queue, because at
 166,000 rows that mapping held the Store for half a second per read and every visible
-tile's read queued behind it (`docs/research/2026-11-15-shared-reader-waits.md`). Readers
-wait on SQLite's locks through a busy handler of the Store's own (`ReaderLockWait`, with
-GRDB's ten-second limit), so a read's log line tells the wait for a lock (`lockMs`) from
-the wait for a connection, and a detail read's line carries the wait for the Store itself
-(`storeMs`). Every connection reports its transaction, first statement and
+tile's read queued behind it (`docs/research/2026-11-15-shared-reader-waits.md`). Every
+connection, the writer as much as each reader, waits on SQLite's locks through a busy
+handler of the Store's own (`ConnectionLockWait`, with GRDB's ten-second reader limit and
+SQLite's own back-off), installed before the connection's first statement, and each wait
+that begins writes `op=catalog.lock.wait` with the connection's name. A WAL connection
+meets another connection's lock only rarely, and never one Otos is told the end of: the
+last connection to a WAL file holds the file's exclusive lock while it closes, to checkpoint
+the log and remove it (another process's `sqlite3 -readonly`, or a test's released store),
+and a recovery of the log's index holds its locks while it runs. The first statement of an
+open reads the schema, so it takes the file's shared lock; with GRDB's writer default, no
+busy handler, a writer opened in that window failed the open at `PRAGMA synchronous` with
+`SQLITE_BUSY` instead of waiting milliseconds for the close. Rejected: a wait on the writer
+only (two mechanisms for one question), and leaving the writer to fail (a launch that meets
+a closing connection then fails to open its catalog). A read's log line tells the wait for a
+lock (`lockMs`) from the wait for a connection, and a detail read's line carries the wait
+for the Store itself (`storeMs`). Every connection reports its transaction, first statement and
 the Store's name for it to `CatalogConnectionActivity` through its SQLite trace, and a read
 that waited a second or more writes `op=catalog.store.stall` as its body starts: its wait
 split at the instant its connection began it, and, on `op=catalog.store.stall.holders`

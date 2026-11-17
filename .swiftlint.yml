@@ -105,6 +105,14 @@ custom_rules:
     message: "A store a test constructs itself is shut down only if the test remembers to, and a forgotten one leaves its reconcile loop and integrity scheduler idling in the test host for the rest of the run. Make it with makeTestStore(...) inside a .testScope suite, which shuts it down when the test ends."
     severity: error
 
+  test_connection_waits_on_locks:
+    name: "A test's own database connection waits on SQLite's locks"
+    included: 'OtosTests/.*\.swift'
+    regex: '\bDatabaseQueue\(\s*path:'
+    match_kinds: [identifier]
+    message: "GRDB's queue fails a statement at once with SQLITE_BUSY when another connection holds a lock on the file, and a test's connection meets a store's: a released store's last connection holds the file's exclusive lock while it closes. Open it with makeTestDatabaseQueue(path:configuration:), which waits as the Store's connections do (ConnectionLockWait)."
+    severity: error
+
   unowned_view_model_task:
     name: "View-model work is owned by a named task or an ordered stream"
     included: 'Otos/ViewModels/.*\.swift'

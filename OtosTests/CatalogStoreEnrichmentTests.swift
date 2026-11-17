@@ -217,7 +217,7 @@ struct CatalogStoreEnrichmentTests {
             ),
         ])
 
-        let db = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let db = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try await db.write { db in
             try db.execute(
                 sql: "UPDATE media_asset SET content_sha1 = ? WHERE relative_path = ?",
@@ -654,7 +654,7 @@ struct CatalogStoreEnrichmentTests {
     /// A catalog write SQLite refuses because the disk is full (`SQLITE_FULL`) is typed as
     /// out of space where the catalog writes, so an import stops on it (ADR 0027).
     @Test func aCatalogWriteTheDiskCannotHoldIsTypedAsOutOfSpace() throws {
-        let queue = try DatabaseQueue(path: makeTestDirectory().appending(path: "full.sqlite").path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: makeTestDirectory().appending(path: "full.sqlite").path(percentEncoded: false))
         try queue.write { db in
             try db.execute(sql: "CREATE TABLE t (b BLOB)")
             try db.execute(sql: "PRAGMA max_page_count = 8")
@@ -822,7 +822,7 @@ private func persistedMetadataRow(
     rootPath: LibraryRootPath,
     relativePath: MediaRelativePath
 ) async throws -> PersistedMetadataRow {
-    try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+    try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
         let fetchedRootID = try Int64.fetchOne(
             db,
             sql: "SELECT id FROM library_root WHERE path = ?",

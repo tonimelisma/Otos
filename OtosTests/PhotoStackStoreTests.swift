@@ -138,7 +138,7 @@ struct PhotoStackStoreTests {
                 )
             })
             let batch = ImportBatchID(unixMilliseconds: 1_800_000_000_000)
-            let stamp = try DatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
+            let stamp = try makeTestDatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
             try await stamp.write { db in
                 try db.execute(
                     sql: "UPDATE media_asset SET import_batch_unix_ms = ? WHERE relative_path IN ('a/DSC1.JPG', 'a/DSC2.JPG', 'c/IMG_1.HEIC')",
@@ -186,7 +186,7 @@ struct PhotoStackStoreTests {
             })
             let first = ImportBatchID(unixMilliseconds: 1_800_000_000_000)
             let second = ImportBatchID(unixMilliseconds: 1_800_000_001_000)
-            let stamp = try DatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
+            let stamp = try makeTestDatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
             try await stamp.write { db in
                 try db.execute(
                     sql: """
@@ -226,7 +226,7 @@ struct PhotoStackStoreTests {
         let files = (0 ..< 6).map { "a/IMG_\($0).JPG" }
         try await withLibrary(files) { library in
             let batches = (0 ..< 6).map { ImportBatchID(unixMilliseconds: 1_800_000_000_000 + Int64($0) * 1000) }
-            let stamp = try DatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
+            let stamp = try makeTestDatabaseQueue(path: library.databaseURL.path(percentEncoded: false))
             try await stamp.write { db in
                 for (index, batch) in batches.enumerated() {
                     try db.execute(

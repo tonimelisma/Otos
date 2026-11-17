@@ -55,6 +55,14 @@ extension CatalogStore {
     /// (`CatalogConnectionActivity`). The writer caps the WAL file at `walByteLimit`: SQLite
     /// truncates the file to it at the first commit after it restarts the log
     /// (`journal_size_limit`), which a passive checkpoint makes possible (`boundWAL`).
+    ///
+    /// Every connection, the writer as much as each reader, waits on a lock another connection
+    /// holds on the file (`ConnectionLockWait`), installed before its first statement. The
+    /// first pragma reads the schema, so it takes the file's shared lock, which another
+    /// connection's exclusive lock refuses: the last connection to a WAL file holds that lock
+    /// while it closes, to checkpoint the log and remove it, and so does a WAL recovery. With
+    /// GRDB's writer default (no busy handler) an open in that window failed at
+    /// `PRAGMA synchronous` with `SQLITE_BUSY` (ADR 0002).
     static func fileBackedDatabaseConfiguration(
         activity: CatalogConnectionActivity,
         pool: CatalogConnectionActivity.Pool = .main,
@@ -63,12 +71,11 @@ extension CatalogStore {
         var configuration = Configuration()
         configuration.maximumReaderCount = CatalogStore.readerCount
         configuration.prepareDatabase { db in
+            activity.waitOnLocks(of: db, pool: pool)
             try db.execute(sql: "PRAGMA synchronous = NORMAL")
             try db.execute(sql: "PRAGMA cache_size = -32768")
             try db.execute(sql: "PRAGMA mmap_size = 268435456")
-            if db.configuration.readonly {
-                ReaderLockWait.install(on: db)
-            } else {
+            if !db.configuration.readonly {
                 try db.execute(sql: "PRAGMA journal_size_limit = \(walByteLimit)")
             }
             activity.attach(to: db, pool: pool)
@@ -2609,7 +2616,7 @@ extension DatabaseReader {
                                 operation: operation,
                                 askedAt: askedAt,
                                 calledAt: called,
-                                lockMs: ReaderLockWait.waitMs(from: db, askedAt: called)
+                                lockMs: ConnectionLockWait.waitMs(from: db, askedAt: called)
                             )
                         }
                         do {
@@ -2693,7 +2700,7 @@ private final nonisolated class ReadInterruption: Sendable {
 
     func end(_ db: Database) {
         sqlite3_progress_handler(db.sqliteConnection, 0, nil, nil)
-        ReaderLockWait.clear(on: db)
+        ConnectionLockWait.clear(on: db)
         state.withLock { $0.connection = nil }
     }
 
@@ -2707,23 +2714,29 @@ private final nonisolated class ReadInterruption: Sendable {
     }
 }
 
-// MARK: - Time a reader waits on SQLite's locks
+// MARK: - Waits on SQLite's locks
 
-/// How long a reader connection's read waited on SQLite's locks before its body ran, kept
-/// apart from the wait for the connection itself: a store query's `waitMs` covers both, and
-/// visible tiles' reads waited seconds in it on the installed app while every SQLite lock a
-/// probe could hold delayed them by milliseconds
-/// (`docs/research/2026-11-15-shared-reader-waits.md`). A WAL reader meets a lock only in
-/// SQLite's rare cases (another connection's exclusive lock, a recovery), so the wait is
-/// SQLite's busy handler: this one replaces GRDB's ten-second timeout for readers with the
-/// same limit and notes when the read first found the database busy. The read's body takes
-/// that instant (`takeWaitMs`) and counts it only when it came after the read was asked, and
-/// every read that frees its connection clears it as it ends, so a wait is never charged to
-/// a later read.
-final nonisolated class ReaderLockWait: Sendable {
-    private static let name = "net.melisma.Otos.readerLockWait"
+/// A catalog connection's wait on a lock another connection holds on the file: SQLite's busy
+/// handler, on every connection the Store opens, installed before its first statement
+/// (`fileBackedDatabaseConfiguration`). A WAL connection meets a lock only in SQLite's rare
+/// cases: another connection's exclusive lock on the file (the last connection to a WAL file
+/// holds it while it closes, to checkpoint the log and remove it) or a recovery of the log's
+/// index. Neither tells Otos when it ends, so the wait asks again on SQLite's own back-off
+/// until the holder lets go, with GRDB's reader limit. GRDB's writer default is no handler at
+/// all, and a writer opened in that window failed the open at its first pragma (ADR 0002).
+///
+/// A reader's wait is also kept apart from the wait for the connection itself: a store
+/// query's `waitMs` covers both, and visible tiles' reads waited seconds in it on the
+/// installed app while every SQLite lock a probe could hold delayed them by milliseconds
+/// (`docs/research/2026-11-15-shared-reader-waits.md`). The wait notes when the read first
+/// found the database busy; the read's body takes that instant (`takeWaitMs`) and counts it
+/// only when it came after the read was asked, and every read that frees its connection
+/// clears it as it ends, so a wait is never charged to a later read. Each wait reports as it
+/// begins (`began`): `op=catalog.lock.wait` for the Store's connections.
+final nonisolated class ConnectionLockWait: Sendable {
+    private static let name = "net.melisma.Otos.connectionLockWait"
     /// GRDB's reader default (`readonlyBusyMode = .timeout(10)`): a holder that never lets
-    /// go fails the read rather than holding it forever.
+    /// go fails the statement rather than holding it forever.
     private static let limit: Duration = .seconds(10)
     /// SQLite's own busy-timeout steps, in milliseconds.
     private static let delays: [Int32] = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100]
@@ -2736,19 +2749,34 @@ final nonisolated class ReaderLockWait: Sendable {
     }
 
     private let waits = Mutex(Waits())
+    private let began: @Sendable () -> Void
 
-    static func install(on db: Database) {
-        let wait = ReaderLockWait()
+    private init(began: @escaping @Sendable () -> Void) {
+        self.began = began
+    }
+
+    /// Installs the wait on `db`; `began` runs as each wait starts, on the connection's queue,
+    /// before its first pause.
+    static func install(on db: Database, began: @escaping @Sendable () -> Void) {
+        let wait = ConnectionLockWait(began: began)
         let context = Unmanaged.passRetained(wait).toOpaque()
         sqlite3_set_clientdata(db.sqliteConnection, name, context) { context in
-            context.map { Unmanaged<ReaderLockWait>.fromOpaque($0).release() }
+            context.map { Unmanaged<ConnectionLockWait>.fromOpaque($0).release() }
         }
         sqlite3_busy_handler(db.sqliteConnection, { context, tries in
             guard let context else {
                 return 0
             }
-            return Unmanaged<ReaderLockWait>.fromOpaque(context).takeUnretainedValue().busy(tries: tries) ? 1 : 0
+            return Unmanaged<ConnectionLockWait>.fromOpaque(context).takeUnretainedValue().busy(tries: tries) ? 1 : 0
         }, context)
+    }
+
+    /// The same wait as a GRDB busy mode, for a connection whose configuration is not the
+    /// Store's (a test's own connection to a catalog file). It holds one wait, so a
+    /// configuration given it opens one connection.
+    static func busyMode() -> Database.BusyMode {
+        let wait = ConnectionLockWait {}
+        return .callback { tries in wait.busy(tries: Int32(clamping: tries)) }
     }
 
     /// The milliseconds from the read's first busy answer until now; 0 when the read, asked
@@ -2772,8 +2800,8 @@ final nonisolated class ReaderLockWait: Sendable {
         attached(to: db)?.waits.withLock { $0 = Waits() }
     }
 
-    private static func attached(to db: Database) -> ReaderLockWait? {
-        sqlite3_get_clientdata(db.sqliteConnection, name).map { Unmanaged<ReaderLockWait>.fromOpaque($0).takeUnretainedValue() }
+    private static func attached(to db: Database) -> ConnectionLockWait? {
+        sqlite3_get_clientdata(db.sqliteConnection, name).map { Unmanaged<ConnectionLockWait>.fromOpaque($0).takeUnretainedValue() }
     }
 
     /// SQLite calls this each time it finds the database busy, `tries` counting from 0 within
@@ -2789,8 +2817,11 @@ final nonisolated class ReaderLockWait: Sendable {
             }
             return waits.waitStarted ?? now
         }
+        if tries == 0 {
+            began()
+        }
         let delay = Self.delays[min(Int(tries), Self.delays.count - 1)]
-        // time: deadline — the holder is outside this read and may never let go.
+        // time: deadline — the holder is another connection, which may never let go.
         guard now - started + .milliseconds(Int(delay)) <= Self.limit else {
             return false
         }
@@ -2978,16 +3009,34 @@ final nonisolated class CatalogConnectionActivity: Sendable {
     fileprivate let stallThreshold: Duration
     fileprivate let keptTransactionMinimum: Duration
     private let reportStall: @Sendable (Stall) -> Void
+    private let reportLockWait: @Sendable (_ connection: String) -> Void
 
     /// `report` receives each stall; by default it writes `op=catalog.store.stall`.
+    /// `reportLockWait` receives the name of each connection that begins to wait on another
+    /// connection's lock on the file; by default it writes `op=catalog.lock.wait`.
     init(
         stallThreshold: Duration = CatalogConnectionActivity.defaultStallThreshold,
         keptTransactionMinimum: Duration = CatalogConnectionActivity.defaultKeptTransactionMinimum,
-        report: @escaping @Sendable (Stall) -> Void = CatalogConnectionActivity.log
+        report: @escaping @Sendable (Stall) -> Void = CatalogConnectionActivity.log,
+        reportLockWait: @escaping @Sendable (_ connection: String) -> Void = CatalogConnectionActivity.logLockWait
     ) {
         self.stallThreshold = stallThreshold
         self.keptTransactionMinimum = keptTransactionMinimum
         reportStall = report
+        self.reportLockWait = reportLockWait
+    }
+
+    /// Installs the connection's wait on SQLite's locks (`ConnectionLockWait`), reporting each
+    /// wait it begins under the connection's name. Called first as each connection opens,
+    /// before any statement that takes a lock.
+    func waitOnLocks(of db: Database, pool: Pool) {
+        let name = Self.connectionName(db, pool: pool)
+        let report = reportLockWait
+        ConnectionLockWait.install(on: db) { report(name) }
+    }
+
+    @Sendable static func logLockWait(_ connection: String) {
+        OtosLog.persistence.noticeOperation("catalog.lock.wait", phase: "began", fields: ["connection": connection])
     }
 
     /// Attaches a record to `db` and traces its statements. Called once per connection as it

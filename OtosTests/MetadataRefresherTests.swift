@@ -88,7 +88,7 @@ struct MetadataRefresherTests {
         let creator = makeTestStore(location: .databaseFile(databaseURL))
         try await creator.start(scansSavedLibraries: false)
         await creator.shutdown()
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/Volumes/Card', 'removableVolume')")
             struct Fixture {
@@ -255,7 +255,7 @@ struct MetadataRefresherTests {
     }
 
     private func revisions(_ databaseURL: URL) async throws -> [String: (revision: Int?, family: String?)] {
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             var result: [String: (revision: Int?, family: String?)] = [:]
             for row in try GRDB.Row.fetchAll(db, sql: "SELECT relative_path, extraction_revision, family FROM asset_metadata") {
                 result[row["relative_path"]] = (row["extraction_revision"], row["family"])

@@ -80,7 +80,7 @@ struct EnrichmentClaimIndexContractTests {
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         return dbQueue
     }

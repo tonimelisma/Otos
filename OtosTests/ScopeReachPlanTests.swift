@@ -191,7 +191,7 @@ struct ScopeReachPlanTests {
     /// otherwise.
     private static func catalog(_ shape: @escaping @Sendable (Database, Int64) throws -> Void) async throws -> DatabaseQueue {
         let url = try makeTestDirectory().appending(path: "catalog.sqlite")
-        let dbQueue = try DatabaseQueue(path: url.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: url.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         try await dbQueue.write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path) VALUES (1, '/tmp/otos-reach-a/'), (2, '/tmp/otos-reach-b/')")

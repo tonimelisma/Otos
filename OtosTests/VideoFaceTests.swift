@@ -511,7 +511,7 @@ extension VideoFaceTests {
     @Test func aVideoOwedOnlyItsFacesIsNotClaimedWhileTheModelIsMissing() async throws {
         let directory = try makeTestDirectory()
         let library = try await VideoLibrary.make(in: directory)
-        let counter = try DatabaseQueue(path: directory.appending(path: "db/catalog.sqlite").path(percentEncoded: false))
+        let counter = try makeTestDatabaseQueue(path: directory.appending(path: "db/catalog.sqlite").path(percentEncoded: false))
         try await counter.write { db in
             // Every product but the faces is current.
             try db.execute(sql: """

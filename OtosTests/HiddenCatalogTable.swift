@@ -24,7 +24,7 @@ struct HiddenCatalogTable {
     }
 
     private func rename(from source: String, to destination: String) async throws {
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             try db.execute(sql: "ALTER TABLE \(source) RENAME TO \(destination)")
         }
     }

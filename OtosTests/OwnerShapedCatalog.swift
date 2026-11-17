@@ -145,7 +145,7 @@ struct OwnerShapedCatalog {
         configuration.prepareDatabase { db in
             try db.execute(sql: "PRAGMA synchronous = OFF")
         }
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false), configuration: configuration)
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false), configuration: configuration)
         try CatalogStore.migrator.migrate(queue)
         var shape = Shape()
         try queue.write { db in

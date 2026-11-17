@@ -76,7 +76,7 @@ struct PhotoDescriptionTests {
         try await library.readFaces([library.result(for: "a.jpg", faces: [FaceEnrichmentTests.face(seed: 1)])])
         try await Self.readText(["SAUNA"], in: library.store)
         try await Self.readLabels(["lake"], in: library.store)
-        let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
+        let database = try makeTestDatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
         let rootID = try await database.read { db in
             try #require(try Int64.fetchOne(db, sql: "SELECT library_root_id FROM media_asset WHERE relative_path = 'a.jpg'"))
         }

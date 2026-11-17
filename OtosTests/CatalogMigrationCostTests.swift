@@ -33,7 +33,7 @@ struct CatalogMigrationCostTests {
         let directory = try makeTestDirectory()
         let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
         let path = catalog.databaseURL.path(percentEncoded: false)
-        let queue = try DatabaseQueue(path: path)
+        let queue = try makeTestDatabaseQueue(path: path)
         try queue.writeWithoutTransaction { db in
             // One photo in a hundred Liked, as a choices filter finds them.
             try db.execute(sql: "UPDATE media_asset SET media_choice = 'liked' WHERE byte_size % 100 = 0")
@@ -64,7 +64,7 @@ struct CatalogMigrationCostTests {
         try pool.close()
         #expect(run.applied == 1)
         // What v75's table takes on the disk: one empty table.
-        let indexBytes = try DatabaseQueue(path: path).read { db in
+        let indexBytes = try makeTestDatabaseQueue(path: path).read { db in
             try Row.fetchAll(db, sql: """
             SELECT name, sum(pgsize) AS bytes FROM dbstat
             WHERE name LIKE '%library_root_change_journal%' GROUP BY name ORDER BY name
@@ -126,7 +126,7 @@ enum WindowReadPages {
             try db.execute(sql: "PRAGMA mmap_size = 0")
             try db.execute(sql: "PRAGMA cache_size = -4000000")
         }
-        let queue = try DatabaseQueue(path: path, configuration: configuration)
+        let queue = try makeTestDatabaseQueue(path: path, configuration: configuration)
         defer { try? queue.close() }
         return try queue.read { db -> Read? in
             guard let query = try query(db) else { return nil }
@@ -212,7 +212,7 @@ enum WindowReadPages {
         for variant in variants {
             if let other = variant.other {
                 let kept = try reads(variant.reads, path: path)
-                let queue = try DatabaseQueue(path: path)
+                let queue = try makeTestDatabaseQueue(path: path)
                 let original = try queue.read { db in
                     try String.fetchOne(db, sql: "SELECT sql FROM sqlite_master WHERE name = ?", arguments: [variant.index]) ?? ""
                 }
@@ -222,7 +222,7 @@ enum WindowReadPages {
                 }
                 try queue.close()
                 let otherReads = try reads(variant.reads, path: path)
-                let restore = try DatabaseQueue(path: path)
+                let restore = try makeTestDatabaseQueue(path: path)
                 try restore.write { db in
                     try db.execute(sql: "DROP INDEX \(variant.index)")
                     try db.execute(sql: original)
@@ -312,7 +312,7 @@ enum WindowReadPages {
         }
         var configuration = Configuration()
         configuration.readonly = true
-        let queue = try DatabaseQueue(path: path, configuration: configuration)
+        let queue = try makeTestDatabaseQueue(path: path, configuration: configuration)
         defer { try? queue.close() }
         let trees = try queue.read { db in
             try Row.fetchAll(db, sql: """
@@ -328,7 +328,7 @@ enum WindowReadPages {
     /// `media_asset` made again without a row id, its indexes as they are: the layout v71
     /// compares itself with. Its triggers name the row id and are left out; only reads run.
     static func rebuildWithoutRowID(path: String) throws {
-        let queue = try DatabaseQueue(path: path)
+        let queue = try makeTestDatabaseQueue(path: path)
         defer { try? queue.close() }
         try queue.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA foreign_keys = OFF")

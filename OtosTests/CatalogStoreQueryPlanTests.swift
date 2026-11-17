@@ -13,7 +13,7 @@ struct CatalogStoreQueryPlanTests {
             withIntermediateDirectories: true
         )
 
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let rootID = try await insertDescriptorFixture(dbQueue)
         let descriptor = CatalogQueryDescriptor(
@@ -57,7 +57,7 @@ struct CatalogStoreQueryPlanTests {
             withIntermediateDirectories: true
         )
 
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let rootOrderQuery = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
@@ -111,7 +111,7 @@ struct CatalogStoreQueryPlanTests {
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let roots = [rootID1, rootID2]
@@ -177,7 +177,7 @@ struct CatalogStoreQueryPlanTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let roots = [rootID1, rootID2]
@@ -258,7 +258,7 @@ struct CatalogStoreQueryPlanTests {
             withIntermediateDirectories: true
         )
 
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         try await dbQueue.write { db in
@@ -329,7 +329,7 @@ struct CatalogStoreQueryPlanTests {
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let coordinates: [(Int64, String, PlaceCoordinate)] = [
@@ -398,7 +398,7 @@ struct CatalogStoreQueryPlanTests {
             withIntermediateDirectories: true
         )
 
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 3, claimedCount: 0)
 
@@ -440,7 +440,7 @@ struct CatalogStoreQueryPlanTests {
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let query = try #require(PhotoStackSQL.candidateQuery(rootIDs: [rootID1, rootID2]))
@@ -477,7 +477,7 @@ struct CatalogStoreQueryPlanTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let tested: Set = ["pending_trash_batch_unix_ms", "awaiting_presence", "hidden_by_source", "best_kind", "content_identifier"]
@@ -538,7 +538,7 @@ struct CatalogStoreQueryPlanTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, _) = try await insertPlanFixture(dbQueue)
         let plans = try await dbQueue.read { db in
@@ -614,7 +614,7 @@ struct CatalogStoreQueryPlanTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let roots = [rootID1, rootID2]
@@ -679,7 +679,7 @@ struct CatalogStoreQueryPlanTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let reaches: [DuplicatesReach] = [.withinEachLibrary, .acrossLibraries]
@@ -718,7 +718,7 @@ struct CatalogStoreQueryPlanTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let person = PersonID(rawValue: 1)
@@ -759,7 +759,7 @@ struct CatalogStoreQueryPlanTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let plans = try await dbQueue.read { db in
@@ -791,7 +791,7 @@ struct CatalogStoreQueryPlanTests {
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let plan = try await dbQueue.read { db in
             try explainPlan(db, sql: "SELECT 1 FROM media_asset WHERE 1\(OnThisDayPicks.exclusionSQL)")
@@ -808,7 +808,7 @@ struct CatalogStoreQueryPlanTests {
     /// question of one photo finds the asset and its search row by their keys.
     @Test func onThisDaysCurrentLabelsAreSoughtByKeyOnAnOwnerShapedCatalog() async throws {
         let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
-        let dbQueue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         let match = try #require(AnniversaryMatch.years(for: CalendarDay(year: 2026, month: 11, day: 16)))
         let (read, write) = try await dbQueue.read { db in
             let scope = CatalogScopePredicate(rootIDs: [6, 7, 15])
@@ -848,7 +848,7 @@ struct CatalogStoreQueryPlanTests {
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let match = try #require(AnniversaryMatch.years(for: CalendarDay(year: 2026, month: 11, day: 9)))
         let plans = try await dbQueue.read { db in
@@ -876,7 +876,7 @@ struct CatalogStoreQueryPlanTests {
             withIntermediateDirectories: true
         )
 
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let rootMetadataOnlyQuery = try #require(EnrichmentClaimGateway.enrichmentClaimQuery(
@@ -911,7 +911,7 @@ struct CatalogStoreQueryPlanTests {
             withIntermediateDirectories: true
         )
 
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let rootID = try await dbQueue.write { db in
             try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-nohash"])
@@ -1141,7 +1141,7 @@ extension CatalogStoreQueryPlanTests {
     /// primary key in path order with no sort.
     @Test func mirrorReadsSeekTheirIndexes() async throws {
         let temp = try makeTestDirectory()
-        let dbQueue = try DatabaseQueue(path: temp.appending(path: "catalog.sqlite").path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: temp.appending(path: "catalog.sqlite").path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         try await dbQueue.read { db in
             let candidates = try explainPlan(db, sql: MirrorGateway.candidatesSQL, arguments: [2, 1])
@@ -1191,7 +1191,7 @@ extension CatalogStoreQueryPlanTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let (candidates, unchecked) = try await dbQueue.read { db in

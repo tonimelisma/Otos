@@ -289,7 +289,7 @@ struct PhotoCopiesTests {
 
     private static func catalog(_ shape: @escaping @Sendable (Database) throws -> Void) async throws -> DatabaseQueue {
         let url = try makeTestDirectory().appending(path: "catalog.sqlite")
-        let dbQueue = try DatabaseQueue(path: url.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: url.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         try await dbQueue.write { db in
             try db.execute(sql: """

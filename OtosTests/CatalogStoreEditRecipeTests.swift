@@ -43,7 +43,7 @@ struct CatalogStoreEditRecipeTests {
         let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             try db.execute(sql: """
             INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, name_sort_key,

@@ -34,6 +34,50 @@ struct CatalogConnectionActivityTests {
         return (pool, stalls)
     }
 
+    /// What an open on a held file reports, in the order it happens.
+    private enum OpenEvent: Sendable {
+        case waiting(connection: String)
+        case opened(Result<DatabasePool, any Error>)
+    }
+
+    /// A catalog opened while another connection holds the file's exclusive lock (the last
+    /// connection to a WAL file holds it while it closes, to checkpoint and remove the log)
+    /// waits for the lock, writer first, and opens once it is let go, rather than failing the
+    /// open with `SQLITE_BUSY` at its first pragma. The holder lets go when the writer reports
+    /// that it waits, not after a time.
+    @Test func aCatalogOpenedWhileAnotherConnectionHoldsTheFileWaitsForIt() async throws {
+        let url = try makeTestDirectory().appending(path: "catalog.sqlite")
+        try TestCatalogTemplate.copy(to: url)
+        var holding = Configuration()
+        holding.prepareDatabase { db in try db.execute(sql: "PRAGMA locking_mode = EXCLUSIVE") }
+        let holder = try makeTestDatabaseQueue(path: url.path(percentEncoded: false), configuration: holding)
+        // A write in exclusive locking mode takes the file's exclusive lock and keeps it.
+        try await holder.write { db in try db.execute(sql: "PRAGMA user_version = 1") }
+
+        let (events, event) = AsyncStream<OpenEvent>.makeStream()
+        let activity = CatalogConnectionActivity(reportLockWait: { event.yield(.waiting(connection: $0)) })
+        let configuration = CatalogStore.fileBackedDatabaseConfiguration(activity: activity)
+        // The open blocks its thread for as long as it waits, so it runs on one of its own.
+        DispatchQueue.global().async {
+            event.yield(.opened(Result { try DatabasePool(path: url.path(percentEncoded: false), configuration: configuration) }))
+        }
+        var iterator = events.makeAsyncIterator()
+        guard case let .waiting(connection) = await iterator.next() else {
+            Issue.record("the open finished before it waited on the held lock")
+            try holder.close()
+            return
+        }
+        #expect(connection == "main.writer")
+        try holder.close()
+        guard case let .opened(opened) = await iterator.next() else {
+            Issue.record("the open reported a second wait instead of opening")
+            return
+        }
+        let pool = try opened.get()
+        #expect(try await pool.read { db in try Int.fetchOne(db, sql: "PRAGMA synchronous") } == 1)
+        try pool.close()
+    }
+
     /// With one reader, a read asked while another holds the connection reports, as its body
     /// starts, the holder's transaction as ended during its wait, named and with its statement.
     @Test func aReadThatWaitedNamesTheReadThatHeldItsConnection() async throws {
@@ -128,6 +172,10 @@ struct CatalogConnectionActivityTests {
                 try Int.fetchOne(db, sql: "SELECT count(*) FROM t") ?? 0
             }
         }
+        // A read resumes its caller from inside its transaction, and the connection's trace
+        // counts the transaction as it ends, after that. Closing the pool waits for every
+        // reader's queue, so each read's end is counted before the totals are read.
+        try pool.close()
 
         let use = activity.use()
         let reads = try #require(use.holds.first { $0.operation == "countRows" })
@@ -137,7 +185,6 @@ struct CatalogConnectionActivityTests {
         #expect(use.busy["main.reader"] == use.holds.filter { $0.role == "main.reader" }.reduce(.zero) { $0 + $1.total })
         #expect(CatalogConnectionActivity.role(of: "main.reader.7") == "main.reader")
         #expect(CatalogConnectionActivity.role(of: "main.writer") == "main.writer")
-        try pool.close()
     }
 
     /// A `CatalogWriter` names every transaction for its caller, a body's statements outside
@@ -204,6 +251,8 @@ struct CatalogConnectionActivityTests {
                 try Int.fetchOne(db, sql: "SELECT count(*) FROM t WHERE x LIKE '%9'") ?? 0
             }
         }
+        // The last read's end is counted after it resumes this caller (above).
+        try pool.close()
 
         let holds = activity.use().holds
         let cold = try #require(holds.first { $0.operation == "coldRead" })
@@ -211,7 +260,6 @@ struct CatalogConnectionActivityTests {
         #expect(cold.readBytes >= (pages / 2) * pageSize, "\(cold.readBytes) of \(pages * pageSize)")
         #expect(warm.readBytes < cold.readBytes / 10, "\(warm.readBytes)")
         #expect(activity.use().readBytes["main.reader"] == holds.filter { $0.role == "main.reader" }.reduce(0) { $0 + $1.readBytes })
-        try pool.close()
     }
 
     /// A stall's holders leave in parts the unified log keeps whole, none splitting a holder.

@@ -73,7 +73,7 @@ struct DecodeVerdictTests {
         let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             let rows: [(String, String?)] = [
                 ("earlierDecoder.jpg", "otos1-macos25A1"), ("thisDecoder.jpg", ImageRenderer.decoderIdentity),
@@ -104,7 +104,7 @@ struct DecodeVerdictTests {
         let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             let videos: [(String, String?)] = [
                 ("earlierReader.mov", "otos-video0-macos25A1"), ("thisReader.mov", VideoFaceReader.decoderIdentity),
@@ -125,7 +125,7 @@ struct DecodeVerdictTests {
         await store.shutdown()
 
         let rows = try await Self.stamps(databaseURL)
-        let faces = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let faces = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Dictionary(uniqueKeysWithValues: Row.fetchAll(db, sql: "SELECT relative_path, faces_source_size FROM media_asset").map { row in
                 (row["relative_path"] as String, (row["faces_source_size"] as Int64?) != nil)
             })
@@ -151,7 +151,7 @@ struct DecodeVerdictTests {
         let fresh = makeTestStore(location: .databaseFile(databaseURL))
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             // Back to before v25, and v44, which indexes its column.
             try db.execute(sql: "DROP INDEX idx_media_asset_undecodable")
             try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN undecodable_by")
@@ -206,7 +206,7 @@ struct DecodeVerdictTests {
     }
 
     private static func stamps(_ databaseURL: URL) async throws -> [String: Stamps] {
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Dictionary(uniqueKeysWithValues: Row.fetchAll(
                 db,
                 sql: "SELECT relative_path, rendered_source_size, undecodable_by FROM media_asset"

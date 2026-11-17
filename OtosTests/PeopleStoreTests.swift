@@ -159,7 +159,7 @@ struct PeopleStoreTests {
             _ = try await library.store.perform(.notAFace([FaceID(asset: library.id(name), index: 0)]))
             _ = try await library.store.perform(.moveToNewPerson([FaceID(asset: library.id(name), index: 1)], name: "Sam \(name)"))
         }
-        let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
+        let database = try makeTestDatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
         try await database.write { db in
             // A migration owes every re-read; b's file changed before its re-read.
             try db.execute(sql: "UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL")
@@ -191,7 +191,7 @@ struct PeopleStoreTests {
             library.result(for: "a.jpg", faces: [Self.face(x: 0.1), Self.face(x: 0.6)]),
             library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
         ])
-        let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
+        let database = try makeTestDatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
         try await database.write { db in
             try db.execute(sql: "DELETE FROM face_embedding WHERE relative_path = 'a.jpg' AND face_index = 1")
         }
@@ -654,7 +654,7 @@ struct PeopleStoreTests {
     func peopleCostsOnTheOwnersShape() async throws {
         let directory = try makeTestDirectory()
         let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
-        let queue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         try await queue.write { db in
             let ids = try Row.fetchAll(db, sql: "SELECT e.id, f.person_id FROM face_embedding e JOIN face f USING (library_root_id, relative_path, face_index)")
             let update = try db.makeStatement(sql: "UPDATE face_embedding SET embedding = ? WHERE id = ?")
@@ -754,14 +754,14 @@ struct PeopleStoreTests {
         // The gallery's own read, as the window makes it on a visit.
         _ = try await phase("galleryRead") { try await store.windowReads.peopleGallery(availableLibraryPaths: paths) }
         // Its parts, each alone: the people with their covers, the anchors, the unchecked tally.
-        let reader = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let reader = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         _ = try await phase("galleryPeople") { try await reader.read { try Row.fetchAll($0, sql: PeopleGallerySQL.people).count } }
         _ = try await phase("galleryAnchors") { try await reader.read { try Row.fetchAll($0, sql: PeopleGallerySQL.anchors).count } }
         _ = try await phase("galleryHasFaces") { try await reader.read { try Bool.fetchOne($0, sql: PeopleGallerySQL.hasFaces) } }
         _ = try await phase("galleryUnchecked") { try await store.backgroundReads.uncheckedForFaces(availableLibraryPaths: paths) }
         try reader.close()
         // One face read again: a new vector row for it, as a new reading writes.
-        let writer = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let writer = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         /// A new reading of a face `offset` readings from the newest; returns its photo.
         @discardableResult
         func readAgain(_ offset: Int = 0) async throws -> MediaAssetID {
@@ -1086,7 +1086,7 @@ struct PeopleStoreTests {
         )
         try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
         _ = try await library.store.perform(.moveToNewPerson([FaceID(asset: library.id("a.jpg"), index: 0)], name: "Sam"))
-        let database = try DatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
+        let database = try makeTestDatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
         let plans = try await database.read { db in
             try [PeopleGallerySQL.people, PeopleGallerySQL.anchors].map { sql in
                 try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(sql)").map { $0["detail"] as String }

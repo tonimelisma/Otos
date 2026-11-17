@@ -79,14 +79,14 @@ struct CatalogMigrationFreezeTests {
     }
 
     private static func migratedQueue() async throws -> DatabaseQueue {
-        let dbQueue = try DatabaseQueue(path: makeTestDirectory().appending(path: "catalog.sqlite").path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: makeTestDirectory().appending(path: "catalog.sqlite").path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         return dbQueue
     }
 
     /// Runs the migrations one at a time on an empty catalog and records what each changed.
     private static func indexesByMigration() async throws -> [Step] {
-        let dbQueue = try DatabaseQueue(path: makeTestDirectory().appending(path: "catalog.sqlite").path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: makeTestDirectory().appending(path: "catalog.sqlite").path(percentEncoded: false))
         let migrator = CatalogStore.migrator
         var previous: [String: String] = [:]
         var steps: [Step] = []

@@ -163,7 +163,7 @@ struct BenchmarkTests {
         // stamped on the catalog file the way an import stamps it.
         let batch = ImportBatchID(unixMilliseconds: 1_800_000_000_000)
         let batchSize = 210
-        let stamp = try DatabaseQueue(path: directory.appending(path: "db/catalog.sqlite").path(percentEncoded: false))
+        let stamp = try makeTestDatabaseQueue(path: directory.appending(path: "db/catalog.sqlite").path(percentEncoded: false))
         try await stamp.write { db in
             try db.execute(
                 sql: """
@@ -220,7 +220,7 @@ struct BenchmarkTests {
         // (`docs/research/2026-11-15-proportional-small-scopes.md`). Every still is given a
         // place, one in fifty of them inside the area.
         let area = MapArea(south: 10, north: 10.5, west: 19.5, east: 20.5)
-        let located = try DatabaseQueue(path: directory.appending(path: "db/catalog.sqlite").path(percentEncoded: false))
+        let located = try makeTestDatabaseQueue(path: directory.appending(path: "db/catalog.sqlite").path(percentEncoded: false))
         let inArea = try await located.write { db in
             try db.execute(sql: """
             UPDATE asset_metadata SET primary_latitude = 10.0 + (rowid % 50) * 1.1, primary_longitude = 20.0

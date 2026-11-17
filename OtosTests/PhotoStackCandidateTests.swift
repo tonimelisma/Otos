@@ -44,7 +44,7 @@ struct PhotoStackCandidateTests {
     @Test func theCandidatesBuildEveryStackOfTheOwnersShapeFromStillsThatCanStack() async throws {
         let scale = StallReproductionTests.ownerSize ? 1 : 0.05
         let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: scale)
-        let queue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         defer { try? queue.close() }
         let (narrow, every, rootPaths, plan) = try await queue.read { db in
             var rootPaths: [Int64: LibraryRootPath] = [:]

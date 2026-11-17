@@ -59,7 +59,7 @@ struct FilterOptionsReadTests {
     /// stored cell names: the oracle joins the tables as the planner likes and counts in SQL.
     @Test func thePlacesWalkFindsWhatEveryLocatedRowsCellNames() async throws {
         let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.05)
-        let queue = try DatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         defer { try? queue.close() }
         let language = PlaceNameLanguage(Locale.current)
         let (walked, oracle) = try await queue.read { db in

@@ -95,7 +95,7 @@ struct CatalogStoreTests {
         try Data("stale".utf8).write(to: staleThumbnail)
 
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try Self.createLegacyV1Schema(dbQueue)
         try await dbQueue.write { db in
             try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: [rootPath.rawValue])
@@ -126,7 +126,7 @@ struct CatalogStoreTests {
         #expect(FileManager.default.fileExists(atPath: original.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: staleThumbnail.path(percentEncoded: false)))
 
-        let rootCount = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let rootCount = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM library_root") ?? 0
         }
         #expect(rootCount == 1)
@@ -330,7 +330,7 @@ struct CatalogStoreTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let sourcePath = LibraryRootPath(rawValue: "/Volumes/Card")
         let destinationPath = LibraryRootPath(rawValue: "/Volumes/Photos")

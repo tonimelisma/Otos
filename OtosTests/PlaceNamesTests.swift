@@ -178,7 +178,7 @@ struct PlaceNamesTests {
     @Test func namesStoredUnderAFullLocaleSurviveTheUpgrade() async throws {
         let databaseURL = try makeTestDirectory().appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.continuousFrameMigrationIdentifier)
         try await queue.write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")

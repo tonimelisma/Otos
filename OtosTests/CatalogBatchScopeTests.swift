@@ -129,7 +129,7 @@ struct CatalogBatchScopeTests {
     }
 
     private func stampBatch(databaseURL: URL, relativePaths: [String]) async throws {
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             for relativePath in relativePaths {
                 try db.execute(
                     sql: "UPDATE media_asset SET import_batch_unix_ms = ? WHERE relative_path = ?",

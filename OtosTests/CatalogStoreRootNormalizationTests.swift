@@ -142,7 +142,7 @@ private func writeSavedSymlinkCatalog(
         at: databaseURL.deletingLastPathComponent(),
         withIntermediateDirectories: true
     )
-    let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+    let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
     try CatalogStore.migrator.migrate(dbQueue)
     try await dbQueue.write { db in
         let storedRoot = try CatalogStore.insertLibraryRoot(path: rootPath, capabilities: .unknown, db: db)
@@ -188,13 +188,13 @@ private func insertSavedAsset(
 }
 
 private func savedLibraryRootPaths(in databaseURL: URL) async throws -> [String] {
-    try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+    try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
         try String.fetchAll(db, sql: "SELECT path FROM library_root")
     }
 }
 
 private func savedAssetThumbnailPaths(in databaseURL: URL) async throws -> [String] {
-    try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+    try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
         try String.fetchAll(db, sql: "SELECT thumbnail_path FROM media_asset")
     }
 }

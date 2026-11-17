@@ -382,7 +382,7 @@ extension ImmichAccountCatalogTests {
             at: thumbnails.appending(path: thumbnailName).deletingLastPathComponent(), withIntermediateDirectories: true
         )
         try Data("thumb".utf8).write(to: thumbnails.appending(path: thumbnailName))
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         let rootID = try await queue.write { db -> Int64 in
             let rootID = try #require(try Int64.fetchOne(db, sql: "SELECT id FROM library_root WHERE path = ?", arguments: [oldPath.rawValue]))
             try db.execute(
@@ -432,7 +432,7 @@ extension ImmichAccountCatalogTests {
         #expect(roots.map(\.path) == [newPath])
         #expect(shown == [newID])
         #expect(asset?.mediaChoice == .liked)
-        let reader = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let reader = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         let kept = try await reader.read { db in
             let asset: StatementArguments = [rootID, relativePath]
             func count(_ table: String, _ condition: String = "") throws -> Int? {

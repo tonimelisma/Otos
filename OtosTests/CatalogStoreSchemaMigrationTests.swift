@@ -183,9 +183,9 @@ struct CatalogStoreSchemaMigrationTests {
         try await copy.start(scansSavedLibraries: false)
         await copy.shutdown()
 
-        let opened = try schema(DatabaseQueue(path: newURL.path(percentEncoded: false)))
+        let opened = try schema(makeTestDatabaseQueue(path: newURL.path(percentEncoded: false)))
         #expect(opened.count > CatalogStore.knownMigrationIdentifiers.count)
-        #expect(try schema(DatabaseQueue(path: copyURL.path(percentEncoded: false))) == opened)
+        #expect(try schema(makeTestDatabaseQueue(path: copyURL.path(percentEncoded: false))) == opened)
         #expect(try schema(CatalogStore.emptyCatalogAtCurrentSchema.get()) == opened)
     }
 
@@ -194,7 +194,7 @@ struct CatalogStoreSchemaMigrationTests {
     @Test func theOpenReportsTheLibrariesItHoldsBeforeUpdating() async throws {
         let databaseURL = try makeTestDirectory().appending(path: "catalog.sqlite")
         do {
-            let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+            let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
             try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.captureDayMigrationIdentifier)
             try await queue.write { db in
                 try db.execute(sql: """
@@ -232,7 +232,7 @@ struct CatalogStoreSchemaMigrationTests {
             #expect(problem == .writtenByOtherOtos)
         }
 
-        let reader = try DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false))
+        let reader = try makeTestDatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false))
         let (rootCount, applied) = try await reader.read { db in
             let rootCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM library_root") ?? 0
             let applied = try String.fetchSet(db, sql: "SELECT identifier FROM grdb_migrations")
@@ -253,7 +253,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             for statement in CatalogSchema.baselineStatements {
                 try db.execute(sql: statement)
             }
@@ -273,7 +273,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let (applied, columns, rows) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let (applied, columns, rows) = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try (
                 String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations"),
                 Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')")),
@@ -375,7 +375,7 @@ struct CatalogStoreSchemaMigrationTests {
             .absolute(.digitized, instant: Date(timeIntervalSince1970: 200)),
             .absolute(.quickTimeCreation, instant: Date(timeIntervalSince1970: 300)),
         ]))
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             for statement in CatalogSchema.baselineStatements {
                 try db.execute(sql: statement)
             }
@@ -423,7 +423,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let (best, columns, indexes) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let (best, columns, indexes) = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try (
                 Dictionary(uniqueKeysWithValues: Row.fetchAll(
                     db, sql: "SELECT relative_path, \(CatalogSchema.absoluteCaptureSQL) AS absolute FROM media_asset"
@@ -649,7 +649,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.sourceProductsMigrationIdentifier)
         try await queue.write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
@@ -670,7 +670,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let named = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let named = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Row.fetchAll(db, sql: "SELECT relative_path, source_item_id FROM media_asset ORDER BY relative_path")
                 .map { row -> String in
                     let path: String = row["relative_path"]
@@ -689,7 +689,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.copiesMigrationIdentifier)
         try await queue.write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
@@ -723,7 +723,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.assignedFacePhotoIndexMigrationIdentifier)
         try await queue.write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
@@ -775,7 +775,7 @@ struct CatalogStoreSchemaMigrationTests {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.captureDayMigrationIdentifier)
         // Three photos of two copies each — Liked and Disliked, Disliked and Not Rated, Not
         // Rated twice — and one file with no copy.
@@ -834,7 +834,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.renderSignatureMigrationIdentifier)
         try await queue.write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
@@ -888,7 +888,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             for statement in CatalogSchema.baselineStatements + CatalogSchema.fileIdentifierStatements {
                 try db.execute(sql: statement)
             }
@@ -914,7 +914,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let stamped = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Set(String.fetchAll(
                 db, sql: "SELECT relative_path FROM media_asset WHERE metadata_source_size IS NOT NULL"
             ))
@@ -935,7 +935,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
 
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             let rows: [(String, String, Int?)] = [
                 ("faceless.arw", "raw", 10), ("withFace.arw", "raw", 10), ("still.jpg", "image", 10), ("unread.arw", "raw", nil),
@@ -965,7 +965,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let stamped = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Set(String.fetchAll(
                 db, sql: "SELECT relative_path FROM media_asset WHERE faces_source_size IS NOT NULL"
             ))
@@ -986,7 +986,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await fresh.start(scansSavedLibraries: false)
         await fresh.shutdown()
 
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             let rows: [(String, Int?)] = [("faceless.jpg", 10), ("earlier.jpg", 10), ("current.jpg", 10), ("unread.jpg", nil)]
             for (path, stamp) in rows {
@@ -1019,7 +1019,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let stamped = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Set(String.fetchAll(
                 db, sql: "SELECT relative_path FROM media_asset WHERE faces_source_size IS NOT NULL"
             ))
@@ -1040,7 +1040,7 @@ struct CatalogStoreSchemaMigrationTests {
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
         // v35 as it ran: on a catalog migrated up to it, before v60 renamed the digest it names.
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue, upTo: CatalogSchema.videoFacesMigrationIdentifier)
 
         let (assetColumns, faceColumns, indexes) = try await dbQueue.read { db in
@@ -1064,7 +1064,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.videoFacesMigrationIdentifier)
         try await queue.write { db in
             try db.execute(sql: """
@@ -1096,7 +1096,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let keys = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let keys = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Row.fetchAll(db, sql: """
             SELECT relative_path, relative_path_key FROM media_asset
             UNION ALL SELECT relative_path, relative_path_key FROM media_companion
@@ -1124,7 +1124,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.pathKeysMigrationIdentifier)
         try await queue.write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
@@ -1157,7 +1157,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let identifiers = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let identifiers = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Row.fetchAll(db, sql: "SELECT relative_path, burst_identifier FROM media_asset ORDER BY relative_path")
                 .map { row -> String in
                     let path: String = row[0]
@@ -1176,7 +1176,7 @@ struct CatalogStoreSchemaMigrationTests {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        let queue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.continuousFrameMigrationIdentifier)
         try await queue.write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
@@ -1192,7 +1192,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let (columns, indexes, identifiers) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let (columns, indexes, identifiers) = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
             .read { db in
                 try (
                     Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')")),
@@ -1217,7 +1217,7 @@ struct CatalogStoreSchemaMigrationTests {
         await fresh.shutdown()
 
         let libraryIndexes = ["idx_media_asset_needs_enrichment_global_library", "idx_media_asset_needs_enrichment_root_library"]
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
             for path in ["faceless.jpg", "withFace.jpg"] {
                 try db.execute(
@@ -1249,7 +1249,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let (stamped, faces, indexes) = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let (stamped, faces, indexes) = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try (
                 Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset WHERE faces_source_size IS NOT NULL") ?? -1,
                 Int.fetchOne(db, sql: "SELECT COUNT(*) FROM face") ?? -1,
@@ -1275,7 +1275,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.baselineMigrationIdentifier, CatalogSchema.fileIdentifierMigrationIdentifier,
             CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
         ]
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             let statements = CatalogSchema.baselineStatements + CatalogSchema.fileIdentifierStatements
                 + CatalogSchema.previewPathStatements + CatalogSchema.editRecipeStatements
             for statement in statements {
@@ -1322,7 +1322,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let stamped = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let stamped = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Set(String.fetchAll(
                 db, sql: "SELECT relative_path FROM media_asset WHERE metadata_source_size IS NOT NULL"
             ))
@@ -1343,7 +1343,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.previewPathMigrationIdentifier, CatalogSchema.editRecipeMigrationIdentifier,
             CatalogSchema.heifOrientationMigrationIdentifier, CatalogSchema.extractionRevisionMigrationIdentifier,
         ]
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             let statements = CatalogSchema.baselineStatements + CatalogSchema.fileIdentifierStatements
                 + CatalogSchema.previewPathStatements + CatalogSchema.editRecipeStatements
                 + CatalogSchema.heifOrientationStatements + CatalogSchema.extractionRevisionStatements
@@ -1375,7 +1375,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let rows = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let rows = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Row.fetchAll(db, sql: """
             SELECT a.relative_path, a.format, a.best_format, m.extraction_revision
             FROM media_asset a JOIN asset_metadata m USING (library_root_id, relative_path)
@@ -1405,7 +1405,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.heifOrientationMigrationIdentifier, CatalogSchema.extractionRevisionMigrationIdentifier,
             CatalogSchema.familyRevisionMigrationIdentifier, CatalogSchema.captureInstantMigrationIdentifier,
         ]
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             let statements = CatalogSchema.baselineStatements + CatalogSchema.fileIdentifierStatements
                 + CatalogSchema.previewPathStatements + CatalogSchema.editRecipeStatements
                 + CatalogSchema.heifOrientationStatements + CatalogSchema.extractionRevisionStatements
@@ -1439,7 +1439,7 @@ struct CatalogStoreSchemaMigrationTests {
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()
 
-        let rows = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let rows = try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Row.fetchAll(db, sql: """
             SELECT a.relative_path, a.parent_path, a.content_identifier, m.extraction_revision
             FROM media_asset a JOIN asset_metadata m USING (library_root_id, relative_path)
@@ -1458,7 +1458,7 @@ struct CatalogStoreSchemaMigrationTests {
 
     @Test func refusedCatalogDeniesNamespaceLeaseAsCatalogUnavailable() async throws {
         let fixture = try await Self.makeUnknownHistoryFixture(identifier: "v999_future_history")
-        let persistedRoot = try await DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
+        let persistedRoot = try await makeTestDatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
             try String.fetchOne(db, sql: "SELECT path FROM library_root")
         }
         let store = makeTestStore(location: .databaseFile(fixture.databaseURL))
@@ -1484,7 +1484,7 @@ struct CatalogStoreSchemaMigrationTests {
         let staleThumbnail = thumbnailDirectory.appending(path: "keep-me.jpg", directoryHint: .notDirectory)
         try Data("keep".utf8).write(to: staleThumbnail)
 
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try await dbQueue.write { db in
             try db.execute(sql: """
             CREATE TABLE library_root (
@@ -1615,7 +1615,7 @@ private extension CatalogStoreSchemaMigrationTests {
         let thumbnail = thumbnailDirectory.appending(path: "kept.jpg", directoryHint: .notDirectory)
         try Data("kept".utf8).write(to: thumbnail)
 
-        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        let dbQueue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         try await dbQueue.write { db in
             try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/unknown-history"])
@@ -1633,7 +1633,7 @@ private extension CatalogStoreSchemaMigrationTests {
     }
 
     static func stampImportBatches(databaseURL: URL, stamps: [String: Int64]) async throws {
-        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+        try await makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
             for (relativePath, batch) in stamps {
                 try db.execute(
                     sql: """

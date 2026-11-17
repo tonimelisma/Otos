@@ -640,7 +640,7 @@ struct PhotoSearchIndexTests {
 
     /// Runs `sql` on an on-disk catalog no store has open.
     private static func execute(_ sql: String, on catalog: Catalog) throws {
-        let queue = try DatabaseQueue(path: database(in: catalog.vectors.deletingLastPathComponent()).path(percentEncoded: false))
+        let queue = try makeTestDatabaseQueue(path: database(in: catalog.vectors.deletingLastPathComponent()).path(percentEncoded: false))
         try queue.write { try $0.execute(sql: sql) }
         try queue.close()
     }
