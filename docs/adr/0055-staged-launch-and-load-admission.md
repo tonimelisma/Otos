@@ -64,9 +64,15 @@ publication to ADR 0005.
 4. **Teardown starts nothing.** The window shuts the admission in its deinit: every waiting
    load hears `CancellationError` and never starts, and no later request is admitted. A
    waiting task that is cancelled withdraws its request at once.
-5. **Owners run below the window.** Every owner's tasks run at `TaskPriority.backgroundOwner`
-   (`.medium`), inherited from the task that starts them; the window's state consumption stays
-   `.userInitiated` (ADR 0032 rule 6).
+5. **Owners run below the window, and no lower.** Every owner's tasks run at
+   `TaskPriority.backgroundOwner` (`.medium`), inherited from the task that starts them; the
+   window's state consumption stays `.userInitiated` (ADR 0032 rule 6). No load runs lower: a
+   granted load holds the one turn, and macOS throttles `.background` work hardest, its CPU and
+   its I/O, page-ins included, while other work runs. A derived-folder look started at
+   `.background` was granted the turn in a full check under parallel load and made no progress
+   for minutes, holding People, the duplicates build and the search index behind it (the idle
+   guard's hang of 2026-11-16). Each grant logs its priority (`op=load.admission phase=granted
+   priority=`).
 6. **The admission is a pure machine behind a lock.** `LoadAdmissionMachine.handle(_:)` is the
    only writer of its state (ADR 0032's second shape, like `ImportSessionMachine`), held in a
    `Mutex` with the waiters' continuations; a continuation is resumed after the lock is

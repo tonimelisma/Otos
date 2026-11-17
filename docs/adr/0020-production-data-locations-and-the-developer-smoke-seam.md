@@ -40,9 +40,8 @@ a required, non-defaulted parameter, so a caller cannot reach production data by
 omitting an argument — reaching it is a thing you have to write down. Tests pass
 temporary locations, a self-cleaning `UserDefaults` suite, and a Trash that is a
 folder they own (or one that refuses every move);
-the hosted test app additionally declines to start the product stack at all
-(`RunContext.isTestRun`), so the test host comes up inert rather than merely
-pointed somewhere else.
+the test bundle is unhosted (ADR 0023): it links OtosKit and never launches the app,
+so no test process reaches `OtosApp` or the production locations it names.
 
 **A developer smoke seam may steer what the app looks at; it may never change what
 the user has configured.** `SmokeLibrarySelection` resolves
@@ -107,10 +106,13 @@ so an exported value left over in a shell cannot silently keep the old
 "register this path" meaning under the new read-only one.
 
 **A durable operational journal, not a log scrape, is the busy truth that protects an
-in-flight operation.** The app publishes busy state through `active_file_operation`
-and `active_reorganization_component` (`CatalogStore.hasActiveOperationalWork()` /
-`activeOperationalRootPaths()`), and `script/smoke-run.sh` reads the same predicate
-through `sqlite3 -readonly` under WAL (`has_active_operational_work()`). Any
+in-flight operation.** The app writes busy state as journal rows: `active_file_operation`
+for an import (`CatalogStoreImportJournal`; a row in phase `abandoned` is cleanup owed to
+the next launch, not work in flight) and `active_reorganization_component` for a
+reorganization (`CatalogStoreReorganizationJournal`). `script/lib/operational-busy.sh`
+reads that predicate through `sqlite3 -readonly` under WAL
+(`has_active_operational_work()`), for `script/smoke-run.sh`, `script/install.sh` and
+`script/survey.sh`. Any
 `SQLITE_BUSY`, `SQLITE_CORRUPT`, or missing-table error counts as busy, and both the
 import and reorganization journals are covered. The safety invariant is global: the
 single `Otos` process is never `kill`ed while any journal row exists, even for a
@@ -127,8 +129,8 @@ alias.
 - **Detect XCTest at runtime and branch data locations.** A runtime
   `am-I-under-test` check as *the mechanism* puts a conditional in the middle of
   production construction and makes the production path the fallback, which is the
-  same shape as the bug. Otos uses `RunContext.isTestRun` only to decline to start
-  the stack, never to choose where data lives.
+  same shape as the bug. Otos has no such check: the unhosted test bundle never runs
+  the app's entry point, so nothing in the product asks whether it runs under test.
 - **A dependency-injection container.** A registry of locations resolved by key
   reintroduces defaulting with more ceremony: a caller that asks for a key nobody
   registered still gets something. Required parameters make the omission a compile
@@ -169,7 +171,3 @@ alias.
 - **Test-suite process isolation mechanics** beyond data locations — ADR 0023.
   This ADR owns *where* data lives; ADR 0023 owns whether the test bundle is
   hosted and how a `PreferencesDomain` value resolves to a concrete store.
-  `RunContext.isTestRun`, referenced above as the mechanism that kept a
-  test-host process from starting the product stack, no longer exists: the
-  test bundle unhosted by ADR 0023 can no longer launch the app at all, so
-  the guard it existed for is unreachable.

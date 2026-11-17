@@ -93,27 +93,39 @@ nonisolated struct BackgroundOwnerSet: Sendable {
 /// behind every other admitted one (`BackgroundLoad.derivedFolder`). One pass, its one
 /// request covered when it ends, however it ended but torn down: a failure is logged and the
 /// next launch looks again. Nothing rings it again (`QuiescentOwner`).
+///
+/// Its task runs at the priority of the task that starts it, `TaskPriority.backgroundOwner`,
+/// like every owner's (ADR 0055): while it runs it holds the admission's one turn, so a lower
+/// priority would hold People, duplicates and the search index behind work the system
+/// throttles hardest under load.
 actor DerivedFolderLoad: QuiescentOwner {
-    private let store: CatalogStore
     private let admission: LoadAdmission
+    /// The look the load runs once admitted.
+    private let look: @Sendable () async throws -> Void
     private var task: Task<Void, Never>?
     let activity = OwnerActivity(owner: "derivedFolder")
 
     init(store: CatalogStore, admission: LoadAdmission) {
-        self.store = store
-        self.admission = admission
+        self.init(admission: admission) {
+            _ = try await store.backgroundReads.reconcileDerivedFilesIfOwed()
+        }
     }
 
-    /// Starts the launch's load, once.
+    init(admission: LoadAdmission, look: @escaping @Sendable () async throws -> Void) {
+        self.admission = admission
+        self.look = look
+    }
+
+    /// Starts the launch's load, once, at the caller's priority.
     func start() {
         guard task == nil else { return }
         let answering = activity.request()
         activity.beginPass()
-        task = Task(priority: .background) { [store, admission] in
+        task = Task { [admission, look] in
             var answered: UInt64?
             do {
                 try await admission.run(.derivedFolder) {
-                    try await store.backgroundReads.reconcileDerivedFilesIfOwed()
+                    try await look()
                 }
                 answered = answering
             } catch is CancellationError {

@@ -351,4 +351,29 @@ struct LoadAdmissionTests {
         #expect(admission.snapshot.isOpen)
         await store.shutdown()
     }
+
+    /// The derived folder's launch load holds the admission's one turn while it runs, so it runs
+    /// at the owners' priority, never below it: a load the system throttles would hold People,
+    /// duplicates and the search index behind it (ADR 0055). Started from an owner's task, the
+    /// look runs at that task's priority.
+    @Test func theDerivedFolderLoadHoldsItsTurnAtTheOwnersPriority() async throws {
+        let admission = LoadAdmission(isOpen: true)
+        let looked = ArrivalGate()
+        let priority = Mutex<TaskPriority?>(nil)
+        let load = DerivedFolderLoad(admission: admission) {
+            priority.withLock { $0 = Task.currentPriority }
+            await looked.arrive()
+        }
+        // Not awaited: an awaiting test task would raise the starting task to its own priority.
+        Task.detached(priority: .backgroundOwner) {
+            await load.start()
+        }
+        await looked.waitForArrivals(1)
+        #expect(admission.snapshot.running?.load == .derivedFolder)
+        #expect(priority.withLock { $0 } == .backgroundOwner)
+
+        await looked.open()
+        _ = try await load.untilQuiescent()
+        #expect(admission.snapshot.running == nil)
+    }
 }

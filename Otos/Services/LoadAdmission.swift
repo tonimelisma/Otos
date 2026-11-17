@@ -322,6 +322,9 @@ final nonisolated class LoadAdmission: Sendable {
         OtosLog.performance.noticeOperation("load.admission", phase: "granted", fields: [
             "load": load.rawValue, "request": "\(request)", "waiter": waiter.rawValue,
             "waitMs": "\(DiagnosticsTiming.milliseconds(since: asked))",
+            // The turn is held at this priority: one below the owners' holds every waiting
+            // load behind work the system throttles.
+            "priority": "\(Task.currentPriority.rawValue)",
         ])
         let started = ContinuousClock.now
         defer {
