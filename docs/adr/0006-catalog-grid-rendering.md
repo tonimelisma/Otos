@@ -153,7 +153,8 @@ prefetch, zoom and scroll anchoring all read. The structure is built fresh from
 structural apply, in one pass: sections are contiguous ranges of the order, keyed by day
 (`.day(nil)` for the unknown-date run, `.ungrouped` for any other sort); identity lookups
 read the position index of the publication's shared `CatalogGridContent`, which Projection
-builds off the main actor, so the structure builds no index of its own. It is pure and independent of AppKit. An animated apply
+makes off the main actor (an order made by an edit takes its source's index with the edit
+applied, ADR 0005), so the structure builds no index of its own. It is pure and independent of AppKit. An animated apply
 matches sections by key to derive its batch; nothing else compares sections across
 applies, so there is no section-level invalidation to go stale.
 

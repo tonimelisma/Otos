@@ -1714,17 +1714,32 @@ nonisolated struct CatalogMediaGridState: Equatable {
         return shown
     }
 
-    /// This grid as Projection publishes it after `previous`, off the main actor: holding
-    /// `previous`'s content when its own is equal to it, or `previous`'s order with its own
-    /// stacks when only the stacks differ. A new order of the same query is published as an
-    /// edit of `previous`'s (`CatalogGridContent.Edit.between`), unless it already is one (a
-    /// hide, a Put Back, a stack expanding): the walk that tells two orders equal tells where
-    /// they differ too, so the grid takes in a read that moved photos, and an act on top of
-    /// it the window has not applied, by the edits (ADR 0006). A new query's order, which the
-    /// grid reloads, is published whole. Builds the content's index.
+    /// This grid as Projection publishes it after `previous`: holding `previous`'s content
+    /// when its own is equal to it, or `previous`'s order with its own stacks when only the
+    /// stacks differ, and otherwise made from `previous`'s order by an edit (ADR 0006).
+    ///
+    /// An order already made by edits — a hide, a Put Back, a stack expanding, a read's
+    /// publication with the acts held on it — is told from `previous`'s by the edit between
+    /// them (`CatalogGridContent.edit(from:)`, through an order both were made from), at the
+    /// edit's cost, and linked to `previous` by it, so the grid showing `previous` follows it
+    /// whichever order it was made from. A new order of the same query is published as an
+    /// edit of `previous`'s (`CatalogGridContent.Edit.between`): the walk that tells two
+    /// orders equal tells where they differ too. A new query's order, which the grid reloads,
+    /// is published whole.
     func sharingContent(of previous: CatalogMediaGridState) -> CatalogMediaGridState {
-        guard !sharesContent(with: previous), content.edit(from: previous.content) == nil else {
+        guard !sharesContent(with: previous) else {
             return self
+        }
+        if let edit = content.edit(from: previous.content) {
+            var shared = self
+            if edit.changesNothing(from: previous.content, to: content) {
+                shared.content = content.stacks == previous.content.stacks
+                    ? previous.content
+                    : previous.content.replacing(stacks: content.stacks)
+            } else if !content.isMadeDirectly(from: previous.content) {
+                shared.content = content.descending(from: previous.content, by: edit)
+            }
+            return shared
         }
         let sameDays = content.dayBuckets.count == previous.content.dayBuckets.count
         if sameDays, content.orderedAssetIDs == previous.content.orderedAssetIDs,
@@ -1741,8 +1756,13 @@ nonisolated struct CatalogMediaGridState: Equatable {
         }
         content.prepareIndex()
         previous.content.prepareIndex()
+        let walked = CatalogGridContent.Edit.walk(previous.content, content)
         var edited = self
-        edited.content = content.descending(from: previous.content, by: .between(previous.content, content))
+        edited.content = content.descending(
+            from: previous.content,
+            by: walked.edit,
+            work: CatalogGridContent.Work(visited: walked.visited)
+        )
         return edited
     }
 }
@@ -1785,18 +1805,43 @@ extension [MediaAssetID]: MediaDisplayOrder {
 /// so a window state copies a pointer, not 158,000 identities, and two publications of the
 /// same content are told apart from two of different content by identity alone.
 ///
-/// Each identity's position is indexed once, the first time a position or membership is
-/// asked, and kept; Projection asks for it at publication (`prepareIndex`), off the main
-/// actor, so the window's selection and focus checks are lookups. A content Projection
-/// rebuilt equal to the last one is dropped before that, so the index is built only for an
-/// order that is new.
+/// Each identity's position is indexed (`Positions`): an order made by an edit of another
+/// (a hide, a Put Back, a stack expanding, a read published as an edit) takes the other's
+/// index with the edit applied, at the edit's cost; an order made whole writes its table once,
+/// the first time a position or membership is asked. Projection asks at publication
+/// (`prepareIndex`), off the main actor, so the window's selection and focus checks are
+/// lookups. A content Projection rebuilt equal to the last one is dropped before that.
 final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrder {
     let orderedAssetIDs: [MediaAssetID]
     let dayBuckets: [Date?]
     let stacks: CatalogGridStacks
-    private let index: Mutex<[MediaAssetID: Int]?>
+    private let index: Mutex<Positions?>
     /// Shared by every content holding this very order and days (`replacing(stacks:)`).
     private let order: Order
+    /// What making this content cost before its index (`work`).
+    private let made: Work
+
+    /// What making one content and its position index cost, counted: the deterministic twin
+    /// of its time, which a publication's line carries (`gridWork=`) and the tests bound.
+    struct Work: Equatable, Sendable, CustomStringConvertible {
+        /// Items visited one at a time: a walk of an order, or a look-up.
+        var visited = 0
+        /// Position-index entries written.
+        var indexed = 0
+        /// Items copied in runs: an order's storage moved whole between edits.
+        var copied = 0
+
+        var description: String {
+            "visited:\(visited),indexed:\(indexed),copied:\(copied)"
+        }
+    }
+
+    /// What making this content cost, its position index included once it is built.
+    var work: Work {
+        var work = made
+        work.indexed += index.withLock { $0?.written ?? 0 }
+        return work
+    }
 
     /// How an order was made from another by dropping and adding items, survivors keeping
     /// their relative order and their days: a Move to Trash's removal (`removing`), a Put
@@ -1817,6 +1862,32 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         /// The positions the edit names: what applying it costs.
         var size: Int {
             removed.count + inserted.count
+        }
+
+        /// Whether this edit, which makes `new` from `old`, leaves the order and its days as
+        /// they were: it names nothing, or every position it names it removes and inserts
+        /// again with the same item and day, as an item taken out and put back by composed
+        /// edits is. The survivors then stand where they stood, so the two are equal; the cost
+        /// is the edit's.
+        func changesNothing(from old: CatalogGridContent, to new: CatalogGridContent) -> Bool {
+            guard !isEmpty else {
+                return true
+            }
+            guard removed == inserted, old.orderedAssetIDs.count == new.orderedAssetIDs.count else {
+                return false
+            }
+            let comparesDays = old.dayBuckets.count == old.orderedAssetIDs.count
+                && new.dayBuckets.count == new.orderedAssetIDs.count
+            return removed.allSatisfy { position in
+                old.orderedAssetIDs[position] == new.orderedAssetIDs[position]
+                    && (!comparesDays || old.dayBuckets[position] == new.dayBuckets[position])
+            }
+        }
+
+        /// The edit that makes the other order from this one's result: what this one removed
+        /// is inserted, what it inserted is removed.
+        var inverse: Edit {
+            Edit(removed: inserted, inserted: removed)
         }
 
         /// This edit and then `next`, as one edit from this one's source to `next`'s result:
@@ -1849,6 +1920,11 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         /// so every item an edit keeps keeps its day. Both orders' indexes are read: Projection
         /// builds them at publication.
         static func between(_ old: CatalogGridContent, _ new: CatalogGridContent) -> Edit {
+            walk(old, new).edit
+        }
+
+        /// `between`, with the items the walk visited.
+        static func walk(_ old: CatalogGridContent, _ new: CatalogGridContent) -> (edit: Edit, visited: Int) {
             let oldIDs = old.orderedAssetIDs
             let newIDs = new.orderedAssetIDs
             let comparesDays = old.dayBuckets.count == oldIDs.count && new.dayBuckets.count == newIDs.count
@@ -1898,9 +1974,10 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
                     oldPosition += 1
                 }
             }
+            let visited = oldPosition + newPosition
             removed.append(contentsOf: oldPosition ..< oldIDs.count)
             inserted.append(contentsOf: newPosition ..< newIDs.count)
-            return Edit(removed: removed, inserted: inserted)
+            return (Edit(removed: removed, inserted: inserted), visited)
         }
 
         /// `positions` (ascending) that `excluded` (ascending) does not hold.
@@ -2007,8 +2084,27 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
             self.lineage = lineage
         }
 
+        /// The edit from `other` when this order was made from it, or is it.
+        func directEdit(from other: Order) -> Edit? {
+            other === self ? Edit(removed: [], inserted: []) : lineage.first { $0.order === other }?.edit
+        }
+
+        /// The edit from `other`: directly, or through the nearest order this one was made from
+        /// that `other` was made from too (or is), `other`'s edits from it undone first.
         func edit(from other: Order) -> Edit? {
-            lineage.first { $0.order === other }?.edit
+            if let edit = directEdit(from: other) {
+                return edit
+            }
+            if let back = other.directEdit(from: self) {
+                return back.inverse
+            }
+            for link in lineage {
+                guard let ancestor = link.order, let toOther = other.directEdit(from: ancestor) else {
+                    continue
+                }
+                return toOther.inverse.followed(by: link.edit)
+            }
+            return nil
         }
     }
 
@@ -2018,36 +2114,52 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         self.stacks = stacks
         index = Mutex(nil)
         order = Order()
+        made = Work()
     }
 
+    /// `orderedAssetIDs`, which `edit` made from `source`'s order: its index is `source`'s
+    /// with the edit applied (`Positions.editing`), when `source`'s is built, so it costs the
+    /// edit, and is built whole on first use otherwise.
     private init(
         orderedAssetIDs: [MediaAssetID],
         dayBuckets: [Date?],
         stacks: CatalogGridStacks,
         edit: Edit,
-        from source: CatalogGridContent
+        from source: CatalogGridContent,
+        work: Work
     ) {
         self.orderedAssetIDs = orderedAssetIDs
         self.dayBuckets = dayBuckets
         self.stacks = stacks
-        index = Mutex(nil)
+        var made = work
+        let positions = source.index.withLock { $0 }.map { positions in
+            let edited = positions.editing(by: edit, into: orderedAssetIDs)
+            made.visited += edited.visited
+            return edited.positions
+        }
+        index = Mutex(positions)
         order = Order(source: source.order, edit: edit)
+        self.made = made
     }
 
     private init(_ content: CatalogGridContent, stacks: CatalogGridStacks) {
         orderedAssetIDs = content.orderedAssetIDs
         dayBuckets = content.dayBuckets
         self.stacks = stacks
-        index = Mutex(content.index.withLock { $0 })
+        index = Mutex(content.index.withLock { $0 }.map(\.carried))
         order = content.order
+        made = Work()
     }
 
-    private init(_ content: CatalogGridContent, edit: Edit, from source: CatalogGridContent) {
+    private init(_ content: CatalogGridContent, edit: Edit, from source: CatalogGridContent, work: Work) {
         orderedAssetIDs = content.orderedAssetIDs
         dayBuckets = content.dayBuckets
         stacks = content.stacks
-        index = Mutex(content.index.withLock { $0 })
+        index = Mutex(content.index.withLock { $0 }.map(\.carried))
         order = Order(source: source.order, edit: edit)
+        var made = content.work
+        made.visited += work.visited
+        self.made = made
     }
 
     /// The same order and days with other stacks: the same order (`sharesOrder`), and its
@@ -2067,7 +2179,7 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
     /// files' mapping with it; the files of a collapsed stack are hidden together, since Move
     /// to Trash moves them together (`CatalogGridStacks.files(reachedThrough:)`).
     func removing(_ hidden: Set<MediaAssetID>) -> CatalogGridContent? {
-        let positions = withIndex { index in hidden.compactMap { index[$0] } }.sorted()
+        let positions = hidden.compactMap { position(of: $0) }.sorted()
         guard !positions.isEmpty else {
             return nil
         }
@@ -2076,40 +2188,70 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
             dayBuckets: dayBuckets.isEmpty ? [] : dayBuckets.editing(removing: positions, inserting: []),
             stacks: stacks.removing(hidden),
             edit: Edit(removed: positions, inserted: []),
-            from: self
+            from: self,
+            work: Work(visited: hidden.count, copied: orderedAssetIDs.count - positions.count)
         )
     }
 
     /// `orderedAssetIDs` and `dayBuckets`, which `edit` made from this content's, showing
     /// `stacks`: a content of its own that remembers the edit, so a grid showing this one
-    /// follows it by the edit alone (a stack expanding or collapsing,
-    /// `CatalogProjection.expanding`).
+    /// follows it by the edit alone (a Put Back, a stack expanding or collapsing,
+    /// `CatalogProjection.expanding`). `work` is what making the order cost its maker.
     func edited(
         by edit: Edit,
         to orderedAssetIDs: [MediaAssetID],
         dayBuckets: [Date?],
-        stacks: CatalogGridStacks
+        stacks: CatalogGridStacks,
+        work: Work = Work()
     ) -> CatalogGridContent {
         CatalogGridContent(
             orderedAssetIDs: orderedAssetIDs,
             dayBuckets: dayBuckets,
             stacks: stacks,
             edit: edit,
-            from: self
+            from: self,
+            work: work
+        )
+    }
+
+    /// This content with `inserted` (ascending positions in the result) added, survivors
+    /// keeping their order and days, showing `stacks`: a Put Back. The runs between the
+    /// insertions are copied whole, and the index is this one's with the insertions applied.
+    func inserting(
+        _ inserted: [(position: Int, id: MediaAssetID, day: Date?)],
+        stacks: CatalogGridStacks,
+        work: Work
+    ) -> CatalogGridContent {
+        var made = work
+        made.copied += orderedAssetIDs.count
+        return edited(
+            by: Edit(removed: [], inserted: inserted.map(\.position)),
+            to: orderedAssetIDs.editing(removing: [], inserting: inserted.map { ($0.position, $0.id) }),
+            dayBuckets: dayBuckets.isEmpty ? [] : dayBuckets.editing(removing: [], inserting: inserted.map { ($0.position, $0.day) }),
+            stacks: stacks,
+            work: made
         )
     }
 
     /// This content's order, days and stacks, its index kept, as an order made from
-    /// `previous`'s by `edit` (`Edit.between`): what Projection publishes for a read whose
-    /// order moved, so a grid showing `previous`, or any order `previous` was made from,
-    /// takes it in by the edit.
-    func descending(from previous: CatalogGridContent, by edit: Edit) -> CatalogGridContent {
-        CatalogGridContent(self, edit: edit, from: previous)
+    /// `previous`'s by `edit` (`Edit.between`, or an edit found through an order both were
+    /// made from): what Projection publishes, so a grid showing `previous`, or any order
+    /// `previous` was made from, takes it in by the edit.
+    func descending(from previous: CatalogGridContent, by edit: Edit, work: Work = Work()) -> CatalogGridContent {
+        CatalogGridContent(self, edit: edit, from: previous, work: work)
+    }
+
+    /// Whether this content's order was made from `other`'s, or is it, so that the edit
+    /// between them is held without going through another order.
+    func isMadeDirectly(from other: CatalogGridContent) -> Bool {
+        order.directEdit(from: other.order) != nil
     }
 
     /// How this content's order was made from `other`'s by edits (`removing`, `edited`,
-    /// `descending`), through any publications between; nil unless it was made from that very
-    /// order, which is still held.
+    /// `descending`), through any publications between: directly, when it was made from that
+    /// very order, or through an order both were made from that is still held, by undoing
+    /// `other`'s edits back to it and making this one's (`Edit.inverse`). Nil when they share
+    /// no held order: a new query's order, or one whose sources are gone.
     func edit(from other: CatalogGridContent) -> Edit? {
         order.edit(from: other.order)
     }
@@ -2120,11 +2262,11 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
 
     /// Builds the position index now, if it is not built yet.
     func prepareIndex() {
-        withIndex { _ in () }
+        withPositions { _ in () }
     }
 
     func position(of id: MediaAssetID) -> Int? {
-        withIndex { $0[id] }
+        withPositions { $0.position(of: id) }
     }
 
     func contains(_ id: MediaAssetID) -> Bool {
@@ -2135,38 +2277,151 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         guard !ids.isEmpty else {
             return []
         }
-        return withIndex { positions in
-            ids.compactMap { id in positions[id].map { (id, $0) } }
+        return withPositions { positions in
+            ids.compactMap { id in positions.position(of: id).map { (id, $0) } }
                 .sorted { $0.1 < $1.1 }
                 .map(\.0)
         }
     }
 
-    /// `body` over the position index, built on first use.
-    private func withIndex<Result: Sendable>(_ body: ([MediaAssetID: Int]) -> Result) -> Result {
+    /// `body` over the position index, built whole on first use when no edit made it.
+    private func withPositions<Result: Sendable>(_ body: (Positions) -> Result) -> Result {
         index.withLock { index in
-            let positions = index ?? Self.positions(of: orderedAssetIDs)
+            let positions = index ?? Positions(whole: orderedAssetIDs)
             index = positions
             return body(positions)
         }
     }
 
-    /// Each identity's first position, as `firstIndex(of:)` answers.
-    private static func positions(of ids: [MediaAssetID]) -> [MediaAssetID: Int] {
-        var positions: [MediaAssetID: Int] = [:]
-        positions.reserveCapacity(ids.count)
-        for (position, id) in ids.enumerated() where positions[id] == nil {
-            positions[id] = position
+    /// Equal content: the same one; an order made from the other by an edit that changes
+    /// nothing, with the same stacks; or the same order, days and stacks item by item.
+    static func == (lhs: CatalogGridContent, rhs: CatalogGridContent) -> Bool {
+        if lhs === rhs {
+            return true
         }
-        return positions
+        if let edit = lhs.order.directEdit(from: rhs.order) {
+            return edit.changesNothing(from: rhs, to: lhs) && lhs.stacks == rhs.stacks
+        }
+        if let edit = rhs.order.directEdit(from: lhs.order) {
+            return edit.changesNothing(from: lhs, to: rhs) && lhs.stacks == rhs.stacks
+        }
+        return lhs.orderedAssetIDs == rhs.orderedAssetIDs
+            && lhs.dayBuckets == rhs.dayBuckets
+            && lhs.stacks == rhs.stacks
     }
 
-    /// Equal content: the same one, or the same order, days and stacks.
-    static func == (lhs: CatalogGridContent, rhs: CatalogGridContent) -> Bool {
-        lhs === rhs
-            || (lhs.orderedAssetIDs == rhs.orderedAssetIDs
-                && lhs.dayBuckets == rhs.dayBuckets
-                && lhs.stacks == rhs.stacks)
+    /// Where each identity of one order stands: a table of each identity's first position in
+    /// an order this one was made from by edits, and the edit from that order to this one,
+    /// with this order's inserted items by identity. A position is the table's, moved past
+    /// the edit's removals and insertions (two binary searches), so an order made by an edit
+    /// of a few positions is indexed in those positions, never in the order's size; only an
+    /// order made whole (a read, a new query) writes a table, once, on first use.
+    private struct Positions: Sendable {
+        /// Each identity's first position in the order the table was written for, shared by
+        /// every order edited from it.
+        final class Table: Sendable {
+            let positions: [MediaAssetID: Int]
+
+            init(_ positions: [MediaAssetID: Int]) {
+                self.positions = positions
+            }
+        }
+
+        let table: Table
+        /// From the table's order to this one; empty for the table's own order.
+        let edit: Edit
+        /// This order's item at each of `edit.inserted`, by identity.
+        let inserted: [MediaAssetID: Int]
+        /// The entries writing these positions cost: the table's, or the inserted items'.
+        let written: Int
+
+        /// The table of `ids`, written whole.
+        init(whole ids: [MediaAssetID]) {
+            var positions: [MediaAssetID: Int] = [:]
+            positions.reserveCapacity(ids.count)
+            for (position, id) in ids.enumerated() where positions[id] == nil {
+                positions[id] = position
+            }
+            table = Table(positions)
+            edit = Edit(removed: [], inserted: [])
+            inserted = [:]
+            written = positions.count
+        }
+
+        private init(table: Table, edit: Edit, inserted: [MediaAssetID: Int], written: Int) {
+            self.table = table
+            self.edit = edit
+            self.inserted = inserted
+            self.written = written
+        }
+
+        /// The same positions, written by another content: nothing written for this one.
+        var carried: Positions {
+            Positions(table: table, edit: edit, inserted: inserted, written: 0)
+        }
+
+        /// The positions of `ids`, which `next` made from this order: the table kept, its edit
+        /// followed by `next`, and the inserted items of the two looked up in `ids`. Costs the
+        /// two edits.
+        func editing(by next: Edit, into ids: [MediaAssetID]) -> (positions: Positions, visited: Int) {
+            let composed = edit.isEmpty ? next : edit.followed(by: next)
+            var inserted: [MediaAssetID: Int] = [:]
+            inserted.reserveCapacity(composed.inserted.count)
+            for position in composed.inserted where inserted[ids[position]] == nil {
+                inserted[ids[position]] = position
+            }
+            return (
+                Positions(table: table, edit: composed, inserted: inserted, written: inserted.count),
+                edit.size + next.size
+            )
+        }
+
+        func position(of id: MediaAssetID) -> Int? {
+            if let position = inserted[id] {
+                return position
+            }
+            guard let tablePosition = table.positions[id] else {
+                return nil
+            }
+            guard !edit.isEmpty else {
+                return tablePosition
+            }
+            // Its place among the table order's survivors, then that survivor's position here:
+            // the rank-th position the edit did not insert.
+            let removedBefore = Self.count(of: edit.removed, below: tablePosition)
+            if removedBefore < edit.removed.count, edit.removed[removedBefore] == tablePosition {
+                return nil
+            }
+            let rank = tablePosition - removedBefore
+            // `inserted[i] - i` counts the survivors ahead of the i-th insertion; those ahead of
+            // the survivor of `rank` are the ones with at most `rank` survivors ahead.
+            var low = 0
+            var high = edit.inserted.count
+            while low < high {
+                let middle = (low + high) / 2
+                if edit.inserted[middle] - middle <= rank {
+                    low = middle + 1
+                } else {
+                    high = middle
+                }
+            }
+            return rank + low
+        }
+
+        /// How many of `sorted` (ascending) are below `value`.
+        private static func count(of sorted: [Int], below value: Int) -> Int {
+            var low = 0
+            var high = sorted.count
+            while low < high {
+                let middle = (low + high) / 2
+                if sorted[middle] < value {
+                    low = middle + 1
+                } else {
+                    high = middle
+                }
+            }
+            return low
+        }
     }
 }
 

@@ -123,6 +123,8 @@ nonisolated struct CatalogProjectionPublicationDiagnostics {
     let orderQueryCount: UInt64
     /// How the grid's order follows the last publication's (`CatalogProjection.gridChange`).
     let gridChange: String
+    /// What making the grid's content cost (`CatalogProjection.gridWork`).
+    let gridWork: String
 
     func emit() async {
         OtosLog.ui.noticeOperation(
@@ -159,6 +161,7 @@ nonisolated struct CatalogProjectionPublicationDiagnostics {
                 "stateChanged": "\(stateChanged)",
                 "orderQueryCount": "\(orderQueryCount)",
                 "gridChange": gridChange,
+                "gridWork": gridWork,
             ]
         )
     }

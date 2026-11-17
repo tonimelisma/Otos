@@ -165,6 +165,46 @@ Rejected: a time-based throttle on background passes beyond the existing cadence
 0033: whether a read can have changed is a fact the Store holds), a generic query cache in
 the Store (the Store would have to know who reads what; the reader knows its inputs).
 
+**An act's publication is its edit.** A content's position index (`CatalogGridContent`'s
+`Positions`) is a table of each identity's position in an order it was made from, the edit
+from that order to this one, and this order's inserted items by identity; a position is the
+table's, moved past the edit's removals and insertions by two binary searches. An order made
+by an edit of an indexed one — a hide, a Put Back, a stack expanding, the acts held on a
+read — takes that index with the edit composed onto it (`Edit.followed(by:)`), at the
+edit's cost; only an order read whole writes a table, once, off the actor. A Put Back finds
+its neighbours by the index and copies the order's runs between the insertions whole
+(`CatalogGridContent.inserting`); it no longer walks the order. Counted at 160,000 photos
+(`ActPublicationWorkTests`), a one-photo Move to Trash visited 1 position and wrote 159,999
+index entries, and its Put Back visited 159,999 and wrote 160,000; now each visits and writes a
+few, the same few as at 16,000. The order's storage is still copied in runs (a Move to Trash
+copies 640 KB of identities and 2.5 MB of days at that size, a memory move, not a walk): a
+persistent order would spare it at the price of every reader of the order, which reads it as
+an array. Rejected: a balanced tree or a rope for the order and its index, for the same reason
+and because the measured cost was the table, not the copy; rebuilding the table once the
+composed edit grows (a read whole resets it, at least once a cadence while a backlog runs).
+
+**An act is never queued behind a build.** The projection is one actor, so an act waits for
+whatever synchronous step it is running. Every step of a pass that walks the scope leaves the
+actor (ADR 0032, rule 6), except a search's narrowing to its matches: the order patch and the
+read's arrays held (`holding`, `patching`), the scope's facts, the collapse and the window
+state (`scopedFacts`, `collapsed`, `assembled`), and the publication itself
+(`preparePublication`): the comparison with the publication shown, the edit from its order
+and the index of an order read whole, against the publication shown and the acts held when
+the build ended. A Move to Trash, a Put Back or a choice that reaches the projection meanwhile
+is applied in its own step to the last publication and published at once, as an edit of the
+order the window shows. The pass's publication then follows the rule of ADR 0032 that newer
+work never cancels published work: the build is not cancelled, and its publication is applied
+on top of the act. In the step that publishes it, when the acts held, the duplicate groups
+or People differ from what it was prepared with, the build's own order — indexed — is edited
+by the acts held now (`publish`); its edit from the last publication is found through the base
+publication both were made from (`CatalogGridContent.edit(from:)`, undoing one side's edits,
+`Edit.inverse`), which the pass holds until then, and the publication is linked to the last
+one by it, so the grid follows it by the edit whichever of the two it shows. An intent for
+another query supersedes the publication's preparation as it does the build. Rejected: taking
+acts ahead of the build by a second queue (two owners of the window's state); cancelling the
+build for an act (ADR 0032, and an act changes one row of what the build answers); publishing
+the build first and the act after (the act would wait for the build it does not need).
+
 **Keyed re-reads.** A change that moved only capture dates, of rows it names
 (`CatalogStoreChange.changed(facts, rows:)`), re-reads those rows alone. The projection numbers
 the changes it hears with their rows (`CatalogChangeLog`). A held date order keeps each row's

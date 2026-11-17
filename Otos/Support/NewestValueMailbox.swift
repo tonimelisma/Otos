@@ -18,15 +18,18 @@ import Synchronization
 /// doorbell (`.bufferingNewest(1)`) only says that the slot may hold a value. One consumer
 /// iterates; `finish` ends its iteration once the slot is empty.
 final nonisolated class NewestValueMailbox<Value: Sendable>: AsyncSequence, Sendable {
-    /// A value taken from the slot, with how many values put before it were never taken.
+    /// A value taken from the slot, with how many values put before it were never taken and
+    /// how long it waited in the slot for the consumer to run.
     nonisolated struct Delivery: Sendable {
         let value: Value
         let superseded: Int
+        let waited: Duration
     }
 
     private nonisolated struct Slot {
         var value: Value?
         var superseded = 0
+        var putAt: ContinuousClock.Instant?
     }
 
     private let slot = Mutex(Slot())
@@ -39,11 +42,13 @@ final nonisolated class NewestValueMailbox<Value: Sendable>: AsyncSequence, Send
 
     /// Replaces any value not yet taken with `value` and wakes the consumer.
     func put(_ value: Value) {
+        let now = ContinuousClock.now
         slot.withLock { slot in
             if slot.value != nil {
                 slot.superseded += 1
             }
             slot.value = value
+            slot.putAt = now
         }
         doorbell.yield()
     }
@@ -58,7 +63,11 @@ final nonisolated class NewestValueMailbox<Value: Sendable>: AsyncSequence, Send
             guard let value = slot.value else {
                 return nil
             }
-            let delivery = Delivery(value: value, superseded: slot.superseded)
+            let delivery = Delivery(
+                value: value,
+                superseded: slot.superseded,
+                waited: slot.putAt.map { $0.duration(to: .now) } ?? .zero
+            )
             slot = Slot()
             return delivery
         }

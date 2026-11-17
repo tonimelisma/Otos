@@ -156,11 +156,14 @@ extension CatalogProjection {
             let heldStacks = previous.stacks(at: revisions)
             // An order read again that came back as held keeps the held arrays, which the
             // reused collapse and the published window share (`holdingArrays(of:)`).
-            ordered = try await store.windowReads.orderedAssetIDs(
+            let read = try await store.windowReads.orderedAssetIDs(
                 for: resolvedDescriptor,
                 availableLibraryPaths: availableLibraryPaths,
                 heldStacks: heldStacks
-            ).holdingArrays(of: previous.heldOrder(for: resolvedDescriptor, availableLibraryPaths: availableLibraryPaths)?.answer)
+            )
+            ordered = await Self.holding(
+                read, of: previous.heldOrder(for: resolvedDescriptor, availableLibraryPaths: availableLibraryPaths)?.answer
+            )
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
             reads.orders[CatalogProjectionReads.Slot(resolvedDescriptor.scope)] = CatalogProjectionReads.Order(
                 descriptor: resolvedDescriptor,
@@ -191,12 +194,12 @@ extension CatalogProjection {
             return .built(state, CatalogProjectionBuildMetrics(orderQueryMs: orderQueryMs, reuse: reuse), reads, nil)
         }
 
-        var unsearched = makeBuildFacts(
+        var unsearched = await Self.scopedFacts(
             allRoots: allRoots,
             request: request,
             resolvedDescriptor: resolvedDescriptor,
             importBatches: importBatches,
-            ordered: (ordered.ids, ordered.dayBuckets, ordered.coordinates),
+            ordered: ordered,
             orderQueryMs: orderQueryMs
         )
         if let search = resolvedDescriptor.effectiveSearch, let searchStatus {
@@ -237,25 +240,23 @@ extension CatalogProjection {
         }
         let collapseStart = ContinuousClock.now
         let collapseSlot = CatalogProjectionReads.CollapseKey(resolvedDescriptor)
-        let collapse = Self.collapseStacks(
-            ordered.stacks,
-            expanded: request.expandedStacks,
-            in: &unsearched,
-            last: previous.collapses[collapseSlot]
+        let collapsed = await Self.collapsed(
+            unsearched, stacks: ordered.stacks, expanded: request.expandedStacks, last: previous.collapses[collapseSlot]
         )
-        reads.collapses[collapseSlot] = collapse.made
-        reuse.collapse = collapse.reused
+        reads.collapses[collapseSlot] = collapsed.collapse
+        reuse.collapse = collapsed.reused
         let collapseMs = DiagnosticsTiming.milliseconds(since: collapseStart)
-        Self.capAnniversaries(in: &unsearched)
-        let facts = unsearched
+        let facts = collapsed.facts
         // The supplementary reads are independent; an error in any fails the build.
         async let unfilteredVisibleAssetCount = unfilteredVisibleAssetCount(facts, store: store)
         async let allAssetCount = catalogedAssetCount(facts, store: store)
-        var (state, _) = try await windowState(
+        let counts = try await (all: allAssetCount, unfiltered: unfilteredVisibleAssetCount)
+        var state = await Self.assembled(
             from: facts,
-            allAssetCount: allAssetCount,
-            unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
-            filterOptions: shownOptions
+            allAssetCount: counts.all,
+            unfilteredVisibleAssetCount: counts.unfiltered,
+            filterOptions: shownOptions,
+            detailRefreshGeneration: detailRefreshGeneration
         )
         state.pendingIdentityRemaps = ordered.pendingIdentityRemaps
         state.searchPhase = facts.search?.phase
@@ -318,12 +319,34 @@ extension CatalogProjection {
         let start = ContinuousClock.now
         guard let reread = try await store.windowReads.orderedAssetIDs(
             ofRows: rows, for: descriptor, availableLibraryPaths: availableLibraryPaths
-        ), let patched = CatalogOrderPatch.patching(
+        ), let patched = await Self.patching(
             held.answer, changed: rows, reread: reread, descending: descriptor.effectiveSort.direction == .descending
         ) else {
             return nil
         }
-        return (patched.holdingArrays(of: held.answer), DiagnosticsTiming.milliseconds(since: start))
+        return (patched, DiagnosticsTiming.milliseconds(since: start))
+    }
+
+    // The pure steps of a build each walk the scope, so each leaves the actor (ADR 0032, rule
+    // 6): an act that reaches the projection while a build makes them is applied at once
+    // (ADR 0005, "An act is never queued behind a build").
+
+    /// `read`, holding `held`'s arrays where they are equal (`holdingArrays(of:)`).
+    @concurrent
+    private static func holding(_ read: CatalogOrderedAssets, of held: CatalogOrderedAssets?) async -> CatalogOrderedAssets {
+        read.holdingArrays(of: held)
+    }
+
+    /// The held order with the re-read rows merged in (`CatalogOrderPatch`), holding its
+    /// arrays where they are equal.
+    @concurrent
+    private static func patching(
+        _ held: CatalogOrderedAssets,
+        changed rows: Set<MediaAssetID>,
+        reread: CatalogOrderedAssets,
+        descending: Bool
+    ) async -> CatalogOrderedAssets? {
+        CatalogOrderPatch.patching(held, changed: rows, reread: reread, descending: descending)?.holdingArrays(of: held)
     }
 
     /// How an options read reads (`plan(forOptions:)`): the row's whole scope, or only the rows
@@ -560,6 +583,60 @@ extension CatalogProjection {
         return try await searchIndex.unreadCount(among: scope)
     }
 
+    /// `facts` with its stacks collapsed and On This Day capped (`collapseStacks`,
+    /// `capAnniversaries`), off the actor, with the collapse for the next pass.
+    @concurrent
+    private static func collapsed(
+        _ facts: CatalogProjectionBuildFacts,
+        stacks: CatalogStacks,
+        expanded: Set<PhotoStackID>,
+        last: CatalogProjectionReads.Collapse?
+    ) async -> (facts: CatalogProjectionBuildFacts, collapse: CatalogProjectionReads.Collapse?, reused: Bool) {
+        var facts = facts
+        let collapse = collapseStacks(stacks, expanded: expanded, in: &facts, last: last)
+        capAnniversaries(in: &facts)
+        return (facts, collapse.made, collapse.reused)
+    }
+
+    /// The scope's facts of `ordered` (`makeBuildFacts`), off the actor.
+    @concurrent
+    private static func scopedFacts(
+        allRoots: [CatalogLibraryState],
+        request: CatalogQueryRequest,
+        resolvedDescriptor: CatalogQueryDescriptor,
+        importBatches: [ImportBatchSummary],
+        ordered: CatalogOrderedAssets,
+        orderQueryMs: Int
+    ) async -> CatalogProjectionBuildFacts {
+        buildFacts(
+            allRoots: allRoots,
+            request: request,
+            resolvedDescriptor: resolvedDescriptor,
+            importBatches: importBatches,
+            ordered: (ordered.ids, ordered.dayBuckets, ordered.coordinates),
+            orderQueryMs: orderQueryMs
+        )
+    }
+
+    /// The window state of `facts` (`windowState(from:)`), off the actor: its map and On This
+    /// Day walk the scope.
+    @concurrent
+    private static func assembled(
+        from facts: CatalogProjectionBuildFacts,
+        allAssetCount: Int,
+        unfilteredVisibleAssetCount: Int,
+        filterOptions: CatalogFilterOptions,
+        detailRefreshGeneration: UInt64
+    ) async -> CatalogWindowState {
+        windowState(
+            from: facts,
+            allAssetCount: allAssetCount,
+            unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
+            filterOptions: filterOptions,
+            detailRefreshGeneration: detailRefreshGeneration
+        )
+    }
+
     /// Narrows the scope to `matches` (ADR 0048), among the scope's own assets, and returns how
     /// many the scope held before.
     private static func narrow(
@@ -606,6 +683,24 @@ extension CatalogProjection {
         ordered: (ids: [MediaAssetID], dayBuckets: [Date?], coordinates: [PlaceCoordinate]),
         orderQueryMs: Int
     ) -> CatalogProjectionBuildFacts {
+        Self.buildFacts(
+            allRoots: allRoots,
+            request: request,
+            resolvedDescriptor: resolvedDescriptor,
+            importBatches: importBatches,
+            ordered: ordered,
+            orderQueryMs: orderQueryMs
+        )
+    }
+
+    nonisolated static func buildFacts(
+        allRoots: [CatalogLibraryState],
+        request: CatalogQueryRequest,
+        resolvedDescriptor: CatalogQueryDescriptor,
+        importBatches: [ImportBatchSummary],
+        ordered: (ids: [MediaAssetID], dayBuckets: [Date?], coordinates: [PlaceCoordinate]),
+        orderQueryMs: Int
+    ) -> CatalogProjectionBuildFacts {
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
         let scoped = CatalogWindowPolicy.assetIDs(
             for: resolvedDescriptor.scope,
@@ -637,6 +732,26 @@ extension CatalogProjection {
         unfilteredVisibleAssetCount: Int,
         filterOptions: CatalogFilterOptions
     ) -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
+        (
+            Self.windowState(
+                from: facts,
+                allAssetCount: allAssetCount,
+                unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
+                filterOptions: filterOptions,
+                detailRefreshGeneration: detailRefreshGeneration
+            ),
+            CatalogProjectionBuildMetrics(orderQueryMs: facts.orderQueryMs)
+        )
+    }
+
+    /// `windowState(from:…)` with the detail refresh it carries given.
+    nonisolated static func windowState(
+        from facts: CatalogProjectionBuildFacts,
+        allAssetCount: Int,
+        unfilteredVisibleAssetCount: Int,
+        filterOptions: CatalogFilterOptions,
+        detailRefreshGeneration: UInt64
+    ) -> CatalogWindowState {
         let signpost = OtosSignpost.performance.beginInterval("CatalogWindowStateBuild")
         defer {
             OtosSignpost.performance.endInterval("CatalogWindowStateBuild", signpost)
@@ -650,7 +765,7 @@ extension CatalogProjection {
             selectedAssetCount: facts.scopedAssetIDs.count,
             search: facts.search
         )
-        let state = CatalogWindowPolicy.catalogWindowState(
+        return CatalogWindowPolicy.catalogWindowState(
             CatalogProjectionWindowStateParts(
                 title: CatalogWindowPolicy.title(for: facts.resolvedDescriptor.scope, libraries: facts.allRoots),
                 libraries: sources.libraries,
@@ -676,7 +791,6 @@ extension CatalogProjection {
             ),
             detailRefreshGeneration: detailRefreshGeneration
         )
-        return (state, CatalogProjectionBuildMetrics(orderQueryMs: facts.orderQueryMs))
     }
 
     /// Cataloged assets in scope ignoring the filter; only asked when the filtered scope

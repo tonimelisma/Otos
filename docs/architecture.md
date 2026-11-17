@@ -351,7 +351,11 @@ everything expensive happens on an actor off the main thread.
   which collapses again only the stacks it changed (`PhotoStackCollapse.changingExpansion`)
   and hands the grid the new order as an edit of the one it shows. Every publication of the
   same query is an edit of the last (`CatalogMediaGridState.sharingContent(of:)`), so an act
-  landing on a read the window skipped is still an edit of the order the grid shows.
+  landing on a read the window skipped is still an edit of the order the grid shows. An
+  act's publication costs its edit, index included (`CatalogGridContent`'s `Positions`), and
+  never waits behind a build: every step of a pass that walks the scope, its publication's
+  comparison included (`preparePublication`), runs off the projection actor, and the pass's
+  publication takes the acts held at its step on top (ADR 0005).
 - **Which pane shows**: `CatalogWindowViewModel.detailPane` (`CatalogDetailPane`) — the
   selected scope's surface from the click on, waiting (`ScopeWaitingView`) until its state
   is applied (DES-118).

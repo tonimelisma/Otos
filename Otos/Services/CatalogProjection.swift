@@ -103,6 +103,9 @@ actor CatalogProjection {
     /// so a test that waits for quiescence has the census of what it waited for; the app's
     /// projection is made without one and builds no census.
     let heldIDsReport: (@Sendable (CatalogProjectionHeldIDs) -> Void)?
+    /// Tests hold a pass's publication, made off the actor (`preparePublication`), at its
+    /// suspension, to deliver an act there; production passes nothing.
+    let preparingPublication: (@Sendable () async -> Void)?
     /// Runs the duplicates builds and People passes one heavy load at a time with the other
     /// owners' (`LoadAdmission`): the window's, which opens it at its first grid.
     let admission: LoadAdmission
@@ -305,9 +308,11 @@ actor CatalogProjection {
         peopleBuilder: PeopleGallery.Builder? = nil,
         backgroundOwners: BackgroundOwners = .all,
         admission: LoadAdmission = LoadAdmission(isOpen: true),
-        heldIDsReport: (@Sendable (CatalogProjectionHeldIDs) -> Void)? = nil
+        heldIDsReport: (@Sendable (CatalogProjectionHeldIDs) -> Void)? = nil,
+        preparingPublication: (@Sendable () async -> Void)? = nil
     ) {
         self.heldIDsReport = heldIDsReport
+        self.preparingPublication = preparingPublication
         self.admission = admission
         self.volumeCapacity = volumeCapacity
         self.cadence = cadence
@@ -552,6 +557,17 @@ nonisolated enum CatalogProjectionIntent: Sendable {
     case choicesLanded(request: UInt64)
     /// The choices numbered `request` were not written: what they took out comes back.
     case choicesWithdrawn(request: UInt64)
+
+    /// The act's name in `op=projection.act` lines, for the intents whose result the window
+    /// shows at once (DES-119, DES-120); nil for a query and for a write's report.
+    var actName: String? {
+        switch self {
+        case .hide: "moveToTrash"
+        case .putBack: "putBack"
+        case .choose: "choose"
+        case .query, .hideLanded, .hideWithdrawn, .choicesLanded, .choicesWithdrawn: nil
+        }
+    }
 }
 
 /// What one of the window's acts keeps off the window ahead of the Store's write, until a
@@ -686,7 +702,27 @@ private nonisolated enum WindowHoldKey: Hashable {
 /// them (DES-076). An item neither of whose neighbours is shown waits for the Store's read.
 /// The map, On This Day and the duplicate groups follow that read.
 extension CatalogProjection {
-    func apply(_ intent: CatalogProjectionIntent) {
+    /// Applies `intent` in the step it reaches the actor. `sentAt` is when its forwarder sent
+    /// it: an act's line says how long it waited for the actor (`waitedUs`) and how long its
+    /// own step took (`applyUs`), so an act's time on the projection reads as queueing or work.
+    func apply(_ intent: CatalogProjectionIntent, sentAt: ContinuousClock.Instant? = nil) {
+        let start = ContinuousClock.now
+        let shown = lastPublishedState?.mediaGrid
+        let publications = publicationCount
+        defer {
+            if let act = intent.actName {
+                let published = publicationCount != publications
+                OtosLog.catalog.noticeOperation("projection.act", phase: "applied", fields: [
+                    "projection": diagnosticID,
+                    "act": act,
+                    "waitedUs": sentAt.map { "\(DiagnosticsTiming.microseconds(since: $0, now: start))" } ?? "unknown",
+                    "applyUs": "\(DiagnosticsTiming.microseconds(since: start))",
+                    "passRunning": "\(runningPasses > 0)",
+                    "published": "\(published)",
+                    "gridWork": published ? lastPublishedState.map { Self.gridWork($0.mediaGrid, after: shown) } ?? "none" : "none",
+                ])
+            }
+        }
         switch intent {
         case let .query(request):
             updateQueryRequest(request)
@@ -771,21 +807,42 @@ extension CatalogProjection {
 
     /// `state` with every held Put Back's items that it does not show put back beside their
     /// neighbours: after the predecessor, or else before the successor, whichever is shown or
-    /// is itself put back. The order is an edit of `state`'s (`CatalogGridContent.edited`), so
-    /// the grid follows it by the inserts alone. Items put back beside the same neighbour keep
+    /// is itself put back. The order is an edit of `state`'s (`CatalogGridContent.inserting`),
+    /// so the grid follows it by the inserts alone. Items put back beside the same neighbour keep
     /// the order they were taken in. An item neither of whose neighbours is there is left to
     /// the Store's read, and one a newer Move to Trash holds (`hidden`) stays off.
     private func puttingBack(_ state: CatalogWindowState, hidden: Set<MediaAssetID>) -> CatalogWindowState {
-        let content = state.mediaGrid.content
-        var pending: [MediaAssetID: TrashRemoval.Item] = [:]
-        for (key, hold) in holds {
-            guard case .putBack = key, case let .putBack(removal) = hold.content,
-                  removal.descriptor == state.mediaGrid.descriptor
-            else {
-                continue
+        Self.puttingBack(state, hidden: hidden, removals: heldPutBackRemovals)
+    }
+
+    /// The removals whose Put Back is held.
+    private var heldPutBackRemovals: [TrashRemoval] {
+        holds.compactMap { key, hold in
+            guard case .putBack = key, case let .putBack(removal) = hold.content else {
+                return nil
             }
-            for item in removal.items where !content.contains(item.id) && !hidden.contains(item.id) {
-                pending[item.id] = item
+            return removal
+        }
+    }
+
+    /// `puttingBack(_:hidden:)` for `removals`, a value: what the publication made off the
+    /// actor puts back. Costs the items put back and their neighbours' look-ups, never the
+    /// order: each neighbour's position is read from the index, and the order's runs between
+    /// the insertions are copied whole.
+    fileprivate nonisolated static func puttingBack(
+        _ state: CatalogWindowState,
+        hidden: Set<MediaAssetID>,
+        removals: [TrashRemoval]
+    ) -> CatalogWindowState {
+        let content = state.mediaGrid.content
+        var visited = 0
+        var pending: [MediaAssetID: TrashRemoval.Item] = [:]
+        for removal in removals where removal.descriptor == state.mediaGrid.descriptor {
+            for item in removal.items where !hidden.contains(item.id) {
+                visited += 1
+                if !content.contains(item.id) {
+                    pending[item.id] = item
+                }
             }
         }
         guard !pending.isEmpty else {
@@ -795,7 +852,11 @@ extension CatalogProjection {
         var before: [MediaAssetID: [TrashRemoval.Item]] = [:]
         var placed = Set<MediaAssetID>()
         func isThere(_ id: MediaAssetID?) -> Bool {
-            id.map { content.contains($0) || placed.contains($0) } ?? false
+            guard let id else {
+                return false
+            }
+            visited += 1
+            return placed.contains(id) || content.contains(id)
         }
         var progressed = true
         while progressed {
@@ -821,51 +882,48 @@ extension CatalogProjection {
                 lhs.successor == rhs.id || (rhs.successor != lhs.id && lhs.id.relativePathPrecedes(rhs.id))
             }
         }
-        let hasDays = !content.dayBuckets.isEmpty
-        var ids: [MediaAssetID] = []
-        var days: [Date?] = []
-        var inserted: [Int] = []
-        ids.reserveCapacity(content.orderedAssetIDs.count + placed.count)
-        func emitPutBack(_ item: TrashRemoval.Item) {
-            for earlier in ordered(before[item.id] ?? []) {
-                emitPutBack(earlier)
+        /// `item` with what is put back before and after it, in order.
+        func chain(_ item: TrashRemoval.Item) -> [TrashRemoval.Item] {
+            ordered(before[item.id] ?? []).flatMap(chain) + [item] + ordered(after[item.id] ?? []).flatMap(chain)
+        }
+        // The shown items something is put back beside, in the order's order.
+        let anchors = Set(before.keys).union(after.keys)
+            .compactMap { id -> (position: Int, id: MediaAssetID)? in
+                visited += 1
+                return content.position(of: id).map { ($0, id) }
             }
-            inserted.append(ids.count)
-            ids.append(item.id)
-            if hasDays {
-                days.append(item.dayBucket)
+            .sorted { $0.position < $1.position }
+        var inserted: [(position: Int, id: MediaAssetID, day: Date?)] = []
+        inserted.reserveCapacity(placed.count)
+        var shift = 0
+        for anchor in anchors {
+            for item in ordered(before[anchor.id] ?? []).flatMap(chain) {
+                inserted.append((anchor.position + shift, item.id, item.dayBucket))
+                shift += 1
             }
-            for later in ordered(after[item.id] ?? []) {
-                emitPutBack(later)
+            for item in ordered(after[anchor.id] ?? []).flatMap(chain) {
+                shift += 1
+                inserted.append((anchor.position + shift, item.id, item.dayBucket))
             }
         }
-        for (position, id) in content.orderedAssetIDs.enumerated() {
-            for earlier in ordered(before[id] ?? []) {
-                emitPutBack(earlier)
+        var stacks = content.stacks
+        let placedItems = placed.compactMap { pending[$0] }
+        if placedItems.contains(where: { $0.tile != nil || !$0.hiddenMembers.isEmpty }) {
+            var tiles = stacks.tiles
+            var shownFor = stacks.shownForHiddenMember
+            for item in placedItems {
+                tiles[item.id] = item.tile
+                for member in item.hiddenMembers {
+                    shownFor[member] = item.id
+                }
             }
-            ids.append(id)
-            if hasDays {
-                days.append(content.dayBuckets[position])
-            }
-            for later in ordered(after[id] ?? []) {
-                emitPutBack(later)
-            }
-        }
-        var tiles = content.stacks.tiles
-        var shownFor = content.stacks.shownForHiddenMember
-        for id in placed {
-            guard let item = pending[id] else { continue }
-            tiles[id] = item.tile
-            for member in item.hiddenMembers {
-                shownFor[member] = id
-            }
+            stacks = CatalogGridStacks(tiles: tiles, shownForHiddenMember: shownFor)
         }
         var shown = state
-        shown.mediaGrid = state.mediaGrid.replacingContent(content.edited(
-            by: CatalogGridContent.Edit(removed: [], inserted: inserted),
-            to: ids,
-            dayBuckets: days,
-            stacks: CatalogGridStacks(tiles: tiles, shownForHiddenMember: shownFor)
+        shown.mediaGrid = state.mediaGrid.replacingContent(content.inserting(
+            inserted,
+            stacks: stacks,
+            work: CatalogGridContent.Work(visited: visited)
         ))
         return shown
     }
@@ -1401,6 +1459,27 @@ private extension CatalogProjection {
         }
         window.duplicates = duplicates
         window.people = people
+        // Telling a read's order from the one shown, the edit between them and the index cost
+        // the order's size, so they are made off the actor, against the publication shown now
+        // and the acts held now. An act that arrives meanwhile is applied and published at
+        // once; `publish` then takes the acts held at its step on top (ADR 0005, "An act is
+        // never queued behind a build"). An intent for another query supersedes this work as
+        // it does the build.
+        let prepared: PreparedPublication
+        do {
+            let base = lastPublishedState
+            let hidden = hiddenItems(for: window.queryDescriptor)
+            let putBacks = heldPutBacks
+            let removals = heldPutBackRemovals
+            prepared = try await supersedable(building: selectedRequest.descriptor) { [window, preparingPublication] in
+                await preparingPublication?()
+                return await Self.preparePublication(window, base: base, hidden: hidden, putBacks: putBacks, removals: removals)
+            }
+            try Task.checkCancellation()
+        } catch {
+            endUnpublishedPass(error, request: selectedRequest)
+            return
+        }
         let diagnostics = publish(
             CatalogProjectionCompletedPublication(
                 state: window,
@@ -1408,6 +1487,7 @@ private extension CatalogProjection {
                 selectedDescriptor: completed.selectedDescriptor,
                 timing: completed.timing
             ),
+            prepared: prepared,
             selectedRequest: selectedRequest
         )
         await diagnostics.emit()
@@ -1699,10 +1779,45 @@ private extension CatalogProjection {
         republish { $0.duplicates = built }
     }
 
-    /// Normalizes the selection the build resolved, compares against the last published
-    /// state, and yields it if it changed. Synchronous.
+    /// What a pass's publication is made of off the actor (`preparePublication`): the build
+    /// with every part equal to the base publication's handed on and its index built, and the
+    /// publication of it with the acts held then, made from the base's order by an edit. The
+    /// base is held until `publish`, so an act's publication made from it meanwhile and this
+    /// one still share an order to find the edit between them through.
+    struct PreparedPublication: Sendable {
+        let built: CatalogWindowState
+        let publication: CatalogWindowState
+        let base: CatalogWindowState?
+        let hidden: Set<MediaAssetID>
+        let putBacks: Set<MediaTrashBatchID>
+    }
+
+    /// The pass's publication of `build` after `base`, off the actor (ADR 0032, rule 6): the
+    /// comparison with the base's parts, the index of an order read whole and the edit from the
+    /// base's order cost the scope, and an act must never wait behind them.
+    @concurrent
+    static func preparePublication(
+        _ build: CatalogWindowState,
+        base: CatalogWindowState?,
+        hidden: Set<MediaAssetID>,
+        putBacks: Set<MediaTrashBatchID>,
+        removals: [TrashRemoval]
+    ) async -> PreparedPublication {
+        let built = build.sharingUnchanged(with: base)
+        let publication = puttingBack(built.hidingItems(hidden), hidden: hidden, removals: removals)
+            .sharingUnchanged(with: base)
+        return PreparedPublication(built: built, publication: publication, base: base, hidden: hidden, putBacks: putBacks)
+    }
+
+    /// Normalizes the selection the build resolved, takes the acts held now on top of the
+    /// publication prepared for it, and yields it if it changed. Synchronous, and in the
+    /// edit's cost: when an act arrived while it was prepared, or the duplicates or People
+    /// were built again, the build's own order, already indexed, is edited by the acts held
+    /// now; either way the result is linked to the last publication by the edit between them,
+    /// through the base both were made from.
     func publish(
         _ publication: CatalogProjectionCompletedPublication,
+        prepared: PreparedPublication,
         selectedRequest: CatalogQueryRequest
     ) -> CatalogProjectionPublicationDiagnostics {
         // Normalize only the exact input this build used; a newer reentrant user
@@ -1716,10 +1831,19 @@ private extension CatalogProjection {
         // the Store's write (`holds`). Parts equal to the last publication's are handed on as that
         // publication's own, so the window learns what changed by identity, never by walking
         // them — and a read that answers what a hide already showed applies nothing.
-        lastBuiltState = publication.state
-        let hidden = hiddenItems(for: publication.state.queryDescriptor)
-        let state = puttingBack(publication.state.hidingItems(hidden), hidden: hidden).sharingUnchanged(with: lastPublishedState)
-        publishedFrom = (builtRevision, hidden, heldPutBacks)
+        var built = prepared.built
+        let hidden = hiddenItems(for: built.queryDescriptor)
+        let putBacks = heldPutBacks
+        let ownersMoved = built.duplicates != duplicates || built.people != people
+        if ownersMoved {
+            built.duplicates = duplicates
+            built.people = people
+        }
+        lastBuiltState = built
+        let rebased = ownersMoved || hidden != prepared.hidden || putBacks != prepared.putBacks
+        let state = (rebased ? puttingBack(built.hidingItems(hidden), hidden: hidden) : prepared.publication)
+            .sharingUnchanged(with: lastPublishedState)
+        publishedFrom = (builtRevision, hidden, putBacks)
         let changeSummary = CatalogProjectionChangeSummary.compare(
             previous: lastPublishedState,
             current: state
@@ -1727,6 +1851,7 @@ private extension CatalogProjection {
         let stateChanged = changeSummary.stateChanged
         let equalityUs = DiagnosticsTiming.microseconds(since: equalityStart)
         let gridChange = Self.gridChange(state.mediaGrid, after: lastPublishedState?.mediaGrid)
+        let gridWork = Self.gridWork(state.mediaGrid, after: lastPublishedState?.mediaGrid)
         if stateChanged {
             yield(state)
         }
@@ -1744,7 +1869,8 @@ private extension CatalogProjection {
             dirtyAfter: requested != covered,
             stateChanged: stateChanged,
             orderQueryCount: orderQueryCount,
-            gridChange: gridChange
+            gridChange: gridChange,
+            gridWork: gridWork
         )
     }
 
@@ -1759,6 +1885,15 @@ private extension CatalogProjection {
             return "same"
         }
         return grid.content.edit(from: previous.content).map { "edit:\($0.size)" } ?? "whole"
+    }
+
+    /// What making a publication's grid content cost (`CatalogGridContent.Work`), for its
+    /// line; `none` when it hands the last publication's content on.
+    static func gridWork(_ grid: CatalogMediaGridState, after previous: CatalogMediaGridState?) -> String {
+        if let previous, grid.sharesContent(with: previous) {
+            return "none"
+        }
+        return grid.content.work.description
     }
 
     private func retainResolvedSelection(
@@ -1832,6 +1967,7 @@ private extension CatalogProjection {
             "hidden": "\(hidden.count)",
             "changed": "\(changed)",
             "gridChange": Self.gridChange(state.mediaGrid, after: lastPublishedState?.mediaGrid),
+            "gridWork": Self.gridWork(state.mediaGrid, after: lastPublishedState?.mediaGrid),
         ])
         if changed {
             yield(state)

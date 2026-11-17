@@ -1517,7 +1517,7 @@ extension CatalogWindowViewModel {
             await projection.attachSearchIndex(searchIndex)
         }
         for await intent in intents {
-            await projection.apply(intent)
+            await projection.apply(intent, sentAt: .now)
         }
     }
 
@@ -1581,7 +1581,7 @@ extension CatalogWindowViewModel {
                 guard let self else {
                     break
                 }
-                applyState(delivery.value, superseded: delivery.superseded)
+                applyState(delivery.value, superseded: delivery.superseded, waited: delivery.waited)
             }
         }
     }
@@ -1681,8 +1681,9 @@ extension CatalogWindowViewModel {
     /// identity changes runs here (before SwiftUI re-renders and before any
     /// AppKit structural apply) so the collection view only ever *renders* the
     /// already-updated model. `superseded` counts the publications a newer one replaced
-    /// before the window could apply them, which it never applies (`NewestValueMailbox`).
-    func applyState(_ nextState: CatalogWindowState, superseded: Int = 0) {
+    /// before the window could apply them, which it never applies (`NewestValueMailbox`);
+    /// `waited` is how long this one waited for the main actor (`deliveryWaitUs`).
+    func applyState(_ nextState: CatalogWindowState, superseded: Int = 0, waited: Duration = .zero) {
         var nextState = nextState
         if let catalogCompatibilityProblem {
             nextState.libraries = []
@@ -1802,6 +1803,7 @@ extension CatalogWindowViewModel {
             "delta": "\(itemCount - previousItemCount)",
             "libraries": "\(nextState.libraries.count)",
             "superseded": "\(superseded)",
+            "deliveryWaitUs": "\(DiagnosticsTiming.microseconds(since: applyStart - waited, now: applyStart))",
             "applyMs": "\(applyMs)",
         ])
         logFirstGridIfLoaded(nextState, items: itemCount, applyMs: applyMs)
