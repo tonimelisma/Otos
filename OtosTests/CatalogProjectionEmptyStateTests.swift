@@ -428,6 +428,77 @@ struct CatalogProjectionEmptyStateTests {
         #expect(states.last?.mediaEmptyState != .loadingCatalog)
         await store.shutdown()
     }
+
+    /// A window that shows no item has no grid a background change could reorder, so a change
+    /// of which rows exist publishes at once: a library added to an empty catalog is listed,
+    /// and its first scan batch shown, without waiting for the cadence. The cadence is an
+    /// hour, so only immediate publications pass.
+    @Test func aNewLibrarysFirstRowsReachAnEmptyWindowWithoutTheCadence() async throws {
+        let root = try makeTestDirectory().appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for index in 0 ..< 3 {
+            try writeCatalogStoreFile(root.appending(path: "photo-\(index).jpg"), contents: "jpeg")
+        }
+        let store = makeTestStore(location: .inMemory, scanCadence: .seconds(3600))
+        try await store.start(scansSavedLibraries: false)
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .seconds(3600))
+        let recorder = EmptyStateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+        _ = await recorder.waitForState { states in
+            states.contains { $0.mediaEmptyState == .noMedia }
+        }
+
+        try await store.addLibrary(url: root)
+
+        let states = await recorder.waitForState { states in
+            states.contains { $0.mediaGrid.orderedAssetIDs.count == 3 }
+        }
+        #expect(states.contains { $0.libraries.count == 1 && $0.mediaGrid.orderedAssetIDs.isEmpty })
+        await store.shutdown()
+    }
+
+    /// The cadence still paces a shown grid: once the window shows items, a library added
+    /// beside them is owed a publication that no doorbell rings, and is published on the next
+    /// tick (here an hour away).
+    @Test func aShownGridStillTakesARowChangeOnTheCadence() async throws {
+        let root = try makeTestDirectory().appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "photo.jpg"), contents: "jpeg")
+        let store = makeTestStore(location: .inMemory, scanCadence: .seconds(3600))
+        try await store.start(scansSavedLibraries: false)
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .seconds(3600))
+        let recorder = EmptyStateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+        try await store.addLibrary(url: root)
+        _ = await recorder.waitForState { states in
+            states.contains { $0.mediaGrid.orderedAssetIDs.count == 1 }
+        }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        let heard = await projection.detailRefreshGeneration
+        try await store.addLibrary(url: makeTestDirectory())
+        try await waitUntil { await projection.detailRefreshGeneration > heard }
+
+        #expect(await !projection.isQuiescent)
+        #expect(await recorder.snapshot().allSatisfy { $0.libraries.count < 2 })
+        await store.shutdown()
+    }
 }
 
 private typealias EmptyStateRecorder = AsyncValueRecorder<CatalogWindowState>

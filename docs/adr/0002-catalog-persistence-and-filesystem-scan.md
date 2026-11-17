@@ -66,9 +66,10 @@ Captured user guidance for verification:
 - Everything stored in the SQLite catalog should be loaded into the in-memory
   catalog working set until evidence or an explicit requirement proves
   otherwise.
-- During filesystem scans, SQLite writes happen on a time cadence, not based on
-  the number of scanned files. ADR 0011 currently sets this background cadence
-  to roughly one second.
+- During filesystem scans, a walk's first `CatalogScanner.firstBatchCount` (256)
+  files are written as soon as the walk has them; after that SQLite writes happen
+  on a time cadence, not based on the number of scanned files. ADR 0011 currently
+  sets this background cadence to roughly one second.
 - During filesystem scans, SwiftUI-visible updates happen on Projection's
   background publication cadence, not based on the number of scanned files. ADR
   0011 currently sets this background cadence to roughly one second while direct
@@ -465,7 +466,13 @@ Fields deliberately not stored by this ADR:
 
 During a filesystem scan, discovered asset changes are accumulated by the catalog
 owner and flushed to SQLite on the background scan cadence when pending changes
-exist. This is a time-based cadence, not a file-count threshold.
+exist. This is a time-based cadence, not a file-count threshold, with one exception:
+a walk's first batch goes out as soon as it holds `CatalogScanner.firstBatchCount`
+(256) files. A batch's write costs each of its rows (about 0.3 ms at the owner's
+schema), so a first batch of a whole cadence's files — 8,729 of a new 160,000-file
+library — kept every row off the window for its 2.6 s write; 256 files are about a
+window of tiles and are written in tens of milliseconds
+(`docs/research/2026-11-17-a-new-library-at-the-owners-size.md`).
 
 `CatalogProjection` publishes SwiftUI-visible background scan state on its
 background publication cadence when pending view changes exist. Direct user

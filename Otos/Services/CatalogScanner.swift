@@ -81,6 +81,10 @@ nonisolated struct CatalogScanner {
         self.observeFile = observeFile
     }
 
+    /// The files a walk's first batch holds: about a window of tiles, written in tens of
+    /// milliseconds where a cadence's batch took seconds. Later batches go out on the cadence.
+    static let firstBatchCount = 256
+
     static let live = CatalogScanner(
         scanRoot: { rootPath, cadence, batchHandler in
             try await LiveCatalogScanner.scan(
@@ -240,6 +244,7 @@ private nonisolated enum LiveCatalogScanner {
         var scanState = ScanState()
         let clock = ContinuousClock()
         var lastFlush = clock.now
+        var flushedAny = false
 
         let state = OtosSignpost.fileAccess.beginInterval("CatalogScanEnumerate")
         defer {
@@ -276,7 +281,14 @@ private nonisolated enum LiveCatalogScanner {
                 enumerator: enumerator,
                 scanState: &scanState
             )
-            if lastFlush.duration(to: clock.now) >= cadence {
+            // The walk's first files go out as soon as there are `firstBatchCount` of them,
+            // then a batch a cadence: a batch's write costs each of its rows, so a first batch
+            // of a cadence's files kept a new library's first rows off the window for the
+            // whole write (8,729 rows, 2.6 s at the owner's library size,
+            // `docs/research/2026-11-17-a-new-library-at-the-owners-size.md`).
+            let firstBatchFull = !flushedAny && scanState.pending.count >= CatalogScanner.firstBatchCount
+            if firstBatchFull || lastFlush.duration(to: clock.now) >= cadence {
+                flushedAny = flushedAny || !scanState.pending.isEmpty
                 try await flush(&scanState.pending, batchHandler: batchHandler)
                 lastFlush = clock.now
             }

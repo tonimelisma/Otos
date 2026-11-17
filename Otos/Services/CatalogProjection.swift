@@ -1163,7 +1163,7 @@ private extension CatalogProjection {
         // are read every pass; no held read, tile detail or derived owner depends on it, so none
         // is read again or asked.
         if change.rows == .none {
-            requestPublication(ringNow: publishedBeforeCatalogLoad)
+            requestPublication(ringNow: publishesAtOnce(change))
             return
         }
         // A remove and same-path add can coalesce into a final snapshot where the
@@ -1198,7 +1198,24 @@ private extension CatalogProjection {
                 galleryRequested &+= 1
             }
         }
-        requestPublication(ringNow: publishedBeforeCatalogLoad)
+        requestPublication(ringNow: publishesAtOnce(change))
+    }
+
+    /// Whether `change` is published now rather than on the cadence: the catalog's first load
+    /// (APP-044), and a change of which rows exist (`.membership`: rows added, a root added
+    /// or removed) while the window shows no item. The cadence spares the main actor the
+    /// apply of a shown grid that a background change reorders; a window that shows no item
+    /// has no grid to reorder, and what it waits for is its first rows — a newly added
+    /// library's first scan batch, which waited for the next tick (0.9 s at the owner's
+    /// library size, `docs/research/2026-11-17-a-new-library-at-the-owners-size.md`).
+    private func publishesAtOnce(_ change: CatalogStoreChange) -> Bool {
+        if publishedBeforeCatalogLoad {
+            return true
+        }
+        guard change.facts.contains(.membership) else {
+            return false
+        }
+        return lastPublishedState?.mediaGrid.orderedAssetIDs.isEmpty ?? true
     }
 
     /// Cancels the build in flight when it is for a descriptor other than the one now asked

@@ -290,6 +290,14 @@ publishes immediately rather than on the background cadence; leaving the window
 blank for a cadence tick after the catalog is already readable was measured at about
 one second of a launch that loads its catalog in 120 ms (APP-044).
 
+For the same reason a change of which rows exist (`.membership`) publishes immediately
+while the published window shows no item. The cadence spares the main actor the apply of
+a shown grid that a background change reorders; a window that shows no item has none, and
+what it waits for is its first rows. A newly added library's first scan batch waited
+0.9 s for the next tick at the owner's library size
+(`docs/research/2026-11-17-a-new-library-at-the-owners-size.md`). Once the window shows
+an item, such changes wait for the cadence again (ARC-019).
+
 When Projection receives `.libraryRemoved(path)` for its selected root, it
 immediately retains `.allMedia` as selection input and requests a publication. A
 same-path replacement therefore remains unselected even when no root-absent
