@@ -190,8 +190,9 @@ nonisolated enum FaceCrop {
 
     /// The square around `box` (fractions, top-left origin), enlarged and kept inside the
     /// image, drawn at no more than `pixelEdge` on a side into pixels of its own
-    /// (`MappedImage`): a crop sharing `image`'s pixels would keep all of `image` alive for as
-    /// long as the tile is held. Smaller than asked only when the image is.
+    /// (`DisplayImage.draw`), which the tile shows without a copy: a crop sharing `image`'s
+    /// pixels would keep all of `image` alive for as long as the tile is held. Smaller than
+    /// asked only when the image is.
     static func crop(_ image: CGImage, box: CGRect, pixelEdge: Int = .max) -> CGImage? {
         let width = CGFloat(image.width)
         let height = CGFloat(image.height)
@@ -206,7 +207,7 @@ nonisolated enum FaceCrop {
         let edge = min(pixelEdge, region.width, region.height)
         let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)
         guard let colorSpace else { return nil }
-        return MappedImage.draw(width: edge, height: edge, colorSpace: colorSpace) { context in
+        return DisplayImage.draw(width: edge, height: edge, colorSpace: colorSpace) { context in
             context.interpolationQuality = .high
             context.draw(region, in: CGRect(x: 0, y: 0, width: edge, height: edge))
         }

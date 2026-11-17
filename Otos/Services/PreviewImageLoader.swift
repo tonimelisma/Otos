@@ -36,13 +36,13 @@ nonisolated protocol PreviewLoading: Sendable {
 /// before it reads or allocates anything and is never held: stepping through photos faster
 /// than they decode starts only the decodes still wanted.
 ///
-/// **What a decode is.** A screen-sized request decodes the stored preview with
-/// `CGImageSourceCreateThumbnailAtIndex` at the requested long edge. Image I/O returns it in
-/// an IOSurface that Core Animation displays as it is, so a shown photo's pixels exist once,
-/// in a region of their own that leaves the footprint when the image goes. A decode drawn
-/// into a bitmap context instead (`ThumbnailStore.load`) is copied again by Core Animation
-/// for display and kept with the image: two full copies a photo, and the decode's scratch
-/// left in the malloc heap (`docs/research/2026-11-16-full-size-view-memory.md`).
+/// **What a decode is.** A screen-sized request decodes the stored preview at the requested
+/// long edge through `DisplayImage.decode`, the one decode of an image a layer shows. Image
+/// I/O returns it in an IOSurface that Core Animation displays as it is, so a shown photo's
+/// pixels exist once, in a region of their own that leaves the footprint when the image goes.
+/// A decode drawn into a bitmap context instead is copied again by Core Animation for display
+/// and kept with the image: two full copies a photo, and the decode's scratch left in the
+/// malloc heap (`docs/research/2026-11-16-full-size-view-memory.md`).
 ///
 /// **What it holds.** A pane holds the image it shows (`PanePreview`), so the loader holds
 /// only what a pane can come back to: the screen-sized decodes of the last
@@ -423,18 +423,10 @@ actor PreviewImageLoader: PreviewLoading {
         }
     }
 
-    /// The stored preview at `targetLongEdge` at most, as Image I/O hands it over: in an
-    /// IOSurface that Core Animation displays without a copy. Its pixels are as stored, as
-    /// `ThumbnailStore` writes them upright.
+    /// The stored preview at `targetLongEdge` at most, as a layer shows it without a copy
+    /// (`DisplayImage.decode`).
     private nonisolated static func decodeStoredPreview(at url: URL, targetLongEdge: Int) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
-            return nil
-        }
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: targetLongEdge,
-            kCGImageSourceShouldCacheImmediately: true,
-        ] as CFDictionary)
+        DisplayImage.decode(url, maxPixelEdge: targetLongEdge)
     }
 
     /// A RAW, or an edited still, is rendered by the interactive renderer with its saved

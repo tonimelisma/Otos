@@ -383,8 +383,8 @@ grouping had put with the right child.
   the photo menus and the Info pane (`docs/design/people.md`).
 - **A face tile holds its own pixels:** a tile is drawn from the uncached preview, so Image I/O
   decodes only the part of the preview the face covers. It is drawn at the cell's backing size
-  into a `MappedImage` (`Otos/Support/MappedImage.swift`), pixels of its own that leave the
-  footprint when the tile goes. `FaceTileImages` costs each tile at what it holds, up to
+  into an IOSurface of its own (`DisplayImage.draw`, ADR 0016), which the tile shows without
+  a copy and which leaves the footprint when the tile goes. `FaceTileImages` costs each tile at what it holds, up to
   48 MB. Rejected: `CGImage.cropping(to:)` of a scaled decode. A crop keeps the whole image it
   was cut from, so 24 small faces in a Retina window held 812 MB in the test process
   (`docs/research/2026-11-16-image-memory-while-used.md`).

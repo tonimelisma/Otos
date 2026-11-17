@@ -368,7 +368,7 @@ struct PeopleStateTests {
 
     /// A face tile holds its own pixels and no more: a small face on a 2560 px preview gives a
     /// tile at most the size asked for, whose bytes are its own rows, not the preview's
-    /// (`MappedImage`). A crop sharing the preview's pixels kept the whole decode alive.
+    /// (`DisplayImage.draw`). A crop sharing the preview's pixels kept the whole decode alive.
     @Test func aFaceTileHoldsOnlyItsOwnPixels() async throws {
         let directory = try makeTestDirectory()
         try Self.writePreview("large.png", width: 2560, height: 1920, face: CGRect(x: 1200, y: 900, width: 100, height: 100), in: directory)

@@ -27,8 +27,9 @@ import UniformTypeIdentifiers
 /// `stage` normalizes QuickLook output to an opaque 8-bit sRGB JPEG without making
 /// it visible to the grid. `CatalogStore` promotes that staged file only after the
 /// matching SQLite row validates, so stale enrichment work cannot overwrite the last
-/// good thumbnail. `load` decodes synchronously on its caller's thread (callers run it from a `Task.detached`) and returns an immutable
-/// `CGImage`; the caller only assigns that already-decoded bitmap on the main actor.
+/// good thumbnail. `load` decodes synchronously on its caller's thread (callers run it off the main actor) and
+/// returns an immutable `CGImage` a layer shows without a copy (`DisplayImage`); the caller
+/// only assigns it on the main actor.
 /// `delete`/`deleteAll` are the purge side for proven deletion and library removal.
 /// Staged files live in their own `.staging` subdirectory, on the same volume so promotion
 /// is an atomic rename; `clearStaging` is startup hygiene for staged files abandoned by a
@@ -298,58 +299,25 @@ nonisolated enum ThumbnailStore {
         }
     }
 
-    /// Loads and decodes a thumbnail synchronously on the calling thread; callers run it from a
-    /// `Task.detached`. `nil` if the file is missing or
-    /// unreadable (the tile then shows its placeholder).
+    /// Decodes a stored image for display (`DisplayImage.decode`) at its stored size,
+    /// synchronously on the calling thread; callers run it off the main actor. `nil` if the
+    /// file is missing or unreadable (the tile then shows its placeholder). A stored thumbnail
+    /// is never larger than a grid tile shows it, so it is decoded whole, as Image I/O returns
+    /// it, and never drawn again: that is the one form a layer shows without a copy, and it
+    /// costs less than any smaller decode of the same file would
+    /// (`docs/research/2026-11-16-tile-images-shown-once.md`).
     static func load(_ relativeName: String, in directory: URL) -> CGImage? {
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailLoad")
         defer {
             OtosSignpost.thumbnails.endInterval("ThumbnailLoad", signpost)
         }
-        let options = [
-            kCGImageSourceShouldCache: true,
-            kCGImageSourceShouldCacheImmediately: true,
-        ] as CFDictionary
-        guard let source = CGImageSourceCreateWithURL(url(for: relativeName, in: directory) as CFURL, options) else {
+        guard let image = DisplayImage.decode(url(for: relativeName, in: directory), maxPixelEdge: .max) else {
             OtosLog.thumbnails.debug(
-                "Thumbnail load source unavailable name=\(relativeName, privacy: .public)"
+                "Thumbnail load failed name=\(relativeName, privacy: .public)"
             )
             return nil
         }
-        guard let image = CGImageSourceCreateImageAtIndex(source, 0, options) else {
-            OtosLog.thumbnails.debug(
-                "Thumbnail load decode failed name=\(relativeName, privacy: .public)"
-            )
-            return nil
-        }
-        // Draw once into premultiplied-BGRA so CA can commit without copying
-        // each paint into an IOSurface.
-        return iosurfaceFriendlyImage(image) ?? image
-    }
-
-    /// Premultiplied BGRA, little-endian, device RGB — the format Core Animation
-    /// prefers for IOSurface-backed layer contents.
-    private static func iosurfaceFriendlyImage(_ image: CGImage) -> CGImage? {
-        let width = image.width
-        let height = image.height
-        guard width > 0, height > 0 else {
-            return nil
-        }
-        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue
-            | CGImageAlphaInfo.premultipliedFirst.rawValue
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: bitmapInfo
-        ) else {
-            return nil
-        }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return context.makeImage()
+        return image
     }
 
     /// Deletes a thumbnail file. No-op if it is already absent.

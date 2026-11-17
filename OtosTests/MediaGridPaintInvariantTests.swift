@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import ImageIO
 @testable import OtosKit
 import QuartzCore
 import Testing
@@ -116,6 +117,43 @@ extension AppKitWindowTests {
             harness.window.appearance = NSAppearance(named: .aqua)
             harness.commitDisplay()
             #expect(try harness.requireDisplayedThumbnail(for: visible) === painted)
+        }
+
+        /// ENR-010: a stored thumbnail decoded through the grid's own path is held once. The
+        /// tile's layer shows the very image the tile store holds, at the stored thumbnail's
+        /// size, and that image's bytes are its own pixels at most: no second image drawn from
+        /// it, and none larger than the stored file.
+        @Test func aShownThumbnailIsTheOneImageTheStoreHolds() async throws {
+            let directory = try makeTestDirectory()
+            let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+            let context = try #require(CGContext(
+                data: nil, width: 256, height: 192, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            ))
+            context.setFillColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1)
+            context.fill(CGRect(x: 0, y: 0, width: 256, height: 192))
+            let destination = try #require(CGImageDestinationCreateWithURL(
+                ThumbnailStore.url(for: "stored.jpg", in: directory) as CFURL, "public.jpeg" as CFString, 1, nil
+            ))
+            try CGImageDestinationAddImage(destination, #require(context.makeImage()), nil)
+            try #require(CGImageDestinationFinalize(destination))
+
+            let harness = try PaintInvariantHarness(itemCount: 1)
+            harness.controller.thumbnailDirectory = directory
+            let id = harness.ids[0]
+            let detail = MediaTileDetail(
+                libraryRootPath: id.libraryRootPath, relativePath: id.relativePath, thumbnailPath: "stored.jpg",
+                bestKind: .image, durationSeconds: nil, renderedSourceSize: 1, renderedSourceMTimeSeconds: 1
+            )
+            harness.controller.mergeTileDetails([id: detail], reason: "test")
+            harness.reconfigureVisible(id)
+            try await waitUntil { harness.controller.tileContents.content(for: id)?.image != nil }
+            harness.reconfigureVisible(id)
+            harness.commitDisplay()
+            let held = try #require(harness.controller.tileContents.content(for: id)?.image)
+            #expect(try harness.requireDisplayedThumbnail(for: id) === held)
+            #expect(held.width == 256 && held.height == 192)
+            #expect(held.bytesPerRow * held.height <= 256 * 4 * 192)
         }
 
         @Test func repeatedVisibleIDsSkipScrollDetailQuery() throws {
