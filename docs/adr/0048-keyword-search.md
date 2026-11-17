@@ -267,8 +267,7 @@ against 77.3, 85 in English for both), and every asset has one.
   the catalog because a lost or torn file then costs a rebuild of about a minute from the
   catalog, not hours of embedding the library again. A commit across the catalog and a second
   file cannot be atomic (P3: 60 of 150 crashes left two files out of step), so the catalog
-  must stay the side that cannot be wrong. Their 650 MB leave the catalog's disk only with a
-  `VACUUM`, which plan 0116 bet 8 holds for the owner's go.
+  must stay the side that cannot be wrong, and their 650 MB stay in the catalog's file.
 - **Currency:** the catalog names the file and how many slots its embeddings commit
   (`search_vector_file`, v70).
   - The count moves in the same commit as the rows: `applySearchEmbeddings`, and

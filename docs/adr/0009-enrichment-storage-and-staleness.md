@@ -336,7 +336,7 @@ Adjacent decisions requiring separate ADRs or specs:
    32-item working window and is held, with its claim, for `ledgerPacing` (900 s,
    `time: backoff`), then starts a fresh set of retries. A claimed row the hand-off has no
    slot for is held the same way, with no deadline, and handed off when a slot frees.
-   **The blocked state is the schedule's, not rediscovered by the Store** (plan 0116): a
+   **The blocked state is the schedule's, not rediscovered by the Store**: a
    row held by a full hand-off, the free-space floor or a failing download was claimed,
    found blocked and given back on every pass — on the owner's Mac, hundreds of
    `claimedEnrichmentCandidates` write transactions a session, with writer waits up to
@@ -590,7 +590,7 @@ queue is not a maintained catalog partition: if the process exits, Store lease e
 is the recovery path.
 
 The cursorless derivation was measured too costly for the derived products at the
-owner's library (plan 0116; `docs/research/2026-11-16-stall-reproduction-baseline.md`):
+owner's library (`docs/research/2026-11-16-stall-reproduction-baseline.md`):
 the render signature, search embedding, text reading and description owners re-ran a
 whole-library candidate query for every page of 8 to 128 — about 3,200 full scans to
 drain 51,000 owed descriptions — and held the main pool's readers for 8 to 33 s. Those
@@ -605,6 +605,18 @@ the owed rows where what is owed is one table's fact (render signatures, an acco
 images). Enrichment claiming keeps its partial indexes and stays cursorless; the products and
 library claim indexes hold only rows no source lists, the only rows those claims take in the
 background.
+
+Rejected with the walk cursor (`docs/research/2026-11-16-plan-0116-due-diligence.md`, P2):
+
+- **A trigger-maintained ledger of owed work.** It stayed correct in 8,000 random operations,
+  but it needs 28 triggers (280 KB of SQL) that copy every predicate's inputs, raises an
+  enrichment flush from 34–43 ms to up to 157 ms, and holds the writer up to 4.7 s on a
+  language switch. Revision constants live in code and root availability is not in SQL, so a
+  ledger cannot hold the whole predicate. Covering indexes and a walk cut a cold count of
+  what is owed from 437k–645k pages to 20k–26k, with no new state.
+- **A per-root path cursor for the newest-first walks.** A keyset over
+  `root IN (…) AND (root, path) > (?, ?)` seeks only on the root, and a path order loses
+  newest capture first (ENR-027, ENR-032).
 
 ## Consequences
 

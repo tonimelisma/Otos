@@ -1,298 +1,237 @@
-# The performance baseline on the owner's library (2026-11-16)
+# The performance program on the owner's library (2026-11-16 to 2026-11-17)
 
-## Question
-
-What does Otos feel like on the owner's Mac today, before and after plan 0116's first stage,
-and where do the time, the memory and the disk go? This is the "before" every later
-performance PR is measured against (plan 0116, `docs/plans/0116-performance-program.md`).
+Date: opened 2026-11-16, closed 2026-11-17 on revision 509cc0a0. This note is the program's
+lasting record: its targets, the first baseline, the final measurement, what moved each number,
+what was measured and rejected, how to measure again, and what remains.
 
 ## Method
 
-Read-only, on the owner's own library and the installed app. Nothing was written to his
-catalog or his folders, and no copy of either was made.
+- Read-only tours of the owner's library (about 167k assets, 103k faces) on the installed app
+  (`script/scorecard.sh --tour`). Nothing was written to his catalog or folders, and no copy of
+  either was made. The saved scorecards are local files; this note cites the revisions.
+- Two tour kinds (ADR 0015): a **launch** tour takes its first step at the first grid, under
+  the launch's own load; a **settled** tour (`--settled`) waits for the launch's background
+  work to settle first. The final launch-kind session lasted 607.5 s; the settled one 77.6 s.
+- Acts (Move to Trash, Put Back, Like, Dislike, Not Rated) only in a sandbox: a generated
+  library on its own volume (`--dev --optimized --seed <photos>`). The owner's library takes no
+  act.
+- Whole-machine surveys (`script/survey.sh`) and the static survey
+  (`2026-11-16-broad-survey-static.md`) for the first baseline.
+- Other agents' builds ran during every session; none ran on a quiet machine.
 
-- **Scorecards** (`script/scorecard.sh`) read from the unified log of three sessions of the
-  installed app: two from before stage 1a, read back by session id, and one read-only tour
-  (`script/scorecard.sh --tour`) on build 661be172, after stages 1a and 1b.
-- **Surveys** (`script/survey.sh`): two four-minute sessions of the installed app with no
-  clicks, one before the fix and one on 661be172, each with a Time Profiler trace, memory
-  by region, heap at the peak, per-process disk and CPU counters, and folder sizes.
-- **The static survey** (`docs/research/2026-11-16-broad-survey-static.md`) for the
-  machine, the disk and the backlog.
-- **The migration's cost** from the installed app's own `op=catalog.migration` line.
+## Targets
 
-No benchmark was run. Numbers and kinds only: no paths, file names, people or search text.
+From `docs/scorecard-targets.json`, which the scorecard prints beside each number.
 
-| Session | Build | When | Length | What ran |
-| --- | --- | --- | --- | --- |
-| A | installed 487baebd | 2026-11-15 21:56 | 90 s | launch, an import click, an All Media click |
-| B | installed, before stage 1a | 2026-11-15 23:14 | 187 s | launch, no clicks |
-| Survey before | installed, before stage 1a (the survey's folder names 487baebd) | 2026-11-16 00:47 | 256 s | launch, no clicks |
-| Survey after | installed 661be172 | 2026-11-16 00:56 | 250 s | launch, no clicks |
-| Tour | installed 661be172 | 2026-11-16 01:01 | 235 s | the full read-only tour |
-| After-tour | installed f192041a | 2026-11-16 02:07 | 166 s | the full read-only tour |
-| Switch-off tours | installed f192041a | 2026-11-16 02:11 to 02:13 | 26 to 76 s | sidebar steps with every owner off, the search index alone, People alone |
+| Target | Scorecard number |
+| --- | --- |
+| Launch to a usable window ≤ 2 s | `launch.firstGridMs` ≤ 2,000 |
+| First visit to any view ≤ 1 s; the loupe, Compare and Info ≤ 1 s | `click.smallScopeMs` ≤ 1,000; `photo.stepMs` ≤ 1,000 |
+| First visit to All Media ≤ 2 s | `click.allMedia.firstMs` ≤ 2,000 |
+| Return to any view ≤ 0.3 s | `click.returnMs` ≤ 300 |
+| A search's first results, a sort or a filter ≤ 1 s | `search.firstResultsMs`, `query.resultMs` ≤ 1,000 |
+| Every act's result visible ≤ 0.1 s | `act.resultMs` ≤ 100 (sandbox only) |
+| No store stall line in a ten-minute session | `stalls.count` = 0, `stalls.per10Min` = 0 |
+| No main-thread stall over 250 ms | `mainThreadStalls.worstMs` ≤ 250 |
+| Peak app footprint ≤ 700 MB | `memory.peakFootprintMB` ≤ 700 |
+| `StallReproductionTests` passes with no known-issue marker | the test |
+| The app's disk growth is measured and explained | `disk.derivedFolderMB` |
 
-The survey records only the checkout's revision, so both surveys' summaries carry
-661be172 in their title line; the build each measured is named by its folder and by its
-place in the schema history (the "before" launch ran no migration, so it predates v65).
+## First baseline (revision 661be172, 2026-11-16)
 
-## The machine
-
-From the static survey: a 16 GB M1 Pro on macOS 27.0.1. Before Otos starts, about 60 to
-110 MB are free and about 4 GB are in swap. The data volume had 18 to 24 GiB free during
-the static survey and 13 GiB free when this note was written. Other agents' builds keep
-the load average at 21 to 27.
-
-## Before the fix
-
-### Sessions A and B (scorecard)
-
-| Number | A | B |
-| --- | --- | --- |
-| Launch to first grid | 1,673 ms (an import, 36 items) | 4,215 ms (All Media, 158,913 items) |
-| Import click to paint, first visit | 2,813 ms | – |
-| All Media click to paint, first visit | 14,456 ms | – |
-| Store stall lines | 83 (53 in the first minute) | 62 (all in the first minute) |
-| Longest connection wait in a stall line | 23,393 ms | 11,787 ms |
-| Window reads that waited a second or more | 7 (worst 8,637 ms) | 4 (worst 11,521 ms) |
-| Main-thread stalls | 0 | 0 |
-
-The All Media click in session A spent 12,878 ms in its order read: 8,637 ms waiting for a
-connection and 4,241 ms running, 2,455 ms of that the stack candidates. Its filter options
-waited 1,983 ms and ran 6,288 ms.
-
-Holders named in session A's stall lines (longest hold, times named):
-
-| Holder | Longest | Named |
-| --- | --- | --- |
-| `mirrorProbes` | 46,663 ms | 35 |
-| `readSearchEmbeddings` | 32,845 ms | 13 |
-| `peopleSnapshot` | 24,891 ms | 22 |
-| `photoDescriptionCandidates` | 23,797 ms | 7 |
-| `renderSignatureCandidates` | 20,581 ms | 69 |
-| `searchEmbeddingCandidates` | 11,440 ms | 44 |
-| `samePhotoCandidates` | 10,358 ms | 30 |
-| `metadataRefreshCandidates` | 8,661 ms | 19 |
-| `samePhotoDetails` | 7,127 ms | 22 |
-| `filterOptions` (the window's) | 6,289 ms | 17 |
-| `orderedAssetIDs` (the window's) | 4,241 ms | 13 |
-
-These builds predate the memory checkpoints, so neither session has a footprint.
-
-### Survey before (four minutes, no clicks)
+After stages 1a and 1b (#802, one walk per drain; #805, v65's owed-work indexes). A 235 s tour.
 
 | Number | Value |
 | --- | --- |
-| Peak footprint (the kernel's lifetime peak) | 3,926 MB |
-| Disk read by Otos and its text reader | 55,241 MB |
-| CPU on the app's threads (Time Profiler) | 193 s of 201 s traced |
-| CPU of the app and its text reader (rusage) | 312 s |
-| Main thread on CPU | 1.1 s |
-| Store connection waits | 57, 274.9 s in all, longest 19,684 ms |
-| Main-thread stalls | 0 |
-| System free memory | 62 to 307 MB |
-| Swap | 5,140 to 6,287 MB (grew 1,147 MB) |
-
-Where the CPU went (first Otos frame): SQLite statements 88.3 s, `PersonRun` 22.8 s,
-`BlockedSimilarity` 14.9 s, `PathFingerprint` 8.4 s. Self time: `pread` 52.0 s.
-At the peak the heap held 1.62 GB of `Float` arrays (205,962 of them: face and search
-vectors), a 252 MB face-tile dictionary and 137 MB of label dictionaries.
-
-## After stages 1a and 1b (build 661be172)
-
-### The tour
-
-| Step | Click to paint | Notes |
-| --- | --- | --- |
-| Launch to first grid | 4,038 ms | All Media, 158,913 items; window attached at 662 ms, catalog open at 83 ms |
-| Import (first) | 676 ms | 109 items |
-| Library (first) | 1,008 ms | order read 422 ms, publish 817 ms |
-| People (first) | 48,818 ms | |
-| A person (first) | 4,094 ms | order read 3,563 ms, of it stack candidates 2,325 ms |
-| Places (first) | 1,469 ms | order read 1,093 ms |
-| On This Day (first) | 137 ms | |
-| Duplicates (first) | 193 ms | |
-| All Media (return) | 545 ms | its filter options then ran 16,423 ms after the paint |
-| Scrolls (six) | 52 to 226 ms | |
-| Open a photo, next and previous ×3, Compare, Info | skipped | `noLocalOriginal`, `noLoupe`, `needsTwoLocalPhotos`: every original is cloud-only |
-| Search, many results (429) | 9,281 ms | |
-| Search, few results (53) | 19,899 ms | |
-| Clear the search | 24,818 ms | |
-| Filter: videos | skipped | `queryUnchanged` |
-| Sort by name | 41,806 ms | |
-| Idle | 60 s | |
-
-| Number | Value |
-| --- | --- |
-| Store stall lines | 62 in 235 s (3, 23, 12, 24 by minute) |
-| Window reads that waited for a connection | 0 |
-| Longest connection wait in a stall line | 21,721 ms (a background read) |
-| Main-thread stalls | 0 |
-| Writer waits | 4, worst 1,117 ms (`claimedEnrichmentCandidates`) |
-| Peak footprint | 3,730 MB (last 3,025 MB) |
-| System free memory, lowest | 86 MB; swap up to 5,991 MB; one pressure warning at 135 s |
-| CPU | 328.6 s in 235 s |
-| Disk read / written | 49,414 MB / 629 MB |
+| Launch to first grid | 4,038 ms (All Media, 158,913 items) |
+| First import / library / People / person / Places | 676 / 1,008 / 48,818 / 4,094 / 1,469 ms |
+| First On This Day / Duplicates | 137 / 193 ms |
+| Return to All Media | 545 ms |
+| Search (many results, complete) / few results / clear | 9,281 / 19,899 / 24,818 ms |
+| Sort by name | 41,806 ms |
+| Photo steps, filter | skipped (every original cloud-only; filter unchanged) |
+| Store stall lines | 62 in 235 s |
+| Main-thread stalls over 250 ms | 0 |
+| Peak footprint | 3,730 MB |
+| CPU / disk read | 328.6 s / 49,414 MB |
+| Main pool's reader time | 663.9 s in 235 s |
 | Store changes | 277, of them 227 `copies` |
 
-Footprint at each milestone: session start 18 MB, catalog open 23 MB, window attached
-81 MB, first grid 355 MB, search index loaded (at 21.3 s, matrix 482 MB) 2,179 MB, People
-built (at 54.8 s) 1,912 MB.
+Before stage 1 (installed 487baebd and the next build, sessions with no or two clicks): launch
+1.7 s to an import or 4.2 s to All Media; All Media's first click 14,456 ms; 83 and 62 stall
+lines; window reads waiting up to 11.5 s for a connection; 3,926 MB peak, 55 GB read and 312 s
+of CPU in four idle minutes.
 
-Reader time by operation (the main pool's readers were busy 663.9 s in 235 s; the
-interactive pool's 3.0 s; the writer 12.9 s):
+Where it went at the baseline:
 
-| Read | Total | Transactions | Longest |
-| --- | --- | --- | --- |
-| `peopleSnapshot` | 131.1 s | 4 | 35.8 s |
-| `samePhotoCandidates` | 122.8 s | 5 | 37.3 s |
-| `filterOptions` | 106.4 s | 11 | 32.8 s |
-| `samePhotoDetails` | 64.4 s | 405 | 2.2 s |
-| `orderedAssetIDs` | 63.7 s | 14 | 25.4 s |
-| `currentSearchEmbeddingIDs` | 48.5 s | 7 | 13.3 s |
-| `unnamedPlaceCells` | 30.5 s | 224 | 0.6 s |
-| `searchEmbeddingCandidates` | 29.6 s | 8 | 4.9 s |
-| `readSearchTexts` | 25.7 s | 9 | 3.5 s |
-| `readSearchEmbeddings` | 19.9 s | 1 | 19.9 s |
-| `searchTextCandidates` | 10.3 s | 8 | 1.5 s |
-| `photoDescriptionCandidates` | 8.8 s | 4 | 2.5 s |
-
-The idle minute was not quiet: 84 s of CPU, 12.4 GB read, 59 store changes a minute (55 of
-them `copies`), 1,076 transactions and 24 stall lines.
-
-### Survey after (four minutes, no clicks)
-
-| Number | Before | After |
+| Read | Reader time | Runs |
 | --- | --- | --- |
-| Peak footprint | 3,926 MB | 3,175 MB |
-| Disk read | 55,241 MB | 33,750 MB |
-| CPU (Time Profiler) | 193 s | 143 s |
-| CPU (rusage) | 312 s | 261 s |
-| Store connection waits | 57, 274.9 s, longest 19.7 s | 46, 251.7 s, longest 20.9 s |
-| `pread` self time | 52.0 s | 24.4 s |
-| Swap | grew 1,147 MB | fell 173 MB |
-| `Float` arrays in the heap at the first peak | 823 MB | 769 MB |
+| `peopleSnapshot` | 131.1 s | 4 |
+| `samePhotoCandidates` | 122.8 s | 5 |
+| `filterOptions` (the window's) | 106.4 s | 11 |
+| `samePhotoDetails` | 64.4 s | 405 |
+| `orderedAssetIDs` (the window's) | 63.7 s | 14 |
+| `currentSearchEmbeddingIDs` | 48.5 s | 7 |
 
-Stage 1 cut the app's disk reads by about 40 % and halved its `pread` time, and the tour's
-window reads no longer waited. Background reads still waited 252 s in all for a connection
-in a 250 s session, and the footprint fell by a fifth. People (`PersonRun`, `Fill`) and duplicates (`BlockedSimilarity`) are still the
-largest CPU owners after SQLite.
+At the peak the heap held 1.62 GB of `Float` arrays (face and search vectors). A switch-off
+tour on f192041a peaked at 336 MB with every owner off, 973 MB with the search index alone and
+2,263 MB with People alone: the gap was the owners. The machine is a 16 GB M1 Pro with about
+100 MB free and 4 GB in swap before Otos starts.
 
-## After stage 2 and the search index's paged load (build f192041a)
+## Final measurement (installed 509cc0a0, 2026-11-17)
 
-Installed build f192041a holds #807 (each owner wakes only on what its own SQL reads), #809
-(a digest write wakes the copy-built owners only when it changes what is a copy), #810 (a
-face's embedding in its own table, v66) and #811 (the search index loads once, in pages).
-The tour ran on 2026-11-16 at 02:07, 166 s, read-only, the same steps as the 661be172 one.
-The first after-tour, on build 5d80f22e, ran on an overloaded machine and is not evidence.
-
-| Number | 661be172 | f192041a |
-| --- | --- | --- |
-| Store stall lines | 62 | **0** |
-| Launch to first grid (All Media) | 4,038 ms | 2,760 ms |
-| Import, first | 676 ms | 617 ms |
-| Library, first | 1,008 ms | 626 ms |
-| People, first | 48,818 ms | 35,495 ms |
-| A person, first | 4,094 ms | 4,261 ms (stack candidates 2,708 ms) |
-| Places, first | 1,469 ms | 1,282 ms |
-| On This Day, first | 137 ms | 169 ms |
-| Duplicates, first | 193 ms | 119 ms |
-| All Media, return | 545 ms | 385 ms (its filter options ran 14,049 ms after the paint) |
-| Search, many / few results | 9,281 / 19,899 ms | 6,195 / 17,705 ms |
-| Clear the search | 24,818 ms | 1,653 ms |
-| Sort by name | 41,806 ms | 27,922 ms |
-| Store changes / of them `copies` | 277 / 227 | 170 / 2 |
-| Disk read | 49,414 MB | 20,967 MB |
-| CPU | 328.6 s in 235 s | 159.5 s in 166 s |
-| Main pool's reader time | 663.9 s | 220.7 s |
-| Peak footprint | 3,730 MB | 3,804 MB |
-| Footprint when the search index has loaded | 2,179 MB (21.3 s) | 2,191 MB (17.4 s) |
-| Footprint when People is built | 1,912 MB (54.8 s) | 2,717 MB (39.7 s) |
-| Main-thread stalls | 0 | 0 |
-
-The photo steps and the filter were still skipped (this build predates #813). The longest
-reader holds were the window's own `orderedAssetIDs` (88.5 s in 15 runs, longest 43.8 s),
-`peopleSnapshot` (40.4 s in 2), `filterOptions` (30.4 s in 9) and `samePhotoCandidates`
-(15.1 s in 2).
-
-**Switch-off tours** (the same build, sidebar steps only, named owners left unstarted):
-
-| Owners running | Length | Peak footprint | Launch to first grid | Disk read | CPU |
-| --- | --- | --- | --- | --- | --- |
-| none | 26 s | 336 MB | 2,200 ms | 104 MB | 13.5 s |
-| the search index alone | 28 s | 973 MB | 3,608 ms | 1,850 MB | 24.1 s |
-| People alone | 76 s | 2,263 MB | 1,875 ms | 553 MB | 66.5 s |
-
-With People alone, People's first paint took 48,613 ms and a person 1,348 ms. The search
-index alone loaded its 482 MB matrix at 16.5 s, with the footprint at 927 MB then. With
-every owner off the footprint stays under the 700 MB target, so the gap is the owners:
-People is the largest holder (about 1.9 GB over the floor), then the search index (about
-0.6 GB).
-
-## The migration
-
-v65 ran on the owner's real file in **4,159 ms** (`op=catalog.migration phase=finish
-id=v65_owed_work_indexes ms=4159`, at 00:55). Its PR estimated 50 to 80 s there from cold
-full-scan times; the generated catalog measured 4,186 ms. A launch 47 s earlier logged the
-migration's start and no finish; the log does not say why it ended.
-
-## The disk
-
-From the static survey: the thumbnails folder is 52.9 GiB in 322,377 files, 49.3 GiB of it
-HEIC previews and video face frames. About 35 GiB of those previews (128,673 files at the
-median size) belong to the remote Immich account, whose originals stay on its server. The
-files no row names are 1,000 thumbnails (11 MiB) and 3 others. The 3.58 GiB first reported
-was a census that did not read `face_frames_path`
-(`2026-11-16-derived-file-orphans.md`). The catalog is 2.39 GiB. In the surveys the thumbnails folder
-did not change and the catalog moved by 53 MB and −5 MB. Test runs leave temporary folders
-on the same volume (0.49 GB of stale ones in the static survey).
-
-## The backlog
-
-From the static survey: 85,834 text readings and about 53,077 descriptions are owed. At the
-rates measured in a sandbox on this Mac (1.8 s a reading, about 4.5 s a description) that
-is about 43 h and 66 h of running time.
-
-## Scorecard targets
-
-The targets the plan sets, against the tour:
-
-| Target | Tour (661be172) | Tour (f192041a) | Met (f192041a) |
+| Number | Baseline 661be172 | Final launch / settled | Target |
 | --- | --- | --- | --- |
-| Launch to first grid ≤ 2,000 ms | 4,038 ms | 2,760 ms | no |
-| First visit to a view ≤ 1,000 ms | 137 to 48,818 ms; 3 of 7 met | 119 to 35,495 ms; 4 of 7 met | no |
-| First visit to All Media ≤ 2,000 ms | not visited first (launch scope); 14,456 ms before | not visited first | unknown |
-| Return to a view ≤ 300 ms | 545 ms | 385 ms | no |
-| Search, sort or filter result ≤ 1,000 ms | 9,281 to 41,806 ms; filter not measured | 1,653 to 27,922 ms; filter not measured | no |
-| An act's result visible ≤ 100 ms | not measured | not measured | unknown |
-| Store stall lines in a session | 62 | 0 | yes |
-| Main-thread stall over 250 ms | none | none | yes |
-| Peak footprint ≤ 700 MB | 3,730 MB | 3,804 MB | no |
+| Launch to first grid | 4,038 ms | 1,099 / 1,021 ms | ≤ 2,000 |
+| First import | 676 ms | 212 / 149 ms | ≤ 1,000 |
+| First library | 1,008 ms | 256 / 241 ms | ≤ 1,000 |
+| First People | 48,818 ms | 53 / 50 ms | ≤ 1,000 |
+| First person | 4,094 ms | 432 / 386 ms | ≤ 1,000 |
+| First Places | 1,469 ms | 372 / 234 ms | ≤ 1,000 |
+| On This Day | 137 ms | 105 / 149 ms | ≤ 1,000 |
+| Duplicates | 193 ms | 56 / 41 ms | ≤ 1,000 |
+| Return to All Media | 545 ms | 104 / 82 ms | ≤ 300 |
+| Photo open / Compare / Info | skipped | 407 / 386, 222 / 193, 481 / 437 ms | ≤ 1,000 |
+| First search: first results | 9,281 ms (complete) | 244 / 234 ms | ≤ 1,000 |
+| First search: complete | 9,281 ms | 332 / 333 ms | none |
+| Filter: videos | skipped | 202 / 171 ms | ≤ 1,000 |
+| Sort by name | 41,806 ms | 152 / 139 ms | ≤ 1,000 |
+| Store stall lines | 62 (235 s) | 0 in a ten-minute session | 0 |
+| Main-thread stalls over 250 ms | 0 | 0 | 0 |
+| Peak footprint | 3,730 MB | 408 / 344 MB | ≤ 700 |
 
-## What it does not capture
+Every target is met. More from the final builds:
 
-- Photo steps (loupe, next and previous, Compare, Info) and the filter: the tour skipped
-  them.
-- Act to visible result for Like, Dislike and Move to Trash: no line carries both ends.
-- A ten-minute session: the tour is about four minutes.
-- A quiet machine: other agents' builds ran during every session.
-- Energy, per-file I/O and the system language model's own footprint: they need root.
+| Number | Value |
+| --- | --- |
+| First launch after an install | 296–405 MB peak (1,179 MB on one earlier install, fixed in #886) |
+| Launch stages, final tours | duplicates built at 3.4 s; launch work settled at 7.1 / 12.0 s, with enrichment, materialization, the search index and descriptions reported as working a backlog |
+| Derived folder (the app's own counters) | 54.3 GB: thumbnails 3.7 GB, previews 46.9 GB, face frames 3.7 GB |
+| Session CPU (launch-kind tours) | 52–84 s |
+| Session disk read | 23–26 GB, of which 21.4–21.8 GB is enrichment hashing downloaded cloud originals |
+| Catalog pages read / page-ins | 2.0–3.0 GB / 0.9–2.2 GB |
+| Owed hashing on 2026-11-17 | 7,732 cloud rows, 389 GB, not hashed |
+| Catalog | schema v65 → v76; one-time compaction 2.81 → 2.13 GB |
+| Full `script/check.sh` | about two minutes (over six minutes on 2026-11-16) |
 
-## Conclusions
+**Acts, sandbox only** (final build 509cc0a0, a seeded library of 200 generated photos on its
+own volume, four tours): Move to Trash 12–48 ms, Put Back 4–28 ms, five in a row within the
+same ranges. The three choice acts (Like, Dislike, Not Rated) were skipped as window-occluded
+on the final build. They were last measured at 0–4 ms on revision 7138219e (28 and 2,000
+photos). A fix to measure them without a lit display is in progress at the time of writing.
 
-- Stage 1 removed what it aimed at: no window read waited for a connection in the tour, disk
-  reads fell by about 40 %, and small views paint in 0.14 to 1.0 s.
-- The app is still far from the targets. People's first paint (48.8 s), search, sort and
-  clear (9 to 42 s), launch (4.0 s) and the footprint (3.7 GB on a Mac with 100 MB free)
-  are the largest gaps.
-- Background reads still hold the main pool's readers for most of a session. `peopleSnapshot`,
-  `samePhotoCandidates`, the window's own `filterOptions` and `orderedAssetIDs` hold the most.
-- Memory is the scarcest resource: the search index's load alone takes the footprint from
-  355 MB to 2,179 MB.
-- After stage 2 and the paged search load (f192041a) the store stall lines are gone (62 to
-  0), almost no change is a `copies` change (227 to 2), the session read 21 GB instead of
-  49 GB, and clearing a search takes 1.7 s instead of 24.8 s. People (35.5 s), sort
-  (27.9 s), search (6 to 18 s), launch (2.8 s) and the footprint (3.8 GB) remain.
-- The switch-off tours put the footprint's gap in the owners: 336 MB with none running,
-  973 MB with the search index alone, 2,263 MB with People alone.
+**A new library's first launch** (seeded 28 camera-size photos, tour peak): 864–930 MB before
+#899 and #903 → 435 MB (launch kind) / 458 MB (settled).
+
+**Switch-off matrix** (`--ablation-matrix`, ef4492e6): every view painted within the same time
+with all owners off, each owner alone and all on (first grid 0.76–1.11 s; a library
+0.19–0.29 s; Places 0.26–0.39 s). No background owner costs felt time.
+
+**Daily benchmark, 2026-11-17** (73dffba5 against baseline 5207d482), instructions:
+
+| Case | Baseline | Flagged | After #904 |
+| --- | --- | --- | --- |
+| `projection.filterOptions.allMedia` | 70.2 M | 322.9 M | 69.4 M |
+| `duplicates.samePhotoPairs` | 466.1 M | 696.5 M | 277.8 M |
+| `window.apply.republished.158k` | 0.30 M | 0.40 M | 0.41 M (left as is) |
+
+The third is #867's per-part observation and awaits the owner's acceptance. The bisect points
+in #904 read 0.31 M → 0.42 M (15441d2b → c825eecb); the note's table reads 0.30 M → 0.40 M
+for baseline and flagged head. The fixes are not judged until the next daily run. Finding: the
+benchmark build is unoptimised (`-Onone`) while the installed app is optimised (`-O`, ADR
+0030), so generic code in Otos's own module costs far more in a benchmark than in the app
+(`Dictionary(exactlyGrouping:)` in #881; `2026-11-17-bench-flag-filter-options-and-pairs.md`).
+
+## Attribution
+
+Each bet is the set of changes aimed at a number. Per-step attribution inside a bet was not
+isolated unless a note says so.
+
+| Bet | What changed | PRs | Moved |
+| --- | --- | --- | --- |
+| Owed work found in one walk | one walk per drain; an index for every "what is owed" read (v65) | #802, #805 | disk read −40 % in idle surveys; no window read waited |
+| Wake on inputs | each owner wakes only on the facts its SQL reads; copy owners only when a copy changes; idle owners write nothing and report quiescence | #807, #809, #829, #831, #840, #864, #869, #896 | stall lines 62 → 0 (f192041a); `copies` changes 227 → 2 |
+| Window read lanes | one pool of eight readers, background admitted four at a time; passive checkpoints; lock waits for every connection | #826, #845, #906 | window waits 1.9 s p95 → 0–4 ms on the generated reproduction |
+| Staged launch | owners start after the first grid; heavy loads take turns (`LoadAdmission`); launch stages name what each consumer needs | #819, #855, #893, #895, #907 | first grid 2,760 → 1,021–1,099 ms with the other bets |
+| People | paint from stored assignment (v68) and a stored gallery (v73); assign only what moved; vectors in an unlinked mapped file; kernel reads faces by position; half-precision vectors | #816, #825, #828, #837, #851, #858, #860, #871, #872, #874, #875, #882, #884 | first People 48,818 → 50–53 ms; with People running the app peaks at 344–408 MB |
+| Search | paged load; mapped Float16 vector file (v70); keyed reconciles; the query shown as typed; encoder load the user waits on; words answer first; text index in the catalog (v74); words and tower race | #811, #822, #830, #833, #848, #855, #876, #885, #887, #889, #908 | first search 9,281 ms → 234–244 ms to first results |
+| Duplicates | a build costs what changed (v67); no Immich external assets | #809, #814, #904 | the candidate read touches no wide row; first Duplicates 193 → 41–56 ms |
+| The window's own reads | stack candidates by folder; filter options walk a wide scope's order; name and size orders from their indexes (v69); `-O` for the installed app; keyed date re-reads; patched filter tallies; held arrays kept; every order walks its index (v76) | #808, #817, #820, #827, #836, #862, #868, #909 | sort by name 41,806 → 139–152 ms; return 545 → 82–104 ms; first person 4,094 → 386–432 ms |
+| Narrow tables and compaction | face embedding in its own table (v66); narrow `media_asset` (v71); the open compacts a file a tenth free | #810, #838, #847 | catalog 2.81 → 2.13 GB; name order 147,594 → 28,584 pages (generated) |
+| Memory outside the heap | one reused read buffer; 4-byte asset IDs in a mapped identity table; owner-scale reads in mapped regions | #861, #878, #881, #883 | freed-and-held bytes 92 → 51 MB on a generated sequence |
+| Image memory | face tiles from their region; held decodes bounded; the full-size view from Image I/O's IOSurface; one image per tile; video faces one frame at a time; renders admitted by memory; pane and lane share one budget; JPEG decode route | #865, #866, #877, #879, #886, #899, #903, #905 | first launch after install 1,179 → 296–405 MB; new library tour 864–930 → 435–458 MB |
+| Acts | newest projected state applied part by part; Put Back shown before file work; a landed write read whole | #859, #863, #867, #888 | choice acts 0–4 ms; Move to Trash 12–48 ms (sandbox) |
+| Scan and disk | an unchanged scan takes no write; the FSEvents change journal (v75); derived files live as long as a row names them; stored folder counters (v72); test temp folders owned | #834, #835, #850, #891, #897 | a launch walks a library only when its journal cannot vouch for it |
+| Instruments | stall reproduction test; survey; scorecard, tour, kinds, sandbox volume, disk read by owner, page-ins per paint | #798, #803, #804, #813, #852, #870, #873, #890, #893, #894, #900 | made each number readable |
+| Check cost | the allocator probe on demand only; test catalogs start from a migrated template | #884, #902 | full check over six minutes → about two |
+
+**Migrations added** (ADR 0002 cost rule; generated owner-shaped catalog unless stated):
+
+| Version | PR | Cost |
+| --- | --- | --- |
+| v66 face embedding table | #810 | 8,058 ms, 469 MB WAL |
+| v67 same-photo indexes | #814 | 719 ms, 39 MB WAL |
+| v68 settled People assignment | #816 | one-row table, not timed |
+| v69 sort orders' tested columns | #820 | 5,775 ms, 112 MB WAL |
+| v70 search vector file | #822 | 2 ms, 41 KB WAL |
+| v71 narrow `media_asset` | #838 | 10.0–15.7 s, 642 MB WAL; compaction 12.0–47.7 s |
+| v72 derived folder counters | #850 | 4 ms, 49 KB WAL |
+| v73 People gallery | #851 | 16 ms, 58 KB WAL |
+| v74 search text words | #889 | 2,809 ms, 6.7 MB WAL (`2026-11-16-search-text-index.md`) |
+| v75 library root change journal | #897 | 4 ms, 33 KB WAL |
+| v76 order filter columns | #909 | 3,593–3,805 ms, 229 MB WAL; 3.9 s on the owner's catalog |
+
+## Measured and rejected
+
+| Idea | Why | Where |
+| --- | --- | --- |
+| A trigger-maintained ledger of owed work | 28 triggers; an enrichment flush up to 157 ms against 34–43 ms; writer holds up to 4.7 s on a language switch | ADR 0009 |
+| A per-root path cursor | seeks only on the root; loses newest capture first | ADR 0009 |
+| Separate database files | 60 of 150 crashes left two files out of step under one `ATTACH` transaction | ADR 0002 |
+| `ANALYZE` / `PRAGMA optimize` | with statistics the planner still chose the wide table; plans are pinned | ADR 0002 |
+| A lower-QoS background pool | background work ten times slower in a loaded run, no window gain | ADR 0002 |
+| A read model of the window in memory; a persisted last answer; a two-step paint; windowed identity | a second owner of the SQL's rules; stale truth; untrue counts; the order read touches no row (0.07 s warm, 0.44 s cold) | ADR 0005 |
+| A reorder debounce | time standing in for a fact the Store holds | ADR 0005, ADR 0033 |
+| The nine planned owed-work indexes as one block | v65 added only what each read needs: 4,159 ms on the owner's file, not 13 s | #805 |
+| A delay before the owners start; two heavy loads at once; `.utility` owners | time for a fact; the measured overlap; late visible thumbnails | ADR 0055 |
+| Compiled models kept apart, or one model resident at a time, for the 1,179 MB peak | the peak was two 4K videos' frames, not the models | `2026-11-16-first-launch-footprint.md` |
+| Fewer decodes on the render lane | halves HEIC throughput to bound a cost only whole JPEG decodes have | `2026-11-17-first-launch-decodes.md` |
+| Kind-led order indexes | 24 indexes, about 230 MB more, to save an 82 ms cold walk | #909 |
+
+One early rejection did not hold: "patching the order incrementally" was rejected as a second
+ordering path, and #836 built it with the SQL's own comparator (`CatalogOrderPatch`, ADR 0005).
+
+## Instruments and how to rerun them
+
+| Instrument | What it gives |
+| --- | --- |
+| `script/scorecard.sh --tour` | one read-only tour of the installed app; add `--settled` for a settled-kind session |
+| `script/scorecard.sh --tour --dev --optimized --seed <photos>` | a tour of a generated library on its own volume, acts included |
+| `script/scorecard.sh --ablate <owners>` / `--ablation-matrix` | the same tour with owners left unstarted, or the whole matrix |
+| `script/scorecard.sh --compare <saved.json>` | before and after, like kind with like |
+| `script/survey.sh` | one session's machine picture: trace, memory by region, heap, disk, CPU |
+| `StallReproductionTests` | the sidebar stall on a generated owner-shaped catalog; no known-issue marker |
+| `CatalogMigrationCostTests` (`OTOS_SCALE_TEST=1`) | a migration's ms and WAL bytes |
+| `OrderReadSurveyTests` (`OTOS_SCALE_TEST=1`) | pages and time for every order the window asks for |
+| `script/bench.sh daily` | the daily CPU guard (ADR 0043); not a measure of felt time |
+
+A tour never runs while Otos is running and quits the app itself.
+
+## What remains
+
+- **Owner decisions.**
+  - Whether to download the 389 GB cloud backlog (7,732 rows) for content hashes.
+  - Accepting the flagged `window.apply.republished.158k` case (`script/bench.sh accept`).
+  - Whether remote-account previews (about 35 GiB of the derived folder at the baseline)
+    exist at full size.
+  - Whether the text-reading and description backlog (about 43 h and 66 h at the baseline)
+    runs while the window is in use.
+- **In progress.** Measuring the choice acts without a lit display.
+- **Not established.**
+  - Why Core ML compiled the text tower again in one session of an install, and why that
+    compile took 3 s (`2026-11-16-first-search-while-the-encoder-loads.md`).
+  - What made the 1.1 s second prediction of 2026-11-17 (`2026-11-17-first-search-after-the-warm-up.md`).
+  - Part of a sandbox first launch's 889 MB before #899 and #903: the loupe step's 200 MB
+    inside the process (`2026-11-17-first-launch-decodes.md`).
+- **Not measured until the next daily run.** #904's two fixes, and every case the PRs after
+  the judged head 73dffba5 may move (#899–#909).

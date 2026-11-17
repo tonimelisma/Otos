@@ -160,7 +160,7 @@ not run every migration for each. A test's store on a new file starts the same w
 file template the test support migrates once per process; tests about migrations open from
 nothing.
 File-backed pools use `maximumReaderCount = 8` (`CatalogStore.readerCount`), in two lanes
-(plan 0116 bet 5, `CatalogReadLanes`). A window read — a scope's order, counts and filter
+(`CatalogReadLanes`). A window read — a scope's order, counts and filter
 options, the visible tiles' details, the Info pane, a user's act — enters the pool at once.
 A background read — enrichment's claims, the candidate walks, the People, duplicates and
 search builds — first takes one of four turns (`CatalogReadAdmission`), so background reads
@@ -231,8 +231,8 @@ budget plus what is written during the longest read in flight, and returns to th
 after it. On a generated catalog of the owner's size, with a 20 s background read in flight,
 a truncating checkpoint behind GRDB's barrier held every main-pool read for 20,055 ms; the
 passive checkpoint took 3 ms and nothing waited, and with 17–25 s readers during heavy
-writes the file peaked at 226–230 MB and returned to 64 MiB (plan 0116 bet 5's proof of
-concept). A failed checkpoint is logged and the next bulk write retries.
+writes the file peaked at 226–230 MB and returned to 64 MiB (the window read lanes' proof of
+concept, `docs/research/2026-11-16-window-read-lanes.md`). A failed checkpoint is logged and the next bulk write retries.
 Rejected: a truncating checkpoint behind GRDB's barrier (it waits for every read in
 flight and holds every new one until it ends: the window stalls for as long as the longest
 background read); pausing background reads, then truncating (no smaller file than the
@@ -255,7 +255,10 @@ none, and the log said nothing about the wait
   `op=catalog.database.open` times every other step (`poolMs`, `schemaMs` — where SQLite
   recovers a log the last process left, `walBytesAtOpen` — `rootsMs`, `migrationsMs`,
   `thumbnailsMs`, `readerMs`), and `op=catalog.start`'s finish line carries `migrations` and
-  `migrationsMs`. The open runs no integrity check, `optimize`, `ANALYZE` or checkpoint.
+  `migrationsMs`. The open runs no integrity check, `optimize`, `ANALYZE` or checkpoint. The
+  reads pin their plans on purpose (`INDEXED BY`, `CROSS JOIN`), and with statistics and the
+  covering indexes present the planner still chose the wide table
+  (`docs/research/2026-11-16-plan-0116-due-diligence.md`, P2), so no statistics are gathered.
 - **The window says what the open is doing** (DES-121): Store reports the step and the
   libraries the catalog holds (`CatalogStore.openings`, newest value, one consumer), read
   before any migration with SQL every schema version answers.
@@ -652,6 +655,22 @@ Decodability remains enrichment's job. A file with a correct UTType that cannot 
 decoded is still cataloged until enrichment records an unsupported outcome.
 
 ## Alternatives Considered
+
+### Derived Data In Separate Database Files
+
+Keep derived products (face vectors, search vectors, descriptions) in their own SQLite files
+beside the catalog, joined by `ATTACH`.
+
+Rejected. A commit across two WAL files is not atomic: of 150 `kill -9` runs, 60 left the
+files out of step under one `ATTACH` transaction, and 61 and 88 under two transactions in
+either order. A trigger cannot name an attached table, a foreign key cannot cross files, and
+cascades and renames stop following. The window's queries join the tables a split would move
+(person scopes, Places, On This Day's exclusion). A split inside the one file, with narrow
+tables and a compaction, removed the cost measured instead (`face_embedding`, v66;
+`media_asset`'s narrow table, v71; the open's compaction). Measured in
+`docs/research/2026-11-16-plan-0116-due-diligence.md`, P3. A derived file outside SQLite is
+kept only where the catalog stays the side that cannot be wrong (ADR 0048's search vector file,
+ADR 0047's face vector file).
 
 ### Raw sqlite3
 

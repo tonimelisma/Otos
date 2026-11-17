@@ -419,6 +419,22 @@ opportunity can mark the root available and reconcile normally.
 
 ## Alternatives Considered
 
+### A Second Holder Of The Window's Answer
+
+Measured on the owner's library and a generated catalog of its shape
+(`docs/research/2026-11-16-plan-0116-due-diligence.md`, P3;
+`docs/research/2026-11-16-performance-baseline.md`), and rejected:
+
+- **A read model of the window in memory.** Swift would become a second owner of the sort,
+  scope, copy and stack rules the SQL owns.
+- **A persisted last answer, shown at launch.** A second copy of the catalog's truth, stale
+  after any change made while the app was closed.
+- **Painting the grid first and the stacks later.** It shows counts that are not true; the
+  counts a scope shows are its stacks' (ADR 0052).
+- **Reading only part of the order (windowed identity).** The order read touches no table
+  row (6,160 pages, 0.07 s warm, 0.44 s cold); the cost was in the stacks and the filter
+  options, not the identities.
+
 ### Store Publishes Full Snapshots
 
 Pros:

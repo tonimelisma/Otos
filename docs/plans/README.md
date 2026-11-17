@@ -3,10 +3,22 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-Plan 0116 (`0116-performance-program.md`) is **active**, opened 2026-11-16: the performance
-program. It sets the targets a tour on the owner's library must meet, records the baseline
-(`docs/research/2026-11-16-performance-baseline.md`), ranks the bets that close the gap and
-lists what was rejected and why. Stage 1 (one walk per drain, and v65's indexes) is merged.
+Plan 0116 (the performance program) is complete. Its file is a pointer only, deleted with
+the source comments that still cite it. It opened
+2026-11-16 with targets a read-only tour of the owner's library must meet, and every target
+was met on 2026-11-17 (revision 509cc0a0). Its targets, first baseline, final measurement,
+attribution by PR, rejections and what remains are
+`docs/research/2026-11-16-performance-baseline.md`; the targets the scorecard prints are
+`docs/scorecard-targets.json`. Its decisions live in ADR 0002 (window read lanes, passive
+checkpoints, narrow tables and the open's compaction, the change journal, no `ANALYZE`, no
+separate database files), ADR 0005 (what changed is re-read by key; no second holder of the
+window's answer), ADR 0009 (one walk per drain over covering indexes; no ledger of owed work),
+ADR 0015 (the scorecard, the tour and its kinds), ADR 0030 (the installed app at `-O`), ADR
+0032 rule 8 (a background owner reports its quiescence as a fact), ADR 0042 (a duplicates build costs what
+changed), ADR 0043 (benchmarks once a day), ADR 0047 (People's mapped face vectors and its
+stored gallery), ADR 0048 (the mapped search vector file, the text index, the words and the
+tower race), ADR 0055 (staged launch and load admission) and ADR 0056 (mapped memory for
+transient buffers). The owner's open questions are listed in the baseline note.
 
 Plan 0115 (stacks: RAW+JPEG pairs and bursts as one photo) is complete in six increments
 and was removed at closure. It opened 2026-11-13 from the survey
