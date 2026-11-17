@@ -224,6 +224,9 @@ actor EnrichmentCoordinator: QuiescentOwner {
     /// The roots the last pass found enrichable: parked demands are asked of a root's facts
     /// only when this set changes.
     var lastEnrichableRoots: Set<LibraryRootPath>?
+    /// The priority rows (on screen, freshly local) the Store last answered owe nothing, so
+    /// a pass asks the Store only of the rest (`PriorityAnswers`).
+    var priorityAnswers = PriorityAnswers()
 
     private var supervisor: Task<Void, Never>?
     private var changeConsumer: Task<Void, Never>?
@@ -561,8 +564,10 @@ extension EnrichmentCoordinator {
 extension EnrichmentCoordinator {
     /// A Store change: new claim inputs, and, when it may have removed, moved or resized a
     /// demanded row — a membership change that names one, or names none — a question for the
-    /// next pass of which demanded rows the Store still offers (`reconcileDemandSources`).
+    /// next pass of which demanded rows the Store still offers (`reconcileDemandSources`); and
+    /// the priority rows it may have made owe work are asked of again (`PriorityAnswers`).
     func noteStoreChange(_ change: CatalogStoreChange) {
+        priorityAnswers.heard(change.rows)
         if case let .changed(facts, rows) = change, facts.contains(.membership), schedule.hasDemands {
             switch rows {
             case .unnamed:

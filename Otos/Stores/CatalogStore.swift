@@ -430,6 +430,15 @@ nonisolated struct ClaimedEnrichmentCandidate: Sendable {
     let scope: EnrichmentScope
 }
 
+/// What a priority claim answered of the rows it was asked about: the rows it claimed, and
+/// the rows it read that owe nothing under the claim their root is first enriched under
+/// (`EnrichmentClaim`, at the video-faces admission asked). A row that owes nothing owes
+/// nothing until a write to it names it, so enrichment does not ask of it again until then.
+nonisolated struct PriorityEnrichmentClaims: Sendable {
+    let claimed: [ClaimedEnrichmentCandidate]
+    let owingNothing: Set<MediaAssetID>
+}
+
 /// Catalog Store guide
 ///
 /// This actor is the only runtime owner of catalog truth. SQLite provides durable
@@ -1107,6 +1116,14 @@ extension CatalogStore {
 
     func namespaceRevision(for rootPath: LibraryRootPath) -> UInt64? {
         roots[rootPath]?.namespaceRevision
+    }
+
+    /// Moves when any fixed library's paths, sizes or dates may have changed, or a library
+    /// came or went (`RootRegistry.libraryNamespaceRevision`): what an account's mirror
+    /// pairing waits on beside its own listing (ADR 0054). A digest written to a library file
+    /// pairs in its own write, so a digest moves nothing here.
+    var libraryNamespaceRevision: UInt64 {
+        roots.libraryNamespaceRevision
     }
 
     /// The pair an import plan's staleness is judged against, read in one actor hop
@@ -4372,26 +4389,27 @@ extension CatalogStore {
     /// `ids` order. These are the rows the user is looking at and rows a download just made
     /// local; the coordinator claims them ahead of background work and outside its claim
     /// window, so the list's own length is the bound. While `videoFaces` is held, no row is
-    /// claimed for a video's faces (`EnrichmentClaim.admitting`).
+    /// claimed for a video's faces (`EnrichmentClaim.admitting`). The answer also names the
+    /// rows read that owe nothing (`PriorityEnrichmentClaims`).
     func priorityEnrichmentCandidates(
         _ ids: [MediaAssetID],
         videoFaces: VideoFacesAdmission
-    ) async throws -> [ClaimedEnrichmentCandidate] {
+    ) async throws -> PriorityEnrichmentClaims {
         var seen = Set<MediaAssetID>()
         let uniqueIDs = EnrichmentClaimGateway.unclaimedPriorityIDs(ids, claimedIDs: &seen)
         guard !uniqueIDs.isEmpty else {
-            return []
+            return PriorityEnrichmentClaims(claimed: [], owingNothing: [])
         }
         let queryStart = ContinuousClock.now
-        let claims = try await priorityEnrichmentCandidates(ids: uniqueIDs, limit: uniqueIDs.count, videoFaces: videoFaces)
+        let answer = try await priorityEnrichmentCandidates(ids: uniqueIDs, limit: uniqueIDs.count, videoFaces: videoFaces)
         await recordSlowEnrichmentCandidateQueryIfNeeded(
             priorityCount: uniqueIDs.count,
-            returnedCount: claims.value.count,
-            waitMs: claims.waitMs,
-            execMs: claims.execMs,
+            returnedCount: answer.claims.value.count,
+            waitMs: answer.claims.waitMs,
+            execMs: answer.claims.execMs,
             queryStart: queryStart
         )
-        return claims.value
+        return PriorityEnrichmentClaims(claimed: answer.claims.value, owingNothing: answer.owingNothing)
     }
 
     /// Claims up to `limit` background rows: removable sources first, then libraries, each
@@ -4413,7 +4431,7 @@ extension CatalogStore {
         localBytesAwaitingProducts.removeFirst(landed.count)
         let landedClaims = try await priorityEnrichmentCandidates(
             ids: landed, limit: landed.count, videoFaces: videoFaces, bytesAreLocal: true
-        )
+        ).claims
         if !landed.isEmpty {
             // Whether a fresh copy was enriched while its bytes were local: each claim's
             // `enrichment.item` line names the file; this says the queue offered it first.
@@ -4525,29 +4543,33 @@ extension CatalogStore {
     /// metadata alone (a card, a camera, an Immich account) is claimed for its rendering and
     /// digest too (`EnrichmentClaim.products`); a fixed library is claimed for its every
     /// product from the start (`EnrichmentClaim.library`); either, admitting `videoFaces`.
+    /// Also returns the rows read that owe nothing under that claim, on any root: whether a
+    /// row owes is its own stamps' answer, whatever its root's reach now.
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
         limit: Int,
         videoFaces: VideoFacesAdmission,
         bytesAreLocal: Bool = false
-    ) async throws -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]> {
+    ) async throws -> (claims: DatabaseTimedValue<[ClaimedEnrichmentCandidate]>, owingNothing: Set<MediaAssetID>) {
         // Enrichment's claim: a background owner's read.
         let priorityAssetsByID = try await mediaAssets(for: ids, lane: backgroundReads.lane)
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
         let dbWriter = try database()
+        let firstClaim = { [roots] (path: LibraryRootPath) -> EnrichmentClaim in
+            let first = roots[path]?.root.firstClaim ?? .metadata
+            let claim = bytesAreLocal && (first == .metadata || first == .account) ? .products : first
+            return claim.admitting(videoFaces)
+        }
+        let owingNothing = Set(priorityAssetsByID.values.filter { !$0.needsEnrichment(firstClaim($0.libraryRootPath)) }.map(\.id))
         let eligibleClaims = EnrichmentClaimGateway.priorityClaimInputs(
             ids: ids,
             assetsByID: priorityAssetsByID,
             rootIDsByPath: rootIDsByPathBeforeWrite,
             isRootEnrichable: { [roots] path in roots[path]?.isEnrichable == true },
-            firstClaim: { [roots] path in
-                let first = roots[path]?.root.firstClaim ?? .metadata
-                let claim = bytesAreLocal && (first == .metadata || first == .account) ? .products : first
-                return claim.admitting(videoFaces)
-            }
+            firstClaim: firstClaim
         )
         guard !eligibleClaims.isEmpty else {
-            return DatabaseTimedValue(value: [], waitMs: 0, execMs: 0)
+            return (DatabaseTimedValue(value: [], waitMs: 0, execMs: 0), owingNothing)
         }
         let timedClaim = try await timedWrite(dbWriter) { db in
             var candidates: [ClaimedEnrichmentCandidate] = []
@@ -4579,7 +4601,7 @@ extension CatalogStore {
                 result: result
             )
         }
-        return result
+        return (result, owingNothing)
     }
 
     private func recordSlowPriorityEnrichmentClaim(

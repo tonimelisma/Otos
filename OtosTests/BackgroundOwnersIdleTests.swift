@@ -24,8 +24,6 @@ struct BackgroundOwnersIdleTests {
     static let readsPerOwner = 2
     /// Rows those reads may return: an owner rung with nothing owed finds nothing to visit.
     static let rowsPerOwner = 0
-    /// Rounds run again because a named wake came due within them, before the guard fails.
-    static let dueRoundLimit = 8
 
     @Test func everyBackgroundOwnerIsQuietOnceItsWorkIsDone() async throws {
         let rounds = try await Self.measure(scale: 0.01, named: "small")
@@ -46,42 +44,41 @@ struct BackgroundOwnersIdleTests {
     ]
 
     private static func measure(scale: Double, named name: String) async throws -> [OwnerRound] {
+        // Each phase's length is logged (`op=ownersIdle.phase`), so a run that takes long says
+        // which phase took it.
+        var phase = PhaseClock(test: name)
         let directory = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let catalog = try OwnerShapedCatalog.make(in: directory, scale: scale)
+        phase.ended("catalogMade")
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
+        phase.ended("storeStarted")
+        // Every backoff an owner arms is a day long (`RunningBackgroundOwners.Backoffs`): the
+        // retry a failure owes (enrichment's download, the search model's load, a description)
+        // never comes due inside the round, however slowly a loaded Mac runs it, so the round
+        // measures only what the ring moved and the test's length is its work.
         let owners = try RunningBackgroundOwners(
             store: store,
             thumbnails: directory.appending(path: "Thumbnails", directoryHint: .isDirectory),
-            account: catalog.account
+            account: catalog.account,
+            backoffs: .beyondTheRun
         )
         await owners.start(store: store)
-        var settled = try await owners.untilQuiescent(store: store)
+        phase.ended("ownersStarted")
+        let settled = try await owners.untilQuiescent(store: store)
+        phase.ended("settled")
 
-        // A wake an owner named when it settled (`OwnerWake`: enrichment's retry backoff, a
-        // breaker's cooldown) that comes due within the round is an input, not idle work: the
-        // retry it owes runs then, with or without the ring. Such a round is run again from
-        // the facts it ended on; only a round in which no named wake came due is measured.
-        // Whether one came due is read from the deadlines the owners named, never waited out.
-        var dueRounds: [String] = []
-        var before: CatalogStoreUse
-        var rung: [OwnerQuiescence]
-        while true {
-            before = store.use()
-            for owner in await owners.quiescentOwners() {
-                await owner.ringIdle()
-            }
-            rung = try await owners.untilQuiescent(store: store)
-            let due = OwnerRound.dueWakes(settled, by: .now)
-            guard !due.isEmpty else { break }
-            dueRounds.append(due.joined(separator: ","))
-            // Each round takes up every deadline at or before its end, and a retry's next
-            // backoff is longer than its last (`EnrichmentRetrySchedule`), so an idle round
-            // follows within a few.
-            try #require(dueRounds.count <= Self.dueRoundLimit, "named wakes kept coming due: \(dueRounds)")
-            settled = rung
+        let before = store.use()
+        for owner in await owners.quiescentOwners() {
+            await owner.ringIdle()
         }
+        let rung = try await owners.untilQuiescent(store: store)
+        phase.ended("rung")
+        // A wake an owner named when it settled that came due within the round would be an
+        // input, not idle work: none may, which the deadlines the owners named say.
+        let due = OwnerRound.dueWakes(settled, by: .now)
+        #expect(due.isEmpty, "named wakes came due within the round: \(due)")
         let idle = IdleUse(from: before, to: store.use())
         let rounds = OwnerRound.between(settled, rung)
         // Every original is dataless and no download succeeds, as on a cloud-only library: what
@@ -96,8 +93,7 @@ struct BackgroundOwnersIdleTests {
         #expect(unnamed.isEmpty, "unnamed transactions: \(unnamed.map { "\($0.role):\($0.count)" })")
         await owners.shutdown()
         await store.shutdown()
-        let report = "settled: \(OwnerRound.summary(settled))\nrounds run again for a wake that came due: "
-            + "\(dueRounds.isEmpty ? "none" : dueRounds.joined(separator: " | "))\nidle store: \(idle.summary)\nidle owners:\n"
+        let report = "settled: \(OwnerRound.summary(settled))\nidle store: \(idle.summary)\nidle owners:\n"
             + rounds.map { "  \($0.summary)" }.joined(separator: "\n") + "\n"
         // The on-demand run at the owner's size leaves its report for the record; the suite's
         // own run says it in a failure's message.
@@ -112,23 +108,30 @@ struct BackgroundOwnersIdleTests {
         #expect(idle.changes - idle.rootStateChanges == 0, "\(report)")
         #expect(idle.rootStateChanges <= 2 * listings, "\(idle.summary)")
         #expect(idle.writes.isEmpty, "\(idle.summary)")
-        let libraries = [catalog.pictures, catalog.archive].count
         for round in rounds {
             #expect(round.work.written == 0, "\(round.summary)")
             #expect(round.work.reads <= Self.readsPerOwner, "\(round.summary)")
-            #expect(round.work.rows <= Self.rowsPerOwner + IdleBound.rows(of: round.owner, libraries: libraries), "\(round.summary)")
+            #expect(round.work.rows <= Self.rowsPerOwner, "\(round.summary)")
         }
         return rounds
     }
 }
 
-/// Rows an owner's idle round reads that are owed though nothing new arrived, with why.
-enum IdleBound {
-    /// An account's sync reads one mirror probe per fixed library each pass (ADR 0054): a
-    /// library's files gain the digests a mirror is learned from as enrichment hashes them,
-    /// which no listing reports to the sync, so each pass asks.
-    static func rows(of owner: String, libraries: Int) -> Int {
-        owner == "immichSync" ? libraries : 0
+/// Logs how long each phase of the guard took since the last one ended.
+struct PhaseClock {
+    let test: String
+    private var last = ContinuousClock.now
+
+    init(test: String) {
+        self.test = test
+    }
+
+    mutating func ended(_ phase: String) {
+        let now = ContinuousClock.now
+        OtosLog.performance.noticeOperation("ownersIdle.phase", phase: phase, fields: [
+            "test": test, "ms": "\(DiagnosticsTiming.milliseconds(last.duration(to: now)))",
+        ])
+        last = now
     }
 }
 

@@ -53,13 +53,13 @@ struct CatalogStoreEnrichmentClaimTests {
         let visibleSecondID = try #require(idsByName["visible-second.jpg"])
         let visibleThirdID = try #require(idsByName["visible-third.jpg"])
 
-        let firstClaim = try await store.priorityEnrichmentCandidates([claimedID], videoFaces: .admitted)
+        let firstClaim = try await store.priorityEnrichmentCandidates([claimedID], videoFaces: .admitted).claimed
         #expect(firstClaim.map(\.asset.relativePath.rawValue) == ["claimed.jpg"])
 
         let visibleClaims = try await store.priorityEnrichmentCandidates(
             [claimedID, visibleSecondID, visibleThirdID],
             videoFaces: .admitted
-        )
+        ).claimed
 
         #expect(visibleClaims.map(\.asset.relativePath.rawValue) == ["visible-second.jpg", "visible-third.jpg"])
     }

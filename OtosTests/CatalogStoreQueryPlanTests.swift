@@ -1296,6 +1296,19 @@ extension CatalogStoreQueryPlanTests {
         #expect(!usesTemporarySort(plan), "\(plan)")
     }
 
+    /// The rows on screen owed their source's images are read by key, one seek a row: ranging
+    /// the account's source-item index visited all of its rows (406 ms for 120 rows on the
+    /// owner's catalog, 24 ms by key).
+    @Test func visibleSourceProductCandidatesSeekTheirKeys() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        let plan = try await dbQueue.read { db in
+            try explainPlan(db, sql: SourceProductsSQL.visibleCandidatesSQL(count: 3), arguments: [1, "a", "b", "c"])
+        }
+        #expect(plan.contains("USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)"), "\(plan)")
+        #expect(!plan.contains("SCAN"), "\(plan)")
+    }
+
     /// v71: a wide scope filtered to Liked or Disliked rows seeks the chosen rows' index and
     /// sorts the few it finds, for its order and its count, in every order, and returns them in
     /// the order the walk would; a filter that takes Not Rated rows walks the order.

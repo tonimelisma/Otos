@@ -83,6 +83,12 @@ nonisolated struct ProcessResourceSample: Equatable, Sendable {
         )
     }
 
+    /// The footprint alone (`phys_footprint`), nil when the kernel does not answer: one
+    /// `task_info` call, for a caller that needs no other figure.
+    static func currentFootprintBytes() -> UInt64? {
+        taskVMInfo()?.footprint
+    }
+
     private static func taskVMInfo() -> (footprint: UInt64, resident: UInt64)? {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)

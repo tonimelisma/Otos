@@ -11,6 +11,12 @@ import Foundation
 nonisolated struct RootRegistry {
     private(set) var statesByPath: [LibraryRootPath: RootRuntimeState] = [:]
     private(set) var pathsByRowID: [Int64: LibraryRootPath] = [:]
+    /// Moves whenever which paths a fixed library occupies, or their sizes and dates, may
+    /// have changed: a library's `namespaceRevision` moved, or a library came or went. What
+    /// an account's mirror pairing reads of the libraries (ADR 0054), so a sync pass that
+    /// sees it unmoved and brought no listing owes no pairing walk. Never reset, so a
+    /// library removed and added again cannot repeat an earlier value.
+    private(set) var libraryNamespaceRevision: UInt64 = 0
 
     var keys: Dictionary<LibraryRootPath, RootRuntimeState>.Keys {
         statesByPath.keys
@@ -33,8 +39,16 @@ nonisolated struct RootRegistry {
     }
 
     mutating func upsert(_ state: RootRuntimeState) {
+        let previous = statesByPath[state.path]
+        if state.root.kind == .library,
+           previous?.rowID != state.rowID || previous?.namespaceRevision != state.namespaceRevision
+        {
+            libraryNamespaceRevision &+= 1
+        }
         if let previousPath = pathsByRowID[state.rowID], previousPath != state.path {
-            statesByPath.removeValue(forKey: previousPath)
+            if statesByPath.removeValue(forKey: previousPath)?.root.kind == .library {
+                libraryNamespaceRevision &+= 1
+            }
         }
         if let existing = statesByPath[state.path], existing.rowID != state.rowID {
             pathsByRowID.removeValue(forKey: existing.rowID)
@@ -53,12 +67,16 @@ nonisolated struct RootRegistry {
         if pathsByRowID[state.rowID] == path {
             pathsByRowID.removeValue(forKey: state.rowID)
         }
+        if state.root.kind == .library {
+            libraryNamespaceRevision &+= 1
+        }
         return state
     }
 
     mutating func removeAll() {
         statesByPath = [:]
         pathsByRowID = [:]
+        libraryNamespaceRevision &+= 1
     }
 
     @discardableResult

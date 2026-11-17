@@ -127,7 +127,7 @@ struct CatalogStoreRemovableSourceTests {
         let cardID = MediaAssetID(libraryRootPath: cardPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
 
         try await store.quiesceRemovableSource(identity: .volume(uuid: "test-card"))
-        let whileQuiesced = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted)
+        let whileQuiesced = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).claimed
         #expect(!whileQuiesced.contains { $0.asset.id.libraryRootPath == cardPath })
 
         // Enrichment's gate hears that the source is claimable again: a camera, which no
@@ -144,7 +144,7 @@ struct CatalogStoreRemovableSourceTests {
         // The rescan the resume starts announces itself after anything the resume announced.
         let heard = await changes.waitForValues { $0.contains(.changed(.membership, rows: .none)) }
         #expect(heard.first == .changed(.detail))
-        let afterResume = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted)
+        let afterResume = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).claimed
         #expect(afterResume.contains { $0.asset.id == cardID })
     }
 
@@ -164,19 +164,19 @@ struct CatalogStoreRemovableSourceTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
         _ = try await waitForSelectedRelativePaths(store, rootPath: cardPath, expected: ["card.jpg"])
         let cardID = MediaAssetID(libraryRootPath: cardPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
-        #expect(try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).map(\.asset.id) == [cardID])
+        #expect(try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).claimed.map(\.asset.id) == [cardID])
 
         let batch = ImportBatchID()
         await store.beginImportSourceRead(batch, source: cardPath)
         #expect(await store.enrichableRootPaths() == [fixture.fixedRootPath])
-        #expect(try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).isEmpty)
+        #expect(try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).claimed.isEmpty)
         let background = try await store.enrichmentCandidates(limit: 10, videoFaces: .admitted)
         #expect(background.allSatisfy { $0.asset.id.libraryRootPath == fixture.fixedRootPath })
 
         await store.endImportSourceRead(batch, source: cardPath)
         #expect(await store.enrichableRootPaths().contains(cardPath))
         // The claim taken before the import was released when it began.
-        #expect(try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).map(\.asset.id) == [cardID])
+        #expect(try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).claimed.map(\.asset.id) == [cardID])
     }
 
     /// Quiescence belongs to one attachment's pending unmount. A card quiesced at one
@@ -208,7 +208,7 @@ struct CatalogStoreRemovableSourceTests {
         _ = try await waitForSelectedRelativePaths(store, rootPath: secondPath, expected: ["card.jpg"])
         let cardID = MediaAssetID(libraryRootPath: secondPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
 
-        let candidates = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted)
+        let candidates = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).claimed
         #expect(candidates.contains { $0.asset.id == cardID })
     }
 
@@ -278,7 +278,7 @@ struct CatalogStoreRemovableSourceTests {
         )
 
         #expect(outcome == .busy(displayName: root.displayName))
-        let afterRefusal = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted)
+        let afterRefusal = try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).claimed
         #expect(afterRefusal.contains { $0.asset.id == cardID })
     }
 

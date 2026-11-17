@@ -38,6 +38,64 @@ nonisolated struct SchedulerRouteFacts: Equatable, Sendable {
     }
 }
 
+/// The priority rows the Store answered owe nothing (ADR 0032 rule 8), held until a Store
+/// change names one, a change names no rows, or the video-faces admission they were answered
+/// at moves. A pass asks the Store only of the priority rows not held, so a pass woken by
+/// anything else — a completion, a wake, another row's write — reads none of the rows on
+/// screen again. Whether a row owes is its own stamps' answer, which only a write to the row
+/// moves, and every write names its rows or names none (`CatalogChangedRows`).
+///
+/// A change heard while a read is out applies to that read's answer too: a row it names, or
+/// every row when it names none, is not held from it, since the read may predate the write.
+/// Only the current priority rows are held, so what it holds is bounded by the screen.
+nonisolated struct PriorityAnswers {
+    private(set) var owingNothing: Set<MediaAssetID> = []
+    private var admission: VideoFacesAdmission?
+    private var reading: (named: Set<MediaAssetID>, unnamed: Bool)?
+
+    func holds(_ id: MediaAssetID) -> Bool {
+        owingNothing.contains(id)
+    }
+
+    /// Before a pass asks: forgets answers given at another admission, and rows no longer
+    /// among the priority rows.
+    mutating func align(admission: VideoFacesAdmission, keeping priority: [MediaAssetID]) {
+        if self.admission != admission {
+            owingNothing = []
+            self.admission = admission
+        }
+        owingNothing.formIntersection(priority)
+    }
+
+    mutating func beginRead() {
+        reading = ([], false)
+    }
+
+    /// Holds the rows the read answered owe nothing, less any a change heard during it may
+    /// have moved.
+    mutating func endRead(owingNothing answered: Set<MediaAssetID>) {
+        guard let heard = reading else { return }
+        reading = nil
+        guard !heard.unnamed else { return }
+        owingNothing.formUnion(answered.subtracting(heard.named))
+    }
+
+    /// A Store change: the rows it names are asked of again, every row when it names none; a
+    /// root's own state (`none`) moves no row.
+    mutating func heard(_ rows: CatalogChangedRows) {
+        switch rows {
+        case .none:
+            return
+        case .unnamed:
+            owingNothing = []
+            reading?.unnamed = true
+        case let .named(named):
+            owingNothing.subtract(named.ids)
+            reading?.named.formUnion(named.ids)
+        }
+    }
+}
+
 extension EnrichmentCoordinator {
     private static let maxReadinessRoutingPasses = 4
 
@@ -62,13 +120,20 @@ extension EnrichmentCoordinator {
             // background work — a card whose reads crawl behind an import, a slow cloud
             // root — a visible row would otherwise wait behind every queued claim, because a
             // freed slot drains the queue first and claims nothing (ENR-018). The priority
-            // list is bounded by the viewport and the materialization hand-off.
-            let unclaimedPriority = prioritizedEnrichmentIDs().filter {
-                readyClaims[$0] == nil && !schedule.hasDemand(for: $0)
+            // list is bounded by the viewport and the materialization hand-off. A row the Store
+            // last answered owes nothing is not asked of again until a write names it
+            // (`PriorityAnswers`).
+            let prioritized = prioritizedEnrichmentIDs()
+            priorityAnswers.align(admission: videoFaces, keeping: prioritized)
+            let unclaimedPriority = prioritized.filter {
+                readyClaims[$0] == nil && !schedule.hasDemand(for: $0) && !priorityAnswers.holds($0)
             }
             if !unclaimedPriority.isEmpty {
-                let claimed = try await store.priorityEnrichmentCandidates(unclaimedPriority, videoFaces: videoFaces)
-                activity.read(rows: claimed.count)
+                priorityAnswers.beginRead()
+                let answer = try await store.priorityEnrichmentCandidates(unclaimedPriority, videoFaces: videoFaces)
+                priorityAnswers.endRead(owingNothing: answer.owingNothing)
+                let claimed = answer.claimed
+                activity.read(rows: claimed.count + answer.owingNothing.count)
                 for candidate in claimed {
                     await recordClaimedCandidate(candidate.asset)
                 }

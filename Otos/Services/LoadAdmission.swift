@@ -235,10 +235,19 @@ final nonisolated class LoadAdmission: Sendable {
     /// Who waits for the launch's loads to have run (`untilDrained()`), resumed in the release
     /// that drains them. Taken only after the admission's own lock is released.
     private let drainWaiters = Mutex<[UUID: CheckedContinuation<Void, any Error>]>([:])
+    /// Reads the process's footprint for the line a release logs: a kernel call
+    /// (`task_info`) that can stall under memory pressure.
+    private let footprint: @Sendable () -> UInt64?
+    /// Where that read runs, after the release has granted the next load and the releasing
+    /// owner has gone on: a stalled read holds back neither, nor a cooperative thread. At the
+    /// owners' QoS class, never below it (PR 895).
+    private static let releaseSampling = DispatchQueue(label: "net.melisma.Otos.loadAdmission.released", qos: .default)
 
     /// Closed until `open()`. An owner a test makes alone gets an open admission of its own.
-    init(isOpen: Bool = false) {
+    /// `footprint` is the process's own unless a test scripts it.
+    init(isOpen: Bool = false, footprint: @escaping @Sendable () -> UInt64? = ProcessResourceSample.currentFootprintBytes) {
         admission = Admission(LoadAdmissionMachine(isOpen: isOpen))
+        self.footprint = footprint
     }
 
     /// Returns once the loads the launch asked for have all run (`hasDrainedSinceOpen`): at
@@ -332,12 +341,17 @@ final nonisolated class LoadAdmission: Sendable {
             settleDrained()
             // The footprint each load leaves: memory a load freed stays counted until reused,
             // and asking malloc to return it returns nothing on macOS 27
-            // (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`).
-            OtosLog.performance.noticeOperation("load.admission", phase: "released", fields: [
-                "load": load.rawValue, "request": "\(request)",
-                "ms": "\(DiagnosticsTiming.milliseconds(since: started))",
-                "footprintAfterMB": "\(ProcessResourceSample.current().footprintBytes / 1_048_576)",
-            ])
+            // (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). Read once the
+            // next load is granted, on a queue of its own: a measurement never sits between a
+            // release and the next grant, nor holds the releasing owner.
+            let ms = DiagnosticsTiming.milliseconds(since: started)
+            let footprint = footprint
+            Self.releaseSampling.async {
+                OtosLog.performance.noticeOperation("load.admission", phase: "released", fields: [
+                    "load": load.rawValue, "request": "\(request)", "ms": "\(ms)",
+                    "footprintAfterMB": footprint().map { "\($0 / 1_048_576)" } ?? "unknown",
+                ])
+            }
         }
         return try await body()
     }

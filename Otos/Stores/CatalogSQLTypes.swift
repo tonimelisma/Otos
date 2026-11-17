@@ -359,11 +359,14 @@ nonisolated enum SourceProductsSQL {
 
     /// The owed rows among `count` paths of one root, by key; binds the root, then the paths.
     /// The rows on screen are asked for ahead of the walk (`ImmichCatalogSync.fetchVisibleProducts`).
+    /// Pinned to the key: left to itself SQLite ranged the root's source-item index, every
+    /// row of the account, and tested each against the paths, 406 ms for 120 rows on the
+    /// owner's 147,293 against 24 ms by key (`docs/research/2026-11-16-idle-disk-read-attribution.md`).
     static func visibleCandidatesSQL(count: Int) -> String {
         """
         SELECT relative_path, source_item_id, kind, byte_size,
                CAST(content_modified_at_unix AS INTEGER) AS mtime
-        FROM media_asset
+        FROM media_asset INDEXED BY sqlite_autoindex_media_asset_1
         WHERE library_root_id = ?
           AND relative_path IN (\(Array(repeating: "?", count: count).joined(separator: ",")))
           AND \(owedPredicate)

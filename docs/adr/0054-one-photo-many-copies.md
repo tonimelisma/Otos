@@ -57,7 +57,7 @@ reports later, of the same bytes, takes the place of the missing size in the sta
 2026-11-15; decided by the agent on the owner's delegation, because the other way, hashing
 each original, would download every one of them).
 - A mirror (`immich_mirror`) is the server path a library's relative paths follow on an
-  account's server. After every completed sync pass, `ImmichCatalogSync` finds up to three
+  account's server. After a completed sync pass that owes it (below), `ImmichCatalogSync` finds up to three
   library files with an external asset of the same name, size and whole-second modification
   time. It asks the server for one such asset's `originalPath` (`GET /api/assets/{id}`) and
   takes the prefix before the file's relative path, compared as bytes. The asset's own
@@ -71,9 +71,18 @@ each original, would download every one of them).
   other bytes makes the digest stale for it.
 - `MirrorGateway.pair` is the one rule. The digest write of a library file (enrichment,
   `applyContentHash`, an import's landing) pairs its mirrored assets in the same transaction.
-  Each pass pairs every file again, in batches of 500 files per transaction, so an asset
-  listed after its file's digest pairs at the end of the pass that lists it. A write path that
-  missed the call would only delay a pair to the next pass.
+  A pass that owes the walk pairs every file again, in batches of 500 files per transaction,
+  so an asset listed after its file's digest pairs at the end of the pass that lists it.
+- The walk (probe and pairing) is owed only when what it reads moved since the last walk
+  that did not fail (ADR 0032 rule 8): the pass's own listing applied a change, or a fixed
+  library's paths, sizes or dates changed (`CatalogStore.libraryNamespaceRevision`, moved by
+  every namespace revision of a library and by a library coming or going). A digest is not
+  among them, since its own write pairs it. A renamed or moved library file keeps its digest
+  under its new path, which only a walk pairs, so the namespace is what owes it. A pass with
+  neither reads no mirror and asks the server nothing (`op=immich.mirror phase=held`): on the
+  owner's idle session the walk had read 56 pages (1,574 ms) and asked the server three paths
+  every five-minute poll with nothing listed. A server or Store failure leaves the walk owed;
+  the server refusing to describe an asset (400/404) is an answer and does not.
 - On the owner's catalog, 16,683 Camera Roll files have an Immich asset with the same name and
   size. Every one of them also has the same whole-second modification time.
 
@@ -188,14 +197,15 @@ is never reported as none.
   full resync, so each external asset is listed with its path checksum. A library's mirror is
   learned from the server once, with one asset request, and pairing a whole library is a
   pass's batched writes. A mirror goes with either root.
-- Every pass pairs every mirrored file again. On a generated library of 16,000 paired files
+- A walk pairs every mirrored file again. On a generated library of 16,000 paired files
   (`immich.mirror.pass.of16k`), that pass costs about 3.6 G instructions and 0.4 s, off the
   main actor. Each batch is read first and written only for files whose asset lacks the
   digest, so a pass over pairs that all stand opens no write transaction
   (`BackgroundOwnersIdleTests`). `CatalogStoreQueryPlanTests.mirrorReadsSeekTheirIndexes`
   holds its reads to index seeks.
 - A file renamed on one side but not yet on the other pairs again once both sides list it at
-  the same path.
+  the same path: the listing or the library's namespace that moves owes the walk
+  (`ImmichMirrorHoldTests`).
 - Duplicates never lists a file and its mirror (ADR 0042, owner 2026-11-15): an external
   library's asset is never a copy there, so nothing can keep it and send the only bytes to the
   Trash.

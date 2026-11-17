@@ -194,6 +194,37 @@ struct LoadAdmissionTests {
         await #expect(throws: CancellationError.self) { try await never.value }
     }
 
+    /// The footprint a release logs is read after the release: a read that stalls (`task_info`
+    /// under memory pressure) holds back neither the next load's grant nor the owner whose
+    /// load ended.
+    @Test func aStalledFootprintReadHoldsBackNoGrantAndNoOwner() async throws {
+        let stalled = DispatchSemaphore(value: 0)
+        let admission = LoadAdmission(isOpen: true) {
+            stalled.wait()
+            return 0
+        }
+        defer {
+            for _ in 0 ..< 2 {
+                stalled.signal()
+            }
+        }
+        let held = ArrivalGate()
+        let first = Task {
+            try await admission.run(.people) { await held.arrive() }
+        }
+        await held.waitForArrivals(1)
+        let next = Task {
+            try await admission.run(.duplicates) { await held.arrive() }
+        }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
+
+        await held.open()
+        try await first.value
+        try await next.value
+        #expect(admission.snapshot.running == nil)
+        #expect(await held.arrivalCount == 2)
+    }
+
     @Test func twoLoadsNeverRunTogether() async throws {
         let admission = LoadAdmission(isOpen: true)
         let held = ArrivalGate()

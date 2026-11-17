@@ -10,7 +10,45 @@ import Testing
 /// also reads All Media's order. An account's sync runs as `ImmichAccounts` runs one, against a
 /// server with nothing new: its stream lists no line and it has no image to give. The stall
 /// reproduction and the idle guard both run them.
+///
+/// `backoffs` sets how long an owner waits after a failure before it tries again: the app's
+/// own waits, or a day, so that no backoff an owner arms while a test runs comes due before
+/// the test ends, however slowly a loaded Mac runs it.
 actor RunningBackgroundOwners {
+    enum Backoffs {
+        case production
+        case beyondTheRun
+
+        static let day: Duration = .seconds(86400)
+
+        var enrichment: EnrichmentRetrySchedule {
+            switch self {
+            case .production:
+                .production
+            case .beyondTheRun:
+                EnrichmentRetrySchedule(
+                    backgroundDownloadDelays: [Self.day], ledgerPacing: Self.day, readinessRecheck: Self.day,
+                    spaceRecheck: Self.day, deviceFailureBackoff: Self.day, deviceAttemptLimit: 1,
+                    writeFailureBackoff: Self.day, faceModelBackoff: Self.day
+                )
+            }
+        }
+
+        var searchIndex: (first: Duration, last: Duration) {
+            switch self {
+            case .production: (.seconds(30), .seconds(900))
+            case .beyondTheRun: (Self.day, Self.day)
+            }
+        }
+
+        var descriptions: (retry: Duration, busy: Duration) {
+            switch self {
+            case .production: (PhotoDescriptionWriter.retryPacing, PhotoDescriptionWriter.busyPacing)
+            case .beyondTheRun: (Self.day, Self.day)
+            }
+        }
+    }
+
     let admission: LoadAdmission
     let materializer: MaterializationCoordinator
     let enrichment: EnrichmentCoordinator
@@ -29,7 +67,7 @@ actor RunningBackgroundOwners {
     private var startTask: Task<Void, Never>?
     private var syncTasks: [Task<Void, Never>] = []
 
-    init(store: CatalogStore, thumbnails: URL, account: LibraryRootPath? = nil) throws {
+    init(store: CatalogStore, thumbnails: URL, account: LibraryRootPath? = nil, backoffs: Backoffs = .production) throws {
         let admission = LoadAdmission()
         self.admission = admission
         materializer = MaterializationCoordinator(
@@ -41,7 +79,8 @@ actor RunningBackgroundOwners {
         enrichment = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .notMaterialized },
-            materializationRequester: materializer
+            materializationRequester: materializer,
+            schedule: EnrichmentSchedule(retrySchedule: backoffs.enrichment)
         )
         renderSignatures = RenderSignatureRefresher(store: store, thumbnailDirectory: thumbnails)
         previewFaces = PreviewFaceReader(store: store, thumbnailDirectory: thumbnails) { _ in throw CocoaError(.featureUnsupported) }
@@ -53,12 +92,15 @@ actor RunningBackgroundOwners {
             thumbnailDirectory: thumbnails,
             vectorDirectory: #require(store.searchIndexDirectory),
             bundle: Bundle(for: BundleMarker.self),
+            backoff: backoffs.searchIndex,
             textReader: SearchTextReader { RecognizingSession { _ in [] } },
             admission: admission
         )
-        descriptions = PhotoDescriptionWriter(store: store, thumbnailDirectory: thumbnails) { _, _ in
-            throw CocoaError(.featureUnsupported)
-        }
+        descriptions = PhotoDescriptionWriter(
+            store: store, thumbnailDirectory: thumbnails,
+            describe: { _, _ in throw CocoaError(.featureUnsupported) },
+            retryPacing: backoffs.descriptions.retry, busyPacing: backoffs.descriptions.busy
+        )
         metadata = MetadataRefresher(store: store) { _ in .unreachable }
         derivedFolder = DerivedFolderLoad(store: store, admission: admission)
         projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, admission: admission)

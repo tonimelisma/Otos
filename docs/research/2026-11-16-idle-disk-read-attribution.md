@@ -86,12 +86,46 @@ capacity figure (`volumeAvailableCapacityForImportantUsage`) costs 15.5 ms of CP
 
 - `searchTextCandidates` (116 reads, 12 ms each) is the text reader's backlog of about 43 h,
   paged; owed.
-- `mirrorPairsOwed` (56 reads in 3 passes) and `sourceProductCandidates` (20 reads) are the
-  Immich account's mirror and product walks, run once per 5-minute poll even when its listing
-  changed nothing (`listed=0 deleted=0`). The library side also moves pairs: a renamed library
-  file is paired under its new path, and no listing reports that to the sync. So the
-  account's own listing cannot be what holds the walks. Not changed here.
-- `mediaAssets` (1,084 reads, 2 ms each) is enrichment re-reading the rows on screen at every
-  dispatch, to find the ones owed a priority claim. Not changed here.
+- `mirrorPairsOwed` (56 reads in 3 passes, 1,574 ms) was the Immich account's mirror walk, run
+  once per 5-minute poll with `listed=0 deleted=0`; each also probed both libraries and asked the
+  server for three Camera Roll assets' paths that never confirmed. A library-side change moves
+  pairs only through a library's namespace (a rename or move keeps its digest under a new path),
+  and a digest pairs in its own write, so the walk now waits on the account's listing applying a
+  change or `CatalogStore.libraryNamespaceRevision` moving (ADR 0054). The idle polls hash
+  digests, which move neither. Its reads were already index walks: a page of digested files walks
+  the library's key (16,924 rows for 9,192 digested), each file one seek of the path-checksum index.
+- `sourceProductCandidates` (20 reads, 2,017 ms, longest 628) was two reads under one name. The
+  product walk is a seek of an empty partial index (0.3 ms, no row, `EXPLAIN`: `SEARCH ... USING
+  INDEX idx_media_asset_source_products_owed`), kept per poll. The rows-on-screen read
+  (`visibleCandidatesSQL`) ranged the account's source-item index, all 147,293 rows, and tested
+  each against the paths: 406 ms for 120 paths, 24 ms pinned to the key
+  (`sqlite_autoindex_media_asset_1`). Pinned, with a plan test.
+- `mediaAssets` (1,084 reads, 2 ms each) was enrichment asking the Store at every pass which rows
+  on screen owe a priority claim; every Store change (a digest written anywhere) and every
+  completion is a pass. A row it answered owes nothing is now held until a change names it or
+  names no rows (`PriorityAnswers`): one read per screen, then one per named row.
 - `currentSearchEmbeddingIDs` (2 reads, 1.45 s each) and `peopleSnapshot` (2 reads) are the
   launch's loads; owed once a session.
+
+## Why the idle guard took 3 to 300 s (2026-11-17)
+
+`BackgroundOwnersIdleTests` (1% scale) took 2.5 s alone and 26 to 178 s in full checks (11
+logs). Two causes, by its own logs:
+
+- **Production backoffs inside the round.** The owners the guard runs fail on purpose (no
+  download, no model), and arm their production retries: enrichment's download at 15 s, the
+  search model's load at 30 s, a description at 900 s. On a loaded run the settle outlasted
+  them, the retries ran, and the guard ran its round again for each wake that came due (up to
+  eight). `RunningBackgroundOwners.Backoffs.beyondTheRun` makes each a day; the guard now
+  asserts that no named wake came due.
+- **A process-wide burst of Store opens.** With phases logged (`op=ownersIdle.phase`), a full
+  run measured: catalog made 0.7 s, `store.start` 26.3 s, owners started 1.6 s, settled 4.0 s,
+  idle round 1.0 s (33.6 s in all). In the same 11 s, other suites opened about 400 fresh
+  stores, each running all 75 migrations, and every Store start in the process finished at
+  the same instant, its startup claim release queued 12 to 15 s (`op=catalog.start
+  claimsMs=`). That wait is the test host's, not the guard's: no owner of the guard waits on
+  time any more.
+
+A release's footprint line read `task_info` on the releasing owner's thread, after the next
+grant. It now runs on a queue of its own (`LoadAdmission`), so a stalled kernel read holds
+neither the next load nor the owner (`LoadAdmissionTests`).
