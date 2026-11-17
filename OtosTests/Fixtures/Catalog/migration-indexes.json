@@ -470,5 +470,9 @@
   {
     "indexes": {},
     "migration": "v74_search_text_words"
+  },
+  {
+    "indexes": {},
+    "migration": "v75_library_root_change_journal"
   }
 ]

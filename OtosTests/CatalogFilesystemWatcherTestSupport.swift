@@ -6,24 +6,42 @@ import Synchronization
 ///
 /// Watchers that never create an `FSEventStream`: `noop` ignores everything, and the
 /// `testing` variants hand the test an `emit` that calls the handler the Store
-/// registered, so a test delivers an event at exactly the point it chooses.
+/// registered, so a test delivers an event at exactly the point it chooses. None of them
+/// offers a change journal unless the test scripts one (`scripted`): a root they watch has
+/// no history, as on a volume that keeps none, so every launch walks it.
 extension CatalogFilesystemWatcher {
     static let noop = CatalogFilesystemWatcher(
-        start: { _, _ in },
-        addRoot: { _ in },
-        removeRoot: { _ in },
+        probe: { _ in nil },
+        start: { _ in },
+        watch: { _, _ in },
+        unwatch: { _ in },
         stop: {}
     )
 
+    /// The live watcher with its journal hidden: live events, and no history, so a test
+    /// that relaunches a Store gets the launch walk it relies on. The stream ignores events
+    /// this process causes, so a test's own writes reach a Store only through its walks.
+    static func liveWithoutHistory() -> CatalogFilesystemWatcher {
+        var watcher = CatalogFilesystemWatcher.live()
+        watcher.probe = { root in
+            LiveFilesystemJournal.probe(root).map {
+                FilesystemJournalProbe(volumeUUID: nil, currentEventID: $0.currentEventID, rootIdentity: $0.rootIdentity)
+            }
+        }
+        return watcher
+    }
+
     /// Test harness that invokes the registered handler without `FSEventStream`.
     static func testing() -> (watcher: CatalogFilesystemWatcher, emit: @Sendable (FilesystemEvent) -> Void) {
-        TestingCatalogFilesystemWatcher.make()
+        let harness = ScriptedCatalogFilesystemWatcher()
+        return (harness.watcher, harness.emit)
     }
 
     static func testingWithRootInspection() -> (
         CatalogFilesystemWatcherInspection
     ) {
-        TestingCatalogFilesystemWatcher.makeWithRootInspection()
+        let harness = ScriptedCatalogFilesystemWatcher()
+        return CatalogFilesystemWatcherInspection(watcher: harness.watcher, emit: harness.emit, roots: harness.roots)
     }
 }
 
@@ -33,87 +51,69 @@ nonisolated struct CatalogFilesystemWatcherInspection {
     let roots: @Sendable () -> [LibraryRootPath]
 }
 
-private nonisolated struct TestingWatcherStorage {
-    var handler: (@Sendable (FilesystemEvent) -> Void)?
-    var roots: [LibraryRootPath] = []
-}
-
-private final nonisolated class TestingCatalogFilesystemWatcher: Sendable {
-    private let storage = Mutex(TestingWatcherStorage())
-
-    static func make() -> (watcher: CatalogFilesystemWatcher, emit: @Sendable (FilesystemEvent) -> Void) {
-        let harness = TestingCatalogFilesystemWatcher()
-        let watcher = CatalogFilesystemWatcher(
-            start: { _, handler in
-                harness.setHandler(handler)
-            },
-            addRoot: { _ in },
-            removeRoot: { _ in },
-            stop: {
-                harness.setHandler(nil)
-            }
-        )
-        return (watcher, harness.emit)
+/// A scripted change journal: the test says what each root's probe reads, sees each root
+/// watched and from which event ID, and delivers events and the end of a replay itself
+/// (`emit`, `emitHistoryDone`). A root watched from an ID is answered `historyDone` only
+/// when the test sends it, so a replay's events are delivered at exactly the point the test
+/// chooses; one watched from now is never sent one.
+final nonisolated class ScriptedCatalogFilesystemWatcher: Sendable {
+    struct Watch: Equatable {
+        let root: LibraryRootPath
+        let since: UInt64?
     }
 
-    static func makeWithRootInspection() -> CatalogFilesystemWatcherInspection {
-        let harness = TestingCatalogFilesystemWatcher()
-        let watcher = CatalogFilesystemWatcher(
-            start: { roots, handler in
-                harness.setRoots(roots)
-                harness.setHandler(handler)
+    private struct State {
+        var handler: (@Sendable (FilesystemWatcherDelivery) -> Void)?
+        var probes: [LibraryRootPath: FilesystemJournalProbe] = [:]
+        var watched: [LibraryRootPath] = []
+        var watches: [Watch] = []
+    }
+
+    private let state = Mutex(State())
+
+    var watcher: CatalogFilesystemWatcher {
+        CatalogFilesystemWatcher(
+            probe: { [self] root in state.withLock { $0.probes[root] } },
+            start: { [self] handler in state.withLock { $0.handler = handler } },
+            watch: { [self] root, since in
+                state.withLock { state in
+                    guard !state.watched.contains(root) else {
+                        return
+                    }
+                    state.watched.append(root)
+                    state.watches.append(Watch(root: root, since: since))
+                }
             },
-            addRoot: { root in
-                harness.addRoot(root)
-            },
-            removeRoot: { root in
-                harness.removeRoot(root)
-            },
-            stop: {
-                harness.setRoots([])
-                harness.setHandler(nil)
+            unwatch: { [self] root in state.withLock { $0.watched.removeAll { $0 == root } } },
+            stop: { [self] in
+                state.withLock { state in
+                    state.watched = []
+                    state.handler = nil
+                }
             }
         )
-        return CatalogFilesystemWatcherInspection(watcher: watcher, emit: harness.emit, roots: harness.roots)
+    }
+
+    func setProbe(_ probe: FilesystemJournalProbe?, for root: LibraryRootPath) {
+        state.withLock { $0.probes[root] = probe }
+    }
+
+    /// Every watch the Store asked for, in order.
+    func watches() -> [Watch] {
+        state.withLock { $0.watches }
+    }
+
+    func roots() -> [LibraryRootPath] {
+        state.withLock { $0.watched }
     }
 
     func emit(_ event: FilesystemEvent) {
-        let handler = storage.withLock { storage in
-            storage.handler
-        }
-        handler?(event)
+        let handler = state.withLock { $0.handler }
+        handler?(.event(event))
     }
 
-    private func setHandler(_ handler: (@Sendable (FilesystemEvent) -> Void)?) {
-        storage.withLock { storage in
-            storage.handler = handler
-        }
-    }
-
-    private func setRoots(_ roots: [LibraryRootPath]) {
-        storage.withLock { storage in
-            storage.roots = roots
-        }
-    }
-
-    private func addRoot(_ root: LibraryRootPath) {
-        storage.withLock { storage in
-            guard !storage.roots.contains(root) else {
-                return
-            }
-            storage.roots.append(root)
-        }
-    }
-
-    private func removeRoot(_ root: LibraryRootPath) {
-        storage.withLock { storage in
-            storage.roots.removeAll { $0 == root }
-        }
-    }
-
-    private func roots() -> [LibraryRootPath] {
-        storage.withLock { storage in
-            storage.roots
-        }
+    func emitHistoryDone(_ root: LibraryRootPath) {
+        let handler = state.withLock { $0.handler }
+        handler?(.historyDone(root))
     }
 }

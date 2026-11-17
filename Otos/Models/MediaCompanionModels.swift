@@ -45,6 +45,24 @@ nonisolated struct CatalogScanObservation: Equatable, Sendable {
     let mediaPaths: Set<MediaRelativePath>
     let companions: [ScannedCompanionFile]
     let skippedPackageCount: Int
+    /// The directories the walk listed, its starting one included.
+    let directoriesRead: Int
+    /// The entries whose resource values the walk read.
+    let itemsStatted: Int
+
+    init(
+        mediaPaths: Set<MediaRelativePath>,
+        companions: [ScannedCompanionFile],
+        skippedPackageCount: Int,
+        directoriesRead: Int = 0,
+        itemsStatted: Int = 0
+    ) {
+        self.mediaPaths = mediaPaths
+        self.companions = companions
+        self.skippedPackageCount = skippedPackageCount
+        self.directoriesRead = directoriesRead
+        self.itemsStatted = itemsStatted
+    }
 
     var companionPaths: Set<MediaRelativePath> {
         Set(companions.map(\.relativePath))

@@ -17,15 +17,12 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v74's text index, its folded readings and their trigger dropped and its
-    /// record removed.
-    static let newest = CatalogSchema.searchTextWordsMigrationIdentifier
+    /// schema before it: v75's journal table dropped and its record removed.
+    static let newest = CatalogSchema.rootChangeJournalMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
         [
-            "DROP TRIGGER search_text_folded_delete",
-            "DROP TABLE search_text_word",
-            "DROP TABLE search_text_folded",
+            "DROP TABLE library_root_change_journal",
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }
@@ -66,12 +63,11 @@ struct CatalogMigrationCostTests {
         let compaction = try CatalogStore.compactIfOwed(pool, fileURL: URL(filePath: path)) {}
         try pool.close()
         #expect(run.applied == 1)
-        // What v74's text index takes on the disk: its FTS5 table's shadow tables, the folded
-        // readings and their key.
+        // What v75's table takes on the disk: one empty table.
         let indexBytes = try DatabaseQueue(path: path).read { db in
             try Row.fetchAll(db, sql: """
             SELECT name, sum(pgsize) AS bytes FROM dbstat
-            WHERE name LIKE 'search_text_word%' OR name LIKE '%search_text_folded%' GROUP BY name ORDER BY name
+            WHERE name LIKE '%library_root_change_journal%' GROUP BY name ORDER BY name
             """).map { "\($0["name"] as String)=\($0["bytes"] as Int64)" }.joined(separator: " ")
         }
         let readsAfter = try WindowReadPages.measure(path: path)

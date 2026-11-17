@@ -138,7 +138,7 @@ func makeTestDirectory() throws -> URL {
 func makeTestStore(
     location: CatalogStore.Location,
     scanner: CatalogScanner = .live,
-    filesystemWatcher: CatalogFilesystemWatcher = .live(),
+    filesystemWatcher: CatalogFilesystemWatcher = .liveWithoutHistory(),
     scanCadence: Duration = .seconds(1),
     wallClock: @escaping @Sendable () -> Date = { Date() },
     initialLoadDidRead: (@Sendable () async -> Void)? = nil,

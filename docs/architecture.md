@@ -220,6 +220,16 @@ everything expensive happens on an actor off the main thread.
   each file; the scope clause, import planning and enrichment claims skip marked rows,
   detach and launch clear the mark, and an erase removes each file's row with its
   journal entry (ADR 0013, ADR 0026).
+- **Launch reconciliation and the change journal**: a fixed library is not walked at
+  launch when its volume's FSEvents history can vouch for it. The catalog stores per root
+  the last event ID it fully applied, with the volume's event-database UUID and the root
+  folder's inode (`library_root_change_journal`); the root's one stream
+  (`CatalogFilesystemWatcher`, one per root) replays the history since it, and the events
+  are reconciled as live ones; `JournalLaunchDecision` walks the root instead when it
+  cannot vouch, and `RootChangeJournal` decides when a newer position may be stored (after
+  the reconcile loop drains, with no walk owed). A walk compares each batch with the
+  catalog's `ScanBaseline` and writes only what differs (ADR 0002, "Change Journal",
+  "Scan Update Cadence").
 - **Scan freshness and import settlement**: each active scan captures the root's
   namespace-mutation epoch. Independent import, reorganization, and filesystem-event
   mutations advance the epoch and retain typed dirty scopes; a stale scan can still

@@ -1,42 +1,78 @@
 import CoreServices
+import Darwin
 import Foundation
 import OSLog
 import Synchronization
 
 /// Filesystem watcher guide
 ///
-/// Subscribes to macOS File System Events for saved library roots and forwards
-/// file-level notifications to a Store-owned handler. This type never decides
-/// persistence, debounce policy, or scan scheduling.
+/// Subscribes to macOS File System Events for saved library roots, one stream per root,
+/// and forwards what each stream delivers to a Store-owned handler. A root watched from a
+/// stored event ID replays the volume's FSEvents history since that ID before its live
+/// events, then reports `historyDone`; that replay is how a launch learns what changed
+/// while Otos was not running (ADR 0002, "Change Journal"). This type never decides
+/// persistence, scan scheduling or what an event means.
 nonisolated struct FilesystemEvent: Equatable {
     let path: String
     let flags: UInt32
+    /// The event's FSEvents ID. Zero where FSEvents gives none (`RootChanged`).
+    let id: UInt64
+
+    init(path: String, flags: UInt32, id: UInt64 = 0) {
+        self.path = path
+        self.flags = flags
+        self.id = id
+    }
+}
+
+/// What a root's stream delivered: one event, or the end of its history replay.
+nonisolated enum FilesystemWatcherDelivery: Equatable {
+    case event(FilesystemEvent)
+    /// Every event the volume recorded under the root before its stream started has been
+    /// delivered (`kFSEventStreamEventFlagHistoryDone`). Sent only to a root watched from
+    /// an event ID.
+    case historyDone(LibraryRootPath)
+}
+
+/// Where a root's change journal stands now (`CatalogFilesystemWatcher.probe`).
+nonisolated struct FilesystemJournalProbe: Equatable {
+    /// `FSEventsCopyUUIDForDevice` of the root's volume: the identity of its event
+    /// database. Nil when the volume keeps no history (FSEvents: read-only, network).
+    let volumeUUID: String?
+    /// `FSEventsGetCurrentEventId()` when probed: a stream started from it misses nothing
+    /// that happens after the probe.
+    let currentEventID: UInt64
+    /// The root folder's inode: a folder replaced at the same path has another.
+    let rootIdentity: UInt64
 }
 
 nonisolated struct CatalogFilesystemWatcher {
-    var start: @Sendable (
-        _ roots: [LibraryRootPath],
-        _ handler: @Sendable @escaping (FilesystemEvent) -> Void
-    ) -> Void
-    var addRoot: @Sendable (LibraryRootPath) -> Void
-    var removeRoot: @Sendable (LibraryRootPath) -> Void
+    /// The root's journal facts, or nil when the root cannot be read.
+    var probe: @Sendable (LibraryRootPath) -> FilesystemJournalProbe?
+    var start: @Sendable (_ handler: @Sendable @escaping (FilesystemWatcherDelivery) -> Void) -> Void
+    /// Watches `root` from event `since` (replaying history after it, then `historyDone`),
+    /// or from now when `since` is nil. A root already watched keeps its stream.
+    var watch: @Sendable (_ root: LibraryRootPath, _ since: UInt64?) -> Void
+    var unwatch: @Sendable (LibraryRootPath) -> Void
     var stop: @Sendable () -> Void
 
-    /// A watcher with its own `FSEventStream`, root list and handler. Each call is
-    /// independent: two stores never share a stream, so one store's `stop()` or `start`
-    /// cannot silence or redirect another's events. The stream stops when `stop()` is
-    /// called or when the last copy of the returned watcher is released.
+    /// A watcher with its own streams and handler. Each call is independent: two stores
+    /// never share a stream, so one store's `stop()` cannot silence another's events. The
+    /// streams stop when `stop()` is called or when the last copy of the watcher is released.
     static func live() -> CatalogFilesystemWatcher {
         let lifetime = LiveCatalogFilesystemWatcher()
         return CatalogFilesystemWatcher(
-            start: { roots, handler in
-                lifetime.state.start(roots: roots, handler: handler)
+            probe: { root in
+                LiveFilesystemJournal.probe(root)
             },
-            addRoot: { root in
-                lifetime.state.addRoot(root)
+            start: { handler in
+                lifetime.state.start(handler: handler)
             },
-            removeRoot: { root in
-                lifetime.state.removeRoot(root)
+            watch: { root, since in
+                lifetime.state.watch(root, since: since)
+            },
+            unwatch: { root in
+                lifetime.state.unwatch(root)
             },
             stop: {
                 lifetime.state.stop()
@@ -47,11 +83,25 @@ nonisolated struct CatalogFilesystemWatcher {
 
 // MARK: - Live
 
+nonisolated enum LiveFilesystemJournal {
+    static func probe(_ root: LibraryRootPath) -> FilesystemJournalProbe? {
+        var info = stat()
+        guard stat(root.rawValue, &info) == 0 else {
+            return nil
+        }
+        let uuid = FSEventsCopyUUIDForDevice(info.st_dev).map { CFUUIDCreateString(nil, $0) as String }
+        return FilesystemJournalProbe(
+            volumeUUID: uuid,
+            currentEventID: FSEventsGetCurrentEventId(),
+            rootIdentity: UInt64(info.st_ino)
+        )
+    }
+}
+
 /// Owns one `WatcherState` for as long as any copy of its `CatalogFilesystemWatcher`
-/// exists. The stream's callback context points at the state unretained; releasing this
-/// owner stops the stream on its queue first, so no callback can run against a freed state.
-/// The owner is never released on the watcher queue: handlers forward events and hold no
-/// reference back to the watcher.
+/// exists. Releasing this owner stops every stream on the watcher's queue first, so no
+/// callback can run against a freed state. Handlers forward deliveries and hold no
+/// reference back to the watcher, so the owner is never released on that queue.
 private final nonisolated class LiveCatalogFilesystemWatcher: Sendable {
     let state = WatcherState()
 
@@ -60,43 +110,56 @@ private final nonisolated class LiveCatalogFilesystemWatcher: Sendable {
     }
 }
 
-private nonisolated struct WatcherStorage {
-    var roots: [LibraryRootPath] = []
-    var handler: (@Sendable (FilesystemEvent) -> Void)?
+/// One root's stream and the context its callback reads. The context lives as long as
+/// the stream: it is released only after `FSEventStreamInvalidate`, on the queue every
+/// callback runs on.
+private final nonisolated class RootStream {
+    let root: LibraryRootPath
+    unowned let state: WatcherState
     var stream: FSEventStreamRef?
+
+    init(root: LibraryRootPath, state: WatcherState) {
+        self.root = root
+        self.state = state
+    }
+}
+
+private nonisolated struct WatcherStorage {
+    var handler: (@Sendable (FilesystemWatcherDelivery) -> Void)?
+    var streams: [LibraryRootPath: RootStream] = [:]
 }
 
 private final nonisolated class WatcherState: Sendable {
     private let queue = DispatchQueue(label: "net.melisma.Otos.filesystem-events")
     private let storage = Mutex(WatcherStorage())
 
-    func start(roots: [LibraryRootPath], handler: @escaping @Sendable (FilesystemEvent) -> Void) {
+    func start(handler: @escaping @Sendable (FilesystemWatcherDelivery) -> Void) {
         queue.sync {
-            storage.withLock { storage in
-                storage.roots = roots
-                storage.handler = handler
-                recreateStreamLocked(storage: &storage)
-            }
+            storage.withLock { $0.handler = handler }
         }
     }
 
-    func addRoot(_ root: LibraryRootPath) {
+    func watch(_ root: LibraryRootPath, since: UInt64?) {
         queue.sync {
             storage.withLock { storage in
-                guard !storage.roots.contains(root) else {
+                guard storage.streams[root] == nil else {
                     return
                 }
-                storage.roots.append(root)
-                recreateStreamLocked(storage: &storage)
+                let rootStream = RootStream(root: root, state: self)
+                guard createStream(rootStream, since: since) else {
+                    return
+                }
+                storage.streams[root] = rootStream
             }
         }
     }
 
-    func removeRoot(_ root: LibraryRootPath) {
+    func unwatch(_ root: LibraryRootPath) {
         queue.sync {
             storage.withLock { storage in
-                storage.roots.removeAll { $0 == root }
-                recreateStreamLocked(storage: &storage)
+                if let rootStream = storage.streams.removeValue(forKey: root) {
+                    invalidate(rootStream)
+                }
             }
         }
     }
@@ -105,87 +168,83 @@ private final nonisolated class WatcherState: Sendable {
         dispatchPrecondition(condition: .notOnQueue(queue))
         queue.sync {
             storage.withLock { storage in
-                invalidateStreamLocked(storage: &storage)
-                storage.roots = []
+                for rootStream in storage.streams.values {
+                    invalidate(rootStream)
+                }
+                storage.streams = [:]
                 storage.handler = nil
             }
         }
     }
 
-    private func recreateStreamLocked(storage: inout WatcherStorage) {
-        invalidateStreamLocked(storage: &storage)
-        guard !storage.roots.isEmpty else {
-            return
-        }
-
-        let state = OtosSignpost.fileAccess.beginInterval("FilesystemWatcherStart")
-        defer {
-            OtosSignpost.fileAccess.endInterval("FilesystemWatcherStart", state)
-        }
-
-        let paths = storage.roots.map(\.rawValue) as CFArray
+    private func createStream(_ rootStream: RootStream, since: UInt64?) -> Bool {
+        let signpost = OtosSignpost.fileAccess.beginInterval("FilesystemWatcherStart")
+        defer { OtosSignpost.fileAccess.endInterval("FilesystemWatcherStart", signpost) }
         var context = FSEventStreamContext(
             version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
+            info: Unmanaged.passUnretained(rootStream).toOpaque(),
             retain: nil,
             release: nil,
             copyDescription: nil
         )
-
+        // `FullHistory`: a replay delivers every event of the history chunk holding `since`,
+        // even ones just before it, so none near an unclean exit is skipped; an event
+        // delivered twice is reconciled twice, which changes nothing.
         let flags = FSEventStreamCreateFlags(
             kFSEventStreamCreateFlagFileEvents
                 | kFSEventStreamCreateFlagUseCFTypes
                 | kFSEventStreamCreateFlagIgnoreSelf
                 | kFSEventStreamCreateFlagWatchRoot
+                | kFSEventStreamCreateFlagFullHistory
         )
-
         guard let stream = FSEventStreamCreate(
             kCFAllocatorDefault,
             filesystemEventStreamCallback,
             &context,
-            paths,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            [rootStream.root.rawValue] as CFArray,
+            since ?? FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             0.1,
             flags
         ) else {
-            OtosLog.fileAccess.error("Filesystem watcher stream creation failed")
-            return
+            OtosLog.fileAccess.errorOperation("filesystem.watch", phase: "createFailed", fields: [
+                "rootPath": rootStream.root.rawValue,
+            ])
+            return false
         }
-
-        storage.stream = stream
+        rootStream.stream = stream
         FSEventStreamSetDispatchQueue(stream, queue)
-        FSEventStreamStart(stream)
-        let rootCount = storage.roots.count
-        OtosLog.fileAccess.info("Filesystem watcher started roots=\(rootCount, privacy: .public)")
+        guard FSEventStreamStart(stream) else {
+            OtosLog.fileAccess.errorOperation("filesystem.watch", phase: "startFailed", fields: [
+                "rootPath": rootStream.root.rawValue,
+            ])
+            invalidate(rootStream)
+            return false
+        }
+        OtosLog.fileAccess.noticeOperation("filesystem.watch", phase: "start", fields: [
+            "rootPath": rootStream.root.rawValue,
+            "since": since.map { "\($0)" } ?? "now",
+        ])
+        return true
     }
 
-    private func invalidateStreamLocked(storage: inout WatcherStorage) {
-        guard let stream = storage.stream else {
+    private func invalidate(_ rootStream: RootStream) {
+        guard let stream = rootStream.stream else {
             return
         }
-        let signpostState = OtosSignpost.fileAccess.beginInterval("FilesystemWatcherStop")
         FSEventStreamStop(stream)
         FSEventStreamInvalidate(stream)
         FSEventStreamRelease(stream)
-        OtosSignpost.fileAccess.endInterval("FilesystemWatcherStop", signpostState)
-        storage.stream = nil
-        OtosLog.fileAccess.info("Filesystem watcher stopped")
+        rootStream.stream = nil
+        OtosLog.fileAccess.info("Filesystem watcher stopped root=\(rootStream.root.rawValue, privacy: .public)")
     }
 
-    fileprivate func deliver(events: [FilesystemEvent]) {
-        let handler = storage.withLock { storage in
-            storage.handler
-        }
+    fileprivate func deliver(_ deliveries: [FilesystemWatcherDelivery]) {
+        let handler = storage.withLock { $0.handler }
         guard let handler else {
             return
         }
-        for event in events {
-            let signpost = OtosSignpost.fileAccess.beginInterval("FilesystemWatcherEvent")
-            OtosLog.fileAccess.debug(
-                "Filesystem event path=\(event.path, privacy: .public) flags=\(event.flags, privacy: .public)"
-            )
-            OtosSignpost.fileAccess.endInterval("FilesystemWatcherEvent", signpost)
-            handler(event)
+        for delivery in deliveries {
+            handler(delivery)
         }
     }
 }
@@ -197,26 +256,29 @@ private nonisolated func filesystemEventStreamCallback(
     numEvents: Int,
     eventPaths: UnsafeMutableRawPointer,
     eventFlags: UnsafePointer<FSEventStreamEventFlags>,
-    _: UnsafePointer<FSEventStreamEventId>
+    eventIDs: UnsafePointer<FSEventStreamEventId>
 ) {
-    guard let clientCallBackInfo,
-          numEvents > 0
-    else {
+    guard let clientCallBackInfo, numEvents > 0 else {
         return
     }
-
-    let client = Unmanaged<WatcherState>
-        .fromOpaque(clientCallBackInfo)
-        .takeUnretainedValue()
-
+    let rootStream = Unmanaged<RootStream>.fromOpaque(clientCallBackInfo).takeUnretainedValue()
     let pathsArray = Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue() as NSArray
-    var events: [FilesystemEvent] = []
-    events.reserveCapacity(numEvents)
+    var deliveries: [FilesystemWatcherDelivery] = []
+    deliveries.reserveCapacity(numEvents)
     for index in 0 ..< numEvents {
+        // The sentinel ending a replay carries no path to act on (FSEvents.h).
+        if eventFlags[index] & UInt32(kFSEventStreamEventFlagHistoryDone) != 0 {
+            deliveries.append(.historyDone(rootStream.root))
+            continue
+        }
         guard let path = pathsArray[index] as? String else {
             continue
         }
-        events.append(FilesystemEvent(path: CatalogPath.catalogSpelling(ofEventPath: path), flags: eventFlags[index]))
+        deliveries.append(.event(FilesystemEvent(
+            path: CatalogPath.catalogSpelling(ofEventPath: path),
+            flags: eventFlags[index],
+            id: eventIDs[index]
+        )))
     }
-    client.deliver(events: events)
+    rootStream.state.deliver(deliveries)
 }

@@ -107,6 +107,8 @@ This ADR owns:
   by ADR 0011's two-tier publication model.
 - Scan-time media eligibility: which regular files become `media_asset` rows based on
   `NSURLContentTypeKey` and `UTType` conformance.
+- The change journal: each fixed library's stored FSEvents position, and the
+  launch decision to replay its history or walk it ("Change Journal").
 - Running-app filesystem watching: macOS FSEvents are hints acted on as they
   arrive, one pass per root at a time. Store
   accumulates typed dirty scopes (file / subtree / root) per root and reconciles
@@ -471,11 +473,95 @@ flush of pending observed-file changes. Deletion of unobserved existing rows
 happens only after a completed scan of that library root, not after a cancelled
 or failed scan.
 
+### Change Journal
+
+A launch does not walk a fixed library when the filesystem itself can say nothing under it
+changed since the catalog last reflected it. Measured before this rule on the owner's library:
+every launch listed both libraries in full, 16,924 and 788 files, eight seconds of walk that
+changed nothing, in the same first seconds as the first grid and People's first pass; the cloud
+provider's File Provider extension, started with Otos, ran at 80–90 % CPU for minutes while the
+walk asked it for listings and attributes.
+
+The fact is the volume's FSEvents history (`FSEvents.h`). Each fixed library root stores one row
+in `library_root_change_journal` (v75): the last event ID whose changes the catalog fully
+reflects, the identity of the volume's event database it belongs to
+(`FSEventsCopyUUIDForDevice`) and the root folder's inode. At launch the Store decides per root
+(`JournalLaunchDecision`):
+
+- the root cannot be read → walk (`reason=unreadable`);
+- the volume has no FSEvents UUID, so keeps no history (FSEvents returns none where it
+  keeps no persistent event store; the header names a read-only device) → watch from now,
+  walk (`noHistory`), and never store a position;
+- no stored position (the first launch after v75, or a root never walked) → walk
+  (`firstWalk`);
+- the UUID differs (events purged, disk erased, IDs wrapped: the header's own cases) → walk
+  (`uuidChanged`);
+- the root's inode differs (the folder was replaced) → walk (`rootChanged`);
+- the stored ID is ahead of `FSEventsGetCurrentEventId()` → walk (`noHistory`);
+- otherwise → the root's stream is created with `sinceWhen` = the stored ID and
+  `kFSEventStreamCreateFlagFullHistory` (a replay re-delivers the chunk holding that ID rather
+  than skip an event near an unclean exit; reconciling an event twice changes nothing).
+
+A walking root's stream starts at the event ID probed just before the walk, so every change
+after the probe is either seen by the walk or delivered as an event. Replayed events go through
+the same classification and dirt as live ones (`Running-App Filesystem Watching` below): a file
+event reconciles that path, a directory or `MustScanSubDirs` event that subtree, and
+`UserDropped`, `KernelDropped`, `EventIdsWrapped`, `RootChanged`, `Mount`, `Unmount`, root-path
+`MustScanSubDirs` and any unknown shape the whole root (`reason=dropped|rootChanged|events`).
+`kFSEventStreamEventFlagHistoryDone` ends the replay: a replay that delivered nothing logs
+`op=catalog.scan phase=skip reason=noChanges directoriesRead=0 filesStatted=0 rowsWritten=0`, one
+that delivered events `phase=replayed reason=events events=N`, and every walk's finish line
+carries its `reason`, `directoriesRead` and `filesStatted`. One stream per root serves the
+launch and the running app: the running-app watcher is this one.
+
+A position is stored only when the journal can vouch for everything before it
+(`RootChangeJournal.positionToStore`): the replay has ended; no batch, pass, dirt, queued or
+running walk or namespace lease is left for the root; and nothing only a complete walk settles is
+outstanding. That last fact is a revision counter (ADR 0032): queuing a walk, an event dropped
+because the root was not armed or not reachable, and a file whose observation failed each owe a
+walk; a walk that completed and could delete what it did not find settles what was owed when it
+started. A walk overtaken by an event cannot delete (ARC-041), so it settles nothing: the event
+is applied after it, no position is stored past it this session, and the next launch walks
+again. The reconcile loop stores the position after it drains, in its own small write; a crash
+between applying events and storing their position only replays them again. A launch whose
+journal vouched starts the 24-hour integrity walk's clock as a completed walk does.
+
+Which roots: fixed libraries only. Removable volumes and cameras keep their attach-time listing
+(ADR 0013); an Immich account its sync stream (ADR 0046).
+
+What the journal does not report, and does not need to: a provider's download or eviction of an
+item changes only its `SF_DATALESS` flag and extended attributes, not the name, size or dates the
+catalog stores, and locality is read on demand by `MaterializationCoordinator`. No walk is
+needed for it.
+
+Rejected:
+
+- A time- or count-based skip ("walked within the last day", "same file count"): neither is a
+  fact about the folder (ADR 0033).
+- Keeping the launch walk and only making it cheaper (PR 1's no-write batches): the walk's
+  listing and attribute reads are what ask the provider for work; skipping the writer leaves them.
+- Reading the File Provider's own change API: Otos is not the domain's host app and the API
+  covers only that provider; FSEvents covers every local volume the same way.
+- One stream for every root with the lowest stored ID: a root would replay another's history,
+  and its replay could not say when its own ended.
+- Non-recursive reads of the folders an event names: with file-level events a folder event
+  means the folder itself was created, removed or renamed, and its contents are new to the
+  catalog; the subtree read (ARC-041) is what that needs.
+
+Unproven: that FSEvents records every change a provider makes inside a File Provider domain
+folder (the 2026-07-11 capture saw hydration-shaped events from the provider's process and one
+hydration with no event; this session could not drive a provider). A provider change FSEvents
+did not record would stay out of the catalog until the next walk: the root's next
+`uuidChanged`/`rootChanged`/dropped fallback, or the 24-hour integrity walk of a long session.
+
+Measured cost of v75 on a generated catalog of the owner's shape (2,272,321,536 bytes, `CatalogMigrationCostTests` with `OTOS_SCALE_TEST=1`): 4 ms and 32,992 WAL bytes; the file's size is unchanged and its new table takes one 4,096-byte page.
+
 ### Running-App Filesystem Watching (V1)
 
 While the app is running, `CatalogFilesystemWatcher` subscribes to macOS File
-System Events for each saved library root using file-level events
-(`kFSEventStreamCreateFlagFileEvents`), `IgnoreSelf`, and `WatchRoot`. `MarkSelf`
+System Events with one stream per saved root, started from the root's journal position
+("Change Journal") or from now, using file-level events
+(`kFSEventStreamCreateFlagFileEvents`), `IgnoreSelf`, `WatchRoot` and `FullHistory`. `MarkSelf`
 is not used (no consumer of `OwnEvent`). The watcher translates callbacks into
 `Sendable` events and forwards them to `CatalogStore`; it never writes SQLite or
 catalog memory. Provider hydration runs outside the Otos process, so `IgnoreSelf`
@@ -519,8 +605,8 @@ allowlisted hydration-shaped events for paths Otos has explicitly asked the
 provider to materialize; unsafe membership/coverage shapes never suppress.
 
 A Store-owned integrity scheduler marks a library root `.root` dirty once when
-24 hours have elapsed since its last successful full-root reconciliation (launch
-and add scans count). It does not duplicate work for active/pending/already-dirty
+24 hours have elapsed since its last successful full-root reconciliation (add and
+launch walks count, and so does a launch replay its journal vouched for). It does not duplicate work for active/pending/already-dirty
 roots.
 
 Watcher lifecycle is tied to saved roots: start after catalog load, add on
@@ -731,7 +817,8 @@ The selected pattern constrains implementation:
 - SwiftUI-visible background scan updates publish on Projection's background
   cadence when pending changes exist
 - concurrent initial-load callers share one Store-owned startup task
-- database-restored roots receive one automatic launch scan request
+- database-restored fixed libraries receive one automatic launch reconciliation: a
+  replay of their change journal, or a walk when it cannot vouch
 - scan callbacks must still own the same root path, private root-row instance,
   and process-local lease generation before changing durable or in-memory state
 

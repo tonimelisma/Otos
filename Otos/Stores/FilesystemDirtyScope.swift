@@ -19,6 +19,8 @@ nonisolated enum FilesystemDirtyScope: Equatable, Hashable {
 /// descendant scopes into ancestor subtrees, and clears everything on `.root`.
 nonisolated struct FilesystemDirtyAccumulator: Equatable {
     private(set) var isRootDirty = false
+    /// Why the root is dirty, from the first cause that made it so.
+    private(set) var rootReason: ScanReason?
     /// Conservative file action per relative path. Upsert wins over delete when
     /// both shapes arrive in the same generation (current filesystem state is
     /// read at settlement time).
@@ -37,7 +39,10 @@ nonisolated struct FilesystemDirtyAccumulator: Equatable {
         subtrees.count
     }
 
-    mutating func insertRoot() {
+    mutating func insertRoot(reason: ScanReason = .events) {
+        if !isRootDirty {
+            rootReason = reason
+        }
         isRootDirty = true
         files.removeAll(keepingCapacity: false)
         subtrees.removeAll(keepingCapacity: false)
@@ -69,10 +74,14 @@ nonisolated struct FilesystemDirtyAccumulator: Equatable {
         }
     }
 
-    mutating func insert(_ scope: FilesystemDirtyScope, fileAction: SingleFileReconcileOperation? = nil) {
+    mutating func insert(
+        _ scope: FilesystemDirtyScope,
+        fileAction: SingleFileReconcileOperation? = nil,
+        rootReason: ScanReason = .events
+    ) {
         switch scope {
         case .root:
-            insertRoot()
+            insertRoot(reason: rootReason)
         case let .subtree(path):
             insertSubtree(path)
         case let .file(path):

@@ -161,6 +161,8 @@ private nonisolated enum LiveCatalogScanner {
         var filesystemIssueBuckets: [ScanIssueKey: ScanIssueBucket] = [:]
         var skippedPackages: [SkippedPackage] = []
         var skippedNonMediaCount = 0
+        var directoriesRead = 1
+        var itemsStatted = 0
 
         mutating func recordIssue(kind: String, path: String, errorDescription: String) {
             filesystemIssueCount += 1
@@ -310,7 +312,9 @@ private nonisolated enum LiveCatalogScanner {
         return CatalogScanObservation(
             mediaPaths: scanState.observedPaths,
             companions: scanState.companions,
-            skippedPackageCount: scanState.skippedPackages.count
+            skippedPackageCount: scanState.skippedPackages.count,
+            directoriesRead: scanState.directoriesRead,
+            itemsStatted: scanState.itemsStatted
         )
     }
 
@@ -364,6 +368,7 @@ private nonisolated enum LiveCatalogScanner {
         scanState: inout ScanState
     ) throws -> CatalogScannedFileReader.ObservedItem? {
         let values = try fileURL.resourceValues(forKeys: resourceKeys)
+        scanState.itemsStatted += 1
         if values.isHidden == true {
             if values.isDirectory == true {
                 enumerator.skipDescendants()
@@ -394,6 +399,8 @@ private nonisolated enum LiveCatalogScanner {
                 || relativePath.map(MediaEligibility.shouldSkipRelativePath) == true
             {
                 enumerator.skipDescendants()
+            } else {
+                scanState.directoriesRead += 1
             }
             return nil
         }

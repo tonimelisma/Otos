@@ -2647,6 +2647,26 @@ nonisolated enum CatalogSchema {
     /// one is matched by none, since a match reads only current readings, and is replaced when
     /// it is read again), with the code that writes them for a new reading
     /// (`SearchTextStorage.index`).
+    /// v75: where each library root's change journal stands (ADR 0002, "Change Journal"):
+    /// the last FSEvents event ID whose changes the catalog fully reflects, the identity of
+    /// the volume's event database it belongs to, and the root folder's inode when it was
+    /// stored. One row per root that has one, gone with the root. A new table: the
+    /// migration reads and writes no existing row.
+    ///
+    /// Frozen as literals.
+    static let rootChangeJournalMigrationIdentifier = "v75_library_root_change_journal"
+
+    static let rootChangeJournalStatements: [String] = [
+        """
+        CREATE TABLE library_root_change_journal (
+            library_root_id INTEGER PRIMARY KEY REFERENCES library_root(id) ON DELETE CASCADE,
+            volume_uuid TEXT NOT NULL,
+            event_id INTEGER NOT NULL,
+            root_identity INTEGER NOT NULL
+        )
+        """,
+    ]
+
     static func indexStoredSearchTexts(_ db: Database) throws {
         let start = ContinuousClock.now
         let rows = try Row.fetchCursor(db, sql: """

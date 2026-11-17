@@ -22,8 +22,10 @@ struct CatalogFilesystemWatcherLiveTests {
         let eventsB = WatcherEventRecorder()
         let watcherA = CatalogFilesystemWatcher.live()
         let watcherB = CatalogFilesystemWatcher.live()
-        watcherA.start([pathA]) { eventsA.record($0) }
-        watcherB.start([pathB]) { eventsB.record($0) }
+        watcherA.start { eventsA.record($0) }
+        watcherB.start { eventsB.record($0) }
+        watcherA.watch(pathA, nil)
+        watcherB.watch(pathB, nil)
         defer {
             watcherA.stop()
             watcherB.stop()
@@ -44,6 +46,42 @@ struct CatalogFilesystemWatcherLiveTests {
         try await waitUntil { eventsB.fileNames().contains("c.jpg") }
     }
 
+    /// A stream started from an event ID replays what happened after it, then says so: a
+    /// file written after the first stream's last event, while no stream watched, is
+    /// delivered to a stream started from that event, with a later ID. Each wait is on a
+    /// delivery the stream makes, never on time: whether the file arrives as history or,
+    /// when the event database had not yet recorded it, as a live event after `historyDone`,
+    /// it arrives.
+    @Test func aStreamStartedFromAnEventDeliversWhatHappenedAfterIt() async throws {
+        let temp = try makeTestDirectory()
+        let root = temp.appending(path: "Journal", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = try CatalogPath.normalizedDirectoryPath(for: root)
+        let probe = try #require(LiveFilesystemJournal.probe(path))
+        try #require(probe.volumeUUID != nil, "the test directory's volume keeps FSEvents history")
+
+        let first = WatcherEventRecorder()
+        let firstWatcher = CatalogFilesystemWatcher.live()
+        firstWatcher.start { first.record($0) }
+        firstWatcher.watch(path, probe.currentEventID)
+        try await waitUntil { first.historyDone(path) }
+        try touchFromAnotherProcess(root.appending(path: "before.jpg"))
+        try await waitUntil { first.fileNames().contains("before.jpg") }
+        let lastSeen = try #require(first.events().filter { $0.path.hasSuffix("/before.jpg") }.map(\.id).max())
+        firstWatcher.stop()
+
+        try touchFromAnotherProcess(root.appending(path: "after.jpg"))
+        let second = WatcherEventRecorder()
+        let secondWatcher = CatalogFilesystemWatcher.live()
+        defer { secondWatcher.stop() }
+        secondWatcher.start { second.record($0) }
+        secondWatcher.watch(path, lastSeen)
+        try await waitUntil { second.fileNames().contains("after.jpg") }
+        let delivered = try #require(second.events().filter { $0.path.hasSuffix("/after.jpg") }.map(\.id).max())
+        #expect(delivered > lastSeen)
+        try await waitUntil { second.historyDone(path) }
+    }
+
     private func touchFromAnotherProcess(_ url: URL) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/touch")
@@ -55,17 +93,32 @@ struct CatalogFilesystemWatcherLiveTests {
 }
 
 private final nonisolated class WatcherEventRecorder: Sendable {
-    private let events = Mutex<[FilesystemEvent]>([])
+    private let deliveries = Mutex<[FilesystemWatcherDelivery]>([])
 
-    func record(_ event: FilesystemEvent) {
-        events.withLock { $0.append(event) }
+    func record(_ delivery: FilesystemWatcherDelivery) {
+        deliveries.withLock { $0.append(delivery) }
+    }
+
+    func events() -> [FilesystemEvent] {
+        deliveries.withLock { deliveries in
+            deliveries.compactMap { delivery in
+                if case let .event(event) = delivery {
+                    return event
+                }
+                return nil
+            }
+        }
+    }
+
+    func historyDone(_ root: LibraryRootPath) -> Bool {
+        deliveries.withLock { $0.contains(.historyDone(root)) }
     }
 
     func paths() -> [String] {
-        events.withLock { $0.map(\.path) }
+        events().map(\.path)
     }
 
     func fileNames() -> Set<String> {
-        events.withLock { Set($0.map { URL(fileURLWithPath: $0.path).lastPathComponent }) }
+        Set(events().map { URL(fileURLWithPath: $0.path).lastPathComponent })
     }
 }

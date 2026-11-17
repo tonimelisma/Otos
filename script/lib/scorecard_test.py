@@ -347,6 +347,21 @@ class ScorecardTests(unittest.TestCase):
         report, _, _ = run(SESSION[:5])
         self.assertTrue(any("process.memory" in item for item in report["notMeasured"]))
 
+    def test_each_library_pass_says_why_it_walked_or_did_not(self):
+        lines = SESSION[:-1] + [
+            line(1.5, "op=catalog.scan phase=skip directoriesRead=0 filesStatted=0 reason=noChanges rootPath=/Volumes/Test/Pictures rowsWritten=0"),
+            line(1.6, "op=catalog.scan phase=replayed events=3 reason=events rootPath=/Volumes/Test/Videos"),
+            line(9.0, "op=catalog.scan phase=finish rootPath=/Volumes/Test/Scans reason=uuidChanged directoriesRead=40 "
+                      "filesStatted=900 observed=850 rowsWritten=0 companionCount=0 companionsChanged=false deleted=0 skippedPackageCount=0"),
+            SESSION[-1],
+        ]
+        report, _, text = run(lines)
+        self.assertEqual([(p["phase"], p["reason"]) for p in report["rootScans"]],
+                         [("skip", "noChanges"), ("replayed", "events"), ("finish", "uuidChanged")])
+        self.assertEqual(report["rootScans"][2]["filesStatted"], 900)
+        self.assertIn("/Volumes/Test/Pictures: skip reason=noChanges directoriesRead=0 filesStatted=0 rowsWritten=0", text)
+        self.assertIn("/Volumes/Test/Scans: finish reason=uuidChanged directoriesRead=40 filesStatted=900 rowsWritten=0", text)
+
     def test_the_derived_folder_counters_are_the_sessions_disk(self):
         counted = ("files=7 bytes=10485760 thumbnailFiles=4 thumbnailBytes=1048576 previewFiles=3 previewBytes=9437184 "
                    "faceFramesFiles=0 faceFramesBytes=0 otherFiles=0 otherBytes=0")

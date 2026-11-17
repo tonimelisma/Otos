@@ -592,6 +592,11 @@ extension CatalogStore {
             }
             try CatalogSchema.indexStoredSearchTexts(db)
         }
+        register(CatalogSchema.rootChangeJournalMigrationIdentifier) { db in
+            for statement in CatalogSchema.rootChangeJournalStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -965,6 +970,41 @@ extension CatalogStore {
                 capabilities.storedCaseSensitiveColumn,
                 deviceModel,
                 rootRowID,
+            ]
+        )
+    }
+
+    /// Each root's stored change-journal position, by root row (`FilesystemJournalPosition`).
+    static func fetchJournalPositions(db: Database) throws -> [Int64: FilesystemJournalPosition] {
+        let rows = try Row.fetchAll(db, sql: """
+        SELECT library_root_id, volume_uuid, event_id, root_identity FROM library_root_change_journal
+        """)
+        return Dictionary(uniqueKeysWithValues: rows.map { row in
+            let eventID: Int64 = row["event_id"]
+            let rootIdentity: Int64 = row["root_identity"]
+            return (row["library_root_id"], FilesystemJournalPosition(
+                volumeUUID: row["volume_uuid"],
+                eventID: UInt64(bitPattern: eventID),
+                rootIdentity: UInt64(bitPattern: rootIdentity)
+            ))
+        })
+    }
+
+    static func storeJournalPosition(_ position: FilesystemJournalPosition, rootRowID: Int64, db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO library_root_change_journal (library_root_id, volume_uuid, event_id, root_identity)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(library_root_id) DO UPDATE SET
+                volume_uuid = excluded.volume_uuid,
+                event_id = excluded.event_id,
+                root_identity = excluded.root_identity
+            """,
+            arguments: [
+                rootRowID,
+                position.volumeUUID,
+                Int64(bitPattern: position.eventID),
+                Int64(bitPattern: position.rootIdentity),
             ]
         )
     }

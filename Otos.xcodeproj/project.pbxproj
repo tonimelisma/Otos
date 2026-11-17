@@ -218,6 +218,7 @@
 				Stores/FilesystemReconciler.swift,
 				Stores/KnownMaterializationSuppression.swift,
 				Stores/MediaOperationGateway.swift,
+				Stores/RootChangeJournal.swift,
 				Stores/RootRegistry.swift,
 				Stores/RootRuntimeState.swift,
 				Stores/ScanLeaseController.swift,

@@ -29,6 +29,9 @@ nonisolated struct FilesystemEventFlags: Equatable {
         if contains(kFSEventStreamEventFlagKernelDropped)
             || contains(kFSEventStreamEventFlagUserDropped)
             || contains(kFSEventStreamEventFlagRootChanged)
+            || contains(kFSEventStreamEventFlagEventIdsWrapped)
+            || contains(kFSEventStreamEventFlagMount)
+            || contains(kFSEventStreamEventFlagUnmount)
         {
             return .root
         }
@@ -90,6 +93,25 @@ nonisolated struct FilesystemEventFlags: Equatable {
         }
     }
 
+    /// Why an event that makes the whole root dirty does (`ScanReason`): the stream lost
+    /// events or its IDs wrapped, the path to the root changed or a volume mounted or
+    /// unmounted under it, or the event's shape names no narrower scope.
+    var rootReason: ScanReason {
+        if contains(kFSEventStreamEventFlagKernelDropped)
+            || contains(kFSEventStreamEventFlagUserDropped)
+            || contains(kFSEventStreamEventFlagEventIdsWrapped)
+        {
+            return .dropped
+        }
+        if contains(kFSEventStreamEventFlagRootChanged)
+            || contains(kFSEventStreamEventFlagMount)
+            || contains(kFSEventStreamEventFlagUnmount)
+        {
+            return .rootChanged
+        }
+        return .events
+    }
+
     var singleFileAction: SingleFileReconcileOperation? {
         guard scopeKind == .file else {
             return nil
@@ -115,6 +137,9 @@ nonisolated struct FilesystemEventFlags: Equatable {
             || contains(kFSEventStreamEventFlagKernelDropped)
             || contains(kFSEventStreamEventFlagUserDropped)
             || contains(kFSEventStreamEventFlagRootChanged)
+            || contains(kFSEventStreamEventFlagEventIdsWrapped)
+            || contains(kFSEventStreamEventFlagMount)
+            || contains(kFSEventStreamEventFlagUnmount)
             || rawValue == 0
         {
             return false
@@ -132,6 +157,9 @@ nonisolated struct FilesystemEventFlags: Equatable {
         appendName("kernelDropped", for: kFSEventStreamEventFlagKernelDropped, to: &names)
         appendName("userDropped", for: kFSEventStreamEventFlagUserDropped, to: &names)
         appendName("rootChanged", for: kFSEventStreamEventFlagRootChanged, to: &names)
+        appendName("eventIdsWrapped", for: kFSEventStreamEventFlagEventIdsWrapped, to: &names)
+        appendName("mount", for: kFSEventStreamEventFlagMount, to: &names)
+        appendName("unmount", for: kFSEventStreamEventFlagUnmount, to: &names)
         appendName("itemCreated", for: kFSEventStreamEventFlagItemCreated, to: &names)
         appendName("itemRemoved", for: kFSEventStreamEventFlagItemRemoved, to: &names)
         appendName("itemInodeMetaMod", for: kFSEventStreamEventFlagItemInodeMetaMod, to: &names)

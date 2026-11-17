@@ -859,7 +859,18 @@ actor CatalogStore {
     /// and every callback revalidates its `ActiveScan` lease before mutating actor state.
     private var scanTasks: [ScanLeaseController.ScanLane: Task<Void, Never>] = [:]
     private var filesystemWatchingStarted = false
-    private var filesystemEventSink: AsyncStream<FilesystemEvent>.Continuation?
+    private var filesystemEventSink: AsyncStream<FilesystemWatcherDelivery>.Continuation?
+    /// Each fixed library's change journal in this session (`RootChangeJournal`, ADR 0002
+    /// "Change Journal"): how far its stream has delivered and what may be stored.
+    private var changeJournals: [LibraryRootPath: RootChangeJournal] = [:]
+    /// The positions the catalog held as it loaded, until each root's launch decides.
+    private var loadedJournalPositions: [LibraryRootPath: FilesystemJournalPosition] = [:]
+    /// The roots whose stream runs.
+    private var watchedRoots: Set<LibraryRootPath> = []
+    /// Why each queued full walk was asked for, and why each running one runs
+    /// (`op=catalog.scan reason=`).
+    private var pendingScanReasons: [LibraryRootPath: ScanReason] = [:]
+    private var runningScanReasons: [LibraryRootPath: ScanReason] = [:]
     private var filesystemEventConsumer: Task<Void, Never>?
     /// The one owner of dirty-scope reconciliation and of starting the next queued
     /// full-root scan (ADR 0032). Anything that leaves reconcilable work — a scan or a
@@ -905,6 +916,12 @@ actor CatalogStore {
             && filesystemDirty.isEmpty
             && reconcileRequested == reconcileCovered
             && !reconcilePassRunning
+            && changeJournals.values.allSatisfy { !$0.isReplaying }
+    }
+
+    /// The change-journal position the catalog holds for `path` in this session.
+    func storedJournalPosition(for path: LibraryRootPath) -> FilesystemJournalPosition? {
+        changeJournals[path]?.stored
     }
 
     /// Per-root typed dirty-scope accumulator. Events that arrive while a lease
@@ -1187,7 +1204,8 @@ extension CatalogStore {
     private func recordIndependentNamespaceMutation(
         root: LibraryRootPath,
         scope: FilesystemDirtyScope,
-        fileAction: SingleFileReconcileOperation? = nil
+        fileAction: SingleFileReconcileOperation? = nil,
+        rootReason: ScanReason = .events
     ) {
         guard var state = roots[root] else {
             return
@@ -1195,7 +1213,7 @@ extension CatalogStore {
         state.namespaceMutationEpoch &+= 1
         upsert(state)
         var dirty = filesystemDirty[root] ?? FilesystemDirtyAccumulator()
-        dirty.insert(scope, fileAction: fileAction)
+        dirty.insert(scope, fileAction: fileAction, rootReason: rootReason)
         filesystemDirty[root] = dirty
         OtosLog.catalog.debugOperation(
             "catalog.namespaceMutation",
@@ -4688,10 +4706,11 @@ extension CatalogStore {
     func start(scansSavedLibraries: Bool = true) async throws {
         try await loadIfNeeded()
         await forgetRemovableSourcesUnseenForRetentionPeriod()
+        startFilesystemWatchingIfNeeded()
         if scansSavedLibraries {
             requestLoadedRootScansIfNeeded()
         }
-        startFilesystemWatchingIfNeeded()
+        watchUnwatchedRoots()
         startIntegrityScanSchedulerIfNeeded()
     }
 
@@ -4757,8 +4776,12 @@ extension CatalogStore {
         // left undone. The window waits on the load: its first grid follows it.
         derivedFolder?.openSession()
         try await applyPendingDerivedRenames(lane: windowReads.lane)
-        let (loadedRoots, assetRows) = try await reader(for: windowReads.lane).readFreeingConnection { db in
-            try (Self.fetchRoots(db), Int.fetchOne(db, sql: "SELECT MAX(rowid) FROM media_asset") ?? 0)
+        let (loadedRoots, assetRows, journalPositions) = try await reader(for: windowReads.lane).readFreeingConnection { db in
+            try (
+                Self.fetchRoots(db),
+                Int.fetchOne(db, sql: "SELECT MAX(rowid) FROM media_asset") ?? 0,
+                Self.fetchJournalPositions(db: db)
+            )
         }
         // Sized before the first read makes the rows' IDs, so the session never rebuilds the
         // identity table's index under its lock while the window makes IDs (ADR 0005).
@@ -4820,6 +4843,9 @@ extension CatalogStore {
         unrequestedLoadedRootPaths = normalizedRoots
             .filter(\.kind.isUserChosenFolder)
             .map(\.path)
+        loadedJournalPositions = Dictionary(uniqueKeysWithValues: unrequestedLoadedRootPaths.compactMap { path in
+            roots[path].flatMap { journalPositions[$0.rowID] }.map { (path, $0) }
+        })
         OtosSignpost.catalog.endInterval("CatalogApplyLoadedCatalog", applyState)
         started = true
         var fields = phases.fields
@@ -5502,7 +5528,7 @@ extension CatalogStore {
             "op=catalog.library.remove phase=start rootPath=\(path.rawValue, privacy: .public)"
         )
 
-        filesystemWatcher.removeRoot(path)
+        stopWatching(path)
         filesystemWatchingArmed.remove(path)
         cancelRuntimeWork(for: path)
 
@@ -5591,8 +5617,8 @@ extension CatalogStore {
         guard namespaceMutationLeases[path]?.generation == lease.generation else { return }
         namespaceMutationLeases.removeValue(forKey: path)
         filesystemWatchingArmed.insert(path)
-        filesystemWatcher.addRoot(path)
-        enqueueScans([path])
+        watchRoot(path)
+        enqueueScans([path], reason: .requested)
         notifyCatalogChanged(.changed(.all))
     }
 
@@ -5850,7 +5876,7 @@ extension CatalogStore {
         state.isQuiesced = false
         upsert(state)
         if attachment.kind.hasFilesystemNamespace {
-            filesystemWatcher.addRoot(attachment.path)
+            watchRoot(attachment.path)
         }
         OtosLog.catalog.info(
             """
@@ -5863,7 +5889,7 @@ extension CatalogStore {
         )
         notifyCatalogChanged(.changed(.all))
         if attachment.enqueuesScan {
-            enqueueScans([attachment.path], priority: .front)
+            enqueueScans([attachment.path], priority: .front, reason: .removable)
         }
     }
 
@@ -5949,8 +5975,8 @@ extension CatalogStore {
             + "capabilities=\(storedRoot.capabilities)"
         OtosLog.catalog.notice("\(message, privacy: .public)")
         notifyCatalogChanged(.changed(.all))
-        filesystemWatcher.addRoot(root.path)
-        enqueueScans([root.path])
+        watchRoot(root.path)
+        enqueueScans([root.path], reason: .firstWalk)
     }
 
     func attachRemovableVolume(
@@ -6164,7 +6190,7 @@ extension CatalogStore {
         }
 
         cancelRuntimeWork(for: root.path)
-        filesystemWatcher.removeRoot(root.path)
+        stopWatching(root.path)
         filesystemWatchingArmed.remove(root.path)
         if var state = roots[root.path] {
             state.isEjectable = false
@@ -6322,7 +6348,7 @@ extension CatalogStore {
         // The quiesce cancelled any scan reading the card, and rows that scan had not
         // reached are still awaiting presence; a card that stays mounted is read again.
         if root.kind.hasFilesystemNamespace {
-            enqueueScans([root.path], priority: .front)
+            enqueueScans([root.path], priority: .front, reason: .removable)
         }
         OtosLog.catalog.notice(
             "op=catalog.removable.resume phase=finish identity=\(identity, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public) kind=\(root.kind.rawValue, privacy: .public)"
@@ -6995,6 +7021,11 @@ extension CatalogStore {
         lastSuccessfulFullRootScanAt.removeAll()
         knownMaterializationSuppression.clear()
         filesystemWatcher.stop()
+        watchedRoots.removeAll()
+        changeJournals.removeAll()
+        loadedJournalPositions.removeAll()
+        pendingScanReasons.removeAll()
+        runningScanReasons.removeAll()
         filesystemEventSink?.finish()
         filesystemEventSink = nil
         filesystemEventConsumer?.cancel()
@@ -7796,10 +7827,19 @@ private extension CatalogStore {
         try roots.validateNoOverlap(path, ignoring: existingRootRowID)
     }
 
+    /// Queues a full walk of each root, saying why (`reason`). A walk is owed in the root's
+    /// journal until one completes, so no position is stored ahead of it.
     private func enqueueScans(
         _ paths: [LibraryRootPath],
-        priority: ScanLeaseController.QueuePriority = .normal
+        priority: ScanLeaseController.QueuePriority = .normal,
+        reason: ScanReason
     ) {
+        for path in paths where roots[path] != nil {
+            if pendingScanReasons[path] == nil {
+                pendingScanReasons[path] = reason
+            }
+            changeJournals[path]?.oweWalk()
+        }
         scanLeases.enqueue(paths, priority: priority) { roots[$0] != nil }
         startNextScanIfNeeded()
     }
@@ -7843,7 +7883,10 @@ private extension CatalogStore {
             )
             scanLeases.beginFilesystemScan(scan, lane: lane)
             filesystemWatchingArmed.insert(nextPath)
-            filesystemWatcher.addRoot(nextPath)
+            watchRoot(nextPath)
+            let reason = pendingScanReasons.removeValue(forKey: nextPath) ?? .requested
+            runningScanReasons[nextPath] = reason
+            changeJournals[nextPath]?.walkStarted()
             // The root's own state moved (its order, a scan or listing starting or ending);
             // no row did, and the rows a scan changed or deleted were announced with them.
             notifyCatalogChanged(.changed(.membership, rows: .none))
@@ -7851,7 +7894,7 @@ private extension CatalogStore {
             recordDiagnostic(
                 operation: "catalog.scan",
                 phase: "start",
-                fields: ["rootPath": nextPath.rawValue, "lane": lane.diagnosticName]
+                fields: ["rootPath": nextPath.rawValue, "lane": lane.diagnosticName, "reason": reason.rawValue]
             )
             scanTasks[lane] = Task.detached(priority: .utility) { [scanner, scanCadence] in
                 do {
@@ -8034,9 +8077,18 @@ private extension CatalogStore {
                 skippedPackages=\(observation.skippedPackageCount, privacy: .public)
                 """
             )
+            let reason = (runningScanReasons[scan.rootPath] ?? .requested).rawValue
             OtosLog.catalog.notice(
-                "op=catalog.scan phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) observed=\(observation.mediaPaths.count, privacy: .public) rowsWritten=\(tally.rowsWritten, privacy: .public) companionCount=\(observation.companions.count, privacy: .public) companionsChanged=\(companionChanged, privacy: .public) deleted=\(deletedCount, privacy: .public) skippedPackageCount=\(observation.skippedPackageCount, privacy: .public)"
+                "op=catalog.scan phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) reason=\(reason, privacy: .public) directoriesRead=\(observation.directoriesRead, privacy: .public) filesStatted=\(observation.itemsStatted, privacy: .public) observed=\(observation.mediaPaths.count, privacy: .public) rowsWritten=\(tally.rowsWritten, privacy: .public) companionCount=\(observation.companions.count, privacy: .public) companionsChanged=\(companionChanged, privacy: .public) deleted=\(deletedCount, privacy: .public) skippedPackageCount=\(observation.skippedPackageCount, privacy: .public)"
             )
+            // A walk that deleted what it did not find reconciled the whole root: what its
+            // journal owed when it started is settled. One whose deletions a mutation
+            // suppressed did not, and leaves it owed.
+            if canReconcileCompanionDeletions, scanCanDelete(scan) {
+                changeJournals[scan.rootPath]?.walkCompleted()
+            } else {
+                changeJournals[scan.rootPath]?.walkEnded()
+            }
             if !canReconcileCompanionDeletions || !scanCanDelete(scan) {
                 let dirty = filesystemDirty[scan.rootPath]
                 recordDiagnostic(
@@ -8275,6 +8327,8 @@ private extension CatalogStore {
         }
         let needsRescan = cleared.needsRescan
         scanTasks.removeValue(forKey: cleared.lane)
+        changeJournals[rootPath]?.walkEnded()
+        runningScanReasons.removeValue(forKey: rootPath)
 
         if armFilesystemWatching, roots[rootPath] != nil {
             filesystemWatchingArmed.insert(rootPath)
@@ -8284,8 +8338,8 @@ private extension CatalogStore {
             // Reorganization (and other independently verified owners) still use
             // rescanAfterCurrentScan for an unconditional full-root follow-up.
             filesystemEventBatches.removeValue(forKey: rootPath)
-            filesystemDirty[rootPath, default: FilesystemDirtyAccumulator()].insertRoot()
-            enqueueScans([rootPath])
+            filesystemDirty[rootPath, default: FilesystemDirtyAccumulator()].insertRoot(reason: .requested)
+            enqueueScans([rootPath], reason: .requested)
         }
 
         // The root's own state moved (its order, a scan or listing starting or ending);
@@ -8329,11 +8383,53 @@ private extension CatalogStore {
         for root in filesystemDirty.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
             await drainDirtyReconcile(for: root)
         }
+        await storeAppliedJournalPositions()
         reconcilePassRunning = false
         reconcileCovered = startedFrom
         startNextScanIfNeeded()
         if reconcileRequested != reconcileCovered {
             reconcileDoorbell?.yield(())
+        }
+    }
+
+    /// Stores, for each root whose every delivered event is applied, the position its journal
+    /// has reached (`RootChangeJournal.positionToStore`). Run by the reconcile loop after it
+    /// drains, so the position is stored only once what it vouches for is in the catalog; a
+    /// failed write is logged and leaves the older position, which only replays more.
+    private func storeAppliedJournalPositions() async {
+        for root in changeJournals.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+            guard let journal = changeJournals[root], journal.canVouch, let rowID = roots[root]?.rowID else {
+                continue
+            }
+            let isApplied = filesystemEventBatches[root]?.isEmpty != false
+                && filesystemEventPasses[root] == nil
+                && filesystemDirty[root]?.isEmpty != false
+                && !scanLeases.hasActiveFilesystemScan(for: root)
+                && !scanLeases.pendingScanPaths.contains(root)
+                && !scanLeases.rescanAfterCurrentScan.contains(root)
+                && namespaceMutationLeases[root] == nil
+            guard isApplied, journal.hasNewPosition,
+                  let position = journal.positionToStore(isApplied: isApplied, probe: filesystemWatcher.probe(root))
+            else {
+                continue
+            }
+            do {
+                let dbWriter = try database()
+                _ = try await timedWrite(dbWriter) { db in
+                    try Self.storeJournalPosition(position, rootRowID: rowID, db: db)
+                }
+                guard roots[root]?.rowID == rowID else {
+                    continue
+                }
+                changeJournals[root]?.didStore(position)
+                OtosLog.catalog.noticeOperation("catalog.journal", phase: "stored", fields: [
+                    "rootPath": root.rawValue, "eventID": "\(position.eventID)",
+                ])
+            } catch {
+                OtosLog.catalog.errorOperation("catalog.journal", phase: "storeFailed", fields: [
+                    "rootPath": root.rawValue, "error": String(describing: error),
+                ])
+            }
         }
     }
 
@@ -8428,7 +8524,100 @@ private extension CatalogStore {
         }
         let paths = unrequestedLoadedRootPaths
         unrequestedLoadedRootPaths.removeAll(keepingCapacity: false)
-        enqueueScans(paths)
+        for path in paths {
+            reconcileAtLaunch(path)
+        }
+    }
+
+    /// A restored fixed library at launch: its stream replays the volume's history since the
+    /// stored position, and only what that names is reconciled; or, when the journal cannot
+    /// vouch for the root (`JournalLaunchDecision`), its stream starts now and the root is
+    /// walked. The source wins either way: the journal is the filesystem's own record, and a
+    /// walk is what stands in for it when it has none to give.
+    private func reconcileAtLaunch(_ path: LibraryRootPath) {
+        let stored = loadedJournalPositions.removeValue(forKey: path)
+        guard rootIsAvailable(path) else {
+            enqueueScans([path], reason: .unreadable)
+            return
+        }
+        let probe = filesystemWatcher.probe(path)
+        let decision = JournalLaunchDecision.decide(stored: stored, probe: probe)
+        var fields = [
+            "rootPath": path.rawValue,
+            "storedEventID": stored.map { "\($0.eventID)" } ?? "none",
+            "currentEventID": probe.map { "\($0.currentEventID)" } ?? "none",
+        ]
+        switch decision {
+        case let .replay(since):
+            fields["mode"] = "replay"
+            fields["since"] = "\(since)"
+            recordDiagnostic(operation: "catalog.scan", phase: "decide", fields: fields)
+            guard let stored else {
+                return
+            }
+            startJournal(.replaying(from: stored), for: path)
+            setAvailability(.available, for: path)
+            filesystemWatchingArmed.insert(path)
+        case let .walk(reason):
+            fields["mode"] = "walk"
+            fields["reason"] = reason.rawValue
+            recordDiagnostic(operation: "catalog.scan", phase: "decide", fields: fields)
+            if let probe {
+                startJournal(.walking(probe: probe, stored: stored), for: path)
+            } else {
+                watchRoot(path)
+            }
+            enqueueScans([path], reason: reason)
+        }
+    }
+
+    /// Starts `journal`'s stream for `path`, from its position, replacing a stream that
+    /// started without one.
+    private func startJournal(_ journal: RootChangeJournal, for path: LibraryRootPath) {
+        if watchedRoots.remove(path) != nil {
+            filesystemWatcher.unwatch(path)
+        }
+        changeJournals[path] = journal
+        filesystemWatcher.watch(path, journal.streamStart)
+        watchedRoots.insert(path)
+    }
+
+    /// Watches `path` if nothing does yet. A fixed library whose journal can be read gets
+    /// one from now (`RootChangeJournal.walking`): its callers are about to walk it, or owe
+    /// it a walk this session has not run. Any other root is watched from now with none.
+    private func watchRoot(_ path: LibraryRootPath) {
+        guard !watchedRoots.contains(path) else {
+            return
+        }
+        if roots[path]?.root.kind.isUserChosenFolder == true, let probe = filesystemWatcher.probe(path) {
+            startJournal(.walking(probe: probe, stored: loadedJournalPositions[path]), for: path)
+            return
+        }
+        filesystemWatcher.watch(path, nil)
+        watchedRoots.insert(path)
+    }
+
+    /// Every root the Store watches that no launch decision or add has watched yet. A
+    /// restored library still waiting for its launch decision is watched from now without a
+    /// journal; its decision replaces that stream.
+    private func watchUnwatchedRoots() {
+        for path in watchedRootPaths where !watchedRoots.contains(path) {
+            if unrequestedLoadedRootPaths.contains(path) {
+                filesystemWatcher.watch(path, nil)
+                watchedRoots.insert(path)
+            } else {
+                watchRoot(path)
+            }
+        }
+    }
+
+    private func stopWatching(_ path: LibraryRootPath) {
+        if watchedRoots.remove(path) != nil {
+            filesystemWatcher.unwatch(path)
+        }
+        changeJournals.removeValue(forKey: path)
+        pendingScanReasons.removeValue(forKey: path)
+        runningScanReasons.removeValue(forKey: path)
     }
 
     private func startFilesystemWatchingIfNeeded() {
@@ -8439,19 +8628,57 @@ private extension CatalogStore {
         // FSEvents reaches us through a synchronous C callback. Events travel one
         // ordered stream to one consumer on this actor (ADR 0032), which holds the Store
         // weakly while it waits and ends with it.
-        let (events, sink) = AsyncStream<FilesystemEvent>.makeStream(bufferingPolicy: .unbounded)
+        let (deliveries, sink) = AsyncStream<FilesystemWatcherDelivery>.makeStream(bufferingPolicy: .unbounded)
         filesystemEventSink = sink
         filesystemEventConsumer = Task { [weak self] in
-            for await event in events {
+            for await delivery in deliveries {
                 guard let self else {
                     return
                 }
-                await handleFilesystemEvent(event)
+                await handleFilesystemDelivery(delivery)
             }
         }
-        filesystemWatcher.start(watchedRootPaths) { event in
-            sink.yield(event)
+        filesystemWatcher.start { delivery in
+            sink.yield(delivery)
         }
+    }
+
+    private func handleFilesystemDelivery(_ delivery: FilesystemWatcherDelivery) {
+        switch delivery {
+        case let .event(event):
+            handleFilesystemEvent(event)
+        case let .historyDone(root):
+            handleHistoryDone(root)
+        }
+    }
+
+    /// The root's stream has delivered every event recorded before it started. For a replay,
+    /// the launch's reconciliation of the root is now the events it delivered, which are
+    /// already in the root's batch: none means nothing changed while Otos was not running,
+    /// and nothing is walked. The journal vouched for the whole root, so the integrity walk's
+    /// clock starts here as it does at a completed walk.
+    private func handleHistoryDone(_ root: LibraryRootPath) {
+        guard var journal = changeJournals[root] else {
+            return
+        }
+        let wasReplaying = journal.isReplaying
+        journal.endHistory()
+        changeJournals[root] = journal
+        if wasReplaying {
+            lastSuccessfulFullRootScanAt[root] = .now
+            if journal.replayedEvents == 0 {
+                OtosLog.catalog.noticeOperation("catalog.scan", phase: "skip", fields: [
+                    "rootPath": root.rawValue, "reason": ScanReason.noChanges.rawValue,
+                    "directoriesRead": "0", "filesStatted": "0", "rowsWritten": "0",
+                ])
+            } else {
+                OtosLog.catalog.noticeOperation("catalog.scan", phase: "replayed", fields: [
+                    "rootPath": root.rawValue, "reason": ScanReason.events.rawValue,
+                    "events": "\(journal.replayedEvents)",
+                ])
+            }
+        }
+        requestReconcile()
     }
 
     private var watchedRootPaths: [LibraryRootPath] {
@@ -8469,6 +8696,9 @@ private extension CatalogStore {
             recordFilesystemEventDrop(path: event.path, root: nil, reason: "outsideRoots")
             return
         }
+        // Delivered, whatever is done with it: an event this pass drops leaves a walk owed
+        // (`recordFilesystemEventDrop`), so no position is stored past it unwalked.
+        changeJournals[root]?.deliver(eventID: event.id)
 
         let hasActiveScan = scanLeases.hasActiveFilesystemScan(for: root)
         // Arm watching as soon as the root is known and available, and never
@@ -8501,6 +8731,7 @@ private extension CatalogStore {
 
     private func recordFilesystemEventDrop(path: String, root: LibraryRootPath?, reason: String) {
         if let root {
+            changeJournals[root]?.oweWalk()
             OtosLog.catalog.debug(
                 """
                 Filesystem event ignored path=\(path, privacy: .public) \
@@ -8687,6 +8918,7 @@ private extension CatalogStore {
 
         switch decision {
         case let .drop(reason):
+            changeJournals[root]?.oweWalk()
             await recordFilesystemEventDrop(root: root, reason: reason)
         case .noop:
             break
@@ -8697,7 +8929,7 @@ private extension CatalogStore {
             for dirt in scopes {
                 switch dirt.scope {
                 case .root:
-                    recordIndependentNamespaceMutation(root: root, scope: .root)
+                    recordIndependentNamespaceMutation(root: root, scope: .root, rootReason: dirt.rootReason)
                     rootCount += dirt.eventCount
                 case let .subtree(path):
                     recordIndependentNamespaceMutation(root: root, scope: .subtree(path))
@@ -8754,7 +8986,7 @@ private extension CatalogStore {
                 OtosLog.catalog.notice(
                     "op=catalog.filesystemEvent phase=schedule mode=fullRoot rootPath=\(root.rawValue, privacy: .public) eventCount=\(dirt.fileCount + dirt.subtreeCount + 1, privacy: .public)"
                 )
-                enqueueScans([root])
+                enqueueScans([root], reason: dirt.rootReason ?? .events)
                 return
             }
 
@@ -8826,7 +9058,7 @@ private extension CatalogStore {
         let lane = scanLane(for: root)
         scanLeases.beginFilesystemScan(scan, lane: lane)
         filesystemWatchingArmed.insert(root)
-        filesystemWatcher.addRoot(root)
+        watchRoot(root)
         // The root's own state moved (its order, a scan or listing starting or ending);
         // no row did, and the rows a scan changed or deleted were announced with them.
         notifyCatalogChanged(.changed(.membership, rows: .none))
@@ -8962,7 +9194,7 @@ private extension CatalogStore {
     ) {
         var accumulator = filesystemDirty[root] ?? FilesystemDirtyAccumulator()
         if escalateToRoot {
-            accumulator.insertRoot()
+            accumulator.insertRoot(reason: .events)
         } else {
             for subtree in dirt.subtrees {
                 accumulator.insertSubtree(subtree)
@@ -9021,7 +9253,7 @@ private extension CatalogStore {
             if let age, age < Self.integrityScanInterval {
                 continue
             }
-            filesystemDirty[path, default: FilesystemDirtyAccumulator()].insertRoot()
+            filesystemDirty[path, default: FilesystemDirtyAccumulator()].insertRoot(reason: .integrity)
             OtosLog.catalog.notice(
                 "op=catalog.integrityScan phase=schedule rootPath=\(path.rawValue, privacy: .public) successfulScanAgeSec=\(age.map { "\(Int(DiagnosticsTiming.seconds($0)))" } ?? "never", privacy: .public)"
             )
@@ -9070,6 +9302,9 @@ private extension CatalogStore {
         do {
             observation = try await scanner.observeFile(fileURL, root)
         } catch {
+            // Not applied: no position is stored past this event in this session, so the
+            // next launch replays it.
+            changeJournals[root]?.oweWalk()
             OtosLog.catalog.errorOperation("catalog.reconcile", phase: "observeFailed", fields: [
                 "rootPath": root.rawValue,
                 "path": relativePath.rawValue,
@@ -9781,7 +10016,7 @@ extension CatalogStore {
             return true
         }
         if dirty || scanLeases.takeRescanAfterCurrentScan(lease.libraryRootPath) {
-            enqueueScans([lease.libraryRootPath])
+            enqueueScans([lease.libraryRootPath], reason: .requested)
         } else {
             startNextScanIfNeeded()
         }

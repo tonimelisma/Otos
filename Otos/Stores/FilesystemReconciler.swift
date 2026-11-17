@@ -24,15 +24,19 @@ nonisolated struct ClassifiedFilesystemDirt: Equatable {
     let scope: FilesystemDirtyScope
     let fileAction: SingleFileReconcileOperation?
     let eventCount: Int
+    /// Why a `.root` scope is one (`FilesystemEventFlags.rootReason`).
+    let rootReason: ScanReason
 
     init(
         scope: FilesystemDirtyScope,
         fileAction: SingleFileReconcileOperation? = nil,
-        eventCount: Int = 1
+        eventCount: Int = 1,
+        rootReason: ScanReason = .events
     ) {
         self.scope = scope
         self.fileAction = fileAction
         self.eventCount = eventCount
+        self.rootReason = rootReason
     }
 }
 
@@ -82,6 +86,6 @@ nonisolated enum FilesystemReconciler {
         } else {
             nil
         }
-        return ClassifiedFilesystemDirt(scope: scope, fileAction: action, eventCount: 1)
+        return ClassifiedFilesystemDirt(scope: scope, fileAction: action, eventCount: 1, rootReason: flags.rootReason)
     }
 }

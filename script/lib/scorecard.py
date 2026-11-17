@@ -456,6 +456,25 @@ def background(events):
     return dict(sorted(passes.items(), key=lambda kv: -kv[1]))
 
 
+def root_scans(events):
+    """Each library pass and each launch that walked nothing, and why (`op=catalog.scan`):
+    a walk's finish line, or a replay's `skip` (nothing changed) or `replayed` (events
+    named what to reconcile)."""
+    passes = []
+    for event in events:
+        if event.op == "catalog.scan" and event.phase in ("finish", "skip", "replayed"):
+            passes.append({
+                "root": event.fields.get("rootPath"),
+                "phase": event.phase,
+                "reason": event.fields.get("reason"),
+                "directoriesRead": event.num("directoriesRead"),
+                "filesStatted": event.num("filesStatted"),
+                "rowsWritten": event.num("rowsWritten"),
+                "events": event.num("events"),
+            })
+    return passes
+
+
 def memory(start, events, tour_steps, click_list):
     samples = of(events, "process.memory")
     milestones = {}
@@ -817,6 +836,7 @@ def analyse(events, session_start):
         "clicks": click_list,
         "stalls": stalls(start, events),
         "background": background(events),
+        "rootScans": root_scans(events),
         "memory": memory(start, events, toured["steps"], click_list),
         "resources": resources(events),
         "tour": toured,
@@ -1001,6 +1021,10 @@ def print_report(report, rows, out):
     w("\nBACKGROUND PASSES (phase=start lines)\n")
     for op, count in list(report["background"].items())[:15]:
         w(f"  {op:44} {count:>5}\n")
+    w("  library passes (phase, reason, directories read, files statted, rows written, events)\n")
+    for scan in report.get("rootScans", []):
+        w(f"    {fmt(scan['root'])}: {scan['phase']} reason={fmt(scan['reason'])} directoriesRead={fmt(scan['directoriesRead'])} "
+          f"filesStatted={fmt(scan['filesStatted'])} rowsWritten={fmt(scan['rowsWritten'])} events={fmt(scan['events'])}\n")
     mem = report["memory"]
     w("\nMEMORY\n")
     w(f"  peak footprint {fmt(mem['peakFootprintMB'])} MB, last {fmt(mem['lastFootprintMB'])} MB, system free min "
