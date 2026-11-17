@@ -562,16 +562,14 @@ nonisolated struct SearchVectorAppend: Sendable {
     let next: SearchVectorKeys
 }
 
-/// What the search index answers a query from (`PhotoSearchIndex`): the vector file it maps,
-/// the text readings, and the revision that names them. Every change to them is a method here,
-/// and each moves `revision` in the same synchronous step, so an equal revision is the same
+/// What the search index answers a query's picture from (`PhotoSearchIndex`): the vector file
+/// it maps, and the revision that names it. Every change to it is a method here, and each
+/// moves `revision` in the same synchronous step, so an equal revision is the same
 /// memory: slots read at one revision (`PhotoSearchIndex.ScopedRows`) are slots of the file
 /// that answers at it. A file memory holds gains or loses slots only here, because only this
 /// file can make it take an append or forget an asset.
 nonisolated struct SearchIndexMemory {
     private(set) var vectors: SearchVectorFile?
-    /// Every non-empty text reading, by asset, folded once for matching.
-    private(set) var texts: [MediaAssetID: String] = [:]
     /// Never reset, so an equal revision means the same memory.
     private(set) var revision: UInt64 = 0
 
@@ -594,25 +592,6 @@ nonisolated struct SearchIndexMemory {
         }
         vectors.forget(gone)
         revision &+= 1
-    }
-
-    /// Every reading memory holds, replaced: the first text reconcile.
-    mutating func replaceTexts(_ texts: [MediaAssetID: String]) {
-        self.texts = texts
-        revision &+= 1
-    }
-
-    /// Each asset's reading set to its folded text, or removed for nil; the revision moves when
-    /// any differs from what memory held.
-    mutating func changeTexts(_ changes: [MediaAssetID: String?]) {
-        var moved = false
-        for (id, text) in changes where texts[id] != text {
-            texts[id] = text
-            moved = true
-        }
-        if moved {
-            revision &+= 1
-        }
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 
 /// Search text storage guide (ADR 0048)
 ///
@@ -13,6 +14,11 @@ import Foundation
 /// `lines` is the reading as JSON: each recognised line with the confidence Vision gave it
 /// (`RecognizedTextLine`), so search can match every line and the Info pane show the certain
 /// ones.
+///
+/// Each reading that holds a word is also in the text index (v74): its folded text in
+/// `search_text_folded` and its words in the FTS5 table `search_text_word` (`SearchTextWords`),
+/// written with the reading in its transaction (`index`) and gone with it by cascade and a
+/// trigger. A query's words are matched there (`matchSQL`), never against readings in memory.
 nonisolated enum SearchTextStorage {
     /// Each reading's key with the source it names (v65).
     static let sourceIndexName = "idx_search_text_source"
@@ -66,39 +72,49 @@ nonisolated enum SearchTextStorage {
         """
     }
 
-    /// The keys of the current readings in `rootCount` roots, empty ones included: each still's
-    /// preview identity from the product stamps index and its reading's source from the text
-    /// source index, the asset side outer, so the check reads neither table.
-    static func currentReadingIDsSQL(rootCount: Int) -> String {
-        """
-        SELECT a.library_root_id, a.relative_path
-        FROM media_asset AS a INDEXED BY \(ProductStampSQL.indexName)
-        CROSS JOIN search_text AS t INDEXED BY \(sourceIndexName)
-            ON t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path
-            AND t.source = \(currentSource("a"))
-        WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
-          AND a.preview_path IS NOT NULL
-        """
+    /// The text index's rows for a reading (v74, `SearchTextWords`): the reading folded as
+    /// matching compares it, keyed by an id the words are stored under.
+    static let deleteFoldedSQL = "DELETE FROM search_text_folded WHERE library_root_id = ? AND relative_path = ?"
+    static let insertFoldedSQL = "INSERT INTO search_text_folded (library_root_id, relative_path, folded) VALUES (?, ?, ?)"
+    static let insertWordsSQL = "INSERT INTO search_text_word (rowid, words) VALUES (?, ?)"
+
+    /// Replaces one reading's rows in the text index with those of `lines`, in the caller's
+    /// write, so the index changes in the transaction that stores the reading: the old folded
+    /// row goes (its trigger takes its words), and a reading that holds a word gets new ones.
+    /// Returns whether it was indexed.
+    static func index(_ lines: [RecognizedTextLine], rootID: Int64, path: String, db: Database) throws -> Bool {
+        try db.cachedStatement(sql: deleteFoldedSQL).execute(arguments: [rootID, path])
+        let folded = SearchTextReading.folded(SearchTextReading.searchable(lines))
+        let words = SearchTextWords.of(folded: folded)
+        guard !words.isEmpty else { return false }
+        try db.cachedStatement(sql: insertFoldedSQL).execute(arguments: [rootID, path, folded])
+        try db.cachedStatement(sql: insertWordsSQL).execute(arguments: [db.lastInsertedRowID, words])
+        return true
     }
 
-    /// One root's stored readings in key order after a path, through the text table's key
-    /// (`CandidateWalk.keyPage`; binds the root, the path, the limit).
-    static let storedLinesSQL = """
-    SELECT library_root_id, relative_path, lines
-    FROM search_text INDEXED BY sqlite_autoindex_search_text_1
-    WHERE library_root_id = ? AND relative_path > ?
-    ORDER BY relative_path
-    LIMIT ?
-    """
-
-    /// One still's current reading by its key (binds the root and the path).
-    static let currentLinesByKeySQL = """
-    SELECT t.lines
-    FROM search_text AS t
-    JOIN media_asset AS a ON a.library_root_id = t.library_root_id AND a.relative_path = t.relative_path
-    WHERE t.library_root_id = ? AND t.relative_path = ?
+    /// The current readings whose words the index expression (bound) holds, with each one's
+    /// folded text, for `SearchTextQuery.matches(folded:)` to decide: the text index first,
+    /// then each returned row's reading and asset by key, to keep only a reading whose source is
+    /// its asset's current one (a stale reading matches nothing).
+    static let matchSQL = """
+    SELECT f.library_root_id, f.relative_path, f.folded
+    FROM search_text_word
+    CROSS JOIN search_text_folded AS f ON f.id = search_text_word.rowid
+    CROSS JOIN search_text AS t INDEXED BY \(sourceIndexName)
+        ON t.library_root_id = f.library_root_id AND t.relative_path = f.relative_path
+    CROSS JOIN media_asset AS a ON a.library_root_id = f.library_root_id AND a.relative_path = f.relative_path
+    WHERE search_text_word MATCH ?
       AND t.source = \(currentSource("a"))
     """
+
+    /// The index expression of `queries`: each one's words (`SearchTextQuery.indexExpression`),
+    /// any of them. Nil when none has a word.
+    static func indexExpression(_ queries: [SearchTextQuery]) -> String? {
+        var seen: Set<String> = []
+        let each = queries.compactMap(\.indexExpression).filter { seen.insert($0).inserted }
+        guard !each.isEmpty else { return nil }
+        return each.count == 1 ? each[0] : each.map { "(\($0))" }.joined(separator: " OR ")
+    }
 
     static func linesJSON(_ lines: [RecognizedTextLine]) throws -> String {
         try String(decoding: JSONEncoder().encode(lines), as: UTF8.self)
@@ -109,11 +125,11 @@ nonisolated enum SearchTextStorage {
     }
 }
 
-/// One stored reading as search matches it (`SearchTextReading.searchable`): empty when the
-/// preview held no text.
-nonisolated struct StoredSearchText: Sendable {
-    let id: MediaAssetID
-    let text: String
+/// What one read of the text index found (`CatalogStore.searchTextMatches`): the assets
+/// matched, and how many rows the index returned for the exact match to decide.
+nonisolated struct SearchTextMatches: Sendable, Equatable {
+    let ids: Set<MediaAssetID>
+    let candidates: Int
 }
 
 /// One line Vision recognised in a preview, with its confidence (0–1).

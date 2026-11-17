@@ -2603,6 +2603,67 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// v74: the text Vision read in photos is matched by an index in the catalog, not by
+    /// strings held in memory (ADR 0048, "Text in the photo"):
+    /// - `search_text_folded`: one row per reading that holds text, its key, and the reading
+    ///   folded as matching compares it (`SearchTextReading.folded`). Its `id` is an explicit
+    ///   `INTEGER PRIMARY KEY`, so the launch's `VACUUM` keeps it, where it may renumber a
+    ///   reading's own rowid. It goes with its reading, and moves with it, by cascade.
+    /// - `search_text_word`: an FTS5 table keyed by that `id`, holding the reading's words
+    ///   (`SearchTextWords`): contentless, ASCII-tokenised, no positions. The trigger deletes a
+    ///   row's words when its folded row goes, however it went.
+    ///
+    /// Frozen as literals. The rows are written from the stored readings by
+    /// `indexStoredSearchTexts`, in the migration's transaction, before anything reads them.
+    static let searchTextWordsMigrationIdentifier = "v74_search_text_words"
+
+    static let searchTextWordsStatements: [String] = [
+        """
+        CREATE TABLE search_text_folded (
+            id INTEGER PRIMARY KEY,
+            library_root_id INTEGER NOT NULL,
+            relative_path TEXT NOT NULL,
+            folded TEXT NOT NULL,
+            UNIQUE (library_root_id, relative_path),
+            FOREIGN KEY (library_root_id, relative_path)
+                REFERENCES search_text(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        )
+        """,
+        """
+        CREATE VIRTUAL TABLE search_text_word USING fts5(
+            words, tokenize = 'ascii', content = '', contentless_delete = 1, detail = none
+        )
+        """,
+        """
+        CREATE TRIGGER search_text_folded_delete AFTER DELETE ON search_text_folded
+        BEGIN
+            DELETE FROM search_text_word WHERE rowid = OLD.id;
+        END
+        """,
+    ]
+
+    /// Writes the index rows of every stored reading that holds text, current or not (a stale
+    /// one is matched by none, since a match reads only current readings, and is replaced when
+    /// it is read again), with the code that writes them for a new reading
+    /// (`SearchTextStorage.index`).
+    static func indexStoredSearchTexts(_ db: Database) throws {
+        let start = ContinuousClock.now
+        let rows = try Row.fetchCursor(db, sql: """
+        SELECT library_root_id, relative_path, lines FROM search_text WHERE lines <> '[]'
+        """)
+        var indexed = 0
+        while let row = try rows.next() {
+            let lines = try SearchTextStorage.lines(fromJSON: row["lines"])
+            if try SearchTextStorage.index(lines, rootID: row["library_root_id"], path: row["relative_path"], db: db) {
+                indexed += 1
+            }
+        }
+        OtosLog.persistence.noticeOperation("catalog.migration.searchTextWords", phase: "finish", fields: [
+            "indexed": "\(indexed)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
+        ])
+    }
+
     static func migrateToWholeSecondCaptureLocal(_ db: Database) throws {
         let indexes = try Row.fetchAll(db, sql: """
         SELECT name, sql FROM sqlite_master

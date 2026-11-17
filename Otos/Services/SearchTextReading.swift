@@ -112,10 +112,20 @@ nonisolated struct SearchTextQuery: Sendable, Equatable {
     }
 
     init(_ query: String) {
-        words = SearchTextReading.folded(query).split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        words = SearchTextReading.folded(query).split(whereSeparator: { !SearchTextWords.isWordCharacter($0) })
             .map(String.init)
             .filter { $0.count >= 2 }
             .map { ($0, $0.unicodeScalars.contains(where: Self.isUnspacedScript)) }
+    }
+
+    /// The query's words as the catalog's text index is asked for them (`SearchTextWords`):
+    /// each word's first `SearchTextWords.prefixLength` characters as a prefix, all of them.
+    /// Every text this query matches holds an indexed word each of them begins, so the rows the
+    /// index returns are a superset of the matches, which `matches(folded:)` then decides. Nil
+    /// for a query with no word, which matches nothing.
+    var indexExpression: String? {
+        guard !words.isEmpty else { return nil }
+        return words.map { "\"\(SearchTextWords.indexed($0.word))\"*" }.joined(separator: " AND ")
     }
 
     /// Whether every word appears in `folded`, a text already folded (`SearchTextReading.folded`).
@@ -133,13 +143,83 @@ nonisolated struct SearchTextQuery: Sendable, Equatable {
         }
     }
 
-    private static func isUnspacedScript(_ scalar: Unicode.Scalar) -> Bool {
+    /// A scalar of a script written without spaces between words (Chinese, Japanese).
+    static func isUnspacedScript(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.value {
         case 0x3040 ... 0x30FF, 0x3400 ... 0x9FFF, 0xF900 ... 0xFAFF:
             true
         default:
             false
         }
+    }
+}
+
+/// Search text words guide (ADR 0048, "Text in the photo")
+///
+/// The words the catalog's text index (`search_text_word`, an FTS5 table) holds for one
+/// reading, so a query finds the photos whose text it matches with one keyed read instead of
+/// comparing every reading. `SearchTextQuery.matches(folded:)` is what a match is: a query word
+/// at the start of a word of the text — after a character that is not a letter — or, for a word
+/// of a script written without spaces, anywhere. The index holds exactly the places such a word
+/// can start, so a prefix query over it misses no match:
+///
+/// - In each run of letters and numbers, the run from every position a word can start at: the
+///   run's first character and each one after a number ("1abc" holds `1abc` and `abc`, since
+///   "abc" matches it). A run holding a character of a script written without spaces holds the
+///   run from every position, since such a word matches anywhere.
+/// - Each is cut to `prefixLength` characters (a query word longer than that is asked for by
+///   its first `prefixLength`), and one shorter than two characters is dropped (no query word
+///   is). A word is in canonical composed form, so equivalent spellings are the same bytes.
+///
+/// The index is a candidate filter, never the answer: the rows it returns carry the reading
+/// folded as `SearchTextReading.folded` gives it, and `SearchTextQuery.matches(folded:)` decides
+/// each, so matching is exactly what it is over every reading. The table tokenises with
+/// SQLite's `ascii` tokenizer, which splits only at ASCII characters that are not letters or
+/// numbers — none of which a word holds — and folds only ASCII case, which folding already did.
+/// SQLite's own `unicode61` and `trigram` tokenizers were measured against these matches and
+/// differ (`docs/research/2026-11-16-search-text-index.md`). Changing what a word is changes
+/// what the table must hold, so it ships with a migration that rebuilds the table.
+nonisolated enum SearchTextWords {
+    /// The longest word the index holds, in characters.
+    static let prefixLength = 8
+
+    /// A character a word is made of: a letter or a number, as the query splits its words.
+    static func isWordCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber
+    }
+
+    /// The index's words of `folded`, a text already folded (`SearchTextReading.folded`), each
+    /// once, separated by spaces; empty when it holds none.
+    static func of(folded: String) -> String {
+        let characters = Array(folded)
+        var words: [String] = []
+        var seen: Set<String> = []
+        var start = 0
+        while start < characters.count {
+            guard isWordCharacter(characters[start]) else {
+                start += 1
+                continue
+            }
+            var end = start
+            while end < characters.count, isWordCharacter(characters[end]) {
+                end += 1
+            }
+            let unspaced = characters[start ..< end].contains { $0.unicodeScalars.contains(where: SearchTextQuery.isUnspacedScript) }
+            for position in start ..< end where unspaced || position == start || !characters[position - 1].isLetter {
+                guard end - position >= 2 else { continue }
+                let word = indexed(characters[position ..< min(end, position + prefixLength)])
+                if seen.insert(word).inserted {
+                    words.append(word)
+                }
+            }
+            start = end
+        }
+        return words.joined(separator: " ")
+    }
+
+    /// `characters` as the index holds a word: at most `prefixLength` of them, composed.
+    static func indexed(_ characters: some Collection<Character>) -> String {
+        String(characters.prefix(prefixLength)).precomposedStringWithCanonicalMapping
     }
 }
 

@@ -264,8 +264,7 @@ struct PhotoSearchIndexTests {
             store.use().connections.holds.filter { $0.operation == operation }.reduce(0) { $0 + $1.count }
         }
         let wholeReads = [
-            "currentSearchEmbeddingIDs()", "searchEmbeddingCandidates(after:limit:)", "currentSearchTextIDs()",
-            "searchTextCandidates(after:limit:)",
+            "currentSearchEmbeddingIDs()", "searchEmbeddingCandidates(after:limit:)", "searchTextCandidates(after:limit:)",
         ]
         var before: [String: Int] = [:]
         for operation in wholeReads {
@@ -293,6 +292,42 @@ struct PhotoSearchIndexTests {
         #expect(await index.vectorFileSlots?.slots == slotsBefore + 1)
         #expect(try await store.backgroundReads.currentSearchEmbeddings(for: [catalog.red]).count == 1)
         await index.shutdown()
+    }
+
+    /// ADR 0048, "Text in the photo": the index's launch pass reads no text reading. A query's
+    /// words are matched by the catalog's text index, so the pass that opens the vectors and
+    /// reconciles the embeddings visits no row of the readings, of their folded text or of
+    /// their words, however many there are; what it owes a reading it finds from the readings'
+    /// source index alone. The same query is answered from the index once the catalog is open.
+    @Test func theLaunchPassReadsNoTextReading() async throws {
+        let catalog = try await makeCatalog(onDisk: true)
+        let store = catalog.store
+        for (name, id) in [("red", catalog.red), ("blue", catalog.blue)] {
+            let asset = try #require(catalog.assets.first { $0.id == id })
+            try await giveReading(store, asset, preview: "\(name)-preview.heic", text: "Policy \(name == "red" ? "ZQUORX" : "VLIMTAR")")
+        }
+        let visits = StatementVisits()
+        try await visits.install(on: store)
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
+            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none, textReader: .readingNoText()
+        )
+        await index.start()
+        try await waitUntil {
+            let embedded = await index.embeddedCount
+            let answered = await index.answeredEveryRequest
+            return embedded == 2 && answered
+        }
+        let loops = visits.take().byLoop
+        #expect(!loops.isEmpty, "the pass's reads were counted")
+        let textTables = ["search_text", "sqlite_autoindex_search_text_1", "search_text_folded", "search_text_word"]
+        #expect(loops.keys.filter { name in textTables.contains { name == $0 || name.hasPrefix("\($0) ") } }.isEmpty, "\(loops)")
+        let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "zquorx")
+        let matches = try await index.matches(query, facts: nil, among: [catalog.red, catalog.blue])
+        #expect((matches.scores?[catalog.red] ?? 0) > PhotoSearchIndex.textMatchScore - 1)
+        #expect((matches.scores?[catalog.blue] ?? 0) < PhotoSearchIndex.textMatchScore - 1)
+        await index.shutdown()
+        await store.shutdown()
     }
 
     /// ADR 0048, "The first query": the intent to search reads the scope's slots ahead, so the
@@ -1441,9 +1476,9 @@ struct PhotoSearchIndexTests {
 
     /// Plan 0116, the first search of a session: a query typed while the text tower loads and
     /// the index's first pass is still at its vectors (here the build of the file, held as it
-    /// names it) publishes the photo whose words match at once, still searching. The text
-    /// readings are in memory before the vectors are reconciled or built, so the words reading
-    /// finds them whatever the embedding side still owes.
+    /// names it) publishes the photo whose words match at once, still searching. The words are
+    /// matched by the catalog's text index, which the index's pass never loads, so the words
+    /// reading finds them whatever the embedding side still owes.
     @Test func aQueryTypedBeforeTheVectorsAreInShowsThePhotosShowingItsWords() async throws {
         let catalog = try await makeCatalog()
         let store = catalog.store
@@ -1559,66 +1594,54 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
-    /// ADR 0032 rule 1: a pass that reconciles the text readings changes memory only after its
-    /// reads. A query answered while the pass awaits the readings memory lacks gets the answer
-    /// its revision names: the one memory gave before the pass, not memory with the gone
-    /// readings removed and the new ones not yet in, under the same revision.
-    @Test func aQueryDuringATextReconcileAnswersAsItsRevisionSays() async throws {
+    /// ADR 0048, "Text in the photo": a search shown follows the catalog's text readings as
+    /// they are written. A reading written while the search is shown joins its answer, and one
+    /// whose preview changes (stale until it is read again) leaves it: the held answer is not reused once a kind of fact the text match reads moved
+    /// (`CatalogChangedFacts.searchTextInputs`).
+    @Test func aShownSearchFollowsTheTextReadingsAsTheyAreWritten() async throws {
         let catalog = try await makeCatalog()
         let store = catalog.store
-        let red = try #require(catalog.assets.first { $0.id == catalog.red })
+        let bundle = Bundle(for: CatalogWindowViewModel.self)
+        let encoder = SearchQueryEncoder(bundle: bundle)
+        let reader = SearchQueryReader(
+            words: { try await encoder.wordsReading($0) }, prepare: {}, isPrepared: { true }
+        ) { try await encoder.englishEncoding(of: $0.text) }
+        let index = PhotoSearchIndex(
+            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors, bundle: bundle,
+            cutoff: SearchCutoff(floor: 10, margin: 0), queries: reader, textReader: .readingNoText()
+        )
+        await index.start()
+        try await waitUntil {
+            let embedded = await index.embeddedCount
+            let answered = await index.answeredEveryRequest
+            return embedded == 2 && answered
+        }
+        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
+        await projection.attachSearchIndex(index)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recorder = AsyncValueRecorder<CatalogWindowState>()
+        let recording = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer { recording.cancel() }
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == 2 }
+        // No picture clears a floor of 10, so only a photo whose text says it is shown.
+        await projection.updateQueryDescriptor(CatalogQueryDescriptor(scope: .allMedia, search: CatalogSearch(text: "insurance")))
+        _ = await recorder.waitForValues { $0.last?.searchPhase == .read && $0.last?.mediaGrid.orderedAssetIDs.isEmpty == true }
+
         let blue = try #require(catalog.assets.first { $0.id == catalog.blue })
         try await giveReading(store, blue, preview: "blue-preview.heic", text: "Proof of Insurance")
-        let held = ArrivalGate()
-        let index = PhotoSearchIndex(
-            store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
-            bundle: Bundle(for: CatalogWindowViewModel.self), cutoff: .none,
-            textReader: SearchTextReader { RecognizingSession { _ in [] } },
-            readTexts: { [redID = catalog.red] ids in
-                // Only the pass that reads red's new reading is held.
-                if ids.contains(redID) {
-                    await held.arrive()
-                }
-                return try await store.backgroundReads.currentSearchTexts(for: ids)
-            }
-        )
-        let changes = await index.changes()
-        await index.start()
-        for await _ in changes where await index.embeddedCount == 2 {
-            break
-        }
-        let query = try await SearchQueryEncoder(bundle: Bundle(for: CatalogWindowViewModel.self)).englishEncoding(of: "insurance")
-        let scope = [catalog.red, catalog.blue]
-        let before = try await waitForValue {
-            let matches = try await index.matches(query, facts: nil, among: scope)
-            return (matches.scores?[catalog.blue] ?? 0) > PhotoSearchIndex.textMatchScore - 1 ? matches : nil
-        }
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs == [catalog.blue] }
 
-        // Blue's reading goes stale (a new preview) and red gets one: a pass removes the one
-        // and reads the other.
-        try await giveReading(store, red, preview: "red-preview.heic", text: "Insurance policy")
         _ = await store.applyEnrichmentBatch([EnrichmentResult(
             id: blue.id, metadata: AssetMetadata(), enrichedKind: .image, thumbnailPath: "blue-thumb.jpg",
             sourceSize: blue.byteSize ?? 0, sourceMTimeSeconds: MediaAsset.mtimeSeconds(blue.contentModifiedAt), contentHash: nil,
             previewPath: "blue-preview-2.heic"
         )])
-        await held.waitForArrivals(1)
-
-        let during = try await index.matches(query, facts: nil, among: scope)
-        try #require(during.indexRevision == before.indexRevision, "nothing but the held text read is in this pass")
-        #expect(during == before)
-
-        // Blue's new preview can land after the held pass took its snapshot, under load, and
-        // then its reading leaves in the pass after that one: the answer settles once both
-        // changes are in, in whichever passes they came.
-        await held.open()
-        _ = try await waitForValue {
-            let matches = try await index.matches(query, facts: nil, among: scope)
-            let settled = matches.indexRevision != before.indexRevision
-                && (matches.scores?[catalog.red] ?? 0) > PhotoSearchIndex.textMatchScore - 1
-                && (matches.scores?[catalog.blue] ?? 0) < PhotoSearchIndex.textMatchScore - 1
-            return settled ? matches : nil
-        }
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.isEmpty == true && $0.last?.searchPhase == .read }
+        #expect(try await store.windowReads.searchTextMatches([SearchTextQuery("insurance")]).ids.isEmpty, "a stale reading matches nothing")
         await index.shutdown()
         await store.shutdown()
     }

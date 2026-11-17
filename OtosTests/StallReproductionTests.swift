@@ -303,7 +303,10 @@ enum StallReproduction {
             try await walk { try await store.backgroundReads.searchEmbeddingRows(after: $0, limit: PhotoSearchIndex.loadPageSize) }
         }
         try await replay("currentSearchEmbeddingIDs") { try await store.backgroundReads.currentSearchEmbeddingIDs().ids.count }
-        try await replay("currentSearchTextIDs") { try await store.backgroundReads.currentSearchTextIDs().ids.count }
+        // A query's words, from the text index (ADR 0048): a word, and a prefix many readings hold.
+        for word in ["open", "ca"] {
+            try await replay("searchTextMatches.\(word)") { try await store.windowReads.searchTextMatches([SearchTextQuery(word)]).ids.count }
+        }
         var involved: [MediaAssetID] = []
         try await replay("samePhotoCandidates") {
             let candidates = try await store.backgroundReads.samePhotoCandidates(availableLibraryPaths: available)

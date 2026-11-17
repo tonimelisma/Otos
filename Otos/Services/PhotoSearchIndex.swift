@@ -46,9 +46,9 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///
 /// - **Embedding** is one loop, woken by a doorbell (ADR 0032 rule 3) that a Store change of a
 ///   kind a pass reads rings (`inputs`; its own writes do not). A change that names its rows
-///   (`CatalogChangedRows`) is reconciled by key: those rows' embeddings and readings are read
-///   by key, the ones no longer current drop out, the ones memory lacks are read in, and the
-///   rows (and their Live Photo partners) owed an embedding or a reading are made — a cost of
+///   (`CatalogChangedRows`) is reconciled by key: those rows' embeddings are read by key,
+///   the ones no longer current drop out, the ones memory lacks are read in, and the rows
+///   (and their Live Photo partners) owed an embedding or a text reading are made — a cost of
 ///   the rows named, never of the library. Only the first pass and a change that cannot name
 ///   its rows reconcile the whole library. The backlog, every asset owed before, is walked
 ///   newest capture first a page at a time (`SearchEmbeddingStorage`), and the walk keeps its
@@ -66,6 +66,10 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///   with a current file maps it and reads no table; a missing, torn or stale one is rebuilt
 ///   from `search_embedding` while search shows what it has read, nothing. The process claims
 ///   the file's folder first (`SearchVectorDirectoryClaim`), so it is the folder's one writer.
+/// - **Text read in photos** is not held here: it is matched by the catalog's text index
+///   (`search_text_word`, written with each reading in its transaction, `SearchTextWords`),
+///   one keyed read per query on the window lane (`CatalogStore.searchTextMatches`). So a
+///   launch reads no reading, and a query's words are answered as soon as the catalog is open.
 /// - **A query** is read by `queries` (`SearchQueryReader`, which owns `SearchQueryEncoder`:
 ///   language, translation, text tower) and answered here from its encoding, among the scope's
 ///   assets: the cut follows the best match in the scope, so a folder whose best photo of a
@@ -76,12 +80,13 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 ///   reader for the reading process, `SearchTextReader`) ends the pass's reading: every still
 ///   not read stays owed, and the retry after the backoff reads them in a new session.
 ///
-/// `revision` moves whenever memory gains or loses an embedding or a text reading, in the same
-/// synchronous step as the change (`SearchIndexMemory`, the only way memory changes), and every
-/// answer carries the revision it was computed at: the same query over the same scope and
-/// facts at the same revision is the same answer, so a projection holding one need not ask
-/// again (`CatalogProjectionReads.Search`). `changes` yields after it moves, so a projection
-/// showing results can ask again. The forwarder and the loop hold this actor weakly and end
+/// `revision` moves whenever memory gains or loses an embedding, in the same synchronous step
+/// as the change (`SearchIndexMemory`, the only way memory changes), and every answer carries
+/// the revision it was computed at: the same query over the same scope and facts at the same
+/// revision is the same picture answer. Its text matches and facts are the Store's, so a
+/// projection holding an answer asks again when a kind of fact they read moved
+/// (`CatalogProjectionReads.search`, `CatalogChangedFacts.searchTextInputs`). `changes` yields
+/// after the revision moves, so a projection showing results can ask again. The forwarder and the loop hold this actor weakly and end
 /// with it. `shutdown` also ends the text reader's child process, a reading in it or not,
 /// and returns once it is gone; the still whose reading it cut short stays owed.
 ///
@@ -90,7 +95,6 @@ nonisolated struct SearchMatches: Sendable, Equatable {
 /// or running, no preparation asked for and not yet made, and the retry, when one is armed,
 /// named as its wake.
 actor PhotoSearchIndex: QuiescentOwner {
-    typealias ReadTexts = @Sendable (Set<MediaAssetID>) async throws -> [MediaAssetID: String]
     typealias NameVectorFile = @Sendable (SearchVectorFileState?) async throws -> Void
 
     private let store: CatalogStore
@@ -103,29 +107,22 @@ actor PhotoSearchIndex: QuiescentOwner {
 
     /// Where the vector file lives (`CatalogStore.searchIndexDirectory`).
     private let vectorDirectory: URL
-    /// Every embedding and text reading memory holds, and the revision that names them
-    /// (`SearchIndexMemory`); changed only through `changeMemory`. Its file is nil until the
-    /// first pass has opened or built one.
+    /// Every embedding memory holds, and the revision that names them (`SearchIndexMemory`);
+    /// changed only through `changeMemory`. Its file is nil until the first pass has opened or
+    /// built one.
     private var memory = SearchIndexMemory()
     /// The last scope a query was answered among, as rows: one hash per asset when the scope
     /// or memory changes, none while the same scope is searched again.
     private var scoped: ScopedRows?
     private var vocabulary: SearchLabelVocabulary?
-    /// Every current reading memory has taken in, empty ones included: what a reconcile
-    /// compares with the catalog's current readings, so a reading with no text is not read
-    /// again each pass. Nil until the first text reconcile has read them all.
-    private var textsRead: Set<MediaAssetID>?
-    /// Moves with every change to the embeddings and readings in memory, in the same step as
-    /// the change (`SearchIndexMemory`): what an answer is computed from. Never reset, so an
+    /// Moves with every change to the embeddings in memory, in the same step as the change
+    /// (`SearchIndexMemory`): what a picture's answer is computed from. Never reset, so an
     /// equal revision means the same memory.
     var revision: UInt64 {
         memory.revision
     }
 
     private let textReader: SearchTextReader
-    /// Reads the current text readings of the ids memory lacks: the Store's, unless a test
-    /// suspends the read to answer a query at that await.
-    private let readTexts: ReadTexts
     /// Names the vector file in the catalog: the Store's, unless a test suspends a naming to
     /// answer a query at that await.
     private let nameVectorFile: NameVectorFile
@@ -189,7 +186,6 @@ actor PhotoSearchIndex: QuiescentOwner {
         backoff: (first: Duration, last: Duration) = (.seconds(30), .seconds(900)),
         queries: SearchQueryReader? = nil,
         textReader: SearchTextReader,
-        readTexts: ReadTexts? = nil,
         nameVectorFile: NameVectorFile? = nil,
         compactionFloor: Int = PhotoSearchIndex.compactionFloor,
         availableBytes: @escaping SearchVectorFile.AvailableBytes = FreeSpaceFloor.availableBytes(onVolumeOf:),
@@ -201,7 +197,6 @@ actor PhotoSearchIndex: QuiescentOwner {
         self.compactionFloor = compactionFloor
         self.store = store
         self.textReader = textReader
-        self.readTexts = readTexts ?? { [store] ids in try await store.backgroundReads.currentSearchTexts(for: ids) }
         self.backoff = backoff
         nextRetry = backoff.first
         self.bundle = bundle
@@ -365,7 +360,7 @@ actor PhotoSearchIndex: QuiescentOwner {
         }
     }
 
-    /// What a pass reads (`CatalogOwnerInputs`): its embedding and text walks and its
+    /// What a pass reads (`CatalogOwnerInputs`): its embedding and text walks and its embedding
     /// reconciles, less what it writes itself (search content, and the labels On This Day
     /// reads), and which roots are reachable. A change of none of these asks for no pass.
     static let inputs = CatalogOwnerInputs(
@@ -375,8 +370,7 @@ actor PhotoSearchIndex: QuiescentOwner {
             SearchEmbeddingStorage.currentEmbeddingIDsSQL(rootCount: 1),
             SearchEmbeddingStorage.storedRowsSQL, SearchEmbeddingStorage.currentEmbeddingByKeySQL,
             SearchEmbeddingStorage.keyedCandidateSQL, SearchEmbeddingStorage.groupMembersSQL,
-            SearchTextStorage.currentReadingIDsSQL(rootCount: 1), SearchTextStorage.storedLinesSQL,
-            SearchTextStorage.currentLinesByKeySQL, SearchTextStorage.keyedCandidateSQL,
+            SearchTextStorage.keyedCandidateSQL,
         ],
         ownWrites: [.searchContent, .searchReadings],
         beyondSQL: .membership
@@ -470,8 +464,9 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// that the Store finds for `facts`: the query's facts as of the asker's now
     /// (`SearchFacts.filter(at:in:)`), nil when it names none. The cut and the label gate's
     /// near-best band follow the best match in the scope, not the library's: the scope is what
-    /// the user asked to be searched. The vocabulary is loaded and memory read before the one
-    /// await, so the answer is what the index held at the revision it carries.
+    /// the user asked to be searched. The vocabulary is loaded and memory read before the
+    /// Store's reads (the text index, the facts), so the picture's answer is what the index held
+    /// at the revision it carries.
     func matches(
         _ encoding: SearchQueryEncoding,
         facts: SearchFactFilter?,
@@ -485,6 +480,8 @@ actor PhotoSearchIndex: QuiescentOwner {
         var matched: [MediaAssetID: Float]?
         var named: [String] = []
         var textMatches = 0
+        var textCandidates = 0
+        var textMs = 0
         if encoding.picture != .none {
             // The words reading (`SearchQueryPicture.unread`) compares no picture: only the
             // photos showing its words match, until a reading that embeds them replaces it.
@@ -511,13 +508,12 @@ actor PhotoSearchIndex: QuiescentOwner {
             // queries unchanged at 0.846). The words are tried as typed and as the English, once
             // when they are the same words.
             let lift = named.isEmpty ? Self.textMatchScore : 0
-            let typed = SearchTextQuery(encoding.text), english = SearchTextQuery(encoding.pictureText)
-            let englishDiffers = english != typed
+            let textStart = ContinuousClock.now
+            let texts = try await store.windowReads.searchTextMatches([SearchTextQuery(encoding.text), SearchTextQuery(encoding.pictureText)])
+            textCandidates = texts.candidates
+            textMs = DiagnosticsTiming.milliseconds(since: textStart)
             let rowOf = vectors?.rowOf
-            for (id, folded) in memory.texts
-                where (typed.matches(folded: folded) || (englishDiffers && english.matches(folded: folded)))
-                && rows.contains(id, rowOf: rowOf)
-            {
+            for id in texts.ids where rows.contains(id, rowOf: rowOf) {
                 picture[id] = lift + (scores.isEmpty ? 0 : rowOf?[id].map { scores[Int($0)] } ?? 0)
                 textMatches += 1
             }
@@ -535,6 +531,8 @@ actor PhotoSearchIndex: QuiescentOwner {
             "allowed": "\(allowed.map { "\($0.count)" } ?? "unnarrowed")",
             "labels": "\(named.count)",
             "textMatches": "\(textMatches)",
+            "textCandidates": "\(textCandidates)",
+            "textMs": "\(textMs)",
             "picture": encoding.picture.diagnosticName,
             "reading": encoding.reading.rawValue,
             "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
@@ -640,13 +638,11 @@ actor PhotoSearchIndex: QuiescentOwner {
 
     /// One pass. The first, and one after a change that named no rows, reconciles the whole
     /// library and starts the backlog walks again from the newest; any other reconciles the
-    /// rows its changes named by key. Memory is brought in line before either backlog is read,
-    /// and in the order the answers need it: the vector file is opened (it reads no table), the
-    /// text readings are read in — all a query read without the text tower matches
-    /// (`SearchQueryPicture.unread`), so the first search of a session finds the words photos
-    /// show whatever the embedding backlog owes — then the embeddings are reconciled, or the
-    /// file built. A pass that fails owes what it took again. Returns the request it answered,
-    /// nil when it failed or was cancelled.
+    /// rows its changes named by key. Memory is brought in line before either backlog is read:
+    /// the vector file is opened (it reads no table), then the embeddings are reconciled, or
+    /// the file built. No text reading is read: the catalog's text index answers a query's words
+    /// (`CatalogStore.searchTextMatches`). A pass that fails owes what it took again. Returns
+    /// the request it answered, nil when it failed or was cancelled.
     private func refresh() async -> UInt64? {
         var settled = false
         var answered: UInt64?
@@ -658,7 +654,6 @@ actor PhotoSearchIndex: QuiescentOwner {
         do {
             if whole {
                 let owed = loaded ? nil : try await openVectors()
-                try await reconcileTexts()
                 if let owed {
                     try await buildVectors(because: owed)
                 } else {
@@ -668,7 +663,6 @@ actor PhotoSearchIndex: QuiescentOwner {
                 textWalk = BacklogWalk()
             } else {
                 try await reconcile(rows)
-                try await reconcileTexts(rows)
             }
             let embedding = try await drain(rows: whole ? [] : rows, answering: answering)
             settled = try await drainTexts(rows: whole ? [] : rows, answering: answering) && embedding
@@ -790,7 +784,7 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// (`SearchVectorFile.open`: off the actor, no table read, the vectors mapped not read),
     /// and any other file in the folder — a compaction or build a crash cut short — is removed.
     /// Returns nil when memory holds the current file, else why a new one must be built
-    /// (`buildVectors`), which the pass does once the text readings are in.
+    /// (`buildVectors`).
     private func openVectors() async throws -> SearchVectorFileInvalid? {
         let start = ContinuousClock.now
         if directoryClaim == nil {
@@ -1028,74 +1022,6 @@ actor PhotoSearchIndex: QuiescentOwner {
         ])
     }
 
-    /// Brings the text readings in memory in line with the catalog's. Which readings are current
-    /// is read from indexes alone (`CatalogStore.currentSearchTextIDs`, empty readings
-    /// included). The first time, every stored reading is read in pages of `loadPageSize`, each
-    /// its own read, and the current ones kept; after it, only the readings memory has not
-    /// taken in are sought by key (`readTexts`), and those no longer current go. A root not
-    /// read now keeps its readings. Every read finishes before memory changes: a query answered
-    /// while they are awaited (`matches`) reads the memory its revision names, and the removal,
-    /// the additions and the revision move in one step.
-    private func reconcileTexts() async throws {
-        let start = ContinuousClock.now
-        let current = try await store.backgroundReads.currentSearchTextIDs()
-        guard let read = textsRead else {
-            var loading: [MediaAssetID: String] = [:]
-            var cursor: AssetKeyCursor?
-            repeat {
-                let page = try await store.backgroundReads.searchTextRows(after: cursor, limit: Self.loadPageSize)
-                for row in page.candidates where !row.text.isEmpty && current.ids.contains(row.id) {
-                    loading[row.id] = SearchTextReading.folded(row.text)
-                }
-                cursor = page.next
-            } while cursor != nil
-            changeMemory {
-                $0.replaceTexts(loading)
-            }
-            textsRead = current.ids
-            OtosLog.thumbnails.noticeOperation("search.texts", phase: "loaded", fields: [
-                "count": "\(loading.count)", "current": "\(current.ids.count)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
-            ])
-            return
-        }
-        let gone = read.filter { id in
-            current.readRoots.contains(id.libraryRootPath)
-                ? !current.ids.contains(id)
-                : !current.catalogedRoots.contains(id.libraryRootPath)
-        }
-        let missing = current.ids.subtracting(read)
-        guard !gone.isEmpty || !missing.isEmpty else { return }
-        let added = missing.isEmpty ? [:] : try await readTexts(missing)
-        var changes: [MediaAssetID: String?] = [:]
-        for id in gone {
-            changes[id] = .some(nil)
-        }
-        for (id, text) in added {
-            changes[id] = SearchTextReading.folded(text)
-        }
-        changeMemory { $0.changeTexts(changes) }
-        textsRead = read.subtracting(gone).union(missing)
-    }
-
-    /// Brings the text readings of `rows` in line with the catalog's, by key (`readTexts`): a
-    /// row's current reading replaces what memory holds of it, and a row with none current
-    /// leaves memory, to be read again at the next whole reconcile if it holds an empty one.
-    private func reconcileTexts(_ rows: Set<MediaAssetID>) async throws {
-        guard !rows.isEmpty, textsRead != nil else { return }
-        let current = try await readTexts(rows)
-        var changes: [MediaAssetID: String?] = [:]
-        for id in rows {
-            let folded = current[id].map(SearchTextReading.folded)
-            changes[id] = .some(folded)
-            if folded != nil {
-                textsRead?.insert(id)
-            } else {
-                textsRead?.remove(id)
-            }
-        }
-        changeMemory { $0.changeTexts(changes) }
-    }
-
     /// Reads owed previews for text after every embedding is made: a photo is searchable by
     /// picture first, and a reading costs far more. First the rows a change named that are owed
     /// a reading, then the backlog, a page at a time newest first from where its walk stopped;
@@ -1160,7 +1086,7 @@ actor PhotoSearchIndex: QuiescentOwner {
     }
 
     /// Reads `candidates` for text in the reading session and writes what it read where the
-    /// preview is still the one read; memory takes what was written.
+    /// preview is still the one read, with its words in the catalog's text index.
     private func readPreviews(_ candidates: [SearchTextCandidate], tally: inout TextTally) async throws {
         guard !candidates.isEmpty else { return }
         let results: [SearchTextResult]
@@ -1174,13 +1100,7 @@ actor PhotoSearchIndex: QuiescentOwner {
         let written = results.isEmpty ? [] : try await store.applySearchTexts(results)
         activity.wrote(results.count)
         tally.unread.formUnion(Set(candidates.map(\.id)).subtracting(written.map(\.id)))
-        var changes: [MediaAssetID: String?] = [:]
-        for result in written {
-            changes[result.id] = .some(result.lines.isEmpty ? nil : SearchTextReading.folded(SearchTextReading.searchable(result.lines)))
-            textsRead?.insert(result.id)
-            tally.withText += result.lines.isEmpty ? 0 : 1
-        }
-        changeMemory { $0.changeTexts(changes) }
+        tally.withText += written.count { !$0.lines.isEmpty }
         tally.read += written.count
     }
 

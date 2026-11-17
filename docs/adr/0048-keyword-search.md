@@ -105,9 +105,10 @@ The projection publishes which state the shown query is in
     stretched to 3 s (`docs/research/2026-11-16-first-search-while-the-encoder-loads.md`), and
     a query typed while it runs is read for its words at once too. With the tower ready there
     is no words reading: the picture's answer comes as quickly. The words reading matches
-    only the text readings in memory, so the index's first pass reads them in before it
-    reconciles or builds its vectors (`PhotoSearchIndex.refresh`): on the owner's library
-    they otherwise landed after the first query of a tour, which then matched nothing. A query
+    the words read in photos through the catalog's text index ("Text in the photo"), which no
+    pass loads, so its answer is ready as soon as the catalog is open; when the index held
+    them in memory, its first pass read them in for 4.5 s on the owner's library before the
+    first query of a tour could match them (`docs/research/2026-11-16-search-text-index.md`). A query
     whose words match nothing keeps what the window shows, still searching, and its pass
     reads nothing more: not the count of photos search has not read, which only an empty
     answer shows and which took 1.1 s there. A pass that ends with the query being read covers
@@ -211,9 +212,8 @@ against 77.3, 85 in English for both), and every asset has one.
   the catalog's current embeddings, then embeds what is owed, 16 at a time, on
   `SearchImageEmbedder`'s queue.
   - **A change that names its rows** (`CatalogStoreChange.changed(_, rows:)`,
-    `CatalogChangedRows`) is reconciled by key. Each named row's current embedding and text
-    reading are read by key: one that is no longer current leaves memory, and one memory lacks
-    joins it. The named rows that are owed an embedding or a reading are made, along with their
+    `CatalogChangedRows`) is reconciled by key. Each named row's current embedding is read
+    by key: one that is no longer current leaves memory, and one memory lacks joins it. The named rows that are owed an embedding or a reading are made, along with their
     Live Photo partners, whose pairing a change to one moves. The cost is that of the rows named,
     never of the library. An enrichment batch, a metadata re-read, an edit, a provisional
     thumbnail, a scan's or listing's batch and a scan's deletions name their rows. A root's own
@@ -312,10 +312,9 @@ against 77.3, 85 in English for both), and every asset has one.
 - **A scope searched again** is not hashed again: the index keeps the last scope as slots
   until the scope or its memory moves. On the owner's library, hashing 165,000 assets twice a
   query was about 180 ms of each match.
-- **One way memory changes:** the mapped file and the text readings live in
-  `SearchIndexMemory`, whose every method moves the revision in the same synchronous step as
-  its change: replacing the file (a load, a build, a compaction, a file let go), an append the
-  file takes, a slot that dies, a reading. A held file takes an append or loses a slot only
+- **One way memory changes:** the mapped file lives in `SearchIndexMemory`, whose every
+  method moves the revision in the same synchronous step as its change: replacing the file (a
+  load, a build, a compaction, a file let go), an append the file takes, a slot that dies. A held file takes an append or loses a slot only
   through it, so slots kept for a scope at a revision are always slots of the file that
   answers at that revision. An append is written to the disk before memory takes it, and a
   compacted file is taken only while memory still holds the file it was copied from as it was
@@ -375,8 +374,10 @@ against 77.3, 85 in English for both), and every asset has one.
   same step as every change to its memory, and each answer carries the revision it was
   computed at. The projection holds the last answer (`CatalogProjectionReads.Search`) and
   reuses it while the index, its revision, the encoding, the resolved facts and the scope
-  are what they were and, for a query naming facts, no kind of fact the Store's fact
-  matches read (rows shown, capture dates, locations, faces) moved. A window lap that took
+  are what they were, for a query naming facts no kind of fact the Store's fact matches read
+  (rows shown, capture dates, locations, faces) moved, and for a query with picture words
+  none its text matches read (rows shown, stored images, search content;
+  `CatalogChangedFacts.searchTextInputs`) moved. A window lap that took
   up only other facts asks the index nothing: at 164k items one match is 350–500 ms.
 
 ### Where results stop: a cutoff relative to the best match
@@ -424,6 +425,21 @@ ignoring case and diacritics, matches whatever the cut. It ranks first only for 
 names no scene label: on 49 judged word queries recall@10 rose from 0.13 to 0.84, while
 picture queries kept 0.846; ranking text matches first for every query dropped picture
 queries to 0.739 ("cat" and "lake" are written on many signs and screens).
+
+The words are matched by an index in the catalog, never by readings held in memory (schema
+v74, `docs/research/2026-11-16-search-text-index.md`). `search_text_folded` holds each reading
+that holds a word, folded as matching compares it, under an `INTEGER PRIMARY KEY` the launch's
+`VACUUM` keeps; `search_text_word`, a contentless FTS5 table keyed by it, holds the reading's
+words (`SearchTextWords`): in each run of letters and numbers, the run from every place a word
+can start, cut to 8 characters (every place, in a run of a script written without spaces). The
+Store writes both in the transaction that stores the reading; they go with the reading, and it
+with its asset, by cascade and a trigger. A query's words are one read on the window lane: the
+index's prefix match, each returned row's reading and asset by key, a stale reading dropped,
+and each candidate decided by the match itself (`SearchTextQuery.matches(folded:)`), so the
+index changes what is read, never what matches. Rejected: SQLite's `unicode61` tokenizer, which
+misses a word after a number ("abc" in `1abc`) and a Chinese or Japanese word inside a run, and
+`trigram`, which cannot ask for a word under three characters (`東京`, `ok`) without scanning;
+and keeping the readings in memory, whose load the first words answer waited on.
 
 The preview is read at Vision's accurate level, pinned to the CPU, and every line from 0.3
 confidence is stored with its confidence (`docs/research/2026-11-12-text-and-labels-in-the-info-pane.md`).

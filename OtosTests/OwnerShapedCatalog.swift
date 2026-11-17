@@ -86,8 +86,9 @@ struct OwnerShapedCatalog {
         static let renderSignaturesOwed = 24
         /// Libraries' previews with no current text reading (his 21 in library 7).
         static let libraryTextsOwed = 21
-        /// The account's previews read for text: 42,878 of 128,673; the rest is owed.
-        static let accountTexts = 42878
+        /// The account's previews read for text: 60,074 of 128,889 on 2026-11-16, 10,724 of
+        /// them holding text; the rest is owed.
+        static let accountTexts = 60074
         static let descriptions = 5521
         /// Face rows: 102,979, of which 15,653 are video frames.
         static let stillFaces = 87326
@@ -395,11 +396,24 @@ struct OwnerShapedCatalog {
           AND a.rowid NOT IN (SELECT row FROM owed WHERE product = 'embedding')
         """)
         shape.embeddings = db.changesCount
-        // Text readings: every library preview but a few, a third of the account's; most
-        // read no text.
+        // Text readings: every library preview but a few, under half of the account's; most
+        // read no text. One in six holds text, as his 13,545 of 75,823 do: eleven lines of
+        // about 14 characters (his 10.9 lines and 478 bytes of stored JSON a reading), words
+        // that vary from row to row, numbers, and a line of Japanese in one reading of 18 (his
+        // 757 readings with Chinese or Japanese).
         let textRow = """
         SELECT a.library_root_id, a.relative_path, \(SearchTextStorage.currentSource("a")),
-               CASE WHEN a.rowid % 6 = 0 THEN '[{"confidence":0.93,"text":"Generated line of recognized text"}]' ELSE '[]' END
+               CASE WHEN a.rowid % 6 = 0 THEN (
+                   SELECT json_group_array(json_object('confidence', 0.93, 'text',
+                       CASE WHEN n.k = 1 AND a.rowid % 18 = 0 THEN '営業時間 ' || (a.rowid % 24) || '時'
+                       ELSE substr('OPEN EXIT CAFE MENU SALE STOP Straße café niño ÉCOLE Rua Praça Gare Platz',
+                                   1 + ((a.rowid * n.k * 7) % 60), 9)
+                            || ' ' || printf('%x', (a.rowid * 2654435761 + n.k) % 1048573)
+                            || ' ' || ((a.rowid + n.k) % 1000) END))
+                   FROM (SELECT 1 AS k UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5
+                         UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
+                         UNION ALL SELECT 10 UNION ALL SELECT 11) AS n
+               ) ELSE '[]' END
         FROM media_asset AS a
         """
         try db.execute(
@@ -419,6 +433,8 @@ struct OwnerShapedCatalog {
             arguments: [scaled(Owner.accountTexts, scale)]
         )
         shape.texts += db.changesCount
+        // Their words in the text index, as the Store writes them with each reading.
+        try CatalogSchema.indexStoredSearchTexts(db)
         shape.textsOwed = try Int.fetchOne(db, sql: """
         SELECT count(*) FROM media_asset AS a WHERE a.library_root_id IN (6, 7, 15) AND a.preview_path IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM search_text AS t WHERE t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path)

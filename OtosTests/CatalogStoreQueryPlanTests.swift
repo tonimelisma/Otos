@@ -532,8 +532,8 @@ struct CatalogStoreQueryPlanTests {
     }
 
     /// Search's reads (ADR 0048): what is owed walks each root's assets by an index and looks
-    /// each up in the reading table by its key; what is current is read by the reading table's
-    /// key, each asset looked up by its own. Nothing scans a table whole.
+    /// each up in the embedding table by its key; what is current is read by the embedding
+    /// table's key, each asset looked up by its own. Nothing scans a table whole.
     @Test func searchReadsSeekByKeyAndRootIndexes() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -550,8 +550,6 @@ struct CatalogStoreQueryPlanTests {
                     db, sql: SearchEmbeddingStorage.currentEmbeddingByKeySQL, arguments: [rootID1, "a.jpg"]
                 ),
                 "storedRows": explainPlan(db, sql: SearchEmbeddingStorage.storedRowsSQL, arguments: [rootID1, "", 2000]),
-                "currentLinesByKey": explainPlan(db, sql: SearchTextStorage.currentLinesByKeySQL, arguments: [rootID1, "a.jpg"]),
-                "storedLines": explainPlan(db, sql: SearchTextStorage.storedLinesSQL, arguments: [rootID1, "", 2000]),
             ]
         }
         for (name, plan) in plans.sorted(by: { $0.key < $1.key }) {
@@ -1276,11 +1274,6 @@ extension CatalogStoreQueryPlanTests {
             let loops = reconcile.split(separator: "\n").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "|`- ")) }
             #expect(loops.first?.contains("a USING COVERING INDEX \(ProductStampSQL.indexName)") == true, "\(reconcile)")
             #expect(loops.last?.contains("e USING COVERING INDEX \(SearchEmbeddingStorage.sourceIndexName)") == true, "\(reconcile)")
-            // The text readings' reconcile, the same way over the text source index.
-            let texts = try explainPlan(db, sql: SearchTextStorage.currentReadingIDsSQL(rootCount: 2), arguments: [1, 2])
-            let textLoops = texts.split(separator: "\n").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "|`- ")) }
-            #expect(textLoops.first?.contains("a USING COVERING INDEX \(ProductStampSQL.indexName)") == true, "\(texts)")
-            #expect(textLoops.last?.contains("t USING COVERING INDEX \(SearchTextStorage.sourceIndexName)") == true, "\(texts)")
         }
     }
 

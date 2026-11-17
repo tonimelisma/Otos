@@ -411,6 +411,10 @@ extension CatalogReads where Lane == WindowLane {
         try await store.namedPeople(lane: lane)
     }
 
+    func searchTextMatches(_ queries: [SearchTextQuery]) async throws -> SearchTextMatches {
+        try await store.searchTextMatches(queries, lane: lane)
+    }
+
     func searchFactMatches(_ facts: SearchFactFilter) async throws -> Set<MediaAssetID> {
         try await store.searchFactMatches(facts, lane: lane)
     }
@@ -582,18 +586,6 @@ extension CatalogReads where Lane == BackgroundLane {
 
     func currentPhotoDescriptions(for ids: [MediaAssetID]) async throws -> [MediaAssetID: String] {
         try await store.currentPhotoDescriptions(for: ids, lane: lane)
-    }
-
-    func currentSearchTextIDs() async throws -> CurrentSearchKeys {
-        try await store.currentSearchTextIDs(lane: lane)
-    }
-
-    func searchTextRows(after cursor: AssetKeyCursor? = nil, limit: Int) async throws -> CandidatePage<StoredSearchText, AssetKeyCursor> {
-        try await store.searchTextRows(after: cursor, limit: limit, lane: lane)
-    }
-
-    func currentSearchTexts(for ids: Set<MediaAssetID>) async throws -> [MediaAssetID: String] {
-        try await store.currentSearchTexts(for: ids, lane: lane)
     }
 
     func samePhotoCandidates(availableLibraryPaths: Set<LibraryRootPath>) async throws -> [SamePhotoCandidate] {

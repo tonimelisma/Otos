@@ -320,6 +320,10 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
             ]),
             .insert(tableName: "search_text"), .delete(tableName: "search_text"),
             .update(tableName: "search_text", columnNames: ["library_root_id", "relative_path", "source", "lines"]),
+            .insert(tableName: "search_text_folded"), .delete(tableName: "search_text_folded"),
+            .update(tableName: "search_text_folded", columnNames: ["id", "library_root_id", "relative_path", "folded"]),
+            .insert(tableName: "search_text_word"), .delete(tableName: "search_text_word"),
+            .update(tableName: "search_text_word", columnNames: ["words"]),
         ]),
         (.peopleGallery, [
             .insert(tableName: "person_summary"), .delete(tableName: "person_summary"),
@@ -10623,8 +10627,10 @@ extension CatalogStore {
         }
     }
 
-    /// Writes text readings for stills whose preview is still the one read; returns those
-    /// written. A write is a change of `.searchContent`, which a description waits for.
+    /// Writes text readings for stills whose preview is still the one read, each with its rows
+    /// in the text index in the same transaction (`SearchTextStorage.index`); returns those
+    /// written. A write is a change of `.searchContent`, which a description and a search shown
+    /// wait for.
     func applySearchTexts(_ results: [SearchTextResult]) async throws -> [SearchTextResult] {
         let rowIDs = roots.rowIDSnapshot()
         let applied = try await database().write { db -> [SearchTextResult] in
@@ -10649,6 +10655,7 @@ extension CatalogStore {
                     """,
                     arguments: [rootID, path, result.source, SearchTextStorage.linesJSON(result.lines)]
                 )
+                _ = try SearchTextStorage.index(result.lines, rootID: rootID, path: path, db: db)
                 written.append(result)
             }
             return written
@@ -10793,82 +10800,29 @@ extension CatalogStore {
         }
     }
 
-    /// The stills in available roots with a current text reading, empty ones included, with the
-    /// roots read and every root cataloged: what `PhotoSearchIndex` reconciles its readings
-    /// against after a catalog change, read from indexes alone (`currentReadingIDsSQL`).
-    func currentSearchTextIDs(lane: CatalogReadLane) async throws -> CurrentSearchKeys {
-        let rootIDs = availableRootRowIDs()
-        let pathsByRowID = roots.pathsByRowID
-        let read = Set(rootIDs.compactMap { pathsByRowID[$0] })
-        let cataloged = Set(roots.values.map(\.path))
-        guard !rootIDs.isEmpty else {
-            return CurrentSearchKeys(ids: [], readRoots: read, catalogedRoots: cataloged)
+    /// The assets whose current text reading one of `queries` matches (ADR 0048, "Text in the
+    /// photo"), from one read of the text index: the readings holding a word each query word
+    /// begins (`SearchTextStorage.matchSQL`), each decided by `SearchTextQuery.matches(folded:)`,
+    /// so the answer is exactly the matches over every current reading. Any root's, read now or
+    /// not: the caller's scope says which it searches. `candidates` is how many rows the index
+    /// returned.
+    func searchTextMatches(_ queries: [SearchTextQuery], lane: CatalogReadLane) async throws -> SearchTextMatches {
+        guard let expression = SearchTextStorage.indexExpression(queries) else {
+            return SearchTextMatches(ids: [], candidates: 0)
         }
-        let ids = try await reader(for: lane).readFreeingConnection { db in
-            let rows = try Row.fetchCursor(
-                db, sql: SearchTextStorage.currentReadingIDsSQL(rootCount: rootIDs.count), arguments: StatementArguments(rootIDs)
-            )
+        let pathsByRowID = roots.pathsByRowID
+        return try await reader(for: lane).readFreeingConnection(operation: "searchTextMatches") { db in
+            let rows = try Row.fetchCursor(db.cachedStatement(sql: SearchTextStorage.matchSQL), arguments: [expression])
             var ids: Set<MediaAssetID> = []
+            var candidates = 0
             while let row = try rows.next() {
-                guard let root = pathsByRowID[row[0]] else { continue }
+                candidates += 1
+                let folded: String = row[2]
+                guard let root = pathsByRowID[row[0]], queries.contains(where: { $0.matches(folded: folded) }) else { continue }
                 ids.insert(MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])))
             }
-            return ids
+            return SearchTextMatches(ids: ids, candidates: candidates)
         }
-        return CurrentSearchKeys(ids: ids, readRoots: read, catalogedRoots: cataloged)
-    }
-
-    /// The stored readings of the available roots, a page at a time in each root's key order
-    /// after `cursor` (`CandidateWalk`), each its own read, as search matches them
-    /// (`SearchTextReading.searchable`); a reading with no text has none. Whether each is
-    /// current is the caller's to ask (`currentSearchTextIDs`): a page reads only the text table.
-    func searchTextRows(
-        after cursor: AssetKeyCursor? = nil,
-        limit: Int,
-        lane: CatalogReadLane
-    ) async throws -> CandidatePage<StoredSearchText, AssetKeyCursor> {
-        let rootIDs = availableRootRowIDs()
-        guard !rootIDs.isEmpty else { return CandidatePage(candidates: [], next: nil) }
-        let pathsByRowID = roots.pathsByRowID
-        return try await reader(for: lane).readFreeingConnection { db in
-            let (rows, next) = try CandidateWalk.keyPage(
-                sql: SearchTextStorage.storedLinesSQL, rootIDs: rootIDs, after: cursor, limit: limit, db: db
-            )
-            let texts = try Array(page: rows, atMost: rows.count) { row -> StoredSearchText? in
-                guard let root = pathsByRowID[row[0]] else { return nil }
-                return try StoredSearchText(
-                    id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[1])),
-                    text: SearchTextReading.searchable(SearchTextStorage.lines(fromJSON: row[2]))
-                )
-            }
-            return CandidatePage(candidates: texts, next: next)
-        }
-    }
-
-    /// The current readings of `ids` with text, as search matches them
-    /// (`SearchTextReading.searchable`), each sought by its key, `currentEmbeddingBatch` to a
-    /// transaction; a still whose current reading holds no text is absent.
-    func currentSearchTexts(for ids: Set<MediaAssetID>, lane: CatalogReadLane) async throws -> [MediaAssetID: String] {
-        let rowIDs = roots.rowIDSnapshot()
-        let keys = ids.compactMap { id in rowIDs[id.libraryRootPath].map { (id: id, rootID: $0) } }
-        var found: [MediaAssetID: String] = [:]
-        var start = 0
-        while start < keys.count {
-            let batch = keys[start ..< min(start + Self.currentEmbeddingBatch, keys.count)]
-            start += batch.count
-            let texts = try await reader(for: lane).readFreeingConnection(operation: "currentSearchTexts") { db in
-                let statement = try db.cachedStatement(sql: SearchTextStorage.currentLinesByKeySQL)
-                return try batch.reduce(into: [MediaAssetID: String]()) { texts, key in
-                    guard let lines = try String.fetchOne(statement, arguments: [key.rootID, key.id.relativePath.rawValue]) else { return }
-                    let text = try SearchTextReading.searchable(SearchTextStorage.lines(fromJSON: lines))
-                    if !text.isEmpty {
-                        texts[key.id] = text
-                    }
-                }
-            }
-            found.merge(texts) { $1 }
-        }
-        return found
     }
 
     /// The stills the same-photo rule compares (`SamePhotoSQL`), with the column facts it

@@ -310,8 +310,8 @@ struct SearchReadingTests {
         #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: "stale", lines: open)]).isEmpty)
         #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: candidate.source, lines: open)]).count == 1)
         #expect(try await store.backgroundReads.searchTextCandidates(limit: 10).candidates.isEmpty)
-        #expect(try await store.backgroundReads.currentSearchTextIDs().ids == [asset.id])
-        #expect(try await store.backgroundReads.currentSearchTexts(for: [asset.id]) == [asset.id: "OPEN\n0p3n"])
+        #expect(try await store.windowReads.searchTextMatches([SearchTextQuery("open")]).ids == [asset.id])
+        #expect(try await store.windowReads.searchTextMatches([SearchTextQuery("0p3n")]).ids == [asset.id], "every kept line is matched")
         #expect(try await store.windowReads.photoInfoOverlay(for: asset.id)?.textLines == ["OPEN"])
         await store.shutdown()
     }

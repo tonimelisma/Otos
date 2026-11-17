@@ -17,13 +17,15 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v73's gallery table and anchor index dropped and its record removed.
-    static let newest = CatalogSchema.peopleGalleryMigrationIdentifier
+    /// schema before it: v74's text index, its folded readings and their trigger dropped and its
+    /// record removed.
+    static let newest = CatalogSchema.searchTextWordsMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
         [
-            "DROP INDEX idx_face_anchor",
-            "DROP TABLE person_summary",
+            "DROP TRIGGER search_text_folded_delete",
+            "DROP TABLE search_text_word",
+            "DROP TABLE search_text_folded",
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }
@@ -64,6 +66,14 @@ struct CatalogMigrationCostTests {
         let compaction = try CatalogStore.compactIfOwed(pool, fileURL: URL(filePath: path)) {}
         try pool.close()
         #expect(run.applied == 1)
+        // What v74's text index takes on the disk: its FTS5 table's shadow tables, the folded
+        // readings and their key.
+        let indexBytes = try DatabaseQueue(path: path).read { db in
+            try Row.fetchAll(db, sql: """
+            SELECT name, sum(pgsize) AS bytes FROM dbstat
+            WHERE name LIKE 'search_text_word%' OR name LIKE '%search_text_folded%' GROUP BY name ORDER BY name
+            """).map { "\($0["name"] as String)=\($0["bytes"] as Int64)" }.joined(separator: " ")
+        }
         let readsAfter = try WindowReadPages.measure(path: path)
         let variants = try WindowReadPages.indexVariants(path: path)
         // The layout v71 does not take, measured on the same rows: the table without a row id.
@@ -73,6 +83,7 @@ struct CatalogMigrationCostTests {
         op=migrationCost id=\(Self.newest) ms=\(DiagnosticsTiming.milliseconds(elapsed)) \
         walBytes=\(walBytes) fileBytesBefore=\(bytesBefore) fileBytesAfter=\(bytesAfter)
         op=compaction outcome=\(compaction)
+        op=newestTables \(indexBytes)
 
         """ + WindowReadPages.report(before: readsBefore, after: readsAfter, withoutRowID: readsWithoutRowID)
             + "\n" + variants.joined(separator: "\n")

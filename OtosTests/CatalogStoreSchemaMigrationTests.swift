@@ -112,8 +112,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 11).map { "\($0)/11" })
-        #expect(run.applied == 11)
+        #expect(steps.recorded == (1 ... 12).map { "\($0)/12" })
+        #expect(run.applied == 12)
         let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
         #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
 
@@ -147,8 +147,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 11).map { "\($0)/11" })
-        #expect(run.applied == 11)
+        #expect(steps.recorded == (1 ... 12).map { "\($0)/12" })
+        #expect(run.applied == 12)
     }
 
     private final class StepLog: Sendable {
@@ -326,6 +326,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.hotAssetTableMigrationIdentifier,
             CatalogSchema.derivedFolderMigrationIdentifier,
             CatalogSchema.peopleGalleryMigrationIdentifier,
+            CatalogSchema.searchTextWordsMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -1755,6 +1756,51 @@ extension CatalogStoreSchemaMigrationTests {
         }
         #expect(readings == ["previewless.jpg", "sign.jpg"])
         #expect(owed == ["empty.jpg"])
+    }
+
+    /// v74: every stored reading that holds a word gets its folded row and its words in the
+    /// text index, current or not; one with no lines, or none of two characters, gets none. The
+    /// rows go with their reading's asset, by cascade and the trigger.
+    @Test func theSearchTextWordsMigrationIndexesTheStoredReadings() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.peopleGalleryMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            for (path, lines) in [
+                ("sign.jpg", #"[{"text":"Proof of Insurance","confidence":1},{"text":"Café 24h","confidence":0.4}]"#),
+                ("empty.jpg", "[]"),
+                ("letters.jpg", #"[{"text":"a b c","confidence":1}]"#),
+            ] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, name_sort_key,
+                        kind, thumbnail_path, preview_path)
+                    VALUES (1, ?, ?, ?, 'image', 'thumb.jpg', 'preview.heic')
+                    """,
+                    arguments: [path, path, path]
+                )
+                try db.execute(
+                    sql: "INSERT INTO search_text (library_root_id, relative_path, source, lines) VALUES (1, ?, 'stale', ?)",
+                    arguments: [path, lines]
+                )
+            }
+        }
+        try CatalogStore.migrator.migrate(queue)
+        let (folded, matched) = try await queue.read { db in
+            try (
+                Row.fetchAll(db, sql: "SELECT relative_path, folded FROM search_text_folded").map { [$0["relative_path"] as String, $0["folded"] as String] },
+                Int.fetchAll(db, sql: #"SELECT rowid FROM search_text_word WHERE search_text_word MATCH '"insura"* AND "24h"*'"#)
+            )
+        }
+        #expect(folded == [["sign.jpg", SearchTextReading.folded("Proof of Insurance\nCafé 24h")]])
+        #expect(matched.count == 1)
+        try await queue.write { db in
+            try db.execute(sql: "DELETE FROM media_asset WHERE relative_path = 'sign.jpg'")
+        }
+        let left = try await queue.read { db in
+            try (Int.fetchOne(db, sql: "SELECT count(*) FROM search_text_folded"), Int.fetchOne(db, sql: "SELECT count(*) FROM search_text_word"))
+        }
+        #expect(left.0 == 0 && left.1 == 0)
     }
 
     /// v66: each face's embedding moves to its own row, numbered in face order, and the face

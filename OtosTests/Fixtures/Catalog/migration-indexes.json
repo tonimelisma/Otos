@@ -466,5 +466,9 @@
       "idx_person_summary_cover": "CREATE INDEX idx_person_summary_cover\nON person_summary(cover_library_root_id, cover_relative_path, cover_face_index)"
     },
     "migration": "v73_people_gallery"
+  },
+  {
+    "indexes": {},
+    "migration": "v74_search_text_words"
   }
 ]

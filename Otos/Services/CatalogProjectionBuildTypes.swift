@@ -80,6 +80,11 @@ nonisolated extension CatalogChangedFacts {
     /// who their faces are.
     static let searchFactInputs: CatalogChangedFacts = [.membership, .captureDate, .location, .faces]
 
+    /// What the Store's answer to a query's words (`CatalogStore.searchTextMatches`) reads: the
+    /// text readings and their index, which rows exist and where, and the stored images a
+    /// reading is current for.
+    static let searchTextInputs: CatalogChangedFacts = [.membership, .images, .searchContent]
+
     /// What the filter's options for the sidebar row `row` depend on: which rows the row
     /// holds, their kinds and formats, and the places named for them. Not which file is a
     /// copy: the options are read with every copy (`CatalogStore.filterOptions`), and 227 of
@@ -189,9 +194,10 @@ nonisolated struct CatalogProjectionReads: Sendable {
 
     /// The last search answer (ADR 0048): what the index matched for one query over one scope.
     /// The index says when what it answers from moved (`PhotoSearchIndex.revision`, carried by
-    /// the answer); the Store's fact matches move with the kinds of fact they read
-    /// (`CatalogChangedFacts.searchFactInputs`), and only when the query names a fact; the date
-    /// is in `facts`, resolved for the pass's now.
+    /// the answer); the Store's fact and text matches move with the kinds of fact they read
+    /// (`CatalogChangedFacts.searchFactInputs`, only when the query names a fact;
+    /// `searchTextInputs`, only when it has picture words); the date is in `facts`, resolved for
+    /// the pass's now.
     struct Search: Sendable {
         let index: PhotoSearchIndex
         let facts: SearchFactFilter?
@@ -295,8 +301,8 @@ nonisolated struct CatalogProjectionReads: Sendable {
     }
 
     /// The last search answer, when it answers `encoding` with `facts` over `scope` from the
-    /// index `index` at `indexRevision`, and, for a query naming facts, no kind of fact the
-    /// Store's matches read changed after `revisions`.
+    /// index `index` at `indexRevision`, and no kind of fact the Store's matches read for it —
+    /// its facts, its words — changed after `revisions`.
     func search(
         _ encoding: SearchQueryEncoding,
         facts: SearchFactFilter?,
@@ -308,6 +314,7 @@ nonisolated struct CatalogProjectionReads: Sendable {
         guard let search, search.index === index, search.matches.indexRevision == indexRevision,
               search.matches.encoding == encoding, search.facts == facts,
               facts == nil || !revisions.moved(CatalogChangedFacts.searchFactInputs, since: search.revisions),
+              encoding.picture == .none || !revisions.moved(CatalogChangedFacts.searchTextInputs, since: search.revisions),
               search.scope == scope
         else {
             return nil
