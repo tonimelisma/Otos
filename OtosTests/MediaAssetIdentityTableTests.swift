@@ -4,9 +4,9 @@ import Testing
 
 /// The process's asset identity table (ADR 0005, "One identity table for the process"):
 /// ordering by path gives exactly `String`'s order and makes no string, from one lock
-/// acquisition per comparison; the index sized at catalog open is never rebuilt while IDs are made; and what the
-/// grid's bind of a screenful costs the table, counted on this thread alone
-/// (`IdentityTableCounting`) so other suites running beside it do not count.
+/// acquisition per comparison; the index sized at catalog open is never rebuilt while IDs are
+/// made; and what the grid's bind of a screenful costs the table. Costs are counted on a table
+/// the test makes (`countingSteps`), which nothing else in the process uses.
 struct MediaAssetIdentityTableTests {
     /// Paths whose order `String` and bytes disagree on: NFC and NFD spellings of one name,
     /// combining marks in either canonical order, Hangul syllables and their jamo, scripts
@@ -40,52 +40,54 @@ struct MediaAssetIdentityTableTests {
         #expect(disagreements.isEmpty, "\(disagreements.prefix(5))")
     }
 
-    /// A sort of IDs by path, by root and path, and of faces by path order reads no string and
-    /// takes the table's lock once per comparison at most, and orders as sorting the decoded
-    /// strings did.
+    /// A sort by path, by root and path, and by path then root (the order of faces) reads no
+    /// string and takes the table's lock once per comparison at most, and orders as sorting the
+    /// decoded strings does; IDs, faces and their policies order exactly so.
     @Test func aSortOfIDsDecodesNothingAndLocksOncePerComparison() {
-        let root = LibraryRootPath(rawValue: "/IdentitySort-\(UUID().uuidString)")
+        let root = LibraryRootPath(rawValue: "/IdentitySort")
         var generator = SplitMix64(seed: 17)
-        let ids = (0 ..< 5000).map { _ in
+        let paths = (0 ..< 5000).map { _ in
             let name = Self.corpus[Int(generator.next() % UInt64(Self.corpus.count))]
-            return MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "\(generator.next() % 97)/\(name)"))
+            return MediaRelativePath(rawValue: "\(generator.next() % 97)/\(name)")
         }
-        var comparisons = 0
-        let (byPath, pathCost) = IdentityTableCounting.count {
-            ids.sorted { lhs, rhs in
-                comparisons += 1
-                return lhs.relativePathPrecedes(rhs)
-            }
-        }
-        #expect(pathCost.decodes == 0 && pathCost.lockAcquisitions <= comparisons, "\(pathCost) over \(comparisons) comparisons")
-        comparisons = 0
-        let (byRootAndPath, rootCost) = IdentityTableCounting.count {
-            ids.sorted { lhs, rhs in
-                comparisons += 1
-                return lhs.pathPrecedes(rhs)
-            }
-        }
-        #expect(rootCost.decodes == 0 && rootCost.lockAcquisitions <= comparisons, "\(rootCost) over \(comparisons) comparisons")
-        comparisons = 0
-        let faces = ids.enumerated().map { FaceID(asset: $1, index: $0 % 3) }
-        let (facesInOrder, faceCost) = IdentityTableCounting.count {
-            faces.sorted { lhs, rhs in
-                comparisons += 1
-                return FaceAssignmentPolicy.pathOrder(lhs, rhs)
-            }
-        }
-        #expect(faceCost.decodes == 0 && faceCost.lockAcquisitions <= comparisons, "\(faceCost) over \(comparisons) comparisons")
+        let decoded = paths.map(\.rawValue).sorted()
 
-        // The same order the decoded strings give, up to canonically equal paths.
-        let decoded = ids.map(\.relativePath.rawValue).sorted()
-        #expect(byPath.map(\.relativePath.rawValue) == decoded)
-        #expect(byRootAndPath.map(\.relativePath.rawValue) == decoded)
-        #expect(facesInOrder.map(\.asset.relativePath.rawValue) == decoded)
-        // What the decoded comparison costs, for the record: a string each side of every one.
-        let (_, decodingCost) = IdentityTableCounting.count {
-            ids.sorted { $0.relativePath.rawValue < $1.relativePath.rawValue }
+        // What each comparison costs, on a table of the test's own.
+        let table = MediaAssetIdentityTable(countingSteps: true)
+        let places = paths.map { table.place(of: root, $0) }
+        func cost(_ precedes: (UInt32, UInt32) -> Bool) -> (order: [String], steps: MediaAssetIdentityTable.Steps, comparisons: Int) {
+            var comparisons = 0
+            let before = table.steps
+            let sorted = places.sorted { lhs, rhs in
+                comparisons += 1
+                return precedes(lhs, rhs)
+            }
+            let after = table.steps
+            let steps = MediaAssetIdentityTable.Steps(
+                lockAcquisitions: after.lockAcquisitions - before.lockAcquisitions,
+                decodes: after.decodes - before.decodes
+            )
+            return (sorted.map { table.relativePath(at: $0).rawValue }, steps, comparisons)
         }
-        #expect(decodingCost.decodes >= ids.count)
+        for (name, precedes) in [
+            ("path", { table.relativePathPrecedes($0, $1) }),
+            ("rootAndPath", { table.pathOrder($0, $1, rootFirst: true) < 0 }),
+            ("pathAndRoot", { table.pathOrder($0, $1, rootFirst: false) < 0 }),
+        ] as [(String, (UInt32, UInt32) -> Bool)] {
+            let sorted = cost(precedes)
+            #expect(sorted.steps.decodes == 0 && sorted.steps.lockAcquisitions <= sorted.comparisons, "\(name): \(sorted.steps) over \(sorted.comparisons) comparisons")
+            #expect(sorted.order == decoded, "\(name)")
+        }
+        // What the decoded comparison costs, for the record: a string each side of every one.
+        let decoding = cost { table.relativePath(at: $0).rawValue < table.relativePath(at: $1).rawValue }
+        #expect(decoding.steps.decodes >= paths.count)
+
+        // The process's IDs, and the faces' policy, order the same way.
+        let ids = paths.map { MediaAssetID(libraryRootPath: root, relativePath: $0) }
+        #expect(ids.sorted { $0.relativePathPrecedes($1) }.map(\.relativePath.rawValue) == decoded)
+        #expect(ids.sorted { $0.pathPrecedes($1) }.map(\.relativePath.rawValue) == decoded)
+        let faces = ids.enumerated().map { FaceID(asset: $1, index: $0 % 3) }
+        #expect(faces.sorted(by: FaceAssignmentPolicy.pathOrder).map(\.asset.relativePath.rawValue) == decoded)
     }
 
     /// The pause a maker of an ID can wait behind, counted as the slots one rebuild of the
@@ -133,20 +135,29 @@ struct MediaAssetIdentityTableTests {
     /// table pays per tile, bounded so it cannot grow unseen.
     @MainActor
     @Test func bindingAScreenfulOfTilesCostsTheTableAFewStepsATile() {
-        let root = LibraryRootPath(rawValue: "/Screenful-\(UUID().uuidString)")
-        let ids = (0 ..< 120).map { MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "IMG_\($0).HEIC")) }
-        let store = TileContentStore()
-        let (_, bind) = IdentityTableCounting.count {
-            for id in ids {
-                store.pin(id)
-                store.holdUnreadDetail(for: id)
-                _ = store.content(for: id)
-            }
+        let root = LibraryRootPath(rawValue: "/Screenful")
+        let table = MediaAssetIdentityTable(countingSteps: true)
+        let paths = (0 ..< 120).map { MediaRelativePath(rawValue: "IMG_\($0).HEIC") }
+        let ids = paths.map { table.id(root, $0) }
+        let store = TileContentStore(identities: table)
+        let start = table.steps
+        for id in ids {
+            store.pin(id)
+            store.holdUnreadDetail(for: id)
+            _ = store.content(for: id)
         }
-        let details = Dictionary(uniqueKeysWithValues: ids.map { id in
-            (id, MediaTileDetail(libraryRootPath: root, relativePath: id.relativePath, thumbnailPath: "t.jpg"))
+        let bound = table.steps
+        let bind = MediaAssetIdentityTable.Steps(
+            lockAcquisitions: bound.lockAcquisitions - start.lockAcquisitions, decodes: bound.decodes - start.decodes
+        )
+        let details = Dictionary(uniqueKeysWithValues: zip(ids, paths).map { id, path in
+            (id, MediaTileDetail(libraryRootPath: root, relativePath: path, thumbnailPath: "t.jpg"))
         })
-        let (_, merge) = IdentityTableCounting.count { _ = store.mergeDetails(details) }
+        _ = store.mergeDetails(details)
+        let merged = table.steps
+        let merge = MediaAssetIdentityTable.Steps(
+            lockAcquisitions: merged.lockAcquisitions - bound.lockAcquisitions, decodes: merged.decodes - bound.decodes
+        )
         // Measured: binding a tile reads its two paths for the stub it holds (one string) and
         // finds the stub's ID again; merging its detail finds the detail's ID three times
         // (`MediaTileDetail.id` is derived from its paths). A few hundred nanoseconds a tile.

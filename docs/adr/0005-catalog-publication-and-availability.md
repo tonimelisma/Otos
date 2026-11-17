@@ -205,9 +205,9 @@ re-read All Media's options whole 92 times while 152 metadata changes arrived.
 its (library root, relative path) pair in `MediaAssetIdentityTable`, which holds each distinct
 pair's bytes once, in mapped regions outside the malloc heap, for the rest of the process.
 Equal pairs are one place, so IDs compare and hash as integers, and an order, a collapse, a
-position index or a stack's members hold no string. Before, an ID was 56 bytes carrying its own
-relative-path string, and every read made a new one per row: after a tour of the owner's shape
-the window, People and the stacks held 691,102 strings (86 MB) and 40 MB of ID arrays
+position index or a stack's members hold no string. An ID that carries its own relative-path
+string is 56 bytes, and every read makes a new one per row: after a tour of the owner's shape
+the window, People and the stacks held 691,102 strings (86 MB) and 40 MB of ID arrays that way
 (`docs/research/2026-11-17-asset-identity-memory.md`). The place is never persisted or logged;
 the catalog's key and the overlay's identity stay the pair (ADR 0008). Rejected: the catalog's
 row id as the in-memory identity. `media_asset` has no `INTEGER PRIMARY KEY`, so `VACUUM`
@@ -226,6 +226,11 @@ equal to an unrelated ID from the other. An ID that carried its table to tell th
 longer be 4 bytes. So the place is a value-level fact, like an interned string or a Swift type's
 metadata, and the table holds no owner's state. Rejected: a Store-owned table passed to the ID's
 makers, for the reasons above.
+
+A test that bounds what the table costs makes a table of its own that counts its steps
+(`MediaAssetIdentityTable(countingSteps:)`) and uses its IDs only with the owner it makes with
+that table (`TileContentStore(identities:)`), so no ID of it meets the process's table; the
+process's table counts nothing.
 
 - **Bound.** The table never frees. It holds one entry, about 110 bytes, for each distinct pair the
   process ever names. That is the catalog's rows, plus each path a rename, a reorganization, an

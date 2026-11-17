@@ -82,8 +82,7 @@ struct StallReproductionTests {
         #expect(renderSignatures.visitedRows >= Int64(catalog.shape.renderSignaturesOwed), "SQLite counted the rows it visited")
         #expect(report.live.count == StallReproduction.scopeCount * 4)
         let unanswered = report.live.filter { !$0.answered }
-        #expect(unanswered.isEmpty, "\(unanswered.count) window reads failed")
-        try StallReproduction.write(report.summary(catalog), named: "small")
+        #expect(unanswered.isEmpty, "\(unanswered.count) window reads failed: \(report.summary(catalog))")
     }
 
     /// The requirement at the owner's size: while every background owner runs, no window read

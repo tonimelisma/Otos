@@ -88,8 +88,8 @@ scale × window long edge). It:
    by `VTCreateCGImageFromCVPixelBuffer`. The loupe and both Compare panes show a decode as a
    layer's contents. A stored thumbnail is never larger than a grid tile shows it, so it is
    decoded whole.
-   Rejected: drawing a decode into a bitmap context (the grid thumbnail's old form) or into
-   mapped memory (the face tiles' old `MappedImage`): Core Animation copies either for
+   Rejected: drawing a decode into a bitmap context or into mapped memory of Otos's own:
+   Core Animation copies either for
    display and keeps the copy with the image, two full copies an image, and the context's
    decode leaves its scratch in the malloc heap; Image I/O's thumbnail decode of a small JPEG,
    which is not an IOSurface and is copied the same way, so a thumbnail is never scaled down

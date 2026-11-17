@@ -12,11 +12,11 @@ import UniformTypeIdentifiers
 // stay separate from durable root identity because the filesystem can change
 // independently of SQLite.
 //
-// `LibraryRootPath`, `MediaRelativePath`, and `MediaAssetID` carry a derived
-// FNV-1a `fingerprint` so Hashable / ObjC-bridged diffable hashing is O(1) after
-// construction. The fingerprint is never persisted, never logged as identity,
-// and never substitutes for string equality (colliding fingerprints still
-// compare the full path strings).
+// `LibraryRootPath` and `MediaRelativePath` carry a derived FNV-1a `fingerprint`
+// so Hashable / ObjC-bridged diffable hashing is O(1) after construction; a
+// `MediaAssetID` is its pair's place in the identity table and hashes that. A
+// fingerprint is never persisted, never logged as identity, and never substitutes
+// for string equality (colliding fingerprints still compare the full path strings).
 //
 // Store owns durable truth in SQLite and exposes small immutable values at query
 // boundaries. `CatalogWindowState` is the UI-ready value built by Projection.
@@ -216,12 +216,18 @@ nonisolated extension MediaRelativePath {
 /// `relativePathThenRootOrder` compare the table's bytes under one lock acquisition, in exactly
 /// the order `String`'s `<` gives the paths.
 nonisolated struct MediaAssetID: Hashable, CustomReflectable {
-    /// The pair's place in `MediaAssetIdentityTable.shared`, the same for equal pairs in this
-    /// process and meaningless outside it.
-    private let place: UInt32
+    /// The pair's place in the identity table that made it (`MediaAssetIdentityTable.shared`
+    /// for every ID but a test's own table's), the same for equal pairs in this process and
+    /// meaningless outside it.
+    fileprivate let place: UInt32
 
     init(libraryRootPath: LibraryRootPath, relativePath: MediaRelativePath) {
         place = MediaAssetIdentityTable.shared.place(of: libraryRootPath, relativePath)
+    }
+
+    /// The ID of `place` in the table that made it.
+    fileprivate init(place: UInt32) {
+        self.place = place
     }
 
     var libraryRootPath: LibraryRootPath {
@@ -295,9 +301,8 @@ nonisolated struct MediaAssetID: Hashable, CustomReflectable {
 /// Every `MediaAssetID` the process makes is a place in this one table, which holds each
 /// distinct (library root, relative path) pair once: the root as one of a few hundred
 /// `LibraryRootPath`s, the relative path as its UTF-8 bytes in the table's own regions. The
-/// window's orders, collapses, stacks, People's and Duplicates' structures then hold 4 bytes
-/// per asset where they held a 56-byte pair of strings and fingerprints, and every read of an
-/// order no longer leaves its own copy of every path held by whoever keeps the order
+/// window's orders, collapses, stacks, People's and Duplicates' structures hold 4 bytes per
+/// asset, and a read of an order makes no copy of any path that outlives the read
 /// (`docs/research/2026-11-17-asset-identity-memory.md`).
 ///
 /// - **One table for the process.** IDs are made wherever a path is read — the Store's
@@ -317,11 +322,10 @@ nonisolated struct MediaAssetID: Hashable, CustomReflectable {
 ///   same place. It grows by one entry per distinct pair the process ever names — the
 ///   catalog's rows, and the paths renames, reorganizations, imports and new Immich asset
 ///   folders add — about 110 bytes each (`usage`, logged in every `op=process.memory` sample).
-/// - **Not the malloc heap.** Entries and bytes live in mapped regions that are never freed,
-///   so what the table keeps is never scattered among the freed blocks of the reads that
-///   made its pairs: an intern table of `String`s kept every read's first string for each
-///   path and raised the footprint by about 90 MB that way
-///   (`docs/research/2026-11-16-shared-path-strings.md`).
+/// - **Not the malloc heap.** Entries and bytes live in mapped regions (`MappedMemory`, ADR
+///   0056) that are never freed, so what the table keeps is never scattered among the freed
+///   blocks of the reads that made its pairs; a table of `String`s raises the footprint by
+///   about 90 MB that way (`docs/research/2026-11-16-shared-path-strings.md`).
 /// - **One lock, held for a rebuild only past the catalog's size.** Finding or adding a pair,
 ///   reading a place's paths or fingerprint, and comparing two places' paths each take the lock
 ///   once, for a lookup, a copy or a byte comparison. The index that finds a pair's place is
@@ -331,8 +335,19 @@ nonisolated struct MediaAssetID: Hashable, CustomReflectable {
 ///   doubles into a new mapping under the lock each time it fills half, moving every place made
 ///   so far, and the old one is unmapped (ADR 0005).
 /// - **Never persisted.** A place is this process's alone; the catalog's key is the pair.
+/// - **Steps counted only where a test asks.** A table made with `countingSteps` counts its
+///   lock acquisitions and the strings it decodes (`steps`), under the lock it already holds,
+///   so a test bounds what a sort or a screenful of tiles costs on a table of its own; the
+///   process's table counts nothing.
 final nonisolated class MediaAssetIdentityTable: Sendable {
     static let shared = MediaAssetIdentityTable()
+
+    /// What a table made with `countingSteps` has paid: its lock acquisitions and the strings
+    /// it has decoded.
+    struct Steps: Equatable, Sendable {
+        var lockAcquisitions = 0
+        var decodes = 0
+    }
 
     private struct Entry {
         let bytes: UnsafePointer<UInt8>
@@ -367,11 +382,23 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
         /// The most slots one rebuild of the index moved under the lock: the longest anyone
         /// waited behind it.
         var largestRebuild = 0
+        let countsSteps: Bool
+        var steps = Steps()
 
-        init() {
-            chunks = MediaAssetIdentityTable.map(MediaAssetIdentityTable.chunkLimit, of: UnsafeMutablePointer<Entry>?.self)
+        init(countsSteps: Bool) {
+            self.countsSteps = countsSteps
+            chunks = MappedMemory.map(MediaAssetIdentityTable.chunkLimit, of: UnsafeMutablePointer<Entry>?.self)
             slotCapacity = 1 << 12
-            slots = MediaAssetIdentityTable.map(slotCapacity, of: UInt32.self)
+            slots = MappedMemory.map(slotCapacity, of: UInt32.self)
+        }
+
+        /// One acquisition of the lock, and a string decoded under it when `decodes`.
+        mutating func noteLock(decodes: Bool = false) {
+            guard countsSteps else { return }
+            steps.lockAcquisitions += 1
+            if decodes {
+                steps.decodes += 1
+            }
         }
 
         func entry(at place: UInt32) -> Entry {
@@ -384,22 +411,30 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
         }
     }
 
-    private let storage = Mutex(Storage())
+    private let storage: Mutex<Storage>
 
-    init() {}
+    /// A table of its own; `countingSteps` for a test that bounds what it pays (`steps`).
+    init(countingSteps: Bool = false) {
+        storage = Mutex(Storage(countsSteps: countingSteps))
+    }
+
+    /// What this table has paid, when made `countingSteps`; nothing otherwise.
+    var steps: Steps {
+        storage.withLock { $0.steps }
+    }
 
     /// Only a table a test makes goes: the process's lives as long as the process.
     deinit {
         storage.withLock { storage in
             for chunk in 0 ..< Self.chunkLimit {
                 guard let stored = storage.chunks[chunk] else { continue }
-                munmap(UnsafeMutableRawPointer(stored), Self.entriesPerChunk * MemoryLayout<Entry>.stride)
+                MappedMemory.unmap(UnsafeMutableRawPointer(stored), Self.entriesPerChunk * MemoryLayout<Entry>.stride)
             }
-            munmap(UnsafeMutableRawPointer(storage.chunks), Self.chunkLimit * MemoryLayout<UnsafeMutablePointer<Entry>?>.stride)
+            MappedMemory.unmap(UnsafeMutableRawPointer(storage.chunks), Self.chunkLimit * MemoryLayout<UnsafeMutablePointer<Entry>?>.stride)
             for region in storage.regions {
-                munmap(region.baseAddress, region.count)
+                region.baseAddress.map { MappedMemory.unmap($0, region.count) }
             }
-            munmap(UnsafeMutableRawPointer(storage.slots), storage.slotCapacity * MemoryLayout<UInt32>.stride)
+            MappedMemory.unmap(UnsafeMutableRawPointer(storage.slots), storage.slotCapacity * MemoryLayout<UInt32>.stride)
         }
     }
 
@@ -409,7 +444,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
         let relativeFingerprint = relativePath.fingerprint
         let hash = PathFingerprint.mediaAsset(root: root.fingerprint, relative: relativeFingerprint)
         return storage.withLock { storage in
-            IdentityTableCounting.noteLock()
+            storage.noteLock()
             // The bytes are read inside the lock, from the path's own string: nothing outside the
             // lock's region reaches the storage.
             var text = text
@@ -434,7 +469,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
                 precondition(Int(place) < Self.chunkLimit * Self.entriesPerChunk, "op=assetIdentity.table phase=full")
                 let chunkIndex = Int(place) >> Self.entriesPerChunkShift
                 if storage.chunks[chunkIndex] == nil {
-                    storage.chunks[chunkIndex] = Self.map(Self.entriesPerChunk, of: Entry.self)
+                    storage.chunks[chunkIndex] = MappedMemory.map(Self.entriesPerChunk, of: Entry.self)
                 }
                 let bytes = Self.copy(utf8, into: &storage)
                 let order = Self.orderForm(of: utf8, bytes: bytes, into: &storage)
@@ -460,7 +495,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
     /// The catalog calls it at open with its rows, before its first read makes their IDs.
     func reserve(_ count: Int) {
         storage.withLock { storage in
-            IdentityTableCounting.noteLock()
+            storage.noteLock()
             var capacity = storage.slotCapacity
             while count * 2 > capacity {
                 capacity *= 2
@@ -473,15 +508,14 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
 
     func root(at place: UInt32) -> LibraryRootPath {
         storage.withLock { storage in
-            IdentityTableCounting.noteLock()
+            storage.noteLock()
             return storage.roots[Int(storage.entry(at: place).root)]
         }
     }
 
     func relativePath(at place: UInt32) -> MediaRelativePath {
-        IdentityTableCounting.noteDecode()
-        return storage.withLock { storage in
-            IdentityTableCounting.noteLock()
+        storage.withLock { storage in
+            storage.noteLock(decodes: true)
             let entry = storage.entry(at: place)
             let text = String(decoding: UnsafeBufferPointer(start: entry.bytes, count: Int(entry.count)), as: UTF8.self)
             return MediaRelativePath(rawValue: text, fingerprint: entry.relativeFingerprint)
@@ -490,7 +524,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
 
     func fingerprint(at place: UInt32) -> UInt64 {
         storage.withLock { storage in
-            IdentityTableCounting.noteLock()
+            storage.noteLock()
             return storage.hash(of: storage.entry(at: place))
         }
     }
@@ -500,7 +534,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
     func relativePathPrecedes(_ place: UInt32, _ other: UInt32) -> Bool {
         guard place != other else { return false }
         return storage.withLock { storage in
-            IdentityTableCounting.noteLock()
+            storage.noteLock()
             let left = storage.entry(at: place)
             let right = storage.entry(at: other)
             return Self.precedes(left.orderBytes, Int(left.orderCount), right.orderBytes, Int(right.orderCount))
@@ -512,7 +546,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
     func relativePathBytesPrecede(_ place: UInt32, _ other: UInt32) -> Bool {
         guard place != other else { return false }
         return storage.withLock { storage in
-            IdentityTableCounting.noteLock()
+            storage.noteLock()
             let left = storage.entry(at: place)
             let right = storage.entry(at: other)
             return Self.precedes(left.bytes, Int(left.count), right.bytes, Int(right.count))
@@ -525,7 +559,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
     func pathOrder(_ place: UInt32, _ other: UInt32, rootFirst: Bool) -> Int {
         guard place != other else { return 0 }
         return storage.withLock { storage in
-            IdentityTableCounting.noteLock()
+            storage.noteLock()
             let left = storage.entry(at: place)
             let right = storage.entry(at: other)
             let relative = Self.precedes(left.orderBytes, Int(left.orderCount), right.orderBytes, Int(right.orderCount)) ? -1
@@ -575,7 +609,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
     private static func copy(_ utf8: UnsafeBufferPointer<UInt8>, into storage: inout Storage) -> UnsafePointer<UInt8> {
         if storage.bytesNext == nil || storage.bytesLeft < utf8.count {
             let size = max(byteRegionSize, utf8.count)
-            let region = map(size, of: UInt8.self)
+            let region = MappedMemory.map(size, of: UInt8.self)
             storage.bytesNext = region
             storage.bytesLeft = size
             storage.regions.append(UnsafeMutableRawBufferPointer(start: region, count: size))
@@ -608,7 +642,7 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
 
     /// Moves every place into an index of `capacity` slots and unmaps the old one.
     private static func rebuild(_ storage: inout Storage, capacity: Int) {
-        let slots = map(capacity, of: UInt32.self)
+        let slots = MappedMemory.map(capacity, of: UInt32.self)
         for old in 0 ..< storage.slotCapacity {
             let stored = storage.slots[old]
             guard stored != 0 else { continue }
@@ -619,61 +653,25 @@ final nonisolated class MediaAssetIdentityTable: Sendable {
             slots[slot] = stored
         }
         storage.largestRebuild = max(storage.largestRebuild, storage.slotCapacity)
-        munmap(UnsafeMutableRawPointer(storage.slots), storage.slotCapacity * MemoryLayout<UInt32>.stride)
+        MappedMemory.unmap(UnsafeMutableRawPointer(storage.slots), storage.slotCapacity * MemoryLayout<UInt32>.stride)
         storage.slots = slots
         storage.slotCapacity = capacity
     }
-
-    /// A zeroed mapping for `count` elements; a mapping that fails is the process out of
-    /// address space, which nothing can recover from.
-    private static func map<Element>(_ count: Int, of _: Element.Type) -> UnsafeMutablePointer<Element> {
-        let bytes = count * MemoryLayout<Element>.stride
-        let region = mmap(nil, bytes, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0)
-        guard let region, region != MAP_FAILED else {
-            fatalError("op=assetIdentity.map phase=failed bytes=\(bytes) errno=\(errno)")
-        }
-        return region.bindMemory(to: Element.self, capacity: count)
-    }
 }
 
-/// Counts, on the calling thread alone, the identity table's lock acquisitions and the strings
-/// it decodes, so a test bounds what a sort or a screenful of tiles costs in them while other
-/// tests run beside it in the process. Outside a counting scope each note is one thread-local
-/// read.
-nonisolated enum IdentityTableCounting {
-    struct Counts: Equatable {
-        var lockAcquisitions = 0
-        var decodes = 0
+extension MediaAssetIdentityTable {
+    /// The ID of the pair in this table: for an owner made with a table of its own (a test's
+    /// `TileContentStore`), whose IDs it reads back through the same table.
+    func id(_ root: LibraryRootPath, _ relativePath: MediaRelativePath) -> MediaAssetID {
+        MediaAssetID(place: place(of: root, relativePath))
     }
 
-    private final class Box {
-        var counts = Counts()
+    func libraryRootPath(of id: MediaAssetID) -> LibraryRootPath {
+        root(at: id.place)
     }
 
-    private static let key: pthread_key_t = {
-        var key = pthread_key_t()
-        pthread_key_create(&key, nil)
-        return key
-    }()
-
-    /// Runs `body` on this thread and returns what it cost the table on this thread.
-    static func count<T>(_ body: () throws -> T) rethrows -> (T, Counts) {
-        let box = Box()
-        let previous = pthread_getspecific(key)
-        pthread_setspecific(key, Unmanaged.passUnretained(box).toOpaque())
-        defer { pthread_setspecific(key, previous) }
-        let result = try withExtendedLifetime(box) { try body() }
-        return (result, box.counts)
-    }
-
-    static func noteLock() {
-        guard let box = pthread_getspecific(key) else { return }
-        Unmanaged<Box>.fromOpaque(box).takeUnretainedValue().counts.lockAcquisitions += 1
-    }
-
-    static func noteDecode() {
-        guard let box = pthread_getspecific(key) else { return }
-        Unmanaged<Box>.fromOpaque(box).takeUnretainedValue().counts.decodes += 1
+    func relativePath(of id: MediaAssetID) -> MediaRelativePath {
+        relativePath(at: id.place)
     }
 }
 

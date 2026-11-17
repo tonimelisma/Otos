@@ -99,6 +99,10 @@ actor CatalogProjection {
     /// Which of the duplicates and People owners this projection starts: all of them, except
     /// in a tour that leaves some out (`BackgroundOwners`).
     let backgroundOwners: BackgroundOwners
+    /// Told the IDs the projection holds as each pass ends, before the pass counts as ended,
+    /// so a test that waits for quiescence has the census of what it waited for; the app's
+    /// projection is made without one and builds no census.
+    let heldIDsReport: (@Sendable (CatalogProjectionHeldIDs) -> Void)?
     /// Runs the duplicates builds and People passes one heavy load at a time with the other
     /// owners' (`LoadAdmission`): the window's, which opens it at its first grid.
     let admission: LoadAdmission
@@ -232,18 +236,21 @@ actor CatalogProjection {
     private(set) var publicationCount: UInt64 = 0
     var detailRefreshGeneration: UInt64 = 0
 
-    /// True when every request has been covered by a successful pass and no pass is
-    /// running. Lets a test wait for settlement instead of guessing a sleep duration.
+    /// Whether the projection owes and runs nothing: its owner fact (`quiescence`) — every
+    /// request covered by a successful pass, no pass or options read running, and every Store
+    /// change delivered to it acted on. Lets a test wait for settlement instead of guessing a
+    /// sleep duration; a change delivered and not yet acted on is work it owes.
     var isQuiescent: Bool {
-        requested == covered && runningPasses == 0 && optionsRequested == optionsCovered && optionsInFlight == nil
+        quiescence != nil
     }
 
     /// The asset IDs the projection holds now, by the structure that holds them: the window
     /// published last, each held order and collapse, the stacks' members and the IDs the
     /// change log's entries name. Each array is the held one itself, so its storage is the
-    /// structure's own (two structures sharing one order show one storage); the diagnostic
-    /// read of what the projection's memory is made of (ADR 0005, "One copy of an order").
-    var heldAssetIDs: CatalogProjectionHeldIDs {
+    /// structure's own (two structures sharing one order show one storage): what the
+    /// projection's memory is made of (ADR 0005, "One copy of an order"), handed to
+    /// `heldIDsReport` as each pass ends.
+    private var heldAssetIDs: CatalogProjectionHeldIDs {
         var held = CatalogProjectionHeldIDs()
         held.add("window", lastPublishedState.map { [$0.mediaGrid.orderedAssetIDs] } ?? [])
         for slot in [CatalogProjectionReads.Slot.allMedia, .other] {
@@ -297,8 +304,10 @@ actor CatalogProjection {
         duplicatesBuilder: DuplicatesProjection.Builder? = nil,
         peopleBuilder: PeopleGallery.Builder? = nil,
         backgroundOwners: BackgroundOwners = .all,
-        admission: LoadAdmission = LoadAdmission(isOpen: true)
+        admission: LoadAdmission = LoadAdmission(isOpen: true),
+        heldIDsReport: (@Sendable (CatalogProjectionHeldIDs) -> Void)? = nil
     ) {
+        self.heldIDsReport = heldIDsReport
         self.admission = admission
         self.volumeCapacity = volumeCapacity
         self.cadence = cadence
@@ -1272,6 +1281,7 @@ private extension CatalogProjection {
         runningPasses += 1
         activity.work.passes += 1
         defer {
+            heldIDsReport?(heldAssetIDs)
             runningPasses -= 1
             activity.work.reads = Int(orderQueryCount + keyedOrderQueryCount + filterOptionsQueryCount + stackReadCount)
             settleQuiescence()
@@ -1909,7 +1919,7 @@ nonisolated struct CatalogProjectionWorkSuperseded: Error {}
 extension CatalogProjection: QuiescentOwner {
     /// A publication or an options read owed or running: the projection's own counters.
     var holdsWork: Bool {
-        !isQuiescent
+        requested != covered || runningPasses != 0 || optionsRequested != optionsCovered || optionsInFlight != nil
     }
 
     /// Asks for a publication on the cadence, as a background change does.

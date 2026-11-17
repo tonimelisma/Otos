@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// The window's memory across scope changes and re-reads (plan 0116; ADR 0005, "One copy of
@@ -21,12 +22,11 @@ struct WindowMemoryTests {
     static let idsPerAssetLimit = 2.2
 
     /// What the held arrays may hold per distinct asset, in bytes: their IDs at
-    /// `idsPerAssetLimit`, each a 4-byte place in the identity table. An ID that carried its
-    /// own path strings was 56 bytes.
+    /// `idsPerAssetLimit`, each a 4-byte place in the identity table.
     static let bytesPerAssetLimit = 10
 
     /// The test process's footprint after the 20 steps at the owner's size, run alone: 144 MB
-    /// measured with 4-byte IDs, 212–220 MB when each ID carried its path strings
+    /// measured with 4-byte IDs, 212–220 MB with IDs that hold their path strings
     /// (`docs/research/2026-11-17-asset-identity-memory.md`).
     static let ownerSizeFootprintLimit: UInt64 = 180 * 1_048_576
 
@@ -41,10 +41,12 @@ struct WindowMemoryTests {
             .library(catalog.pictures), .library(catalog.account), .library(catalog.archive),
             .importBatch(batch.batchID), .allMedia,
         ]
+        let held = HeldIDs()
         let projection = CatalogProjection(
             volumeCapacity: ampleVolumeCapacity,
             cadence: .milliseconds(25),
-            backgroundOwners: BackgroundOwners(off: Set(BackgroundOwner.allCases))
+            backgroundOwners: BackgroundOwners(off: Set(BackgroundOwner.allCases)),
+            heldIDsReport: { held.report($0) }
         )
         // Drained without keeping what it delivers: a recorder of every state would hold every
         // published order.
@@ -58,7 +60,7 @@ struct WindowMemoryTests {
         let progress = Progress(enabled: ownerSize)
         progress.append("catalog rows=\(catalog.shape.assets)")
         try await Self.settle(projection, on: .allMedia)
-        let first = try await Self.census(projection)
+        let first = try Self.census(held)
         progress.append("first \(Self.sample())")
         for step in 1 ... 20 {
             let scope = scopes[(step - 1) % scopes.count]
@@ -77,7 +79,7 @@ struct WindowMemoryTests {
                 "step=\(step) scope=\(scope.diagnosticDescription) changed=\(changed) orderReads=\(projection.orderQueryCount) stackReads=\(projection.stackReadCount) \(Self.sample())"
             )
         }
-        let after = try await Self.census(projection)
+        let after = try Self.census(held)
         await store.shutdown()
 
         let lines = ["scale=\(ownerSize ? 1 : 0.02)"] + first.lines("after=1") + after.lines("after=20")
@@ -152,8 +154,21 @@ struct WindowMemoryTests {
         }
     }
 
-    private static func census(_ projection: CatalogProjection) async throws -> Census {
-        let held = await projection.heldAssetIDs
+    /// The IDs the projection last reported holding, as its last pass ended.
+    private final class HeldIDs: Sendable {
+        private let last = Mutex<CatalogProjectionHeldIDs?>(nil)
+
+        func report(_ held: CatalogProjectionHeldIDs) {
+            last.withLock { $0 = held }
+        }
+
+        var reported: CatalogProjectionHeldIDs? {
+            last.withLock { $0 }
+        }
+    }
+
+    private static func census(_ reported: HeldIDs) throws -> Census {
+        let held = try #require(reported.reported, "the projection reported no pass")
         var census = Census()
         // Read before the census builds its own sets.
         census.footprint = ProcessResourceSample.current().footprintBytes

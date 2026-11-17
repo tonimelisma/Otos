@@ -641,9 +641,15 @@ struct CatalogProjectionTests {
 
     /// A Put Back still waiting for the Store, then another Move to Trash and a read: the put
     /// back item stays where it was, the newly hidden one is off, through every publication.
+    /// The duplicate groups' first build is held until the hide has settled, so it lands at
+    /// that suspension and republishes the hidden window before the Put Back.
     @Test func aPutBackStaysShownThroughAnotherHideAndARead() async throws {
         try await withCatalogedLibrary(fileCount: 4, fileNamePrefix: "putbackmix") { fixture in
-            let (projection, recorder, recordingTask) = await Self.recordedProjection(fixture)
+            let groups = ArrivalGate()
+            let (projection, recorder, recordingTask) = await Self.recordedProjection(fixture) { _, _ in
+                await groups.arrive()
+                return .empty
+            }
             defer { recordingTask.cancel() }
             let first = try #require(await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs.count == 4 }.last)
             let order = first.mediaGrid.orderedAssetIDs
@@ -651,8 +657,14 @@ struct CatalogProjectionTests {
             await projection.hide([order[1]], batch: undone)
             _ = try await fixture.store.markPendingTrash([order[1]], batch: undone)
             await projection.hideLanded(undone)
-            let hiddenCount = try await waitForProjectionQuiescence(projection, recordedBy: recorder).count
+            _ = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
+            await groups.waitForArrivals(1)
+            await groups.open()
+            _ = await recorder.waitForCount(1) { $0.last?.duplicates != nil }
             await projection.putBack(undone)
+            // Counted from the Put Back's own publication: a People or duplicates build that
+            // lands after the hide settled republishes the hidden window before it.
+            let backCount = await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs.contains(order[1]) == true }.count
             let later = MediaTrashBatchID(unixMilliseconds: 12)
             await projection.hide([order[2]], batch: later)
             _ = try await fixture.store.markPendingTrash([order[2]], batch: later)
@@ -660,7 +672,7 @@ struct CatalogProjectionTests {
             let recorded = try await waitForProjectionQuiescence(projection, recordedBy: recorder)
             let expected = [order[0], order[1], order[3]]
             #expect(recorded.last?.mediaGrid.orderedAssetIDs == expected)
-            for state in recorded.dropFirst(hiddenCount) {
+            for state in recorded.dropFirst(backCount - 1) {
                 #expect(state.mediaGrid.orderedAssetIDs.contains(order[1]), "the put back item never leaves again")
             }
 
@@ -756,9 +768,12 @@ struct CatalogProjectionTests {
     }
 
     private static func recordedProjection(
-        _ fixture: CatalogedLibrary
+        _ fixture: CatalogedLibrary,
+        duplicatesBuilder: DuplicatesProjection.Builder? = nil
     ) async -> (CatalogProjection, StateRecorder, Task<Void, Never>) {
-        let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
+        let projection = CatalogProjection(
+            volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10), duplicatesBuilder: duplicatesBuilder
+        )
         let recorder = StateRecorder()
         let stream = await projection.states(
             store: fixture.store,

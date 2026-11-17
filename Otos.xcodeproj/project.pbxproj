@@ -226,6 +226,7 @@
 				Support/FileBytes.swift,
 				Support/Instrumentation.swift,
 				Support/MappedArrayBuilder.swift,
+				Support/MappedMemory.swift,
 				Support/NewestValueMailbox.swift,
 				Support/ProcessResources.swift,
 				Support/RelativeDateText.swift,

@@ -18,9 +18,6 @@ struct CatalogMigrationFreezeTests {
     @Test func everyMigrationBuildsTheIndexesItWasFrozenWith() async throws {
         let frozen = try Self.frozenIndexes()
         let built = try await Self.indexesByMigration()
-        // What every migration built, in the fixture's own shape: a new migration's entry is
-        // copied from here, byte for byte.
-        try Self.writeBuilt(built)
         #expect(built.map(\.migration) == frozen.map(\.migration), "a migration was added, removed or reordered")
         let frozenByMigration = Dictionary(uniqueKeysWithValues: frozen.map { ($0.migration, $0.indexes) })
         for step in built {
@@ -124,15 +121,6 @@ struct CatalogMigrationFreezeTests {
                 indexes: indexes.mapValues { $0 as? String }
             )
         }
-    }
-
-    private static func writeBuilt(_ steps: [Step]) throws {
-        let entries: [[String: Any]] = steps.map { step in
-            ["migration": step.migration, "indexes": step.indexes.mapValues { $0.map { $0 as Any } ?? NSNull() }]
-        }
-        let url = SourceTree.root.appending(path: "build/catalog-migrations/migration-indexes.json")
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONSerialization.data(withJSONObject: entries, options: [.prettyPrinted, .sortedKeys]).write(to: url)
     }
 
     private static func json(_ indexes: [String: String?]) -> String {

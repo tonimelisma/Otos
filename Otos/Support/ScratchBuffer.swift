@@ -1,5 +1,3 @@
-import Darwin
-
 /// Scratch buffer guide
 ///
 /// **The rule: a transient buffer of 4 KB or more that is freed before the process ends goes
@@ -8,8 +6,9 @@ import Darwin
 /// counted after `free`, and `malloc_zone_pressure_relief` returned nothing for any zone
 /// (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). A pass that builds a
 /// few hundred megabytes of scratch and frees it leaves all of it in the footprint. A
-/// `ScratchBuffer` is its own virtual-memory region: mapped when made, unmapped when its last
-/// reference goes, so the footprint goes back down when the work ends.
+/// `ScratchBuffer` is its own virtual-memory region (`MappedMemory`, ADR 0056): mapped when
+/// made, unmapped when its last reference goes, so the footprint goes back down when the work
+/// ends.
 ///
 /// - **What belongs here:** matrices, products and per-row tables a pass fills and drops, of a
 ///   size known when the work starts (`FaceAssignmentPolicy`'s blocks and products,
@@ -26,22 +25,16 @@ final nonisolated class ScratchBuffer<Element: BitwiseCopyable> {
     let base: UnsafeMutablePointer<Element>
     private let bytes: Int
 
-    /// Maps a region for `count` elements, rounded up to whole pages; a mapping that fails is
-    /// the process out of address space, which nothing can recover from.
+    /// Maps a region for `count` elements, rounded up to whole pages (`MappedMemory`, whose
+    /// policy a failed mapping follows).
     init(count: Int) {
         self.count = count
-        let page = Int(getpagesize())
-        let needed = max(count, 1) * MemoryLayout<Element>.stride
-        bytes = (needed + page - 1) / page * page
-        let region = mmap(nil, bytes, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0)
-        guard let region, region != MAP_FAILED else {
-            fatalError("op=scratch.map phase=failed bytes=\(bytes) errno=\(errno)")
-        }
-        base = region.bindMemory(to: Element.self, capacity: max(count, 1))
+        bytes = MappedMemory.pages(for: max(count, 1) * MemoryLayout<Element>.stride)
+        base = MappedMemory.map(bytes).bindMemory(to: Element.self, capacity: max(count, 1))
     }
 
     deinit {
-        munmap(UnsafeMutableRawPointer(base), bytes)
+        MappedMemory.unmap(UnsafeMutableRawPointer(base), bytes)
     }
 
     /// Sets every element to `value`.

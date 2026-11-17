@@ -108,9 +108,13 @@ final class TileContentStore {
     /// Told each time every visible tile is settled, once per visible set: the fact a scroll
     /// waits for (`op=ui.mediaGrid.visibleThumbnails`).
     var onVisibleThumbnailsComplete: ((VisibleThumbnailsReport) -> Void)?
+    /// The identity table the tiles' IDs are places in, which their paths are read back from:
+    /// the process's, or a test's own that counts what a bind pays (`countingSteps`).
+    private let identities: MediaAssetIdentityTable
 
-    init(imageByteBudget: Int = 256 * 1024 * 1024) {
+    init(imageByteBudget: Int = 256 * 1024 * 1024, identities: MediaAssetIdentityTable = .shared) {
         self.imageByteBudget = max(1, imageByteBudget)
+        self.identities = identities
     }
 
     var count: Int {
@@ -202,7 +206,7 @@ final class TileContentStore {
     @discardableResult
     func mergeDetail(_ detail: MediaTileDetail) -> TileContentChange {
         let change = merge(detail, read: true)
-        noteSettlement(of: detail.id)
+        noteSettlement(of: id(of: detail))
         return change
     }
 
@@ -212,11 +216,16 @@ final class TileContentStore {
         guard entries[id] == nil else {
             return
         }
-        _ = merge(MediaTileDetail(libraryRootPath: id.libraryRootPath, relativePath: id.relativePath), read: false)
+        _ = merge(MediaTileDetail(libraryRootPath: identities.libraryRootPath(of: id), relativePath: identities.relativePath(of: id)), read: false)
+    }
+
+    /// The ID `detail` names, in this store's table.
+    private func id(of detail: MediaTileDetail) -> MediaAssetID {
+        identities.id(detail.libraryRootPath, detail.relativePath)
     }
 
     private func merge(_ detail: MediaTileDetail, read: Bool) -> TileContentChange {
-        let id = detail.id
+        let id = id(of: detail)
         let key = MediaAssetTilePresentation.imageContentKey(detail)
         let stamp = nextAccessStamp()
 
@@ -267,7 +276,7 @@ final class TileContentStore {
     func mergeDetails(_ details: [MediaAssetID: MediaTileDetail]) -> [MediaAssetID: TileContentChange] {
         var changes: [MediaAssetID: TileContentChange] = [:]
         for (id, detail) in details {
-            precondition(detail.id == id)
+            precondition(self.id(of: detail) == id)
             changes[id] = mergeDetail(detail)
         }
         return changes
@@ -366,8 +375,8 @@ final class TileContentStore {
             if let entry = next.removeValue(forKey: remap.oldID) {
                 var moved = entry
                 moved.content.detail = MediaTileDetail(
-                    libraryRootPath: remap.newID.libraryRootPath,
-                    relativePath: remap.newID.relativePath,
+                    libraryRootPath: identities.libraryRootPath(of: remap.newID),
+                    relativePath: identities.relativePath(of: remap.newID),
                     byteSize: moved.content.detail.byteSize,
                     thumbnailPath: moved.content.detail.thumbnailPath,
                     bestKind: moved.content.detail.bestKind,

@@ -91,18 +91,20 @@ struct BackgroundOwnersIdleTests {
         let demandBound = await owners.enrichment.claimWindowLimit + owners.enrichment.handoffPolicy.globalOutstandingLimit
         await owners.shutdown()
         await store.shutdown()
-        try IdleUse.write(
-            "settled: \(OwnerRound.summary(settled))\nrounds run again for a wake that came due: "
-                + "\(dueRounds.isEmpty ? "none" : dueRounds.joined(separator: " | "))\nidle store: \(idle.summary)\nidle owners:\n"
-                + rounds.map { "  \($0.summary)" }.joined(separator: "\n") + "\n",
-            named: name
-        )
+        let report = "settled: \(OwnerRound.summary(settled))\nrounds run again for a wake that came due: "
+            + "\(dueRounds.isEmpty ? "none" : dueRounds.joined(separator: " | "))\nidle store: \(idle.summary)\nidle owners:\n"
+            + rounds.map { "  \($0.summary)" }.joined(separator: "\n") + "\n"
+        // The on-demand run at the owner's size leaves its report for the record; the suite's
+        // own run says it in a failure's message.
+        if name == "owner" {
+            try IdleUse.write(report, named: name)
+        }
 
         #expect(demands <= demandBound, "enrichment holds \(demands) demands, more than its window and hand-off (\(demandBound))")
         // No catalog change: a root's own state, an account's listing starting and ending, is
         // announced (`CatalogChangedRows.none`) and moves no read, once each per listing pass.
         let listings = rounds.first { $0.owner == "immichSync" }?.work.passes ?? 0
-        #expect(idle.changes - idle.rootStateChanges == 0, "\(idle.summary)")
+        #expect(idle.changes - idle.rootStateChanges == 0, "\(report)")
         #expect(idle.rootStateChanges <= 2 * listings, "\(idle.summary)")
         #expect(idle.writes.isEmpty, "\(idle.summary)")
         let libraries = [catalog.pictures, catalog.archive].count

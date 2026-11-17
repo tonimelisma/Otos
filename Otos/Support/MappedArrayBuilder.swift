@@ -1,4 +1,3 @@
-import Darwin
 import GRDB
 
 /// Mapped array builder guide
@@ -8,7 +7,7 @@ import GRDB
 /// buffer it outgrows is freed into malloc, which keeps it in the process's footprint on macOS
 /// 27 (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`): a 16 MB result left
 /// up to 16 MB of freed blocks behind it. This builder grows in its own mapped regions instead
-/// (`mmap`, like `ScratchBuffer`), unmaps each one it outgrows, and hands back an array of
+/// (`MappedMemory`, like `ScratchBuffer`), unmaps each one it outgrows, and hands back an array of
 /// exactly its length, so the only malloc block the build leaves is the result itself.
 ///
 /// - **What belongs here:** a cursor's rows mapped to values (`collect`), and any loop that
@@ -23,9 +22,8 @@ import GRDB
 ///   (`reserveCapacity`, `Array(unsafeUninitializedCapacity:)`).
 /// - **Use:** one builder per build, by one task, never shared; `finish()` ends it. Elements
 ///   may be any type: they are moved, never copied bitwise, and a builder dropped unfinished
-///   releases what it holds. A mapping that fails is the process out of address space, where an
-///   array's own allocation traps too, so it traps (as `ScratchBuffer` and
-///   `MediaAssetIdentityTable` do).
+///   releases what it holds. Its regions come from `MappedMemory`, whose policy a failed
+///   mapping follows (ADR 0056).
 nonisolated struct MappedArrayBuilder<Element>: ~Copyable {
     /// The elements: a small heap buffer (`bytes == 0`) until the build outgrows it, then a
     /// mapped region of `bytes`.
@@ -89,22 +87,16 @@ nonisolated struct MappedArrayBuilder<Element>: ~Copyable {
         if bytes == 0 {
             base.deallocate()
         } else {
-            munmap(UnsafeMutableRawPointer(base), bytes)
+            MappedMemory.unmap(UnsafeMutableRawPointer(base), bytes)
         }
     }
 
     /// Doubles into a new mapping, moves the elements over and releases the old buffer: what
     /// an array would free into malloc goes back to the system.
     private mutating func grow() {
-        let page = Int(getpagesize())
         let stride = max(MemoryLayout<Element>.stride, 1)
-        let wanted = max(count * 2 * stride, page)
-        let newBytes = (wanted + page - 1) / page * page
-        let region = mmap(nil, newBytes, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0)
-        guard let region, region != MAP_FAILED else {
-            fatalError("op=mappedArray.map phase=failed bytes=\(newBytes) errno=\(errno)")
-        }
-        let newBase = region.bindMemory(to: Element.self, capacity: newBytes / stride)
+        let newBytes = MappedMemory.pages(for: count * 2 * stride)
+        let newBase = MappedMemory.map(newBytes).bindMemory(to: Element.self, capacity: newBytes / stride)
         if let base {
             newBase.moveInitialize(from: base, count: count)
             Self.release(base, bytes: bytes)
