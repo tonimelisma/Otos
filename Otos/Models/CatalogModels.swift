@@ -1714,21 +1714,36 @@ nonisolated struct CatalogMediaGridState: Equatable {
         return shown
     }
 
-    /// This grid holding `previous`'s content when its own is equal to it, or `previous`'s
-    /// order with its own stacks when only the stacks differ. Compares the order, days and
-    /// stacks: Projection calls it off the main actor, at publication.
+    /// This grid as Projection publishes it after `previous`, off the main actor: holding
+    /// `previous`'s content when its own is equal to it, or `previous`'s order with its own
+    /// stacks when only the stacks differ. A new order of the same query is published as an
+    /// edit of `previous`'s (`CatalogGridContent.Edit.between`), unless it already is one (a
+    /// hide, a Put Back, a stack expanding): the walk that tells two orders equal tells where
+    /// they differ too, so the grid takes in a read that moved photos, and an act on top of
+    /// it the window has not applied, by the edits (ADR 0006). A new query's order, which the
+    /// grid reloads, is published whole. Builds the content's index.
     func sharingContent(of previous: CatalogMediaGridState) -> CatalogMediaGridState {
-        guard !sharesContent(with: previous),
-              content.orderedAssetIDs == previous.content.orderedAssetIDs,
-              content.dayBuckets == previous.content.dayBuckets
-        else {
+        guard !sharesContent(with: previous), content.edit(from: previous.content) == nil else {
             return self
         }
-        var shared = self
-        shared.content = content.stacks == previous.content.stacks
-            ? previous.content
-            : previous.content.replacing(stacks: content.stacks)
-        return shared
+        let sameDays = content.dayBuckets.count == previous.content.dayBuckets.count
+        if sameDays, content.orderedAssetIDs == previous.content.orderedAssetIDs,
+           content.dayBuckets == previous.content.dayBuckets
+        {
+            var shared = self
+            shared.content = content.stacks == previous.content.stacks
+                ? previous.content
+                : previous.content.replacing(stacks: content.stacks)
+            return shared
+        }
+        guard descriptor == previous.descriptor else {
+            return self
+        }
+        content.prepareIndex()
+        previous.content.prepareIndex()
+        var edited = self
+        edited.content = content.descending(from: previous.content, by: .between(previous.content, content))
+        return edited
     }
 }
 
@@ -1784,32 +1799,216 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
     private let order: Order
 
     /// How an order was made from another by dropping and adding items, survivors keeping
-    /// their relative order: a Move to Trash's removal (`removing`), a stack expanding or
-    /// collapsing (`editing`). A grid showing the other order takes this one in by these
-    /// positions alone (`MediaGridStructure.init(grid:following:)`).
+    /// their relative order and their days: a Move to Trash's removal (`removing`), a Put
+    /// Back or a stack expanding or collapsing (`edited`), a read that moved photos
+    /// (`descending(from:)`). An item that left one place and came back at another is both
+    /// removed and inserted: a move. A grid showing the other order takes this one in by
+    /// these positions alone (`MediaGridStructure.init(grid:following:)`).
     struct Edit: Equatable, Sendable {
         /// The other order's positions this one dropped, ascending.
         let removed: [Int]
-        /// This order's positions that the other does not hold, ascending.
+        /// This order's positions that the other does not hold at its place, ascending.
         let inserted: [Int]
 
         var isEmpty: Bool {
             removed.isEmpty && inserted.isEmpty
         }
+
+        /// The positions the edit names: what applying it costs.
+        var size: Int {
+            removed.count + inserted.count
+        }
+
+        /// This edit and then `next`, as one edit from this one's source to `next`'s result:
+        /// what applying the two in turn makes, at the cost of the two edits, never the
+        /// order. An item this edit inserted and `next` removed is in neither; one this edit
+        /// removed and `next` put back is removed and inserted, a move.
+        func followed(by next: Edit) -> Edit {
+            // This edit's result is `next`'s source: a position in it that this edit did not
+            // insert is a survivor of this edit's source; one `next` did not remove survives
+            // into `next`'s result.
+            let removedLater = Self.positions(next.removed, notIn: inserted)
+            let insertedEarlier = Self.positions(inserted, notIn: next.removed)
+            return Edit(
+                removed: Self.merged(
+                    removed,
+                    Self.select(Self.ranks(of: removedLater, excluding: inserted), complementOf: removed)
+                ),
+                inserted: Self.merged(
+                    next.inserted,
+                    Self.select(Self.ranks(of: insertedEarlier, excluding: next.removed), complementOf: next.inserted)
+                )
+            )
+        }
+
+        /// How `new` is made from `old`: one walk of the two orders side by side, and a look-up
+        /// of each item only where they differ. Two items that match stay; where they do not,
+        /// an item the other order does not hold is removed or inserted, and of two that both
+        /// orders hold elsewhere, the one going further is moved, so a few photos moving between
+        /// days cost a few look-ups. A photo whose day changed without moving is moved in place,
+        /// so every item an edit keeps keeps its day. Both orders' indexes are read: Projection
+        /// builds them at publication.
+        static func between(_ old: CatalogGridContent, _ new: CatalogGridContent) -> Edit {
+            let oldIDs = old.orderedAssetIDs
+            let newIDs = new.orderedAssetIDs
+            let comparesDays = old.dayBuckets.count == oldIDs.count && new.dayBuckets.count == newIDs.count
+            var removed: [Int] = []
+            var inserted: [Int] = []
+            // Items already taken out of the old order ahead of their new place, and items
+            // already put into the new order ahead of their old place.
+            var leftEarly = Set<MediaAssetID>()
+            var cameEarly = Set<MediaAssetID>()
+            var oldPosition = 0
+            var newPosition = 0
+            while oldPosition < oldIDs.count, newPosition < newIDs.count {
+                let oldID = oldIDs[oldPosition]
+                let newID = newIDs[newPosition]
+                if oldID == newID {
+                    if comparesDays, old.dayBuckets[oldPosition] != new.dayBuckets[newPosition] {
+                        removed.append(oldPosition)
+                        inserted.append(newPosition)
+                    }
+                    oldPosition += 1
+                    newPosition += 1
+                } else if cameEarly.contains(oldID) {
+                    removed.append(oldPosition)
+                    oldPosition += 1
+                } else if leftEarly.contains(newID) {
+                    inserted.append(newPosition)
+                    newPosition += 1
+                } else if let oldIDInNew = new.position(of: oldID) {
+                    guard let newIDInOld = old.position(of: newID) else {
+                        inserted.append(newPosition)
+                        newPosition += 1
+                        continue
+                    }
+                    // Both are held further on in the other order: the one going further
+                    // moves, so the one that stays where it was matches next.
+                    if oldIDInNew - newPosition >= newIDInOld - oldPosition {
+                        removed.append(oldPosition)
+                        leftEarly.insert(oldID)
+                        oldPosition += 1
+                    } else {
+                        inserted.append(newPosition)
+                        cameEarly.insert(newID)
+                        newPosition += 1
+                    }
+                } else {
+                    removed.append(oldPosition)
+                    oldPosition += 1
+                }
+            }
+            removed.append(contentsOf: oldPosition ..< oldIDs.count)
+            inserted.append(contentsOf: newPosition ..< newIDs.count)
+            return Edit(removed: removed, inserted: inserted)
+        }
+
+        /// `positions` (ascending) that `excluded` (ascending) does not hold.
+        private static func positions(_ positions: [Int], notIn excluded: [Int]) -> [Int] {
+            var result: [Int] = []
+            result.reserveCapacity(positions.count)
+            var next = 0
+            for position in positions {
+                while next < excluded.count, excluded[next] < position {
+                    next += 1
+                }
+                if next == excluded.count || excluded[next] != position {
+                    result.append(position)
+                }
+            }
+            return result
+        }
+
+        /// Each of `positions` (ascending, none in `excluded`) as its place among the
+        /// positions `excluded` (ascending) does not hold.
+        private static func ranks(of positions: [Int], excluding excluded: [Int]) -> [Int] {
+            var next = 0
+            return positions.map { position in
+                while next < excluded.count, excluded[next] < position {
+                    next += 1
+                }
+                return position - next
+            }
+        }
+
+        /// The position of each of `ranks` (ascending) among the positions `excluded`
+        /// (ascending) does not hold.
+        private static func select(_ ranks: [Int], complementOf excluded: [Int]) -> [Int] {
+            var next = 0
+            return ranks.map { rank in
+                while next < excluded.count, excluded[next] <= rank + next {
+                    next += 1
+                }
+                return rank + next
+            }
+        }
+
+        /// Two disjoint ascending lists as one.
+        private static func merged(_ lhs: [Int], _ rhs: [Int]) -> [Int] {
+            guard !lhs.isEmpty else {
+                return rhs
+            }
+            guard !rhs.isEmpty else {
+                return lhs
+            }
+            var result: [Int] = []
+            result.reserveCapacity(lhs.count + rhs.count)
+            var left = 0
+            var right = 0
+            while left < lhs.count, right < rhs.count {
+                if lhs[left] < rhs[right] {
+                    result.append(lhs[left])
+                    left += 1
+                } else {
+                    result.append(rhs[right])
+                    right += 1
+                }
+            }
+            result.append(contentsOf: lhs[left...])
+            result.append(contentsOf: rhs[right...])
+            return result
+        }
     }
 
-    /// The identity of one publication of an order and its days, and, for one made by an
-    /// edit, the order it was made from and the edit.
+    /// The identity of one publication of an order and its days, and, for one made by
+    /// edits, how it was made from each earlier order still held anywhere: the window may
+    /// skip publications (it applies only the newest, ADR 0004), so the grid shows an older
+    /// order than the one an act's publication was made from, and takes the act in by the
+    /// edit from the order it shows.
     private final class Order: Sendable {
-        /// Held weakly: a content made by an edit never keeps its source's order alive,
-        /// and once nothing holds that order, nothing can ask about it.
-        weak let source: Order?
-        /// Empty for an order that was not made by an edit.
-        let edit: Edit
+        /// One earlier order and the edit from it to this one, the edits of every
+        /// publication between composed (`Edit.followed(by:)`).
+        struct Link: Sendable {
+            /// Held weakly: an order never keeps an earlier one alive, and once nothing holds
+            /// that order, nothing can ask about it, so its link is dropped at the next edit.
+            weak let order: Order?
+            let edit: Edit
+        }
 
-        init(source: Order? = nil, edit: Edit = Edit(removed: [], inserted: [])) {
-            self.source = source
-            self.edit = edit
+        /// Nearest first; empty for an order that was not made by an edit.
+        let lineage: [Link]
+
+        init() {
+            lineage = []
+        }
+
+        /// The order `edit` makes from `source`: linked to `source` and, by the edit composed,
+        /// to each earlier order `source` is linked to that is still held. The composing costs
+        /// the edits, a few held orders at a time, and is done where the order is made, off
+        /// the main actor.
+        init(source: Order, edit: Edit) {
+            var lineage = [Link(order: source, edit: edit)]
+            for link in source.lineage {
+                guard let order = link.order else {
+                    continue
+                }
+                lineage.append(Link(order: order, edit: link.edit.followed(by: edit)))
+            }
+            self.lineage = lineage
+        }
+
+        func edit(from other: Order) -> Edit? {
+            lineage.first { $0.order === other }?.edit
         }
     }
 
@@ -1841,6 +2040,14 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         self.stacks = stacks
         index = Mutex(content.index.withLock { $0 })
         order = content.order
+    }
+
+    private init(_ content: CatalogGridContent, edit: Edit, from source: CatalogGridContent) {
+        orderedAssetIDs = content.orderedAssetIDs
+        dayBuckets = content.dayBuckets
+        stacks = content.stacks
+        index = Mutex(content.index.withLock { $0 })
+        order = Order(source: source.order, edit: edit)
     }
 
     /// The same order and days with other stacks: the same order (`sharesOrder`), and its
@@ -1892,13 +2099,19 @@ final nonisolated class CatalogGridContent: Equatable, Sendable, MediaDisplayOrd
         )
     }
 
-    /// How this content's order was made from `other`'s by an edit (`removing`,
-    /// `editing`); nil unless it was made from that very order.
+    /// This content's order, days and stacks, its index kept, as an order made from
+    /// `previous`'s by `edit` (`Edit.between`): what Projection publishes for a read whose
+    /// order moved, so a grid showing `previous`, or any order `previous` was made from,
+    /// takes it in by the edit.
+    func descending(from previous: CatalogGridContent, by edit: Edit) -> CatalogGridContent {
+        CatalogGridContent(self, edit: edit, from: previous)
+    }
+
+    /// How this content's order was made from `other`'s by edits (`removing`, `edited`,
+    /// `descending`), through any publications between; nil unless it was made from that very
+    /// order, which is still held.
     func edit(from other: CatalogGridContent) -> Edit? {
-        guard let source = order.source, source === other.order else {
-            return nil
-        }
-        return order.edit
+        order.edit(from: other.order)
     }
 
     var orderedIDs: [MediaAssetID] {

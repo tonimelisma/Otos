@@ -88,6 +88,25 @@ which must show within 100 ms):
 8. Shorter or no motion. A shorter motion only shortens the wait, and the 0.35 s motion is
    DES-070's duration for content changing place.
 
+For an act whose publication was made from an order the grid has not shown (a read that
+moved photos, published just before the act and skipped by the window's newest-wins
+delivery), which at the owner's 160,000 items cost a comparison of the two whole orders,
+40–47 ms of the act's 100 ms:
+
+9. Compare the two orders, as before: the act's result waits for a pass over every item.
+10. The act first against what the grid shows, the reorder after: the user asked for the
+    act, the reorder is background. But the act's edit names positions in an order the
+    grid never showed, so it must be carried onto the shown one by identity, and a Put
+    Back's item placed there beside neighbours that the reorder may have moved to another
+    day, splitting a day the next apply joins again; the grid would show an order no
+    publication holds, and the reorder would still be compared in full after it.
+11. Both as one composed edit (chosen). The reorder is described where it is made, in the
+    walk Projection already makes to tell two orders equal, and the act's edit composes
+    with it at the cost of the two edits. The grid shows only published orders, applies the
+    act and the reorder in the one batch that turns what it shows into the newest, in the
+    turn that delivers it, with selection, focus and the anchor kept as for any batch, and
+    compares nothing. A new query's order is still published whole and compared.
+
 ## Decision
 
 Use a narrow `NSViewControllerRepresentable` containing `NSCollectionView`,
@@ -156,12 +175,21 @@ batch read one `MediaGridStructureChange`, which pairs sections by key, compares
 pair's items from both ends for the runs they share, and looks up by identity only what
 lies between those runs and the items of unpaired sections: a few photos changing day
 look up a few hundred identities, not the library
-(`docs/research/2026-11-15-grid-reorder-follows-the-change.md`). A content made from the
-one on screen by removing items records the positions it dropped from that very order
-(held weakly), so a hide's structure takes the old sections less those positions and the
-change reads each day's shared runs from them: what a fresh build and a full comparison
-make, at the cost of the sections and the removed items, not the grid
-(`docs/research/2026-11-15-grid-hide-follows-the-removal.md`). A change no batch can describe (surviving
+(`docs/research/2026-11-15-grid-reorder-follows-the-change.md`). That comparison is only
+for a new query's order. Every other publication says how its order was made from the ones
+before it (`CatalogGridContent.Edit`: positions removed from the old order, positions
+inserted into the new, an item in both being a move): a hide, a Put Back, a stack expanding
+or collapsing, and a read that moved photos, which Projection describes in the same walk
+that tells two orders equal (`Edit.between`, ADR 0005). Each content keeps, for every
+earlier order still held anywhere, the edit from it, the edits of the publications between
+composed (`Edit.followed(by:)`, held weakly, so no order is kept alive for its lineage). So
+a grid showing an older order than the one an act's publication was made from — the window
+applies only the newest publication, and an act often lands just after a read that moved
+photos — still takes the act in by an edit: its structure is the old sections edited and
+its batch the edit's deletes, inserts and moves, what a fresh build and a full comparison
+make, at the cost of the sections and the edit, not the grid
+(`docs/research/2026-11-15-grid-hide-follows-the-removal.md`,
+`docs/research/2026-11-17-acts-on-an-unshown-reorder.md`). A change no batch can describe (surviving
 sections that swap order, a repeated section key — neither occurs under Date sort)
 reloads.
 
@@ -253,8 +281,9 @@ move-only batch — at `super`'s unmodified attributes so moves animate as plain
 position changes. Reorder-only completion
 skips `TileContentStore.prune` (membership identical by definition), and so does the
 completion of an apply that followed an edit: a Move to Trash's tiles come back by its Put
-Back, inserted beside their neighbours, and come back painted (APP-015); the next apply of another order
-prunes them. The
+Back, inserted beside their neighbours, and come back painted (APP-015); the next apply of a
+new query's order, published whole, prunes them, and `TileContentStore`'s byte budget bounds
+their images until then. The
 apply-policy summary reads membership from the previous structure's own identity
 index, so no apply rebuilds a set of the identities on screen.
 Descriptor-changed reorders (sort/scope/filter flips) and large membership
@@ -290,12 +319,14 @@ pending grid state. A structural apply has two halves inside that one exclusive 
 The pure half — the next `MediaGridStructure`, the diff summary against the structure on
 screen, and, for an animated apply, the `MediaGridBatchUpdates` between the two — is
 built off the main actor (`@concurrent`) from `Sendable` values copied when the gate
-admits the apply. The exception is an order made from the one on screen by an edit (a
+admits the apply. The exception is an order made from the one on screen by edits (a
 Move to Trash's hide, its Put Back's items inserted beside their neighbours, a stack
-expanding or collapsing: `CatalogGridContent.edit(from:)`):
-its structure is the old sections edited, its batch the edit's deletes and inserts, a cost
+expanding or collapsing, a read that moved photos, composed across publications the window
+skipped: `CatalogGridContent.edit(from:)`) naming fewer positions than the reload threshold:
+its structure is the old sections edited, its batch the edit's deletes, inserts and moves, a cost
 of the sections and the edit rather than the items, so it is built in the main-actor turn
-that delivered it and committed in the same turn. Sending it off the main actor bought
+that delivered it and committed in the same turn; a larger edit (a scan's arrivals) looks up
+every identity it inserts and is built off the main actor like any other. Sending a small one off the main actor bought
 nothing and cost the act's result a second main-thread turn, which the sandbox tour
 measured at 106 ms (`docs/research/2026-11-16-grid-applies-during-motion.md`). The AppKit half — scroll anchor capture, handing AppKit the structure
 (`reloadData`, or `performBatchUpdates` with the structure switched inside the update

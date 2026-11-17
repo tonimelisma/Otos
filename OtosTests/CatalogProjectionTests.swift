@@ -887,6 +887,64 @@ private func makeAsset(root: LibraryRoot, relativePath: String) -> MediaAsset {
     )
 }
 
+/// Through the publication loop: a read that moved a photo is published as an edit of the
+/// order before it, and a Move to Trash on top of it as an edit of both.
+extension CatalogProjectionTests {
+    @Test func aReadThatMovesAPhotoAndAnActOnItAreEditsOfTheOrderBefore() async throws {
+        try await withCatalogedLibrary(fileCount: 4, fileNamePrefix: "moved") { fixture in
+            let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))
+            let recorder = StateRecorder()
+            let stream = await projection.states(
+                store: fixture.store,
+                initialDescriptor: CatalogQueryDescriptor(scope: .library(fixture.rootPath))
+            )
+            let recordingTask = Task {
+                for await state in stream {
+                    await recorder.append(state)
+                }
+            }
+            defer { recordingTask.cancel() }
+            _ = await recorder.waitForCount(1) { $0.last?.mediaGrid.orderedAssetIDs.count == 4 }
+            let before = try #require(try await waitForProjectionQuiescence(projection, recordedBy: recorder).last)
+            let order = before.mediaGrid.orderedAssetIDs
+
+            // The last photo gains a capture date: the read moves it.
+            let last = try #require(order.last)
+            let asset = try #require(try await fixture.store.windowReads.mediaAssets(for: [last])[last])
+            let sourceMTime = try #require(asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) })
+            let outcome = await fixture.store.applyEnrichmentBatch([
+                EnrichmentResult(
+                    id: last,
+                    metadata: AssetMetadata(
+                        timestamps: [.absolute(instant: Date(timeIntervalSince1970: 4_000_000_000))],
+                        cameraModel: "Cam"
+                    ),
+                    thumbnailPath: "thumb.jpg",
+                    sourceSize: asset.byteSize,
+                    sourceMTimeSeconds: sourceMTime,
+                    contentHash: .empty
+                ),
+            ])
+            #expect(outcome == .applied(count: 1))
+            let moved = try #require(await recorder.waitForCount(1) {
+                $0.last.map { $0.mediaGrid.orderedAssetIDs != order && Set($0.mediaGrid.orderedAssetIDs) == Set(order) } ?? false
+            }.last)
+            #expect(moved.mediaGrid.content.edit(from: before.mediaGrid.content) != nil, "the read is an edit")
+
+            await projection.hide([order[1]], batch: MediaTrashBatchID(unixMilliseconds: 1))
+            let hidden = try #require(await recorder.waitForCount(1) {
+                $0.last?.mediaGrid.orderedAssetIDs.contains(order[1]) == false
+            }.last)
+            let edit = try #require(hidden.mediaGrid.content.edit(from: before.mediaGrid.content), "the act is an edit of the order before the read")
+            let made = order.editing(
+                removing: edit.removed,
+                inserting: edit.inserted.map { (position: $0, element: hidden.mediaGrid.orderedAssetIDs[$0]) }
+            )
+            #expect(made == hidden.mediaGrid.orderedAssetIDs)
+        }
+    }
+}
+
 private typealias StateRecorder = AsyncValueRecorder<CatalogWindowState>
 
 private extension AsyncValueRecorder where Value == CatalogWindowState {

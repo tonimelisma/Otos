@@ -1726,6 +1726,7 @@ private extension CatalogProjection {
         )
         let stateChanged = changeSummary.stateChanged
         let equalityUs = DiagnosticsTiming.microseconds(since: equalityStart)
+        let gridChange = Self.gridChange(state.mediaGrid, after: lastPublishedState?.mediaGrid)
         if stateChanged {
             yield(state)
         }
@@ -1742,8 +1743,22 @@ private extension CatalogProjection {
             totalMs: publication.timing.totalMs,
             dirtyAfter: requested != covered,
             stateChanged: stateChanged,
-            orderQueryCount: orderQueryCount
+            orderQueryCount: orderQueryCount,
+            gridChange: gridChange
         )
+    }
+
+    /// How a publication's grid order follows the one published before it, for its line: the
+    /// same order, an edit of it with the positions it names, or a whole order the grid
+    /// compares (a new query's).
+    static func gridChange(_ grid: CatalogMediaGridState, after previous: CatalogMediaGridState?) -> String {
+        guard let previous else {
+            return "whole"
+        }
+        if grid.sharesOrder(with: previous) {
+            return "same"
+        }
+        return grid.content.edit(from: previous.content).map { "edit:\($0.size)" } ?? "whole"
     }
 
     private func retainResolvedSelection(
@@ -1816,7 +1831,7 @@ private extension CatalogProjection {
             "base": base,
             "hidden": "\(hidden.count)",
             "changed": "\(changed)",
-            "editOfPublished": "\(lastPublishedState.map { state.mediaGrid.content.edit(from: $0.mediaGrid.content) != nil } ?? false)",
+            "gridChange": Self.gridChange(state.mediaGrid, after: lastPublishedState?.mediaGrid),
         ])
         if changed {
             yield(state)

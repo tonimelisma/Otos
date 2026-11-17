@@ -20,7 +20,7 @@ extension MediaGridViewController {
         let insertedCount: Int
         let removedCount: Int
         let reorderOnly: Bool
-        /// The order was an edit of the one on screen (`MediaGridStructure.isEdited(into:)`).
+        /// The order was made from the one on screen by edits (`MediaGridStructure.edit(into:)`).
         let followsEdit: Bool
         let largeApply: Bool
         let animatingDifferences: Bool
@@ -33,6 +33,16 @@ extension MediaGridViewController {
         /// on from where they were drawn rather than this apply waiting for them.
         let motionsInFlightAtCommit: Int
         let signpost: OSSignpostIntervalState
+        /// What finding the change cost, in items; none for an apply that found no change.
+        var work = StructuralApplyWork()
+    }
+
+    /// What a structural apply's change cost, in items (diagnostics): those compared in place
+    /// and looked up by identity (`MediaGridStructureChange`), and the items its batch moved.
+    struct StructuralApplyWork {
+        var compared = 0
+        var lookedUp = 0
+        var moved = 0
     }
 
     /// How the collection view took a new structure (diagnostics).
@@ -56,8 +66,12 @@ extension MediaGridViewController {
         /// `nil` when the apply reloads: the summary chose the reloadData path, or no batch
         /// can describe the change (`MediaGridBatchUpdates.between`).
         let batchUpdates: MediaGridBatchUpdates?
-        /// The new order was an edit of the one on screen, or that edit undone.
+        /// The new order was made from the one on screen by edits.
         let followsEdit: Bool
+        /// Items the change compared in place and looked up by identity
+        /// (`MediaGridStructureChange`): none compared when it follows an edit.
+        let comparedCount: Int
+        let lookedUpCount: Int
         let diffPolicyMs: Int
         let structureBuildMs: Int
         let batchUpdatesMs: Int
@@ -70,16 +84,20 @@ extension MediaGridViewController {
     /// gate's pending grid, applied after this one. The slot is held from admission to the
     /// commit's return, never for the motion the commit starts (`commitStructure`).
     ///
-    /// A grid whose order was made from the one on screen by an edit (a Move to Trash's
-    /// hide, a stack expanding or collapsing: `CatalogGridContent.edit(from:)`) is built from
-    /// the old sections and the edit alone, a cost of the sections and the edit rather than
-    /// the items, so it is built and committed here, in the turn that delivered it: an act's
-    /// result never waits for a second main-thread turn to come back from a build.
+    /// A grid whose order was made from the one on screen by edits (a Move to Trash's hide, a
+    /// Put Back, a stack expanding or collapsing, a read that moved photos, composed across any
+    /// publications the window skipped: `CatalogGridContent.edit(from:)`) is built from the
+    /// old sections and the edit alone, a cost of the sections and the edit rather than the
+    /// items, so a small one is built and committed here, in the turn that delivered it: an
+    /// act's result never waits for a second main-thread turn to come back from a build, nor
+    /// for a comparison of the whole order when it lands on a reorder the grid has not shown.
+    /// An edit large enough to reload (`MediaGridStructuralApplyPolicy`'s threshold, a scan's
+    /// arrivals) looks up as many identities as it inserts, so it is built off the main actor.
     ///
-    /// Any other build reads every item to cut the day sections and to compare the days a
-    /// change left alone, and looks up only what changed
-    /// (`docs/research/2026-11-15-grid-reorder-follows-the-change.md`); at a library's size
-    /// that is still tens of milliseconds, so it runs off the main actor
+    /// Any other build — a new query's order, published whole — reads every item to cut the
+    /// day sections and to compare the days a change left alone, and looks up only what
+    /// changed (`docs/research/2026-11-15-grid-reorder-follows-the-change.md`); at a library's
+    /// size that is still tens of milliseconds, so it runs off the main actor
     /// (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). One build at
     /// a time, by the gate's exclusivity; the task is cancelled only at teardown, and a
     /// cancelled build is never applied.
@@ -90,7 +108,9 @@ extension MediaGridViewController {
         let applyStart = ContinuousClock.now
         let previous = structure
         let descriptorChanged = change != .unchanged
-        if previous.isEdited(into: grid.content) {
+        if let edit = previous.edit(into: grid.content),
+           edit.size < MediaGridStructuralApplyPolicy.reloadDataFallbackChangedItemThreshold
+        {
             let built = Self.build(for: grid, descriptorChanged: descriptorChanged, previous: previous)
             commitStructure(built, grid: grid, change: change, applyStart: applyStart)
             return
@@ -134,6 +154,7 @@ extension MediaGridViewController {
         let structureStart = ContinuousClock.now
         let structure = MediaGridStructure(grid: grid, following: previous)
         let structureBuildMs = DiagnosticsTiming.milliseconds(since: structureStart)
+        let followsEdit = structure.edit(since: previous) != nil
 
         // The one identity comparison both the summary and the batch read: it looks up
         // only what changed between the two structures.
@@ -150,7 +171,9 @@ extension MediaGridViewController {
             structure: structure,
             summary: summary,
             batchUpdates: batchUpdates,
-            followsEdit: previous.isEdited(into: grid.content),
+            followsEdit: followsEdit,
+            comparedCount: change.comparedCount,
+            lookedUpCount: change.lookedUpCount,
             diffPolicyMs: diffPolicyMs,
             structureBuildMs: structureBuildMs,
             batchUpdatesMs: DiagnosticsTiming.milliseconds(since: batchStart)
@@ -228,7 +251,12 @@ extension MediaGridViewController {
             sectionCount: built.structure.numberOfSections,
             heldDuringScroll: mutationGate.lastDrainedHeldDuringScroll,
             motionsInFlightAtCommit: motionsInFlightAtCommit,
-            signpost: signpost
+            signpost: signpost,
+            work: StructuralApplyWork(
+                compared: built.comparedCount,
+                lookedUp: built.lookedUpCount,
+                moved: built.batchUpdates?.movedItems.count ?? 0
+            )
         )
         completeStructuralApply(context, operation: operation, stallMonitor: stallMonitor)
     }
@@ -675,6 +703,9 @@ extension MediaGridViewController {
                 "removed": "\(context.removedCount)",
                 "reorderOnly": "\(context.reorderOnly)",
                 "followsEdit": "\(context.followsEdit)",
+                "compared": "\(context.work.compared)",
+                "lookedUp": "\(context.work.lookedUp)",
+                "moved": "\(context.work.moved)",
                 "largeApply": "\(context.largeApply)",
                 "animatingDifferences": "\(context.animatingDifferences)",
                 "animationSuppressed": "\(context.animationSuppressed)",

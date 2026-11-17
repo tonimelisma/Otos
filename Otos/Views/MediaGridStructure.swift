@@ -25,9 +25,9 @@ import Synchronization
 /// items cost D × N to describe: 13–15 seconds for the owner's 158,000 items over about
 /// 5,000 days. This is built in one linear pass, off the main actor, inside the mutation
 /// gate's exclusive slot (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`).
-/// A structure following an edit of the order on screen (a Move to Trash, a stack expanding
-/// or collapsing) is built from the old sections and the edit alone
-/// (`init(grid:following:)`).
+/// A structure following edits of the order on screen (a Move to Trash, a Put Back, a stack
+/// expanding or collapsing, a read that moved photos) is built from the old sections and the
+/// edit alone (`init(grid:following:)`).
 ///
 /// Index-path lookup by identity (selection, focus, anchoring, drag) and the identities
 /// `MediaGridStructureChange` looks up both read the position index of the `CatalogGridContent` the order
@@ -365,10 +365,11 @@ nonisolated struct MediaGridStructure: Sendable {
         content.edit(from: previous.content)
     }
 
-    /// Whether `next` was made from this structure's order by an edit, so the structure
-    /// that shows it costs the sections and the edit to build, not the items.
-    func isEdited(into next: CatalogGridContent) -> Bool {
-        next.edit(from: content) != nil
+    /// The edit that makes `next` from this structure's order, if `next` was made from it by
+    /// edits, so the structure that shows it costs the sections and the edit to build, not
+    /// the items.
+    func edit(into next: CatalogGridContent) -> CatalogGridContent.Edit? {
+        next.edit(from: content)
     }
 
     /// An order and its day buckets outside a publication, as a test or a fixture holds them.
@@ -495,9 +496,11 @@ nonisolated struct MediaGridStructure: Sendable {
 /// identity comparison the apply policy's summary and the batch both read
 /// (`MediaGridStructuralApplyPolicy.summarize`, `MediaGridBatchUpdates.between`).
 ///
-/// An order made from the one on screen by an edit (`CatalogGridContent.Edit`: a Move to
-/// Trash, a stack expanding or collapsing) is read from the edit: nothing is compared or
-/// looked up. Any other pair of orders is compared: sections pair by key, a paired
+/// An order made from the one on screen by edits (`CatalogGridContent.Edit`: a Move to
+/// Trash, a Put Back, a stack expanding or collapsing, a read that moved photos, and any of
+/// them composed across publications the window skipped) is read from the edit: nothing is
+/// compared, and only what it inserted is looked up, to tell an item it moved from one it
+/// added. Any other pair of orders (a new query's, published whole) is compared: sections pair by key, a paired
 /// section's items are compared from both ends, in order, for the run they share at the
 /// front and at the back, and only what lies between those runs, and every item of a
 /// section with no pair, is looked up by identity. A day the change did not touch is one
@@ -519,7 +522,9 @@ nonisolated struct MediaGridStructureChange: Sendable {
 
     enum Kind: Sendable {
         /// The new order is the old one edited: survivors keep their relative order.
-        case edit(CatalogGridContent.Edit)
+        /// `moved` is each inserted item the old order held, from its old position to its
+        /// new one: an item the edit moved rather than added.
+        case edit(CatalogGridContent.Edit, moved: [(from: Int, to: Int)])
         /// The orders were compared. `pairs` is each new section's pairing, `nil` for a
         /// section the old structure has no key for; `newIndexOfOldSection` the new index
         /// of each old section, or -1 when its key is gone. Every pairing is `nil`, and
@@ -535,6 +540,12 @@ nonisolated struct MediaGridStructureChange: Sendable {
     let retainedCount: Int
     /// Whether the two orders are the same sequence: every item at the place it had.
     let orderIsUnchanged: Bool
+    /// The work the change took, in items: those compared in place across the two orders
+    /// (every item of the runs a compared section shares), and those looked up by identity.
+    /// An edit compares none and looks up only what it inserted (diagnostics, and what the
+    /// tests hold an edit's apply to).
+    let comparedCount: Int
+    let lookedUpCount: Int
 
     init(from old: MediaGridStructure, to new: MediaGridStructure) {
         if let edit = new.edit(since: old) {
@@ -544,13 +555,22 @@ nonisolated struct MediaGridStructureChange: Sendable {
         }
     }
 
-    /// An edit's change: every new item but the inserted ones is an old one.
+    /// An edit's change: every new item but the inserted ones is an old one, and an inserted
+    /// one the old order holds was moved.
     private init(old: MediaGridStructure, new: MediaGridStructure, edit: CatalogGridContent.Edit) {
         self.old = old
         self.new = new
-        kind = .edit(edit)
-        retainedCount = new.orderedIDs.count - edit.inserted.count
+        var moved: [(from: Int, to: Int)] = []
+        for position in edit.inserted {
+            if let oldPosition = old.position(of: new.orderedIDs[position]) {
+                moved.append((oldPosition, position))
+            }
+        }
+        kind = .edit(edit, moved: moved)
+        retainedCount = new.orderedIDs.count - edit.inserted.count + moved.count
         orderIsUnchanged = edit.isEmpty
+        comparedCount = 0
+        lookedUpCount = edit.inserted.count
     }
 
     /// Each new section's pairing; empty for an edit, which pairs nothing.
@@ -576,6 +596,8 @@ nonisolated struct MediaGridStructureChange: Sendable {
         pairs.reserveCapacity(new.sections.count)
         var retained = 0
         var orderIsUnchanged = oldIDs.count == newIDs.count
+        var compared = 0
+        var lookedUp = 0
         /// The answers are counted, not kept: a change small enough to animate looks its
         /// few stretches up again for the batch, and a scope switch's would be every item.
         func lookUp(_ positions: Range<Int>) {
@@ -584,6 +606,7 @@ nonisolated struct MediaGridStructureChange: Sendable {
             guard !oldIDs.isEmpty else {
                 return
             }
+            lookedUp += positions.count
             for position in positions {
                 let oldPosition = old.position(of: newIDs[position])
                 retained += oldPosition == nil ? 0 : 1
@@ -601,6 +624,7 @@ nonisolated struct MediaGridStructureChange: Sendable {
             let (front, back) = Self.sharedRuns(oldIDs, oldItems, newIDs, newItems)
             pairs.append(PairedSection(oldSection: oldSection, sharedFront: front, sharedBack: back))
             retained += front + back
+            compared += front + back
             let frontMoved = front > 0 && oldItems.lowerBound != newItems.lowerBound
             let backMoved = back > 0 && oldItems.upperBound != newItems.upperBound
             orderIsUnchanged = orderIsUnchanged && !frontMoved && !backMoved
@@ -609,6 +633,8 @@ nonisolated struct MediaGridStructureChange: Sendable {
         kind = .compared(pairs: pairs, newIndexOfOldSection: newIndexOfOldSection)
         retainedCount = retained
         self.orderIsUnchanged = orderIsUnchanged
+        comparedCount = compared
+        lookedUpCount = lookedUp
     }
 
     /// The old positions between `pair`'s shared runs: where every item of its old section
@@ -674,9 +700,9 @@ nonisolated struct MediaGridStructureChange: Sendable {
 /// deletions and move sources at old positions, insertions and move destinations at new
 /// ones, and the day headers that go and come at their supplementary index paths.
 ///
-/// An edit (`MediaGridStructureChange.Kind.edit`) is its removed and inserted positions,
-/// and the headers of the days it emptied or started: no survivor changes its relative
-/// order, so nothing moves. A compared change matches sections by key: a section only in
+/// An edit (`MediaGridStructureChange.Kind.edit`) is its removed and inserted positions, an
+/// item it both removed and inserted being a move, and the headers of the days it emptied or
+/// started: no survivor changes its relative order, so nothing else moves. A compared change matches sections by key: a section only in
 /// the old structure loses its header, one only in the new gains one. An item that left
 /// its section for another is an explicit move, wherever it went. Within a surviving
 /// section, the longest run of its own items already in old order stays put and AppKit
@@ -712,8 +738,8 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
             return nil
         }
         switch change.kind {
-        case let .edit(edit):
-            return edited(edit, change: change)
+        case let .edit(edit, moved):
+            return edited(edit, moved: moved, change: change)
         case let .compared(pairs, newIndexOfOldSection):
             guard let newIndexOfOldSection,
                   let edits = sectionEdits(change, newIndexOfOldSection: newIndexOfOldSection)
@@ -737,10 +763,12 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
         }
     }
 
-    /// An edit's batch: its positions, and the headers of the days it emptied or started,
-    /// each told by its key in the other structure.
+    /// An edit's batch: its positions — an item it moved is a move, so AppKit keeps its view —
+    /// and the headers of the days it emptied or started, each told by its key in the other
+    /// structure.
     private static func edited(
         _ edit: CatalogGridContent.Edit,
+        moved: [(from: Int, to: Int)],
         change: MediaGridStructureChange
     ) -> MediaGridBatchUpdates {
         let old = change.old
@@ -748,6 +776,13 @@ nonisolated struct MediaGridBatchUpdates: Equatable, Sendable {
         var updates = MediaGridBatchUpdates()
         updates.deletedItems = Set(edit.removed.map(MediaGridStructure.indexPath(atPosition:)))
         updates.insertedItems = Set(edit.inserted.map(MediaGridStructure.indexPath(atPosition:)))
+        for (from, to) in moved {
+            let source = MediaGridStructure.indexPath(atPosition: from)
+            let target = MediaGridStructure.indexPath(atPosition: to)
+            updates.deletedItems.remove(source)
+            updates.insertedItems.remove(target)
+            updates.movedItems.append(Move(from: source, to: target))
+        }
         var lastSection: Int?
         for position in edit.removed {
             guard let section = old.section(containing: position), section != lastSection else {

@@ -170,11 +170,13 @@ everything expensive happens on an actor off the main thread.
   `MediaGridStructure.Headers`), so a batch costs AppKit no per-day work; the day sections are
   the layout's. The apply policy's summary and the batch both read one
   `MediaGridStructureChange`, which looks up only the identities outside the runs each
-  day shares with its previous self. A grid whose order was made from the one on screen
-  by an edit (`CatalogGridContent.Edit`: Move to Trash's `removing`, a stack expanding or
-  collapsing, `edited`) is taken in by the edit's positions alone
-  (`MediaGridStructure.init(grid:following:)`) and applied as their inserts and deletes,
-  and the layout takes the structure's sections and header keys in one value
+  day shares with its previous self; it runs only for a new query's order, which Projection
+  publishes whole. A grid whose order was made from the one on screen by edits
+  (`CatalogGridContent.Edit`: Move to Trash's `removing`, a Put Back or a stack expanding or
+  collapsing, `edited`, a read that moved photos, `descending(from:by:)`, composed across
+  publications the window skipped) is taken in by the edit's positions alone
+  (`MediaGridStructure.init(grid:following:)`) and applied as their inserts, deletes and
+  moves, and the layout takes the structure's sections and header keys in one value
   (`layoutInput`). The controller is the collection view's plain
   `NSCollectionViewDataSource` over that one value, which the layout, day bar, headers,
   selection, drag, prefetch, zoom and scroll anchoring also read. The grid's layout is
@@ -347,7 +349,9 @@ everything expensive happens on an actor off the main thread.
   People act is laid over People by `PendingPeopleActs` until a build covers its write
   (`CatalogPeopleState.covers`); an expansion is published by `CatalogProjection.showExpansion`,
   which collapses again only the stacks it changed (`PhotoStackCollapse.changingExpansion`)
-  and hands the grid the new order as an edit of the one it shows.
+  and hands the grid the new order as an edit of the one it shows. Every publication of the
+  same query is an edit of the last (`CatalogMediaGridState.sharingContent(of:)`), so an act
+  landing on a read the window skipped is still an edit of the order the grid shows.
 - **Which pane shows**: `CatalogWindowViewModel.detailPane` (`CatalogDetailPane`) — the
   selected scope's surface from the click on, waiting (`ScopeWaitingView`) until its state
   is applied (DES-118).

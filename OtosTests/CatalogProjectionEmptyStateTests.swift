@@ -458,10 +458,12 @@ struct CatalogProjectionEmptyStateTests {
 
         try await store.addLibrary(url: root)
 
+        // The library's listing and its first batch may reach one build together: which of
+        // the two the projection reads first is the scan's timing, not the projection's.
         let states = await recorder.waitForState { states in
-            states.contains { $0.mediaGrid.orderedAssetIDs.count == 3 }
+            states.contains { $0.libraries.count == 1 && $0.mediaGrid.orderedAssetIDs.count == 3 }
         }
-        #expect(states.contains { $0.libraries.count == 1 && $0.mediaGrid.orderedAssetIDs.isEmpty })
+        #expect(states.contains { $0.libraries.count == 1 })
         await store.shutdown()
     }
 

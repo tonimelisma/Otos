@@ -151,6 +151,15 @@ map, On This Day, the duplicate groups, People, the filter's options and the imp
 batches — with the last publication's own, then builds the new content's position index
 (`CatalogWindowState.sharingUnchanged(with:)`). The comparison is paid once, here; the
 window, the change summary and SwiftUI then tell an unchanged part by identity (ADR 0004).
+A grid order of the same query that is not equal is published as an edit of the last
+publication's (`CatalogGridContent.Edit.between`): the same walk of the two orders side by
+side, which looks an item up only where they differ, so a read that moved a few photos
+costs a few look-ups more than telling the orders equal. A hide, a Put Back and a stack
+expanding are already edits of the order they were made from. Each published content keeps
+the edit from every earlier order still held, the edits between composed, so the grid takes
+any publication of the query in by an edit of the order it shows, whichever publications the
+window skipped (ADR 0006). Only a new query's order (another scope, filter, sort or search)
+is published whole, and the grid reloads it.
 
 Rejected: a time-based throttle on background passes beyond the existing cadence (ADR
 0033: whether a read can have changed is a fact the Store holds), a generic query cache in

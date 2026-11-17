@@ -105,14 +105,22 @@ struct MediaGridStructureRemovalTests {
         #expect(MediaGridStructure(grid: shown.hiding([Self.id(2)]), following: shownStructure).numberOfSections == 1)
     }
 
-    /// A grid made from another publication than the one on screen is built afresh.
-    @Test func aRemovalFromAnotherOrderIsBuiltAfresh() {
+    /// A grid made from a publication the window skipped follows the order on screen by the
+    /// two removals composed; one made from an order not made from the one on screen is
+    /// built afresh.
+    @Test func aRemovalFromASkippedPublicationFollowsBothRemovals() throws {
         let shown = Self.grid([3, 3])
         let first = shown.hiding([Self.id(1)])
         let second = first.hiding([Self.id(4)])
-        let structure = MediaGridStructure(grid: second, following: MediaGridStructure(grid: shown))
+        try Self.expectFollowsTheRemoval(shown, second)
+        #expect(MediaGridStructure(grid: second, following: MediaGridStructure(grid: shown)).edit(
+            since: MediaGridStructure(grid: shown)
+        ) == CatalogGridContent.Edit(removed: [1, 4], inserted: []))
+
+        let other = Self.fresh(shown).hiding([Self.id(4)])
+        let structure = MediaGridStructure(grid: other, following: MediaGridStructure(grid: shown))
         #expect(structure.edit(since: MediaGridStructure(grid: shown)) == nil)
-        #expect(structure.sections == MediaGridStructure(grid: Self.fresh(second)).sections)
+        #expect(structure.sections == MediaGridStructure(grid: Self.fresh(other)).sections)
     }
 
     @Test func randomRemovalsFollowTheRemovedPositions() throws {
