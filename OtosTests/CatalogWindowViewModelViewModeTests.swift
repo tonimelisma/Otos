@@ -22,6 +22,7 @@ final class FakePreviewLoader: PreviewLoading {
         var hold = false
         var pending: [Pending] = []
         var defaultOutcome: PreviewImageLoader.Outcome?
+        var heldPhotoReleases = 0
     }
 
     private let state = Mutex(State())
@@ -86,11 +87,33 @@ final class FakePreviewLoader: PreviewLoading {
     func quiesce(under root: LibraryRootPath) async {}
 
     func resume(under root: LibraryRootPath) async {}
+
+    func releaseHeldPhotos() {
+        state.withLock { $0.heldPhotoReleases += 1 }
+    }
+
+    var heldPhotoReleases: Int {
+        state.withLock { $0.heldPhotoReleases }
+    }
 }
 
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelViewModeTests {
+    /// Leaving the full-size view tells the loader no pane can return to a photo; moving
+    /// within it does not.
+    @Test func leavingTheFullSizeViewReleasesTheHeldPhotos() {
+        let fake = FakePreviewLoader()
+        let model = makeViewModeModel(loader: fake)
+        let ids = makeViewModeIDs(count: 3)
+        model.applyState(makeViewModeState(orderedIDs: ids))
+        model.openLoupe(id: ids[0])
+        model.focusNext()
+        #expect(fake.heldPhotoReleases == 0)
+        model.exitToGrid()
+        #expect(fake.heldPhotoReleases == 1)
+    }
+
     @Test func staleDecodeDiscardedByIdentity() async throws {
         let fake = FakePreviewLoader()
         await fake.setHold(true)

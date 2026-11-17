@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import OSLog
 import QuickLookThumbnailing
+import Synchronization
 import UniformTypeIdentifiers
 
 /// Preview loading boundary used by `CatalogWindowViewModel`. Production uses
@@ -15,6 +16,9 @@ nonisolated protocol PreviewLoading: Sendable {
     /// `resume(under:)`: an eject must not find the loader holding a card file open.
     func quiesce(under root: LibraryRootPath) async
     func resume(under root: LibraryRootPath) async
+    /// Lets go of every photo held for a pane to return to: the full-size view was left, so
+    /// no pane can. Synchronous, so a request made after it never finds what it let go.
+    func releaseHeldPhotos()
 }
 
 /// Preview image loader guide
@@ -27,7 +31,18 @@ nonisolated protocol PreviewLoading: Sendable {
 /// downsampled `CGImage` or `.unavailable`.
 ///
 /// Per-id in-flight work is coalesced. Stale results are rejected by the ViewModel's
-/// expected-asset identity check — this actor returns whatever it decoded.
+/// expected-asset identity check — this actor returns whatever it decoded. A decode whose
+/// every waiter has gone (the pane moved on) is cancelled, and a cancelled decode stops
+/// before it reads or allocates anything and is never held: stepping through photos faster
+/// than they decode starts only the decodes still wanted.
+///
+/// **What a decode is.** A screen-sized request decodes the stored preview with
+/// `CGImageSourceCreateThumbnailAtIndex` at the requested long edge. Image I/O returns it in
+/// an IOSurface that Core Animation displays as it is, so a shown photo's pixels exist once,
+/// in a region of their own that leaves the footprint when the image goes. A decode drawn
+/// into a bitmap context instead (`ThumbnailStore.load`) is copied again by Core Animation
+/// for display and kept with the image: two full copies a photo, and the decode's scratch
+/// left in the malloc heap (`docs/research/2026-11-16-full-size-view-memory.md`).
 ///
 /// **What it holds.** A pane holds the image it shows (`PanePreview`), so the loader holds
 /// only what a pane can come back to: the screen-sized decodes of the last
@@ -68,7 +83,7 @@ actor PreviewImageLoader: PreviewLoading {
     /// left, so a return to it never waits.
     static let retainedPhotos = 3
 
-    private struct CacheEntry {
+    private nonisolated struct CacheEntry: Sendable {
         let image: CGImage
         let longEdge: Int
         let nativePixelSize: CGSize?
@@ -81,9 +96,18 @@ actor PreviewImageLoader: PreviewLoading {
     /// Where stored previews live (ADR 0035); nil for an in-memory catalog, which then
     /// always decodes the original.
     private let derivedImageDirectory: URL?
-    private var cache: [MediaAssetID: CacheEntry] = [:]
-    /// The held photos, least recently asked for first.
-    private var cacheOrder: [MediaAssetID] = []
+    /// The photos held for a return. Behind a lock rather than on the actor, so the window
+    /// lets go of them synchronously when it leaves the full-size view (`releaseHeldPhotos`).
+    private nonisolated struct HeldPhotos {
+        var entries: [MediaAssetID: CacheEntry] = [:]
+        /// Least recently asked for first.
+        var order: [MediaAssetID] = []
+        /// How many times the window left the full-size view. A decode asked for before the
+        /// latest leave is not held when it lands after it.
+        var visit = 0
+    }
+
+    private let held = Mutex(HeldPhotos())
     /// One decode per asset in flight, remembered with the size it was asked for. A second
     /// request shares it only when that decode is at least as large as the one it needs;
     /// otherwise it would be handed a smaller image than it asked for.
@@ -91,6 +115,47 @@ actor PreviewImageLoader: PreviewLoading {
         let longEdge: Int
         let revision: Int64
         let task: Task<Outcome, Never>
+        let waiters: DecodeWaiters
+    }
+
+    /// Who still waits for one in-flight decode. The last to be cancelled cancels the decode,
+    /// and a cancelled decode takes no new waiter: a request arriving after it starts its own.
+    private final nonisolated class DecodeWaiters: Sendable {
+        private let state = Mutex<(waiting: Int, abandoned: Bool)>((0, false))
+
+        func join() -> Bool {
+            state.withLock { state in
+                guard !state.abandoned else { return false }
+                state.waiting += 1
+                return true
+            }
+        }
+
+        /// True when the waiter leaving was the last.
+        func leave() -> Bool {
+            state.withLock { state in
+                state.waiting -= 1
+                state.abandoned = state.waiting < 1
+                return state.abandoned
+            }
+        }
+
+        var count: Int {
+            state.withLock { $0.waiting }
+        }
+    }
+
+    /// The decodes this loader started, and those it cancelled before they read a byte.
+    nonisolated struct DecodeCounts: Equatable, Sendable {
+        var started = 0
+        var cancelledBeforeStart = 0
+    }
+
+    private(set) var decodeCounts = DecodeCounts()
+
+    /// How many requests wait for `id`'s in-flight decode.
+    func waiterCount(for id: MediaAssetID) -> Int {
+        inFlight[id]?.waiters.count ?? 0
     }
 
     private var inFlight: [MediaAssetID: InFlightDecode] = [:]
@@ -119,35 +184,45 @@ actor PreviewImageLoader: PreviewLoading {
             return .unavailable
         }
         let revision = request.detail?.renderedRevision ?? 0
-        if let cached = cache[request.id], cached.longEdge >= request.targetLongEdge, cached.revision == revision {
-            touch(request.id)
+        let visit = held.withLock { $0.visit }
+        if let cached = heldEntry(request.id, longEdge: request.targetLongEdge, revision: revision) {
             return .image(cached.image, nativePixelSize: cached.nativePixelSize)
         }
         if let existing = inFlight[request.id], existing.longEdge >= request.targetLongEdge,
-           existing.revision == revision
+           existing.revision == revision, existing.waiters.join()
         {
-            return await existing.task.value
+            return await Self.wait(for: existing.task, among: existing.waiters)
         }
+        let waiters = DecodeWaiters()
+        _ = waiters.join()
         let task = Task(priority: .userInitiated) {
             await self.decode(request)
         }
         // A larger request replaces a smaller decode's entry; the smaller one finishes for
         // its own caller, and each caller removes only the entry it owns.
-        inFlight[request.id] = InFlightDecode(longEdge: request.targetLongEdge, revision: revision, task: task)
-        let outcome = await task.value
-        if inFlight[request.id]?.longEdge == request.targetLongEdge, inFlight[request.id]?.revision == revision {
+        inFlight[request.id] = InFlightDecode(
+            longEdge: request.targetLongEdge, revision: revision, task: task, waiters: waiters
+        )
+        let outcome = await Self.wait(for: task, among: waiters)
+        if inFlight[request.id]?.task == task {
             inFlight[request.id] = nil
+        }
+        // A cancelled decode is never held, even one that finished: nobody waits for it.
+        guard !task.isCancelled else {
+            return .unavailable
         }
         if request.targetLongEdge == Self.fullResolution {
             // The pane holds the full decode; the photo's screen-sized one stays the newest
             // held, the one a return to it paints.
-            if cache[request.id] != nil {
-                touch(request.id)
+            held.withLock { held in
+                if held.entries[request.id] != nil {
+                    Self.touch(request.id, in: &held)
+                }
             }
         } else if case let .image(image, nativePixelSize) = outcome {
             insert(
                 image, for: request.id, longEdge: request.targetLongEdge,
-                nativePixelSize: nativePixelSize, revision: revision
+                nativePixelSize: nativePixelSize, revision: revision, visit: visit
             )
         }
         return outcome
@@ -172,6 +247,58 @@ actor PreviewImageLoader: PreviewLoading {
         quiescedRoots.remove(root)
     }
 
+    nonisolated func releaseHeldPhotos() {
+        // Taken out under the lock and let go after it: an image's last release frees its
+        // pixels.
+        let released = held.withLock { held in
+            defer { held = HeldPhotos(visit: held.visit &+ 1) }
+            return held
+        }
+        OtosLog.mediaIO.noticeOperation("preview.held", phase: "released", fields: [
+            "photos": "\(released.entries.count)",
+            "bytes": "\(Self.bytes(of: released))",
+        ])
+    }
+
+    /// How many photos are held for a return, and their pixels' bytes.
+    nonisolated var heldPhotos: (count: Int, bytes: Int) {
+        held.withLock { held in
+            (held.entries.count, Self.bytes(of: held))
+        }
+    }
+
+    private nonisolated static func bytes(of held: HeldPhotos) -> Int {
+        held.entries.values.reduce(0) { $0 + $1.image.bytesPerRow * $1.image.height }
+    }
+
+    /// Awaits a shared decode. A waiter that is cancelled leaves it, and the last to leave
+    /// cancels it.
+    private nonisolated static func wait(for task: Task<Outcome, Never>, among waiters: DecodeWaiters) async -> Outcome {
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            if waiters.leave() {
+                task.cancel()
+            }
+        }
+    }
+
+    /// Runs `work` off the actor, at the QoS Image I/O's own workers run at. A cancelled
+    /// caller cancels it, and work cancelled before it begins does not run.
+    private nonisolated static func offActor<Value: Sendable>(
+        _ work: @escaping @Sendable () async -> Value?
+    ) async -> Value? {
+        let task = Task.detached(priority: .medium) { () async -> Value? in
+            guard !Task.isCancelled else { return nil }
+            return await work()
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     private func decode(_ request: Request) async -> Outcome {
         let url = request.id.fileURL
         let signpost = OtosSignpost.mediaIO.beginInterval("PreviewDecode")
@@ -184,12 +311,22 @@ actor PreviewImageLoader: PreviewLoading {
         // touching the original — cloud-only or not (ADR 0035). The original's size comes
         // from catalog metadata, because reading its header would download it. A preview
         // that is missing or unreadable falls through to the original below.
+        guard !Task.isCancelled else {
+            decodeCounts.cancelledBeforeStart += 1
+            return .unavailable
+        }
         if request.targetLongEdge != Self.fullResolution, request.detail?.bestKind != .video,
            let previewPath = request.detail?.previewPath, let directory = derivedImageDirectory
         {
-            let stored = await Task.detached(priority: .medium) {
-                ThumbnailStore.load(previewPath, in: directory)
-            }.value
+            decodeCounts.started += 1
+            let previewURL = ThumbnailStore.url(for: previewPath, in: directory)
+            let target = request.targetLongEdge
+            let stored = await Self.offActor {
+                Self.decodeStoredPreview(at: previewURL, targetLongEdge: target)
+            }
+            guard !Task.isCancelled else {
+                return .unavailable
+            }
             if let stored {
                 OtosLog.mediaIO.notice(
                     """
@@ -225,31 +362,35 @@ actor PreviewImageLoader: PreviewLoading {
             return .unavailable
         }
 
+        guard !Task.isCancelled else {
+            decodeCounts.cancelledBeforeStart += 1
+            return .unavailable
+        }
         // Re-check immediately before the byte read (ADR 0008).
         guard status(url) == .materialized else {
             return .unavailable
         }
+        decodeCounts.started += 1
 
-        // Decode in a `Task.detached` (off this actor) so two panes can decode concurrently and bookkeeping
-        // stays responsive. Dataless/materialize gates above already ran in order.
+        // Decoded off this actor (`offActor`) so two panes can decode concurrently and
+        // bookkeeping stays responsive. Dataless/materialize gates above already ran in order.
         // ImageIO thumbnail creation waits on Default-QoS internal workers; matching
         // that QoS avoids the Thread Performance Checker priority-inversion hang risk
         // that fires when this path runs at .userInitiated.
         let target = request.targetLongEdge
         let recipe = request.detail?.editRecipe ?? .neutral
-        let decoded: (CGImage, String, CGSize?)? = await Task.detached(priority: .medium) { () -> (
-            CGImage,
-            String,
-            CGSize?
-        )? in
+        let decoded = await Self.offActor { () async -> DecodedImage? in
             if isVideo {
-                return await Self.decodeVideoPoster(url: url, targetLongEdge: target)
+                return await Self.decodeVideoPoster(url: url, targetLongEdge: target).map(DecodedImage.init)
             }
             if ImageRenderer.isRAW(url) || !recipe.isNeutral {
-                return await Self.render(url: url, targetLongEdge: target, recipe: recipe)
+                return await Self.render(url: url, targetLongEdge: target, recipe: recipe).map(DecodedImage.init)
             }
-            return Self.decodeImage(url: url, targetLongEdge: target)
-        }.value
+            return Self.decodeImage(url: url, targetLongEdge: target).map(DecodedImage.init)
+        }.map { ($0.image, $0.source, $0.nativePixelSize) }
+        guard !Task.isCancelled else {
+            return .unavailable
+        }
 
         let decodeMs = DiagnosticsTiming.milliseconds(since: start)
         guard let (image, source, nativePixelSize) = decoded else {
@@ -270,6 +411,30 @@ actor PreviewImageLoader: PreviewLoading {
             """
         )
         return .image(image, nativePixelSize: nativePixelSize)
+    }
+
+    private nonisolated struct DecodedImage: Sendable {
+        let image: CGImage
+        let source: String
+        let nativePixelSize: CGSize?
+
+        init(_ decoded: (CGImage, String, CGSize?)) {
+            (image, source, nativePixelSize) = decoded
+        }
+    }
+
+    /// The stored preview at `targetLongEdge` at most, as Image I/O hands it over: in an
+    /// IOSurface that Core Animation displays without a copy. Its pixels are as stored, as
+    /// `ThumbnailStore` writes them upright.
+    private nonisolated static func decodeStoredPreview(at url: URL, targetLongEdge: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            return nil
+        }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: targetLongEdge,
+            kCGImageSourceShouldCacheImmediately: true,
+        ] as CFDictionary)
     }
 
     /// A RAW, or an edited still, is rendered by the interactive renderer with its saved
@@ -371,23 +536,47 @@ actor PreviewImageLoader: PreviewLoading {
         for id: MediaAssetID,
         longEdge: Int,
         nativePixelSize: CGSize?,
-        revision: Int64
+        revision: Int64,
+        visit: Int
     ) {
         // A smaller decode that finishes after a larger one must not replace it — unless
-        // it shows a newer edit.
-        if let existing = cache[id], existing.longEdge >= longEdge, existing.revision >= revision {
-            touch(id)
-            return
+        // it shows a newer edit. What is let go is let go after the lock.
+        let evicted: [CacheEntry] = held.withLock { held in
+            guard held.visit == visit else {
+                return []
+            }
+            if let existing = held.entries[id], existing.longEdge >= longEdge, existing.revision >= revision {
+                Self.touch(id, in: &held)
+                return []
+            }
+            held.entries[id] = CacheEntry(image: image, longEdge: longEdge, nativePixelSize: nativePixelSize, revision: revision)
+            Self.touch(id, in: &held)
+            var evicted: [CacheEntry] = []
+            while held.order.count > Self.retainedPhotos {
+                if let entry = held.entries.removeValue(forKey: held.order.removeFirst()) {
+                    evicted.append(entry)
+                }
+            }
+            return evicted
         }
-        cache[id] = CacheEntry(image: image, longEdge: longEdge, nativePixelSize: nativePixelSize, revision: revision)
-        touch(id)
-        while cacheOrder.count > Self.retainedPhotos {
-            cache[cacheOrder.removeFirst()] = nil
+        // The evicted images are released here, outside the lock.
+        _ = evicted
+    }
+
+    /// The held decode of `id` when it is at least `longEdge` and shows `revision`, made the
+    /// most recently asked for.
+    private func heldEntry(_ id: MediaAssetID, longEdge: Int, revision: Int64) -> CacheEntry? {
+        held.withLock { held in
+            guard let entry = held.entries[id], entry.longEdge >= longEdge, entry.revision == revision else {
+                return nil
+            }
+            Self.touch(id, in: &held)
+            return entry
         }
     }
 
-    private func touch(_ id: MediaAssetID) {
-        cacheOrder.removeAll { $0 == id }
-        cacheOrder.append(id)
+    private nonisolated static func touch(_ id: MediaAssetID, in held: inout HeldPhotos) {
+        held.order.removeAll { $0 == id }
+        held.order.append(id)
     }
 }

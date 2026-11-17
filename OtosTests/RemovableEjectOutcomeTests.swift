@@ -171,6 +171,8 @@ struct RemovableEjectOutcomeTests {
         func resume(under root: LibraryRootPath) {
             events.append("resume:\(root.rawValue)")
         }
+
+        nonisolated func releaseHeldPhotos() {}
     }
 
     private actor Counter {

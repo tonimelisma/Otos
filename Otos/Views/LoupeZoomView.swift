@@ -44,6 +44,11 @@ struct LoupeZoomView: NSViewRepresentable {
         view.setContent(image: image, nativeLongEdge: nativeLongEdge, assetID: assetID)
         view.apply(command)
     }
+
+    /// A loupe taken down lets go of the photo it showed, whoever still holds the view.
+    static func dismantleNSView(_ view: LoupeZoomScrollView, coordinator _: ()) {
+        view.releaseContent()
+    }
 }
 
 final class LoupeZoomScrollView: NSScrollView {
@@ -113,6 +118,11 @@ final class LoupeZoomScrollView: NSScrollView {
             document.isPicking = picking
             window?.invalidateCursorRects(for: document)
         }
+    }
+
+    func releaseContent() {
+        document.image = nil
+        currentAssetID = nil
     }
 
     func setContent(image: CGImage, nativeLongEdge: CGFloat?, assetID: MediaAssetID) {

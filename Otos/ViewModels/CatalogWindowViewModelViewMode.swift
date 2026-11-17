@@ -180,6 +180,8 @@ extension CatalogWindowViewModel {
         comparePair = .empty
         lastReplacedComparePane = nil
         cancelAllPaneRequestTasks()
+        // No pane is left to return to a photo, so the loader lets go of what it held for one.
+        previewLoader.releaseHeldPhotos()
         clearLoupeVideo()
         resetLoupeZoomForFocusChange()
         OtosLog.ui.notice("op=viewMode.set mode=grid")

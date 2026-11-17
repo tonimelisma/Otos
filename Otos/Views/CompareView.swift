@@ -95,9 +95,7 @@ struct CompareView: View {
                     DesignPalette.content(for: colorScheme)
                     switch display {
                     case let .full(image):
-                        Image(decorative: image, scale: 1)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
+                        PaneImageView(image: image)
                             .accessibilityElement()
                             .accessibilityLabel(paneAccessibilityLabel(for: id))
                             .accessibilityAddTraits(.isImage)
@@ -205,5 +203,52 @@ struct CompareView: View {
             tileChoiceChange: tileChoiceChange,
             focusTargetID: focusTargetID
         )
+    }
+}
+
+/// A Compare pane's photo, fitted and centred: the decode as a layer's contents, which Core
+/// Animation shows from the decode's own pixels (an IOSurface from `PreviewImageLoader`), the
+/// way the loupe shows it. A pane taken down lets go of the photo.
+private struct PaneImageView: NSViewRepresentable {
+    let image: CGImage
+
+    func makeNSView(context _: Context) -> PaneImageLayerView {
+        PaneImageLayerView(frame: .zero)
+    }
+
+    func updateNSView(_ view: PaneImageLayerView, context _: Context) {
+        view.image = image
+    }
+
+    static func dismantleNSView(_ view: PaneImageLayerView, coordinator _: ()) {
+        view.image = nil
+    }
+}
+
+private final class PaneImageLayerView: NSView {
+    var image: CGImage? {
+        didSet {
+            if image !== oldValue {
+                layer?.contents = image
+            }
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.contentsGravity = .resizeAspect
+        layer?.magnificationFilter = .linear
+        layer?.minificationFilter = .trilinear
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("PaneImageLayerView is never decoded")
+    }
+
+    /// Clicks and the context menu belong to the pane around it.
+    override func hitTest(_: NSPoint) -> NSView? {
+        nil
     }
 }

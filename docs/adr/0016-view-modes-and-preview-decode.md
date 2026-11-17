@@ -72,7 +72,20 @@ scale × window long edge). It:
    256 MB LRU, three held with the one shown add 63 MB (`docs/research/2026-11-16-image-memory-while-used.md` §3).
    Rejected: a byte budget, which sizes the cache by the photos' pixels rather than by the
    one return it exists for, and holding a full-resolution decode for a return, a few
-   hundred megabytes for a photo the loupe reopens at fit (APP-040).
+   hundred megabytes for a photo the loupe reopens at fit (APP-040). Leaving the full-size
+   view lets go of all of them (`releaseHeldPhotos`, synchronous from `exitToGrid`): no pane
+   is left to return. A decode whose every waiter is cancelled is cancelled with them, stops
+   before it reads a byte, and is never held.
+6. Decodes a screen-sized request's stored preview with
+   `CGImageSourceCreateThumbnailAtIndex` at the requested long edge, and the loupe and both
+   Compare panes show a decode as a layer's contents. Image I/O returns that decode in an
+   IOSurface, which Core Animation displays as it is, so a shown photo's pixels exist once.
+   Rejected: drawing the decode into a bitmap context (the grid thumbnail's form) or into
+   mapped memory (`MappedImage`): Core Animation copies either for display and keeps the
+   copy with the image, two full copies a photo, and the context's decode leaves its
+   scratch in the malloc heap; SwiftUI's `Image` for Compare, whose display list keeps the
+   last image it drew after the pane is gone
+   (`docs/research/2026-11-16-full-size-view-memory.md`).
 
 The 256 px enrichment thumbnail paints immediately in loupe; the full decode
 replaces it when ready (APP-015 monotonic rule — never blank, never regress to

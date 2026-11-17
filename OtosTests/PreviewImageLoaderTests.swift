@@ -334,18 +334,18 @@ private final class PreviewMaterializationRecorder: MaterializationRequesting, S
     }
 }
 
-private func writeTinyJPEG(to url: URL) throws {
+private func writeTinyJPEG(to url: URL, width: Int = 32, height: Int = 24) throws {
     let context = CGContext(
         data: nil,
-        width: 32,
-        height: 24,
+        width: width,
+        height: height,
         bitsPerComponent: 8,
         bytesPerRow: 0,
         space: CGColorSpaceCreateDeviceRGB(),
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
     )!
     context.setFillColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1)
-    context.fill(CGRect(x: 0, y: 0, width: 32, height: 24))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     let image = context.makeImage()!
     let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil)!
     CGImageDestinationAddImage(destination, image, nil)
@@ -389,6 +389,22 @@ struct PreviewImageLoaderRetentionTests {
         case noImage
     }
 
+    /// A loader whose originals are cloud-only until a download, held at `gate`, makes them
+    /// local.
+    private static func gatedLoader(_ gate: ArrivalGate) -> PreviewImageLoader {
+        let local = Mutex(false)
+        return PreviewImageLoader(
+            status: { _ in .materialized },
+            materializationRequester: ClosureMaterializationRequester(
+                status: { _ in local.withLock { $0 } ? .materialized : .dataless }
+            ) { _ in
+                await gate.arrive()
+                local.withLock { $0 = true }
+                return .testMaterialized
+            }
+        )
+    }
+
     /// Four photos visited in turn: the last three are held, so stepping back through them
     /// paints the decode already made; the first was let go and is decoded again.
     @Test func theLoaderHoldsOnlyThePhotosAPaneCanReturnTo() async throws {
@@ -413,5 +429,117 @@ struct PreviewImageLoaderRetentionTests {
         let full = try await Self.image(loader, ids[0], edge: PreviewImageLoader.fullResolution)
         #expect(try await Self.image(loader, ids[0], edge: PreviewImageLoader.fullResolution) !== full)
         #expect(try await Self.image(loader, ids[0]) === screen)
+    }
+
+    /// Leaving the full-size view lets go of every photo held for a return: none is left
+    /// held, and the next visit decodes anew.
+    @Test func leavingTheFullSizeViewLetsGoOfEveryHeldPhoto() async throws {
+        let ids = try Self.photos(PreviewImageLoader.retainedPhotos)
+        let loader = Self.loader()
+        var first: [CGImage] = []
+        for id in ids {
+            try await first.append(Self.image(loader, id))
+        }
+        #expect(loader.heldPhotos.count == PreviewImageLoader.retainedPhotos)
+        loader.releaseHeldPhotos()
+        #expect(loader.heldPhotos == (0, 0))
+        #expect(try await Self.image(loader, ids[0]) !== first[0])
+    }
+
+    /// A screen-sized request is decoded at the size it asks for, not at the stored
+    /// preview's: what a shown photo holds is bounded by the pane it is shown in. Walked
+    /// through five photos, the loader holds three of them at that size, once each.
+    @Test func aStoredPreviewIsDecodedAtTheSizeAskedFor() async throws {
+        let directory = try makeTestDirectory()
+        let root = LibraryRootPath(rawValue: directory.path(percentEncoded: false))
+        let loader = PreviewImageLoader(
+            status: { _ in .dataless },
+            derivedImageDirectory: directory,
+            materializationRequester: ClosureMaterializationRequester(status: { _ in .dataless }) { _ in
+                MaterializationResult(outcome: .timedOut, rerequestCount: 0, elapsedMs: 0)
+            }
+        )
+        let edge = 320
+        for index in 0 ..< 5 {
+            let name = "preview-\(index).jpg"
+            try writeTinyJPEG(to: directory.appending(path: name), width: 1280, height: 960)
+            let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "photo-\(index).heic"))
+            let detail = MediaTileDetail(libraryRootPath: root, relativePath: id.relativePath, previewPath: name, bestKind: .image)
+            guard case let .image(image, _) = await loader.preview(for: .init(id: id, detail: detail, targetLongEdge: edge)) else {
+                throw LoaderTestError.noImage
+            }
+            #expect(max(image.width, image.height) == edge)
+        }
+        let held = loader.heldPhotos
+        #expect(held.count == PreviewImageLoader.retainedPhotos)
+        // Four bytes a pixel, rows padded at most a tenth.
+        let shown = edge * edge * 3 / 4 * 4
+        #expect(held.bytes <= PreviewImageLoader.retainedPhotos * shown * 11 / 10, "held \(held.bytes) bytes")
+        #expect(await loader.decodeCounts == .init(started: 5, cancelledBeforeStart: 0))
+    }
+
+    /// A decode whose every waiter has moved on is cancelled before it reads a byte, and is
+    /// not held: asked for again, the photo is decoded by a request of its own.
+    @Test func aDecodeNobodyWaitsForStopsBeforeItReadsAByte() async throws {
+        let ids = try Self.photos(1)
+        let gate = ArrivalGate()
+        let loader = Self.gatedLoader(gate)
+        let abandoned = Task {
+            await loader.preview(for: .init(id: ids[0], detail: nil, targetLongEdge: 64))
+        }
+        await gate.waitForArrivals(1)
+        abandoned.cancel()
+        await gate.open()
+        guard case .unavailable = await abandoned.value else {
+            Issue.record("a cancelled request was handed an image")
+            return
+        }
+        #expect(await loader.decodeCounts == .init(started: 0, cancelledBeforeStart: 1))
+        #expect(loader.heldPhotos == (0, 0))
+        _ = try await Self.image(loader, ids[0])
+        #expect(await loader.decodeCounts == .init(started: 1, cancelledBeforeStart: 1))
+    }
+
+    /// A decode asked for before the full-size view was left, landing after it, goes to its
+    /// caller and is not held.
+    @Test func aDecodeLandingAfterTheViewWasLeftIsNotHeld() async throws {
+        let ids = try Self.photos(1)
+        let gate = ArrivalGate()
+        let loader = Self.gatedLoader(gate)
+        let request = Task {
+            await loader.preview(for: .init(id: ids[0], detail: nil, targetLongEdge: 64))
+        }
+        await gate.waitForArrivals(1)
+        loader.releaseHeldPhotos()
+        await gate.open()
+        guard case .image = await request.value else {
+            Issue.record("the caller got no image")
+            return
+        }
+        #expect(loader.heldPhotos == (0, 0))
+    }
+
+    /// A shared decode keeps running while anyone still waits for it: one of two waiters
+    /// moving on leaves the other its photo.
+    @Test func aSharedDecodeRunsForTheWaiterStillWaiting() async throws {
+        let ids = try Self.photos(1)
+        let gate = ArrivalGate()
+        let loader = Self.gatedLoader(gate)
+        let leaving = Task {
+            await loader.preview(for: .init(id: ids[0], detail: nil, targetLongEdge: 64))
+        }
+        await gate.waitForArrivals(1)
+        let staying = Task {
+            await loader.preview(for: .init(id: ids[0], detail: nil, targetLongEdge: 64))
+        }
+        try await waitUntil { await loader.waiterCount(for: ids[0]) == 2 }
+        leaving.cancel()
+        await gate.open()
+        guard case .image = await staying.value else {
+            Issue.record("the waiter still waiting got no image")
+            return
+        }
+        _ = await leaving.value
+        #expect(await loader.decodeCounts == .init(started: 1, cancelledBeforeStart: 0))
     }
 }
