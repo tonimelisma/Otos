@@ -2,6 +2,7 @@ import Dispatch
 import Foundation
 import GRDB
 @testable import OtosKit
+import SQLite3
 import Synchronization
 import Testing
 
@@ -225,8 +226,8 @@ struct CatalogConnectionActivityTests {
         try pool.close()
     }
 
-    /// A read that brings pages into SQLite's cache is charged their bytes, and a read of pages
-    /// already cached is not: what each operation asked of the file.
+    /// A read that brings pages into SQLite's cache is charged their bytes, and the pages it
+    /// finds already cached are not: what each operation asked of the file.
     @Test func aReadIsChargedThePagesItReadFromTheFile() async throws {
         let activity = CatalogConnectionActivity()
         var configuration = CatalogStore.fileBackedDatabaseConfiguration(activity: activity)
@@ -246,9 +247,19 @@ struct CatalogConnectionActivityTests {
         }
         let pageSize = try await pool.read { db in try Int64.fetchOne(db, sql: "PRAGMA page_size") ?? 4096 }
         let pages = try await pool.read { db in try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0 }
+        // SQLite's own account of each read's pages: those it found in its cache and those it
+        // read from the file. Whether a page is still cached for the second read is the
+        // kernel's to decide: the system SQLite keeps its page cache in purgeable memory
+        // (`vm_purgable_control`), which memory pressure reclaims between two reads.
+        var served: [String: PageService] = [:]
         for operation in ["coldRead", "warmRead"] {
-            _ = try await pool.readFreeingConnection(operation: operation) { db in
-                try Int.fetchOne(db, sql: "SELECT count(*) FROM t WHERE x LIKE '%9'") ?? 0
+            served[operation] = try await pool.readFreeingConnection(operation: operation) { db in
+                let hitsBefore = Self.pageCount(db, SQLITE_DBSTATUS_CACHE_HIT)
+                _ = try Int.fetchOne(db, sql: "SELECT count(*) FROM t WHERE x LIKE '%9'")
+                return PageService(
+                    cached: Self.pageCount(db, SQLITE_DBSTATUS_CACHE_HIT) - hitsBefore,
+                    read: Self.pageCount(db, SQLITE_DBSTATUS_CACHE_MISS)
+                )
             }
         }
         // The last read's end is counted after it resumes this caller (above).
@@ -257,9 +268,27 @@ struct CatalogConnectionActivityTests {
         let holds = activity.use().holds
         let cold = try #require(holds.first { $0.operation == "coldRead" })
         let warm = try #require(holds.first { $0.operation == "warmRead" })
-        #expect(cold.readBytes >= (pages / 2) * pageSize, "\(cold.readBytes) of \(pages * pageSize)")
-        #expect(warm.readBytes < cold.readBytes / 10, "\(warm.readBytes)")
+        let coldPages = try #require(served["coldRead"])
+        let warmPages = try #require(served["warmRead"])
+        #expect(coldPages.read >= pages / 2, "\(coldPages) of \(pages)")
+        #expect(warmPages.cached + warmPages.read >= pages / 2, "\(warmPages) of \(pages)")
+        #expect(cold.readBytes == coldPages.read * pageSize, "\(cold.readBytes): \(coldPages)")
+        #expect(warm.readBytes == warmPages.read * pageSize, "\(warm.readBytes): \(warmPages)")
         #expect(activity.use().readBytes["main.reader"] == holds.filter { $0.role == "main.reader" }.reduce(0) { $0 + $1.readBytes })
+    }
+
+    /// The pages one read's statements took from SQLite's cache and from the file.
+    private struct PageService: Sendable {
+        let cached: Int64
+        let read: Int64
+    }
+
+    /// SQLite's count of `status` on `db`'s connection, left as it is.
+    private static func pageCount(_ db: Database, _ status: Int32) -> Int64 {
+        var current: Int32 = 0
+        var highwater: Int32 = 0
+        sqlite3_db_status(db.sqliteConnection, status, &current, &highwater, 0)
+        return Int64(current)
     }
 
     /// A stall's holders leave in parts the unified log keeps whole, none splitting a holder.
