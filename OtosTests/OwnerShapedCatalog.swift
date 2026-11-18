@@ -36,6 +36,7 @@ struct OwnerShapedCatalog {
         var videosOwingFaces = 0
         var metadataStaleInLibraries = 0
         var unhashable = 0
+        var mirrorPairs = 0
         var embeddings = 0
         var texts = 0
         var faces = 0
@@ -118,6 +119,10 @@ struct OwnerShapedCatalog {
         /// Import batches in the libraries: 11,401 rows in 45 batches.
         static let importedRows = 11401
         static let importBatches = 45
+        /// Library 7's files his server mirrors (ADR 0054): 16,683 have an external asset of the
+        /// same name, size and whole-second modification time. Each is generated paired, so the
+        /// copy-key reads meet the whole mirror.
+        static let mirroredFiles = 16683
     }
 
     static let baseCaptureUnix: Int64 = 1_262_304_000
@@ -195,6 +200,7 @@ struct OwnerShapedCatalog {
             shape.assets = offset
             try writeBursts(db)
             shape.unhashable = try Int.fetchOne(db, sql: "SELECT count(*) FROM media_asset WHERE content_sha1 IS NULL") ?? 0
+            try writeMirrorPairs(db, scale: scale, shape: &shape)
             try writeBacklog(db, scale: scale, shape: &shape)
             try writeDerivedRows(db, scale: scale, shape: &shape)
         }
@@ -328,6 +334,43 @@ struct OwnerShapedCatalog {
                 isAccount,
             ]
         )
+    }
+
+    /// The account's rows are an external library's assets, each with its path checksum, and
+    /// his mirrored files are paired with the account's first assets in row order (schema v79).
+    /// A paired asset is listed with its file's size and modification time, and its own
+    /// products were read at those, so it stays current and the pair's versions agree: the
+    /// catalog's triggers give both rows one copy key, as the account's walk would. Written
+    /// before the backlog and the derived rows, which then hold for the facts written here.
+    private static func writeMirrorPairs(_ db: Database, scale: Double, shape: inout Shape) throws {
+        try db.execute(sql: "UPDATE media_asset SET source_path_sha1 = randomblob(20) WHERE library_root_id = 15")
+        try db.execute(
+            sql: """
+            CREATE TEMP TABLE mirror_match AS
+            SELECT f.relative_path AS file_path, a.relative_path AS asset_path, f.byte_size AS size,
+                   f.content_modified_at_unix AS mtime
+            FROM (SELECT relative_path, byte_size, content_modified_at_unix, row_number() OVER (ORDER BY rowid) AS n
+                  FROM media_asset WHERE library_root_id = 7) AS f
+            JOIN (SELECT relative_path, row_number() OVER (ORDER BY rowid) AS n
+                  FROM media_asset WHERE library_root_id = 15) AS a ON a.n = f.n
+            WHERE f.n <= ?
+            """,
+            arguments: [scaled(Owner.mirroredFiles, scale)]
+        )
+        try db.execute(sql: """
+        UPDATE media_asset SET byte_size = m.size, content_modified_at_unix = m.mtime,
+            metadata_source_size = m.size, metadata_source_mtime = CAST(m.mtime AS INTEGER),
+            source_products_size = m.size, source_products_mtime = CAST(m.mtime AS INTEGER),
+            faces_source_size = m.size, faces_source_mtime = CAST(m.mtime AS INTEGER)
+        FROM mirror_match AS m
+        WHERE media_asset.library_root_id = 15 AND media_asset.relative_path = m.asset_path
+        """)
+        try db.execute(sql: """
+        INSERT INTO immich_mirror_pair (library_root_id, file_path, account_root_id, asset_path)
+        SELECT 7, file_path, 15, asset_path FROM mirror_match
+        """)
+        shape.mirrorPairs = db.changesCount
+        try db.execute(sql: "DROP TABLE mirror_match")
     }
 
     /// The backlog that is not a missing derived row: the account's stills whose preview is

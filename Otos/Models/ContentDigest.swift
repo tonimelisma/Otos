@@ -45,3 +45,18 @@ nonisolated struct ContentDigest: Equatable, Hashable, Sendable {
         bytes.map { String(format: "%02x", $0) }.joined()
     }
 }
+
+/// What the copies of one photo share (ADR 0054, `media_asset.copy_key`): the digest of
+/// their bytes, or, for a mirrored library file and its external-library asset whose bytes
+/// nobody has read, the asset's path checksum, which the server's listing names. Only
+/// equality is asked of it; it is never read as a digest.
+nonisolated struct PhotoCopyKey: Equatable, Hashable, Sendable {
+    let data: Data
+
+    init?(data: Data) {
+        guard data.count == ContentDigest.byteCount else {
+            return nil
+        }
+        self.data = data
+    }
+}

@@ -612,7 +612,7 @@ nonisolated enum DuplicatesHoldSQL {
         guard let standing = try DigestStanding.read(libraryRootID: libraryRootID, relativePath: relativePath, db: db) else {
             return false
         }
-        return standing.copyDigest != nil && standing.shared
+        return standing.copyKey != nil && standing.shared
     }
 
     /// Whether a write that changed `facts` of one row changed what Duplicates reads: a kind of

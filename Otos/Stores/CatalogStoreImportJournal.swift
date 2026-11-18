@@ -279,11 +279,6 @@ extension CatalogStore {
             ]
         )
         try writeLandedProducts(landed, db: db)
-        if operation.contentHash != nil {
-            _ = try MirrorGateway.pairMirroredAssets(
-                libraryRootID: destinationRootID, relativePath: relativePath.rawValue, db: db
-            )
-        }
         // A rendering was drawn with the source's last rendered edit; an edit saved after
         // it is enrichment's to render for the copy (ADR 0036).
         try releaseUnrenderedEdits(db: db, rootID: destinationRootID, relativePath: relativePath)

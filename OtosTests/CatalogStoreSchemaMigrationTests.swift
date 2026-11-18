@@ -112,8 +112,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 16).map { "\($0)/16" })
-        #expect(run.applied == 16)
+        #expect(steps.recorded == (1 ... 17).map { "\($0)/17" })
+        #expect(run.applied == 17)
         let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
         #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
 
@@ -147,8 +147,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 16).map { "\($0)/16" })
-        #expect(run.applied == 16)
+        #expect(steps.recorded == (1 ... 17).map { "\($0)/17" })
+        #expect(run.applied == 17)
     }
 
     private final class StepLog: Sendable {
@@ -357,6 +357,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.orderFilterColumnsMigrationIdentifier,
             CatalogSchema.noThumbnailComingMigrationIdentifier,
             CatalogSchema.personPhotoMigrationIdentifier,
+            CatalogSchema.photoCopyKeyMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -711,9 +712,9 @@ struct CatalogStoreSchemaMigrationTests {
         try await queue.write { db in
             #expect(try MirrorGateway.serverPrefix(accountRootID: 2, libraryRootID: 1, db: db) == "/mnt/od/Pictures/")
             try db.execute(sql: "DELETE FROM library_root WHERE id = 3")
-            #expect(try MirrorGateway.mirrors(ofLibrary: 3, db: db).isEmpty)
+            #expect(try MirrorGateway.mirrors(ofAccount: 2, db: db).map(\.libraryRootID) == [1])
             try db.execute(sql: "DELETE FROM library_root WHERE id = 2")
-            #expect(try MirrorGateway.mirrors(ofLibrary: 1, db: db).isEmpty)
+            #expect(try MirrorGateway.mirrors(ofAccount: 2, db: db).isEmpty)
         }
     }
 

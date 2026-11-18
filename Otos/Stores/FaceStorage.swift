@@ -342,10 +342,10 @@ nonisolated struct PreviewFacePage: Equatable, Sendable {
 nonisolated enum PeopleFaceColumn: Int, CaseIterable {
     case rootID, path, faceIndex, vector, personID, assignment, likeness, isKeyPhoto
     case captureLocal, isVideo
-    /// The face's file's digest while it has a present copy, else NULL: the photos whose copies
-    /// People reads (`PhotoFaceSQL.presentCopiesOfDigest`), from the row this read joins anyway.
-    /// NULL for a file with no copy, so the read copies no digest it does not use.
-    case copiedDigest
+    /// The face's file's copy key while it has a present copy, else NULL: the photos whose
+    /// copies People reads (`PhotoFaceSQL.presentCopiesOfKey`), from the row this read joins
+    /// anyway. NULL for a file with no copy, so the read copies no key it does not use.
+    case copiedKey
 
     /// The expression each column is read from, over `face f` joined to `media_asset m` and
     /// to its vector's row `e` (`FaceEmbeddingSQL.join`).
@@ -361,7 +361,7 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
         case .isKeyPhoto: "f.is_key_photo"
         case .captureLocal: "m.best_capture_local"
         case .isVideo: "m.best_kind = 'video'"
-        case .copiedDigest: "CASE WHEN m.has_copies = 1 THEN m.content_sha1 END"
+        case .copiedKey: "CASE WHEN m.has_copies = 1 THEN m.copy_key END"
         }
     }
 
@@ -537,7 +537,7 @@ nonisolated enum PreviewFaceSQL {
     /// each copy is read for its faces, and a photo is not yet checked while any present copy
     /// in these roots is not. A row with a present copy (`has_copies`, on the row these counts
     /// already read) is counted only when no copy ranked before it is unread too, asked
-    /// through the digest index; a row with no copy costs what it did. Its arguments are the
+    /// through the copy key's index; a row with no copy costs what it did. Its arguments are the
     /// roots, six times.
     static func uncheckedSQL(rootCount: Int) -> String {
         let roots = placeholders(rootCount)
@@ -556,8 +556,8 @@ nonisolated enum PreviewFaceSQL {
         let firstUnread = { (unread: String) in
             """
             NOT (media_asset.has_copies = 1 AND EXISTS (
-                SELECT 1 FROM media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
-                WHERE \(CatalogSchema.isCopy("copy", of: "media_asset"))
+                SELECT 1 FROM media_asset AS copy INDEXED BY \(PhotoCopySQL.indexName)
+                WHERE \(PhotoCopySQL.isCopy("copy", of: "media_asset"))
                   AND \(CatalogVisibilitySQL.isPresent("copy"))
                   AND copy.library_root_id IN (\(roots))
                   AND (\(CatalogSchema.copyRank("copy"))) < (\(CatalogSchema.copyRank("media_asset")))

@@ -6,19 +6,21 @@ import Testing
 
 /// ADR 0054: an Immich external library that mirrors a library lists each file with the
 /// SHA-1 of its server path, never of its bytes. Otos learns the server path a library's
-/// files follow from one asset's own path, confirmed by its checksum, and an asset listed
-/// at a library file's path with the size and modification time its digest was read at
-/// takes that digest, so the two are one photo with no download.
+/// files follow from one asset's own path, confirmed by its checksum, and pairs each library
+/// file with the asset its path names, from the listing alone: no byte is read, nothing is
+/// downloaded and no digest is needed. The pair's rows are one photo while their versions
+/// agree (schema v79).
 @Suite(.testScope)
 struct ImmichMirrorTests {
     private static let server = URL(string: "https://photos.example.com")!
     private static let serverPrefix = "/mnt/onedrive/Pictures/Camera Roll/"
 
-    /// One pass per stream asked for, and each asset's own facts.
+    /// One pass per stream asked for, then empty complete streams; each asset's own facts.
     private final class MirrorServer: ImmichSyncSource, Sendable {
         private let passes: Mutex<[[ImmichSyncEvent]]>
         private let details: [String: ImmichAssetDetail]
         private let detailRequests = Mutex<[String]>([])
+        private let previewRequests = Mutex<[String]>([])
 
         init(_ passes: [[ImmichSyncEvent]], details: [String: ImmichAssetDetail]) {
             self.passes = Mutex(passes)
@@ -29,8 +31,12 @@ struct ImmichMirrorTests {
             detailRequests.withLock { $0 }
         }
 
+        var requestedPreviews: [String] {
+            previewRequests.withLock { $0 }
+        }
+
         func events(fromZero _: Bool) async throws -> any AsyncSequence<ImmichSyncEvent, any Error> {
-            let lines = passes.withLock { $0.isEmpty ? [] : $0.removeFirst() }
+            let lines = passes.withLock { $0.isEmpty ? [ImmichMirrorTests.complete] : $0.removeFirst() }
             return AsyncThrowingStream<ImmichSyncEvent, any Error> { continuation in
                 lines.forEach { continuation.yield($0) }
                 continuation.finish()
@@ -39,8 +45,9 @@ struct ImmichMirrorTests {
 
         func acknowledge(_: [String]) async throws {}
 
-        func preview(assetID _: String) async throws -> Data {
-            throw URLError(.badServerResponse)
+        func preview(assetID: String) async throws -> Data {
+            previewRequests.withLock { $0.append(assetID) }
+            throw ImmichClientError.refused(status: 404)
         }
 
         func asset(id: String) async throws -> ImmichAssetDetail {
@@ -58,6 +65,10 @@ struct ImmichMirrorTests {
         let account: LibraryRootPath
         /// The library file `2024/IMG_1.JPG`, which the server mirrors.
         let file: PlanningFileFacts
+
+        var asset: MediaAssetID {
+            MediaAssetID(libraryRootPath: account, relativePath: MediaRelativePath(rawValue: "a/IMG_1.JPG"))
+        }
     }
 
     /// `secondCopy` also puts `2024/IMG_1 copy.JPG`, the same bytes, in the library.
@@ -82,10 +93,10 @@ struct ImmichMirrorTests {
         return Fixture(store: store, library: library, account: account, file: file)
     }
 
-    private func digest(_ file: PlanningFileFacts, store: CatalogStore) async throws {
+    private func digest(_ file: PlanningFileFacts, store: CatalogStore, as digest: ContentDigest = contentDigest) async throws {
         _ = try await store.applyContentHash(ContentHashResult(
             id: file.id,
-            contentHash: Self.contentDigest,
+            contentHash: digest,
             sourceSize: file.byteSize,
             sourceMTimeSeconds: file.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) }
         ))
@@ -117,42 +128,57 @@ struct ImmichMirrorTests {
         ], detail)
     }
 
-    private static let complete = ImmichSyncEvent.complete(ack: "SyncCompleteV1|1")
+    fileprivate static let complete = ImmichSyncEvent.complete(ack: "SyncCompleteV1|1")
 
-    private func ids(_ scope: SidebarSelection, _ store: CatalogStore) async throws -> Set<MediaAssetID> {
-        let paths = await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
+    private func ids(
+        _ scope: SidebarSelection,
+        _ store: CatalogStore,
+        available: Set<LibraryRootPath>? = nil
+    ) async throws -> Set<MediaAssetID> {
+        let paths = if let available {
+            available
+        } else {
+            await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
+        }
         return try await Set(store.windowReads.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: paths).ids)
     }
 
-    private func digest(of path: String, in root: LibraryRootPath, _ store: CatalogStore) async throws -> ContentDigest? {
-        let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
-        return try await store.windowReads.mediaAssets(for: [id])[id]?.contentHash
+    private func asset(_ id: MediaAssetID, _ store: CatalogStore) async throws -> MediaAsset? {
+        try await store.windowReads.mediaAssets(for: [id])[id]
     }
 
-    /// A pass that lists the asset after the file's digest was read learns the mirror from
-    /// the asset's path and pairs them: All Media shows the library's file alone, and the
-    /// account still shows its asset. A later pass keeps the mirror without asking again.
-    @Test func aMirroredFileAndItsExternalAssetAreOnePhoto() async throws {
-        let fixture = try await fixture(digested: true)
+    /// A pass that lists the asset learns the mirror from the asset's path and pairs it with
+    /// the library file its path names, though neither has a digest — a cloud-only file whose
+    /// bytes Otos never read: All Media shows the library's file alone, the library shows its
+    /// file and the account its asset. Nothing is downloaded and no digest is written. A later
+    /// pass keeps the mirror without asking the server again.
+    @Test func aMirroredFileWithNoDigestAndItsExternalAssetAreOnePhoto() async throws {
+        let fixture = try await fixture(digested: false)
         let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
-        let server = MirrorServer([listing.events + [Self.complete], [Self.complete]], details: ["a": listing.detail])
+        let server = MirrorServer([listing.events + [Self.complete]], details: ["a": listing.detail])
         let sync = ImmichCatalogSync(
             rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
         )
 
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, fixture.store) == Self.contentDigest)
         #expect(try await ids(.allMedia, fixture.store) == [fixture.file.id])
-        #expect(try await ids(.library(fixture.account), fixture.store).map(\.relativePath.rawValue) == ["a/IMG_1.JPG"])
+        #expect(try await ids(.library(fixture.library), fixture.store) == [fixture.file.id])
+        #expect(try await ids(.library(fixture.account), fixture.store) == [fixture.asset])
+        #expect(try await asset(fixture.asset, fixture.store)?.contentHash == nil)
+        #expect(try await asset(fixture.file.id, fixture.store)?.contentHash == nil)
+        #expect(server.requestedPreviews.isEmpty || server.requestedPreviews == ["a"])
+        #expect(try await fixture.store.windowReads.visibleAssetCount(
+            for: .allMedia, availableLibraryPaths: [fixture.library, fixture.account]
+        ) == 1)
 
         #expect(await sync.pass() == .synced(listed: 0, deleted: 0, full: false))
         #expect(server.requestedDetails == ["a"])
         await fixture.store.shutdown()
     }
 
-    /// A file whose digest is read after the pass learned its mirror pairs in that digest's
-    /// own write, with no pass between.
-    @Test func aFileDigestedAfterThePassPairsInItsOwnWrite() async throws {
+    /// A file's digest read after the pair agrees with it: the pair stays one photo, and the
+    /// asset is given no digest of its own.
+    @Test func aDigestReadAfterThePairKeepsItOnePhoto() async throws {
         let fixture = try await fixture(digested: false)
         let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
         let server = MirrorServer([listing.events + [Self.complete]], details: ["a": listing.detail])
@@ -160,11 +186,45 @@ struct ImmichMirrorTests {
             rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
         )
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, fixture.store) == nil)
 
         try await digest(fixture.file, store: fixture.store)
-        #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, fixture.store) == Self.contentDigest)
+        #expect(try await asset(fixture.file.id, fixture.store)?.contentHash == Self.contentDigest)
+        #expect(try await asset(fixture.asset, fixture.store)?.contentHash == nil)
         #expect(try await ids(.allMedia, fixture.store) == [fixture.file.id])
+        await fixture.store.shutdown()
+    }
+
+    /// A Like or a Dislike on either row of a pair is the photo's (owner, 2026-11-15): it is
+    /// written on both, whichever the user chose it on.
+    @Test func aChoiceOnEitherRowOfAPairIsThePhotos() async throws {
+        let fixture = try await fixture(digested: false)
+        let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
+        let server = MirrorServer([listing.events + [Self.complete]], details: ["a": listing.detail])
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
+
+        _ = try await fixture.store.setMediaChoice(.liked, for: [fixture.asset])
+        #expect(try await asset(fixture.file.id, fixture.store)?.mediaChoice == .liked)
+        _ = try await fixture.store.setMediaChoice(.disliked, for: [fixture.file.id])
+        #expect(try await asset(fixture.asset, fixture.store)?.mediaChoice == .disliked)
+        await fixture.store.shutdown()
+    }
+
+    /// With the library not available, the account's asset is the photo's reachable copy and
+    /// shows in All Media; with the account not available, the library's file does.
+    @Test func eitherCopyShowsWhenTheOtherIsNotAvailable() async throws {
+        let fixture = try await fixture(digested: false)
+        let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
+        let server = MirrorServer([listing.events + [Self.complete]], details: ["a": listing.detail])
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
+
+        #expect(try await ids(.allMedia, fixture.store, available: [fixture.account]) == [fixture.asset])
+        #expect(try await ids(.allMedia, fixture.store, available: [fixture.library]) == [fixture.file.id])
         await fixture.store.shutdown()
     }
 
@@ -200,7 +260,7 @@ struct ImmichMirrorTests {
 
         #expect(try await duplicates().copies == files)
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, store) == Self.contentDigest)
+        #expect(try await ids(.allMedia, store).count == 1)
         #expect(try await duplicates().copies == files)
         #expect(try await duplicates().scope == files)
         #expect(try await store.windowReads.visibleAssetCount(for: .duplicates, availableLibraryPaths: [fixture.library, fixture.account]) == files.count)
@@ -209,9 +269,10 @@ struct ImmichMirrorTests {
         await store.shutdown()
     }
 
-    /// An asset at the file's path but listed with another modification time holds other
-    /// bytes: it keeps no digest and shows beside the file.
-    @Test func anAssetListedWithOtherFactsIsNotTheFilesCopy() async throws {
+    /// An asset at the file's path but listed with another modification time is another
+    /// version: the file was changed and the server has not read it again. The pair stands,
+    /// by path, but the two are two photos until their versions agree.
+    @Test func aPairWhoseVersionsDifferIsTwoPhotos() async throws {
         let fixture = try await fixture(digested: true)
         let modified = try #require(fixture.file.contentModifiedAt).addingTimeInterval(60)
         let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG", modified: modified)
@@ -221,7 +282,7 @@ struct ImmichMirrorTests {
         )
 
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, fixture.store) == nil)
+        #expect(try await asset(fixture.asset, fixture.store)?.contentHash == nil)
         #expect(try await ids(.allMedia, fixture.store).count == 2)
         await fixture.store.shutdown()
     }
@@ -238,13 +299,29 @@ struct ImmichMirrorTests {
 
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
         #expect(try await fixture.store.backgroundReads.mirrorProbes(account: fixture.account).map(\.serverPrefix) == [nil])
-        #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, fixture.store) == nil)
         #expect(try await ids(.allMedia, fixture.store).count == 2)
         await fixture.store.shutdown()
     }
 
+    /// A stored prefix that pairs a file is kept with no request, though the probe's first
+    /// candidates are files the server holds under another folder: a library the server holds
+    /// partly elsewhere keeps the pairs its prefix names.
+    @Test func aPrefixThatPairsAFileIsKeptWithNoRequest() async throws {
+        let fixture = try await fixture(digested: false)
+        let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
+        let server = MirrorServer([listing.events + [Self.complete]], details: ["a": listing.detail])
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
+        #expect(server.requestedDetails == ["a"])
+        #expect(try await fixture.store.backgroundReads.mirrorProbes(account: fixture.account).map(\.isPaired) == [true])
+        await fixture.store.shutdown()
+    }
+
     /// Immich's path checksum is the SHA-1 of `path:` and the server path; the prefix is the
-    /// server path before the relative path, compared as bytes.
+    /// server path before the relative path, compared as bytes, and a server path that teaches
+    /// none says why.
     @Test func thePathChecksumAndServerPrefixAreImmichs() throws {
         let checksum = try #require(ImmichAsset.pathChecksum(checksum: "YSh/w9kgVtWGbzD5f2uUP5/HYag=", libraryID: "lib"))
         #expect(ImmichPathChecksum(serverPath: "/mnt/onedrive/Pictures/Camera Roll/2024/IMG_1.JPG") == checksum)
@@ -258,5 +335,14 @@ struct ImmichMirrorTests {
         // The same name in its decomposed form is another path.
         let composed = MediaRelativePath(rawValue: "P\u{00E4}iv\u{00E4}.JPG")
         #expect(MirrorGateway.serverPrefix(of: "/od/Pa\u{0308}iva\u{0308}.JPG", relativePath: composed) == nil)
+
+        let candidate = MirrorGateway.Candidate(
+            relativePath: relative, assetID: "a",
+            pathChecksum: ImmichPathChecksum(serverPath: "/mnt/od/2024/IMG_1.JPG")
+        )
+        #expect(MirrorGateway.prefix(of: "/mnt/od/2024/IMG_1.JPG", for: candidate) == .success("/mnt/od/"))
+        #expect(MirrorGateway.prefix(of: nil, for: candidate) == .failure(.noPath))
+        #expect(MirrorGateway.prefix(of: "/mnt/od/2023/IMG_1.JPG", for: candidate) == .failure(.tailMismatch(sharedComponents: 1)))
+        #expect(MirrorGateway.prefix(of: "/other/2024/IMG_1.JPG", for: candidate) == .failure(.checksumMismatch))
     }
 }

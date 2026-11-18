@@ -538,7 +538,7 @@ nonisolated enum CatalogQueryGateway {
                        m.rendered_source_size, m.rendered_source_mtime, m.thumbnail_path, m.preview_path,
                        m.duration_seconds, m.best_kind, m.media_choice,
                        m.edit_recipe_json, m.rendered_revision,
-                       CASE WHEN \(CatalogSchema.isCopy("m")) THEN m.content_sha1 END AS copy_digest,
+                       m.copy_key AS copy_key,
                        a.pixel_width, a.pixel_height, a.orientation
                 FROM media_asset m
                 LEFT JOIN asset_metadata a
@@ -765,7 +765,7 @@ nonisolated enum CatalogVisibilitySQL {
 /// named on one copy names the photo). Faces are read from each copy's own preview and stay
 /// on it, so a test of a row asks its own faces, and then — only for a row with a present
 /// copy (`has_copies`, which the window's indexes carry) — its copies' faces, through the
-/// digest index. A row with no copy costs what it did. `condition` is over `face`, and its
+/// copy key's index. A row with no copy costs what it did. `condition` is over `face`, and its
 /// arguments are bound twice, in order.
 nonisolated enum PhotoFaceSQL {
     /// Whether `row` or a present copy of it holds a face `condition` selects; `index` is the
@@ -779,10 +779,10 @@ nonisolated enum PhotoFaceSQL {
               AND face.relative_path = \(row).relative_path
               AND \(condition)
         ) OR (\(row).has_copies = 1 AND EXISTS (
-            SELECT 1 FROM media_asset AS face_copy INDEXED BY \(ContentDigestSQL.indexName)
+            SELECT 1 FROM media_asset AS face_copy INDEXED BY \(PhotoCopySQL.indexName)
             CROSS JOIN \(face)
               ON face.library_root_id = face_copy.library_root_id AND face.relative_path = face_copy.relative_path
-            WHERE \(CatalogSchema.isCopy("face_copy", of: row))
+            WHERE \(PhotoCopySQL.isCopy("face_copy", of: row))
               AND \(CatalogVisibilitySQL.isPresent("face_copy"))
               AND NOT (face_copy.library_root_id = \(row).library_root_id AND face_copy.relative_path = \(row).relative_path)
               AND \(condition)
@@ -800,25 +800,25 @@ nonisolated enum PhotoFaceSQL {
         FROM face
         LEFT JOIN media_asset AS face_photo INDEXED BY \(mediaAssetKeyIndexName)
           ON face_photo.library_root_id = face.library_root_id AND face_photo.relative_path = face.relative_path
-        LEFT JOIN media_asset AS face_copy INDEXED BY \(ContentDigestSQL.indexName)
+        LEFT JOIN media_asset AS face_copy INDEXED BY \(PhotoCopySQL.indexName)
           ON face_photo.has_copies = 1
-          AND \(CatalogSchema.isCopy("face_copy", of: "face_photo"))
+          AND \(PhotoCopySQL.isCopy("face_copy", of: "face_photo"))
           AND \(CatalogVisibilitySQL.isPresent("face_copy"))
         WHERE \(condition)
         """
     }
 
-    /// Every present copy of the photo whose files share the bound digest: the copies People
-    /// resolves a photo's faces through (`PeopleSnapshot.copies`), asked for each digest of a
+    /// Every present copy of the photo whose files share the bound copy key: the copies People
+    /// resolves a photo's faces through (`PeopleSnapshot.copies`), asked for each key of a
     /// file with a face and `has_copies`, read with the file's faces
-    /// (`PeopleFaceColumn.copiedDigest`). The same relation as `holds` — a row with
-    /// `has_copies`, its copies through the digest index — so the faces People shows on a photo
+    /// (`PeopleFaceColumn.copiedKey`). The same relation as `holds` — a row with
+    /// `has_copies`, its copies through the copy key's index — so the faces People shows on a photo
     /// are the faces its scopes find it by. A file with no copy costs nothing here: the faces'
     /// own read has already sought it by its key.
-    static let presentCopiesOfDigest = """
+    static let presentCopiesOfKey = """
     SELECT face_copy.library_root_id, face_copy.relative_path
-    FROM media_asset AS face_copy INDEXED BY \(ContentDigestSQL.indexName)
-    WHERE \(CatalogSchema.isCopy("face_copy", ofDigest: "?"))
+    FROM media_asset AS face_copy INDEXED BY \(PhotoCopySQL.indexName)
+    WHERE \(PhotoCopySQL.isCopy("face_copy", ofKey: "?"))
       AND \(CatalogVisibilitySQL.isPresent("face_copy"))
     """
 }
@@ -895,8 +895,8 @@ nonisolated enum PersonPhotoSQL {
             FROM person_photo AS member INDEXED BY \(copiesIndexName)
             CROSS JOIN media_asset AS member_photo INDEXED BY \(mediaAssetKeyIndexName)
               ON member_photo.library_root_id = member.library_root_id AND member_photo.relative_path = member.relative_path
-            CROSS JOIN media_asset INDEXED BY \(ContentDigestSQL.indexName)
-              ON \(CatalogSchema.isCopy("member_photo", of: "media_asset"))
+            CROSS JOIN media_asset INDEXED BY \(PhotoCopySQL.indexName)
+              ON \(PhotoCopySQL.isCopy("member_photo", of: "media_asset"))
             WHERE member.person_id = ? AND member.\(copiesPredicate)
               AND \(CatalogVisibilitySQL.isPresent("member_photo"))
               AND NOT (media_asset.library_root_id = member.library_root_id AND media_asset.relative_path = member.relative_path)
@@ -1096,6 +1096,31 @@ nonisolated enum ContentDigestSQL {
     /// The row's digest while it is current, else NULL, as a value.
     static func current(_ row: String) -> String {
         "CASE WHEN \(isCurrent(row)) THEN \(row).content_sha1 END"
+    }
+}
+
+/// Which rows are copies of one photo (ADR 0054): the rows that share a copy key
+/// (`media_asset.copy_key`, schema v79). The catalog's triggers keep the key — a row's
+/// current digest of some bytes in a library or an account, or the key its mirror pair
+/// gives both its rows — so a reader asks only whether two keys are equal, through
+/// `idx_media_asset_copy_key`, which holds the key with the row's key and presence.
+nonisolated enum PhotoCopySQL {
+    static let indexName = "idx_media_asset_copy_key"
+
+    /// Whether `row` is a copy of some photo at all.
+    static func isCopy(_ row: String) -> String {
+        "\(row).copy_key IS NOT NULL"
+    }
+
+    /// Whether `copy` is a copy of the photo `row` is a copy of (`row` itself included),
+    /// whatever its presence.
+    static func isCopy(_ copy: String, of row: String) -> String {
+        "\(copy).copy_key = \(row).copy_key"
+    }
+
+    /// Whether `copy` is a copy of the photo whose copies share `key` (a SQL value).
+    static func isCopy(_ copy: String, ofKey key: String) -> String {
+        "\(copy).copy_key = \(key)"
     }
 }
 
@@ -1991,8 +2016,8 @@ private nonisolated func scopeClause(
 
           AND (media_asset.shown_copy_root_id IS NULL
                OR NOT EXISTS (
-                   SELECT 1 FROM media_asset AS better INDEXED BY \(ContentDigestSQL.indexName)
-                   WHERE \(CatalogSchema.isCopy("better", of: "media_asset"))
+                   SELECT 1 FROM media_asset AS better INDEXED BY \(PhotoCopySQL.indexName)
+                   WHERE \(PhotoCopySQL.isCopy("better", of: "media_asset"))
                      AND better.library_root_id IN (\(roots))
                      AND \(CatalogVisibilitySQL.isPresent("better"))
                      AND (\(CatalogSchema.copyRank("better"))) < (\(CatalogSchema.copyRank("media_asset")))
@@ -2323,6 +2348,6 @@ private nonisolated func storedTileDetail(from row: Row) throws -> StoredTileDet
         renderedSourceSize: row["rendered_source_size"],
         renderedSourceMTimeSeconds: row["rendered_source_mtime"],
         mediaChoice: MediaChoice(rawValue: row["media_choice"] ?? "") ?? .default,
-        copyDigest: (row["copy_digest"] as Data?).flatMap(ContentDigest.init(data:))
+        copyKey: (row["copy_key"] as Data?).flatMap(PhotoCopyKey.init(data:))
     )
 }

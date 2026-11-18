@@ -259,20 +259,20 @@ extension CatalogWindowViewModel {
     /// taking its copy's choice. The catalog writes a choice on every copy in the act's own
     /// transaction (`media_asset_choice_made`), so the window shows it on each copy in the
     /// step that applies the act, and a failed write withdraws it from each. The copies are
-    /// the tiles the tile store holds, each by the digest its detail read.
+    /// the tiles the tile store holds, each by the copy key its detail read.
     private func withHeldCopies(_ choices: [MediaAssetID: MediaChoice]) -> [MediaAssetID: MediaChoice] {
-        var byDigest: [ContentDigest: MediaChoice] = [:]
+        var byKey: [PhotoCopyKey: MediaChoice] = [:]
         for (id, choice) in choices {
-            if let digest = tileContentStore.content(for: id)?.detail.copyDigest {
-                byDigest[digest] = choice
+            if let key = tileContentStore.content(for: id)?.detail.copyKey {
+                byKey[key] = choice
             }
         }
-        guard !byDigest.isEmpty else {
+        guard !byKey.isEmpty else {
             return choices
         }
         var expanded = choices
-        for (id, digest) in tileContentStore.copies(among: Set(byDigest.keys)) where expanded[id] == nil {
-            expanded[id] = byDigest[digest]
+        for (id, key) in tileContentStore.copies(among: Set(byKey.keys)) where expanded[id] == nil {
+            expanded[id] = byKey[key]
         }
         return expanded
     }

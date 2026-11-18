@@ -5,12 +5,12 @@ import Foundation
 import Synchronization
 import Testing
 
-/// ADR 0054, ADR 0032 rule 8: an account's mirror walk (probe every library, page every
-/// digested file against the account) is owed only by what it reads moving: the account's
-/// listing bringing something, or a library's paths, sizes or dates changing
-/// (`CatalogStore.libraryNamespaceRevision`). A file's digest pairs in its own write, so a
-/// poll that listed nothing and found no library changed reads no mirror and asks the server
-/// nothing; a file renamed on disk pairs at the next pass, though no listing says so.
+/// ADR 0054, ADR 0032 rule 8: an account's mirror walk (page every mirrored file against
+/// the account, then probe each library none of whose files is paired) is owed only by what
+/// it reads moving: the account's listing bringing something, or a library's paths, sizes
+/// or dates changing (`CatalogStore.libraryNamespaceRevision`). A poll that listed nothing
+/// and found no library changed reads no mirror and asks the server nothing; a file renamed
+/// on disk unpairs and pairs again at the next pass, though no listing says so.
 @Suite(.testScope)
 struct ImmichMirrorHoldTests {
     private static let server = URL(string: "https://photos.example.com")!
@@ -121,9 +121,22 @@ struct ImmichMirrorHoldTests {
         store.use().connections.holds.filter { $0.operation.hasPrefix("mirror") }.reduce(0) { $0 + $1.count }
     }
 
-    private func digest(of path: String, in root: LibraryRootPath, _ store: CatalogStore) async throws -> ContentDigest? {
-        let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
-        return try await store.windowReads.mediaAssets(for: [id])[id]?.contentHash
+    /// How many items All Media shows: one for a file and its mirror once they are paired.
+    private func allMedia(_ store: CatalogStore) async throws -> Int {
+        let paths = await CatalogWindowPolicy.availablePaths(from: store.currentLibraries())
+        return try await store.windowReads.orderedAssetIDs(for: CatalogQueryDescriptor(scope: .allMedia), availableLibraryPaths: paths).ids.count
+    }
+
+    private func rename(_ fixture: Fixture, _ from: String, to: String) async throws {
+        let original = fixture.folder.appending(path: from)
+        let renamed = fixture.folder.appending(path: to)
+        try FileManager.default.moveItem(at: original, to: renamed)
+        let flags = UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile)
+        fixture.emit(FilesystemEvent(path: original.path, flags: flags))
+        fixture.emit(FilesystemEvent(path: renamed.path, flags: flags))
+        _ = try await waitForCatalogStoreState(fixture.store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue).contains(to)
+        }
     }
 
     /// The first pass pairs; a pass after it that listed nothing, with no library changed,
@@ -135,7 +148,7 @@ struct ImmichMirrorHoldTests {
         let sync = ImmichCatalogSync(rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity)
 
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await digest(of: "a/IMG_1.JPG", in: fixture.account, fixture.store) == Self.contentDigest)
+        #expect(try await allMedia(fixture.store) == 1)
         let walked = Self.mirrorReads(fixture.store)
         #expect(walked > 0)
 
@@ -150,29 +163,47 @@ struct ImmichMirrorHoldTests {
     /// The server lists the file under the name it has since been given on disk. The first
     /// pass finds no library file of that name, so it learns no mirror; once the rename reaches
     /// the catalog, the next pass, which lists nothing, walks again, learns the mirror and pairs.
-    @Test func aFileRenamedOnDiskPairsAtTheNextPass() async throws {
+    @Test func aFileRenamedOnDiskBeforeTheServerPairsAtTheNextPass() async throws {
         let fixture = try await fixture()
         let listing = try Self.listing("a", named: "IMG_2.JPG", of: fixture.file, at: Self.serverPrefix + "2024/IMG_2.JPG")
         let server = Server([listing.events + [Self.complete]], details: ["a": listing.detail])
         let sync = ImmichCatalogSync(rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity)
 
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await digest(of: "a/IMG_2.JPG", in: fixture.account, fixture.store) == nil)
+        #expect(try await allMedia(fixture.store) == 2)
         #expect(server.requestedDetails.isEmpty)
 
-        let original = fixture.folder.appending(path: "2024/IMG_1.JPG")
-        let renamed = fixture.folder.appending(path: "2024/IMG_2.JPG")
-        try FileManager.default.moveItem(at: original, to: renamed)
-        let flags = UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile)
-        fixture.emit(FilesystemEvent(path: original.path, flags: flags))
-        fixture.emit(FilesystemEvent(path: renamed.path, flags: flags))
-        _ = try await waitForCatalogStoreState(fixture.store) { snapshot in
-            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue).contains("2024/IMG_2.JPG")
-        }
+        try await rename(fixture, "2024/IMG_1.JPG", to: "2024/IMG_2.JPG")
 
         #expect(await sync.pass() == .synced(listed: 0, deleted: 0, full: false))
         #expect(server.requestedDetails == ["a"])
-        #expect(try await digest(of: "a/IMG_2.JPG", in: fixture.account, fixture.store) == Self.contentDigest)
+        #expect(try await allMedia(fixture.store) == 1)
+        await fixture.store.shutdown()
+    }
+
+    /// A paired file renamed on disk is no longer at the path that named its asset: the next
+    /// pass, which lists nothing, unpairs it and the two show apart. When the server lists the
+    /// file at its new path — the old asset gone, a new one listed — that pass pairs them again,
+    /// under the prefix already learned, with no request.
+    @Test func aPairedFileRenamedOnDiskUnpairsAndPairsAgain() async throws {
+        let fixture = try await fixture()
+        let first = try Self.listing("a", named: "IMG_1.JPG", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
+        let second = try Self.listing("b", named: "IMG_2.JPG", of: fixture.file, at: Self.serverPrefix + "2024/IMG_2.JPG")
+        let server = Server(
+            [first.events + [Self.complete], [Self.complete], [.assetDeleted(assetID: "a", ack: "AssetDeleteV1|a")] + second.events + [Self.complete]],
+            details: ["a": first.detail, "b": second.detail]
+        )
+        let sync = ImmichCatalogSync(rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity)
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
+        #expect(try await allMedia(fixture.store) == 1)
+
+        try await rename(fixture, "2024/IMG_1.JPG", to: "2024/IMG_2.JPG")
+        #expect(await sync.pass() == .synced(listed: 0, deleted: 0, full: false))
+        #expect(try await allMedia(fixture.store) == 2)
+
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 1, full: false))
+        #expect(try await allMedia(fixture.store) == 1)
+        #expect(server.requestedDetails == ["a"])
         await fixture.store.shutdown()
     }
 }

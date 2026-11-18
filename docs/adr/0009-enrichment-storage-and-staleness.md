@@ -483,10 +483,9 @@ Adjacent decisions requiring separate ADRs or specs:
 
     Cost: an exact copy among cloud-only files is not found until both copies are local.
     Duplicates and the one-copy rule treat a row with no digest as in no identical group,
-    as they did while it waited for its download. A mirrored library file's account copy
-    takes the library file's digest (ADR 0054), so for a cloud-only file with no digest the
-    mirror's one-copy rule waits for local bytes too. A separate change is making a mirror
-    pair that its path confirms count as one photo without the digest.
+    as they did while it waited for its download. A mirrored library file and its account
+    copy are one photo by their pair, which the server's path checksum confirms with no byte
+    read (ADR 0054, schema v79), so the mirror's one-copy rule does not wait for the digest.
 
     Rejected:
     - *Keep downloading for the digest* (§7's eager coverage): hours of open app and

@@ -17,22 +17,55 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v78's table, triggers and indexes dropped, the face index v77 had made
-    /// again, and its record removed.
-    static let newest = CatalogSchema.personPhotoMigrationIdentifier
+    /// schema before it: v79's triggers, tables, index and column dropped; each generated
+    /// pair's asset given its file's digest, as v61's pairing wrote it, and the copies of
+    /// those digests regrouped by v64's rule; `person_photo`'s digest put back; v64's and
+    /// v78's triggers made again; and its record removed.
+    static let newest = CatalogSchema.photoCopyKeyMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
-        [
-            "DROP TRIGGER face_person_photo_inserted",
-            "DROP TRIGGER face_person_photo_deleted",
-            "DROP TRIGGER face_person_photo_updated",
+        let v64Triggers = CatalogSchema.photoCopiesStatements.filter { $0.hasPrefix("CREATE TRIGGER") }
+        let v78Triggers = CatalogSchema.personPhotoStatements.filter {
+            $0.contains("CREATE TRIGGER face_person_photo_inserted") || $0.contains("CREATE TRIGGER face_person_photo_updated")
+                || $0.contains("CREATE TRIGGER media_asset_person_photo_updated")
+        }
+        let paired = "SELECT content_sha1 FROM media_asset WHERE source_path_sha1 IS NOT NULL AND content_sha1 IS NOT NULL"
+        return [
+            "DROP TRIGGER immich_mirror_pair_inserted",
+            "DROP TRIGGER immich_mirror_pair_deleted",
+            "DROP TRIGGER media_asset_copy_inserted",
+            "DROP TRIGGER media_asset_copy_deleted",
+            "DROP TRIGGER media_asset_copy_updated",
+            "DROP TRIGGER media_asset_choice_made",
             "DROP TRIGGER media_asset_person_photo_updated",
-            "DROP TABLE person_photo",
-            "DROP INDEX idx_face_person_photo",
+            "DROP TRIGGER face_person_photo_inserted",
+            "DROP TRIGGER face_person_photo_updated",
             """
-            CREATE INDEX idx_face_person_photo
-            ON face(person_id, library_root_id, relative_path, is_not_face) WHERE person_id IS NOT NULL
+            UPDATE media_asset AS a SET content_sha1 = f.content_sha1,
+                content_hash_source_size = a.byte_size, content_hash_source_mtime = CAST(a.content_modified_at_unix AS INTEGER)
+            FROM immich_mirror_pair AS p
+            JOIN media_asset AS f ON f.library_root_id = p.library_root_id AND f.relative_path = p.file_path
+            WHERE a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
+              AND \(ContentDigestSQL.isCurrent("f"))
             """,
+            "DROP TABLE immich_mirror_pair",
+            "DROP TABLE copy_key_touched",
+            // Before v79 a pair with no digest was no copy: its rows stood alone.
+            """
+            UPDATE media_asset SET shown_copy_root_id = NULL, has_copies = 0
+            WHERE content_sha1 IS NULL AND (shown_copy_root_id IS NOT NULL OR has_copies <> 0)
+            """,
+            "DROP INDEX idx_media_asset_copy_key",
+            "ALTER TABLE media_asset DROP COLUMN copy_key",
+            CatalogSchema.photoCopiesRecompute(rows: "content_sha1 IN (\(paired))"),
+            "ALTER TABLE person_photo RENAME COLUMN copy_key TO content_sha1",
+            """
+            UPDATE person_photo SET (content_sha1, shown_copy_root_id, has_copies) = (
+                SELECT m.content_sha1, m.shown_copy_root_id, m.has_copies FROM media_asset AS m
+                WHERE m.library_root_id = person_photo.library_root_id AND m.relative_path = person_photo.relative_path
+            )
+            """,
+        ] + v64Triggers + v78Triggers + [
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }
@@ -400,6 +433,18 @@ enum WindowReadPages {
         try read("filterOptions") { db in
             try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db)
         }
+        // All Media's one-copy rule, with every copy root and with the mirrored library away:
+        // the second asks the copy key's index whether a better copy is reachable.
+        try read("allMediaOneCopy") { db in
+            try CatalogQueryGateway.orderedAssetIDQuery(
+                descriptor: .default, scope: CatalogScopePredicate(rootIDs: roots, showsOneCopy: true, holdsEveryCopyRoot: true), db: db
+            )
+        }
+        try read("allMediaLibraryAway") { db in
+            try CatalogQueryGateway.orderedAssetIDQuery(
+                descriptor: .default, scope: CatalogScopePredicate(rootIDs: [6, 15], showsOneCopy: true), db: db
+            )
+        }
         try read("peopleFaceAssetJoin") { _ in
             SQLQuery(sql: """
             SELECT f.library_root_id, f.relative_path, f.face_index, m.best_capture_local, m.has_copies
@@ -458,9 +503,17 @@ enum WindowReadPages {
                 )
                 precondition(table.contains("WITHOUT ROWID"))
                 try db.execute(sql: table)
+                // The columns migrations after v71 added, which its table does not have.
+                let hot = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_asset_hot')"))
+                let added = try Row.fetchAll(db, sql: "SELECT name, type FROM pragma_table_xinfo('media_asset') WHERE hidden = 0")
+                    .filter { !hot.contains($0["name"] as String) }
+                for column in added {
+                    try db.execute(sql: "ALTER TABLE media_asset_hot ADD COLUMN \(column["name"] as String) \(column["type"] as String)")
+                }
+                let addedNames = added.map { ", " + ($0["name"] as String) }.joined()
                 try db.execute(sql: """
-                INSERT INTO media_asset_hot (\(CatalogSchema.hotAssetCopiedColumns), render_dhash, render_signature_read)
-                SELECT \(CatalogSchema.hotAssetCopiedColumns), render_dhash, render_signature_read FROM media_asset
+                INSERT INTO media_asset_hot (\(CatalogSchema.hotAssetCopiedColumns), render_dhash, render_signature_read\(addedNames))
+                SELECT \(CatalogSchema.hotAssetCopiedColumns), render_dhash, render_signature_read\(addedNames) FROM media_asset
                 ORDER BY library_root_id, relative_path
                 """)
                 try db.execute(sql: "DROP TABLE media_asset")

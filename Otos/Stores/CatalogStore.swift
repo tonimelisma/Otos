@@ -276,10 +276,14 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
         (.copies, [
             .update(tableName: "media_asset", columnNames: [
                 "content_sha1", "content_hash_source_size", "content_hash_source_mtime", "shown_copy_root_id",
-                "source_path_sha1", "has_copies",
+                "source_path_sha1", "has_copies", "copy_key",
             ]),
             .insert(tableName: "immich_mirror"), .delete(tableName: "immich_mirror"),
             .update(tableName: "immich_mirror", columnNames: ["account_root_id", "library_root_id", "server_prefix"]),
+            .insert(tableName: "immich_mirror_pair"), .delete(tableName: "immich_mirror_pair"),
+            .update(tableName: "immich_mirror_pair", columnNames: [
+                "library_root_id", "file_path", "account_root_id", "asset_path",
+            ]),
         ]),
         (.searchReadings, [.update(tableName: "search_embedding", columnNames: ["confident_labels"])]),
         // A row's own digest is detail too: a digest no other copy holds makes no file a copy,
@@ -391,14 +395,14 @@ nonisolated struct DigestStanding: Equatable, Sendable {
     let storedDigest: Data?
     let storedSize: Int64?
     let storedMTime: Int64?
-    /// The digest while the row is a copy at all: current, of some bytes, in a library or an
-    /// account (`CatalogSchema.isCopy`); nil otherwise.
-    let copyDigest: Data?
-    /// Whether another copy, of any presence, shares `copyDigest`.
+    /// The row's copy key (`PhotoCopySQL`): its current digest of some bytes in a library or
+    /// an account, or the key its mirror pair gives it; nil when it is a copy of nothing.
+    let copyKey: Data?
+    /// Whether another row, of any presence, shares `copyKey`.
     let shared: Bool
 
     /// Where a row that did not exist stood: no digest, a copy of nothing.
-    static let absent = DigestStanding(storedDigest: nil, storedSize: nil, storedMTime: nil, copyDigest: nil, shared: false)
+    static let absent = DigestStanding(storedDigest: nil, storedSize: nil, storedMTime: nil, copyKey: nil, shared: false)
 
     static func read(libraryRootID: Int64, relativePath: String, db: Database) throws -> DigestStanding? {
         try Row.fetchOne(
@@ -406,17 +410,17 @@ nonisolated struct DigestStanding: Equatable, Sendable {
             arguments: [libraryRootID, relativePath]
         ).map { row in
             DigestStanding(
-                storedDigest: row[0], storedSize: row[1], storedMTime: row[2], copyDigest: row[3], shared: row[4]
+                storedDigest: row[0], storedSize: row[1], storedMTime: row[2], copyKey: row[3], shared: row[4]
             )
         }
     }
 
     /// Whether going from this standing to `after` changed which files are copies of which:
-    /// the row joined or left a digest another copy holds, or another copy joined or left
-    /// its own — a mirrored asset the write paired. A digest no other copy holds, before or
-    /// after, makes no file a copy.
+    /// the row joined or left a key another row holds, or another row joined or left its
+    /// own — a mirrored asset whose key follows its file's digest. A key no other row holds,
+    /// before or after, makes no file a copy.
     func changesCopies(to after: DigestStanding) -> Bool {
-        (copyDigest != after.copyDigest || shared != after.shared) && (shared || after.shared)
+        (copyKey != after.copyKey || shared != after.shared) && (shared || after.shared)
     }
 }
 
@@ -1494,7 +1498,8 @@ extension CatalogStore {
                 db,
                 sql: """
                 SELECT import_batch_unix_ms, edit_recipe_json IS NOT NULL AS edited,
-                       (\(ContentDigestSQL.isCurrent("media_asset"))) AS has_digest
+                       (\(ContentDigestSQL.isCurrent("media_asset"))) AS has_digest,
+                       \(PhotoCopySQL.isCopy("media_asset")) AS is_copy
                 FROM media_asset WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: arguments
@@ -1512,24 +1517,23 @@ extension CatalogStore {
             ).map { MediaRelativePath(rawValue: $0["relative_path"]).fileName }
             let batch: Int64? = asset["import_batch_unix_ms"]
             let hasDigest: Bool = asset["has_digest"]
-            let copies = try hasDigest ? String.fetchAll(
+            let isCopy: Bool = asset["is_copy"]
+            // A row that is a copy of some photo lists its other copies; one with a digest
+            // and no key has none; one with neither is not checked yet (its digest is owed).
+            let copies = try isCopy ? String.fetchAll(
                 db,
                 sql: """
                 SELECT root.path FROM media_asset AS a
-                JOIN media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
-                  ON copy.content_sha1 = a.content_sha1
+                JOIN media_asset AS copy INDEXED BY \(PhotoCopySQL.indexName)
+                  ON \(PhotoCopySQL.isCopy("copy", of: "a"))
                 JOIN library_root AS root ON root.id = copy.library_root_id
                 WHERE a.library_root_id = ? AND a.relative_path = ?
                   AND NOT (copy.library_root_id = a.library_root_id AND copy.relative_path = a.relative_path)
-                  AND \(ContentDigestSQL.isCurrent("a"))
-                  AND \(ContentDigestSQL.isCurrent("copy"))
-                  AND copy.content_sha1 <> \(ContentDigestSQL.empty)
-                  AND root.kind IN (\(CatalogSchema.copyRootKinds))
                   AND \(CatalogVisibilitySQL.isPresent("copy"))
                 ORDER BY \(CatalogSchema.copyRank("copy"))
                 """,
                 arguments: arguments
-            ).map(LibraryRootPath.init(rawValue:)) : nil
+            ).map(LibraryRootPath.init(rawValue:)) : hasDigest ? [] : nil
             let labels = try Row.fetchOne(
                 db,
                 sql: """
@@ -1658,7 +1662,7 @@ extension CatalogStore {
             var collected = MappedArrayBuilder<PeopleSnapshot.Face>()
             var keyPhotos: [PersonID: FaceID] = [:]
             // The digests of the files with a face and a present copy, whose copies follow.
-            var copiedDigests: Set<Data> = []
+            var copiedKeys: Set<Data> = []
             // A Live Photo's movie is one item with its still (ADR 0041), whose faces are its.
             // Read by position (`PeopleFaceColumn`): a name lookup scans the row's columns,
             // and at 18 columns over every face it was most of the read (bench
@@ -1677,8 +1681,8 @@ extension CatalogStore {
             func take(_ row: Row) -> PeopleSnapshot.Face? {
                 let rootID: Int64 = row[PeopleFaceColumn.rootID.rawValue]
                 let pathText: String = row[PeopleFaceColumn.path.rawValue]
-                if let digest = row[PeopleFaceColumn.copiedDigest.rawValue] as Data? {
-                    copiedDigests.insert(digest)
+                if let digest = row[PeopleFaceColumn.copiedKey.rawValue] as Data? {
+                    copiedKeys.insert(digest)
                 }
                 let path = lastAsset.flatMap { $0.relativePath.rawValue == pathText ? $0.relativePath : nil }
                     ?? MediaRelativePath(rawValue: pathText)
@@ -1742,11 +1746,11 @@ extension CatalogStore {
                     }
                 }
             }
-            // The present copies of each photo with a face, by the digest they share (ADR 0054).
+            // The present copies of each photo with a face, by the key they share (ADR 0054).
             var copies: [[PeopleSnapshot.Copy]] = []
-            let copiesOfDigest = try db.cachedStatement(sql: PhotoFaceSQL.presentCopiesOfDigest)
-            for digest in copiedDigests {
-                let photo = try Row.fetchAll(copiesOfDigest, arguments: [digest]).compactMap { row -> PeopleSnapshot.Copy? in
+            let copiesOfKey = try db.cachedStatement(sql: PhotoFaceSQL.presentCopiesOfKey)
+            for digest in copiedKeys {
+                let photo = try Row.fetchAll(copiesOfKey, arguments: [digest]).compactMap { row -> PeopleSnapshot.Copy? in
                     let rootID: Int64 = row[0]
                     guard let rootPath = pathsByRowID[rootID] else { return nil }
                     return PeopleSnapshot.Copy(
@@ -2088,10 +2092,10 @@ extension CatalogStore {
             ORDER BY f.face_index
             """)
             let digestOf = try db.cachedStatement(sql: """
-            SELECT CASE WHEN has_copies = 1 THEN content_sha1 END FROM media_asset
+            SELECT CASE WHEN has_copies = 1 THEN copy_key END FROM media_asset
             WHERE library_root_id = ? AND relative_path = ?
             """)
-            let copiesOfDigest = try db.cachedStatement(sql: PhotoFaceSQL.presentCopiesOfDigest)
+            let copiesOfKey = try db.cachedStatement(sql: PhotoFaceSQL.presentCopiesOfKey)
             var own: [MediaAssetID: [PhotoFace]] = [:]
             func read(_ file: MediaAssetID, rootID: Int64) throws {
                 guard own[file] == nil else { return }
@@ -2105,7 +2109,7 @@ extension CatalogStore {
             for (file, rootID) in keys {
                 try read(file, rootID: rootID)
                 guard let digest = try Data.fetchOne(digestOf, arguments: [rootID, file.relativePath.rawValue]) else { continue }
-                let group = try Row.fetchAll(copiesOfDigest, arguments: [digest]).compactMap { row -> PeopleSnapshot.Copy? in
+                let group = try Row.fetchAll(copiesOfKey, arguments: [digest]).compactMap { row -> PeopleSnapshot.Copy? in
                     let copyRoot: Int64 = row[0]
                     guard let path = pathsByRowID[copyRoot] else { return nil }
                     return PeopleSnapshot.Copy(
@@ -2136,7 +2140,7 @@ extension CatalogStore {
         return try await reader(for: lane).readFreeingConnection { db in
             let rows = try Row.fetchAll(db, sql: """
             SELECT \(FaceTileColumn.selectList(face: "f", asset: "m")),
-                   CASE WHEN m.has_copies = 1 THEN m.content_sha1 END,
+                   CASE WHEN m.has_copies = 1 THEN m.copy_key END,
                    CASE WHEN m.best_kind IN ('raw', 'image') THEN m.burst_identifier END
             FROM face f INDEXED BY idx_face_person_photo
             JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
@@ -2157,7 +2161,7 @@ extension CatalogStore {
                 }
             }
             faces.sort { FaceTile.newestFirst($0.tile, $1.tile) }
-            // Copies share their digest; the files of a stack its key, from the stacks of the
+            // Copies share their copy key; the files of a stack its key, from the stacks of the
             // newest files only, the ones the row can show.
             var seen: Set<Data> = []
             var byDigest = faces.filter { $0.digest.map { seen.insert($0).inserted } ?? true }
@@ -5117,9 +5121,6 @@ extension CatalogStore {
                     ]
                 )
                 let written = db.changesCount
-                if written > 0 {
-                    _ = try MirrorGateway.pairMirroredAssets(libraryRootID: rootRowID, relativePath: relativePath, db: db)
-                }
                 if written == 0 {
                     // The file changed while it was read: the digest is for other bytes.
                     try db.execute(
@@ -7944,7 +7945,7 @@ private extension CatalogStore {
             renderedSourceSize: storedDetail.renderedSourceSize,
             renderedSourceMTimeSeconds: storedDetail.renderedSourceMTimeSeconds,
             mediaChoice: storedDetail.mediaChoice,
-            copyDigest: storedDetail.copyDigest
+            copyKey: storedDetail.copyKey
         )
     }
 
@@ -10466,18 +10467,20 @@ extension CatalogStore {
     // MARK: - Mirrors (ADR 0054)
 
     /// Each library as `account`'s mirror discovery sees it: the server prefix learned for
-    /// it and files that may be the account's assets (`MirrorGateway.Probe`).
+    /// it, whether any of its files is paired with one of the account's assets, and files
+    /// that may be the account's assets (`MirrorGateway.Probe`).
     func mirrorProbes(account: LibraryRootPath, lane: CatalogReadLane) async throws -> [MirrorGateway.Probe] {
         guard let accountRootID = roots[account]?.rowID else {
             return []
         }
         let libraries = roots.values.filter { $0.root.kind == .library }.map { (id: $0.rowID, path: $0.path) }
-        return try await reader(for: lane).readFreeingConnection { db in
+        return try await reader(for: lane).readFreeingConnection(operation: "mirrorProbes") { db in
             try libraries.map { library in
                 try MirrorGateway.Probe(
                     libraryRootID: library.id,
                     libraryRootPath: library.path,
                     serverPrefix: MirrorGateway.serverPrefix(accountRootID: accountRootID, libraryRootID: library.id, db: db),
+                    isPaired: MirrorGateway.isPaired(libraryRootID: library.id, accountRootID: accountRootID, db: db),
                     candidates: MirrorGateway.candidates(libraryRootID: library.id, accountRootID: accountRootID, db: db)
                 )
             }
@@ -10490,7 +10493,7 @@ extension CatalogStore {
         guard let accountRootID = roots[account]?.rowID, let libraryRootID = roots[library]?.rowID else {
             return
         }
-        try await database().write { db in
+        try await database().write(operation: "recordMirror") { db in
             try MirrorGateway.record(
                 accountRootID: accountRootID, libraryRootID: libraryRootID, serverPrefix: serverPrefix, db: db
             )
@@ -10500,56 +10503,47 @@ extension CatalogStore {
         ])
     }
 
-    /// Gives every asset of `account` that is a mirrored library file the file's digest
-    /// (`MirrorGateway.pair`), a batch of files at a time; returns how many took one. Each
-    /// batch is read first and written only for the files whose asset lacks the digest, so a
-    /// pass over pairs that all stand — every sync pass of a settled account — opens no write.
+    /// Pairs every file of each library `account` mirrors with the asset its path names
+    /// there (`MirrorGateway.owedPairs`), a batch of files at a time, and unpairs a file from
+    /// an asset its path no longer names; returns how many pairs came and went. Each batch
+    /// is read first and written only for the files whose pair is owed, so a walk over
+    /// pairs that all stand — every owed walk of a settled account — opens no write. The
+    /// catalog's triggers make each pair's rows one photo (schema v79).
     func pairMirroredCopies(account: LibraryRootPath, lane: CatalogReadLane) async throws -> Int {
         guard let accountRootID = roots[account]?.rowID else {
             return 0
         }
         let dbQueue = try database()
         let started = ContinuousClock.now
-        let mirrors = try await reader(for: lane).readFreeingConnection { db in
-            try Row.fetchAll(
-                db,
-                sql: "SELECT library_root_id, server_prefix FROM immich_mirror WHERE account_root_id = ?",
-                arguments: [accountRootID]
-            ).map { row -> (libraryRootID: Int64, serverPrefix: String) in
-                (row["library_root_id"], row["server_prefix"])
-            }
-        }
-        struct Batch {
-            let last: String?
-            let count: Int
-            let unpaired: [MirrorGateway.DigestedFile]
+        let mirrors = try await reader(for: lane).readFreeingConnection(operation: "mirrors") { db in
+            try MirrorGateway.mirrors(ofAccount: accountRootID, db: db)
         }
         var paired = 0
+        var unpaired = 0
         var files = 0
         var choicesJoined = false
         for mirror in mirrors {
-            var after: String?
+            var after = ""
             while true {
                 let batch = try await reader(for: lane).readFreeingConnection(operation: "mirrorPairsOwed") { [after] db in
-                    let batch = try MirrorGateway.digestedFiles(libraryRootID: mirror.libraryRootID, after: after, db: db)
-                    return try Batch(
-                        last: batch.last?.relativePath, count: batch.count,
-                        unpaired: MirrorGateway.unpaired(
-                            batch, accountRootID: accountRootID, serverPrefix: mirror.serverPrefix, db: db
-                        )
+                    try MirrorGateway.owedPairs(
+                        libraryRootID: mirror.libraryRootID, accountRootID: accountRootID,
+                        serverPrefix: mirror.serverPrefix, after: after, db: db
                     )
                 }
-                if !batch.unpaired.isEmpty {
-                    // The write pairs again under its own conditions: a file whose digest or
-                    // asset moved since the read pairs only if it still should.
+                if !batch.owed.isEmpty {
+                    // The write pairs again under its own conditions: a file or an asset that
+                    // went or moved since the read is not paired.
                     let written = try await timedWrite(dbQueue, operation: "pairMirroredCopies") { db in
                         let joinsBefore = try CatalogSchema.choiceJoins(db)
-                        let paired = try MirrorGateway.pair(
-                            batch.unpaired, accountRootID: accountRootID, serverPrefix: mirror.serverPrefix, db: db
+                        let counts = try MirrorGateway.writePairs(
+                            batch.owed, libraryRootID: mirror.libraryRootID, accountRootID: accountRootID,
+                            serverPrefix: mirror.serverPrefix, db: db
                         )
-                        return try (paired, CatalogSchema.choiceJoins(db) != joinsBefore)
+                        return try (counts, CatalogSchema.choiceJoins(db) != joinsBefore)
                     }.value
-                    paired += written.0
+                    paired += written.0.paired
+                    unpaired += written.0.unpaired
                     choicesJoined = choicesJoined || written.1
                 }
                 files += batch.count
@@ -10564,14 +10558,14 @@ extension CatalogStore {
             "mirrors": "\(mirrors.count)",
             "files": "\(files)",
             "paired": "\(paired)",
+            "unpaired": "\(unpaired)",
             "ms": "\(DiagnosticsTiming.milliseconds(from: started, to: ContinuousClock.now))",
         ])
-        // A pair is an asset taking the digest its library file holds (`MirrorGateway.pairSQL`
-        // writes only an asset that lacks it), so every pair makes two files copies.
-        if paired > 0 {
+        // A pair that comes or goes joins or splits a photo's copies.
+        if paired + unpaired > 0 {
             notifyCatalogChanged(.changed(.digests(copiesChanged: true, digestsChanged: true, choicesJoined: choicesJoined)))
         }
-        return paired
+        return paired + unpaired
     }
 
     /// Keep All Copies: remembers every pair of copies in each group as kept together.

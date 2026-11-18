@@ -49,45 +49,74 @@ and is the row's digest, stamped with the facts the same listing wrote. A size t
 reports later, of the same bytes, takes the place of the missing size in the stamp.
 - An external library's asset (`libraryId` set) has a checksum of its path, not its bytes:
   the SHA-1 of `path:<its path on the server>` (`ImmichPathChecksum`, stored as
-  `media_asset.source_path_sha1`). It takes a digest only as a mirrored library file's copy
-  (below), or when its original is downloaded for the user's own work.
+  `media_asset.source_path_sha1`). It is never a digest. A mirrored file's asset is one photo
+  with the file by the pair below, not by a digest.
 - A name and size that match are never treated as proof.
 
-**A mirrored library file names its external-library asset by its path** (owner's mirror,
-2026-11-15; decided by the agent on the owner's delegation, because the other way, hashing
-each original, would download every one of them).
+**A mirrored library file is its external asset, by the server's path for it** (owner's
+mirror, 2026-11-15; decided by the agent on the owner's delegation, because the other way,
+hashing each original, would download every one of them; made a fact of its own on
+2026-11-17, below).
 - A mirror (`immich_mirror`) is the server path a library's relative paths follow on an
-  account's server. After a completed sync pass that owes it (below), `ImmichCatalogSync` finds up to three
+  account's server. It is learned once per library: `ImmichCatalogSync` finds up to three
   library files with an external asset of the same name, size and whole-second modification
-  time. It asks the server for one such asset's `originalPath` (`GET /api/assets/{id}`) and
+  time, asks the server for one such asset's `originalPath` (`GET /api/assets/{id}`), and
   takes the prefix before the file's relative path, compared as bytes. The asset's own
   checksum must equal the checksum of that prefix plus the relative path. A same-named file
-  from another folder confirms nothing, and the next candidate is asked. A stored prefix that
-  a candidate still confirms is kept with no request.
-- An asset is a library file's copy when its path checksum is that of the prefix plus the
-  file's relative path, and the server lists it with the size and whole-second modification
-  time that the file's digest was read at. This is rsync's quick check, on the exact path. The
-  asset then takes the file's digest, stamped with its own listed facts, so a later listing of
-  other bytes makes the digest stale for it.
-- `MirrorGateway.pair` is the one rule. The digest write of a library file (enrichment,
-  `applyContentHash`, an import's landing) pairs its mirrored assets in the same transaction.
-  A cloud-only library file is never downloaded for its digest alone (ADR 0009 §12), so its
-  mirror pairs only once the file's bytes are local for another reason and its digest is
-  taken.
-  A pass that owes the walk pairs every file again, in batches of 500 files per transaction,
-  so an asset listed after its file's digest pairs at the end of the pass that lists it.
-- The walk (probe and pairing) is owed only when what it reads moved since the last walk
-  that did not fail (ADR 0032 rule 8): the pass's own listing applied a change, or a fixed
-  library's paths, sizes or dates changed (`CatalogStore.libraryNamespaceRevision`, moved by
-  every namespace revision of a library and by a library coming or going). A digest is not
-  among them, since its own write pairs it. A renamed or moved library file keeps its digest
-  under its new path, which only a walk pairs, so the namespace is what owes it. A pass with
-  neither reads no mirror and asks the server nothing (`op=immich.mirror phase=held`): on the
-  owner's idle session the walk had read 56 pages (1,574 ms) and asked the server three paths
-  every five-minute poll with nothing listed. A server or Store failure leaves the walk owed;
-  the server refusing to describe an asset (400/404) is an answer and does not.
-- On the owner's catalog, 16,683 Camera Roll files have an Immich asset with the same name and
-  size. Every one of them also has the same whole-second modification time.
+  from another folder confirms nothing, and the next candidate is asked; each refusal is
+  logged with why (`op=immich.mirror phase=candidateRefused reason=`: no path, a path that
+  does not end with the file's relative path, with how many trailing components it shares,
+  or a prefix that does not give the asset's checksum).
+- **A pair** (`immich_mirror_pair`) is the fact that one library file is one external asset:
+  the asset whose path checksum is the checksum of the mirror's prefix plus the file's
+  relative path. The sync records it from the listing alone, with no download, no digest and
+  no request to the server once the prefix is known. The path checksum is the server's own
+  name for the file at that path, so the proof is exact; a name and size are never it.
+- **The walk** (`CatalogStore.pairMirroredCopies`) is the pair's one owner. It pages every
+  file of each mirrored library, 500 per read, seeks the account's asset at the file's
+  checksum, and writes only a batch whose pairs are owed: a file whose path names an asset it
+  is not paired with pairs, and a pair whose file's path no longer names its asset goes (a
+  file renamed on disk keeps its pair through the foreign key until that walk). A walk over
+  pairs that all stand opens no write. The pair goes with either row by its foreign keys.
+- A library file pairs with one asset, and an asset with one file. A library two accounts
+  both mirror pairs with the first account's walk; the other account's asset of the same
+  file stays its own photo.
+- The walk runs first, then the probe, and only for a library none of whose files is paired:
+  a stored prefix that pairs any file is kept with no request. A library the server holds
+  partly under another path keeps the pairs its prefix names.
+- The walk is owed only when what it reads moved since the last walk that did not fail (ADR
+  0032 rule 8): the pass's own listing applied a change, or a library's paths, sizes or dates
+  changed (`CatalogStore.libraryNamespaceRevision`, moved by every namespace revision of a
+  library and by a library coming or going). A pass with neither reads no mirror and asks the
+  server nothing (`op=immich.mirror phase=held`): on the owner's idle session the walk had
+  read 56 pages (1,574 ms) and asked the server three paths every five-minute poll with
+  nothing listed. A server or Store failure leaves the walk owed; the server refusing to
+  describe an asset (400/404) is an answer and does not.
+
+**A pair is one photo while its versions agree** (decided 2026-11-17, on the owner's
+delegation). The path says the two rows are the same file; whether they hold the same bytes
+is the question every copy answers, and the copies' rule is "identical copies are one photo".
+- Both rows have a current digest: they agree when the digests are equal.
+- Otherwise the asset must be listed with the file's current size and whole-second
+  modification time: rsync's quick check, on the exact path. A file whose digest is not read
+  yet — a cloud-only one, whose digest waits for its bytes to be local (ADR 0009 §12) — agrees
+  this way with no byte read.
+- A pair whose versions differ — the file edited and not yet read again by the server, or a
+  digest that disagrees — is two photos, each shown where it is, until a listing or a read
+  makes them agree. The pair itself stays: it is a fact about paths, and the next listing of
+  the same file's new bytes needs no new walk.
+
+**The copies of a photo share a key, and SQLite keeps it** (schema v79).
+- `media_asset.copy_key` is a row's current digest of some bytes in a library or an account;
+  for a pair whose versions agree, both rows take one key: the digest either holds, else the
+  asset's path checksum. Every rule of the photo below — the shown copy, `has_copies`, the
+  photo's choice, its faces, Info's `Copies` row and the window's held choice — groups by the
+  key (`PhotoCopySQL`, `idx_media_asset_copy_key`), so a digest group and a mirror pair are
+  one relation, not two.
+- The copy triggers set the key in the write that moves what it reads: a row's digest, its
+  stamps, its size or mtime, its presence, its path, or its pair's other row's. The pair
+  table's triggers do the same when a pair comes or goes. The key is a projection of facts the
+  catalog holds and the triggers rebuild in every write; nothing writes it by hand.
 
 **The shown copy is a library's before an account's, then the first by root and path,
 among the scope's reachable roots.**
@@ -104,14 +133,14 @@ among the scope's reachable roots.**
 - `media_asset.shown_copy_root_id` is the root of the best present copy ranked before a row,
   in any root, NULL for the best copy itself. It counts only present copies in a library or an
   account.
-- `media_asset.has_copies` (v64) is 1 when another present copy shares the row's digest.
-- Three triggers recompute both for the digest group a write leaves and the one it joins: on
-  an insert, a delete, and an update of the digest, its stamps, the file's size or mtime, its
-  presence or its path. They run in the transaction of every write, so no write path can leave
-  them stale and no Swift owner duplicates the rule.
+- `media_asset.has_copies` (v64) is 1 when another present row shares the row's copy key.
+- The copy triggers recompute both for the key a write leaves and the one it joins: on an
+  insert, a delete, an update of the digest, its stamps, the file's size or mtime, its presence
+  or its path, and a pair coming or going. They run in the transaction of every write, so no
+  write path can leave them stale and no Swift owner duplicates the rule.
 - A scope hides a row when its shown copy's root is in the scope. Only for a row whose shown
   copy's root is not in the scope (its library not available) does the read ask, through the
-  digest index, whether a copy ranked before it is in the scope. That is a table read for those
+  copy key's index, whether a copy ranked before it is in the scope. That is a table read for those
   rows alone, so mounting or unmounting a library writes nothing. A scope that holds every
   library and account root (`holdsEveryCopyRoot`, from the root registry) has every best copy
   in reach and does not ask: its read is the one it was before.
@@ -119,8 +148,8 @@ among the scope's reachable roots.**
   v64), so the common test reads no table row.
 
 **A choice and a face belong to the photo, not the copy** (owner, 2026-11-15: "The photo").
-The copies are the same relation the shown copy uses: the same current SHA-1 in a library or
-an account, a mirror pair included.
+The copies are the same relation the shown copy uses: the same copy key, which a digest group
+and a mirror pair whose versions agree both give.
 - **A choice is written on every copy.** A Like, Dislike or un-choice on any copy is written on
   all its copies, whatever their presence, in the same transaction (trigger
   `media_asset_choice_made`). So the order, the counts, the Liked filter, On This Day's
@@ -137,8 +166,8 @@ an account, a mirror pair included.
   proven deletion of one copy purges that row alone and the photo's choice lives on the others.
 - **A face on any copy is the photo's.** Faces are read from each copy's own preview and stay
   on the copy (`PhotoFaceSQL`). A person's photos, People and the People filter test a row's
-  own faces and, only for a row with `has_copies`, its present copies' faces through the digest
-  index. A person's narrow scope seeks its faces' photos and their copies. A person's photo
+  own faces and, only for a row with `has_copies`, its present copies' faces through the copy
+  key's index. A person's narrow scope seeks its faces' photos and their copies. A person's photo
   count counts each photo once (`PeopleSnapshot.photos`).
 - **Every copy shows the photo's people.** Info's People section and the photo menus list the
   shown file's own faces, then each visible person named only on another present copy, with
@@ -177,6 +206,11 @@ is never reported as none.
 | Trusting an external library's checksum as a digest | It is the SHA-1 of `path:<path>`, which no library file's bytes can match. It names the asset a mirrored file's path points at instead. |
 | Downloading every external-library original to hash it | About 147k downloads on the owner's account, against ADR 0046 §4: an account's original is downloaded only for the user's own work. |
 | Matching a mirror by name, size and date alone | A guess across folders. The path checksum makes the path exact, and the size and date only say the bytes are the same version. |
+| Pairing a mirror through the file's digest (the asset taking the file's digest, v61 to v78) | The pair waited for the file's bytes, read only after a cloud-only file's download, and the walk read only files with a digest: on the owner's catalog on 2026-11-17, of the 982 files the stored prefix named, 968 had no digest and only 14 were one photo with their asset. The path checksum already names the asset. |
+| A second key beside the digest (rows are copies by digest or by pair) | Every rule of the photo — the shown copy, `has_copies`, the choice, faces, Info, the held choice — would ask two relations and close over both; one key makes them one relation. |
+| Writing a stand-in digest on the library file | The file's digest says what its bytes are, and Duplicates and enrichment read it so; a path checksum there would be a false fact. |
+| Showing a pair as one photo whatever its versions | A file edited and not yet read again by the server is not the photo the account holds. The copies' rule is identical copies; the pair waits for its versions to agree. |
+| Several prefixes per library | No evidence yet: the 15,950 files the owner's stored prefix does not name may not end with their relative path at all on the server (unknown until one is asked). The refusal's log line says which. |
 | Listing every asset's `originalPath` (`POST /api/search/metadata`) | It is about 150 requests per resync, and a second record of a path the stream's checksum already names. One path per library teaches the prefix. |
 | Showing the copy with the user's work (edited, liked) first | Liking or un-liking would swap which file the tile is, under the pointer. |
 | Keeping a choice on its copy and resolving the photo's choice in each read | Every read that tests a choice — the order under a Liked filter, counts, On This Day, the stacks, the tile badge, Info — would need a digest lookup per row; the order index cannot hold the digest, so it is the per-row table read that took 17–33 s. A conflict between copies would also be decided in each read. |
@@ -200,15 +234,23 @@ is never reported as none.
   full resync, so each external asset is listed with its path checksum. A library's mirror is
   learned from the server once, with one asset request, and pairing a whole library is a
   pass's batched writes. A mirror goes with either root.
-- A walk pairs every mirrored file again. On a generated library of 16,000 paired files
-  (`immich.mirror.pass.of16k`), that pass costs about 3.6 G instructions and 0.4 s, off the
-  main actor. Each batch is read first and written only for files whose asset lacks the
-  digest, so a pass over pairs that all stand opens no write transaction
+- Migration v79 adds `immich_mirror_pair`, `copy_key` and its index, and the copy triggers
+  over the key; clears the digests v61's pairing wrote on external assets; and gives
+  `person_photo` the key in place of the digest. Pairs are recorded at the account's next walk,
+  which every launch owes. Its cost on a generated owner-shaped catalog is in
+  `docs/research/2026-11-17-mirror-pairs-by-path.md`.
+- A walk reads every mirrored file again, a checksum and an index seek each, and writes only
+  the pairs that are owed, so a walk over pairs that all stand opens no write transaction
   (`BackgroundOwnersIdleTests`). `CatalogStoreQueryPlanTests.mirrorReadsSeekTheirIndexes`
   holds its reads to index seeks.
-- A file renamed on one side but not yet on the other pairs again once both sides list it at
-  the same path: the listing or the library's namespace that moves owes the walk
-  (`ImmichMirrorHoldTests`).
+- A file renamed on disk unpairs at the next walk and pairs again once the server lists it at
+  its new path; one renamed on the server first pairs once the rename reaches the catalog: the
+  listing or the library's namespace that moves owes the walk (`ImmichMirrorHoldTests`).
+- On the owner's catalog on 2026-11-17 the stored prefix names 982 of library 7's 16,932
+  files, all in two of its eleven folders; the other 15,950 have an asset of the same name and
+  size whose path checksum is not that of the prefix plus their relative path. Why is not
+  known without one server answer for such a file, which the probe now logs; until then those
+  photos show twice in the combined scopes.
 - Duplicates never lists a file and its mirror (ADR 0042, owner 2026-11-15): an external
   library's asset is never a copy there, so nothing can keep it and send the only bytes to the
   Trash.
@@ -223,7 +265,7 @@ is never reported as none.
   catalog. It notifies `.copies`, which the combined scopes, People and Duplicates are built
   from, only when it changed which files are copies: where the written row stood before and
   after the write (`DigestStanding`, read in the same transaction) says whether it joined or
-  left a digest another copy holds, or a mirrored asset took its digest. A digest no other
+  left a copy key another row holds, or its pair's asset took its digest as their key. A digest no other
   copy holds — most of a library's backlog — notifies only `.detail` (the tile's copy digest,
   Info's `Copies` row), and a digest written again unchanged notifies nothing. On the owner's
   library a read-only session that imported and edited nothing announced `.copies` for 226 of

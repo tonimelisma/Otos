@@ -303,13 +303,13 @@ final class TileContentStore {
         return changes
     }
 
-    /// The held tiles that are identical copies (ADR 0054) with one of `digests`, each with
-    /// its digest: a walk of the entries held, which the scope bounds.
-    func copies(among digests: Set<ContentDigest>) -> [MediaAssetID: ContentDigest] {
-        var copies: [MediaAssetID: ContentDigest] = [:]
+    /// The held tiles that are copies of a photo (ADR 0054) with one of `keys`, each with
+    /// its key: a walk of the entries held, which the scope bounds.
+    func copies(among keys: Set<PhotoCopyKey>) -> [MediaAssetID: PhotoCopyKey] {
+        var copies: [MediaAssetID: PhotoCopyKey] = [:]
         for (id, entry) in entries {
-            if let digest = entry.content.detail.copyDigest, digests.contains(digest) {
-                copies[id] = digest
+            if let key = entry.content.detail.copyKey, keys.contains(key) {
+                copies[id] = key
             }
         }
         return copies

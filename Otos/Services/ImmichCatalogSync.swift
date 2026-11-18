@@ -131,9 +131,10 @@ actor ImmichCatalogSync: QuiescentOwner {
     private var mirrorsCovered: MirrorInputs?
     let activity = OwnerActivity(owner: "immichSync")
 
-    /// What a mirror walk reads that can move between passes: the libraries' paths, sizes and
-    /// dates (`CatalogStore.libraryNamespaceRevision`), and this account's listing. A library
-    /// file's digest is not among them: its own write pairs it (`MirrorGateway.pairMirroredAssets`).
+    /// What a mirror walk reads that can move between passes: the libraries' paths
+    /// (`CatalogStore.libraryNamespaceRevision`, which their sizes and dates move too), and
+    /// this account's listing. A pair is by path alone, so a digest is not among them: whether
+    /// a pair's versions agree is the catalog's triggers' to decide in each write (schema v79).
     private struct MirrorInputs: Equatable {
         let libraryNamespace: UInt64
         let listings: UInt64
@@ -249,13 +250,14 @@ actor ImmichCatalogSync: QuiescentOwner {
 
     // MARK: - Mirrors (ADR 0054)
 
-    /// Learns where the server holds each library it mirrors, then gives every mirrored
-    /// asset its library file's digest. It runs once the stream is applied, so every asset
-    /// the pass listed is there to pair. It walks only when what it reads has moved since the
-    /// last walk that did not fail (`MirrorInputs`): this account listed something, or a
-    /// library's paths, sizes or dates changed; a pass with neither reads nothing
-    /// (ADR 0032 rule 8). A read that fails pairs nothing new, is logged, and leaves the walk
-    /// owed for the next pass.
+    /// Pairs every mirrored library file with the asset its server path names, then learns
+    /// where the server holds each library none of whose files is paired yet, and pairs
+    /// again when it learned one. It runs once the stream is applied, so every asset the pass
+    /// listed is there to pair. It walks only when what it reads has moved since the last
+    /// walk that did not fail (`MirrorInputs`): this account listed something, or a library's
+    /// paths, sizes or dates changed; a pass with neither reads nothing (ADR 0032 rule 8). A
+    /// read that fails pairs nothing new, is logged, and leaves the walk owed for the next
+    /// pass.
     private func pairMirrors() async {
         let inputs = await MirrorInputs(libraryNamespace: store.libraryNamespaceRevision, listings: listingsApplied)
         guard inputs != mirrorsCovered else {
@@ -263,6 +265,9 @@ actor ImmichCatalogSync: QuiescentOwner {
                 "rootPath": rootPath.rawValue, "libraryNamespace": "\(inputs.libraryNamespace)",
                 "listings": "\(inputs.listings)",
             ])
+            return
+        }
+        guard await walkMirrors() else {
             return
         }
         let probes: [MirrorGateway.Probe]
@@ -275,42 +280,50 @@ actor ImmichCatalogSync: QuiescentOwner {
             return
         }
         activity.read(rows: probes.count)
-        var learned = true
-        for probe in probes {
-            learned = await learnMirror(probe) && learned
+        var answered = true
+        var recorded = false
+        for probe in probes where !probe.isPaired {
+            let outcome = await learnMirror(probe)
+            answered = answered && outcome.answered
+            recorded = recorded || outcome.recorded
         }
-        do {
-            // A write walk over every mirrored library: one heavy load at a time.
-            let paired = try await admission.run(.immichMirror) {
-                try await store.backgroundReads.pairMirroredCopies(account: rootPath)
+        if recorded {
+            guard await walkMirrors() else {
+                return
             }
-            activity.wrote(paired)
-        } catch is CancellationError {
-            return
-        } catch {
-            OtosLog.catalog.errorOperation("immich.mirror", phase: "pairFailed", fields: [
-                "rootPath": rootPath.rawValue, "error": String(describing: error),
-            ])
-            return
         }
-        if learned {
+        if answered {
             mirrorsCovered = inputs
         }
     }
 
-    /// A library's mirror: kept while one of its files still names its asset under the
-    /// prefix, else learned from the server's path of a candidate asset, which its own
-    /// checksum must confirm. A same-named file from another folder confirms nothing, and the
-    /// next candidate is asked. False when the server or the Store failed to answer, so what
-    /// the probe could not learn stays owed.
-    private func learnMirror(_ probe: MirrorGateway.Probe) async -> Bool {
-        let fields = ["accountRootPath": rootPath.rawValue, "libraryRootPath": probe.libraryRootPath.rawValue]
-        if let prefix = probe.serverPrefix, probe.candidates.contains(where: {
-            ImmichPathChecksum(serverPath: prefix + $0.relativePath.rawValue) == $0.pathChecksum
-        }) {
-            OtosLog.catalog.noticeOperation("immich.mirror", phase: "kept", fields: fields)
+    /// One walk of every mirror's pairs (`CatalogStore.pairMirroredCopies`), one heavy load at
+    /// a time; false when it failed, which leaves the walk owed.
+    private func walkMirrors() async -> Bool {
+        do {
+            let changed = try await admission.run(.immichMirror) {
+                try await store.backgroundReads.pairMirroredCopies(account: rootPath)
+            }
+            activity.wrote(changed)
             return true
+        } catch is CancellationError {
+            return false
+        } catch {
+            OtosLog.catalog.errorOperation("immich.mirror", phase: "pairFailed", fields: [
+                "rootPath": rootPath.rawValue, "error": String(describing: error),
+            ])
+            return false
         }
+    }
+
+    /// Learns a library's mirror from the server's path of a candidate asset, which its own
+    /// checksum must confirm: a library none of whose files is paired, under no prefix or a
+    /// prefix that names none of them. A same-named file from another folder confirms
+    /// nothing, and the next candidate is asked. `answered` is false when the server or the
+    /// Store failed to answer, so what the probe could not learn stays owed; `recorded` when
+    /// a prefix was recorded.
+    private func learnMirror(_ probe: MirrorGateway.Probe) async -> (answered: Bool, recorded: Bool) {
+        let fields = ["accountRootPath": rootPath.rawValue, "libraryRootPath": probe.libraryRootPath.rawValue]
         for candidate in probe.candidates {
             let detail: ImmichAssetDetail
             do {
@@ -321,18 +334,28 @@ actor ImmichCatalogSync: QuiescentOwner {
                 OtosLog.catalog.noticeOperation("immich.mirror", phase: "pathRefused", fields: fields.merging([
                     "assetID": candidate.assetID, "status": "\(status)",
                 ]) { current, _ in current })
-                return true
+                return (true, false)
             } catch {
                 OtosLog.catalog.errorOperation("immich.mirror", phase: "pathReadFailed", fields: fields.merging([
                     "assetID": candidate.assetID, "error": String(describing: error),
                 ]) { current, _ in current })
-                return false
+                return (false, false)
             }
-            guard let originalPath = detail.originalPath,
-                  let prefix = MirrorGateway.serverPrefix(of: originalPath, relativePath: candidate.relativePath),
-                  ImmichPathChecksum(serverPath: prefix + candidate.relativePath.rawValue) == candidate.pathChecksum
-            else {
+            let prefix: String
+            switch MirrorGateway.prefix(of: detail.originalPath, for: candidate) {
+            case let .success(learned):
+                prefix = learned
+            case let .failure(refusal):
+                OtosLog.catalog.noticeOperation("immich.mirror", phase: "candidateRefused", fields: fields.merging(
+                    refusal.fields.merging(["assetID": candidate.assetID]) { current, _ in current }
+                ) { current, _ in current })
                 continue
+            }
+            guard prefix != probe.serverPrefix else {
+                // The stored prefix, confirmed again, names none of the library's files:
+                // nothing new to pair by.
+                OtosLog.catalog.noticeOperation("immich.mirror", phase: "kept", fields: fields)
+                return (true, false)
             }
             do {
                 try await store.recordMirror(account: rootPath, library: probe.libraryRootPath, serverPrefix: prefix)
@@ -340,14 +363,14 @@ actor ImmichCatalogSync: QuiescentOwner {
                 OtosLog.catalog.errorOperation("immich.mirror", phase: "recordFailed", fields: fields.merging([
                     "error": String(describing: error),
                 ]) { current, _ in current })
-                return false
+                return (false, false)
             }
-            return true
+            return (true, true)
         }
         OtosLog.catalog.noticeOperation("immich.mirror", phase: "notMirrored", fields: fields.merging([
             "candidates": "\(probe.candidates.count)", "known": "\(probe.serverPrefix != nil)",
         ]) { current, _ in current })
-        return true
+        return (true, false)
     }
 
     /// The stream applied to its end: from zero while a resync is owed, else from the

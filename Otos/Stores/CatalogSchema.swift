@@ -1670,15 +1670,14 @@ nonisolated enum CatalogSchema {
     }
 
     /// Where one row stands among copies (`DigestStanding`): its stored digest and the facts
-    /// it was read at, its digest while it is a copy at all, and whether another copy, of
-    /// any presence, shares that digest. Binds the root and the path; one probe of the
-    /// digest index.
+    /// it was read at, its copy key (v79), and whether another row, of any presence, shares
+    /// that key. Binds the root and the path; one probe of the copy key's index.
     static let digestStandingSQL = """
     SELECT a.content_sha1, a.content_hash_source_size, a.content_hash_source_mtime,
-           CASE WHEN \(isCopy("a")) THEN a.content_sha1 END AS copy_digest,
-           CASE WHEN \(isCopy("a")) THEN EXISTS (
-               SELECT 1 FROM media_asset AS copy INDEXED BY \(ContentDigestSQL.indexName)
-               WHERE \(isCopy("copy", of: "a")) AND copy.rowid <> a.rowid
+           a.copy_key AS copy_key,
+           CASE WHEN \(PhotoCopySQL.isCopy("a")) THEN EXISTS (
+               SELECT 1 FROM media_asset AS copy INDEXED BY \(PhotoCopySQL.indexName)
+               WHERE \(PhotoCopySQL.isCopy("copy", of: "a")) AND copy.rowid <> a.rowid
            ) ELSE 0 END AS shared
     FROM media_asset AS a
     WHERE a.library_root_id = ? AND a.relative_path = ?
@@ -2919,6 +2918,372 @@ nonisolated enum CatalogSchema {
                 awaiting_presence = NEW.awaiting_presence, hidden_by_source = NEW.hidden_by_source,
                 best_kind = NEW.best_kind, best_format = NEW.best_format, content_identifier = NEW.content_identifier,
                 burst_identifier = NEW.burst_identifier, content_sha1 = NEW.content_sha1,
+                shown_copy_root_id = NEW.shown_copy_root_id, has_copies = NEW.has_copies,
+                media_choice = NEW.media_choice
+            WHERE (library_root_id = OLD.library_root_id AND relative_path = OLD.relative_path)
+               OR (library_root_id = NEW.library_root_id AND relative_path = NEW.relative_path);
+        END
+        """,
+    ]
+
+    /// Schema v79: a photo's copies share one key, and a mirror pair is a fact of its own
+    /// (ADR 0054, "A mirrored library file is its external asset, by the server's path").
+    /// - `immich_mirror_pair` names, for a library file, the external-library asset that is
+    ///   that file on an account's server: the asset whose path checksum is the checksum of
+    ///   the mirror's prefix plus the file's relative path. The account's sync records it
+    ///   from the listing alone, with no download and no digest. One pair per file and per
+    ///   asset; the foreign keys take it with either row.
+    /// - `media_asset.copy_key` is what a row's copies share. A row's own key is its current
+    ///   digest of some bytes, in a library or an account. A pair whose versions agree — the
+    ///   same digest when both have one, else the asset listed with the file's size and
+    ///   whole-second modification time — gives both rows one key: the digest either holds,
+    ///   else the asset's path checksum. A pair whose versions differ (the file edited and
+    ///   not synced yet) is two photos: each row keeps its own key.
+    /// - The copy triggers keep the key in the write that moves what it reads, and the shown
+    ///   copy, `has_copies` and the photo's choice beside it, grouped by the key through
+    ///   `idx_media_asset_copy_key`; the pair's own triggers do the same when a pair comes or
+    ///   goes. `copy_key_touched` holds the keys one trigger program regroups.
+    /// - An external asset's digest was only its mirrored file's digest, written by v61's
+    ///   pairing: it is cleared, and the pair takes its place at the account's next walk.
+    /// - `person_photo` carries the key in place of the digest, which only the one-copy test
+    ///   read there.
+    ///
+    /// Rows are written before the index that holds them, and the triggers last.
+    static let photoCopyKeyMigrationIdentifier = "v79_photo_copy_key"
+
+    /// v79's own rules, frozen with it: an applied migration's outcome never changes
+    /// (ADR 0002), so the triggers are spelled from these and from nothing a later change
+    /// could edit. The current readers' side is `PhotoCopySQL`.
+    private static let v79CopyKinds = "SELECT id FROM library_root WHERE kind IN ('library', 'immichAccount')"
+
+    private static func v79OwnKey(_ row: String) -> String {
+        """
+        CASE WHEN \(row).content_sha1 IS NOT NULL AND length(\(row).content_sha1) = 20
+          AND \(row).content_hash_source_size = COALESCE(\(row).byte_size, -1)
+          AND \(row).content_hash_source_mtime = CAST(COALESCE(\(row).content_modified_at_unix, -1) AS INTEGER)
+          AND \(row).content_sha1 <> X'da39a3ee5e6b4b0d3255bfef95601890afd80709'
+          AND \(row).library_root_id IN (\(v79CopyKinds))
+        THEN \(row).content_sha1 END
+        """
+    }
+
+    /// The key a pair gives both its rows while its versions agree, else NULL.
+    private static let v79PairKey = """
+    CASE WHEN CASE WHEN (\(v79OwnKey("f"))) IS NOT NULL AND (\(v79OwnKey("a"))) IS NOT NULL
+                   THEN (\(v79OwnKey("f"))) = (\(v79OwnKey("a")))
+                   ELSE f.byte_size = a.byte_size
+                    AND CAST(f.content_modified_at_unix AS INTEGER) = CAST(a.content_modified_at_unix AS INTEGER)
+              END
+         THEN COALESCE((\(v79OwnKey("f"))), (\(v79OwnKey("a"))), a.source_path_sha1)
+    END
+    """
+
+    /// `row`'s copy key: its pair's while the pair's versions agree, else its own.
+    private static func v79Key(_ row: String) -> String {
+        """
+        COALESCE(
+            (SELECT \(v79PairKey) FROM immich_mirror_pair AS p
+             JOIN media_asset AS f ON f.library_root_id = p.library_root_id AND f.relative_path = p.file_path
+             JOIN media_asset AS a ON a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
+             WHERE p.library_root_id = \(row).library_root_id AND p.file_path = \(row).relative_path),
+            (SELECT \(v79PairKey) FROM immich_mirror_pair AS p
+             JOIN media_asset AS f ON f.library_root_id = p.library_root_id AND f.relative_path = p.file_path
+             JOIN media_asset AS a ON a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
+             WHERE p.account_root_id = \(row).library_root_id AND p.asset_path = \(row).relative_path),
+            \(v79OwnKey(row))
+        )
+        """
+    }
+
+    /// The row at `root`/`path` and its pair's other row, as rowids.
+    private static func v79PairRows(root: String, path: String) -> String {
+        """
+        SELECT rowid FROM media_asset WHERE library_root_id = \(root) AND relative_path = \(path)
+        UNION ALL
+        SELECT m.rowid FROM immich_mirror_pair AS p
+        JOIN media_asset AS m ON m.library_root_id = p.account_root_id AND m.relative_path = p.asset_path
+        WHERE p.library_root_id = \(root) AND p.file_path = \(path)
+        UNION ALL
+        SELECT m.rowid FROM immich_mirror_pair AS p
+        JOIN media_asset AS m ON m.library_root_id = p.library_root_id AND m.relative_path = p.file_path
+        WHERE p.account_root_id = \(root) AND p.asset_path = \(path)
+        """
+    }
+
+    private static func v79Rank(_ row: String) -> String {
+        """
+        ((SELECT kind FROM library_root WHERE id = \(row).library_root_id) = 'immichAccount'), \
+        \(row).library_root_id, \(row).relative_path
+        """
+    }
+
+    private static func v79Present(_ row: String) -> String {
+        "\(row).pending_trash_batch_unix_ms IS NULL AND \(row).awaiting_presence = 0 AND \(row).hidden_by_source = 0"
+    }
+
+    private static let v79Touched = "copy_key IN (SELECT key FROM copy_key_touched)"
+
+    /// The shown copy and `has_copies` of every row of the touched keys.
+    private static let v79Regroup = """
+    UPDATE media_asset SET
+        shown_copy_root_id = (
+            SELECT copy.library_root_id FROM media_asset AS copy INDEXED BY idx_media_asset_copy_key
+            WHERE copy.copy_key = media_asset.copy_key AND \(v79Present("copy"))
+              AND (\(v79Rank("copy"))) < (\(v79Rank("media_asset")))
+            ORDER BY \(v79Rank("copy"))
+            LIMIT 1
+        ),
+        has_copies = EXISTS (
+            SELECT 1 FROM media_asset AS copy INDEXED BY idx_media_asset_copy_key
+            WHERE copy.copy_key = media_asset.copy_key AND \(v79Present("copy")) AND copy.rowid <> media_asset.rowid
+        )
+    WHERE \(v79Touched);
+    """
+
+    /// Every row of the touched keys takes the choice of the latest act among its copies, where
+    /// they disagree; the count of rows that took one follows (`countsJoinedChoices`).
+    private static let v79Unify = """
+    UPDATE media_asset SET (media_choice, media_choice_sequence) = (
+        SELECT copy.media_choice, copy.media_choice_sequence
+        FROM media_asset AS copy INDEXED BY idx_media_asset_copy_key
+        WHERE copy.copy_key = media_asset.copy_key
+        ORDER BY copy.media_choice_sequence DESC
+        LIMIT 1
+    )
+    WHERE \(v79Touched)
+      AND EXISTS (
+          SELECT 1 FROM media_asset AS copy INDEXED BY idx_media_asset_copy_key
+          WHERE copy.copy_key = media_asset.copy_key
+            AND copy.media_choice_sequence IS NOT media_asset.media_choice_sequence
+      );
+    UPDATE choice_sequence SET joins = joins + changes();
+    """
+
+    /// The trigger program that sets the copy key of the rows `rows` selects (a `rowid IN`
+    /// list) and regroups the keys they leave and join.
+    private static func v79Rekey(rows: String) -> String {
+        """
+        DELETE FROM copy_key_touched;
+        INSERT OR IGNORE INTO copy_key_touched (key)
+        SELECT copy_key FROM media_asset WHERE rowid IN (\(rows)) AND copy_key IS NOT NULL;
+        UPDATE media_asset SET copy_key = \(v79Key("media_asset"))
+        WHERE rowid IN (\(rows)) AND copy_key IS NOT \(v79Key("media_asset"));
+        INSERT OR IGNORE INTO copy_key_touched (key)
+        SELECT copy_key FROM media_asset WHERE rowid IN (\(rows)) AND copy_key IS NOT NULL;
+        \(v79Regroup)
+        \(v79Unify)
+        UPDATE media_asset SET shown_copy_root_id = NULL, has_copies = 0
+        WHERE rowid IN (\(rows)) AND copy_key IS NULL AND (shown_copy_root_id IS NOT NULL OR has_copies <> 0);
+        DELETE FROM copy_key_touched;
+        """
+    }
+
+    /// The rows an asset update rekeys: the row and its pair's other row, by its new key and
+    /// its old one (a move's pair follows it by the foreign key).
+    private static let v79UpdatedRows = """
+    \(v79PairRows(root: "NEW.library_root_id", path: "NEW.relative_path"))
+    UNION ALL
+    \(v79PairRows(root: "OLD.library_root_id", path: "OLD.relative_path"))
+    """
+
+    /// A pair's two rows, of the pair row `pair` (`NEW` or `OLD`).
+    private static func v79PairSides(_ pair: String) -> String {
+        """
+        SELECT rowid FROM media_asset WHERE library_root_id = \(pair).library_root_id AND relative_path = \(pair).file_path
+        UNION ALL
+        SELECT rowid FROM media_asset WHERE library_root_id = \(pair).account_root_id AND relative_path = \(pair).asset_path
+        """
+    }
+
+    /// The columns a row's own key, its pair's agreement, its presence or its rank read.
+    private static let v79Inputs = """
+    content_sha1, content_hash_source_size, content_hash_source_mtime, byte_size, content_modified_at_unix, \
+    pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, library_root_id, relative_path
+    """
+
+    private static let v79InputChanged = """
+    OLD.content_sha1 IS NOT NEW.content_sha1
+      OR OLD.content_hash_source_size IS NOT NEW.content_hash_source_size
+      OR OLD.content_hash_source_mtime IS NOT NEW.content_hash_source_mtime
+      OR OLD.byte_size IS NOT NEW.byte_size
+      OR OLD.content_modified_at_unix IS NOT NEW.content_modified_at_unix
+      OR OLD.pending_trash_batch_unix_ms IS NOT NEW.pending_trash_batch_unix_ms
+      OR OLD.awaiting_presence IS NOT NEW.awaiting_presence
+      OR OLD.hidden_by_source IS NOT NEW.hidden_by_source
+      OR OLD.library_root_id IS NOT NEW.library_root_id
+      OR OLD.relative_path IS NOT NEW.relative_path
+    """
+
+    private static let v79PersonPhotoColumns = """
+    person_id, library_root_id, relative_path, best_capture_local, name_sort_key, \
+    byte_size, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, best_kind, best_format, \
+    content_identifier, burst_identifier, copy_key, shown_copy_root_id, has_copies, media_choice
+    """
+
+    private static let v79PersonPhotoValues = """
+    m.library_root_id, m.relative_path, m.best_capture_local, m.name_sort_key, m.byte_size,
+    m.pending_trash_batch_unix_ms, m.awaiting_presence, m.hidden_by_source, m.best_kind, m.best_format,
+    m.content_identifier, m.burst_identifier, m.copy_key, m.shown_copy_root_id, m.has_copies, m.media_choice
+    """
+
+    static let photoCopyKeyStatements: [String] = [
+        "DROP TRIGGER media_asset_copy_inserted",
+        "DROP TRIGGER media_asset_copy_deleted",
+        "DROP TRIGGER media_asset_copy_updated",
+        "DROP TRIGGER media_asset_choice_made",
+        "DROP TRIGGER media_asset_person_photo_updated",
+        "DROP TRIGGER face_person_photo_inserted",
+        "DROP TRIGGER face_person_photo_updated",
+        """
+        CREATE TABLE immich_mirror_pair (
+            library_root_id INTEGER NOT NULL,
+            file_path TEXT NOT NULL,
+            account_root_id INTEGER NOT NULL,
+            asset_path TEXT NOT NULL,
+            PRIMARY KEY (library_root_id, file_path),
+            UNIQUE (account_root_id, asset_path),
+            FOREIGN KEY (library_root_id, file_path) REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            FOREIGN KEY (account_root_id, asset_path) REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) WITHOUT ROWID
+        """,
+        "CREATE TABLE copy_key_touched (key BLOB PRIMARY KEY) WITHOUT ROWID",
+        "ALTER TABLE media_asset ADD COLUMN copy_key BLOB",
+        "ALTER TABLE person_photo RENAME COLUMN content_sha1 TO copy_key",
+        // The digests v61's pairing wrote on external assets: their groups are regrouped below.
+        """
+        INSERT OR IGNORE INTO copy_key_touched (key)
+        SELECT content_sha1 FROM media_asset WHERE source_path_sha1 IS NOT NULL AND content_sha1 IS NOT NULL
+        """,
+        """
+        UPDATE media_asset SET content_sha1 = NULL, content_hash_source_size = NULL, content_hash_source_mtime = NULL,
+            shown_copy_root_id = NULL, has_copies = 0
+        WHERE source_path_sha1 IS NOT NULL AND content_sha1 IS NOT NULL
+        """,
+        "UPDATE media_asset SET copy_key = \(v79OwnKey("media_asset")) WHERE content_sha1 IS NOT NULL",
+        """
+        CREATE INDEX idx_media_asset_copy_key
+        ON media_asset(copy_key, library_root_id, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source)
+        WHERE copy_key IS NOT NULL
+        """,
+        v79Regroup,
+        "DELETE FROM copy_key_touched",
+        """
+        UPDATE person_photo SET (copy_key, shown_copy_root_id, has_copies) = (
+            SELECT m.copy_key, m.shown_copy_root_id, m.has_copies FROM media_asset AS m
+            WHERE m.library_root_id = person_photo.library_root_id AND m.relative_path = person_photo.relative_path
+        )
+        """,
+        """
+        CREATE TRIGGER media_asset_copy_inserted AFTER INSERT ON media_asset
+        WHEN NEW.content_sha1 IS NOT NULL
+        BEGIN
+        \(v79Rekey(rows: "NEW.rowid"))
+        END
+        """,
+        """
+        CREATE TRIGGER media_asset_copy_deleted AFTER DELETE ON media_asset
+        WHEN OLD.copy_key IS NOT NULL
+        BEGIN
+        DELETE FROM copy_key_touched;
+        INSERT INTO copy_key_touched (key) VALUES (OLD.copy_key);
+        \(v79Regroup)
+        DELETE FROM copy_key_touched;
+        END
+        """,
+        // A write that moves a row's key input and sets its choice at once — an import's
+        // landing, which brings the card's choice — is an act, ordered before the photo takes
+        // the latest act among its copies. A move's pair follows its row by the foreign key, so
+        // the pair's rows are found from either key.
+        """
+        CREATE TRIGGER media_asset_copy_updated AFTER UPDATE OF \(v79Inputs) ON media_asset
+        WHEN (\(v79InputChanged)) AND (OLD.content_sha1 IS NOT NULL OR NEW.content_sha1 IS NOT NULL
+          OR OLD.copy_key IS NOT NULL
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE library_root_id = NEW.library_root_id AND file_path = NEW.relative_path)
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE account_root_id = NEW.library_root_id AND asset_path = NEW.relative_path)
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE library_root_id = OLD.library_root_id AND file_path = OLD.relative_path)
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE account_root_id = OLD.library_root_id AND asset_path = OLD.relative_path))
+        BEGIN
+        UPDATE choice_sequence SET value = value + 1 WHERE NEW.media_choice IS NOT OLD.media_choice;
+        UPDATE media_asset SET media_choice_sequence = (SELECT value FROM choice_sequence)
+        WHERE rowid = NEW.rowid AND NEW.media_choice IS NOT OLD.media_choice;
+        \(v79Rekey(rows: v79UpdatedRows))
+        END
+        """,
+        """
+        CREATE TRIGGER media_asset_choice_made AFTER UPDATE OF media_choice ON media_asset
+        WHEN NEW.media_choice IS NOT OLD.media_choice
+          AND NEW.media_choice_sequence IS OLD.media_choice_sequence
+          AND NOT (\(v79InputChanged))
+        BEGIN
+        UPDATE choice_sequence SET value = value + 1;
+        UPDATE media_asset SET
+            media_choice = NEW.media_choice,
+            media_choice_sequence = (SELECT value FROM choice_sequence)
+        WHERE rowid = NEW.rowid OR (NEW.copy_key IS NOT NULL AND media_asset.copy_key = NEW.copy_key);
+        END
+        """,
+        """
+        CREATE TRIGGER immich_mirror_pair_inserted AFTER INSERT ON immich_mirror_pair
+        BEGIN
+        \(v79Rekey(rows: v79PairSides("NEW")))
+        END
+        """,
+        """
+        CREATE TRIGGER immich_mirror_pair_deleted AFTER DELETE ON immich_mirror_pair
+        BEGIN
+        \(v79Rekey(rows: v79PairSides("OLD")))
+        END
+        """,
+        """
+        CREATE TRIGGER face_person_photo_inserted AFTER INSERT ON face
+        WHEN NEW.person_id IS NOT NULL AND NEW.is_not_face = 0
+        BEGIN
+            INSERT OR IGNORE INTO person_photo (\(v79PersonPhotoColumns))
+            SELECT NEW.person_id, \(v79PersonPhotoValues)
+            FROM media_asset AS m WHERE m.library_root_id = NEW.library_root_id AND m.relative_path = NEW.relative_path;
+        END
+        """,
+        """
+        CREATE TRIGGER face_person_photo_updated AFTER UPDATE OF person_id, is_not_face ON face
+        WHEN OLD.person_id IS NOT NEW.person_id OR OLD.is_not_face IS NOT NEW.is_not_face
+        BEGIN
+            DELETE FROM person_photo
+            WHERE OLD.person_id IS NOT NULL AND OLD.is_not_face = 0
+              AND person_id = OLD.person_id
+              AND library_root_id = OLD.library_root_id AND relative_path = OLD.relative_path
+              AND NOT EXISTS (
+                  SELECT 1 FROM face WHERE face.person_id = OLD.person_id
+                    AND face.library_root_id = OLD.library_root_id AND face.relative_path = OLD.relative_path
+                    AND face.is_not_face = 0
+              );
+            INSERT OR IGNORE INTO person_photo (\(v79PersonPhotoColumns))
+            SELECT NEW.person_id, \(v79PersonPhotoValues)
+            FROM media_asset AS m
+            WHERE NEW.person_id IS NOT NULL AND NEW.is_not_face = 0
+              AND m.library_root_id = NEW.library_root_id AND m.relative_path = NEW.relative_path;
+        END
+        """,
+        """
+        CREATE TRIGGER media_asset_person_photo_updated
+        AFTER UPDATE OF capture_wall_compact, capture_instant_unix, created_at_unix, content_modified_at_unix,
+            assumed_utc_offset_seconds, name_sort_key, byte_size, pending_trash_batch_unix_ms, awaiting_presence,
+            hidden_by_source, kind, enriched_kind, format, enriched_format, content_identifier, burst_identifier,
+            copy_key, shown_copy_root_id, has_copies, media_choice ON media_asset
+        WHEN OLD.best_capture_local IS NOT NEW.best_capture_local OR OLD.name_sort_key IS NOT NEW.name_sort_key
+          OR OLD.byte_size IS NOT NEW.byte_size OR OLD.pending_trash_batch_unix_ms IS NOT NEW.pending_trash_batch_unix_ms
+          OR OLD.awaiting_presence IS NOT NEW.awaiting_presence OR OLD.hidden_by_source IS NOT NEW.hidden_by_source
+          OR OLD.best_kind IS NOT NEW.best_kind OR OLD.best_format IS NOT NEW.best_format
+          OR OLD.content_identifier IS NOT NEW.content_identifier OR OLD.burst_identifier IS NOT NEW.burst_identifier
+          OR OLD.copy_key IS NOT NEW.copy_key OR OLD.shown_copy_root_id IS NOT NEW.shown_copy_root_id
+          OR OLD.has_copies IS NOT NEW.has_copies OR OLD.media_choice IS NOT NEW.media_choice
+        BEGIN
+            UPDATE person_photo SET best_capture_local = NEW.best_capture_local, name_sort_key = NEW.name_sort_key,
+                byte_size = NEW.byte_size, pending_trash_batch_unix_ms = NEW.pending_trash_batch_unix_ms,
+                awaiting_presence = NEW.awaiting_presence, hidden_by_source = NEW.hidden_by_source,
+                best_kind = NEW.best_kind, best_format = NEW.best_format, content_identifier = NEW.content_identifier,
+                burst_identifier = NEW.burst_identifier, copy_key = NEW.copy_key,
                 shown_copy_root_id = NEW.shown_copy_root_id, has_copies = NEW.has_copies,
                 media_choice = NEW.media_choice
             WHERE (library_root_id = OLD.library_root_id AND relative_path = OLD.relative_path)

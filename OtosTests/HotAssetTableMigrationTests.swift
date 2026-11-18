@@ -55,8 +55,10 @@ struct HotAssetTableMigrationTests {
             let columns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_asset')"))
             #expect(columns.isDisjoint(with: Self.removedColumns))
             #expect(columns.contains("render_signature_read"))
-            // Every index is carried over; the later migrations add two.
-            #expect(try Self.indexNames(db) == indexesBefore.union([ChosenRowsSQL.indexName, SearchEmbeddingStorage.noThumbnailComingIndexName]))
+            // Every index is carried over; the later migrations add three.
+            #expect(try Self.indexNames(db) == indexesBefore.union([
+                ChosenRowsSQL.indexName, SearchEmbeddingStorage.noThumbnailComingIndexName, PhotoCopySQL.indexName,
+            ]))
             // A signature current for its thumbnail keeps its hash and its gray; a stale one is
             // owed again; a thumbnail that did not decode stays read.
             for signature in signaturesBefore {

@@ -2,16 +2,16 @@ import Foundation
 import GRDB
 
 /// Mirrors SQL (ADR 0054), run inside the Store's database access by `CatalogStore`'s
-/// mirror intents and by every write of a library file's digest.
+/// mirror intents, which an account's sync drives (`ImmichCatalogSync`).
 ///
 /// An Immich external library that holds a library's files lists each one as an asset
 /// whose checksum is the SHA-1 of `path:<its path on the server>`, never of its bytes. A
 /// mirror (`immich_mirror`) is the server path a library's relative paths follow there, so
-/// a library file's own path names its asset exactly: the checksum of the server prefix
-/// plus its relative path. The asset is that file's copy when the server lists it with the
-/// size and modification time (whole seconds) the file's digest was read at, and it then
-/// takes that digest, stamped with its own listed facts. A later listing of other bytes
-/// moves its facts, so the digest stops being current for it, as any stale digest does.
+/// a library file's own path names its asset exactly: the asset whose path checksum is the
+/// checksum of the server prefix plus the file's relative path. That is the pair
+/// (`immich_mirror_pair`), a fact read from the listing alone: no byte of either file is
+/// read and nothing is downloaded. The catalog's triggers make the pair's two rows one
+/// photo while its versions agree (`media_asset.copy_key`, schema v79).
 nonisolated enum MirrorGateway {
     /// A library file that may be one of the account's assets: an external library's asset
     /// with its name, size and modification time. Only the server's path for it can say.
@@ -22,11 +22,13 @@ nonisolated enum MirrorGateway {
     }
 
     /// One library as an account's mirror discovery sees it: the server prefix learned for
-    /// it, if any, and files that may be the account's assets.
+    /// it, if any, whether any of its files is paired with one of the account's assets, and
+    /// files that may be the account's assets.
     struct Probe: Equatable, Sendable {
         let libraryRootID: Int64
         let libraryRootPath: LibraryRootPath
         let serverPrefix: String?
+        let isPaired: Bool
         let candidates: [Candidate]
     }
 
@@ -34,9 +36,9 @@ nonisolated enum MirrorGateway {
     /// another folder, without asking the server for more than a few paths.
     static let candidateLimit = 3
 
-    /// Library files whose digest a pass pairs in one transaction: each pair recomputes its
-    /// copy group's shown copy (about 0.7 ms on the owner's catalog), so a first pairing of
-    /// a whole library never holds the writer for seconds.
+    /// Library files a walk reads, and writes the pairs of, in one transaction: each pair
+    /// that comes or goes regroups its photo's copies (about 0.7 ms on the owner's catalog),
+    /// so a first pairing of a whole library never holds the writer for seconds.
     static let pairBatchSize = 500
 
     /// Library files of a root (second argument) with an external asset of an account (first)
@@ -81,6 +83,16 @@ nonisolated enum MirrorGateway {
         )
     }
 
+    /// Whether any file of the library (first argument) is paired with an asset of the
+    /// account (second): a seek of the pair table's key by library.
+    static let isPairedSQL = """
+    SELECT EXISTS (SELECT 1 FROM immich_mirror_pair WHERE library_root_id = ? AND account_root_id = ?)
+    """
+
+    static func isPaired(libraryRootID: Int64, accountRootID: Int64, db: Database) throws -> Bool {
+        try Bool.fetchOne(db, sql: isPairedSQL, arguments: [libraryRootID, accountRootID]) ?? false
+    }
+
     static func record(accountRootID: Int64, libraryRootID: Int64, serverPrefix: String, db: Database) throws {
         try db.execute(
             sql: """
@@ -91,140 +103,165 @@ nonisolated enum MirrorGateway {
         )
     }
 
-    /// A root's files with a current digest of some bytes; a call adds its path bounds.
-    static let digestedFilesSQL = """
-    SELECT relative_path, content_sha1, content_hash_source_size, content_hash_source_mtime
-    FROM media_asset
-    WHERE library_root_id = ?
-      AND \(ContentDigestSQL.isCurrent("media_asset"))
-      AND content_sha1 <> \(ContentDigestSQL.empty)
-      AND byte_size IS NOT NULL AND content_modified_at_unix IS NOT NULL
-    """
-
-    /// The library files of `libraryRootID` with a current digest, from `after` on in path
-    /// order, at most `limit` of them; one file when `relativePath` names it.
-    static func digestedFiles(
-        libraryRootID: Int64,
-        relativePath: String? = nil,
-        after: String? = nil,
-        limit: Int = pairBatchSize,
-        db: Database
-    ) throws -> [DigestedFile] {
-        var sql = digestedFilesSQL
-        var arguments: StatementArguments = [libraryRootID]
-        if let relativePath {
-            sql += "\n  AND relative_path = ?"
-            arguments += [relativePath]
-        }
-        if let after {
-            sql += "\n  AND relative_path > ?"
-            arguments += [after]
-        }
-        sql += "\nORDER BY relative_path LIMIT \(limit)"
-        return try Row.fetchAll(db, sql: sql, arguments: arguments).compactMap { row in
-            guard let digest = (row["content_sha1"] as Data?).flatMap(ContentDigest.init(data:)) else {
-                return nil
-            }
-            return DigestedFile(
-                relativePath: row["relative_path"],
-                digest: digest,
-                size: row["content_hash_source_size"],
-                mtime: row["content_hash_source_mtime"]
-            )
-        }
-    }
-
-    /// A library file's digest and the facts it was read at.
-    struct DigestedFile: Sendable {
-        let relativePath: String
-        let digest: ContentDigest
-        let size: Int64
-        let mtime: Int64
-    }
-
-    /// The mirrors that hold `libraryRootID`'s files.
-    static func mirrors(ofLibrary libraryRootID: Int64, db: Database) throws -> [(accountRootID: Int64, serverPrefix: String)] {
+    /// The mirrors of `accountRootID`: each library its server holds and the prefix there.
+    static func mirrors(ofAccount accountRootID: Int64, db: Database) throws -> [(libraryRootID: Int64, serverPrefix: String)] {
         try Row.fetchAll(
             db,
-            sql: "SELECT account_root_id, server_prefix FROM immich_mirror WHERE library_root_id = ?",
-            arguments: [libraryRootID]
-        ).map { row in (row["account_root_id"], row["server_prefix"]) }
+            sql: "SELECT library_root_id, server_prefix FROM immich_mirror WHERE account_root_id = ?",
+            arguments: [accountRootID]
+        ).map { row in (row["library_root_id"], row["server_prefix"]) }
     }
 
-    /// An account's asset at one path checksum (binds the account, the checksum, the size, the
-    /// whole-second mtime and the digest) listed with the size and mtime a file's digest was
-    /// read at, and not holding that digest already: the asset the file's pair writes.
-    static let owesPairCondition = """
-    library_root_id = ? AND source_path_sha1 = ?
-      AND byte_size = ? AND CAST(content_modified_at_unix AS INTEGER) = ?
-      AND (\(ContentDigestSQL.current("media_asset"))) IS NOT ?
+    /// A library's files after a path (both bound), in path order, a batch at a time: a walk
+    /// of the table's key.
+    static let filesSQL = """
+    SELECT relative_path FROM media_asset INDEXED BY sqlite_autoindex_media_asset_1
+    WHERE library_root_id = ? AND relative_path > ?
+    ORDER BY relative_path
+    LIMIT \(pairBatchSize)
     """
 
-    /// An account's asset at one path checksum takes a digest when listed with the size and
-    /// whole-second mtime it was read at, unless it holds that digest already.
-    static let pairSQL = """
-    UPDATE media_asset SET
-        content_sha1 = ?,
-        content_hash_source_size = byte_size,
-        content_hash_source_mtime = CAST(content_modified_at_unix AS INTEGER)
-    WHERE \(owesPairCondition)
+    /// The account's asset (first argument) at one path checksum (second): a seek of the
+    /// path checksum's index.
+    static let assetAtChecksumSQL = """
+    SELECT relative_path FROM media_asset INDEXED BY idx_media_asset_source_path_sha1
+    WHERE library_root_id = ? AND source_path_sha1 = ?
     """
 
-    static let owesPairSQL = "SELECT EXISTS (SELECT 1 FROM media_asset WHERE \(owesPairCondition))"
+    /// The pairs of a library's files in a range of paths (library, first and last path bound),
+    /// with the account each names: a range of the pair table's key.
+    static let pairsInRangeSQL = """
+    SELECT file_path, account_root_id, asset_path FROM immich_mirror_pair
+    WHERE library_root_id = ? AND file_path >= ? AND file_path <= ?
+    """
 
-    /// The files of `files` whose mirrored asset does not hold their digest yet: read first, so
-    /// a pass over a library whose pairs all stand opens no write.
-    static func unpaired(
-        _ files: [DigestedFile],
+    /// One file's pair as the walk finds it owed: the asset its path names now (nil for none),
+    /// and the asset it is paired with in the account now (nil for none).
+    struct OwedPair: Equatable, Sendable {
+        let filePath: String
+        let pairedAsset: String?
+        let namedAsset: String?
+    }
+
+    /// One batch of a library's files as the walk reads it: how many files, the last path,
+    /// and the files whose pair with `accountRootID` is not what their path names.
+    struct Batch: Sendable {
+        let count: Int
+        let last: String?
+        let owed: [OwedPair]
+    }
+
+    /// Reads the files of `libraryRootID` after `after`, a batch of them, and returns the ones
+    /// whose pair with the account is owed: a file whose path names an asset it is not paired
+    /// with, or paired with an asset its path no longer names. A file paired with another
+    /// account's asset is that account's, and is left.
+    static func owedPairs(
+        libraryRootID: Int64,
         accountRootID: Int64,
         serverPrefix: String,
+        after: String,
         db: Database
-    ) throws -> [DigestedFile] {
-        let statement = try db.cachedStatement(sql: owesPairSQL)
-        return try files.filter { file in
-            let checksum = ImmichPathChecksum(serverPath: serverPrefix + file.relativePath)
-            return try Bool.fetchOne(statement, arguments: [
-                accountRootID, checksum.data, file.size, file.mtime, file.digest.data,
-            ]) ?? false
+    ) throws -> Batch {
+        let files = try String.fetchAll(db.cachedStatement(sql: filesSQL), arguments: [libraryRootID, after])
+        guard let first = files.first, let last = files.last else {
+            return Batch(count: 0, last: nil, owed: [])
         }
-    }
-
-    /// Gives each asset that is one of `files` under a mirror the file's digest; returns how
-    /// many assets took one. The asset must be listed with the size and modification time
-    /// the digest was read at, so a server still holding other bytes keeps its own state.
-    static func pair(
-        _ files: [DigestedFile],
-        accountRootID: Int64,
-        serverPrefix: String,
-        db: Database
-    ) throws -> Int {
-        let statement = try db.cachedStatement(sql: pairSQL)
-        var paired = 0
+        var paired: [String: (account: Int64, asset: String)] = [:]
+        for row in try Row.fetchAll(db.cachedStatement(sql: pairsInRangeSQL), arguments: [libraryRootID, first, last]) {
+            paired[row[0]] = (row[1], row[2])
+        }
+        let named = try db.cachedStatement(sql: assetAtChecksumSQL)
+        var owed: [OwedPair] = []
         for file in files {
-            let checksum = ImmichPathChecksum(serverPath: serverPrefix + file.relativePath)
-            try statement.execute(arguments: [
-                file.digest.data, accountRootID, checksum.data, file.size, file.mtime, file.digest.data,
-            ])
-            paired += db.changesCount
+            let existing = paired[file]
+            if let existing, existing.account != accountRootID {
+                continue
+            }
+            let checksum = ImmichPathChecksum(serverPath: serverPrefix + file)
+            let asset = try String.fetchOne(named, arguments: [accountRootID, checksum.data])
+            if asset != existing?.asset {
+                owed.append(OwedPair(filePath: file, pairedAsset: existing?.asset, namedAsset: asset))
+            }
         }
-        return paired
+        return Batch(count: files.count, last: last, owed: owed)
     }
 
-    /// The digest write of one library file reaches its mirrored assets in the same
-    /// transaction (ADR 0054). A pass pairs every file again, so a write path that does not
-    /// call this delays a pair until the account's next pass, and never loses one.
-    static func pairMirroredAssets(libraryRootID: Int64, relativePath: String, db: Database) throws -> Int {
-        let mirrors = try mirrors(ofLibrary: libraryRootID, db: db)
-        guard !mirrors.isEmpty else {
-            return 0
+    static let unpairSQL = """
+    DELETE FROM immich_mirror_pair
+    WHERE library_root_id = ? AND file_path = ? AND account_root_id = ? AND asset_path = ?
+    """
+
+    /// Pairs a file with the account's asset its path names, under the write's own reading:
+    /// both rows must still be there and the asset still at that checksum, and neither may
+    /// be paired already.
+    static let pairSQL = """
+    INSERT OR IGNORE INTO immich_mirror_pair (library_root_id, file_path, account_root_id, asset_path)
+    SELECT file.library_root_id, file.relative_path, asset.library_root_id, asset.relative_path
+    FROM media_asset AS file, media_asset AS asset INDEXED BY idx_media_asset_source_path_sha1
+    WHERE file.library_root_id = ? AND file.relative_path = ?
+      AND asset.library_root_id = ? AND asset.source_path_sha1 = ? AND asset.relative_path = ?
+    """
+
+    /// Writes the owed pairs of one batch: a pair its file's path no longer names goes, and
+    /// the pair its path names comes. Returns how many came and how many went.
+    static func writePairs(
+        _ owed: [OwedPair],
+        libraryRootID: Int64,
+        accountRootID: Int64,
+        serverPrefix: String,
+        db: Database
+    ) throws -> (paired: Int, unpaired: Int) {
+        let unpair = try db.cachedStatement(sql: unpairSQL)
+        let pair = try db.cachedStatement(sql: pairSQL)
+        var paired = 0
+        var unpaired = 0
+        for file in owed {
+            if let asset = file.pairedAsset {
+                try unpair.execute(arguments: [libraryRootID, file.filePath, accountRootID, asset])
+                unpaired += db.changesCount
+            }
+            if let asset = file.namedAsset {
+                let checksum = ImmichPathChecksum(serverPath: serverPrefix + file.filePath)
+                try pair.execute(arguments: [libraryRootID, file.filePath, accountRootID, checksum.data, asset])
+                paired += db.changesCount
+            }
         }
-        let files = try digestedFiles(libraryRootID: libraryRootID, relativePath: relativePath, db: db)
-        guard !files.isEmpty else {
-            return 0
+        return (paired, unpaired)
+    }
+
+    /// Why a candidate's server path taught no prefix, for the probe's log: the server gave
+    /// no path, its path does not end with the file's relative path (with how many of the
+    /// relative path's trailing components it does end with), or the prefix it gives does
+    /// not reproduce the asset's own checksum.
+    enum Refusal: Error, Equatable, Sendable {
+        case noPath
+        case tailMismatch(sharedComponents: Int)
+        case checksumMismatch
+
+        var fields: [String: String] {
+            switch self {
+            case .noPath: ["reason": "noPath"]
+            case let .tailMismatch(shared): ["reason": "tailMismatch", "sharedTailComponents": "\(shared)"]
+            case .checksumMismatch: ["reason": "checksumMismatch"]
+            }
         }
-        return try mirrors.reduce(0) { paired, mirror in
-            try paired + pair(files, accountRootID: mirror.accountRootID, serverPrefix: mirror.serverPrefix, db: db)
+    }
+
+    /// The prefix a candidate's server path teaches, or why it teaches none.
+    static func prefix(of originalPath: String?, for candidate: Candidate) -> Result<String, Refusal> {
+        guard let originalPath else {
+            return .failure(.noPath)
         }
+        guard let prefix = serverPrefix(of: originalPath, relativePath: candidate.relativePath) else {
+            let server = originalPath.split(separator: "/", omittingEmptySubsequences: false).reversed()
+            let local = candidate.relativePath.rawValue.split(separator: "/", omittingEmptySubsequences: false).reversed()
+            let shared = zip(server, local).prefix { $0 == $1 }.count
+            return .failure(.tailMismatch(sharedComponents: shared))
+        }
+        guard ImmichPathChecksum(serverPath: prefix + candidate.relativePath.rawValue) == candidate.pathChecksum else {
+            return .failure(.checksumMismatch)
+        }
+        return .success(prefix)
     }
 
     /// The server prefix `originalPath` has before `relativePath`: the path up to and with

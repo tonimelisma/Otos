@@ -215,6 +215,21 @@ struct PersonPhotoOrderTests {
             .map { "\($0.libraryRootID)/\($0.relativePath.rawValue)" }
     }
 
+    /// `PhotoFaceSQL.holds` as the schema the read runs on can answer it: before v79 a row's
+    /// copies were the rows of its current digest, read through the digest index.
+    static func holds(_ db: Database, condition: String) throws -> String {
+        let current = PhotoFaceSQL.holds("media_asset", condition: condition)
+        guard try !db.columns(in: "media_asset").contains(where: { $0.name == "copy_key" }) else {
+            return current
+        }
+        return current
+            .replacingOccurrences(of: PhotoCopySQL.indexName, with: ContentDigestSQL.indexName)
+            .replacingOccurrences(
+                of: PhotoCopySQL.isCopy("face_copy", of: "media_asset"),
+                with: CatalogSchema.isCopy("face_copy", of: "media_asset")
+            )
+    }
+
     /// The previous implementation's read, as it was before v78: the scope's rows, each tested
     /// for a face of the person on it or on a present copy, in the order's own terms.
     static func previousOrder(_ read: Read, _ db: Database) throws -> [String] {
@@ -243,7 +258,7 @@ struct PersonPhotoOrderTests {
                    ))
             """
         }
-        predicate += "\n  AND \(PhotoFaceSQL.holds("media_asset", condition: "face.person_id = ? AND face.is_not_face = 0"))"
+        try predicate += "\n  AND \(Self.holds(db, condition: "face.person_id = ? AND face.is_not_face = 0"))"
         arguments += [person, person]
         let filter = read.descriptor.filter
         if !filter.kinds.isEmpty {
@@ -253,11 +268,11 @@ struct PersonPhotoOrderTests {
             predicate += "\n  AND media_choice IN (\(filter.choices.map { "'\($0.rawValue)'" }.sorted().joined(separator: ", ")))"
         }
         for other in filter.people.sorted() {
-            predicate += "\n  AND \(PhotoFaceSQL.holds("media_asset", condition: "face.is_not_face = 0 AND face.person_id = ?"))"
+            try predicate += "\n  AND \(Self.holds(db, condition: "face.is_not_face = 0 AND face.person_id = ?"))"
             arguments += [other.rawValue, other.rawValue]
         }
         if filter.unassignedFaces {
-            predicate += "\n  AND \(PhotoFaceSQL.holds("media_asset", condition: "face.is_not_face = 0 AND face.person_id IS NULL"))"
+            try predicate += "\n  AND \(Self.holds(db, condition: "face.is_not_face = 0 AND face.person_id IS NULL"))"
         }
         let sort = read.descriptor.effectiveSort
         let direction = sort.direction == .descending ? "DESC" : "ASC"
@@ -296,7 +311,7 @@ struct PersonPhotoOrderTests {
     /// integer where `person_photo`'s column holds it as a real, and SQLite orders the two alike.
     static let copiedColumns = """
     CAST(best_capture_local AS REAL), name_sort_key, byte_size, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source, \
-    best_kind, best_format, content_identifier, burst_identifier, content_sha1, shown_copy_root_id, has_copies, media_choice
+    best_kind, best_format, content_identifier, burst_identifier, copy_key, shown_copy_root_id, has_copies, media_choice
     """
 
     static func stored(_ db: Database) throws -> [String] {

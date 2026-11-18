@@ -631,6 +631,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.photoCopyKeyMigrationIdentifier) { db in
+            for statement in CatalogSchema.photoCopyKeyStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 
@@ -1264,9 +1269,6 @@ extension CatalogStore {
                     libraryRootID,
                     result.id.relativePath.rawValue,
                 ]
-            )
-            _ = try MirrorGateway.pairMirroredAssets(
-                libraryRootID: libraryRootID, relativePath: result.id.relativePath.rawValue, db: db
             )
         }
         if let metadata = result.metadata {

@@ -1484,11 +1484,11 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
     let renderedSourceSize: Int64?
     let renderedSourceMTimeSeconds: Int?
     let mediaChoice: MediaChoice
-    /// The current digest the row's identical copies share (ADR 0054), nil for a row that is
-    /// no copy (no current digest, or not in a library or an account): the relation a choice
+    /// The key the row's copies share (ADR 0054, `media_asset.copy_key`), nil for a row that is
+    /// no copy of any photo: the relation a choice
     /// is written through (`media_asset_choice_made`), so the window shows a held choice on
     /// every copy it holds (`MediaChoiceOverlay`).
-    let copyDigest: ContentDigest?
+    let copyKey: PhotoCopyKey?
 
     /// This detail with another choice: what a tile shows while a choice the catalog has not
     /// recorded yet is held (`MediaChoiceOverlay`).
@@ -1508,7 +1508,7 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
             renderedSourceSize: renderedSourceSize,
             renderedSourceMTimeSeconds: renderedSourceMTimeSeconds,
             mediaChoice: choice,
-            copyDigest: copyDigest
+            copyKey: copyKey
         )
     }
 
@@ -1527,7 +1527,7 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         renderedSourceSize: Int64? = nil,
         renderedSourceMTimeSeconds: Int? = nil,
         mediaChoice: MediaChoice = .default,
-        copyDigest: ContentDigest? = nil
+        copyKey: PhotoCopyKey? = nil
     ) {
         self.libraryRootPath = libraryRootPath
         self.relativePath = relativePath
@@ -1543,7 +1543,7 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         self.renderedSourceSize = renderedSourceSize
         self.renderedSourceMTimeSeconds = renderedSourceMTimeSeconds
         self.mediaChoice = mediaChoice
-        self.copyDigest = copyDigest
+        self.copyKey = copyKey
     }
 
     var id: MediaAssetID {

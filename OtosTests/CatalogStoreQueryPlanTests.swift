@@ -1164,9 +1164,10 @@ private func insertEnrichmentClaimFixture(
 
 extension CatalogStoreQueryPlanTests {
     /// ADR 0054: a mirror's reads seek indexes at any catalog size. The candidate probe walks
-    /// one library root by its key and seeks the account's size index per file; a pairing
-    /// seeks the account's path-checksum index; a page of digested files walks the root's
-    /// primary key in path order with no sort.
+    /// one library root by its key and seeks the account's size index per file; a page of a
+    /// library's files walks the root's primary key in path order with no sort; each file's
+    /// asset is a seek of the account's path-checksum index, and its pair a seek of the pair
+    /// table's key; a pairing seeks the same indexes.
     @Test func mirrorReadsSeekTheirIndexes() async throws {
         let temp = try makeTestDirectory()
         let dbQueue = try makeTestDatabaseQueue(path: temp.appending(path: "catalog.sqlite").path(percentEncoded: false))
@@ -1176,18 +1177,19 @@ extension CatalogStoreQueryPlanTests {
             #expect(candidates.contains("SEARCH asset USING INDEX idx_media_asset_size_root_asc"), "\(candidates)")
             #expect(!candidates.contains("SCAN"), "\(candidates)")
 
-            let digest = Data(repeating: 1, count: 20)
-            let pair = try explainPlan(db, sql: MirrorGateway.pairSQL, arguments: [digest, 2, digest, 4, 1, digest])
-            #expect(pair.contains("USING INDEX idx_media_asset_source_path_sha1"), "\(pair)")
-            let owed = try explainPlan(db, sql: MirrorGateway.owesPairSQL, arguments: [2, digest, 4, 1, digest])
-            #expect(owed.contains("USING INDEX idx_media_asset_source_path_sha1"), "\(owed)")
-
-            let files = try explainPlan(
-                db, sql: MirrorGateway.digestedFilesSQL + "\n  AND relative_path > ?\nORDER BY relative_path LIMIT 500",
-                arguments: [1, "a"]
-            )
-            #expect(files.contains("SEARCH media_asset USING"), "\(files)")
+            let checksum = Data(repeating: 1, count: 20)
+            let files = try explainPlan(db, sql: MirrorGateway.filesSQL, arguments: [1, "a"])
+            #expect(files.contains("INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path>?)"), "\(files)")
             #expect(!usesTemporarySort(files), "\(files)")
+            let asset = try explainPlan(db, sql: MirrorGateway.assetAtChecksumSQL, arguments: [2, checksum])
+            #expect(asset.contains("SEARCH media_asset USING INDEX idx_media_asset_source_path_sha1 (library_root_id=? AND source_path_sha1=?)"), "\(asset)")
+            let pairs = try explainPlan(db, sql: MirrorGateway.pairsInRangeSQL, arguments: [1, "a", "b"])
+            #expect(pairs.contains("SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path>? AND file_path<?)"), "\(pairs)")
+            let isPaired = try explainPlan(db, sql: MirrorGateway.isPairedSQL, arguments: [1, 2])
+            #expect(isPaired.contains("SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=?)"), "\(isPaired)")
+            let pair = try explainPlan(db, sql: MirrorGateway.pairSQL, arguments: [1, "a", 2, checksum, "b"])
+            #expect(pair.contains("USING INDEX idx_media_asset_source_path_sha1"), "\(pair)")
+            #expect(!pair.contains("SCAN"), "\(pair)")
         }
     }
 }
@@ -1242,8 +1244,8 @@ extension CatalogStoreQueryPlanTests {
         }
         #expect(!unchecked.contains("SCAN media_asset"))
         // A photo's copies (ADR 0054) are asked through the digest index, never a scan.
-        #expect(unchecked.contains("SEARCH copy USING INDEX \(ContentDigestSQL.indexName)")
-            || unchecked.contains("SEARCH copy USING COVERING INDEX \(ContentDigestSQL.indexName)"), "\(unchecked)")
+        #expect(unchecked.contains("SEARCH copy USING INDEX \(PhotoCopySQL.indexName)")
+            || unchecked.contains("SEARCH copy USING COVERING INDEX \(PhotoCopySQL.indexName)"), "\(unchecked)")
         #expect(!unchecked.contains("SCAN copy"), "\(unchecked)")
     }
 }

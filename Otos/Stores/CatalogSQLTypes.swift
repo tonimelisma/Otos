@@ -180,7 +180,7 @@ nonisolated struct StoredTileDetail {
     var renderedSourceSize: Int64?
     var renderedSourceMTimeSeconds: Int?
     var mediaChoice: MediaChoice = .default
-    var copyDigest: ContentDigest?
+    var copyKey: PhotoCopyKey?
 }
 
 nonisolated struct SQLQuery {

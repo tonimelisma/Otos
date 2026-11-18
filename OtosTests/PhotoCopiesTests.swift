@@ -118,7 +118,7 @@ struct PhotoCopiesTests {
             } else {
                 #expect(plan.contains { $0.hasPrefix("SEARCH media_asset USING PRIMARY KEY (person_id=?") }, "\(plan)")
             }
-            #expect(plan.contains { $0.hasPrefix("SEARCH \(alias) USING") && $0.contains(ContentDigestSQL.indexName) }, "\(plan)")
+            #expect(plan.contains { $0.hasPrefix("SEARCH \(alias) USING") && $0.contains(PhotoCopySQL.indexName) }, "\(plan)")
             #expect(!plan.contains { $0.hasPrefix("SCAN \(alias)") }, "\(plan)")
         }
     }
@@ -232,10 +232,10 @@ struct PhotoCopiesTests {
         await store.shutdown()
     }
 
-    /// The copies People resolves a photo's faces through are read from the digest index, by
-    /// the digest of a file with a face and a present copy: every present copy of the photo,
+    /// The copies People resolves a photo's faces through are read from the copy key's index,
+    /// by the key of a file with a face and a present copy: every present copy of the photo,
     /// the copy with no face of its own included. A photo with no copy is not asked for.
-    @Test func thePhotosCopiesAreReadThroughTheDigestIndex() async throws {
+    @Test func thePhotosCopiesAreReadThroughTheCopyKeyIndex() async throws {
         let dbQueue = try await Self.catalog { db in
             try Self.face(person: 1, on: "a/IMG_0001.JPG", db: db)
             try db.execute(sql: """
@@ -246,23 +246,23 @@ struct PhotoCopiesTests {
         }
         let (asked, rows, plan) = try await dbQueue.read { db in
             let asked = try Data.fetchAll(db, sql: """
-            SELECT m.content_sha1 FROM face f
+            SELECT m.copy_key FROM face f
             JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
             WHERE m.has_copies = 1
             """)
             return try (
                 asked,
                 asked.flatMap { digest in
-                    try Row.fetchAll(db, sql: PhotoFaceSQL.presentCopiesOfDigest, arguments: [digest])
+                    try Row.fetchAll(db, sql: PhotoFaceSQL.presentCopiesOfKey, arguments: [digest])
                         .map { "\($0[0] as Int64):\($0[1] as String)" }
                 },
-                Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(PhotoFaceSQL.presentCopiesOfDigest)", arguments: [Data()])
+                Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(PhotoFaceSQL.presentCopiesOfKey)", arguments: [Data()])
                     .map { $0["detail"] as String }
             )
         }
         #expect(asked.count == 1, "IMG_0200.JPG has no copy, so its photo is not asked for")
         #expect(Set(rows) == ["1:IMG_0001.JPG", "2:a/IMG_0001.JPG"])
-        #expect(plan.contains { $0.hasPrefix("SEARCH face_copy USING") && $0.contains(ContentDigestSQL.indexName) }, "\(plan)")
+        #expect(plan.contains { $0.hasPrefix("SEARCH face_copy USING") && $0.contains(PhotoCopySQL.indexName) }, "\(plan)")
         #expect(!plan.contains { $0.hasPrefix("SCAN face_copy") }, "\(plan)")
     }
 

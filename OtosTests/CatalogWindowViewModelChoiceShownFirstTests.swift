@@ -157,8 +157,8 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
             let read = try await model.tileDetailReader.details(for: library.ids)
             model.tileContentStore.mergeDetails(read)
             let (target, copy, unread) = (library.ids[0], library.ids[1], library.ids[2])
-            #expect(read[target]?.copyDigest != nil && read[target]?.copyDigest == read[copy]?.copyDigest)
-            #expect(read[unread]?.copyDigest == nil)
+            #expect(read[target]?.copyKey != nil && read[target]?.copyKey == read[copy]?.copyKey)
+            #expect(read[unread]?.copyKey == nil)
             _ = model.applyGridClick(hit: target, modifiers: [], orderedIDs: library.ids)
 
             model.submitMediaChoice(.liked, origin: .keyboard)
