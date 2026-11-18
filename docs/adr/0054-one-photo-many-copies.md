@@ -71,9 +71,6 @@ each original, would download every one of them).
   other bytes makes the digest stale for it.
 - `MirrorGateway.pair` is the one rule. The digest write of a library file (enrichment,
   `applyContentHash`, an import's landing) pairs its mirrored assets in the same transaction.
-  A cloud-only library file is never downloaded for its digest alone (ADR 0009 §12), so its
-  mirror pairs only once the file's bytes are local for another reason and its digest is
-  taken.
   A pass that owes the walk pairs every file again, in batches of 500 files per transaction,
   so an asset listed after its file's digest pairs at the end of the pass that lists it.
 - The walk (probe and pairing) is owed only when what it reads moved since the last walk

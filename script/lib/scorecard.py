@@ -975,20 +975,12 @@ def owners_at_end(events):
         return None
     pending = [{k: v for k, v in e.fields.items() if k not in ("op", "phase")}
                for e in of(events, "owners.pending", status.phase) if e.time >= status.time]
-    # Rows an owner holds for a fact outside it, quiescent or not (`op=owners.held`): a count,
-    # or None where the build logged `unknown`.
-    held = [{"owner": e.fields.get("owner"), "waitingFor": e.fields.get("waitingFor"), "count": e.num("count")}
-            for e in of(events, "owners.held", status.phase) if e.time >= status.time]
     return {
         "moment": status.phase,
         "owners": status.num("owners"),
         "quiescent": status.num("quiescent"),
         "pending": pending,
-        "held": held,
     }
-
-
-HELD_LABELS = {"digestAwaitsLocalBytes": "digest waits for local bytes"}
 
 
 def describe_pending(owner):
@@ -1338,7 +1330,7 @@ def print_report(report, rows, out):
         for row in res["topHolds"]:
             w(f"    {row[0]:52} {row[1]:>9} {row[2]:>7} {row[3]:>8}\n")
         w(f"  store changes {res['changes']} by kind {res['changeFacts']}\n")
-    print_disk_by_owner(res.get("diskByOwner") or {}, w, report.get("ownersAtEnd"))
+    print_disk_by_owner(res.get("diskByOwner") or {}, w)
     t = report["tour"]
     if t["steps"] or t["config"]:
         w(f"\nTOUR config={t['config']} finished={t['finished']}\n")
@@ -1374,16 +1366,8 @@ def print_machine(m, w):
         w(f"    {role}: {entry['count']} processes, {entry['cpuMs']} ms CPU, largest {entry['peakFootprintMB']} MB\n")
 
 
-def print_disk_by_owner(windows, w, at_end=None):
+def print_disk_by_owner(windows, w):
     w("\nDISK READ BY OWNER (MiB; each owner's figure is what it asked of the disk)\n")
-    held = (at_end or {}).get("held")
-    if at_end is None or held is None:
-        w("  held rows: - (no op=owners.status line)\n")
-    elif not held:
-        w(f"  held rows at {at_end['moment']}: - (no op=owners.held line: a build older than it)\n")
-    for row in held or []:
-        label = HELD_LABELS.get(row["waitingFor"], row["waitingFor"])
-        w(f"  held at {at_end['moment']}: {label}: {fmt(row['count'])} ({row['owner']}, op=owners.held)\n")
     for name in ("session", "idle"):
         window = windows.get(name)
         if not window:

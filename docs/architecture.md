@@ -257,11 +257,7 @@ everything expensive happens on an actor off the main thread.
   digests. Import settlement takes each product from the source when its stamp names the
   copied bytes, or — for a missing rendering — the source's thumbnail as a provisional
   one; it never renders. A copy that settles owing a product is the first row the next
-  background claim offers (`localBytesAwaitingProducts`), while its bytes are local. A
-  cloud-only row that owes only its digest is never downloaded: the coordinator hands its
-  claim to the Store's digest hold (`holdDigestsForLocalBytes`), and the Store ends it on
-  an event on the file, a download Otos made for other work, a scan finding its facts moved,
-  or the next launch (ADR 0009 §12). Source
+  background claim offers (`localBytesAwaitingProducts`), while its bytes are local. Source
   and destination overlay lifecycles remain independent. While an import copies from a
   card, the Store stops offering the card to enrichment
   (`beginImportSourceRead`/`endImportSourceRead`, bracketed by

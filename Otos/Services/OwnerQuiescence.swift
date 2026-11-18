@@ -163,16 +163,6 @@ nonisolated enum LaunchSettlement: String, Sendable, Comparable {
     }
 }
 
-/// Rows an owner holds until a fact outside it ends their wait (ADR 0032 rule 8): no work of
-/// its own, so its quiescence does not count them, but its status reports them
-/// (`op=owners.held`).
-nonisolated struct OwnerHeldRows: Equatable, Sendable {
-    /// What they wait for, as the log names it: `digestAwaitsLocalBytes`.
-    let waitingFor: String
-    /// How many; nil when the count could not be read.
-    let count: Int?
-}
-
 /// What an owner holds at one instant, quiescent or not: what a session that ends before its
 /// owners settle reports for each (`op=owners.status`), so "never quiescent" names the owner
 /// and what it was doing rather than a dash.
@@ -194,8 +184,6 @@ nonisolated struct OwnerStatus: Equatable, Sendable {
     /// What the background room holds this owner's next unit for, when it waits on it
     /// (`BackgroundHold`, ADR 0057).
     var heldBy: String?
-    /// The rows it holds until a fact outside it ends their wait (`QuiescentOwner.heldRows`).
-    var held: [OwnerHeldRows] = []
 
     var isQuiescent: Bool {
         owedRequests == 0 && runningPasses == 0 && unactedChanges == 0 && !holdsWork
@@ -434,9 +422,6 @@ nonisolated protocol QuiescentOwner: Actor {
     /// and calls `settleQuiescence()` in the step that makes it true. False for an owner with
     /// no backlog: all its work is what it was asked.
     var worksBacklog: Bool { get }
-    /// The rows it holds until a fact outside it ends their wait, read when a status is
-    /// reported: none for most owners.
-    func heldRows() async -> [OwnerHeldRows]
     /// Rings the owner's wake path once, as an input it reads would, with no input changed:
     /// what a caller runs to see that a wake with nothing new costs nothing. An owner with no
     /// wake path (one pass a launch) does nothing.
@@ -487,11 +472,6 @@ extension QuiescentOwner {
     /// What the owner holds now, quiescent or not.
     var status: OwnerStatus {
         activity.status(holdsWork: holdsWork, worksBacklog: worksBacklog)
-    }
-
-    /// No rows held for a fact outside the owner.
-    func heldRows() async -> [OwnerHeldRows] {
-        []
     }
 
     /// Resumes the waiters whose fact now holds.
@@ -598,18 +578,14 @@ nonisolated enum BackgroundOwnerQuiescence {
     static func statuses(of owners: [any QuiescentOwner]) async -> [OwnerStatus] {
         var statuses: [OwnerStatus] = []
         for owner in owners {
-            var status = await owner.status
-            status.held = await owner.heldRows()
-            statuses.append(status)
+            await statuses.append(owner.status)
         }
         return statuses
     }
 
     /// `op=owners.status`: at `moment` (a session's end), how many owners were quiescent, and
     /// one `op=owners.pending` line for each that was not, with what it owed, ran and held. A
-    /// session that never reported `op=owners.quiescent` is explained by these lines. Then one
-    /// `op=owners.held` line for each kind of row an owner holds for a fact outside it, quiescent
-    /// or not (`OwnerHeldRows`).
+    /// session that never reported `op=owners.quiescent` is explained by these lines.
     static func logStatus(_ statuses: [OwnerStatus], moment: String) {
         let pending = statuses.filter { !$0.isQuiescent }
         OtosLog.performance.noticeOperation("owners.status", phase: moment, fields: [
@@ -618,15 +594,6 @@ nonisolated enum BackgroundOwnerQuiescence {
         ])
         for status in pending {
             OtosLog.performance.noticeOperation("owners.pending", phase: moment, fields: status.fields)
-        }
-        // Held rows are reported quiescent or not: they are no owner's work.
-        for status in statuses {
-            for held in status.held {
-                OtosLog.performance.noticeOperation("owners.held", phase: moment, fields: [
-                    "owner": status.owner, "waitingFor": held.waitingFor,
-                    "count": held.count.map { "\($0)" } ?? "unknown",
-                ])
-            }
         }
     }
 

@@ -86,13 +86,13 @@ struct EnrichmentPriorityAnswerTests {
         answers.align(admission: .admitted, keeping: [id, other])
         answers.beginRead()
         answers.heard(.rows([id]))
-        answers.endRead(nothingToClaim: [id, other])
+        answers.endRead(owingNothing: [id, other])
         #expect(!answers.holds(id))
         #expect(answers.holds(other))
 
         answers.beginRead()
         answers.heard(.unnamed)
-        answers.endRead(nothingToClaim: [id])
+        answers.endRead(owingNothing: [id])
         #expect(!answers.holds(id))
         #expect(!answers.holds(other))
     }
