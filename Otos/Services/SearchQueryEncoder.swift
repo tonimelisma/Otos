@@ -857,11 +857,13 @@ actor SearchTextTower {
         return (tokenizer, model)
     }
 
-    /// The system's memory-pressure warnings, heard on this actor's own queue.
+    /// The system's memory-pressure warnings, heard on this actor's own queue: the handler
+    /// claims no isolation (a block formed here would otherwise inherit this actor's and be
+    /// checked at entry), and asserts the actor, whose executor is the queue it runs on.
     private func watchMemoryPressure() {
         guard pressure == nil else { return }
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: queue)
-        source.setEventHandler { [weak self] in
+        source.setEventHandler { @Sendable [weak self] in
             self?.assumeIsolated { $0.releaseIfIdle() }
         }
         source.activate()

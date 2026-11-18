@@ -111,10 +111,10 @@ extension FileMaterialization {
                 eventMask: [.attrib, .write, .extend, .delete, .rename, .revoke],
                 queue: watchQueue
             )
-            source.setEventHandler {
+            source.setEventHandler { @Sendable in
                 continuation.yield()
             }
-            source.setCancelHandler {
+            source.setCancelHandler { @Sendable in
                 close(descriptor)
             }
             continuation.onTermination = { _ in

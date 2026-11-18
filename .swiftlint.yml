@@ -89,6 +89,12 @@ custom_rules:
     message: "An error is not a fact (ADR 0032, rule 4): `try? … ?? []/0/\"\"/false/.empty` turns a failure into a value someone reads as true. Handle the error (log it, publish nothing, report it), or keep the result Optional so unknown stays unknown."
     severity: error
 
+  dispatch_handler_claims_isolation:
+    name: "A dispatch source's handler claims no isolation"
+    regex: '\.set(Event|Cancel|Registration)Handler\b[^{\n]*\{(?!\s*@Sendable\b)'
+    message: "A dispatch source runs its handler on the source's queue, and the handler parameter is a plain block: a closure formed in a main-actor or actor-isolated context inherits that isolation, and Swift checks it at entry, so the first delivery traps in _dispatch_assert_queue_fail (ADR 0032, rule 5). Write the handler `{ @Sendable … }` and reach isolated state from it the way the queue allows (assumeIsolated on an actor whose executor is that queue, a Mutex-held owner, or the owner's stream)."
+    severity: error
+
   unordered_main_actor_hop:
     name: "A callback must not hop to the main actor through its own task"
     included: 'Otos/.*\.swift'

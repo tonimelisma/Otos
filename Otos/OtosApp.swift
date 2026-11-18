@@ -72,7 +72,11 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
         OtosLog.app.notice(
             "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"
         )
-        machineConditions = MachineConditionsMonitor(room: catalogViewModel.backgroundRoom, storeUse: catalogViewModel.storeUse)
+        machineConditions = MachineConditionsMonitor(
+            room: catalogViewModel.backgroundRoom,
+            storeUse: catalogViewModel.storeUse,
+            userInApp: NSApp?.isActive ?? false
+        )
         ResourceCheckpoint.record("sessionStart")
     }
 

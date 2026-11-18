@@ -38,7 +38,10 @@ instruments to ADR 0015.
    the kernel's memory-pressure level, `ProcessInfo.thermalState`, Low Power Mode, and
    whether Otos is the active app (`NSApplication` becoming and resigning active: the
    person is in the app). `MachineConditionsMonitor`, owned by the app delegate, is the one
-   listener to the platform's reports; each changes its one field in the step it arrives.
+   listener to the platform's reports; each changes its one field in the step it arrives,
+   on the thread it arrives on. The monitor is `nonisolated`: the memory-pressure source runs
+   its handler on a global queue, and a handler formed in a main-actor type inherits the main
+   actor and traps at entry on the first report (ADR 0032, rule 5).
    **Memory pressure is read at the moment of each decision, not heard** (below, "The two
    memory-pressure sources"): every `hold(for:)` and `untilOpen(for:)` reads
    `kern.memorystatus_vm_pressure_level` first (`MemoryPressureReader`), so a unit never

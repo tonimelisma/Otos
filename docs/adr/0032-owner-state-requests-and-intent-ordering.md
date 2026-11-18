@@ -77,6 +77,12 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
    callback yields into its owner's stream. SwiftLint rule `unordered_main_actor_hop`
    rejects a bare `Task { @MainActor … }` started from a callback; where an API documents
    the main thread, `MainActor.assumeIsolated` asserts it instead of hopping.
+   A callback claims no isolation the platform does not give it: a closure handed to an
+   API whose parameter is a plain block (a dispatch source's handlers among them) inherits
+   the isolation of the context that formed it, and Swift checks that isolation at the
+   closure's entry, so a delivery on the platform's own queue traps in
+   `_dispatch_assert_queue_fail`. SwiftLint rule `dispatch_handler_claims_isolation`
+   requires a dispatch source's handler to be written `{ @Sendable … }`.
    `unowned_view_model_task` rejects a bare `Task {}` started per call in view-model code:
    such work is a named task property cancelled at teardown, or a stream's one consumer.
 6. **Blocking work leaves the actor explicitly.** Filesystem walks, planning, decoding and

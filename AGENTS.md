@@ -246,7 +246,8 @@ a third-party constraint (ADR 0039).
      `.bufferingNewest(1)` for newest-wins state), never one `Task {}` per call. An intent
      that starts long work returns when it is applied. A platform callback yields into its
      owner's stream; it never hops through its own `Task { @MainActor … }` (lint
-     `unordered_main_actor_hop`), and view-model work is never a bare per-call `Task {}`
+     `unordered_main_actor_hop`) and never claims an isolation the platform does not give it
+     (lint `dispatch_handler_claims_isolation`), and view-model work is never a bare per-call `Task {}`
      (lint `unowned_view_model_task`).
   6. **Blocking work leaves the actor by a named mechanism** (`@concurrent`,
      `Task.detached`, a task-group child, a dedicated queue): this target compiles with
