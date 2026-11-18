@@ -1,12 +1,11 @@
-import AppKit
 import Foundation
 
 /// Machine conditions monitor guide (ADR 0057, ADR 0015)
 ///
 /// The app's one listener to the platform's reports about room for background work, and
 /// the one place they reach the `BackgroundRoom`: the system's memory-pressure source
-/// (`DispatchSource.makeMemoryPressureSource`), the thermal state's and Low Power Mode's
-/// notifications, and the app becoming and ceasing to be the active app. Each report updates
+/// (`DispatchSource.makeMemoryPressureSource`) and the thermal state's and Low Power Mode's
+/// notifications. Each report updates
 /// one field of the room's conditions in the step it arrives, on the thread it arrives on;
 /// nothing hops to another actor.
 ///
@@ -16,8 +15,7 @@ import Foundation
 /// and Swift checks it at the closure's entry, so a main-actor monitor trapped in
 /// `_dispatch_assert_queue_fail` on the first report the source ever delivered. Here no
 /// handler can claim an actor, and each is written `@Sendable` besides (SwiftLint
-/// `dispatch_handler_claims_isolation`). The caller, on the main actor, says whether the app
-/// is active when listening starts.
+/// `dispatch_handler_claims_isolation`).
 ///
 /// The memory-pressure source is a doorbell, not the level: on each report the room reads
 /// the kernel's level (`kern.memorystatus_vm_pressure_level`) and holds that, since the
@@ -29,12 +27,11 @@ final nonisolated class MachineConditionsMonitor {
     private let source: any DispatchSourceMemoryPressure
     private var observers: [NSObjectProtocol] = []
 
-    init(room: BackgroundRoom, storeUse: (@Sendable () -> CatalogStoreUse)?, userInApp: Bool) {
+    init(room: BackgroundRoom, storeUse: (@Sendable () -> CatalogStoreUse)?) {
         let info = ProcessInfo.processInfo
         room.update { conditions in
             conditions.thermal = info.thermalState
             conditions.lowPower = info.isLowPowerModeEnabled
-            conditions.userInApp = userInApp
         }
         room.readMemory(.launch, fields: [
             "thermal": SystemPressure.thermalName(info.thermalState),
@@ -66,16 +63,6 @@ final nonisolated class MachineConditionsMonitor {
         ) { @Sendable _ in
             let lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
             room.update { $0.lowPower = lowPower }
-        })
-        observers.append(center.addObserver(
-            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: nil
-        ) { @Sendable _ in
-            room.update { $0.userInApp = true }
-        })
-        observers.append(center.addObserver(
-            forName: NSApplication.didResignActiveNotification, object: nil, queue: nil
-        ) { @Sendable _ in
-            room.update { $0.userInApp = false }
         })
     }
 

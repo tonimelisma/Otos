@@ -718,9 +718,9 @@ Rejected with the walk cursor (`docs/research/2026-11-16-plan-0116-due-diligence
   memory pressure, a serious thermal state or Low Power Mode, no new background download
   starts, and the waiting ones start in the step the room opens; how fast the downloads
   run follows the machine. No download is made for a digest alone (§12): a cloud-only
-  file's digest waits until its bytes are local for another reason. **Decision for the owner to
-  confirm:** descriptions (ADR 0053), whose model service holds about 450 MB more while it
-  answers, run only while Otos is not the active app.
+  file's digest waits until its bytes are local for another reason. Descriptions (ADR 0053)
+  run while Otos is the active app and at memory-pressure warning (the owner, 2026-11-18;
+  ADR 0057 decision 8).
 - A future metadata-driven feature (sort, filter, inspector) must use the scalar
   columns/detail JSON on demand or propose its own measured index/resident structure
   in a new spec; it cannot assume metadata is resident in the grid path.

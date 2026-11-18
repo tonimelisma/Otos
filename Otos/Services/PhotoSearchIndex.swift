@@ -1150,7 +1150,7 @@ actor PhotoSearchIndex: QuiescentOwner {
         var unasked = candidates[...]
         while !unasked.isEmpty {
             if let hold = room.hold(for: .textReading) {
-                activity.heldBy = OwnerHold(hold)
+                activity.heldBy = hold
                 defer { activity.heldBy = nil }
                 try await room.untilOpen(for: .textReading)
             }

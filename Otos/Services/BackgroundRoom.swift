@@ -1,8 +1,8 @@
 import Foundation
 import Synchronization
 
-/// What the machine and the app report about room for heavy background work: every field is
-/// a fact a platform source or the app's own state reports, never a guess from time.
+/// What the machine reports about room for heavy background work: every field is a fact a
+/// platform source reports, never a guess from time.
 nonisolated struct MachineConditions: Equatable, Sendable {
     /// The machine's memory-pressure level: the kernel's current level when the room reads
     /// it (`MemoryPressureReader`), else the memory-pressure source's last report.
@@ -29,25 +29,26 @@ nonisolated struct MachineConditions: Equatable, Sendable {
     var thermal: ProcessInfo.ThermalState
     /// `ProcessInfo.isLowPowerModeEnabled`.
     var lowPower: Bool
-    /// Otos is the active app (`NSApplication.isActive`): the person is using it.
-    var userInApp: Bool
 
     /// A machine with room for everything: what an owner a test makes alone runs under.
-    static let roomy = MachineConditions(memory: .normal, thermal: .nominal, lowPower: false, userInApp: false)
+    static let roomy = MachineConditions(memory: .normal, thermal: .nominal, lowPower: false)
 
     /// Why `work` may not start now, or nil when it may (ADR 0057).
     ///
-    /// - Memory at `warning` or `critical` holds every kind: each holds hundreds of megabytes
-    ///   in Otos or in a process it drives, or fills the file cache with an original.
+    /// - Memory at `critical` holds every kind.
+    /// - Memory at `warning` holds every kind but a description. A download, a text page and
+    ///   a heavy load each hold hundreds of megabytes in Otos or in a process it drives, or
+    ///   fill the file cache with an original. A description's memory is the system language
+    ///   model's, which macOS swaps out with the other apps (the owner, 2026-11-18); a
+    ///   description held at warning loaded the model, raised the level and was held again,
+    ///   over and over.
     /// - A `serious` or `critical` thermal state holds every kind: the system is throttling.
     /// - Low Power Mode holds every kind: the person asked the Mac to spend less.
-    /// - A description waits while the person is in the app: each request runs the system
-    ///   language model's service, about 450 MB more than at rest, beside the window.
     func hold(for work: BackgroundWork) -> BackgroundHold? {
         switch memory {
         case .critical: return .memoryCritical
-        case .warning: return .memoryWarning
-        case .normal: break
+        case .warning where work != .description: return .memoryWarning
+        case .warning, .normal: break
         }
         if thermal == .serious || thermal == .critical {
             return .thermal
@@ -55,17 +56,11 @@ nonisolated struct MachineConditions: Equatable, Sendable {
         if lowPower {
             return .lowPower
         }
-        if work == .description, userInApp {
-            return .userInApp
-        }
         return nil
     }
 
     var logFields: [String: String] {
-        [
-            "memory": memory.rawValue, "thermal": SystemPressure.thermalName(thermal),
-            "lowPower": "\(lowPower)", "userInApp": "\(userInApp)",
-        ]
+        ["memory": memory.rawValue, "thermal": SystemPressure.thermalName(thermal), "lowPower": "\(lowPower)"]
     }
 }
 
@@ -85,16 +80,12 @@ nonisolated enum BackgroundWork: String, CaseIterable, Sendable {
     case heavyLoad
 }
 
-/// Why a kind of background work is held.
+/// Why a kind of background work is held: what a waiting owner's status names (`heldBy=`).
 nonisolated enum BackgroundHold: String, Sendable {
     case memoryWarning
     case memoryCritical
     case thermal
     case lowPower
-    case userInApp
-    /// A load waits for the kernel to report the available share it has been seen to take
-    /// above the warning line, or its cost floor (`LoadAdmissionMachine.RoomNeed`, ADR 0055).
-    case memoryHeadroom
 }
 
 /// Where the room reads the kernel's memory-pressure level, and when it looks again while the
@@ -133,8 +124,7 @@ nonisolated enum MemoryPressureRead: String, Sendable {
 /// Background room guide (ADR 0057)
 ///
 /// The one owner of whether heavy background work may start now. It holds the machine's
-/// conditions (`MachineConditions`: memory pressure, thermal state, Low Power Mode, whether
-/// the person is in the app) and answers, for each kind of work (`BackgroundWork`), whether
+/// conditions (`MachineConditions`: memory pressure, thermal state, Low Power Mode) and answers, for each kind of work (`BackgroundWork`), whether
 /// it is held and why (`MachineConditions.hold(for:)`). How many of a kind run at once stays
 /// its owner's (one description, one text-reading helper, the materializer's per-root and
 /// byte caps, one heavy load); the room decides only whether any new one starts.

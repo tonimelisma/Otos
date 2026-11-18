@@ -14,7 +14,7 @@ import Testing
 struct MachineConditionsMonitorTests {
     @Test func aMemoryPressureReportDeliveredOffTheMainThreadReachesTheRoom() async {
         let room = BackgroundRoom(conditions: .roomy)
-        let monitor = MachineConditionsMonitor(room: room, storeUse: nil, userInApp: false)
+        let monitor = MachineConditionsMonitor(room: room, storeUse: nil)
 
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
@@ -32,7 +32,7 @@ struct MachineConditionsMonitorTests {
         var start = MachineConditions.roomy
         start.lowPower = !ProcessInfo.processInfo.isLowPowerModeEnabled
         let room = BackgroundRoom(conditions: start)
-        let monitor = MachineConditionsMonitor(room: room, storeUse: nil, userInApp: false)
+        let monitor = MachineConditionsMonitor(room: room, storeUse: nil)
         room.deliver(start)
 
         await withCheckedContinuation { continuation in

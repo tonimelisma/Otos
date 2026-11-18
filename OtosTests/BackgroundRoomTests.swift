@@ -8,8 +8,8 @@ import Testing
 /// condition here is scripted; nothing waits on time.
 @Suite(.testScope)
 struct BackgroundRoomTests {
-    static let warning = MachineConditions(memory: .warning, thermal: .nominal, lowPower: false, userInApp: false)
-    static let critical = MachineConditions(memory: .critical, thermal: .nominal, lowPower: false, userInApp: false)
+    static let warning = MachineConditions(memory: .warning, thermal: .nominal, lowPower: false)
+    static let critical = MachineConditions(memory: .critical, thermal: .nominal, lowPower: false)
 
     /// One candidate whose preview does not exist: a reading of it answers `.undecodable`.
     static func page(in directory: URL) -> [SearchTextCandidate] {
@@ -20,26 +20,26 @@ struct BackgroundRoomTests {
         return [SearchTextCandidate(id: id, previewPath: "missing.heic", source: "preview")]
     }
 
-    /// What each condition holds, kind by kind.
+    /// What each condition holds, kind by kind: a description only at critical memory, heat
+    /// and Low Power Mode, never at warning (the owner, 2026-11-18).
     @Test func eachConditionHoldsTheKindsItShould() {
         for work in BackgroundWork.allCases {
             #expect(MachineConditions.roomy.hold(for: work) == nil)
-            #expect(Self.warning.hold(for: work) == .memoryWarning)
+            #expect(Self.warning.hold(for: work) == (work == .description ? nil : .memoryWarning))
             #expect(Self.critical.hold(for: work) == .memoryCritical)
             var hot = MachineConditions.roomy
             hot.thermal = .serious
+            #expect(hot.hold(for: work) == .thermal)
+            hot.thermal = .critical
             #expect(hot.hold(for: work) == .thermal)
             hot.thermal = .fair
             #expect(hot.hold(for: work) == nil)
             var saving = MachineConditions.roomy
             saving.lowPower = true
             #expect(saving.hold(for: work) == .lowPower)
-        }
-        var inApp = MachineConditions.roomy
-        inApp.userInApp = true
-        #expect(inApp.hold(for: .description) == .userInApp)
-        for work in BackgroundWork.allCases where work != .description {
-            #expect(inApp.hold(for: work) == nil)
+            var hotAtWarning = Self.warning
+            hotAtWarning.thermal = .serious
+            #expect(hotAtWarning.hold(for: work) == (work == .description ? .thermal : .memoryWarning))
         }
     }
 
@@ -50,25 +50,25 @@ struct BackgroundRoomTests {
         let started = Mutex(0)
         let waiters = (0 ..< 3).map { _ in
             Task {
-                try await room.untilOpen(for: .description)
+                try await room.untilOpen(for: .textReading)
                 started.withLock { $0 += 1 }
             }
         }
-        try await waitUntil { room.counts.waiting[.description] == 3 }
+        try await waitUntil { room.counts.waiting[.textReading] == 3 }
         #expect(started.withLock { $0 } == 0)
-        #expect(room.counts.admitted[.description] == nil)
+        #expect(room.counts.admitted[.textReading] == nil)
 
         room.deliver(.roomy)
         for waiter in waiters {
             try await waiter.value
         }
         #expect(started.withLock { $0 } == 3)
-        #expect(room.counts.admitted[.description] == 3)
-        #expect(room.counts.held[.description] == 3)
+        #expect(room.counts.admitted[.textReading] == 3)
+        #expect(room.counts.held[.textReading] == 3)
 
         room.deliver(Self.warning)
         room.deliver(.roomy)
-        #expect(room.counts.admitted[.description] == 3)
+        #expect(room.counts.admitted[.textReading] == 3)
         #expect(room.counts.waiting.isEmpty)
     }
 
@@ -84,14 +84,13 @@ struct BackgroundRoomTests {
         #expect(room.counts.admitted[.textReading] == nil)
     }
 
-    /// A kind the conditions do not hold starts at once, beside a held one.
+    /// A kind the conditions do not hold starts at once, beside a held one: at warning a
+    /// description starts while text reading waits.
     @Test func anOpenKindDoesNotWaitBesideAHeldOne() async throws {
-        var inApp = MachineConditions.roomy
-        inApp.userInApp = true
-        let room = BackgroundRoom(conditions: inApp)
-        try await room.untilOpen(for: .textReading)
-        #expect(room.counts.admitted[.textReading] == 1)
-        #expect(room.hold(for: .description) == .userInApp)
+        let room = BackgroundRoom(conditions: Self.warning)
+        try await room.untilOpen(for: .description)
+        #expect(room.counts.admitted[.description] == 1)
+        #expect(room.hold(for: .textReading) == .memoryWarning)
     }
 
     /// A held room grants only the load the view needs; the others start, each once, in
@@ -122,115 +121,162 @@ struct BackgroundRoomTests {
     }
 
     /// A held room reopens one load at a time, and the load that was running when the level
-    /// rose is not the first started again: the room delivers the hold while a description's
-    /// request is under way, and at the reopen a People pass asked for later runs first, then
-    /// the description asked again.
+    /// rose is not the first started again: the room delivers the hold while a People pass is
+    /// under way, and at the reopen a duplicates build asked for later runs first, then the
+    /// People pass asked again.
     @Test func aLoadThatRanIntoTheHoldResumesBehindTheOthers() async throws {
         let room = BackgroundRoom()
         let admission = LoadAdmission(isOpen: true, room: room)
         let order = Mutex<[BackgroundLoad]>([])
-        let request = ArrivalGate()
-        let described = Task {
-            try await admission.run(.description) {
-                order.withLock { $0.append(.description) }
-                await request.arrive()
+        let pass = ArrivalGate()
+        let people = Task {
+            try await admission.run(.people) {
+                order.withLock { $0.append(.people) }
+                await pass.arrive()
             }
         }
-        await request.waitForArrivals(1)
-        let people = Task { try await admission.run(.people) { order.withLock { $0.append(.people) } } }
+        await pass.waitForArrivals(1)
+        let duplicates = Task { try await admission.run(.duplicates) { order.withLock { $0.append(.duplicates) } } }
         try await waitUntil { admission.snapshot.waiting.count == 1 }
 
         room.deliver(Self.warning)
-        #expect(admission.snapshot.roomNeeds[.description]?.raises == 1)
-        await request.open()
-        try await described.value
-        let again = Task { try await admission.run(.description) { order.withLock { $0.append(.description) } } }
+        #expect(admission.snapshot.roomNeeds[.people]?.raises == 1)
+        await pass.open()
+        try await people.value
+        let again = Task { try await admission.run(.people) { order.withLock { $0.append(.people) } } }
         try await waitUntil { admission.snapshot.waiting.count == 2 }
         #expect(admission.snapshot.running == nil, "nothing starts while the room holds")
 
         room.deliver(.roomy)
-        try await people.value
+        try await duplicates.value
         try await again.value
-        #expect(order.withLock { $0 } == [.description, .people, .description])
-        #expect(admission.snapshot.roomNeeds[.description]?.raises == 1, "a raise is kept for the session")
+        #expect(order.withLock { $0 } == [.people, .duplicates, .people])
+        #expect(admission.snapshot.roomNeeds[.people]?.raises == 1, "a raise is kept for the session")
     }
 
-    /// The live path of a description that raised the pressure: the kernel's shares at its
+    /// A description request under way when the level rises to warning, and again to
+    /// critical, is not stopped and raises nothing: it finishes, and the next request at warning
+    /// starts at once while a People pass waits in the room; at critical the next one waits.
+    @Test func aDescriptionInFlightFinishesWhateverTheLevelAndAtWarningTheNextStarts() async throws {
+        let room = BackgroundRoom()
+        let admission = LoadAdmission(isOpen: true, room: room)
+        let request = ArrivalGate()
+        let first = Task {
+            try await admission.run(.description) {
+                await request.arrive()
+                return "written"
+            }
+        }
+        await request.waitForArrivals(1)
+        let people = Task { try await admission.run(.people) {} }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
+
+        room.deliver(Self.warning)
+        room.deliver(Self.critical)
+        room.deliver(Self.warning)
+        #expect(admission.snapshot.running?.load == .description, "a level change stops no request")
+        await request.open()
+        #expect(try await first.value == "written")
+        #expect(admission.snapshot.roomNeeds.isEmpty, "a description is charged no cost")
+        #expect(admission.snapshot.lastGranted == nil)
+
+        try await admission.run(.description) {}
+        #expect(admission.snapshot.granted[.description] == 2)
+        #expect(admission.snapshot.granted[.people] == nil, "the People pass waits at warning")
+
+        room.deliver(Self.critical)
+        let held = Task { try await admission.run(.description) {} }
+        try await waitUntil { admission.snapshot.waiting.count == 2 }
+        #expect(admission.hold(for: .description) == .memoryCritical)
+        room.deliver(.roomy)
+        try await people.value
+        try await held.value
+        #expect(admission.snapshot.granted == [.description: 3, .people: 1])
+    }
+
+    /// A heavy load that raised the pressure, on the live path: the kernel's shares at its
     /// grant and at the warning are kept, the room's look goes on after the level is normal
-    /// again while the share is below the line plus what it took, the owner's status names the
-    /// wait with both shares, and the load starts in the step of the look that reads enough.
+    /// again while the share is below the line plus what it took, and the load starts in the
+    /// step of the look that reads enough.
     @Test func aLoadThatRaisedThePressureStartsAtTheLookThatFindsWhatItTook() async throws {
         let kernel = ScriptedKernel(.normal, available: 70)
         let room = BackgroundRoom(memory: kernel.reader)
         let admission = LoadAdmission(isOpen: true, room: room)
-        let request = ArrivalGate()
-        let first = Task { try await admission.run(.description) { await request.arrive() } }
-        await request.waitForArrivals(1)
+        let pass = ArrivalGate()
+        let first = Task { try await admission.run(.people) { await pass.arrive() } }
+        await pass.waitForArrivals(1)
         kernel.set(.warning, available: 25)
         #expect(room.hold(for: .download) == .memoryWarning)
         // 32 + (70 − 25).
-        #expect(admission.snapshot.roomNeeds[.description] == LoadAdmissionMachine.RoomNeed(requiredPercent: 77, raises: 1))
-        await request.open()
+        #expect(admission.snapshot.roomNeeds[.people] == LoadAdmissionMachine.RoomNeed(requiredPercent: 77, raises: 1))
+        await pass.open()
         try await first.value
 
         let ran = Mutex(false)
-        let again = Task { try await admission.run(.description) { ran.withLock { $0 = true } } }
+        let again = Task { try await admission.run(.people) { ran.withLock { $0 = true } } }
         try await waitUntil { admission.snapshot.waiting.count == 1 }
         try await waitUntil { kernel.looking }
         kernel.set(.normal, available: 76)
         kernel.tick()
         try await waitUntil { room.conditions.memory == .normal && kernel.looking }
-        #expect(admission.hold(for: .description) == OwnerHold(.memoryHeadroom, requiredPercent: 77, availablePercent: 76))
+        #expect(admission.snapshot.headroomRequired == 77)
         #expect(ran.withLock { $0 } == false)
 
         kernel.set(.normal, available: 77)
         kernel.tick()
         try await again.value
         #expect(ran.withLock { $0 })
-        #expect(admission.snapshot.roomNeeds[.description]?.requiredPercent == 77)
+        #expect(admission.snapshot.roomNeeds[.people]?.requiredPercent == 77)
         try await waitUntil { room.looksAgain == false }
     }
 
-    /// A description whose cost was never seen waits from its first request for the floor:
-    /// the request alone makes the room look, and the look that reads the line plus the floor
-    /// starts it.
-    @Test func aFirstDescriptionWaitsForTheFloorFromItsRequest() async throws {
-        let kernel = ScriptedKernel(.normal, available: 50)
+    /// On the live kernel a description needs no headroom: at normal with 20 % available, and
+    /// at warning with 25 %, each request starts at once, and none makes the room look for a
+    /// share.
+    @Test func aDescriptionStartsAtOnceAtNormalAndWarningWhateverIsAvailable() async throws {
+        let kernel = ScriptedKernel(.normal, available: 20)
         let room = BackgroundRoom(memory: kernel.reader)
         let admission = LoadAdmission(isOpen: true, room: room)
+        try await admission.run(.description) {}
         #expect(room.looksAgain == false)
-        let ran = Mutex(false)
-        let described = Task { try await admission.run(.description) { ran.withLock { $0 = true } } }
-        try await waitUntil { admission.snapshot.waiting.count == 1 }
-        #expect(admission.hold(for: .description) == OwnerHold(.memoryHeadroom, requiredPercent: 67, availablePercent: 50))
-        try await waitUntil { kernel.looking }
-        #expect(ran.withLock { $0 } == false)
+        #expect(admission.snapshot.headroomRequired == nil)
 
-        kernel.set(.normal, available: 67)
-        kernel.tick()
-        try await described.value
-        #expect(ran.withLock { $0 })
-        try await waitUntil { room.looksAgain == false }
+        kernel.set(.warning, available: 25)
+        try await admission.run(.description) {}
+        #expect(room.conditions.memory == .warning)
+        #expect(admission.snapshot.granted[.description] == 2)
+        #expect(admission.snapshot.roomNeeds.isEmpty)
     }
 
-    /// A description waits while the person is in the app; a heavy load the room does not hold
-    /// starts past it, and the description starts once the app is left.
-    @Test func aHeldDescriptionDoesNotHoldBackAHeavyLoad() async throws {
-        var inApp = MachineConditions.roomy
-        inApp.userInApp = true
-        let room = BackgroundRoom(conditions: inApp)
-        let admission = LoadAdmission(isOpen: true, room: room)
-        let order = Mutex<[BackgroundLoad]>([])
-        let described = Task { try await admission.run(.description) { order.withLock { $0.append(.description) } } }
-        try await waitUntil { admission.snapshot.waiting.count == 1 }
-        #expect(admission.hold(for: .description) == OwnerHold(.userInApp))
-        try await admission.run(.duplicates) { order.withLock { $0.append(.duplicates) } }
-        #expect(order.withLock { $0 } == [.duplicates])
+    /// A description waits at critical memory, a serious or critical thermal state, and in Low
+    /// Power Mode, its hold named for its status; it starts exactly once in the step that
+    /// delivers the conditions that clear it.
+    @Test func aDescriptionWaitsOnlyForCriticalMemoryHeatOrLowPower() async throws {
+        var serious = MachineConditions.roomy
+        serious.thermal = .serious
+        var hot = MachineConditions.roomy
+        hot.thermal = .critical
+        var saving = MachineConditions.roomy
+        saving.lowPower = true
+        let cases: [(MachineConditions, BackgroundHold)] = [
+            (Self.critical, .memoryCritical), (serious, .thermal), (hot, .thermal), (saving, .lowPower),
+        ]
+        for (conditions, hold) in cases {
+            let room = BackgroundRoom(conditions: conditions)
+            let admission = LoadAdmission(isOpen: true, room: room)
+            let ran = Mutex(0)
+            let described = Task { try await admission.run(.description) { ran.withLock { $0 += 1 } } }
+            try await waitUntil { admission.snapshot.waiting.count == 1 }
+            #expect(admission.hold(for: .description) == hold)
+            #expect(ran.withLock { $0 } == 0)
 
-        room.deliver(.roomy)
-        try await described.value
-        #expect(order.withLock { $0 } == [.duplicates, .description])
-        #expect(admission.snapshot.roomNeeds[.description]?.raises == 0, "a hold that is not memory marks no load")
+            room.deliver(Self.warning)
+            try await described.value
+            #expect(ran.withLock { $0 } == 1)
+            #expect(admission.hold(for: .description) == nil)
+            room.deliver(.roomy)
+            #expect(admission.snapshot.granted == [.description: 1])
+        }
     }
 
     /// The text reader starts no helper while the room holds text reading; the page stops
@@ -276,20 +322,20 @@ struct BackgroundRoomTests {
     }
 
     /// The kernel at `warning` and a source that never says so: every decision reads the
-    /// kernel, so no kind is let start — a serial waiter waits, and a heavy load asked for
-    /// after the kernel rose is not granted though the admission last heard `normal`.
-    @Test func aWarningTheSourceNeverAnnouncedHoldsEveryKind() async throws {
+    /// kernel, so no kind a warning holds is let start — a serial waiter waits, and a heavy load
+    /// asked for after the kernel rose is not granted though the admission last heard `normal`.
+    @Test func aWarningTheSourceNeverAnnouncedHoldsEveryKindItHolds() async throws {
         let kernel = ScriptedKernel(.normal)
         let room = BackgroundRoom(memory: kernel.reader)
         let admission = LoadAdmission(isOpen: true, room: room)
         #expect(admission.snapshot.room.heavyLoad == nil)
 
         kernel.set(.warning)
-        for work in BackgroundWork.allCases {
+        for work in BackgroundWork.allCases where work != .description {
             #expect(room.hold(for: work) == .memoryWarning)
         }
-        let waiter = Task { try await room.untilOpen(for: .description) }
-        try await waitUntil { room.counts.waiting[.description] == 1 }
+        let waiter = Task { try await room.untilOpen(for: .textReading) }
+        try await waitUntil { room.counts.waiting[.textReading] == 1 }
         let ran = Mutex(false)
         let load = Task { try await admission.run(.duplicates) { ran.withLock { $0 = true } } }
         try await waitUntil { admission.snapshot.waiting.count == 1 }
@@ -303,7 +349,7 @@ struct BackgroundRoomTests {
         try await waiter.value
         try await load.value
         #expect(ran.withLock { $0 })
-        #expect(room.counts.admitted[.description] == 1)
+        #expect(room.counts.admitted[.textReading] == 1)
     }
 
     /// The kernel back at `normal` and a source that stays silent: the room, holding a level

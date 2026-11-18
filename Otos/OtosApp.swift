@@ -62,7 +62,7 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     }()
 
     /// The platform's reports about room for background work (memory pressure, thermal state,
-    /// Low Power Mode, the app being active), delivered to the window's background room and
+    /// Low Power Mode), delivered to the window's background room and
     /// checkpointed for the session.
     private var machineConditions: MachineConditionsMonitor?
 
@@ -74,8 +74,7 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
         )
         machineConditions = MachineConditionsMonitor(
             room: catalogViewModel.backgroundRoom,
-            storeUse: catalogViewModel.storeUse,
-            userInApp: NSApp?.isActive ?? false
+            storeUse: catalogViewModel.storeUse
         )
         ResourceCheckpoint.record("sessionStart")
     }

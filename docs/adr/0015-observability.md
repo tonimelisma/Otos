@@ -114,8 +114,14 @@ real backlog. Three instruments see those:
   still counted); the scorecard keeps each helper's last line. The scorecard prints the level over the
   session (`MACHINE`: the level at launch, each change, seconds at each level) and the
   process tree's CPU and footprints, and judges `machine.pressureCaused`: from a launch at
-  `normal`, a level that left `normal` came while Otos was the new workload (FAIL); from
-  any other launch level the machine was not quiet and the row is `NOT-JUDGED`. The log
+  `normal`, a level that left `normal` came while Otos was the new workload (FAIL), except
+  the seconds description writing accounts for, which the owner accepts (2026-11-18: "OS will
+  swap running apps"; ADR 0057 decision 8): an episode above normal whose memory hold began
+  with a description request running (`op=load.admission phase=memoryHold held=true
+  running=description`) is the descriptions' whole, and in any other episode the seconds a
+  request ran (its `phase=granted` time plus its `phase=released` `ms`) are; a session whose
+  every second above normal is theirs is `ACCEPTED`, with its value the seconds left over (0);
+  from any other launch level the machine was not quiet and the row is `NOT-JUDGED`. The log
   cannot say whether another workload started after Otos, so a FAIL is Otos's on a machine
   kept otherwise quiet. `script/survey.sh`'s summary prints the same from its live capture,
   and counts the text readers alive at each moment apart from those seen so far. The system

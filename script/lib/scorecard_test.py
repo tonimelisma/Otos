@@ -643,12 +643,53 @@ class MachineTests(unittest.TestCase):
 
     def test_an_owner_the_room_held_says_why(self):
         held = scorecard.describe_pending({"owner": "descriptions", "runningPasses": "1", "written": "4",
-                                           "heldBy": "userInApp", "backlog": "true"})
-        self.assertIn("held by userInApp", held)
+                                           "heldBy": "memoryCritical", "backlog": "true"})
+        self.assertIn("held by memoryCritical", held)
         self.assertNotIn("held by", scorecard.describe_pending({"owner": "x", "heldBy": "none"}))
-        headroom = scorecard.describe_pending({"owner": "descriptions", "heldBy": "memoryHeadroom",
-                                               "requiredPercent": "67", "availablePercent": "45"})
-        self.assertIn("held by memoryHeadroom (needs 67 % available, 45 %)", headroom)
+
+    @staticmethod
+    def described(second, request, ms=None):
+        """A description request granted at `second`, released `ms` later (None: still running)."""
+        lines = [line(second, f"op=load.admission phase=granted load=description request={request} "
+                              "waiter=background waitMs=0 priority=21")]
+        if ms is not None:
+            # The release line is written after the next grant, on a queue of its own.
+            lines.append(line(second + ms / 1000 + 0.5, f"op=load.admission phase=released load=description "
+                                                        f"request={request} ms={ms} footprintAfterMB=300"))
+        return lines
+
+    def test_pressure_that_began_while_a_description_ran_is_accepted(self):
+        lines = pressure_session("normal", (20.1, "warning"), (40.1, "normal"))
+        lines += self.described(10.0, 1, ms=10100) + self.described(20.2, 2, ms=4000)
+        lines.append(line(20.1, "op=load.admission phase=memoryHold held=true memory=memoryWarning "
+                                "running=description available=29"))
+        report, rows, out = run(lines)
+        machine = report["machine"]
+        self.assertEqual((machine["secondsFromDescriptions"], machine["secondsNotFromDescriptions"]), (20.0, 0.0))
+        self.assertEqual((machine["pressureCaused"], machine["descriptionRequests"]), ("descriptions", 2))
+        row = self.row(rows)
+        self.assertEqual((row["verdict"], row["value"], row["state"]), ("ACCEPTED", 0.0, "descriptions"))
+        self.assertIn("20.0 s from description writing (accepted; 2 requests), 0.0 s not", out)
+
+    def test_pressure_that_began_with_no_description_running_fails_for_the_seconds_none_ran(self):
+        lines = pressure_session("normal", (20.1, "warning"), (40.1, "critical"), (50.1, "normal"))
+        lines += self.described(25.0, 1, ms=5000) + self.described(45.0, 2)
+        lines.append(line(20.1, "op=load.admission phase=memoryHold held=true memory=memoryWarning "
+                                "running=people available=29"))
+        report, rows, _ = run(lines)
+        machine = report["machine"]
+        # 5 s of the first request, and the second's 5.1 s to the return to normal.
+        self.assertEqual((machine["secondsFromDescriptions"], machine["secondsNotFromDescriptions"]), (10.1, 19.9))
+        row = self.row(rows)
+        self.assertEqual((row["verdict"], row["value"], row["state"]), ("FAIL", 19.9, "caused"))
+
+    def test_pressure_with_no_description_request_fails_whole(self):
+        lines = pressure_session("normal", (20.1, "warning"), (40.1, "normal"))
+        lines.append(line(20.1, "op=load.admission phase=memoryHold held=true memory=memoryWarning "
+                                "running=none available=29"))
+        report, rows, _ = run(lines)
+        self.assertEqual(report["machine"]["secondsNotFromDescriptions"], 20.0)
+        self.assertEqual(self.row(rows)["verdict"], "FAIL")
 
     def test_the_process_tree_adds_each_helpers_last_line_to_the_app(self):
         report, rows, out = run(pressure_session("normal", helpers=[(5.0, 1000, 60, 7), (10.0, 4000, 130, 7), (30.0, 2500, 90, 8)]))

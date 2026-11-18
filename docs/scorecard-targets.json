@@ -19,7 +19,7 @@
     {"metric": "mainThreadStalls.worstMs", "maxMs": 250, "source": "performance targets (docs/research/2026-11-16-performance-baseline.md): no main-thread stall over 250 ms"},
     {"metric": "memory.peakFootprintMB", "max": 700, "source": "performance targets (docs/research/2026-11-16-performance-baseline.md): peak app footprint 700 MB"},
     {"metric": "scroll.withoutThumbnail", "max": null, "source": "a count, not a target: visible tiles a scroll settled with no thumbnail rendered yet (the enrichment backlog)"},
-    {"metric": "machine.pressureCaused", "max": null, "source": "a quiet machine stays quiet (ADR 0015): with the window open and a backlog owed, the machine's memory-pressure level stays normal; judged only when the level was normal at launch (PASS: it stayed normal; FAIL: it left normal; NOT-JUDGED: the machine was not quiet at launch). The value is the seconds above normal"},
+    {"metric": "machine.pressureCaused", "max": null, "source": "a quiet machine stays quiet (ADR 0015): with the window open and a backlog owed, the machine's memory-pressure level stays normal; judged only when the level was normal at launch (PASS: it stayed normal; ACCEPTED: it left normal only while description writing accounts for it, which the owner accepts, 2026-11-18: an episode the room's memory hold began with a description request running, else the seconds a request ran; FAIL: any other second above normal; NOT-JUDGED: the machine was not quiet at launch). The value is the seconds above normal that description writing does not account for"},
     {"metric": "machine.treeCpuMs", "max": null, "source": "a number, not a target: CPU of Otos and its text-reading helpers over the session (ADR 0015)"}
   ]
 }

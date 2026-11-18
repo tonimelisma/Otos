@@ -598,7 +598,7 @@ struct SearchQueryReaderTests {
     /// which is no load the admission grants: it runs while a held background load still waits,
     /// and the admission grants nothing for it.
     @Test func aHeldBackgroundRoomDoesNotHoldTheWarmPrediction() async throws {
-        let room = BackgroundRoom(conditions: MachineConditions(memory: .warning, thermal: .nominal, lowPower: false, userInApp: false))
+        let room = BackgroundRoom(conditions: MachineConditions(memory: .warning, thermal: .nominal, lowPower: false))
         let admission = LoadAdmission(isOpen: true, room: room)
         let duplicates = Task { try await admission.run(.duplicates) {} }
         try await waitUntil { admission.snapshot.waiting.count == 1 }

@@ -135,96 +135,130 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.release(2)) == [.grant(1, .searchPrepare)])
     }
 
-    /// The load granted last when the memory hold begins ran into it: at the reopen exactly one
-    /// load starts, not that one, and it runs only after the others waiting, for the session.
+    /// The heavy load granted last when the memory hold begins ran into it: at the reopen
+    /// exactly one load starts, not that one, and it runs only after the others waiting, for the
+    /// session.
     @Test func atTheReopenOneLoadStartsAndNotTheOneThatRanIntoTheHold() {
-        let warning = LoadRoomHolds(heavyLoad: .memoryWarning, description: .memoryWarning)
         var machine = LoadAdmissionMachine(isOpen: true)
-        #expect(machine.handle(.request(1, .description)) == [.grant(1, .description)])
-        _ = machine.handle(.request(2, .people))
-        _ = machine.handle(.request(3, .duplicates))
-        #expect(machine.handle(.room(warning)).isEmpty)
-        #expect(machine.roomNeeds[.description]?.raises == 1)
+        #expect(machine.handle(.request(1, .people)) == [.grant(1, .people)])
+        _ = machine.handle(.request(2, .duplicates))
+        _ = machine.handle(.request(3, .searchIndex))
+        #expect(machine.handle(.room(Self.warning(available: nil))).isEmpty)
+        #expect(machine.roomNeeds[.people]?.raises == 1)
         #expect(machine.handle(.release(1)).isEmpty, "nothing starts while the room holds")
-        _ = machine.handle(.request(4, .description))
+        _ = machine.handle(.request(4, .people))
 
-        #expect(machine.handle(.room(.open)) == [.grant(2, .people)], "one at a time")
-        #expect(machine.handle(.release(2)) == [.grant(3, .duplicates)])
-        _ = machine.handle(.request(5, .people))
-        #expect(machine.handle(.release(3)) == [.grant(5, .people)], "a load asked later still goes first")
-        #expect(machine.handle(.release(5)) == [.grant(4, .description)])
+        #expect(machine.handle(.room(.open)) == [.grant(2, .duplicates)], "one at a time")
+        #expect(machine.handle(.release(2)) == [.grant(3, .searchIndex)])
+        _ = machine.handle(.request(5, .duplicates))
+        #expect(machine.handle(.release(3)) == [.grant(5, .duplicates)], "a load asked later still goes first")
+        #expect(machine.handle(.release(5)) == [.grant(4, .people)])
         #expect(machine.handle(.release(4)).isEmpty)
-        #expect(machine.roomNeeds[.description]?.raises == 1, "a clean run does not forget the raise")
+        #expect(machine.roomNeeds[.people]?.raises == 1, "a clean run does not forget the raise")
     }
 
     /// Each grant raises the pressure at most once, a hold that is not for memory marks
     /// nothing, and an unread share measures nothing.
     @Test func aGrantRaisesThePressureOnceAndOnlyForMemory() {
-        let warning = LoadRoomHolds(heavyLoad: .memoryWarning, description: .memoryWarning)
         var machine = LoadAdmissionMachine(isOpen: true)
-        _ = machine.handle(.request(1, .people))
+        _ = machine.handle(.request(1, .duplicates))
         _ = machine.handle(.release(1))
-        _ = machine.handle(.request(2, .description))
-        _ = machine.handle(.room(warning))
+        _ = machine.handle(.request(2, .people))
+        _ = machine.handle(.room(Self.warning(available: nil)))
         _ = machine.handle(.release(2))
         _ = machine.handle(.room(.open))
-        _ = machine.handle(.room(warning))
-        #expect(machine.roomNeeds[.description] == LoadAdmissionMachine.RoomNeed(requiredPercent: 67, raises: 1))
-        #expect(machine.roomNeeds[.people] == nil)
+        _ = machine.handle(.room(Self.warning(available: nil)))
+        #expect(machine.roomNeeds[.people] == LoadAdmissionMachine.RoomNeed(requiredPercent: nil, raises: 1))
+        #expect(machine.roomNeeds[.duplicates] == nil)
         _ = machine.handle(.room(.open))
-        #expect(machine.handle(.request(3, .description)) == [.grant(3, .description)], "unread, it starts")
+        #expect(machine.handle(.request(3, .people)) == [.grant(3, .people)], "unread, it starts")
         _ = machine.handle(.room(LoadRoomHolds(heavyLoad: .memoryCritical, description: .memoryCritical)))
         _ = machine.handle(.release(3))
-        #expect(machine.roomNeeds[.description]?.raises == 2)
+        #expect(machine.roomNeeds[.people]?.raises == 2)
         _ = machine.handle(.room(.open))
-        _ = machine.handle(.request(4, .people))
+        _ = machine.handle(.request(4, .duplicates))
         _ = machine.handle(.room(LoadRoomHolds(heavyLoad: .thermal, description: .thermal)))
-        #expect(machine.roomNeeds[.people] == nil, "a thermal hold is no memory cost")
+        #expect(machine.roomNeeds[.duplicates] == nil, "a thermal hold is no memory cost")
     }
 
-    /// Before any grant raised the pressure, a description needs the warning line plus its
-    /// cost floor (32 + 35); a load with no floor starts on any read share.
-    @Test func aDescriptionWhoseCostWasNeverSeenNeedsTheFloor() {
+    /// A description needs no share: at normal and at warning, with little available, it is
+    /// granted at once, asks the room for no share, and a heavy load at warning waits.
+    @Test func aDescriptionStartsAtNormalAndAtWarningWhateverIsAvailable() {
         var machine = LoadAdmissionMachine(isOpen: true)
-        #expect(machine.roomNeeds[.description]?.requiredPercent == 67)
-        _ = machine.handle(.room(Self.open(available: 66)))
-        #expect(machine.handle(.request(1, .description)).isEmpty)
-        #expect(machine.headroomRequired == 67)
-        #expect(machine.handle(.request(2, .people)) == [.grant(2, .people)], "a load with no floor starts past it")
-        #expect(machine.handle(.release(2)).isEmpty)
-        #expect(machine.handle(.room(Self.open(available: 67))) == [.grant(1, .description)])
-        #expect(machine.headroomRequired == nil)
-    }
-
-    /// With ample room a description is granted at once.
-    @Test func withAmpleRoomADescriptionStartsAtOnce() {
-        var machine = LoadAdmissionMachine(isOpen: true)
-        _ = machine.handle(.room(Self.open(available: 80)))
+        _ = machine.handle(.room(Self.open(available: 20)))
         #expect(machine.handle(.request(1, .description)) == [.grant(1, .description)])
         #expect(machine.headroomRequired == nil)
+        _ = machine.handle(.release(1))
+        _ = machine.handle(.room(Self.warning(available: 25)))
+        #expect(machine.handle(.request(2, .people)).isEmpty, "a heavy load waits at warning")
+        #expect(machine.handle(.request(3, .description)) == [.grant(3, .description)])
+        #expect(machine.headroomRequired == nil)
+        #expect(machine.roomNeeds.isEmpty)
     }
 
-    /// A description granted at S that fell to L is not granted again until the kernel reports
-    /// the warning line plus S − L; the lowest share read while it ran counts, not only the
-    /// warning's. A held load asks the room for no share.
-    @Test func aDescriptionThatFellIsAdmittedAgainstWhatItTook() {
+    /// A description waits while the room holds its kind — critical memory, heat, Low Power
+    /// Mode — and starts in the step that clears it.
+    @Test func aHeldDescriptionStartsInTheStepThatClearsTheHold() {
+        for hold in [BackgroundHold.memoryCritical, .thermal, .lowPower] {
+            var machine = LoadAdmissionMachine(isOpen: true)
+            _ = machine.handle(.room(LoadRoomHolds(heavyLoad: hold, description: hold)))
+            #expect(machine.handle(.request(1, .description)).isEmpty)
+            #expect(machine.handle(.room(Self.warning(available: 25))) == [.grant(1, .description)])
+        }
+    }
+
+    /// A description that fell is charged to no load: the pressure it raised marks neither it
+    /// nor the heavy load granted before it, the next description starts at once, and the heavy
+    /// load waits only while the room holds it.
+    @Test func aDescriptionThatRaisedThePressureIsChargedToNoLoad() {
         var machine = LoadAdmissionMachine(isOpen: true)
         _ = machine.handle(.room(Self.open(available: 70)))
-        #expect(machine.handle(.request(1, .description)) == [.grant(1, .description)])
+        #expect(machine.handle(.request(1, .people)) == [.grant(1, .people)])
+        _ = machine.handle(.release(1))
+        #expect(machine.handle(.request(2, .description)) == [.grant(2, .description)])
+        #expect(machine.lastGranted == nil)
         _ = machine.handle(.room(Self.open(available: 28)))
         _ = machine.handle(.room(Self.warning(available: 31)))
-        // 32 + (70 − 28).
-        #expect(machine.roomNeeds[.description] == LoadAdmissionMachine.RoomNeed(requiredPercent: 74, raises: 1))
-        _ = machine.handle(.release(1))
-        _ = machine.handle(.request(2, .description))
-        #expect(machine.headroomRequired == nil, "a held load asks for no share")
+        #expect(machine.roomNeeds.isEmpty)
+        _ = machine.handle(.request(3, .people))
+        #expect(machine.handle(.release(2)).isEmpty, "the People pass waits at warning")
+        #expect(machine.handle(.request(4, .description)) == [.grant(4, .description)])
+        _ = machine.handle(.release(4))
+        #expect(machine.handle(.room(Self.open(available: 40))) == [.grant(3, .people)], "no requirement")
+    }
 
-        #expect(machine.handle(.room(Self.open(available: 73))).isEmpty)
-        #expect(machine.headroomRequired == 74)
-        #expect(machine.handle(.request(3, .people)) == [.grant(3, .people)])
-        #expect(machine.handle(.release(3)).isEmpty)
-        #expect(machine.handle(.room(Self.open(available: 74))) == [.grant(2, .description)])
-        #expect(machine.headroomRequired == nil)
+    /// A description's turn yields to the view: the load the view needs is granted beside a
+    /// running description in the step it is wanted or asked, while a load nobody waits on
+    /// still waits; nothing else starts while the two run, and the next waiting load starts
+    /// once both ended. Neither grant measures a cost.
+    @Test func theViewsLoadStartsBesideARunningDescription() {
+        var machine = LoadAdmissionMachine(isOpen: true)
+        #expect(machine.handle(.request(1, .description)) == [.grant(1, .description)])
+        #expect(machine.handle(.request(2, .duplicates)).isEmpty)
+        #expect(machine.handle(.request(3, .people)).isEmpty, "not wanted, it waits")
+        #expect(machine.handle(.want(.people)) == [.grant(3, .people)])
+        #expect(machine.running?.request == 1)
+        #expect(machine.beside?.request == 3)
+        #expect(machine.lastGranted == nil)
+        #expect(machine.handle(.release(1)).isEmpty, "one heavy load at a time beside the view's")
+        #expect(machine.handle(.request(4, .description)).isEmpty)
+        #expect(machine.handle(.release(3)) == [.grant(2, .duplicates)])
+
+        _ = machine.handle(.release(2))
+        #expect(machine.handle(.release(4)).isEmpty)
+        _ = machine.handle(.request(5, .description))
+        #expect(machine.handle(.request(6, .people)) == [.grant(6, .people)], "asked while wanted, at once")
+        #expect(machine.runningLoads == [.description, .people])
+    }
+
+    /// Only a description yields its turn: with a heavy load running, the view's load waits for
+    /// it (ADR 0055, decision 3).
+    @Test func aHeavyLoadRunningKeepsItsTurnFromTheView() {
+        var machine = LoadAdmissionMachine(isOpen: true)
+        _ = machine.handle(.request(1, .duplicates))
+        _ = machine.handle(.want(.people))
+        #expect(machine.handle(.request(2, .people)).isEmpty)
+        #expect(machine.handle(.release(1)) == [.grant(2, .people)])
     }
 
     /// A second grant that raised the pressure ratchets the requirement past the share it was
@@ -232,37 +266,41 @@ struct LoadAdmissionMachineTests {
     @Test func theRequirementRatchetsAfterASecondRaise() {
         var machine = LoadAdmissionMachine(isOpen: true)
         _ = machine.handle(.room(Self.open(available: 70)))
-        _ = machine.handle(.request(1, .description))
+        _ = machine.handle(.request(1, .people))
         _ = machine.handle(.room(Self.warning(available: 25)))
         _ = machine.handle(.release(1))
         // 32 + (70 − 25).
-        #expect(machine.roomNeeds[.description]?.requiredPercent == 77)
+        #expect(machine.roomNeeds[.people]?.requiredPercent == 77)
 
         _ = machine.handle(.room(Self.open(available: 78)))
-        #expect(machine.handle(.request(2, .description)) == [.grant(2, .description)])
+        #expect(machine.handle(.request(2, .people)) == [.grant(2, .people)])
         _ = machine.handle(.room(Self.warning(available: 60)))
         _ = machine.handle(.release(2))
         // The cost seen (32 + 18) is below the requirement: it ratchets past the grant's share.
-        #expect(machine.roomNeeds[.description] == LoadAdmissionMachine.RoomNeed(requiredPercent: 79, raises: 2))
+        #expect(machine.roomNeeds[.people] == LoadAdmissionMachine.RoomNeed(requiredPercent: 79, raises: 2))
 
         _ = machine.handle(.room(Self.open(available: 78)))
-        #expect(machine.handle(.request(3, .description)).isEmpty, "not granted into the room it raised")
+        #expect(machine.handle(.request(3, .people)).isEmpty, "not granted into the room it raised")
         #expect(machine.headroomRequired == 79)
-        #expect(machine.handle(.room(Self.open(available: 90))) == [.grant(3, .description)])
+        #expect(machine.handle(.room(Self.open(available: 90))) == [.grant(3, .people)])
         _ = machine.handle(.release(3))
-        #expect(machine.roomNeeds[.description]?.requiredPercent == 79, "a clean run lowers nothing")
+        #expect(machine.roomNeeds[.people]?.requiredPercent == 79, "a clean run lowers nothing")
     }
 
-    /// A heavy load with no floor that raised the pressure is admitted by the same rule.
+    /// A heavy load that raised the pressure is admitted against what it took; the lowest share
+    /// read while it ran counts, not only the warning's; the view's load starts whatever.
     @Test func aHeavyLoadThatRaisedThePressureNeedsWhatItTook() {
         var machine = LoadAdmissionMachine(isOpen: true)
         _ = machine.handle(.room(Self.open(available: 50)))
         _ = machine.handle(.request(1, .people))
+        _ = machine.handle(.room(Self.open(available: 28)))
         _ = machine.handle(.room(Self.warning(available: 30)))
         _ = machine.handle(.release(1))
-        #expect(machine.roomNeeds[.people]?.requiredPercent == 52)
-        _ = machine.handle(.room(Self.open(available: 51)))
+        // 32 + (50 − 28).
+        #expect(machine.roomNeeds[.people]?.requiredPercent == 54)
+        _ = machine.handle(.room(Self.open(available: 53)))
         #expect(machine.handle(.request(2, .people)).isEmpty)
+        #expect(machine.headroomRequired == 54)
         #expect(machine.handle(.want(.people)) == [.grant(2, .people)], "the view's load starts whatever")
     }
 
@@ -270,8 +308,9 @@ struct LoadAdmissionMachineTests {
         LoadRoomHolds(heavyLoad: nil, description: nil, availablePercent: available)
     }
 
-    static func warning(available: Int) -> LoadRoomHolds {
-        LoadRoomHolds(heavyLoad: .memoryWarning, description: .memoryWarning, availablePercent: available)
+    /// What the room holds at warning: every heavy load, and no description.
+    static func warning(available: Int?) -> LoadRoomHolds {
+        LoadRoomHolds(heavyLoad: .memoryWarning, description: nil, availablePercent: available)
     }
 
     @Test func aViewNeedsTheLoadItCannotAnswerWithout() {
@@ -336,6 +375,31 @@ struct LoadAdmissionTests {
         try await next.value
         #expect(second.withLock { $0 })
         #expect(admission.snapshot.running == nil)
+    }
+
+    /// A window read is never answered behind a description: with a request held in flight at
+    /// its suspension, the People view's pass is granted and runs to its end while the request
+    /// is still under way, and a duplicates build nobody waits on still waits for the request.
+    @Test func theViewsLoadIsNotDelayedBehindADescriptionInFlight() async throws {
+        let admission = LoadAdmission(isOpen: true)
+        let request = ArrivalGate()
+        let described = Task { try await admission.run(.description) { await request.arrive() } }
+        await request.waitForArrivals(1)
+        let built = Mutex(false)
+        let duplicates = Task { try await admission.run(.duplicates) { built.withLock { $0 = true } } }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
+
+        admission.want(.people)
+        let shown = try await admission.run(.people) { admission.snapshot.runningLoads }
+        #expect(shown == [.description, .people])
+        #expect(admission.snapshot.running?.load == .description, "the request is still under way")
+        #expect(built.withLock { $0 } == false)
+
+        await request.open()
+        try await described.value
+        try await duplicates.value
+        #expect(built.withLock { $0 })
+        #expect(admission.snapshot.granted == [.description: 1, .people: 1, .duplicates: 1])
     }
 
     @Test func theViewsLoadRunsBeforeTheLoadsAskedFirst() async throws {

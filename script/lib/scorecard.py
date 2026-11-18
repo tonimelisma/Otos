@@ -615,6 +615,69 @@ def memory(start, events, tour_steps, click_list):
 PRESSURE_LEVELS = ("normal", "warning", "critical")
 
 
+def overlap_seconds(span, spans):
+    """Seconds of `span` that the non-overlapping `spans` cover."""
+    start, stop = span
+    return sum(max(0.0, (min(stop, b) - max(start, a)).total_seconds()) for a, b in spans)
+
+
+def description_spans(events, end):
+    """Each description request from its grant to its end (`op=load.admission load=description`:
+    the grant's time plus the release's `ms`; one still running at the session's end runs to
+    it). Requests run one at a time, so the spans never overlap."""
+    released = {e.fields.get("request"): e for e in of(events, "load.admission", "released")
+                if e.fields.get("load") == "description"}
+    spans = []
+    for grant in of(events, "load.admission", "granted"):
+        if grant.fields.get("load") != "description":
+            continue
+        release = released.get(grant.fields.get("request"))
+        ms = release.num("ms") if release is not None else None
+        stop = grant.time + dt.timedelta(milliseconds=ms) if ms is not None else end
+        if stop is not None:
+            spans.append((grant.time, max(grant.time, stop)))
+    return spans
+
+
+def pressure_attribution(launch_line, changes, events, end):
+    """The seconds above normal that description requests account for, and the rest.
+
+    The owner accepts the pressure description writing causes (2026-11-18: "Descriptions should
+    run when the app is foregrounded. OS will swap running apps"; ADR 0015, ADR 0057). An
+    episode above normal — from a read that left normal to the read that found it again — is
+    the descriptions' whole when the room's memory hold began with a description request
+    running (`op=load.admission phase=memoryHold held=true running=…description…`, logged in
+    the step of that read): the level then stays up until the kernel lowers it, which it does
+    only after its own smoothing. Any other episode is theirs only for the seconds a request
+    ran in it; the rest is not."""
+    episodes = []
+    level, since = launch_line.fields.get("level"), launch_line.time
+    for change in (c for c in changes if c.time >= launch_line.time):
+        if level in PRESSURE_LEVELS[1:]:
+            if episodes and episodes[-1][1] == since:
+                episodes[-1] = (episodes[-1][0], change.time)
+            else:
+                episodes.append((since, change.time))
+        level, since = change.fields.get("level"), change.time
+    if level in PRESSURE_LEVELS[1:] and end is not None:
+        stop = max(since, end)
+        if episodes and episodes[-1][1] == since:
+            episodes[-1] = (episodes[-1][0], stop)
+        else:
+            episodes.append((since, stop))
+    requests = description_spans(events, end)
+    holds = [e for e in of(events, "load.admission", "memoryHold") if e.fields.get("held") == "true"]
+    attributed = 0.0
+    for start, stop in episodes:
+        began = next((h for h in holds if start <= h.time <= stop), None)
+        if began is not None and "description" in began.fields.get("running", "").split(","):
+            attributed += (stop - start).total_seconds()
+        else:
+            attributed += overlap_seconds((start, stop), requests)
+    total = sum((stop - start).total_seconds() for start, stop in episodes)
+    return round(attributed, 1), round(max(0.0, total - attributed), 1), len(requests)
+
+
 def machine(start, events):
     """The machine's memory-pressure level over the session, and the load of Otos's own
     process tree (the app and its text-reading helpers).
@@ -626,11 +689,13 @@ def machine(start, events):
     re-read while held, so a level the source never announced is counted.
     `phase=sourceReport` lines (the source's own reports) are not levels. Seconds at each level run from the launch line
     to the session's last event. The judgement (`pressureCaused`) holds only when the machine
-    was at `normal` at launch: then a level that left `normal` came while Otos was the new
-    workload (`caused`), one that stayed is `normal`; a launch at another level is `notJudged`,
-    since the machine was not quiet before Otos. Whether another workload started during the
-    session is not in the app's log, so a caused level is Otos's or a neighbour's started
-    after it; a quiet machine (nothing else started) makes it Otos's.
+    was at `normal` at launch: then a level that stayed is `normal`; one that left `normal`
+    came while Otos was the new workload, and is `descriptions` when description writing
+    accounts for every second of it (`pressure_attribution`: pressure the owner accepts),
+    else `caused`; a launch at another level is `notJudged`, since the machine was not quiet
+    before Otos. Whether another workload started during the session is not in the app's log,
+    so a caused level is Otos's or a neighbour's started after it; a quiet machine (nothing
+    else started) makes it Otos's.
 
     A helper's line (`op=process.usage phase=helper`) is its last sample before it ended:
     CPU and peak footprint at least those, never more."""
@@ -640,7 +705,8 @@ def machine(start, events):
     end = events[-1].time if events else None
     result = {"atLaunch": None, "systemLevelAtLaunch": None, "availablePercentAtLaunch": None,
               "thermalAtLaunch": None, "lowPowerAtLaunch": None, "changes": [], "seconds": None,
-              "worst": None, "pressureCaused": None, "secondsOutsideNormal": None}
+              "worst": None, "pressureCaused": None, "secondsOutsideNormal": None,
+              "secondsFromDescriptions": None, "secondsNotFromDescriptions": None, "descriptionRequests": None}
     if launch_line is not None:
         result.update({
             "atLaunch": launch_line.fields.get("level"),
@@ -662,10 +728,15 @@ def machine(start, events):
         ranked = [PRESSURE_LEVELS.index(s) for s in seen if s in PRESSURE_LEVELS]
         result["worst"] = PRESSURE_LEVELS[max(ranked)] if ranked else None
         result["secondsOutsideNormal"] = round(seconds["warning"] + seconds["critical"], 1)
+        described, other, requests = pressure_attribution(launch_line, changes, events, end)
+        result.update({"secondsFromDescriptions": described, "secondsNotFromDescriptions": other,
+                       "descriptionRequests": requests})
         if result["atLaunch"] != "normal":
             result["pressureCaused"] = "notJudged"
+        elif result["worst"] == "normal":
+            result["pressureCaused"] = "normal"
         else:
-            result["pressureCaused"] = "normal" if result["worst"] == "normal" else "caused"
+            result["pressureCaused"] = "caused" if other > 0 else "descriptions"
     result["changes"] = [{"atMs": ms_since(start.time, c), "level": c.fields.get("level"),
                           "systemLevel": c.num("systemLevel"), "availablePercent": c.num("availablePercent")}
                          for c in changes]
@@ -1008,11 +1079,7 @@ def describe_pending(owner):
         parts.append(f"wake {owner['wake']}")
     if owner.get("heldBy") not in (None, "none"):
         # The background room held its next unit (ADR 0057).
-        held = f"held by {owner['heldBy']}"
-        if owner.get("requiredPercent") is not None:
-            # A load waiting for memory headroom: the share it needs, the share there was.
-            held += f" (needs {owner['requiredPercent']} % available, {owner.get('availablePercent', 'unknown')} %)"
-        parts.append(held)
+        parts.append(f"held by {owner['heldBy']}")
     return f"{owner.get('owner')}: " + ", ".join(parts or ["not quiescent"])
 
 
@@ -1171,10 +1238,13 @@ def verdicts(report, targets):
     add("disk.derivedFolderMB", "derived folder MB", (report.get("disk") or {}).get("folderMB"))
     caused = (report.get("machine") or {}).get("pressureCaused")
     # Not a number against a limit: the level is judged only from a quiet start (`machine`).
-    verdict = {"normal": "PASS", "caused": "FAIL", "notJudged": "NOT-JUDGED"}.get(caused, "NO-DATA")
-    # The value is the seconds spent above `normal`; the state names the judgement.
+    # Pressure description writing accounts for is the owner's to accept (2026-11-18), not a fail.
+    verdict = {"normal": "PASS", "descriptions": "ACCEPTED", "caused": "FAIL",
+               "notJudged": "NOT-JUDGED"}.get(caused, "NO-DATA")
+    # The value is the seconds above `normal` that descriptions do not account for; the state
+    # names the judgement.
     rows.append({"metric": "machine.pressureCaused", "label": "memory pressure caused: s above normal",
-                 "value": (report.get("machine") or {}).get("secondsOutsideNormal"), "target": "normal",
+                 "value": (report.get("machine") or {}).get("secondsNotFromDescriptions"), "target": "normal",
                  "state": caused, "verdict": verdict})
     tree = (report.get("machine") or {}).get("tree") or {}
     add("machine.treeCpuMs", "CPU ms of Otos and its helpers", tree.get("cpuMs"))
@@ -1367,6 +1437,8 @@ def print_machine(m, w):
           f"low power {fmt(m['lowPowerAtLaunch'])}); worst {m['worst']}; caused {m['pressureCaused']}\n")
         seconds = m["seconds"] or {}
         w("  seconds at each level " + ", ".join(f"{k} {fmt(seconds.get(k))}" for k in PRESSURE_LEVELS) + "\n")
+        w(f"  above normal {fmt(m['secondsOutsideNormal'])} s: {fmt(m['secondsFromDescriptions'])} s from description "
+          f"writing (accepted; {fmt(m['descriptionRequests'])} requests), {fmt(m['secondsNotFromDescriptions'])} s not\n")
         for change in m["changes"]:
             w(f"    {change['level']} at {change['atMs']} ms (kernel level {fmt(change['systemLevel'])}, "
               f"{fmt(change['availablePercent'])} % available)\n")

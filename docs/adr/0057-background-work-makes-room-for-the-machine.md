@@ -35,9 +35,8 @@ instruments to ADR 0015.
 ## Decision
 
 1. **One owner, `BackgroundRoom`, holds the machine's conditions** (`MachineConditions`):
-   the kernel's memory-pressure level, `ProcessInfo.thermalState`, Low Power Mode, and
-   whether Otos is the active app (`NSApplication` becoming and resigning active: the
-   person is in the app). `MachineConditionsMonitor`, owned by the app delegate, is the one
+   the kernel's memory-pressure level, `ProcessInfo.thermalState` and Low Power Mode. Whether
+   Otos is the active app is not a condition (decision 8). `MachineConditionsMonitor`, owned by the app delegate, is the one
    listener to the platform's reports; each changes its one field in the step it arrives,
    on the thread it arrives on. The monitor is `nonisolated`: the memory-pressure source runs
    its handler on a global queue, and a handler formed in a main-actor type inherits the main
@@ -61,8 +60,8 @@ instruments to ADR 0015.
 2. **The room decides, per kind of work, whether a new unit may start**
    (`MachineConditions.hold(for:)`). Four kinds (`BackgroundWork`): a background download of a
    cloud original, a page of text reading, a description request, and a background heavy
-   load. Memory at `warning` or `critical`, a `serious` or `critical` thermal state, and Low
-   Power Mode hold every kind. A description is also held while the person is in the app.
+   load. Memory at `critical`, a `serious` or `critical` thermal state, and Low Power Mode hold
+   every kind. Memory at `warning` holds every kind but a description (decision 8).
 3. **Every owner asks before a unit.** The description writer takes a load turn for each
    request (ADR 0055), which waits while the room holds descriptions; the search index waits there before each page of text; the text
    reader asks before each reading. The materializer reads `hold(for: .download)` in its
@@ -80,7 +79,8 @@ instruments to ADR 0015.
    once when the room holds text reading and no reading runs in it, and mid-reading at
    `critical`; its reading stays owed. A download in flight is not stopped: the provider's
    download goes on whatever Otos holds (`MaterializationCoordinator.cancelWaiter`). A
-   description request in flight (about 4 s) and a heavy load in flight finish.
+   description request in flight (about 4 s) and a heavy load in flight finish, whatever the
+   level becomes (ADR 0032 rule 3).
 6. **Concurrency per kind, from the measurements.**
    - Text reading: one helper, never more. Only one ever ran (the survey's "three readers"
      counted readers seen so far, not alive); each holds its own copy of the text model,
@@ -90,21 +90,33 @@ instruments to ADR 0015.
      two large videos, and a file larger than half the budget alone, so never two multi-GB
      transfers at once. The room adds the hold, not a smaller cap: no measurement shows a
      cap below four costs less per byte hashed.
-   - Heavy loads: one at a time (ADR 0055), a description request among them.
-7. **A reopen starts one load, and not the one that raised the pressure; a load starts only
-   into the room it takes.** The held loads resume one at a time (ADR 0055's single turn).
-   A level read normal is not room enough for a load that costs more than the margin above
-   the warning line: `LoadAdmission` admits each load against the share it has been seen to
-   take above that line, a description from a cost floor before any is seen (ADR 0055,
-   decision 8), and the load that raised the pressure waits behind the others. The room keeps
-   the kernel's available share from each read and, while a load waits for its requirement
-   (`wantHeadroom(atLeast:)`, told after every admission step), reads it on the same 5 s
-   look (`time: poll`: nothing reports a rise), telling its observers in the step of the read
-   that reaches it. On a machine that stays fuller, the room keeps that look for the session
-   (one `sysctl` read each 5 s) and no description starts. On a934ef17 every reopen restarted a description and a People pass together, and the
-   machine went back to warning 3.7–5.6 s later, four times
-   (`docs/research/2026-11-17-launch-pressure-dips.md`). Text reading (one helper, 80–169 MB)
-   and downloads (the file cache) reopen in the same step: neither was the cost measured.
+   - Heavy loads: one at a time (ADR 0055), a description request among them; the load the
+     current view needs starts beside a running request.
+7. **A reopen starts one load, and not the one that raised the pressure; a heavy load that
+   raised it starts only into the room it took.** The held loads resume one at a time (ADR
+   0055's single turn). A level read normal is not room enough for a heavy load that costs
+   more than the margin above the warning line: `LoadAdmission` admits a heavy load that
+   raised the pressure against the share it was seen to take above that line (ADR 0055,
+   decision 8), and it waits behind the others. The room keeps the kernel's available share
+   from each read and, while a load waits for its requirement (`wantHeadroom(atLeast:)`, told
+   after every admission step), reads it on the same 5 s look (`time: poll`: nothing reports a
+   rise), telling its observers in the step of the read that reaches it. On a934ef17 every
+   reopen restarted a description and a People pass together, and the machine went back to
+   warning 3.7–5.6 s later, four times (`docs/research/2026-11-17-launch-pressure-dips.md`).
+   Text reading (one helper, 80–169 MB) and downloads (the file cache) reopen in the same step:
+   neither was the cost measured.
+8. **Descriptions run while Otos is frontmost and at memory-pressure warning.** The owner,
+   2026-11-18: "Descriptions should run when the app is foreground ed. OS will swap running
+   apps". The memory a request takes is the system language model's service's, which macOS
+   compresses and swaps out like any other app's; free memory and the app being in the
+   background are not preconditions for it. With descriptions held while Otos was active and
+   admitted only at 67 % available, none was written on his Mac (755 owed). A description is
+   held only at `critical`, a `serious` or `critical` thermal state, and Low Power Mode, and
+   never at `warning`: held there, a request loaded the model, raised the level to warning,
+   was held, and started again at the return to normal, 13 dips in 128 s before #943. A
+   request in flight is never stopped by a level change (decision 5). The pressure
+   description writing raises is accepted: the scorecard reports it as the descriptions'
+   (ADR 0015), not as a failure.
 
 ### The two memory-pressure sources
 
@@ -141,17 +153,13 @@ the source ever delivers a normal after a warning it never sent was not measured
 (producing pressure on the owner's machine is not safe); the kernel's code says it does not,
 which is why the held level is read again on a poll rather than left to the next event.
 
-### Decision for the owner to confirm
-
-**Descriptions run only while Otos is not the active app.** While the person uses the
-window, the system language model's service (about 450 MB more than at rest) is not asked;
-when they switch to another app, the backlog continues, and stops again when they come back.
-It is the option that keeps the machine quiet while the window is in use. Its cost: on a
-library whose window is always in front, no description is written. The framework may
-rate-limit a request from an app in the background; a busy answer paces the writer for a
-minute (ADR 0053), as before. Recorded in ADR 0009 and ADR 0053 too.
-
 ## Rejected alternatives
+
+- **Descriptions only while Otos is not the active app** (this ADR's first decision). On a
+  library whose window is in front, nothing was written; the owner rejected it on 2026-11-18
+  (decision 8).
+- **A setting for running descriptions in the foreground.** The owner's direction is the
+  behaviour, not a choice for the person to make.
 
 - **The dispatch source as the level.** It reports late or never (above); the room believed
   `normal` while the kernel said warning for minutes.
@@ -177,8 +185,9 @@ minute (ADR 0053), as before. Recorded in ADR 0009 and ADR 0053 too.
 
 ## Consequences
 
-- Under `warning`, no new description, text page, background download or background heavy
-  load starts; the window's own work does. The hold begins at the first decision after the
+- Under `warning`, no new text page, background download or background heavy load starts;
+  the window's own work and description requests do. Under `critical`, no description starts
+  either. The hold begins at the first decision after the
   kernel reaches warning, whatever the source says. When the level returns to `normal`, each
   held owner resumes in the step that reads it: the source's report when it announced the
   rise, else the next look, at most 5 s after the kernel lowered it; held loads resume one at
@@ -188,10 +197,11 @@ minute (ADR 0053), as before. Recorded in ADR 0009 and ADR 0053 too.
   (`cause` = `decision`, `sourceReport` or `recheck`, with the source's last report), and each
   source report is `phase=sourceReport` beside the kernel's level. The scorecard's MACHINE
   section reads the launch and changed lines, so a level the source never announced is in it.
-- The backlog drains only while the machine has room: on a machine that sits at `warning`,
-  it waits, and descriptions wait on any machine with less available than a description
-  takes (67 % before one is seen; the owner's decision that descriptions are optional, ADR
-  0055 decision 8). Rows hashed and described per minute are lower on a loaded machine.
+- The enrichment backlog drains only while the machine has room: on a machine that sits at
+  `warning`, it waits. Descriptions are written at `warning` and while Otos is in front, and
+  their own pressure can keep the machine at `warning` while they run, holding background
+  downloads, text pages and heavy loads until it reads normal again. Rows hashed per minute
+  are lower on a loaded machine.
 - A test scripts the conditions (`BackgroundRoom(conditions:)`, `deliver(_:)`), and the
   kernel and its looks (`BackgroundRoom(memory:)` with a scripted `MemoryPressureReader`);
   owners made alone get a roomy room with no reader, so every existing owner test runs as

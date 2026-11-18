@@ -128,56 +128,26 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
-    /// ADR 0055, ADR 0057: each request takes a load turn; while the person is in the app no
-    /// request is made, and the writer's status names the hold; once the app is left the still
-    /// is described, with one request in one turn.
-    @Test func noRequestIsMadeWhileThePersonIsInTheApp() async throws {
+    /// A still with its facts read and a preview stored, owed a description: what the three
+    /// tests of when a request is made below describe.
+    private static func owedStill() async throws -> (library: FaceEnrichmentTests.ScannedLibrary, still: MediaAssetID, directory: URL) {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
-        let still = library.id("a.jpg")
-        let store = library.store
         let directory = try makeTestDirectory().appending(path: "Thumbnails", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try writeSubjectJPEG(to: directory.appending(path: "preview-a.jpg.heic"), center: CGPoint(x: 0.5, y: 0.5))
         try await library.readFaces([library.result(for: "a.jpg", faces: [])])
-        try await Self.readText([], in: store)
-        try await Self.readLabels([], in: store)
-        var inApp = MachineConditions.roomy
-        inApp.userInApp = true
-        let room = BackgroundRoom(conditions: inApp)
-        let admission = LoadAdmission(isOpen: true, room: room)
-        let requests = Mutex(0)
-        let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory, describe: { _, _ in
-            requests.withLock { $0 += 1 }
-            return .written("A lake.")
-        }, admission: admission)
-
-        await writer.start()
-        try await waitUntil { await writer.status.heldBy == OwnerHold(.userInApp) }
-        #expect(requests.withLock { $0 } == 0)
-
-        room.deliver(.roomy)
-        try await waitUntil { try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("A lake.") }
-        #expect(requests.withLock { $0 } == 1)
-        #expect(admission.snapshot.granted[.description] == 1)
-        #expect(await writer.status.heldBy == nil)
-        await writer.shutdown()
-        await store.shutdown()
+        try await readText([], in: library.store)
+        try await readLabels([], in: library.store)
+        return (library, library.id("a.jpg"), directory)
     }
 
-    /// ADR 0055: on a machine with less available memory than the line plus a description's
-    /// cost floor, no request is made and the writer's status names the hold with the share
-    /// required and the share available; the look that reads enough starts the request.
-    @Test func noRequestIsMadeWhileTheMachineHasLessRoomThanADescriptionTakes() async throws {
-        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
-        let still = library.id("a.jpg")
+    /// ADR 0055, ADR 0057: a request is made at memory-pressure warning with little memory
+    /// available, on the live kernel's reading, in one turn, and the writer names no hold.
+    /// Whether Otos is the active app is no condition (the owner, 2026-11-18).
+    @Test func aRequestIsMadeAtWarningWithLittleMemoryAvailable() async throws {
+        let (library, still, directory) = try await Self.owedStill()
         let store = library.store
-        let directory = try makeTestDirectory().appending(path: "Thumbnails", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try writeSubjectJPEG(to: directory.appending(path: "preview-a.jpg.heic"), center: CGPoint(x: 0.5, y: 0.5))
-        try await library.readFaces([library.result(for: "a.jpg", faces: [])])
-        try await Self.readText([], in: store)
-        try await Self.readLabels([], in: store)
-        let kernel = ScriptedKernel(.normal, available: 45)
+        let kernel = ScriptedKernel(.warning, available: 20)
         let room = BackgroundRoom(memory: kernel.reader)
         let admission = LoadAdmission(isOpen: true, room: room)
         let requests = Mutex(0)
@@ -187,17 +157,64 @@ struct PhotoDescriptionTests {
         }, admission: admission)
 
         await writer.start()
-        let held = OwnerHold(.memoryHeadroom, requiredPercent: 67, availablePercent: 45)
-        try await waitUntil { await writer.status.heldBy == held }
-        #expect(await writer.status.fields["requiredPercent"] == "67")
-        #expect(await writer.status.fields["availablePercent"] == "45")
-        #expect(requests.withLock { $0 } == 0)
-
-        try await waitUntil { kernel.looking }
-        kernel.set(.normal, available: 70)
-        kernel.tick()
         try await waitUntil { try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("A lake.") }
         #expect(requests.withLock { $0 } == 1)
+        #expect(admission.snapshot.granted[.description] == 1)
+        #expect(room.conditions.memory == .warning)
+        #expect(await writer.status.heldBy == nil)
+        await writer.shutdown()
+        await store.shutdown()
+    }
+
+    /// ADR 0057: at critical memory pressure no request is made and the writer's status names
+    /// the hold; the step that delivers warning starts the request.
+    @Test func noRequestIsMadeAtCriticalPressure() async throws {
+        let (library, still, directory) = try await Self.owedStill()
+        let store = library.store
+        let room = BackgroundRoom(conditions: MachineConditions(memory: .critical, thermal: .nominal, lowPower: false))
+        let admission = LoadAdmission(isOpen: true, room: room)
+        let requests = Mutex(0)
+        let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory, describe: { _, _ in
+            requests.withLock { $0 += 1 }
+            return .written("A lake.")
+        }, admission: admission)
+
+        await writer.start()
+        try await waitUntil { await writer.status.heldBy == .memoryCritical }
+        #expect(await writer.status.fields["heldBy"] == "memoryCritical")
+        #expect(requests.withLock { $0 } == 0)
+
+        room.deliver(MachineConditions(memory: .warning, thermal: .nominal, lowPower: false))
+        try await waitUntil { try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("A lake.") }
+        #expect(requests.withLock { $0 } == 1)
+        #expect(await writer.status.heldBy == nil)
+        await writer.shutdown()
+        await store.shutdown()
+    }
+
+    /// ADR 0032 rule 3, ADR 0057: a request in flight when the level rises to critical is not
+    /// cancelled, and its answer is written.
+    @Test func aRequestInFlightIsWrittenWhenTheLevelRises() async throws {
+        let (library, still, directory) = try await Self.owedStill()
+        let store = library.store
+        let room = BackgroundRoom()
+        let admission = LoadAdmission(isOpen: true, room: room)
+        let model = ArrivalGate()
+        let cancelled = Mutex(false)
+        let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory, describe: { _, _ in
+            await model.arrive()
+            cancelled.withLock { $0 = $0 || Task.isCancelled }
+            return .written("A lake.")
+        }, admission: admission)
+
+        await writer.start()
+        await model.waitForArrivals(1)
+        room.deliver(MachineConditions(memory: .critical, thermal: .nominal, lowPower: false))
+        #expect(admission.snapshot.running?.load == .description, "the level stops no request")
+        await model.open()
+        try await waitUntil { try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("A lake.") }
+        #expect(cancelled.withLock { $0 } == false)
+        #expect(await model.arrivalCount == 1)
         await writer.shutdown()
         await store.shutdown()
     }
