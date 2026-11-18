@@ -187,6 +187,76 @@ struct GridContentEditTests {
         #expect(reread.sharingContent(of: shown).content.edit(from: shown.content) == CatalogGridContent.Edit(removed: [3], inserted: []))
     }
 
+    // MARK: - A read's publication writes no table of its order
+
+    /// Reads drawn at random, each published after the last as the projection publishes them:
+    /// every published index answers every position as the order itself does, through edits
+    /// composed across the run and the table written again once the edit would outgrow it.
+    @Test func everyPublishedReadsIndexAnswersAsItsOrderDoes() {
+        var generator = SplitMix(seed: 59)
+        var published = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: (0 ..< 24).map(Self.id))
+        published.content.prepareIndex()
+        var next = 24
+        var rewritten = 0
+        for _ in 0 ..< 300 {
+            var ids = published.orderedAssetIDs
+            for _ in 0 ..< Int.random(in: 1 ... 3, using: &generator) {
+                switch Int.random(in: 0 ..< 3, using: &generator) {
+                case 0 where ids.count > 4:
+                    ids.remove(at: Int.random(in: 0 ..< ids.count, using: &generator))
+                case 1:
+                    ids.insert(Self.id(next), at: Int.random(in: 0 ... ids.count, using: &generator))
+                    next += 1
+                default:
+                    let moved = ids.remove(at: Int.random(in: 0 ..< ids.count, using: &generator))
+                    ids.insert(moved, at: Int.random(in: 0 ... ids.count, using: &generator))
+                }
+            }
+            let before = published.content.indexEditSize
+            published = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids).sharingContent(of: published)
+            if published.content.indexEditSize < before {
+                rewritten += 1
+            }
+            #expect(published.content.indexEditSize < ids.count)
+            for (position, id) in ids.enumerated() {
+                #expect(published.content.position(of: id) == position)
+            }
+            #expect(published.content.position(of: Self.id(100_000)) == nil)
+        }
+        #expect(rewritten > 0, "a run this long writes the table again")
+    }
+
+    /// A read that moved one photo, published after the order the window shows at the owner's
+    /// size: its index is the shown order's carried through the edit, so it writes the moved
+    /// photo's entry, never a table of the 160,000 (the 2026-11-18 daily run flagged a
+    /// publication that wrote one and walked the order too). The same few entries at 16,000.
+    @Test func aReadsPublicationIndexesItsEditNotItsOrder() throws {
+        func published(dayCount: Int) throws -> (indexed: Int, visited: Int) {
+            let photos = dayCount * Self.ownerPhotosPerDay
+            var days = (0 ..< dayCount).map { day in
+                (0 ..< Self.ownerPhotosPerDay).map { Self.id(day * Self.ownerPhotosPerDay + $0) }
+            }
+            let shown = Self.grid(days)
+            shown.content.prepareIndex()
+            // A read gave the newest photo the fourth day's date.
+            let moved = days[0].removeFirst()
+            days[3].append(moved)
+            let read = Self.grid(days).sharingContent(of: shown)
+            let edit = try #require(read.content.edit(from: shown.content))
+            #expect(edit == CatalogGridContent.Edit(removed: [0], inserted: [4 * Self.ownerPhotosPerDay - 1]))
+            #expect(read.content.position(of: moved) == 4 * Self.ownerPhotosPerDay - 1)
+            #expect(read.content.position(of: Self.id(photos - 1)) == photos - 1)
+            #expect(read.content.position(of: Self.id(1)) == 0)
+            return (read.content.work.indexed, read.content.work.visited)
+        }
+        let owner = try published(dayCount: Self.ownerDays)
+        let tenth = try published(dayCount: Self.ownerDays / 10)
+        #expect(owner.indexed <= 2, "a read's publication at 160,000 indexed \(owner.indexed)")
+        #expect(owner.indexed == tenth.indexed)
+        // The walk tells the two orders apart item by item: in proportion to the order, once.
+        #expect(owner.visited <= 2 * Self.ownerDays * Self.ownerPhotosPerDay + 8, "visited \(owner.visited)")
+    }
+
     // MARK: - An act on a reorder the grid has not shown, at the owner's size
 
     /// The owner's size: 160,000 photos over 5,000 days, newest first.

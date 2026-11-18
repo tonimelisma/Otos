@@ -153,8 +153,13 @@ batches — with the last publication's own, then builds the new content's posit
 window, the change summary and SwiftUI then tell an unchanged part by identity (ADR 0004).
 A grid order of the same query that is not equal is published as an edit of the last
 publication's (`CatalogGridContent.Edit.between`): the same walk of the two orders side by
-side, which looks an item up only where they differ, so a read that moved a few photos
-costs a few look-ups more than telling the orders equal. A hide, a Put Back and a stack
+side, which tells the runs they share at either end equal item by item and looks up only the
+items between, in an index of that stretch alone, so a read that moved a few photos costs a
+few look-ups more than telling the orders equal. Its position index is the last
+publication's carried through that edit, as an act's is (below): the publication writes no
+table of the order. The 2026-11-18 daily run flagged `window.publish.orderChanged.158k`
+(788.8 → 980.2 M instructions) when the walk was added beside a table of the new order,
+written whole for every read and read by the walk; carried, the publication costs the walk. A hide, a Put Back and a stack
 expanding are already edits of the order they were made from. Each published content keeps
 the edit from every earlier order still held, the edits between composed, so the grid takes
 any publication of the query in by an edit of the order it shows, whichever publications the
@@ -171,7 +176,10 @@ from that order to this one, and this order's inserted items by identity; a posi
 table's, moved past the edit's removals and insertions by two binary searches. An order made
 by an edit of an indexed one — a hide, a Put Back, a stack expanding, the acts held on a
 read — takes that index with the edit composed onto it (`Edit.followed(by:)`), at the
-edit's cost; only an order read whole writes a table, once, off the actor. A Put Back finds
+edit's cost; only an order that is no edit of an indexed one (a new query's) writes a
+table, once, off the actor. Once the composed edit names as many positions as the order holds,
+carrying it would cost what the table costs, so the table is written whole again
+(`Positions.editing(by:into:)`): an index's edit never outgrows its order. A Put Back finds
 its neighbours by the index and copies the order's runs between the insertions whole
 (`CatalogGridContent.inserting`); it no longer walks the order. Counted at 160,000 photos
 (`ActPublicationWorkTests`), a one-photo Move to Trash visited 1 position and wrote 159,999
@@ -180,8 +188,9 @@ few, the same few as at 16,000. The order's storage is still copied in runs (a M
 copies 640 KB of identities and 2.5 MB of days at that size, a memory move, not a walk): a
 persistent order would spare it at the price of every reader of the order, which reads it as
 an array. Rejected: a balanced tree or a rope for the order and its index, for the same reason
-and because the measured cost was the table, not the copy; rebuilding the table once the
-composed edit grows (a read whole resets it, at least once a cadence while a backlog runs).
+and because the measured cost was the table, not the copy; a table written for every read's
+publication, which cost the 158,000-photo publication 848 M of its 980 M instructions in the
+Debug build while the edit it carried named two positions.
 
 **An act is never queued behind a build.** The projection is one actor, so an act waits for
 whatever synchronous step it is running. Every step of a pass that walks the scope leaves the

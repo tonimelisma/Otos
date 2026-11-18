@@ -121,7 +121,7 @@ struct GridBacklogMemoryTests {
     }
 
     /// `publications` reads of a backlog over `photos` photos, published as the projection
-    /// publishes them (`sharingContent(of:)`, the index of each read built at publication). The
+    /// publishes them (`sharingContent(of:)`, each read's index the last one's carried through its edit). The
     /// grid applies every seventh and holds one order through the middle fifth of the run, as a
     /// scroll holds reorders; every `scrollEvery` publications it is scrolled a screen and a half
     /// on, pinning `visible` tiles and decoding them and two screens either way, a thumbnail of
@@ -178,12 +178,12 @@ struct GridBacklogMemoryTests {
     }
 
     /// After a thousand backlog publications, scrolled to many places: the window holds the
-    /// published order and the one the grid shows, an index holds no edit across reads, and the
+    /// published order and the one the grid shows, an index's edit stays smaller than its order, and the
     /// tile store keeps the visible tiles and its off-screen limit, whatever the run's length.
     @Test func aBacklogOfPublicationsHoldsWhatTheWindowShows() {
         let census = Self.run(photos: 8000, publications: 1000, visible: 60, scrollEvery: 5)
         #expect(census.contentsAlive <= 3, "\(census)")
-        #expect(census.largestIndexEdit == 0, "a read's publication indexes from its own table: \(census)")
+        #expect(census.largestIndexEdit < 8000, "an index's edit never outgrows its order: \(census)")
         #expect(census.editFromShown >= 0, "the grid follows from the order it shows: \(census)")
         #expect(census.tiles <= census.visible + census.offscreenLimit * 5 / 4, "\(census)")
         #expect(census.tiles >= census.visible + census.offscreenLimit, "the store keeps what it is designed to keep: \(census)")

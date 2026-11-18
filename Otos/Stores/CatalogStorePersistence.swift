@@ -2370,7 +2370,12 @@ extension CatalogStore {
         // The assumed offset (`CaptureLocalTime.assumedUTCOffset`) is made for the
         // absolute time the row is placed by. The file's dates stand in for it only while
         // no capture instant does, and an absolute time unchanged to the second keeps the
-        // offset it was given, so a rescan in another zone moves nothing.
+        // offset it was given, so a rescan in another zone moves nothing. A file whose facts
+        // moved may owe more than its digest now: its digest hold ends, and enrichment claims
+        // it again (ADR 0009 §12); any other claim is its owner's.
+        // The text carries no comment: a cached statement is found by its SQL, hashed whole
+        // at every execution, and a character outside ASCII makes that hash normalize the
+        // text, about ten times the cost (`CatalogSQLTextTests`).
         try db.cachedStatement(sql: """
         INSERT INTO media_asset (
             library_root_id,
@@ -2408,8 +2413,6 @@ extension CatalogStore {
             file_identifier = excluded.file_identifier,
             relative_path_key = excluded.relative_path_key,
             awaiting_presence = 0,
-            -- A file whose facts moved may owe more than its digest now: its digest hold
-            -- ends, and enrichment claims it again (ADR 0009 §12). A claim is its owner's.
             enrichment_claimed = CASE
                 WHEN media_asset.enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes) THEN NULL
                 ELSE media_asset.enrichment_claimed

@@ -478,8 +478,14 @@ Findings, not work.
   - The app's CPU is not split by owner anywhere, so no share of idle CPU is attributed to any
     owner.
   - "Not attributed 0" for disk read is a clamp, not a measurement.
-- **Not measured until the next daily run.** The bench cases touched since the last daily run
-  (#936, #937, #939, #941, #942, #943).
+- **The 2026-11-18 daily run flagged two cases** (head 9afa1f53 against 73dffba5):
+  `window.publish.orderChanged.158k` 788.8 → 980.2 M instructions, from #920's walk of the two
+  orders beside a table of the new order written whole; `immich.listing.batch500.of20k` 570.3 →
+  629.4 M, from #936's SQL comment holding `§` in the scan upsert, which made each cached
+  lookup of its text hash through Unicode normalization. Fixed by carrying the last
+  publication's index through the walk's edit, and by an ASCII upsert text
+  (`2026-11-18-bench-flag-publish-walk-and-upsert-comment.md`); not measured until the next
+  daily run.
 - **Mirrored files not yet on the server.** 10 mirrored files had no asset on the server at the
   time of measurement.
 
