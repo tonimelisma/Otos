@@ -1,6 +1,6 @@
 # The performance program on the owner's library (2026-11-16 to 2026-11-17)
 
-Date: opened 2026-11-16, closed 2026-11-17; final measurement on installed revision 3fa7ee1b.
+Date: opened 2026-11-16, closed 2026-11-17; final measurement on installed revision 12031093.
 This note is the program's lasting record: its targets, the first baseline, the final
 measurement, what moved each number, what was measured and rejected, how to measure again,
 and what remains.
@@ -12,8 +12,9 @@ and what remains.
   either was made. The saved scorecards are local files; this note cites the revisions.
 - Two tour kinds (ADR 0015): a **launch** tour takes its first step at the first grid, under
   the launch's own load; a **settled** tour (`--settled`) waits for the launch's background
-  work to settle first. The final launch-kind session lasted 615.1 s; the settled one 75.3 s.
-  Each final tour was read from a live log capture that reported `complete=yes` (#918,
+  work to settle first. The final launch-kind session lasted 615.3 s, eight clicks and a
+  600 s idle; the settled one 88.0 s, and it was the build's first launch, which ran migration
+  v79. Each final tour was read from a live log capture that reported `complete=yes` (#918,
   `2026-11-17-scorecard-live-capture.md`).
 - The machine beside each tour: since #925 the scorecard's `MACHINE` section reads the
   kernel's memory-pressure level at launch, each report of the pressure source, the seconds at
@@ -87,38 +88,41 @@ tour on f192041a peaked at 336 MB with every owner off, 973 MB with the search i
 2,263 MB with People alone: the gap was the owners. The machine is a 16 GB M1 Pro with about
 100 MB free and 4 GB in swap before Otos starts.
 
-## Final measurement (installed 3fa7ee1b, 2026-11-17)
+## Final measurement (installed 12031093, 2026-11-17)
 
-A full `script/check.sh` passed on the tree before it was installed. The previous finals,
-installed f398d5dc and f2bee3f8, are kept beside it.
+The previous finals, installed f398d5dc, f2bee3f8 and 3fa7ee1b, are kept beside it. The
+settled tour of 12031093 reported only its launch, stalls, failures and peak; its other
+numbers are not measured.
 
-| Number | Baseline 661be172 | f398d5dc launch / settled | f2bee3f8 launch / settled | Final 3fa7ee1b launch / settled | Target |
-| --- | --- | --- | --- | --- | --- |
-| Launch to first grid | 4,038 ms | 1,052 / 1,271 ms | 1,024 / 1,020 ms | 975 / 998 ms | ≤ 2,000 |
-| First import | 676 ms | 209 / 241 ms | 125 / 149 ms | 220 / 167 ms | ≤ 1,000 |
-| First library | 1,008 ms | 269 / 255 ms | 258 / 202 ms | 234 / 207 ms | ≤ 1,000 |
-| First People | 48,818 ms | 55 / 58 ms | 50 / 49 ms | 50 / 13 ms | ≤ 1,000 |
-| First person | 4,094 ms | 499 / 407 ms | 235 / 194 ms | 249 / 191 ms | ≤ 1,000 |
-| First Places | 1,469 ms | 257 / 254 ms | 370 / 221 ms | 250 / 211 ms | ≤ 1,000 |
-| On This Day | 137 ms | 742 / 151 ms | 158 / 108 ms | 148 / 102 ms | ≤ 1,000 |
-| Duplicates | 193 ms | 42 / 43 ms | 63 / 42 ms | 39 / 33 ms | ≤ 1,000 |
-| Return to All Media | 545 ms | 78 / 69 ms | 130 / 85 ms | 77 / 82 ms | ≤ 300 |
-| Photo open / Compare / Info | skipped | 395 / 439, 171 / 183, 480 / 416 ms | 365 / 276, 206 / 180, 554 / 437 ms | 349 / 196, 207 / 181, 465 / 437 ms | ≤ 1,000 |
-| First search: first results | 9,281 ms (complete) | 939 / 281 ms | 294 / 185 ms | 351 / 187 ms | ≤ 1,000 |
-| First search: complete | 9,281 ms | 2,287 / 498 ms | 563 / 441 ms | 1,206 / 397 ms | none |
-| Filter: videos | skipped | 191 / 98 ms | 172 / 211 ms | 118 / 117 ms | ≤ 1,000 |
-| Sort by name | 41,806 ms | 155 / 605 ms | 143 / 121 ms | 843 / 210 ms | ≤ 1,000 |
-| Store stall lines | 62 (235 s) | 0 in each tour | 0 in each tour | 0 in each tour | 0 |
-| Main-thread stalls over 250 ms | 0 | 0 | 0 | 0 | 0 |
-| Peak footprint | 3,730 MB | 390 / 327 MB | 378 / 363 MB | 402 / 340 MB | ≤ 700 |
-| Memory pressure over the session | not read | not read by the scorecard; warning in one sampled launch tour (below) | normal for all 607.6 s / all 76.7 s | normal for all 615.1 s / all 75.3 s | `machine.pressureCaused` PASS |
+| Number | Baseline 661be172 | f398d5dc launch / settled | f2bee3f8 launch / settled | 3fa7ee1b launch / settled | Final 12031093 launch / settled | Target |
+| --- | --- | --- | --- | --- | --- | --- |
+| Launch to first grid | 4,038 ms | 1,052 / 1,271 ms | 1,024 / 1,020 ms | 975 / 998 ms | 1,102 / 1,784 ms (1,297 ms of it migration v79) | ≤ 2,000 |
+| First import | 676 ms | 209 / 241 ms | 125 / 149 ms | 220 / 167 ms | 147 ms / not measured | ≤ 1,000 |
+| First library | 1,008 ms | 269 / 255 ms | 258 / 202 ms | 234 / 207 ms | 269 ms / not measured | ≤ 1,000 |
+| First People | 48,818 ms | 55 / 58 ms | 50 / 49 ms | 50 / 13 ms | 53 ms / not measured | ≤ 1,000 |
+| First person | 4,094 ms | 499 / 407 ms | 235 / 194 ms | 249 / 191 ms | 270 ms / not measured | ≤ 1,000 |
+| First Places | 1,469 ms | 257 / 254 ms | 370 / 221 ms | 250 / 211 ms | 301 ms / not measured | ≤ 1,000 |
+| On This Day | 137 ms | 742 / 151 ms | 158 / 108 ms | 148 / 102 ms | 114 ms / not measured | ≤ 1,000 |
+| Duplicates | 193 ms | 42 / 43 ms | 63 / 42 ms | 39 / 33 ms | 42 ms / not measured | ≤ 1,000 |
+| Return to All Media | 545 ms | 78 / 69 ms | 130 / 85 ms | 77 / 82 ms | 83 ms / not measured | ≤ 300 |
+| Photo open / Compare / Info | skipped | 395 / 439, 171 / 183, 480 / 416 ms | 365 / 276, 206 / 180, 554 / 437 ms | 349 / 196, 207 / 181, 465 / 437 ms | 376, 171, 448 ms / not measured | ≤ 1,000 |
+| First search: first results | 9,281 ms (complete) | 939 / 281 ms | 294 / 185 ms | 351 / 187 ms | 329 ms / not measured | ≤ 1,000 |
+| First search: complete | 9,281 ms | 2,287 / 498 ms | 563 / 441 ms | 1,206 / 397 ms | not measured | none |
+| Filter: videos | skipped | 191 / 98 ms | 172 / 211 ms | 118 / 117 ms | 102 ms / not measured | ≤ 1,000 |
+| Sort by name | 41,806 ms | 155 / 605 ms | 143 / 121 ms | 843 / 210 ms | 272 ms / not measured | ≤ 1,000 |
+| Store stall lines | 62 (235 s) | 0 in each tour | 0 in each tour | 0 in each tour | 0 in each tour | 0 |
+| Main-thread stalls over 250 ms | 0 | 0 | 0 | 0 | 0 (worst 0 ms) / not measured | 0 |
+| Peak footprint | 3,730 MB | 390 / 327 MB | 378 / 363 MB | 402 / 340 MB | 664 / 540 MB | ≤ 700 |
+| Memory pressure over the session | not read | not read by the scorecard; warning in one sampled launch tour (below) | normal for all 607.6 s / all 76.7 s | normal for all 615.1 s / all 75.3 s | normal for all 615.3 s / not measured | `machine.pressureCaused` PASS |
 
-Every target is met; both final tours had zero failures and a complete log capture. The final
-launch tour began at pressure normal (kernel level 1, 77 % available, thermal nominal, Low
-Power Mode off) and stayed normal for all 615.1 s; the settled tour stayed normal for all
-75.3 s. The f2bee3f8 launch tour began at 74 % available, its settled tour at 73 %.
+Every target is met in the final launch tour, and the settled tour had zero failures; both
+had a complete log capture. The final launch tour's memory pressure was normal for all
+615.3 s. Its peak, 664 MB, is under the 700 MB target but close to it ("Left open"). The
+3fa7ee1b launch tour began at pressure normal (kernel level 1, 77 % available, thermal
+nominal, Low Power Mode off) and stayed normal for all 615.1 s; its settled tour stayed normal
+for all 75.3 s. The f2bee3f8 launch tour began at 74 % available, its settled tour at 73 %.
 Across the installed builds 1fe52a12, 509cc0a0, 87e272a1, 6b254b2c, f398d5dc, 60199d89,
-f2bee3f8 and 3fa7ee1b every launch-kind and settled tour on the owner's library passed every target, with
+f2bee3f8, 3fa7ee1b and 12031093 every launch-kind and settled tour on the owner's library passed every target, with
 two exceptions: one settled tour on 1fe52a12 failed sort by name at 1,075 ms, fixed by #909's
 order indexes; one launch tour on f398d5dc, under memory-pressure warning, failed first person
 at 1,555 ms, fixed by #927's `person_photo` (v78), with #926 addressing the pressure. More from
@@ -126,14 +130,15 @@ the final builds:
 
 | Number | Value |
 | --- | --- |
-| First launch after an install | 296–405 MB peak (341 MB after installing 3fa7ee1b; 309 MB after installing f2bee3f8, the launch that applies v78; 315 MB after installing f398d5dc; 1,179 MB on one earlier install, fixed in #886) |
+| Final launch tour, other steps | photo next 145 / 163 / 203 ms, previous 78 / 167 / 131 ms; search again 261 and 182 ms; All Media 158,119 items |
+| First launch after an install | 296–540 MB peak (540 MB after installing 12031093, the launch that applies v79; 341 MB after installing 3fa7ee1b; 309 MB after installing f2bee3f8, the launch that applies v78; 315 MB after installing f398d5dc; 1,179 MB on one earlier install, fixed in #886) |
 | Launch stages, tours of 87e272a1 | duplicates built at 3.2 s; launch work settled at 17.5 s (launch kind), with materialization, enrichment, the search index and descriptions reported as working a backlog, and at 4.8 s (settled). Since #918 the launch-work stage is the owners caught up to the moment all had started, not settled at one instant |
-| Derived folder (the app's own counters, earlier final builds) | 54.3 GB: thumbnails 3.7 GB, previews 46.9 GB, face frames 3.7 GB |
-| Session CPU | 52–84 s on launch-kind tours (67 s on f398d5dc); 28 s on the settled tour of f398d5dc (15 s on 87e272a1); on 60199d89's launch-kind tour, the first read of the whole process tree, 119 s: the app 42 s, text-reading helpers 78 s across three helper processes (the largest 184 MB) |
-| Session disk read | 21.5 GB on the launch-kind tour of f398d5dc, owed hashing of cloud originals (5.6 GB on 87e272a1, of which 2.6 GB hashing; 23–26 GB, 21.4–21.8 GB of it hashing, on earlier final builds); 3.5 GB on the settled tour of f398d5dc (1.1 GB on 87e272a1) |
+| Derived folder (the app's own counters) | 54,275 MB on 12031093; on earlier final builds 54.3 GB: thumbnails 3.7 GB, previews 46.9 GB, face frames 3.7 GB |
+| Session CPU | 1,109 s on the final launch tour of 12031093 (the app 998 s, one helper 111 s; see "Left open"); earlier, 52–84 s on launch-kind tours (67 s on f398d5dc); 28 s on the settled tour of f398d5dc (15 s on 87e272a1); on 60199d89's launch-kind tour, the first read of the whole process tree, 119 s: the app 42 s, text-reading helpers 78 s across three helper processes (the largest 184 MB) |
+| Session disk read | 5,215 MiB on the final launch tour of 12031093, 3,186 MiB of it in the idle; 21.5 GB on the launch-kind tour of f398d5dc, owed hashing of cloud originals (5.6 GB on 87e272a1, of which 2.6 GB hashing; 23–26 GB, 21.4–21.8 GB of it hashing, on earlier final builds); 3.5 GB on the settled tour of f398d5dc (1.1 GB on 87e272a1) |
 | Catalog pages read / page-ins (earlier final builds) | 2.0–3.0 GB / 0.9–2.2 GB |
 | Owed hashing on 2026-11-17 | 7,732 cloud rows, 389 GB, not hashed |
-| Catalog | schema v65 → v78; one-time compaction 2.81 → 2.13 GB |
+| Catalog | schema v65 → v79; one-time compaction 2.81 → 2.13 GB |
 | Full `script/check.sh` | about two minutes (over six minutes on 2026-11-16) |
 
 **Quiet-machine measurement** (installed 87e272a1): one tour with the machine recorded as
@@ -162,12 +167,16 @@ not been run.
   that tour: 21 GB is the figure this comparison was made with, and the session disk read above
   is 21.5 GB, while the attribution note counts 13.0 GB hashed. No hold was logged.
 - *Installed f2bee3f8.* Both tours were normal throughout (607.6 s and 76.7 s).
-- *Installed 3fa7ee1b, with #929.* Both final tours were normal throughout (615.1 s and
-  75.3 s).
+- *Installed 3fa7ee1b, with #929.* Both tours were normal throughout (615.1 s and 75.3 s).
+- *Later builds.* One tour of b9f85b77 ran at warning throughout, and the tour that crashed
+  (#935) began at warning; neither is attributed to Otos or to the rest of the machine.
+- *Installed 12031093.* The final launch tour was normal throughout (615.3 s); the settled
+  tour's pressure is not measured.
 
 Established: before #926, Otos's background work took a quiet machine to warning within
 30 s; after it, five consecutive tours on the owner's library (one on 60199d89, two on
-f2bee3f8, two on 3fa7ee1b) stayed at normal pressure for their whole length. Not
+f2bee3f8, two on 3fa7ee1b) and the final launch tour of 12031093 stayed at normal pressure
+for their whole length. Not
 established: that #926's limits are the reason. No hold was logged on 60199d89 and that
 session hashed less, so the run shows the machine stayed quiet but does not by itself prove
 the room kept it so. The hold itself has been shown only in deterministic tests, never live:
@@ -222,8 +231,8 @@ backlog; harder than the owner's settled library;
   for the tower, whose evicted pages are read back (about 330 MB). Three designs were
   measured; the nearest achievable is about 0.4 s resident and about 1.1–1.5 s evicted
   (#919). It has not occurred on the owner's library: 0.23–0.94 s across the last seven
-  tours there by #919, 0.29 / 0.19 s in the two tours of f2bee3f8, and 0.35 / 0.19 s in the
-  two final tours of 3fa7ee1b. The search field's focus now warms a prepared tower, so for a
+  tours there by #919, 0.29 / 0.19 s in the two tours of f2bee3f8, 0.35 / 0.19 s in the
+  two tours of 3fa7ee1b, and 0.33 s in the final launch tour of 12031093. The search field's focus now warms a prepared tower, so for a
   person who types the page-in comes before the query; for a query submitted with the focus,
   as the tour's immediate step does, it can still land in the first search ("What
   remains").
@@ -257,6 +266,24 @@ benchmark build is unoptimised (`-Onone`) while the installed app is optimised (
 0030), so generic code in Otos's own module costs far more in a benchmark than in the app
 (`Dictionary(exactlyGrouping:)` in #881; `2026-11-17-bench-flag-filter-options-and-pairs.md`).
 
+## After 3fa7ee1b
+
+- **#931, #933.** The search field's focus warms the text tower; #933 fixed a test.
+- **#932, #934, #936.** "A digest alone never downloads a cloud-only original" was installed,
+  reverted (#934) and re-landed (#936). The first install showed heavy CPU. An early reading
+  of the log took it for a repeated read of one file, and was wrong: rows waiting out retry
+  pacing were claimed and released on every enrichment pass. #936 holds a paced row's claim.
+  Tour disk read on the owner's library, 68.5 s launch tours: 5,911 MiB on the reverted build
+  d556d35b, 1,649 MiB on ef41db33.
+- **#935.** A crash: the memory-pressure monitor's dispatch-source handler carried main-actor
+  isolation and trapped on its first report (`_dispatch_assert_queue_fail`), in a tour that
+  began at memory-pressure warning. The type is nonisolated now, and a lint requires
+  `@Sendable` handlers.
+- **#937.** A mirrored file and its Immich asset are one photo by the server's path, with no
+  digest (schema v79): 982 pairs on the owner's catalog; All Media 159,100 → 158,119 items
+  between a tour before v79 and the final launch tour. 15,950 mirrored files still show twice
+  ("Left open").
+
 ## Attribution
 
 Each bet is the set of changes aimed at a number. Per-step attribution inside a bet was not
@@ -277,7 +304,7 @@ isolated unless a note says so.
 | Image memory | face tiles from their region; held decodes bounded; the full-size view from Image I/O's IOSurface; one image per tile; video faces one frame at a time; renders admitted by memory; pane and lane share one budget; JPEG decode route; the tile store keeps the visible tiles and sixteen screens off screen | #865, #866, #877, #879, #886, #899, #903, #905, #923 | first launch after install 1,179 → 296–405 MB; new library tour 864–930 → 435–458 MB; new 160k library 697–1,098 → 486–488 MB |
 | Acts | newest projected state applied part by part; Put Back shown before file work; a landed write read whole; only the user's scrolling holds the grid; every publication an edit of the last; an act's publication costs its edit and never waits behind a build | #859, #863, #867, #888, #914, #920, #922 | choice acts 0–1 ms; Move to Trash 8–19 ms on 200 photos; at 160k, Move to Trash and Put Back 272–434 → 8–75 ms (sandbox, timed to the main-actor commit) |
 | Scan and disk | an unchanged scan takes no write; the FSEvents change journal (v75); derived files live as long as a row names them; stored folder counters (v72); test temp folders owned; a stream's history before its start is already reflected; a small first batch; a scan baseline of digests | #834, #835, #850, #891, #897, #915, #916, #917 | a launch walks a library only when its journal cannot vouch for it; a new library is walked once; its first paint at 160k 4,220 → 233–239 ms |
-| The machine's room | `BackgroundRoom` holds new description requests, text-reading pages, background downloads and background heavy loads under memory warning or critical, serious or critical thermal state or Low Power Mode, and descriptions while Otos is the active app; while held only the current view's heavy load runs; each decision reads the kernel's memory-pressure level, read again every 5 s only while holding for memory (ADR 0057) | #926, #929 | the machine stayed at normal pressure in every tour since (not shown to be the room's doing; see the quiet-machine measurements) |
+| The machine's room | `BackgroundRoom` holds new description requests, text-reading pages, background downloads and background heavy loads under memory warning or critical, serious or critical thermal state or Low Power Mode, and descriptions while Otos is the active app; while held only the current view's heavy load runs; each decision reads the kernel's memory-pressure level, read again every 5 s only while holding for memory (ADR 0057) | #926, #929 | the machine stayed at normal pressure in the tours of 60199d89, f2bee3f8 and 3fa7ee1b and the final launch tour of 12031093 (not shown to be the room's doing; see the quiet-machine measurements) |
 | Instruments | stall reproduction test; survey; scorecard, tour, kinds, sandbox volume, disk read by owner, page-ins per paint; settled tours judged from the library's walk; live log capture; the text tower's and a first batch's waits; the machine's pressure level and Otos's process-tree load | #798, #803, #804, #813, #852, #870, #873, #890, #893, #894, #900, #912, #918, #919, #925 | made each number readable |
 | Check cost | the allocator probe on demand only; test catalogs start from a migrated template | #884, #902 | full check over six minutes → about two |
 
@@ -298,6 +325,7 @@ isolated unless a note says so.
 | v76 order filter columns | #909 | 3,593–3,805 ms, 229 MB WAL; 3.9 s on the owner's catalog |
 | v77 rows with no thumbnail coming | #921 | 36 ms, 53,592 bytes WAL |
 | v78 a person's photos (`person_photo`) | #927 | 1,155 ms, 29 MB WAL (`2026-11-17-a-persons-photos-in-order.md`) |
+| v79 a mirrored file and its Immich asset paired by the server's path | #937 | 1,297 ms on the owner's catalog at the first launch of 12031093; WAL not measured |
 
 ## Measured and rejected
 
@@ -338,6 +366,23 @@ ordering path, and #836 built it with the SQL's own comparator (`CatalogOrderPat
 
 A tour never runs while Otos is running and quits the app itself.
 
+## Left open
+
+Findings, not work.
+
+- **The idle drains an account backlog.** While idle the app drains a backlog of account photos
+  that earlier builds never reached: 5,067 one-row enrichment write transactions in the final
+  launch tour, about 0.2 CPU-seconds a photo. The part shown to be overhead is the re-reads
+  those writes trigger: `orderedAssetIDs` 76.3 s over 1,302 reads and `peopleGallery` 44.7 s
+  over 556 reads, about 14 % of the session's CPU. The rest is not attributed. The backlog's
+  size is not measured.
+- **Peak footprint near the target.** The 664 MB peak was reached during that drain, at a
+  People build: under the 700 MB target but close to it.
+- **Unpaired mirrored files.** 15,950 mirrored files still show twice; their server path does
+  not match the stored prefix, and the reason is unknown.
+- **Not measured until the next daily run** (scheduled for 2026-11-18). #904's two fixes, every
+  case the PRs from #899 onward may move, and the cases #936 and #937 touch.
+
 ## What remains
 
 - **Owner decisions.**
@@ -358,7 +403,8 @@ A tour never runs while Otos is running and quits the app itself.
     and released at every pass (4,336 claim and 2,674 release transactions); a paced row
     now keeps its claim (ENR-035). The tour's Duplicates step timed out because the
     memory-pressure hold grants no heavy load but the view's, and the tour waits for the
-    launch's build before it shows Duplicates. Not re-measured until the next tour.
+    launch's build before it shows Duplicates. Re-landed in #936 ("After 3fa7ee1b"); the
+    final launch tour of 12031093 read 5,215 MiB and showed Duplicates in 42 ms.
   - Accepting the flagged `window.apply.republished.158k` case (`script/bench.sh accept`).
   - Three decisions of ADR 0057, recorded for confirmation: descriptions run only while Otos
     is not the active app; Low Power Mode and a serious or critical thermal state hold all
@@ -400,5 +446,3 @@ A tour never runs while Otos is running and quits the app itself.
     (`2026-11-17-tile-store-under-a-backlog.md`).
   - About 59 MB of untyped malloc and about 60 MB held by the allocator at the new 160k
     library's peak.
-- **Not measured until the next daily run** (scheduled for 2026-11-18). #904's two fixes, and
-  every case the PRs from #899 onward may move.
