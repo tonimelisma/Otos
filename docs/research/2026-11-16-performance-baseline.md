@@ -1,7 +1,7 @@
-# The performance program on the owner's library (2026-11-16 to 2026-11-17)
+# The performance program on the owner's library (2026-11-16 to 2026-11-18)
 
-Date: opened 2026-11-16, closed 2026-11-17; final measurement on installed revision 6dc46aa3,
-2026-11-18.
+Date: opened 2026-11-16, closed 2026-11-18 with the final measurement on installed revision
+6dc46aa3 and the acts measured on its tree in a sandbox.
 This note is the program's lasting record: its targets, the first baseline, the final
 measurement, what moved each number, what was measured and rejected, how to measure again,
 and what remains.
@@ -124,8 +124,9 @@ a934ef17's short tour is described below the table.
 
 The final launch tour of 6dc46aa3 met every target: 0 failed rows in 608.0 s. Memory pressure
 was normal at launch (62 % available), at its worst and in what the scorecard judged caused.
-Every scroll stop showed every tile's thumbnail. Acts are not measured: the tour takes acts
-only in a sandbox home.
+Every scroll stop showed every tile's thumbnail. The tour takes no act on the owner's library;
+the acts of 6dc46aa3's tree were measured in a sandbox library of his size, every one within
+100 ms ("Acts at the owner's library size").
 
 The launch tour of 7edc1b16 met every target: 0 failed rows in 607.9 s, with a complete
 log capture. Memory pressure was normal for the whole session, which began at 59 % available.
@@ -209,7 +210,7 @@ not been run.
   (#935) began at warning; neither is attributed to Otos or to the rest of the machine.
 - *Installed 12031093.* The launch tour was normal throughout (615.3 s); the settled tour's
   pressure is not measured. Both began at 69–73 % available.
-- *Installed a934ef17.* The final launch tour was at warning for 43.6 s of 624.3 s: four dips
+- *Installed a934ef17.* The launch tour was at warning for 43.6 s of 624.3 s: four dips
   of about 10 s in the first minute and one at 621 s; the short tour dipped once, from 9.0 s to
   19.0 s. From the app's own log of the short tour: pressure at launch was normal with 63 %
   available; the app's footprint stayed under 400 MB through the dip; the machine-wide
@@ -226,7 +227,7 @@ not been run.
   scorecard judged a pressure warning caused. The next, ordinary tour (617.3 s, launched at
   45 % available): 128.4 s at warning across 13 dips, 12 of them within about 5 s of a
   description grant.
-- *Installed 7edc1b16, with #943.* The final launch tour was normal for all 607.9 s, launched
+- *Installed 7edc1b16, with #943.* The launch tour was normal for all 607.9 s, launched
   at 59 % available. No description was written in it.
 - *Installed 6dc46aa3, with #945.* The final launch tour was normal for all 608.0 s, launched
   at 62 % available. No description was written in it.
@@ -261,7 +262,8 @@ backlog, the window occluded. Times are to the main-actor commit
 | the scroll hold for the user's scrolling only (#914), four tours | 1–15 ms | 17–116 ms | 25–113 ms |
 | every publication an edit of the last (#920), two tours | 3–7 ms (one tour) | 13–65 ms | 29–98 ms |
 | an act never queued behind a build (#922), two complete tours | 3–8 ms | 12–61 ms | 8–64 ms |
-| the final tree (#923), two tours | 21 / 22 / 1 and 5 / 5 / 0 ms | 23 and 23 ms; in a row 13–26 and 20–62 ms | 9 and 26 ms; in a row 9–75 and 8–35 ms |
+| the tree of #923, two tours | 21 / 22 / 1 and 5 / 5 / 0 ms | 23 and 23 ms; in a row 13–26 and 20–62 ms | 9 and 26 ms; in a row 9–75 and 8–35 ms |
+| the final tree, 6dc46aa3 (#945), one tour | 5 / 3 / 2 ms | six in a row: 15, 26, 31, 55, 39, 26 ms | six in a row: 11, 13, 17, 19, 6, 7 ms |
 
 - Before #914 every Move to Trash and Put Back, all 24 measured, took 272–434 ms: each waited
   out the grid's 250 ms scroll hold, begun by the grid's own anchor-keeping scroll.
@@ -271,8 +273,14 @@ backlog, the window occluded. Times are to the main-actor commit
   not shown is applied by its composed edit (`followsEdit=true compared=0`).
 - After #922, the slowest act was 64 ms in one complete tour and 58 ms in the other; what is
   left is the main actor's commit. A third tour, with an incomplete capture, read up to 137 ms.
-- On the final tree every act was within 100 ms, the slowest 75 ms.
-- No presented-frame figure exists: the display was asleep in every run.
+- On the tree of #923 every act was within 100 ms, the slowest 75 ms.
+- The final tree was measured again because #945 changed the publication path acts use: a
+  publication now carries the last one's index through its edit. One tour of the 6dc46aa3
+  tree (2026-11-18, 241.7 s, 0 failed rows, 0 stall lines, peak footprint 474 MB): every act
+  within 100 ms, the slowest a Move to Trash at 55 ms. Each Move to Trash's file work finished
+  109–264 ms after its commit; that has no target. The sandbox volume was removed afterwards.
+- No presented-frame figure exists: the window was occluded or the display asleep in every
+  run, so each time is to the main-actor commit, not to pixels.
 
 **A new library at the owner's size** (the same 160,002-file sandbox library under its
 backlog; harder than the owner's settled library;
@@ -406,7 +414,7 @@ isolated unless a note says so.
 | Narrow tables and compaction | face embedding in its own table (v66); narrow `media_asset` (v71); the open compacts a file a tenth free | #810, #838, #847 | catalog 2.81 → 2.13 GB; name order 147,594 → 28,584 pages (generated) |
 | Memory outside the heap | one reused read buffer; 4-byte asset IDs in a mapped identity table; owner-scale reads in mapped regions | #861, #878, #881, #883 | freed-and-held bytes 92 → 51 MB on a generated sequence |
 | Image memory | face tiles from their region; held decodes bounded; the full-size view from Image I/O's IOSurface; one image per tile; video faces one frame at a time; renders admitted by memory; pane and lane share one budget; JPEG decode route; the tile store keeps the visible tiles and sixteen screens off screen | #865, #866, #877, #879, #886, #899, #903, #905, #923 | first launch after install 1,179 → 296–405 MB; new library tour 864–930 → 435–458 MB; new 160k library 697–1,098 → 486–488 MB |
-| Acts | newest projected state applied part by part; Put Back shown before file work; a landed write read whole; only the user's scrolling holds the grid; every publication an edit of the last; an act's publication costs its edit and never waits behind a build | #859, #863, #867, #888, #914, #920, #922 | choice acts 0–1 ms; Move to Trash 8–19 ms on 200 photos; at 160k, Move to Trash and Put Back 272–434 → 8–75 ms (sandbox, timed to the main-actor commit) |
+| Acts | newest projected state applied part by part; Put Back shown before file work; a landed write read whole; only the user's scrolling holds the grid; every publication an edit of the last; an act's publication costs its edit and never waits behind a build | #859, #863, #867, #888, #914, #920, #922 | choice acts 0–1 ms; Move to Trash 8–19 ms on 200 photos; at 160k, Move to Trash and Put Back 272–434 → 8–75 ms, and 6–55 ms on the final tree 6dc46aa3 (sandbox, timed to the main-actor commit) |
 | Scan and disk | an unchanged scan takes no write; the FSEvents change journal (v75); derived files live as long as a row names them; stored folder counters (v72); test temp folders owned; a stream's history before its start is already reflected; a small first batch; a scan baseline of digests | #834, #835, #850, #891, #897, #915, #916, #917 | a launch walks a library only when its journal cannot vouch for it; a new library is walked once; its first paint at 160k 4,220 → 233–239 ms |
 | The machine's room | `BackgroundRoom` holds new description requests, text-reading pages, background downloads and background heavy loads under memory warning or critical, serious or critical thermal state or Low Power Mode, and descriptions while Otos is the active app; while held only the current view's heavy load runs; each decision reads the kernel's memory-pressure level, read again every 5 s only while holding for memory (ADR 0057); a description request takes a load turn, and a load is admitted against the room it has been seen to take, a description from a 35-point floor (ADR 0055) | #926, #929, #941, #943 | the machine stayed at normal pressure in the tours of 60199d89, f2bee3f8 and 3fa7ee1b, the launch tour of 12031093 and the launch tours of 7edc1b16 and 6dc46aa3 (not shown to be the room's doing; see the quiet-machine measurements); both tours of a934ef17 and the tours of ace92158 and b1429daa dipped to warning |
 | Instruments | stall reproduction test; survey; scorecard, tour, kinds, sandbox volume, disk read by owner, page-ins per paint; settled tours judged from the library's walk; live log capture; the text tower's and a first batch's waits; the machine's pressure level and Otos's process-tree load | #798, #803, #804, #813, #852, #870, #873, #890, #893, #894, #900, #912, #918, #919, #925 | made each number readable |
@@ -476,7 +484,8 @@ A tour never runs while Otos is running and quits the app itself.
 Findings, not work.
 
 - **Acts.** Actions' results within 0.1 s are measured only in a sandbox library of the owner's
-  size (at most 75 ms), because an act on the owner's library would change his data.
+  size (at most 55 ms on the final tree 6dc46aa3, 75 ms on the tree of #923), because an act on
+  the owner's library would change his data.
 - **A brand-new library's first search with the text model evicted.** About 1.1–1.5 s against
   1 s; the nearest achievable is about 1.1 s. Awaiting the owner's decision.
 - **Descriptions wait for room.** Descriptions write nothing while less than 67 % of memory is
@@ -532,7 +541,7 @@ Findings, not work.
     now keeps its claim (ENR-035). The tour's Duplicates step timed out because the
     memory-pressure hold grants no heavy load but the view's, and the tour waits for the
     launch's build before it shows Duplicates. Re-landed in #936 ("After 3fa7ee1b"); the
-    final launch tour of 12031093 read 5,215 MiB and showed Duplicates in 42 ms.
+    launch tour of 12031093 read 5,215 MiB and showed Duplicates in 42 ms.
   - Accepting the flagged `window.apply.republished.158k` case (`script/bench.sh accept`).
   - Three decisions of ADR 0057, recorded for confirmation: descriptions run only while Otos
     is not the active app; Low Power Mode and a serious or critical thermal state hold all
