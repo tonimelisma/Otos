@@ -435,8 +435,11 @@ Findings, not work.
 - **Peak footprint near the target.** The 664 MB peak of 12031093's launch tour was reached
   during that drain, at a People build: under the 700 MB target but close to it. The final
   launch tour of a934ef17 peaked at 579 MB.
-- **Unpaired mirrored files.** 15,950 mirrored files still show twice; their server path does
-  not match the stored prefix, and the reason is unknown.
+- **Unpaired mirrored files.** 15,950 mirrored files showed twice: the server lists the library
+  under a second prefix, which a prefix that paired any file kept from ever being asked, and
+  three paths differ in Unicode normal form (`docs/research/2026-11-17-mirror-pairs-by-path.md`,
+  "A second prefix"). Schema v80 learns a set of prefixes and matches either form; about 15,945
+  pair at the account's first owed walk after install. Not yet observed on the owner's library.
 - **The stall reproduction at the owner's size failed on 12031093; fixed by #939.** The target
   row "`StallReproductionTests` passes" was not met on 12031093: the on-demand run
   (`OTOS_SCALE_TEST=1`) found an import batch's filter options visiting 1,880 rows for 254 in

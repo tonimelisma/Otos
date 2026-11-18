@@ -530,11 +530,11 @@ struct BenchmarkTests {
         await store.endSourceListing(scan: scan)
         try await store.recordMirror(account: account, library: library, serverPrefix: prefix)
         let first = try await store.backgroundReads.pairMirroredCopies(account: account)
-        #expect(first == count)
+        #expect(first.paired == count)
 
         try await run.measure("immich.mirror.pass.of16k") {
-            let paired = try await store.backgroundReads.pairMirroredCopies(account: account)
-            #expect(paired == 0)
+            let walk = try await store.backgroundReads.pairMirroredCopies(account: account)
+            #expect(walk.changed == 0)
         }
         // All Media over 16,000 photos of two copies each (ADR 0054): with both roots the
         // stored best copy decides every row; with the library away each account copy asks

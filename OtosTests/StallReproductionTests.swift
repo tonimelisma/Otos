@@ -67,8 +67,10 @@ struct StallReproductionTests {
         #expect(shape.unhashable > shape.assets / 2, "the account and most of a OneDrive library are never hashed")
         let probes = try await store.backgroundReads.mirrorProbes(account: catalog.account)
         #expect(Set(probes.map(\.libraryRootPath)) == [catalog.pictures, catalog.archive])
-        #expect(probes.first { $0.libraryRootPath == catalog.archive }?.serverPrefix == nil, "library 6 has no mirror")
-        #expect(probes.first { $0.libraryRootPath == catalog.pictures }?.serverPrefix != nil)
+        #expect(probes.first { $0.libraryRootPath == catalog.archive }?.serverPrefixes == [], "library 6 has no mirror")
+        #expect(probes.first { $0.libraryRootPath == catalog.pictures }?.serverPrefixes.count == 2, "library 7 is under two prefixes")
+        // The generated pairs are the ones the account's walk names under its two prefixes.
+        #expect(try await store.backgroundReads.pairMirroredCopies(account: catalog.account) == MirrorWalk(paired: 0, unpaired: 0))
     }
 
     /// The whole measurement runs on a small catalog: every background owner starts, every
@@ -370,7 +372,7 @@ enum StallReproduction {
         try await replay("peopleGallery", limit: people) {
             try await store.windowReads.peopleGallery(availableLibraryPaths: available)?.people.count ?? 0
         }
-        try await replay("mirrorProbes") { try await store.backgroundReads.mirrorProbes(account: catalog.account).reduce(0) { $0 + $1.candidates.count } }
+        try await replay("mirrorProbes") { try await store.backgroundReads.mirrorProbes(account: catalog.account).count { $0.candidate != nil } }
 
         // The window's reads for each scope change.
         for scope in try await scopes(catalog, store: store) {

@@ -114,12 +114,13 @@ struct ImmichMirrorTests {
     ) throws -> (events: [ImmichSyncEvent], detail: ImmichAssetDetail) {
         let modifiedAt = try modified ?? #require(file.contentModifiedAt)
         let checksum = ImmichPathChecksum(serverPath: serverPath)
+        let name = try #require(file.relativePath.rawValue.split(separator: "/").last.map(String.init))
         let asset = ImmichAsset(
-            id: id, originalFileName: "IMG_1.JPG", type: .image, visibility: .timeline, deletedAt: nil,
+            id: id, originalFileName: name, type: .image, visibility: .timeline, deletedAt: nil,
             fileCreatedAt: modifiedAt, fileModifiedAt: modifiedAt, hasPreview: false, pathChecksum: checksum
         )
         let detail = ImmichAssetDetail(
-            id: id, originalFileName: "IMG_1.JPG", type: .image, fileCreatedAt: modifiedAt, fileModifiedAt: modifiedAt,
+            id: id, originalFileName: name, type: .image, fileCreatedAt: modifiedAt, fileModifiedAt: modifiedAt,
             fileSize: file.byteSize, hasPreview: false, pathChecksum: checksum, originalPath: serverPath
         )
         return ([
@@ -298,14 +299,13 @@ struct ImmichMirrorTests {
         )
 
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await fixture.store.backgroundReads.mirrorProbes(account: fixture.account).map(\.serverPrefix) == [nil])
+        #expect(try await fixture.store.backgroundReads.mirrorProbes(account: fixture.account).map(\.serverPrefixes) == [[]])
         #expect(try await ids(.allMedia, fixture.store).count == 2)
         await fixture.store.shutdown()
     }
 
-    /// A stored prefix that pairs a file is kept with no request, though the probe's first
-    /// candidates are files the server holds under another folder: a library the server holds
-    /// partly elsewhere keeps the pairs its prefix names.
+    /// A prefix that pairs every file is kept, and the probe has no candidate left to ask
+    /// about: the pass asks the server one path and no more.
     @Test func aPrefixThatPairsAFileIsKeptWithNoRequest() async throws {
         let fixture = try await fixture(digested: false)
         let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
@@ -315,13 +315,15 @@ struct ImmichMirrorTests {
         )
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
         #expect(server.requestedDetails == ["a"])
-        #expect(try await fixture.store.backgroundReads.mirrorProbes(account: fixture.account).map(\.isPaired) == [true])
+        let probes = try await fixture.store.backgroundReads.mirrorProbes(account: fixture.account)
+        #expect(probes.map(\.serverPrefixes) == [[Self.serverPrefix]])
+        #expect(probes.map(\.candidate) == [nil])
         await fixture.store.shutdown()
     }
 
-    /// Immich's path checksum is the SHA-1 of `path:` and the server path; the prefix is the
-    /// server path before the relative path, compared as bytes, and a server path that teaches
-    /// none says why.
+    /// Immich's path checksum is the SHA-1 of `path:` and the server path's bytes; the prefix
+    /// is the server path before the relative path, compared as characters, so a name in the
+    /// other Unicode normal form is the same path, and a server path that teaches none says why.
     @Test func thePathChecksumAndServerPrefixAreImmichs() throws {
         let checksum = try #require(ImmichAsset.pathChecksum(checksum: "YSh/w9kgVtWGbzD5f2uUP5/HYag=", libraryID: "lib"))
         #expect(ImmichPathChecksum(serverPath: "/mnt/onedrive/Pictures/Camera Roll/2024/IMG_1.JPG") == checksum)
@@ -332,12 +334,25 @@ struct ImmichMirrorTests {
         #expect(MirrorGateway.serverPrefix(of: "/mnt/od/2024/IMG_1.JPG", relativePath: relative) == "/mnt/od/")
         #expect(MirrorGateway.serverPrefix(of: "/mnt/od/x2024/IMG_1.JPG", relativePath: relative) == nil)
         #expect(MirrorGateway.serverPrefix(of: "/2024/IMG_1.JPG", relativePath: relative) == nil)
-        // The same name in its decomposed form is another path.
-        let composed = MediaRelativePath(rawValue: "P\u{00E4}iv\u{00E4}.JPG")
-        #expect(MirrorGateway.serverPrefix(of: "/od/Pa\u{0308}iva\u{0308}.JPG", relativePath: composed) == nil)
+        // The same name in its decomposed form is the same path, and the prefix is the server's.
+        let composed = MediaRelativePath(rawValue: "P\u{00E4}iv\u{00E4}/IMG_1.JPG")
+        let decomposedServerPath = "/od/Sa\u{0308}ilo\u{0308}/Pa\u{0308}iva\u{0308}/IMG_1.JPG"
+        #expect(MirrorGateway.serverPrefix(of: decomposedServerPath, relativePath: composed) == "/od/Sa\u{0308}ilo\u{0308}/")
+        let mixed = MirrorGateway.Candidate(
+            relativePath: composed, assetPath: MediaRelativePath(rawValue: "b/IMG_1.JPG"), assetID: "b",
+            pathChecksum: ImmichPathChecksum(serverPath: decomposedServerPath)
+        )
+        #expect(MirrorGateway.prefix(of: decomposedServerPath, for: mixed) == .success("/od/Sa\u{0308}ilo\u{0308}/"))
+        // Either form of a path names its checksum, and an ASCII path has one form.
+        let decomposed = ImmichPathChecksum(serverPath: decomposedServerPath)
+        #expect(decomposed.names(serverPath: "/od/S\u{00E4}il\u{00F6}/P\u{00E4}iv\u{00E4}/IMG_1.JPG"))
+        #expect(!decomposed.names(serverPath: "/od/Saila/Paiva/IMG_1.JPG"))
+        #expect(ImmichPathChecksum.everyForm(ofServerPath: "/od/2024/IMG_1.JPG").count == 1)
+        #expect(ImmichPathChecksum.everyForm(ofServerPath: decomposedServerPath).count == 2)
+        #expect(MirrorGateway.folder(of: "/od/2024/IMG_1.JPG") == "/od/2024")
 
         let candidate = MirrorGateway.Candidate(
-            relativePath: relative, assetID: "a",
+            relativePath: relative, assetPath: MediaRelativePath(rawValue: "a/IMG_1.JPG"), assetID: "a",
             pathChecksum: ImmichPathChecksum(serverPath: "/mnt/od/2024/IMG_1.JPG")
         )
         #expect(MirrorGateway.prefix(of: "/mnt/od/2024/IMG_1.JPG", for: candidate) == .success("/mnt/od/"))

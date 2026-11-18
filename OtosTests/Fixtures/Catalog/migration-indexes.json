@@ -511,5 +511,11 @@
     "indexes": {
       "idx_media_asset_copy_key": "CREATE INDEX idx_media_asset_copy_key\nON media_asset(copy_key, library_root_id, relative_path, pending_trash_batch_unix_ms, awaiting_presence, hidden_by_source)\nWHERE copy_key IS NOT NULL"
     }
+  },
+  {
+    "migration": "v80_mirror_prefixes",
+    "indexes": {
+      "idx_immich_mirror_asked_asset": "CREATE INDEX idx_immich_mirror_asked_asset ON immich_mirror_asked(account_root_id, asset_path)"
+    }
   }
 ]

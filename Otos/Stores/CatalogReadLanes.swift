@@ -528,7 +528,7 @@ extension CatalogReads where Lane == BackgroundLane {
         try await store.mirrorProbes(account: account, lane: lane)
     }
 
-    func pairMirroredCopies(account: LibraryRootPath) async throws -> Int {
+    func pairMirroredCopies(account: LibraryRootPath) async throws -> MirrorWalk {
         try await store.pairMirroredCopies(account: account, lane: lane)
     }
 

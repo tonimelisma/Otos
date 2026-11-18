@@ -126,6 +126,10 @@ struct OwnerShapedCatalog {
         /// same name, size and whole-second modification time. Each is generated paired, so the
         /// copy-key reads meet the whole mirror.
         static let mirroredFiles = 16683
+        /// His server lists library 7 under two prefixes: 982 files (two of its folders) under
+        /// the first, the rest under the second (2026-11-17). The prefixes are examples.
+        static let firstPrefixFiles = 982
+        static let serverPrefixes = ["/srv/a/Pictures/Camera Roll/", "/srv/b/Pictures/Camera Roll/"]
     }
 
     static let baseCaptureUnix: Int64 = 1_262_304_000
@@ -167,6 +171,10 @@ struct OwnerShapedCatalog {
         var configuration = Configuration()
         configuration.prepareDatabase { db in
             try db.execute(sql: "PRAGMA synchronous = OFF")
+            // The checksum Immich gives an external asset at a server path, for the mirror's pairs.
+            db.add(function: DatabaseFunction("immich_path_checksum", argumentCount: 1, pure: true) { values in
+                String.fromDatabaseValue(values[0]).map { ImmichPathChecksum(serverPath: $0).data }
+            })
         }
         let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false), configuration: configuration)
         try CatalogStore.migrator.migrate(queue)
@@ -346,16 +354,20 @@ struct OwnerShapedCatalog {
 
     /// The account's rows are an external library's assets, each with its path checksum, and
     /// his mirrored files are paired with the account's first assets in row order (schema v79).
-    /// A paired asset is listed with its file's size and modification time, and its own
-    /// products were read at those, so it stays current and the pair's versions agree: the
-    /// catalog's triggers give both rows one copy key, as the account's walk would. Written
-    /// before the backlog and the derived rows, which then hold for the facts written here.
+    /// His server lists the library under two prefixes (v80): the first `Owner.firstPrefixFiles`
+    /// pairs are under `Owner.serverPrefixes[0]`, the rest under the second, and each paired
+    /// asset's checksum is that of its prefix and its file's relative path, so the account's
+    /// walk finds every pair standing. A paired asset is listed with its file's size and
+    /// modification time, and its own products were read at those, so it stays current and the
+    /// pair's versions agree: the catalog's triggers give both rows one copy key, as the
+    /// account's walk would. Written before the backlog and the derived rows, which then hold
+    /// for the facts written here.
     private static func writeMirrorPairs(_ db: Database, scale: Double, shape: inout Shape) throws {
         try db.execute(sql: "UPDATE media_asset SET source_path_sha1 = randomblob(20) WHERE library_root_id = 15")
         try db.execute(
             sql: """
             CREATE TEMP TABLE mirror_match AS
-            SELECT f.relative_path AS file_path, a.relative_path AS asset_path, f.byte_size AS size,
+            SELECT f.n AS n, f.relative_path AS file_path, a.relative_path AS asset_path, f.byte_size AS size,
                    f.content_modified_at_unix AS mtime
             FROM (SELECT relative_path, byte_size, content_modified_at_unix, row_number() OVER (ORDER BY rowid) AS n
                   FROM media_asset WHERE library_root_id = 7) AS f
@@ -365,14 +377,18 @@ struct OwnerShapedCatalog {
             """,
             arguments: [scaled(Owner.mirroredFiles, scale)]
         )
-        try db.execute(sql: """
-        UPDATE media_asset SET byte_size = m.size, content_modified_at_unix = m.mtime,
-            metadata_source_size = m.size, metadata_source_mtime = CAST(m.mtime AS INTEGER),
-            source_products_size = m.size, source_products_mtime = CAST(m.mtime AS INTEGER),
-            faces_source_size = m.size, faces_source_mtime = CAST(m.mtime AS INTEGER)
-        FROM mirror_match AS m
-        WHERE media_asset.library_root_id = 15 AND media_asset.relative_path = m.asset_path
-        """)
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET byte_size = m.size, content_modified_at_unix = m.mtime,
+                metadata_source_size = m.size, metadata_source_mtime = CAST(m.mtime AS INTEGER),
+                source_products_size = m.size, source_products_mtime = CAST(m.mtime AS INTEGER),
+                faces_source_size = m.size, faces_source_mtime = CAST(m.mtime AS INTEGER),
+                source_path_sha1 = immich_path_checksum(CASE WHEN m.n <= ? THEN ? ELSE ? END || m.file_path)
+            FROM mirror_match AS m
+            WHERE media_asset.library_root_id = 15 AND media_asset.relative_path = m.asset_path
+            """,
+            arguments: [scaled(Owner.firstPrefixFiles, scale), Owner.serverPrefixes[0], Owner.serverPrefixes[1]]
+        )
         try db.execute(sql: """
         INSERT INTO immich_mirror_pair (library_root_id, file_path, account_root_id, asset_path)
         SELECT 7, file_path, 15, asset_path FROM mirror_match
@@ -595,8 +611,10 @@ struct OwnerShapedCatalog {
             arguments: [scaled(Owner.descriptions, scale)]
         )
         shape.descriptions = db.changesCount
-        // The account's server holds library 7, not library 6.
-        try db.execute(sql: "INSERT INTO immich_mirror (account_root_id, library_root_id, server_prefix) VALUES (15, 7, '/mnt/onedrive/Pictures')")
+        // The account's server holds library 7, under two prefixes, not library 6.
+        for prefix in Owner.serverPrefixes {
+            try db.execute(sql: "INSERT INTO immich_mirror (account_root_id, library_root_id, server_prefix) VALUES (15, 7, ?)", arguments: [prefix])
+        }
     }
 
     /// People and faces: his people, largest first, each holding his share of the assigned

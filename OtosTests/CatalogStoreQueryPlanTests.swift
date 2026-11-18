@@ -1164,32 +1164,43 @@ private func insertEnrichmentClaimFixture(
 
 extension CatalogStoreQueryPlanTests {
     /// ADR 0054: a mirror's reads seek indexes at any catalog size. The candidate probe walks
-    /// one library root by its key and seeks the account's size index per file; a page of a
-    /// library's files walks the root's primary key in path order with no sort; each file's
-    /// asset is a seek of the account's path-checksum index, and its pair a seek of the pair
-    /// table's key; a pairing seeks the same indexes.
+    /// one library root by its key and seeks the account's size index per file, and the pair
+    /// and asked tables by their keys; a library's prefixes are a seek of the mirror table's
+    /// key in its order; a page of a library's files walks the root's primary key in path order
+    /// with no sort; a file's free asset is a seek of the account's path-checksum index and the
+    /// pair table's asset key, its pair a seek of the pair table's key and of the asset; a
+    /// pairing and a remembered candidate seek the same indexes.
     @Test func mirrorReadsSeekTheirIndexes() async throws {
         let temp = try makeTestDirectory()
         let dbQueue = try makeTestDatabaseQueue(path: temp.appending(path: "catalog.sqlite").path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         try await dbQueue.read { db in
-            let candidates = try explainPlan(db, sql: MirrorGateway.candidatesSQL, arguments: [2, 1])
-            #expect(candidates.contains("SEARCH asset USING INDEX idx_media_asset_size_root_asc"), "\(candidates)")
-            #expect(!candidates.contains("SCAN"), "\(candidates)")
+            let candidate = try explainPlan(db, sql: MirrorGateway.candidateSQL, arguments: [2, 1])
+            #expect(candidate.contains("SEARCH asset USING INDEX idx_media_asset_size_root_asc"), "\(candidate)")
+            #expect(candidate.contains("immich_mirror_asked") || candidate.contains("SEARCH q USING PRIMARY KEY"), "\(candidate)")
+            #expect(!candidate.contains("SCAN"), "\(candidate)")
+
+            let prefixes = try explainPlan(db, sql: MirrorGateway.serverPrefixesSQL, arguments: [2, 1])
+            // The table's key or its library index, which holds the key: a seek of both roots.
+            #expect(prefixes.contains("SEARCH immich_mirror USING"), "\(prefixes)")
+            #expect(prefixes.contains("library_root_id=?") && prefixes.contains("account_root_id=?"), "\(prefixes)")
+            #expect(!usesTemporarySort(prefixes), "\(prefixes)")
 
             let checksum = Data(repeating: 1, count: 20)
             let files = try explainPlan(db, sql: MirrorGateway.filesSQL, arguments: [1, "a"])
             #expect(files.contains("INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path>?)"), "\(files)")
             #expect(!usesTemporarySort(files), "\(files)")
-            let asset = try explainPlan(db, sql: MirrorGateway.assetAtChecksumSQL, arguments: [2, checksum])
+            let asset = try explainPlan(db, sql: MirrorGateway.freeAssetAtChecksumSQL, arguments: [2, checksum])
             #expect(asset.contains("SEARCH media_asset USING INDEX idx_media_asset_source_path_sha1 (library_root_id=? AND source_path_sha1=?)"), "\(asset)")
+            #expect(!asset.contains("SCAN"), "\(asset)")
             let pairs = try explainPlan(db, sql: MirrorGateway.pairsInRangeSQL, arguments: [1, "a", "b"])
-            #expect(pairs.contains("SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path>? AND file_path<?)"), "\(pairs)")
-            let isPaired = try explainPlan(db, sql: MirrorGateway.isPairedSQL, arguments: [1, 2])
-            #expect(isPaired.contains("SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=?)"), "\(isPaired)")
+            #expect(pairs.contains("SEARCH p USING PRIMARY KEY (library_root_id=? AND file_path>? AND file_path<?)"), "\(pairs)")
+            #expect(pairs.contains("SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)"), "\(pairs)")
             let pair = try explainPlan(db, sql: MirrorGateway.pairSQL, arguments: [1, "a", 2, checksum, "b"])
             #expect(pair.contains("USING INDEX idx_media_asset_source_path_sha1"), "\(pair)")
             #expect(!pair.contains("SCAN"), "\(pair)")
+            let asked = try explainPlan(db, sql: MirrorGateway.recordAskedSQL, arguments: [1, "a", 2, "b", checksum])
+            #expect(!asked.contains("SCAN"), "\(asked)")
         }
     }
 }
@@ -1403,9 +1414,11 @@ extension CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue()
         try CatalogStore.migrator.migrate(dbQueue)
         let plan = try await dbQueue.read { db in
-            try explainPlan(db, sql: MirrorGateway.candidatesSQL, arguments: [2, 1])
+            try explainPlan(db, sql: MirrorGateway.candidateSQL, arguments: [2, 1])
         }
+        // The two loops over `media_asset`; the pair and asked tables are seeks of their keys.
         let loops = plan.split(separator: "\n").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "|`- ")) }
+            .filter { $0.hasPrefix("SEARCH library") || $0.hasPrefix("SEARCH asset") || $0.hasPrefix("SCAN") }
         #expect(loops.count == 2, "\(plan)")
         #expect(loops.first?.hasPrefix("SEARCH library USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=?)") == true, "\(plan)")
         #expect(loops.last?.hasPrefix("SEARCH asset USING INDEX idx_media_asset_size_root_asc") == true, "\(plan)")

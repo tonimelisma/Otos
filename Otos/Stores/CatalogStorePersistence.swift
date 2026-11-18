@@ -636,6 +636,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.mirrorPrefixesMigrationIdentifier) { db in
+            for statement in CatalogSchema.mirrorPrefixesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

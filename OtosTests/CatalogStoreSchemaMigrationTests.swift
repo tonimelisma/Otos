@@ -112,8 +112,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 17).map { "\($0)/17" })
-        #expect(run.applied == 17)
+        #expect(steps.recorded == (1 ... 18).map { "\($0)/18" })
+        #expect(run.applied == 18)
         let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
         #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
 
@@ -147,8 +147,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 17).map { "\($0)/17" })
-        #expect(run.applied == 17)
+        #expect(steps.recorded == (1 ... 18).map { "\($0)/18" })
+        #expect(run.applied == 18)
     }
 
     private final class StepLog: Sendable {
@@ -358,6 +358,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.noThumbnailComingMigrationIdentifier,
             CatalogSchema.personPhotoMigrationIdentifier,
             CatalogSchema.photoCopyKeyMigrationIdentifier,
+            CatalogSchema.mirrorPrefixesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -710,11 +711,66 @@ struct CatalogStoreSchemaMigrationTests {
         }
         #expect(owed == 1)
         try await queue.write { db in
-            #expect(try MirrorGateway.serverPrefix(accountRootID: 2, libraryRootID: 1, db: db) == "/mnt/od/Pictures/")
+            // A library has a set of prefixes (v80).
+            #expect(try MirrorGateway.serverPrefixes(accountRootID: 2, libraryRootID: 1, db: db) == ["/mnt/od/", "/mnt/od/Pictures/"])
             try db.execute(sql: "DELETE FROM library_root WHERE id = 3")
             #expect(try MirrorGateway.mirrors(ofAccount: 2, db: db).map(\.libraryRootID) == [1])
             try db.execute(sql: "DELETE FROM library_root WHERE id = 2")
             #expect(try MirrorGateway.mirrors(ofAccount: 2, db: db).isEmpty)
+        }
+    }
+
+    /// v80 (ADR 0054): a library's one prefix becomes the first of its set, and a pair whose
+    /// rows have no digest takes its own key in place of the asset's path checksum, which two
+    /// servers can share; a pair of a digested file keeps the digest.
+    @Test func theMirrorPrefixesMigrationKeepsThePrefixAndGivesEachPairItsOwnKey() async throws {
+        let temp = try makeTestDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let queue = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.photoCopyKeyMigrationIdentifier)
+        let checksum = ImmichPathChecksum(serverPath: "/srv/a/2024/IMG_1.JPG").data
+        let digest = Data(repeating: 7, count: 20)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (1, '/Pictures', 'library')")
+            try db.execute(sql: "INSERT INTO library_root (id, path, kind) VALUES (2, '/RemoteStaging/family', 'immichAccount')")
+            let rows: [(Int64, String, Data?)] = [
+                (1, "2024/IMG_1.JPG", nil), (2, "a/IMG_1.JPG", checksum),
+                (1, "2024/IMG_2.JPG", nil), (2, "b/IMG_2.JPG", Data(repeating: 9, count: 20)),
+            ]
+            for (root, path, sha1) in rows {
+                try db.execute(sql: """
+                INSERT INTO media_asset (library_root_id, relative_path, name_sort_key, name, kind, format, byte_size,
+                                         created_at_unix, content_modified_at_unix, source_path_sha1)
+                VALUES (?, ?, ?, ?, 'image', 'JPEG', 100, 1600000000, 1600000060, ?)
+                """, arguments: [root, path, path.lowercased(), String(path.split(separator: "/").last ?? ""), sha1])
+            }
+            try db.execute(sql: """
+            UPDATE media_asset SET content_sha1 = ?, content_hash_source_size = 100, content_hash_source_mtime = 1600000060
+            WHERE library_root_id = 1 AND relative_path = '2024/IMG_2.JPG'
+            """, arguments: [digest])
+            try db.execute(sql: "INSERT INTO immich_mirror (account_root_id, library_root_id, server_prefix) VALUES (2, 1, '/srv/a/')")
+            try db.execute(sql: """
+            INSERT INTO immich_mirror_pair (library_root_id, file_path, account_root_id, asset_path)
+            VALUES (1, '2024/IMG_1.JPG', 2, 'a/IMG_1.JPG'), (1, '2024/IMG_2.JPG', 2, 'b/IMG_2.JPG')
+            """)
+            #expect(try Data.fetchAll(db, sql: "SELECT copy_key FROM media_asset WHERE relative_path LIKE '%IMG_1.JPG'") == [checksum, checksum])
+        }
+        try CatalogStore.migrator.migrate(queue)
+
+        try await queue.write { db in
+            let pairKey = Data("pair:2:a/IMG_1.JPG".utf8)
+            #expect(try Data.fetchAll(db, sql: "SELECT copy_key FROM media_asset WHERE relative_path LIKE '%IMG_1.JPG'") == [pairKey, pairKey])
+            #expect(try Data.fetchAll(db, sql: "SELECT copy_key FROM media_asset WHERE relative_path LIKE '%IMG_2.JPG'") == [digest, digest])
+            #expect(try Int.fetchAll(db, sql: "SELECT has_copies FROM media_asset ORDER BY rowid") == [1, 1, 1, 1])
+            #expect(try MirrorGateway.serverPrefixes(accountRootID: 2, libraryRootID: 1, db: db) == ["/srv/a/"])
+            try MirrorGateway.record(accountRootID: 2, libraryRootID: 1, serverPrefix: "/srv/b/", db: db)
+            #expect(try MirrorGateway.mirrors(ofAccount: 2, db: db).map(\.serverPrefixes) == [["/srv/a/", "/srv/b/"]])
+            // A pair inserted after the migration takes the same kind of key.
+            try db.execute(sql: "DELETE FROM immich_mirror_pair WHERE file_path = '2024/IMG_1.JPG'")
+            #expect(try Data.fetchAll(db, sql: "SELECT copy_key FROM media_asset WHERE copy_key IS NOT NULL AND relative_path LIKE '%IMG_1.JPG'").isEmpty)
+            try db.execute(sql: "INSERT INTO immich_mirror_pair VALUES (1, '2024/IMG_1.JPG', 2, 'a/IMG_1.JPG')")
+            #expect(try Data.fetchAll(db, sql: "SELECT copy_key FROM media_asset WHERE relative_path LIKE '%IMG_1.JPG'") == [pairKey, pairKey])
         }
     }
 

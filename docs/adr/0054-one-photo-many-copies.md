@@ -57,33 +57,55 @@ reports later, of the same bytes, takes the place of the missing size in the sta
 mirror, 2026-11-15; decided by the agent on the owner's delegation, because the other way,
 hashing each original, would download every one of them; made a fact of its own on
 2026-11-17, below).
-- A mirror (`immich_mirror`) is the server path a library's relative paths follow on an
-  account's server. It is learned once per library: `ImmichCatalogSync` finds up to three
-  library files with an external asset of the same name, size and whole-second modification
-  time, asks the server for one such asset's `originalPath` (`GET /api/assets/{id}`), and
-  takes the prefix before the file's relative path, compared as bytes. The asset's own
-  checksum must equal the checksum of that prefix plus the relative path. A same-named file
-  from another folder confirms nothing, and the next candidate is asked; each refusal is
-  logged with why (`op=immich.mirror phase=candidateRefused reason=`: no path, a path that
-  does not end with the file's relative path, with how many trailing components it shares,
-  or a prefix that does not give the asset's checksum).
+- A mirror (`immich_mirror`, schema v80) is the set of server prefixes a library's relative
+  paths follow on an account's server: one server can list one library under several paths
+  (an external library per mount of the same folders; on the owner's server, two of the
+  library's folders under `/srv/a/…` and the other nine under `/srv/b/…`). A prefix is learned
+  from one request: `ImmichCatalogSync` takes the first library file, in path order, that no
+  pair holds and that has an unpaired external asset of the same name, size and whole-second
+  modification time not asked about before (`MirrorGateway.Probe.candidate`), asks the server
+  for that asset's `originalPath` (`GET /api/assets/{id}`), and takes the prefix before the
+  file's relative path. The asset's own checksum must be the checksum of that prefix plus the
+  relative path. The prefix is recorded beside the others (`op=immich.mirror phase=learned
+  serverPrefix=`), the walk pairs what it names, and the next round asks about the next
+  unexplained file.
+- **The probe is bounded by facts, not time** (ADR 0033). Each round asks one path per library
+  with a candidate; a library whose candidate taught nothing asks nothing more that pass, and
+  another round runs only while the prefixes the last round learned paired files. A candidate
+  whose path taught nothing — the server refused to describe the asset (400/404), gave no
+  path, a path that does not end with the file's relative path, a prefix that does not give the
+  asset's checksum, or a prefix the library already has — is remembered
+  (`immich_mirror_asked`, at the asset's path checksum then) and never asked again while that
+  path stands; the probe runs only on a pass that owes the walk. Each refusal is logged with its
+  reason and the folders it compared, never a file's name (`op=immich.mirror
+  phase=candidateRefused reason= serverFolder= fileFolder=`, and `sharedTailComponents=` for a
+  path that does not end with the file's).
+- **A path matches in either Unicode normal form.** Immich hashes the path its crawl of the
+  external library read from the server's own filesystem, byte for byte with no normalisation
+  (`library.service.ts`, `path:${assetPath}`), so an accented name is in whatever form that
+  disk holds it, and a Mac's library file can hold the same name in the other form (on the
+  owner's library, three files in a folder whose name has an `ä`). `ImmichPathChecksum.
+  everyForm` is the one rule: the checksums of the path as given, composed and decomposed. The
+  walk seeks each, the probe's confirmation accepts any, and the prefix is found by comparing
+  characters, which are equal in either form. A path of ASCII alone has one form and one seek.
 - **A pair** (`immich_mirror_pair`) is the fact that one library file is one external asset:
-  the asset whose path checksum is the checksum of the mirror's prefix plus the file's
+  an asset whose path checksum is the checksum of one of the mirror's prefixes plus the file's
   relative path. The sync records it from the listing alone, with no download, no digest and
   no request to the server once the prefix is known. The path checksum is the server's own
   name for the file at that path, so the proof is exact; a name and size are never it.
 - **The walk** (`CatalogStore.pairMirroredCopies`) is the pair's one owner. It pages every
-  file of each mirrored library, 500 per read, seeks the account's asset at the file's
-  checksum, and writes only a batch whose pairs are owed: a file whose path names an asset it
-  is not paired with pairs, and a pair whose file's path no longer names its asset goes (a
-  file renamed on disk keeps its pair through the foreign key until that walk). A walk over
-  pairs that all stand opens no write. The pair goes with either row by its foreign keys.
+  file of each mirrored library, 500 per read. A paired file stands when its asset's own
+  checksum is among the file's under the prefixes, with no seek; an unpaired one seeks the
+  account's free asset (one no file is paired with) at each of its checksums, the prefixes in
+  order. It writes only a batch whose pairs are owed: a file whose path names a free asset
+  pairs, and a pair whose file's path no longer names its asset goes (a file renamed on disk
+  keeps its pair through the foreign key until that walk). A walk over pairs that all stand
+  opens no write. The pair goes with either row by its foreign keys.
 - A library file pairs with one asset, and an asset with one file. A library two accounts
   both mirror pairs with the first account's walk; the other account's asset of the same
-  file stays its own photo.
-- The walk runs first, then the probe, and only for a library none of whose files is paired:
-  a stored prefix that pairs any file is kept with no request. A library the server holds
-  partly under another path keeps the pairs its prefix names.
+  file stays its own photo, and so does a second asset of the same file under another prefix.
+- The walk runs first, then the probe for the files no prefix explains, then the walk again
+  for each prefix learned.
 - The walk is owed only when what it reads moved since the last walk that did not fail (ADR
   0032 rule 8): the pass's own listing applied a change, or a library's paths, sizes or dates
   changed (`CatalogStore.libraryNamespaceRevision`, moved by every namespace revision of a
@@ -106,10 +128,13 @@ is the question every copy answers, and the copies' rule is "identical copies ar
   makes them agree. The pair itself stays: it is a fact about paths, and the next listing of
   the same file's new bytes needs no new walk.
 
-**The copies of a photo share a key, and SQLite keeps it** (schema v79).
+**The copies of a photo share a key, and SQLite keeps it** (schema v79, v80).
 - `media_asset.copy_key` is a row's current digest of some bytes in a library or an account;
   for a pair whose versions agree, both rows take one key: the digest either holds, else the
-  asset's path checksum. Every rule of the photo below — the shown copy, `has_copies`, the
+  pair's own key, `pair:<account root id>:<asset path>` as bytes — the pair table's unique key,
+  which never equals a 20-byte digest. A path checksum is not that key: two accounts on two
+  servers with one server path for two different files would give four rows one key, and one
+  photo would be hidden as the other's copy. Every rule of the photo below — the shown copy, `has_copies`, the
   photo's choice, its faces, Info's `Copies` row and the window's held choice — groups by the
   key (`PhotoCopySQL`, `idx_media_asset_copy_key`), so a digest group and a mirror pair are
   one relation, not two.
@@ -210,8 +235,12 @@ is never reported as none.
 | A second key beside the digest (rows are copies by digest or by pair) | Every rule of the photo — the shown copy, `has_copies`, the choice, faces, Info, the held choice — would ask two relations and close over both; one key makes them one relation. |
 | Writing a stand-in digest on the library file | The file's digest says what its bytes are, and Duplicates and enrichment read it so; a path checksum there would be a false fact. |
 | Showing a pair as one photo whatever its versions | A file edited and not yet read again by the server is not the photo the account holds. The copies' rule is identical copies; the pair waits for its versions to agree. |
-| Several prefixes per library | No evidence yet: the 15,950 files the owner's stored prefix does not name may not end with their relative path at all on the server (unknown until one is asked). The refusal's log line says which. |
-| Listing every asset's `originalPath` (`POST /api/search/metadata`) | It is about 150 requests per resync, and a second record of a path the stream's checksum already names. One path per library teaches the prefix. |
+| One prefix per library (v61 to v79) | The owner's server lists his library under two prefixes: 982 files under the stored one, and, of the other 15,955, 15,942 under a second exactly, 3 more once the path's normal form is matched, and 10 not on the server yet (read on 2026-11-17 from the catalog's path checksums and one asset's `originalPath`). With one prefix, a prefix that paired any file was kept and the second was never asked. |
+| Asking up to three candidates every owed walk | The same three paths were asked every walk when none confirmed. One request per library per round, with every unanswered candidate remembered, asks each path once. |
+| Comparing server and library paths as bytes | A name with an accented letter can be in either normal form on either disk; three of the owner's files never paired. |
+| Normalising paths when the catalog stores them | The checksum is of the server's own bytes, which Otos does not choose, and a library path names a file on disk as it is; the one rule belongs where the two are compared. |
+| The asset's path checksum as a pair's copy key (v79) | Not unique across servers: two accounts with one server path for different files made them one photo. |
+| Listing every asset's `originalPath` (`POST /api/search/metadata`) | It is about 150 requests per resync, and a second record of a path the stream's checksum already names. One path per prefix teaches it. |
 | Showing the copy with the user's work (edited, liked) first | Liking or un-liking would swap which file the tile is, under the pointer. |
 | Keeping a choice on its copy and resolving the photo's choice in each read | Every read that tests a choice — the order under a Liked filter, counts, On This Day, the stacks, the tile badge, Info — would need a digest lookup per row; the order index cannot hold the digest, so it is the per-row table read that took 17–33 s. A conflict between copies would also be decided in each read. |
 | Propagating faces to every copy | Faces are read from each copy's own preview, by two pipelines that draw a photo differently (ADR 0042); there is no face-to-face correspondence to copy along, and a copy read later would need it again. |
@@ -246,11 +275,14 @@ is never reported as none.
 - A file renamed on disk unpairs at the next walk and pairs again once the server lists it at
   its new path; one renamed on the server first pairs once the rename reaches the catalog: the
   listing or the library's namespace that moves owes the walk (`ImmichMirrorHoldTests`).
-- On the owner's catalog on 2026-11-17 the stored prefix names 982 of library 7's 16,932
-  files, all in two of its eleven folders; the other 15,950 have an asset of the same name and
-  size whose path checksum is not that of the prefix plus their relative path. Why is not
-  known without one server answer for such a file, which the probe now logs; until then those
-  photos show twice in the combined scopes.
+- Migration v80 rebuilds `immich_mirror` with the prefix in its key (its one row per library
+  becomes the first of the set), adds `immich_mirror_asked`, makes the copy triggers that spell
+  the key again, and rekeys every pair's rows. On the owner's library the account's next owed
+  walk — the first pass of every launch — asks the server one path, learns the second prefix
+  and pairs about 15,945 more files, so All Media shows about that many fewer items; a further
+  request is made only if a file no prefix explains still has a candidate asset, and that one
+  is remembered. Its cost on a generated owner-shaped catalog is in
+  `docs/research/2026-11-17-mirror-pairs-by-path.md`.
 - Duplicates never lists a file and its mirror (ADR 0042, owner 2026-11-15): an external
   library's asset is never a copy there, so nothing can keep it and send the only bytes to the
   Trash.

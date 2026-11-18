@@ -509,9 +509,35 @@ nonisolated struct ImmichPathChecksum: Equatable, Hashable, Sendable {
         self.data = data
     }
 
-    /// The checksum Immich computes for a file at `serverPath`.
+    /// The checksum Immich computes for a file at `serverPath`, over the path's bytes as given.
     init(serverPath: String) {
         data = Data(Insecure.SHA1.hash(data: Data("path:\(serverPath)".utf8)))
+    }
+
+    /// The checksums a server path may have, whichever Unicode normal form its server stores:
+    /// the path as given, composed (NFC) and decomposed (NFD), each once. Immich hashes the
+    /// path its crawl of the external library read from its own filesystem, byte for byte and
+    /// with no normalisation, so a name with an accented letter is in whatever form that disk
+    /// holds it, which need not be the form the Mac's library file has (ADR 0054). Every
+    /// comparison of a library file's path with a server's goes through this one rule. A path
+    /// of ASCII alone has one form.
+    static func everyForm(ofServerPath serverPath: String) -> [ImmichPathChecksum] {
+        guard !serverPath.utf8.allSatisfy({ $0 < 0x80 }) else {
+            return [ImmichPathChecksum(serverPath: serverPath)]
+        }
+        var forms: [ImmichPathChecksum] = []
+        for form in [serverPath, serverPath.precomposedStringWithCanonicalMapping, serverPath.decomposedStringWithCanonicalMapping] {
+            let checksum = ImmichPathChecksum(serverPath: form)
+            if !forms.contains(checksum) {
+                forms.append(checksum)
+            }
+        }
+        return forms
+    }
+
+    /// Whether this is the checksum of `serverPath` in any of its normal forms.
+    func names(serverPath: String) -> Bool {
+        Self.everyForm(ofServerPath: serverPath).contains(self)
     }
 }
 

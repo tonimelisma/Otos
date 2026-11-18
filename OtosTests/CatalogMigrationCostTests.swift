@@ -17,55 +17,46 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v79's triggers, tables, index and column dropped; each generated
-    /// pair's asset given its file's digest, as v61's pairing wrote it, and the copies of
-    /// those digests regrouped by v64's rule; `person_photo`'s digest put back; v64's and
-    /// v78's triggers made again; and its record removed.
-    static let newest = CatalogSchema.photoCopyKeyMigrationIdentifier
+    /// schema before it: v80's triggers dropped and v79's made again; each pair that took its
+    /// own key given its asset's path checksum, as v79 keyed it; the mirror table rebuilt with
+    /// one prefix per library (the first); the asked table dropped; and its record removed.
+    static let newest = CatalogSchema.mirrorPrefixesMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
-        let v64Triggers = CatalogSchema.photoCopiesStatements.filter { $0.hasPrefix("CREATE TRIGGER") }
-        let v78Triggers = CatalogSchema.personPhotoStatements.filter {
-            $0.contains("CREATE TRIGGER face_person_photo_inserted") || $0.contains("CREATE TRIGGER face_person_photo_updated")
-                || $0.contains("CREATE TRIGGER media_asset_person_photo_updated")
+        let rekeyed = [
+            "media_asset_copy_inserted", "media_asset_copy_updated", "immich_mirror_pair_inserted", "immich_mirror_pair_deleted",
+        ]
+        let v79Triggers = CatalogSchema.photoCopyKeyStatements.filter { statement in
+            rekeyed.contains { statement.hasPrefix("CREATE TRIGGER \($0) ") }
         }
-        let paired = "SELECT content_sha1 FROM media_asset WHERE source_path_sha1 IS NOT NULL AND content_sha1 IS NOT NULL"
-        return [
-            "DROP TRIGGER immich_mirror_pair_inserted",
-            "DROP TRIGGER immich_mirror_pair_deleted",
-            "DROP TRIGGER media_asset_copy_inserted",
-            "DROP TRIGGER media_asset_copy_deleted",
-            "DROP TRIGGER media_asset_copy_updated",
-            "DROP TRIGGER media_asset_choice_made",
-            "DROP TRIGGER media_asset_person_photo_updated",
-            "DROP TRIGGER face_person_photo_inserted",
-            "DROP TRIGGER face_person_photo_updated",
+        #expect(v79Triggers.count == rekeyed.count)
+        let pairKey = "substr(copy_key, 1, 5) = CAST('pair:' AS BLOB)"
+        return rekeyed.map { "DROP TRIGGER \($0)" } + [
             """
-            UPDATE media_asset AS a SET content_sha1 = f.content_sha1,
-                content_hash_source_size = a.byte_size, content_hash_source_mtime = CAST(a.content_modified_at_unix AS INTEGER)
-            FROM immich_mirror_pair AS p
-            JOIN media_asset AS f ON f.library_root_id = p.library_root_id AND f.relative_path = p.file_path
-            WHERE a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
-              AND \(ContentDigestSQL.isCurrent("f"))
+            UPDATE media_asset SET copy_key = COALESCE(
+                (SELECT a.source_path_sha1 FROM immich_mirror_pair AS p
+                 JOIN media_asset AS a ON a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
+                 WHERE p.library_root_id = media_asset.library_root_id AND p.file_path = media_asset.relative_path),
+                source_path_sha1)
+            WHERE \(pairKey)
             """,
-            "DROP TABLE immich_mirror_pair",
-            "DROP TABLE copy_key_touched",
-            // Before v79 a pair with no digest was no copy: its rows stood alone.
             """
-            UPDATE media_asset SET shown_copy_root_id = NULL, has_copies = 0
-            WHERE content_sha1 IS NULL AND (shown_copy_root_id IS NOT NULL OR has_copies <> 0)
-            """,
-            "DROP INDEX idx_media_asset_copy_key",
-            "ALTER TABLE media_asset DROP COLUMN copy_key",
-            CatalogSchema.photoCopiesRecompute(rows: "content_sha1 IN (\(paired))"),
-            "ALTER TABLE person_photo RENAME COLUMN copy_key TO content_sha1",
-            """
-            UPDATE person_photo SET (content_sha1, shown_copy_root_id, has_copies) = (
-                SELECT m.content_sha1, m.shown_copy_root_id, m.has_copies FROM media_asset AS m
-                WHERE m.library_root_id = person_photo.library_root_id AND m.relative_path = person_photo.relative_path
+            CREATE TABLE immich_mirror_v61 (
+                account_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
+                library_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
+                server_prefix TEXT NOT NULL,
+                PRIMARY KEY (account_root_id, library_root_id)
             )
             """,
-        ] + v64Triggers + v78Triggers + [
+            """
+            INSERT OR IGNORE INTO immich_mirror_v61 (account_root_id, library_root_id, server_prefix)
+            SELECT account_root_id, library_root_id, server_prefix FROM immich_mirror ORDER BY server_prefix
+            """,
+            "DROP TABLE immich_mirror",
+            "ALTER TABLE immich_mirror_v61 RENAME TO immich_mirror",
+            "CREATE INDEX idx_immich_mirror_library ON immich_mirror(library_root_id)",
+            "DROP TABLE immich_mirror_asked",
+        ] + v79Triggers + [
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }

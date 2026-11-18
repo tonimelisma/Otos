@@ -10473,9 +10473,9 @@ extension CatalogStore {
 
     // MARK: - Mirrors (ADR 0054)
 
-    /// Each library as `account`'s mirror discovery sees it: the server prefix learned for
-    /// it, whether any of its files is paired with one of the account's assets, and files
-    /// that may be the account's assets (`MirrorGateway.Probe`).
+    /// Each library as `account`'s mirror discovery sees it: the server prefixes learned for
+    /// it, and the first file none of them explains that may be one of the account's assets
+    /// (`MirrorGateway.Probe`).
     func mirrorProbes(account: LibraryRootPath, lane: CatalogReadLane) async throws -> [MirrorGateway.Probe] {
         guard let accountRootID = roots[account]?.rowID else {
             return []
@@ -10486,16 +10486,14 @@ extension CatalogStore {
                 try MirrorGateway.Probe(
                     libraryRootID: library.id,
                     libraryRootPath: library.path,
-                    serverPrefix: MirrorGateway.serverPrefix(accountRootID: accountRootID, libraryRootID: library.id, db: db),
-                    isPaired: MirrorGateway.isPaired(libraryRootID: library.id, accountRootID: accountRootID, db: db),
-                    candidates: MirrorGateway.candidates(libraryRootID: library.id, accountRootID: accountRootID, db: db)
+                    serverPrefixes: MirrorGateway.serverPrefixes(accountRootID: accountRootID, libraryRootID: library.id, db: db),
+                    candidate: MirrorGateway.candidate(libraryRootID: library.id, accountRootID: accountRootID, db: db)
                 )
             }
         }
     }
 
-    /// Records where `account`'s server holds `library`'s files: the server path its
-    /// relative paths follow.
+    /// Adds a server path `library`'s relative paths follow on `account`'s server.
     func recordMirror(account: LibraryRootPath, library: LibraryRootPath, serverPrefix: String) async throws {
         guard let accountRootID = roots[account]?.rowID, let libraryRootID = roots[library]?.rowID else {
             return
@@ -10506,8 +10504,19 @@ extension CatalogStore {
             )
         }
         OtosLog.catalog.noticeOperation("immich.mirror", phase: "recorded", fields: [
-            "accountRootPath": account.rawValue, "libraryRootPath": library.rawValue,
+            "accountRootPath": account.rawValue, "libraryRootPath": library.rawValue, "serverPrefix": serverPrefix,
         ])
+    }
+
+    /// Remembers that the server's path for `candidate`'s asset taught `library` no new
+    /// prefix, so the probe does not ask it again while the asset's path stands.
+    func recordMirrorAsked(account: LibraryRootPath, library: LibraryRootPath, candidate: MirrorGateway.Candidate) async throws {
+        guard let accountRootID = roots[account]?.rowID, let libraryRootID = roots[library]?.rowID else {
+            return
+        }
+        try await database().write(operation: "recordMirrorAsked") { db in
+            _ = try MirrorGateway.recordAsked(candidate, libraryRootID: libraryRootID, accountRootID: accountRootID, db: db)
+        }
     }
 
     /// Pairs every file of each library `account` mirrors with the asset its path names
@@ -10516,9 +10525,9 @@ extension CatalogStore {
     /// is read first and written only for the files whose pair is owed, so a walk over
     /// pairs that all stand — every owed walk of a settled account — opens no write. The
     /// catalog's triggers make each pair's rows one photo (schema v79).
-    func pairMirroredCopies(account: LibraryRootPath, lane: CatalogReadLane) async throws -> Int {
+    func pairMirroredCopies(account: LibraryRootPath, lane: CatalogReadLane) async throws -> MirrorWalk {
         guard let accountRootID = roots[account]?.rowID else {
-            return 0
+            return MirrorWalk(paired: 0, unpaired: 0)
         }
         let dbQueue = try database()
         let started = ContinuousClock.now
@@ -10535,7 +10544,7 @@ extension CatalogStore {
                 let batch = try await reader(for: lane).readFreeingConnection(operation: "mirrorPairsOwed") { [after] db in
                     try MirrorGateway.owedPairs(
                         libraryRootID: mirror.libraryRootID, accountRootID: accountRootID,
-                        serverPrefix: mirror.serverPrefix, after: after, db: db
+                        serverPrefixes: mirror.serverPrefixes, after: after, db: db
                     )
                 }
                 if !batch.owed.isEmpty {
@@ -10544,8 +10553,7 @@ extension CatalogStore {
                     let written = try await timedWrite(dbQueue, operation: "pairMirroredCopies") { db in
                         let joinsBefore = try CatalogSchema.choiceJoins(db)
                         let counts = try MirrorGateway.writePairs(
-                            batch.owed, libraryRootID: mirror.libraryRootID, accountRootID: accountRootID,
-                            serverPrefix: mirror.serverPrefix, db: db
+                            batch.owed, libraryRootID: mirror.libraryRootID, accountRootID: accountRootID, db: db
                         )
                         return try (counts, CatalogSchema.choiceJoins(db) != joinsBefore)
                     }.value
@@ -10563,6 +10571,7 @@ extension CatalogStore {
         OtosLog.catalog.noticeOperation("immich.mirror", phase: "paired", fields: [
             "rootPath": account.rawValue,
             "mirrors": "\(mirrors.count)",
+            "prefixes": "\(mirrors.reduce(0) { $0 + $1.serverPrefixes.count })",
             "files": "\(files)",
             "paired": "\(paired)",
             "unpaired": "\(unpaired)",
@@ -10572,7 +10581,7 @@ extension CatalogStore {
         if paired + unpaired > 0 {
             notifyCatalogChanged(.changed(.digests(copiesChanged: true, digestsChanged: true, choicesJoined: choicesJoined)))
         }
-        return paired + unpaired
+        return MirrorWalk(paired: paired, unpaired: unpaired)
     }
 
     /// Keep All Copies: remembers every pair of copies in each group as kept together.

@@ -2,7 +2,7 @@
 
 - Date: 2026-11-17
 - Relied on by: ADR 0054 ("A mirrored library file is its external asset", "A pair is one photo
-  while its versions agree", "The copies of a photo share a key"), migration v79
+  while its versions agree", "The copies of a photo share a key"), migrations v79 and v80
 
 ## Question
 
@@ -125,3 +125,44 @@ migration; the account's first walk writes them.
 
 The one-copy test reads `shown_copy_root_id` from the order index, as before v79; no read joins
 the pair table.
+
+## A second prefix (later on 2026-11-17, relied on by migration v80)
+
+One read-only server answer, authorized by the owner, gave the `originalPath` of one of the
+15,955 unpaired files: the same library, under a second server prefix (written here as
+`/srv/b/…`; the stored one as `/srv/a/…`). Checked offline against each unpaired file's
+asset's `source_path_sha1`:
+
+| Of the 15,955 files no stored prefix pairs | Count |
+| --- | --- |
+| Match `SHA-1("path:" + second prefix + relative path)` exactly | 15,942 |
+| Match once the path is in the other Unicode normal form (a folder name with `ä`; local and server forms differ) | 3 |
+| Have no asset on the server yet (new files) | 10 |
+
+So one library has two prefixes on one server, and the probe never asked again because a stored
+prefix that paired any file was kept. Immich hashes the path its crawl read from its own disk,
+byte for byte, with no normalisation, so the form of an accented name is the server disk's.
+
+Migration v80: a set of prefixes per library (`immich_mirror` keyed by the prefix), remembered
+candidates (`immich_mirror_asked`), every path compared in either normal form
+(`ImmichPathChecksum.everyForm`), and a pair's fallback copy key its own (`pair:<account>:<asset
+path>`) in place of the asset's path checksum, which two servers can share.
+
+### v80's cost on a generated owner-shaped catalog
+
+Measured with `OTOS_SCALE_TEST=1 script/check.sh --only CatalogMigrationCostTests` on
+`OwnerShapedCatalog` at scale 1, which now generates its 16,683 pairs under two prefixes (982
+under the first), each asset's path checksum that of its prefix and file, the catalog put back
+to v79 (v79's triggers, one prefix per library, each pair keyed by its asset's path checksum):
+
+| Measure | Value |
+| --- | --- |
+| Migration time (the Store's own migration pass) | 2,447 ms, under other sessions' parallel checks |
+| Write-ahead log it leaves | 55.5 MB |
+| File size before / after | 2.328 GB / 2.331 GB (no compaction owed) |
+| A Like, a format change, an insert and a delete: log bytes before / after | unchanged (61,832 / 57,712 / 111,272 / 111,272) |
+| Order reads' pages before / after | `defaultOrder` 7,372 → 7,374, `nameOrder` 6,974 → 6,976, `likedFilter` 96 → 98, `filterOptions` 7,843 → 7,845 |
+
+Almost all of it is the rekey of every pair whose rows have no common digest (each regroups
+its key). The generated catalog has 16,683 pairs; the owner's has 982, so his migration rekeys
+about a seventeenth as many rows. No order index is rebuilt.

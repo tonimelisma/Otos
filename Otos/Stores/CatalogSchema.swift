@@ -3292,6 +3292,150 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// Schema v80: a library an account mirrors has a set of server prefixes, a candidate the
+    /// server's path taught nothing is remembered, and a pair's copy key is its own (ADR 0054).
+    /// - `immich_mirror` holds one row per server prefix a library's relative paths follow on
+    ///   an account's server: a server can hold one library under several paths (an external
+    ///   library per mount of the same folders). Rebuilt with the prefix in its key; no table
+    ///   references it, so dropping the old one cascades nothing and the checks stay immediate.
+    /// - `immich_mirror_asked` holds each library file and external asset whose server path
+    ///   was read and taught no new prefix, at the asset's path checksum then: the probe never
+    ///   asks the same pair of rows again while the asset's path stands. The foreign keys take
+    ///   it with either row.
+    /// - A pair whose versions agree and neither of whose rows has a digest took the asset's
+    ///   path checksum as its copy key, and a path checksum is not unique across servers: two
+    ///   accounts on two servers with one path for two different files gave four rows one key.
+    ///   The pair's fallback key is now its own: the account and the asset's path, the pair
+    ///   table's unique key, as text, so it never equals a 20-byte digest. The copy triggers
+    ///   that spell the key are made again with it, and every pair's rows are rekeyed.
+    static let mirrorPrefixesMigrationIdentifier = "v80_mirror_prefixes"
+
+    /// v80's key rules, frozen with it (ADR 0002). The pieces v79 froze and v80 does not
+    /// change are v79's own.
+    private static let v80PairKey = """
+    CASE WHEN CASE WHEN (\(v79OwnKey("f"))) IS NOT NULL AND (\(v79OwnKey("a"))) IS NOT NULL
+                   THEN (\(v79OwnKey("f"))) = (\(v79OwnKey("a")))
+                   ELSE f.byte_size = a.byte_size
+                    AND CAST(f.content_modified_at_unix AS INTEGER) = CAST(a.content_modified_at_unix AS INTEGER)
+              END
+         THEN COALESCE((\(v79OwnKey("f"))), (\(v79OwnKey("a"))), CAST('pair:' || a.library_root_id || ':' || a.relative_path AS BLOB))
+    END
+    """
+
+    private static func v80Key(_ row: String) -> String {
+        """
+        COALESCE(
+            (SELECT \(v80PairKey) FROM immich_mirror_pair AS p
+             JOIN media_asset AS f ON f.library_root_id = p.library_root_id AND f.relative_path = p.file_path
+             JOIN media_asset AS a ON a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
+             WHERE p.library_root_id = \(row).library_root_id AND p.file_path = \(row).relative_path),
+            (SELECT \(v80PairKey) FROM immich_mirror_pair AS p
+             JOIN media_asset AS f ON f.library_root_id = p.library_root_id AND f.relative_path = p.file_path
+             JOIN media_asset AS a ON a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
+             WHERE p.account_root_id = \(row).library_root_id AND p.asset_path = \(row).relative_path),
+            \(v79OwnKey(row))
+        )
+        """
+    }
+
+    private static func v80Rekey(rows: String) -> String {
+        """
+        DELETE FROM copy_key_touched;
+        INSERT OR IGNORE INTO copy_key_touched (key)
+        SELECT copy_key FROM media_asset WHERE rowid IN (\(rows)) AND copy_key IS NOT NULL;
+        UPDATE media_asset SET copy_key = \(v80Key("media_asset"))
+        WHERE rowid IN (\(rows)) AND copy_key IS NOT \(v80Key("media_asset"));
+        INSERT OR IGNORE INTO copy_key_touched (key)
+        SELECT copy_key FROM media_asset WHERE rowid IN (\(rows)) AND copy_key IS NOT NULL;
+        \(v79Regroup)
+        \(v79Unify)
+        UPDATE media_asset SET shown_copy_root_id = NULL, has_copies = 0
+        WHERE rowid IN (\(rows)) AND copy_key IS NULL AND (shown_copy_root_id IS NOT NULL OR has_copies <> 0);
+        DELETE FROM copy_key_touched;
+        """
+    }
+
+    /// Every pair's two rows, as rowids.
+    private static let v80EveryPairRow = """
+    SELECT m.rowid FROM immich_mirror_pair AS p
+    JOIN media_asset AS m ON m.library_root_id = p.library_root_id AND m.relative_path = p.file_path
+    UNION ALL
+    SELECT m.rowid FROM immich_mirror_pair AS p
+    JOIN media_asset AS m ON m.library_root_id = p.account_root_id AND m.relative_path = p.asset_path
+    """
+
+    static let mirrorPrefixesStatements: [String] = [
+        "DROP TRIGGER media_asset_copy_inserted",
+        "DROP TRIGGER media_asset_copy_updated",
+        "DROP TRIGGER immich_mirror_pair_inserted",
+        "DROP TRIGGER immich_mirror_pair_deleted",
+        """
+        CREATE TABLE immich_mirror_prefix (
+            account_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
+            library_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
+            server_prefix TEXT NOT NULL,
+            PRIMARY KEY (account_root_id, library_root_id, server_prefix)
+        ) WITHOUT ROWID
+        """,
+        """
+        INSERT INTO immich_mirror_prefix (account_root_id, library_root_id, server_prefix)
+        SELECT account_root_id, library_root_id, server_prefix FROM immich_mirror
+        """,
+        "DROP TABLE immich_mirror",
+        "ALTER TABLE immich_mirror_prefix RENAME TO immich_mirror",
+        "CREATE INDEX idx_immich_mirror_library ON immich_mirror(library_root_id)",
+        """
+        CREATE TABLE immich_mirror_asked (
+            library_root_id INTEGER NOT NULL,
+            file_path TEXT NOT NULL,
+            account_root_id INTEGER NOT NULL,
+            asset_path TEXT NOT NULL,
+            asset_path_sha1 BLOB NOT NULL,
+            PRIMARY KEY (library_root_id, file_path, account_root_id, asset_path),
+            FOREIGN KEY (library_root_id, file_path) REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            FOREIGN KEY (account_root_id, asset_path) REFERENCES media_asset(library_root_id, relative_path)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) WITHOUT ROWID
+        """,
+        "CREATE INDEX idx_immich_mirror_asked_asset ON immich_mirror_asked(account_root_id, asset_path)",
+        v80Rekey(rows: v80EveryPairRow),
+        """
+        CREATE TRIGGER media_asset_copy_inserted AFTER INSERT ON media_asset
+        WHEN NEW.content_sha1 IS NOT NULL
+        BEGIN
+        \(v80Rekey(rows: "NEW.rowid"))
+        END
+        """,
+        """
+        CREATE TRIGGER media_asset_copy_updated AFTER UPDATE OF \(v79Inputs) ON media_asset
+        WHEN (\(v79InputChanged)) AND (OLD.content_sha1 IS NOT NULL OR NEW.content_sha1 IS NOT NULL
+          OR OLD.copy_key IS NOT NULL
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE library_root_id = NEW.library_root_id AND file_path = NEW.relative_path)
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE account_root_id = NEW.library_root_id AND asset_path = NEW.relative_path)
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE library_root_id = OLD.library_root_id AND file_path = OLD.relative_path)
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE account_root_id = OLD.library_root_id AND asset_path = OLD.relative_path))
+        BEGIN
+        UPDATE choice_sequence SET value = value + 1 WHERE NEW.media_choice IS NOT OLD.media_choice;
+        UPDATE media_asset SET media_choice_sequence = (SELECT value FROM choice_sequence)
+        WHERE rowid = NEW.rowid AND NEW.media_choice IS NOT OLD.media_choice;
+        \(v80Rekey(rows: v79UpdatedRows))
+        END
+        """,
+        """
+        CREATE TRIGGER immich_mirror_pair_inserted AFTER INSERT ON immich_mirror_pair
+        BEGIN
+        \(v80Rekey(rows: v79PairSides("NEW")))
+        END
+        """,
+        """
+        CREATE TRIGGER immich_mirror_pair_deleted AFTER DELETE ON immich_mirror_pair
+        BEGIN
+        \(v80Rekey(rows: v79PairSides("OLD")))
+        END
+        """,
+    ]
+
     static func indexStoredSearchTexts(_ db: Database) throws {
         let start = ContinuousClock.now
         let rows = try Row.fetchCursor(db, sql: """
