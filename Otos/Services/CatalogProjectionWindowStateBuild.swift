@@ -350,11 +350,12 @@ extension CatalogProjection {
     }
 
     /// How an options read reads (`plan(forOptions:)`): the row's whole scope, or only the rows
-    /// the changes since the held tally was read name, with the cells' names when they moved,
-    /// to patch that tally in place.
+    /// the changes since the held tally was read name, with the names in the tally's language
+    /// of the cells those rows give and of `renamed` (the tally's cells, when the cells' names
+    /// moved), to patch that tally in place.
     enum FilterOptionsPlan: Equatable, Sendable {
         case whole
-        case keyed(rows: Set<MediaAssetID>, names: PlaceNameLanguage?, patching: UInt64)
+        case keyed(rows: Set<MediaAssetID>, names: PlaceNameLanguage?, renamed: Set<PlaceCell>, patching: UInt64)
     }
 
     /// What an options read gave and the Store change it started after.
@@ -407,16 +408,16 @@ extension CatalogProjection {
             let options = try await filterOptionsReader(owed)
             return FilterOptionsRead(outcome: .answered(options), sequence: sequence, ms: DiagnosticsTiming.milliseconds(since: start))
         }
-        if case let .keyed(rows, names, patching) = plan {
+        if case let .keyed(rows, names, renamed, patching) = plan {
             // Nothing a change named moved what the options count: the held tally stands.
-            guard !rows.isEmpty || names != nil else {
+            guard !rows.isEmpty || !renamed.isEmpty else {
                 return FilterOptionsRead(
-                    outcome: .keyed(CatalogFilterOptionRows(rows: [], names: nil), patching: patching),
+                    outcome: .keyed(CatalogFilterOptionRows(rows: [], namedCells: [], names: [:]), patching: patching),
                     sequence: sequence, ms: 0
                 )
             }
             if let read = try await store.windowReads.filterOptionsOfRows(
-                rows, names: names, for: owed.row, availableLibraryPaths: owed.availableLibraryPaths
+                rows, namesIn: names, renamed: renamed, for: owed.row, availableLibraryPaths: owed.availableLibraryPaths
             ) {
                 keyedFilterOptionsQueryCount &+= 1
                 return FilterOptionsRead(

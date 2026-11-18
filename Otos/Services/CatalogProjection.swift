@@ -1603,7 +1603,12 @@ private extension CatalogProjection {
         guard let keyed = changeLog.keyedOptionRows(since: held.sequence, for: owed.row) else {
             return .whole
         }
-        return .keyed(rows: keyed.rows, names: keyed.names ? tally.language : nil, patching: held.sequence)
+        // The re-read rows' cells are named in the tally's language; every cell it counts is
+        // named again only when the cells' names moved.
+        return .keyed(
+            rows: keyed.rows, names: tally.language,
+            renamed: keyed.names && tally.language != nil ? tally.cells : [], patching: held.sequence
+        )
     }
 
     /// Keeps a read's options and republishes the window with them, then reads the newest

@@ -111,4 +111,62 @@ struct FilterOptionsKeyedReadTests {
             try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: url)
         }
     }
+
+    /// A tally holds the names of its own cells only: a row that moves into a named cell the
+    /// tally never counted brings that cell's name with its keyed re-read, and a renamed cell is
+    /// named again by its key. After each, the patched tally offers what a whole read does.
+    @Test func aKeyedReadNamesTheCellsItsRowsMoveIntoAndTheCellsRenamed() async throws {
+        // The owner's 1,435 named cells on a small catalog: Archive's eight rows count a few.
+        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01, ownersPlaces: true)
+        let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        let libraries = try #require(await store.loadedLibraries())
+        let available = CatalogWindowPolicy.availablePaths(from: libraries)
+        let language = PlaceNameLanguage(Locale.current)
+        let row = SidebarSelection.library(catalog.archive)
+        func whole() async throws -> CatalogFilterOptionTally {
+            try await store.windowReads.filterOptionTally(for: row, availableLibraryPaths: available, placeNameLanguages: [language])
+        }
+        var tally = try await whole()
+        #expect(tally.names.count == tally.cells.count && tally.cells.count < 1435, "a tally names only its own cells")
+
+        // One of Archive's rows moves into a named cell none of its rows is in.
+        let id = try #require(try await store.windowReads.orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: row), availableLibraryPaths: available
+        ).ids.first)
+        let k = try #require((0 ..< 1435).first { !tally.cells.contains(PlaceCell(latitude: 2000 + $0 / 40, longitude: 1000 + $0 % 40)) })
+        let asset = try #require(try await store.windowReads.mediaAssets(for: [id])[id])
+        var metadata = AssetMetadata.absoluteCapture(instant: asset.captureLocalTime?.presentationDate())
+        metadata.locations = [GeoRecord(
+            source: "exifGPS", latitude: (2000 + Double(k / 40) + 0.5) / 50, longitude: (1000 + Double(k % 40) + 0.5) / 50, altitudeMeters: nil
+        )]
+        _ = await store.applyEnrichmentBatch([EnrichmentResult(
+            id: id, metadata: metadata, enrichedKind: asset.bestKind, enrichedFormat: asset.bestFormat,
+            thumbnailPath: nil, sourceSize: asset.byteSize,
+            sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt), contentHash: nil
+        )])
+        let moved = try #require(try await store.windowReads.filterOptionsOfRows(
+            [id], namesIn: language, renamed: [], for: row, availableLibraryPaths: available
+        ))
+        let tookMoved = tally.take(moved)
+        #expect(tookMoved)
+        #expect(tally.names[PlaceCell(latitude: 2000 + k / 40, longitude: 1000 + k % 40)]?.town == "Town \(k)")
+        #expect(try await tally.options == whole().options)
+
+        // Every counted cell is renamed: the keyed read names the tally's cells again.
+        let renamed = tally.cells
+        try await store.applyPlaceNames(
+            Dictionary(uniqueKeysWithValues: renamed.map { ($0, PlaceNames(country: "Renamed Country", town: "Renamed \($0.longitude)")) }),
+            language: language
+        )
+        let names = try #require(try await store.windowReads.filterOptionsOfRows(
+            [], namesIn: language, renamed: renamed, for: row, availableLibraryPaths: available
+        ))
+        #expect(names.namedCells == renamed)
+        let tookNames = tally.take(names)
+        #expect(tookNames)
+        #expect(tally.options.countries.map(\.name) == ["Renamed Country"])
+        #expect(try await tally.options == whole().options)
+        await store.shutdown()
+    }
 }

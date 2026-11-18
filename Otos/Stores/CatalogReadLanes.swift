@@ -277,12 +277,13 @@ extension CatalogReads where Lane == WindowLane {
 
     func filterOptionsOfRows(
         _ changed: Set<MediaAssetID>,
-        names language: PlaceNameLanguage?,
+        namesIn language: PlaceNameLanguage?,
+        renamed: Set<PlaceCell>,
         for row: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> CatalogFilterOptionRows? {
         try await store.filterOptionsOfRows(
-            changed, names: language, for: row, availableLibraryPaths: availableLibraryPaths, lane: lane
+            changed, namesIn: language, renamed: renamed, for: row, availableLibraryPaths: availableLibraryPaths, lane: lane
         )
     }
 

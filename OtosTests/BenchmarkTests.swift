@@ -104,7 +104,7 @@ struct BenchmarkTests {
         ).ids.prefix(200))
         try await run.measure("projection.filterOptions.allMedia.keyed200") {
             let read = try await projection.readFilterOptions(
-                owed, plan: .keyed(rows: moved, names: nil, patching: 0), store: store
+                owed, plan: .keyed(rows: moved, names: nil, renamed: [], patching: 0), store: store
             )
             guard case let .keyed(rows, _) = read.outcome else {
                 Issue.record("a library's options are read by key")

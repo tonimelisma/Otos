@@ -7,7 +7,7 @@ import Foundation
 /// the counts (`options`): a type is offered while a row has it, a place with the number of
 /// rows in its named cells, most first. So a change that names its rows and moves only their
 /// locations or types re-reads those rows by key and replaces what they gave (`replace(_:)`),
-/// and a change of the cells' names re-reads the names alone, instead of reading the row's
+/// and a change of the cells' names re-reads the names of its cells alone, instead of reading the row's
 /// whole scope again: on the owner's library a sync moved the locations of rows a batch at a
 /// time, and each batch re-read All Media's options whole
 /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
@@ -52,14 +52,15 @@ nonisolated struct CatalogFilterOptionTally: Sendable {
     private var cellTable: [PlaceCell] = []
     private var cellIndex: [PlaceCell: UInt32] = [:]
     private var cellCounts: [Int] = []
-    /// The cells Maps named in `language`, with their names.
-    var names: [PlaceCell: PlaceNames]
+    /// The names Maps gave in `language` to the cells the counted rows give, read by each
+    /// cell's key once the rows are counted (`CatalogQueryGateway.placeCellNames(of:language:db:)`):
+    /// a scope's options read the names of its own cells, never every named cell's.
+    var names: [PlaceCell: PlaceNames] = [:]
     /// The language the places are offered in; nil offers none (`CatalogFilterOptions`).
     let language: PlaceNameLanguage?
 
-    /// An empty tally, which a whole read fills (`take(rowIDs:types:cells:)`).
-    init(names: [PlaceCell: PlaceNames], language: PlaceNameLanguage?) {
-        self.names = names
+    /// An empty tally, which a whole read fills (`take(rowIDs:types:cells:)`) and then names.
+    init(language: PlaceNameLanguage?) {
         self.language = language
     }
 
@@ -75,6 +76,11 @@ nonisolated struct CatalogFilterOptionTally: Sendable {
 
     var cellCount: Int {
         cellCounts.count { $0 > 0 }
+    }
+
+    /// The cells the counted rows give now: the cells whose names the options show.
+    var cells: Set<PlaceCell> {
+        Set(cellTable.indices.lazy.filter { cellCounts[$0] > 0 }.map { cellTable[$0] })
     }
 
     /// A run of consecutive rows of a whole read of one type, or of one cell: its slot in this
@@ -224,23 +230,26 @@ nonisolated struct CatalogFilterOptionTally: Sendable {
         return CatalogFilterOptions(formatsByKind: kinds, countries: countries, placeNameLanguage: language)
     }
 
-    /// The tally with `read` taken in: each re-read row's fact replaced, and the names when it
-    /// read them. False, with the tally unchanged, when a re-read row is one it did not count
-    /// (`replace(_:)`).
+    /// The tally with `read` taken in: each re-read row's fact replaced, and each cell the read
+    /// named given the name it read, or none when it has none. False, with the tally unchanged,
+    /// when a re-read row is one it did not count (`replace(_:)`).
     mutating func take(_ read: CatalogFilterOptionRows) -> Bool {
         guard replace(read.rows) else {
             return false
         }
-        if let names = read.names {
-            self.names = names
+        for cell in read.namedCells {
+            names[cell] = read.names[cell]
         }
         return true
     }
 }
 
 /// What a keyed re-read of a tally's rows gives (`CatalogStore.filterOptionsOfRows`): each
-/// named row's fact now, and the cells' names when the changes moved them.
+/// named row's fact now, and the names of the cells it read them for (`namedCells`): the
+/// re-read rows' cells, and every cell of the tally when the changes moved the cells' names.
+/// A cell read with no name in `names` has none.
 nonisolated struct CatalogFilterOptionRows: Sendable {
     let rows: [CatalogFilterOptionTally.Row]
-    let names: [PlaceCell: PlaceNames]?
+    let namedCells: Set<PlaceCell>
+    let names: [PlaceCell: PlaceNames]
 }

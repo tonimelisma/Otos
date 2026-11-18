@@ -37,6 +37,9 @@ struct OwnerShapedCatalog {
         var metadataStaleInLibraries = 0
         var unhashable = 0
         var mirrorPairs = 0
+        /// The rows of the text index's segment directory and configuration
+        /// (`search_text_word_idx`, `search_text_word_config`), which a query word seeks.
+        var textIndexDirectoryRows = 0
         var embeddings = 0
         var texts = 0
         var faces = 0
@@ -132,8 +135,10 @@ struct OwnerShapedCatalog {
 
     /// Writes the catalog under `directory`: the file in `db/`, the libraries' empty folders
     /// in `Libraries/`. `scale` 1 is the owner's catalog; every count is rounded, and an owed
-    /// remainder is never rounded to nothing.
-    static func make(in directory: URL, scale: Double) throws -> OwnerShapedCatalog {
+    /// remainder is never rounded to nothing. `ownersPlaces` names his 1,435 cells at any
+    /// scale: a small catalog then holds more named cells than an import batch holds rows, as
+    /// his does, so a read of every named cell outweighs a small scope as it does on his.
+    static func make(in directory: URL, scale: Double, ownersPlaces: Bool = false) throws -> OwnerShapedCatalog {
         let clock = ContinuousClock()
         let start = clock.now
         let databaseURL = directory.appending(path: "db/catalog.sqlite")
@@ -202,7 +207,10 @@ struct OwnerShapedCatalog {
             shape.unhashable = try Int.fetchOne(db, sql: "SELECT count(*) FROM media_asset WHERE content_sha1 IS NULL") ?? 0
             try writeMirrorPairs(db, scale: scale, shape: &shape)
             try writeBacklog(db, scale: scale, shape: &shape)
-            try writeDerivedRows(db, scale: scale, shape: &shape)
+            try writeDerivedRows(db, scale: scale, placeCells: ownersPlaces ? Owner.placeCells : scaled(Owner.placeCells, scale), shape: &shape)
+            shape.textIndexDirectoryRows = try Int.fetchOne(
+                db, sql: "SELECT (SELECT count(*) FROM search_text_word_idx) + (SELECT count(*) FROM search_text_word_config)"
+            ) ?? 0
         }
         try queue.close()
         let bytes = try FileManager.default.attributesOfItem(atPath: databaseURL.path(percentEncoded: false))[.size] as? Int64 ?? 0
@@ -431,7 +439,7 @@ struct OwnerShapedCatalog {
     /// The derived tables, each current for its row by the product's own source SQL, but for
     /// the owed remainders, which are spread through the table so a read that walks it finds
     /// them late.
-    private static func writeDerivedRows(_ db: Database, scale: Double, shape: inout Shape) throws {
+    private static func writeDerivedRows(_ db: Database, scale: Double, placeCells cells: Int, shape: inout Shape) throws {
         let spread = "ORDER BY (rowid * 7919) % 100003"
         try db.execute(sql: "CREATE TEMP TABLE owed (product TEXT NOT NULL, row INTEGER NOT NULL)")
         shape.renderSignaturesOwed = Owner.renderSignaturesOwed
@@ -525,7 +533,6 @@ struct OwnerShapedCatalog {
         """)
         // Metadata records of about 1.1 KB, three in four located in one of his 1,435 named
         // cells; a fifth read by an older parser.
-        let cells = scaled(Owner.placeCells, scale)
         let language = PlaceNameLanguage(Locale.current).identifier
         try db.execute(
             sql: """

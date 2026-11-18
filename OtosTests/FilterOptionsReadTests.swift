@@ -64,8 +64,9 @@ struct FilterOptionsReadTests {
         let language = PlaceNameLanguage(Locale.current)
         let (walked, oracle) = try await queue.read { db in
             let roots: [Int64] = [6, 7, 15]
-            var tally = try CatalogFilterOptionTally(names: CatalogQueryGateway.placeCellNames(language: language, db: db), language: language)
+            var tally = CatalogFilterOptionTally(language: language)
             #expect(try CatalogQueryGateway.tallyFilterOptionRows(scope: CatalogScopePredicate(rootIDs: roots), into: &tally, db: db))
+            tally.names = try CatalogQueryGateway.placeCellNames(of: tally.cells, language: language, db: db)
             let rows = try Row.fetchAll(
                 db,
                 sql: """

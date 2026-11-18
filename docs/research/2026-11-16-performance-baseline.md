@@ -380,6 +380,14 @@ Findings, not work.
   People build: under the 700 MB target but close to it.
 - **Unpaired mirrored files.** 15,950 mirrored files still show twice; their server path does
   not match the stored prefix, and the reason is unknown.
+- **The stall reproduction at the owner's size failed on 12031093.** The target row
+  "`StallReproductionTests` passes" was not met by the final measurement: the on-demand run
+  (`OTOS_SCALE_TEST=1`) found an import batch's filter options visiting 1,880 rows for 254 in
+  scope (every one of the 1,435 named cells' names read whole, since #862), and the text
+  matches 15 rows over four per row (the text index's own segment directory, read once per
+  query word, which the test's bound did not count). The options now read only their own
+  cells' names by key, the bound counts the directory apart and the candidates the index
+  returns, and every check asserts the bounds on a small catalog with his named cells.
 - **Not measured until the next daily run** (scheduled for 2026-11-18). #904's two fixes, every
   case the PRs from #899 onward may move, and the cases #936 and #937 touch.
 

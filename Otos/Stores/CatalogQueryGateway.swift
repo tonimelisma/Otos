@@ -339,19 +339,23 @@ nonisolated enum CatalogQueryGateway {
         )
     }
 
-    /// The cells Maps named in `language`, with their names: a scan of `place_cell`, one row
-    /// per map cell a located photo falls in, a few thousand at most.
-    static func placeCellNames(language: PlaceNameLanguage, db: Database) throws -> [PlaceCell: PlaceNames] {
-        let rows = try Row.fetchCursor(
-            db.cachedStatement(sql: "SELECT cell_latitude, cell_longitude, country, town FROM place_cell WHERE language = ?"),
-            arguments: [language.identifier]
-        )
+    /// The names Maps gave `cells` in `language`, each by one seek of its key: a scope's
+    /// options read the names of the cells its rows give, so an import of 254 rows reads at most
+    /// its own cells' names, not the 1,435 named cells of the owner's catalog. A cell with no
+    /// name in `language` has none.
+    static func placeCellNames(of cells: some Sequence<PlaceCell>, language: PlaceNameLanguage, db: Database) throws -> [PlaceCell: PlaceNames] {
+        let statement = try db.cachedStatement(sql: placeCellNameSQL)
         var names: [PlaceCell: PlaceNames] = [:]
-        while let row = try rows.next() {
-            names[PlaceCell(latitude: row[0], longitude: row[1])] = PlaceNames(country: row[2], town: row[3])
+        for cell in cells {
+            if let row = try Row.fetchOne(statement, arguments: [cell.latitude, cell.longitude, language.identifier]) {
+                names[cell] = PlaceNames(country: row[0], town: row[1])
+            }
         }
         return names
     }
+
+    /// One cell's name in a language, by the cell's key (binds latitude, longitude, language).
+    static let placeCellNameSQL = "SELECT country, town FROM place_cell WHERE cell_latitude = ? AND cell_longitude = ? AND language = ?"
 
     /// The row id of the row at a key; a key with no row has none.
     static let rowIDOfKeySQL = "SELECT rowid FROM media_asset WHERE library_root_id = ? AND relative_path = ?"

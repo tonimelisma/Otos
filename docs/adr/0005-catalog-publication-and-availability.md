@@ -232,12 +232,15 @@ The filter's options are re-read by key the same way. An options read keeps, bes
 answer, what each row of the sidebar row's scope gave it (`CatalogFilterOptionTally`): per
 row, its SQLite row id and the indexes of its file type and its map cell in small tables of
 the types and cells present, with a count per type and per cell (about 2.2 MB for All Media's
-159,000 rows), and the cells' names in the catalog's one language; the options are derived
+159,000 rows), and, in the catalog's one language, the names of the cells its rows give, each
+read by the cell's key once the walk has counted them (never every named cell's: 1,435 on the
+owner's catalog, more than an import batch's rows); the options are derived
 from the counts. When every change since the tally was read that moved a fact the options
 depend on moved only locations or file types of named rows, or the cells' names
 (`CatalogChangeLog.keyedOptionRows`), the read seeks those rows by key through the scope's own
 predicate (`CatalogStore.filterOptionsOfRows`; a row the scope no longer counts gives
-nothing), with the names when they moved (a scan of `place_cell`), and the projection patches
+nothing), with the names of those rows' cells, and of every cell the tally counts when the names
+moved, each by its key, and the projection patches
 the held tally in place in the step that applies the read's end, after checking it is still
 the tally the read was planned from. A re-read row the tally never counted means the scope's
 rows changed under it: the tally is dropped and read whole. A row id names a row while it

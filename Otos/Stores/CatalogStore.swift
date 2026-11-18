@@ -3390,9 +3390,9 @@ extension CatalogStore {
     }
 
     /// The options of `selection`'s sidebar row as each of its rows gives them
-    /// (`CatalogFilterOptionTally`), with the cells' names in the one language the catalog holds
-    /// names in, when it holds them in one: the whole read, which a keyed re-read then patches
-    /// (`filterOptionsOfRows`).
+    /// (`CatalogFilterOptionTally`), with the names of the cells they give, by each cell's key,
+    /// in the one language the catalog holds names in, when it holds them in one: the whole
+    /// read, which a keyed re-read then patches (`filterOptionsOfRows`).
     func filterOptionTally(
         for selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>,
@@ -3402,16 +3402,16 @@ extension CatalogStore {
         let row = selection.sidebarRow
         let language = placeNameLanguages.count == 1 ? placeNameLanguages.first : nil
         guard let scope = optionsScope(of: row, availableLibraryPaths: availableLibraryPaths) else {
-            return CatalogFilterOptionTally(names: [:], language: nil)
+            return CatalogFilterOptionTally(language: nil)
         }
         let timed = try await timedRead(reader(for: lane), operation: "filterOptions") { db in
-            var tally = try CatalogFilterOptionTally(
-                names: language.map { try CatalogQueryGateway.placeCellNames(language: $0, db: db) } ?? [:],
-                language: language
-            )
+            var tally = CatalogFilterOptionTally(language: language)
             // A scope that turns out to select nothing (a day with no photos) offers nothing.
             guard try CatalogQueryGateway.tallyFilterOptionRows(scope: scope, into: &tally, db: db) else {
-                return CatalogFilterOptionTally(names: [:], language: nil)
+                return CatalogFilterOptionTally(language: nil)
+            }
+            if let language {
+                tally.names = try CatalogQueryGateway.placeCellNames(of: tally.cells, language: language, db: db)
             }
             return tally
         }
@@ -3425,15 +3425,18 @@ extension CatalogStore {
         return timed.value
     }
 
-    /// What each of `changed` gives the options of `row` now, each by one seek of its key, and
-    /// the cells' names when `names`: what a change that names its rows re-reads (ADR 0005,
-    /// "Keyed re-reads"). A changed row the scope does not count gives no fact; a key with no
-    /// row gives nothing, since only a membership change removes a row and it reads the tally
-    /// whole. Nil when the row's scope is not a whole set of roots (Places, a day, an import, a
-    /// person), whose rows a key cannot test, and a whole read is owed.
+    /// What each of `changed` gives the options of `row` now, each by one seek of its key, and,
+    /// in `language`, the names of the cells those rows give and of `renamed` (the held tally's
+    /// cells, when the changes moved the cells' names), each by its key: what a change that
+    /// names its rows re-reads (ADR 0005, "Keyed re-reads"). A changed row the scope does not
+    /// count gives no fact; a key with no row gives nothing, since only a membership change
+    /// removes a row and it reads the tally whole. Nil when the row's scope is not a whole set
+    /// of roots (Places, a day, an import, a person), whose rows a key cannot test, and a whole
+    /// read is owed.
     func filterOptionsOfRows(
         _ changed: Set<MediaAssetID>,
-        names language: PlaceNameLanguage?,
+        namesIn language: PlaceNameLanguage?,
+        renamed: Set<PlaceCell>,
         for row: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>,
         lane: CatalogReadLane
@@ -3467,12 +3470,16 @@ extension CatalogStore {
                     }
                 }
             }
-            let names = try language.map { try CatalogQueryGateway.placeCellNames(language: $0, db: db) }
-            return CatalogFilterOptionRows(rows: rows, names: names)
+            guard let language else {
+                return CatalogFilterOptionRows(rows: rows, namedCells: [], names: [:])
+            }
+            let cells = renamed.union(rows.compactMap { $0.fact?.cell })
+            let names = try CatalogQueryGateway.placeCellNames(of: cells, language: language, db: db)
+            return CatalogFilterOptionRows(rows: rows, namedCells: cells, names: names)
         }
         OtosLog.catalog.noticeOperation("catalog.store.query.filterOptions", phase: "keyed", fields: [
             "row": row.diagnosticDescription, "changed": "\(changed.count)", "rows": "\(timed.value.rows.count)",
-            "names": "\(timed.value.names?.count ?? 0)", "waitMs": "\(timed.waitMs)", "execMs": "\(timed.execMs)",
+            "cells": "\(timed.value.namedCells.count)", "names": "\(timed.value.names.count)", "waitMs": "\(timed.waitMs)", "execMs": "\(timed.execMs)",
             "queryMs": "\(timed.totalMs)",
         ])
         return timed.value

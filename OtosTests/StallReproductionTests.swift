@@ -76,7 +76,7 @@ struct StallReproductionTests {
     /// is replayed with SQLite's counts of the rows it visited.
     @Test func everyWindowReadAndBackgroundReadIsMeasuredOnASmallCatalog() async throws {
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 0.01)
+        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 0.01, ownersPlaces: true)
         let report = try await StallReproduction.measure(catalog, in: directory, rounds: 1, readsStallLines: false)
         let renderSignatures = try #require(report.quiet.first { $0.name == "renderSignatureCandidates" })
         #expect(renderSignatures.returned == catalog.shape.renderSignaturesOwed)
@@ -88,6 +88,9 @@ struct StallReproductionTests {
         #expect(report.live.count == StallReproduction.scopeCount * 4)
         let unanswered = report.live.filter { !$0.answered }
         #expect(unanswered.isEmpty, "\(unanswered.count) window reads failed: \(report.summary(catalog))")
+        // Every read visits rows in proportion to what it answers, as at the owner's size: a
+        // read that stops being proportional fails every check, not only an on-demand run.
+        StallReproduction.expectProportionalVisits(report, catalog)
     }
 
     /// The requirement at the owner's size: while every background owner runs, no window read
@@ -103,44 +106,13 @@ struct StallReproductionTests {
         let unanswered = report.live.filter { !$0.answered }
         #expect(unanswered.isEmpty, "\(unanswered.count) window reads failed")
 
-        // A read outside the scope changes that is not a walk (`libraryVisitingReads`) visits
-        // rows in proportion to what it returns or asks for; a read by key (`rowsReadByKey`)
-        // visits the rows it joins for each.
-        for read in report.quiet where !read.isWindowRead && StallReproduction.libraryVisitingReads[read.name] == nil {
-            let perRow = StallReproduction.rowsReadByKey[read.name]?.rows ?? Self.visitsPerOwedRow
-            #expect(
-                read.visitedRows <= Int64(perRow * max(read.returned, read.limit)),
-                "\(read.name) visited \(read.visitedRows) rows to return \(read.returned)"
-            )
-        }
         // Window reads have their own readers (ADR 0002): a background read takes one
         // of `CatalogReadAdmission.backgroundReaders` turns before it enters the pool. No window
         // read waits for a connection longer than the allowance (the live store's stall
         // threshold), and none a second.
         let waitedWindowReads = report.stalls.filter { StallReproduction.windowOperations.contains($0.operation) }
         #expect(waitedWindowReads.isEmpty, "\(waitedWindowReads.count) window reads waited \(Self.windowReadAllowance) or more")
-        // A window read's work stays in proportion to what it answers, on any machine: the rows
-        // it visits are at most `visitsPerOwedRow` per row it returns or per row its scope holds.
-        // A read that applies the stack rule (the order read, and the imports' counts of what
-        // each batch shows) reads the stack candidates of the scope's roots (`stackLoops`),
-        // which the window holds across passes (ADR 0005); it reads each at most once per index.
-        for read in report.quiet where read.isWindowRead {
-            let stackVisits = read.visitedByLoop.filter { StallReproduction.stackLoops.contains($0.key) }.values.reduce(0, +)
-            let own = read.visitedRows - stackVisits
-            let bound = Int64(Self.visitsPerOwedRow * max(read.returned, read.limit, read.scopeRows))
-            #expect(own <= bound, "\(read.name) of \(read.scope) visited \(own) rows for \(read.returned) returned, \(read.scopeRows) in scope")
-            #expect(
-                stackVisits <= Int64(2 * catalog.shape.assets),
-                "\(read.name) of \(read.scope) read \(stackVisits) stack candidates"
-            )
-        }
-        // A walk for what is owed visits each row it walks at most once per index it joins,
-        // once per drain.
-        for read in report.quiet {
-            guard let walk = StallReproduction.libraryVisitingReads[read.name] else { continue }
-            let bound = Int64(walk.indexes * catalog.shape.assets + Self.visitsPerOwedRow * max(read.returned, read.limit))
-            #expect(read.visitedRows <= bound, "\(read.name) visited \(read.visitedRows) rows, more than once per drain (\(bound))")
-        }
+        StallReproduction.expectProportionalVisits(report, catalog)
     }
 }
 
@@ -181,6 +153,13 @@ enum StallReproduction {
     static let rowsReadByKey: [String: (rows: Int, joins: String)] = [
         "peopleGallery": (5, "person, key face and photo, newest face and photo"),
     ]
+    /// The loops of the text index's own lookups (`search_text_word`, FTS5): a query word's
+    /// seek of the index's segment directory and its configuration, read once per query word
+    /// whatever it matches. The rows it joins for each candidate the index returns are the
+    /// read's own.
+    static let textIndexLoops: Set<String> = [
+        "sqlite_autoindex_search_text_word_idx_1", "sqlite_autoindex_search_text_word_config_1",
+    ]
     /// The loops of an order read's stack read (`PhotoStackSQL.candidateQuery`).
     static let stackLoops: Set<String> = [
         "idx_media_asset_stack_candidate", "raw_folder", "pairing_folder", "idx_media_asset_burst",
@@ -191,7 +170,7 @@ enum StallReproduction {
 
     struct QuietRead {
         let name: String
-        let limit: Int
+        var limit: Int
         let returned: Int
         /// The window read's scope, and the rows its order returned: what an options or
         /// imports read is in proportion to.
@@ -203,6 +182,11 @@ enum StallReproduction {
         let sorts: Int64
         var isWindowRead: Bool {
             StallReproduction.windowOperations.contains(name)
+        }
+
+        /// Each loop's rows visited, most first.
+        var loops: String {
+            visitedByLoop.sorted { $0.value > $1.value }.map { "\($0.key):\($0.value)" }.joined(separator: ",")
         }
     }
 
@@ -228,6 +212,52 @@ enum StallReproduction {
         /// description writer's count their first).
         var wakes: [String: (heard: Int, wakes: Int)] = [:]
         var liveDuration: Duration = .zero
+    }
+
+    // MARK: - Bounds
+
+    /// Each read's rows visited, in proportion to what it answers, at any size:
+    /// - a read outside the scope changes that is not a walk (`libraryVisitingReads`) visits
+    ///   `visitsPerOwedRow` rows per row it returns or asks for; a read by key
+    ///   (`rowsReadByKey`) visits the rows it joins for each; a read through a full-text index
+    ///   (`textIndexLoops`) also seeks the index's own segment directory, at most once per query
+    ///   word, whatever it matches;
+    /// - a window read visits at most `visitsPerOwedRow` per row it returns or per row its
+    ///   scope holds. A read that applies the stack rule (the order read, and the imports'
+    ///   counts of what each batch shows) reads the stack candidates of the scope's roots
+    ///   (`stackLoops`), which the window holds across passes (ADR 0005); it reads each at most
+    ///   once per index;
+    /// - a walk for what is owed visits each row it walks at most once per index it joins, once
+    ///   per drain.
+    static func expectProportionalVisits(_ report: Report, _ catalog: OwnerShapedCatalog) {
+        let perOwedRow = StallReproductionTests.visitsPerOwedRow
+        for read in report.quiet where !read.isWindowRead && libraryVisitingReads[read.name] == nil {
+            let perRow = rowsReadByKey[read.name]?.rows ?? perOwedRow
+            let directory = read.visitedByLoop.filter { textIndexLoops.contains($0.key) }.values.reduce(0, +)
+            #expect(
+                read.visitedRows - directory <= Int64(perRow * max(read.returned, read.limit)),
+                "\(read.name) visited \(read.visitedRows - directory) rows to return \(read.returned): \(read.loops)"
+            )
+            #expect(
+                directory <= Int64(catalog.shape.textIndexDirectoryRows),
+                "\(read.name) read \(directory) rows of the text index's directory, which holds \(catalog.shape.textIndexDirectoryRows)"
+            )
+        }
+        for read in report.quiet where read.isWindowRead {
+            let stackVisits = read.visitedByLoop.filter { stackLoops.contains($0.key) }.values.reduce(0, +)
+            let own = read.visitedRows - stackVisits
+            let bound = Int64(perOwedRow * max(read.returned, read.limit, read.scopeRows))
+            #expect(
+                own <= bound,
+                "\(read.name) of \(read.scope) visited \(own) rows for \(read.returned) returned, \(read.scopeRows) in scope: \(read.loops)"
+            )
+            #expect(stackVisits <= Int64(2 * catalog.shape.assets), "\(read.name) of \(read.scope) read \(stackVisits) stack candidates")
+        }
+        for read in report.quiet {
+            guard let walk = libraryVisitingReads[read.name] else { continue }
+            let bound = Int64(walk.indexes * catalog.shape.assets + perOwedRow * max(read.returned, read.limit))
+            #expect(read.visitedRows <= bound, "\(read.name) visited \(read.visitedRows) rows, more than once per drain (\(bound))")
+        }
     }
 
     // MARK: - Measuring
@@ -310,8 +340,16 @@ enum StallReproduction {
         // What an empty search answer leaves out of the photos it is still reading (ADR 0048).
         try await replay("assetsWithNoThumbnailComing") { try await store.windowReads.assetsWithNoThumbnailComing().count }
         // A query's words, from the text index (ADR 0048): a word, and a prefix many readings hold.
+        // Each candidate the index returns is joined to its reading and asset by key, and the
+        // exact match decides it: the candidates are the rows the read asks for.
         for word in ["open", "ca"] {
-            try await replay("searchTextMatches.\(word)") { try await store.windowReads.searchTextMatches([SearchTextQuery(word)]).ids.count }
+            var candidates = 0
+            try await replay("searchTextMatches.\(word)") {
+                let matches = try await store.windowReads.searchTextMatches([SearchTextQuery(word)])
+                candidates = matches.candidates
+                return matches.ids.count
+            }
+            report.quiet[report.quiet.count - 1].limit = candidates
         }
         var involved: [MediaAssetID] = []
         try await replay("samePhotoCandidates") {
@@ -517,9 +555,8 @@ extension StallReproduction.Report {
             "op=stallReproduction.live loadAverage=\(StallReproduction.loadAverage()) durationMs=\(ms(liveDuration)) mirrorProbeMs=\(ms(mirrorProbe)) searchPasses=\(searchPasses) phases=\(phases.sorted { $0.key < $1.key }.map { "\($0.key):\(ms($0.value))" }.joined(separator: ","))",
         ]
         for read in quiet {
-            let loops = read.visitedByLoop.sorted { $0.value > $1.value }.prefix(3).map { "\($0.key):\($0.value)" }.joined(separator: ",")
             lines.append(
-                "op=stallReproduction.quiet read=\(read.name) limit=\(read.limit) returned=\(read.returned) ms=\(ms(read.answer)) visited=\(read.visitedRows) sorts=\(read.sorts) loops=\(loops)"
+                "op=stallReproduction.quiet read=\(read.name) limit=\(read.limit) returned=\(read.returned) ms=\(ms(read.answer)) visited=\(read.visitedRows) sorts=\(read.sorts) loops=\(read.loops)"
             )
         }
         for name in Set(live.map(\.name)).sorted() {
