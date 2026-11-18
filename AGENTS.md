@@ -44,10 +44,14 @@ design rules for user-facing surfaces; per-screen specs live beside it in
   supposed to use my production data for all read-only testing!"). Read-only work on it is
   expected, and nobody asks first: launching the installed app and looking at it, visiting
   its views, reading its unified log and crash reports, opening its catalog read-only
-  (`sqlite3 -readonly … ?mode=ro`) for schema, counts, plans and timings, and `stat`/`du` of
-  his libraries and app folders. What is never done there is anything that changes his data
+  (`sqlite3 -readonly … ?mode=ro`) for schema, counts, plans and timings, `stat`/`du` of
+  his libraries and app folders, and read-only requests (GET) to his Immich server with the
+  session token Otos stored in the Keychain (owner, 2026-11-18: "You are supposed to do read
+  only tests with my library including immich key"); the token is never printed or logged
+  and goes only to his own server. What is never done there is anything that changes his data
   or leaves state behind: no Move to Trash, Like or Dislike, naming or merging people,
-  import, erase, edit, reorganize or settings change; no write to the catalog; no copy or
+  import, erase, edit, reorganize or settings change; no write to the catalog or to his
+  Immich server; no copy or
   backup of it, and no build launched on a copy (a copy's roots are his real folders and
   devices); no reading a cloud-only file's bytes, which downloads it. An Otos the session
   launched is quit when the look is done, and the quit is confirmed (`pgrep -x Otos`).
