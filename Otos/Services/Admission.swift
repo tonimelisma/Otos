@@ -47,9 +47,14 @@ final nonisolated class Admission<Machine: AdmissionMachine>: Sendable {
     }
 
     private let state: Mutex<State>
+    /// Called with the machine after every step, inside the lock, so successive steps reach it
+    /// in their order: what a shell keeps in step with the machine (`LoadAdmission` tells the
+    /// background room the share a waiting load needs). It must not call this admission.
+    private let afterStep: (@Sendable (Machine) -> Void)?
 
-    init(_ machine: Machine) {
+    init(_ machine: Machine, afterStep: (@Sendable (Machine) -> Void)? = nil) {
         state = Mutex(State(machine: machine))
+        self.afterStep = afterStep
     }
 
     /// The machine as it is now: what a test reads to see what runs and what waits.
@@ -74,7 +79,7 @@ final nonisolated class Admission<Machine: AdmissionMachine>: Sendable {
                     if Task.isCancelled {
                         return Self.take([(request, false)], from: &state)
                     }
-                    return Self.step(Machine.requested(request, ask), in: &state)
+                    return step(Machine.requested(request, ask), in: &state)
                 }
                 Self.resume(resumptions)
             }
@@ -90,7 +95,7 @@ final nonisolated class Admission<Machine: AdmissionMachine>: Sendable {
     }
 
     func perform(_ event: Machine.Event) {
-        Self.resume(state.withLock { Self.step(event, in: &$0) })
+        Self.resume(state.withLock { step(event, in: &$0) })
     }
 
     /// Performs `event` and returns what `read` makes of the machine before and after it, in
@@ -98,7 +103,7 @@ final nonisolated class Admission<Machine: AdmissionMachine>: Sendable {
     func performReading<T>(_ event: Machine.Event, _ read: (Machine, Machine) -> T) -> T {
         let (resumptions, value) = state.withLock { state in
             let before = state.machine
-            let resumptions = Self.step(event, in: &state)
+            let resumptions = step(event, in: &state)
             return (resumptions, read(before, state.machine))
         }
         Self.resume(resumptions)
@@ -107,8 +112,10 @@ final nonisolated class Admission<Machine: AdmissionMachine>: Sendable {
 
     private typealias Resumption = (continuation: CheckedContinuation<Void, any Error>, granted: Bool)
 
-    private static func step(_ event: Machine.Event, in state: inout State) -> [Resumption] {
-        take(state.machine.handle(event).map(Machine.resolution(of:)), from: &state)
+    private func step(_ event: Machine.Event, in state: inout State) -> [Resumption] {
+        let resumptions = Self.take(state.machine.handle(event).map(Machine.resolution(of:)), from: &state)
+        afterStep?(state.machine)
+        return resumptions
     }
 
     private static func take(

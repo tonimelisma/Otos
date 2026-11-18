@@ -528,7 +528,7 @@ struct MaterializationCoordinatorTests {
             room: room
         )
         let background = Task { await coordinator.materialize(request("backlog.jpg", priority: .background)) }
-        try await waitUntil { await coordinator.status.heldBy == BackgroundHold.memoryWarning.rawValue }
+        try await waitUntil { await coordinator.status.heldBy == OwnerHold(.memoryWarning) }
         #expect(await coordinator.materialize(request("on-screen.jpg", priority: .interactive)).isMaterialized)
         #expect(started.withLock { $0 } == ["on-screen.jpg"])
 

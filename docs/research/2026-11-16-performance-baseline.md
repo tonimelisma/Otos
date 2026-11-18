@@ -413,8 +413,8 @@ A tour never runs while Otos is running and quits the app itself.
 
 Findings, not work.
 
-- **The room can dip the machine repeatedly; attributed, a fix merged, not yet measured on
-  the owner's library.** Both tours of a934ef17 dipped to memory-pressure warning (43.6 s of
+- **The room can dip the machine repeatedly; attributed, two fixes merged, the second not yet
+  measured on the owner's library.** Both tours of a934ef17 dipped to memory-pressure warning (43.6 s of
   624.3 s; once in the short tour). Attributed
   (`2026-11-17-launch-pressure-dips.md`): the first dip followed a description request from
   Otos's process that made the system load its 3B language model and image encoder into the
@@ -423,9 +423,14 @@ Findings, not work.
   3.7–5.6 s after a reopen restarted a cold description beside a People pass. The 12031093
   tours ran the same stack from 69–70 % available and stayed normal; a934ef17's began at
   59–63 %. Not proven: how much of the 1.5 GB is the model's own, and that the model service
-  drops its model at warning. A description request now takes a load turn (ADR 0055), a
-  reopen starts one load, and a load that ran into the hold starts again only into more room
-  than it took.
+  drops its model at warning. A description request now takes a load turn (ADR 0055) and a
+  reopen starts one load. The first fix re-admitted a load that ran into the hold once the
+  share exceeded the one at its grant: on installed b1429daa, launched at 45 % available, that
+  was still 128.4 s at warning over 13 dips in 617 s, every one after a description granted
+  at 28–54 % (`2026-11-17-launch-pressure-dips.md`, "After the fix"). Now every load is
+  admitted against the warning line (32 %) plus the room it has been seen to take, a
+  description from a floor of 35 points (67 %); on a machine as full as that session's, no
+  description is written, by the owner's decision.
 - **The idle drains an account backlog.** While idle the app drains a backlog of account photos
   that earlier builds never reached: 5,067 one-row enrichment write transactions in the launch
   tour of 12031093, about 0.2 CPU-seconds a photo. The re-reads those writes trigger are shown:

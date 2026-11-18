@@ -141,7 +141,7 @@ struct BackgroundRoomTests {
         try await waitUntil { admission.snapshot.waiting.count == 1 }
 
         room.deliver(Self.warning)
-        #expect(Set(admission.snapshot.pressureRaisers.keys) == [.description])
+        #expect(admission.snapshot.roomNeeds[.description]?.raises == 1)
         await request.open()
         try await described.value
         let again = Task { try await admission.run(.description) { order.withLock { $0.append(.description) } } }
@@ -152,15 +152,15 @@ struct BackgroundRoomTests {
         try await people.value
         try await again.value
         #expect(order.withLock { $0 } == [.description, .people, .description])
-        #expect(admission.snapshot.pressureRaisers.isEmpty, "a description that ran clean is not behind again")
+        #expect(admission.snapshot.roomNeeds[.description]?.raises == 1, "a raise is kept for the session")
     }
 
-    /// The live path of a load that raised the pressure: the kernel's share at its grant is
-    /// kept, the room's look goes on after the level is normal again while the share is no
-    /// larger, the owner's status names the wait, and the load starts in the step of the look
-    /// that reads more room than it took.
-    @Test func aLoadThatRaisedThePressureStartsAtTheLookThatFindsMoreRoom() async throws {
-        let kernel = ScriptedKernel(.normal, available: 60)
+    /// The live path of a description that raised the pressure: the kernel's shares at its
+    /// grant and at the warning are kept, the room's look goes on after the level is normal
+    /// again while the share is below the line plus what it took, the owner's status names the
+    /// wait with both shares, and the load starts in the step of the look that reads enough.
+    @Test func aLoadThatRaisedThePressureStartsAtTheLookThatFindsWhatItTook() async throws {
+        let kernel = ScriptedKernel(.normal, available: 70)
         let room = BackgroundRoom(memory: kernel.reader)
         let admission = LoadAdmission(isOpen: true, room: room)
         let request = ArrivalGate()
@@ -168,7 +168,8 @@ struct BackgroundRoomTests {
         await request.waitForArrivals(1)
         kernel.set(.warning, available: 25)
         #expect(room.hold(for: .download) == .memoryWarning)
-        #expect(admission.snapshot.pressureRaisers == [.description: 60])
+        // 32 + (70 − 25).
+        #expect(admission.snapshot.roomNeeds[.description] == LoadAdmissionMachine.RoomNeed(requiredPercent: 77, raises: 1))
         await request.open()
         try await first.value
 
@@ -176,17 +177,39 @@ struct BackgroundRoomTests {
         let again = Task { try await admission.run(.description) { ran.withLock { $0 = true } } }
         try await waitUntil { admission.snapshot.waiting.count == 1 }
         try await waitUntil { kernel.looking }
-        kernel.set(.normal, available: 55)
+        kernel.set(.normal, available: 76)
         kernel.tick()
         try await waitUntil { room.conditions.memory == .normal && kernel.looking }
-        #expect(admission.hold(for: .description) == .memoryHeadroom)
+        #expect(admission.hold(for: .description) == OwnerHold(.memoryHeadroom, requiredPercent: 77, availablePercent: 76))
         #expect(ran.withLock { $0 } == false)
 
-        kernel.set(.normal, available: 70)
+        kernel.set(.normal, available: 77)
         kernel.tick()
         try await again.value
         #expect(ran.withLock { $0 })
-        #expect(admission.snapshot.pressureRaisers.isEmpty)
+        #expect(admission.snapshot.roomNeeds[.description]?.requiredPercent == 77)
+        try await waitUntil { room.looksAgain == false }
+    }
+
+    /// A description whose cost was never seen waits from its first request for the floor:
+    /// the request alone makes the room look, and the look that reads the line plus the floor
+    /// starts it.
+    @Test func aFirstDescriptionWaitsForTheFloorFromItsRequest() async throws {
+        let kernel = ScriptedKernel(.normal, available: 50)
+        let room = BackgroundRoom(memory: kernel.reader)
+        let admission = LoadAdmission(isOpen: true, room: room)
+        #expect(room.looksAgain == false)
+        let ran = Mutex(false)
+        let described = Task { try await admission.run(.description) { ran.withLock { $0 = true } } }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
+        #expect(admission.hold(for: .description) == OwnerHold(.memoryHeadroom, requiredPercent: 67, availablePercent: 50))
+        try await waitUntil { kernel.looking }
+        #expect(ran.withLock { $0 } == false)
+
+        kernel.set(.normal, available: 67)
+        kernel.tick()
+        try await described.value
+        #expect(ran.withLock { $0 })
         try await waitUntil { room.looksAgain == false }
     }
 
@@ -200,14 +223,14 @@ struct BackgroundRoomTests {
         let order = Mutex<[BackgroundLoad]>([])
         let described = Task { try await admission.run(.description) { order.withLock { $0.append(.description) } } }
         try await waitUntil { admission.snapshot.waiting.count == 1 }
-        #expect(admission.hold(for: .description) == .userInApp)
+        #expect(admission.hold(for: .description) == OwnerHold(.userInApp))
         try await admission.run(.duplicates) { order.withLock { $0.append(.duplicates) } }
         #expect(order.withLock { $0 } == [.duplicates])
 
         room.deliver(.roomy)
         try await described.value
         #expect(order.withLock { $0 } == [.duplicates, .description])
-        #expect(admission.snapshot.pressureRaisers.isEmpty, "a hold that is not memory marks no load")
+        #expect(admission.snapshot.roomNeeds[.description]?.raises == 0, "a hold that is not memory marks no load")
     }
 
     /// The text reader starts no helper while the room holds text reading; the page stops

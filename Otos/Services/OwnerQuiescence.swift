@@ -173,6 +173,32 @@ nonisolated struct OwnerHeldRows: Equatable, Sendable {
     let count: Int?
 }
 
+/// What holds an owner's next unit, as its status names it (ADR 0057): the background room's
+/// hold, and, while a load waits for memory headroom (`BackgroundHold.memoryHeadroom`), the
+/// available share it needs and the share the kernel last reported, so a log reader sees why
+/// nothing starts.
+nonisolated struct OwnerHold: Equatable, Sendable {
+    let hold: BackgroundHold
+    var requiredPercent: Int?
+    var availablePercent: Int?
+
+    init(_ hold: BackgroundHold, requiredPercent: Int? = nil, availablePercent: Int? = nil) {
+        self.hold = hold
+        self.requiredPercent = requiredPercent
+        self.availablePercent = availablePercent
+    }
+
+    /// `heldBy=`, with `requiredPercent=` and `availablePercent=` for a headroom wait.
+    var fields: [String: String] {
+        var fields = ["heldBy": hold.rawValue]
+        if hold == .memoryHeadroom {
+            fields["requiredPercent"] = requiredPercent.map { "\($0)" } ?? "unknown"
+            fields["availablePercent"] = availablePercent.map { "\($0)" } ?? "unknown"
+        }
+        return fields
+    }
+}
+
 /// What an owner holds at one instant, quiescent or not: what a session that ends before its
 /// owners settle reports for each (`op=owners.status`), so "never quiescent" names the owner
 /// and what it was doing rather than a dash.
@@ -192,8 +218,8 @@ nonisolated struct OwnerStatus: Equatable, Sendable {
     let wake: OwnerWake?
     let work: OwnerWork
     /// What the background room holds this owner's next unit for, when it waits on it
-    /// (`BackgroundHold`, ADR 0057).
-    var heldBy: String?
+    /// (`OwnerHold`, ADR 0057).
+    var heldBy: OwnerHold?
     /// The rows it holds until a fact outside it ends their wait (`QuiescentOwner.heldRows`).
     var held: [OwnerHeldRows] = []
 
@@ -203,12 +229,14 @@ nonisolated struct OwnerStatus: Equatable, Sendable {
 
     /// The log fields of one owner that is not quiescent.
     var fields: [String: String] {
-        [
+        var fields = [
             "owner": owner, "owedRequests": "\(owedRequests)", "runningPasses": "\(runningPasses)",
             "unactedChanges": "\(unactedChanges)", "holdsWork": "\(holdsWork)", "backlog": "\(worksBacklog)",
             "wake": wake.map(\.description) ?? "none", "passes": "\(work.passes)", "reads": "\(work.reads)",
-            "rows": "\(work.rows)", "written": "\(work.written)", "heldBy": heldBy ?? "none",
+            "rows": "\(work.rows)", "written": "\(work.written)", "heldBy": "none",
         ]
+        fields.merge(heldBy?.fields ?? [:]) { _, held in held }
+        return fields
     }
 }
 
@@ -232,10 +260,10 @@ final nonisolated class OwnerActivity {
     /// The wake the owner keeps armed while it owes nothing now.
     var wake: OwnerWake?
     /// The background room's hold its next unit waits on, while it waits (ADR 0057).
-    var heldBy: String?
+    var heldBy: OwnerHold?
     /// Reads that hold as of the moment a status is taken, for an owner whose unit waits in an
     /// admission that the hold can change under (a description's turn, ADR 0055).
-    var heldNow: (@Sendable () -> String?)?
+    var heldNow: (@Sendable () -> OwnerHold?)?
     var work = OwnerWork()
     private var waiters: [UUID: (wait: OwnerWait, continuation: CheckedContinuation<OwnerQuiescence?, any Error>)] = [:]
 

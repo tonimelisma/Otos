@@ -646,6 +646,9 @@ class MachineTests(unittest.TestCase):
                                            "heldBy": "userInApp", "backlog": "true"})
         self.assertIn("held by userInApp", held)
         self.assertNotIn("held by", scorecard.describe_pending({"owner": "x", "heldBy": "none"}))
+        headroom = scorecard.describe_pending({"owner": "descriptions", "heldBy": "memoryHeadroom",
+                                               "requiredPercent": "67", "availablePercent": "45"})
+        self.assertIn("held by memoryHeadroom (needs 67 % available, 45 %)", headroom)
 
     def test_the_process_tree_adds_each_helpers_last_line_to_the_app(self):
         report, rows, out = run(pressure_session("normal", helpers=[(5.0, 1000, 60, 7), (10.0, 4000, 130, 7), (30.0, 2500, 90, 8)]))

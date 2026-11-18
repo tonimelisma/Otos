@@ -1008,7 +1008,11 @@ def describe_pending(owner):
         parts.append(f"wake {owner['wake']}")
     if owner.get("heldBy") not in (None, "none"):
         # The background room held its next unit (ADR 0057).
-        parts.append(f"held by {owner['heldBy']}")
+        held = f"held by {owner['heldBy']}"
+        if owner.get("requiredPercent") is not None:
+            # A load waiting for memory headroom: the share it needs, the share there was.
+            held += f" (needs {owner['requiredPercent']} % available, {owner.get('availablePercent', 'unknown')} %)"
+        parts.append(held)
     return f"{owner.get('owner')}: " + ", ".join(parts or ["not quiescent"])
 
 

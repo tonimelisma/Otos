@@ -90,17 +90,41 @@ publication to ADR 0005.
    (`docs/research/2026-11-17-launch-pressure-dips.md`). The writer runs each request inside
    `run(.description)`; a request is bounded (3–11 s), so its turn starves nothing, and the
    walk between requests holds no turn.
-8. **A load that raised the pressure is admitted against the room it took.** Loads run one at
-   a time, so the background load granted last when the room's memory hold begins (ADR 0057)
-   is the one the machine was carrying as the level rose (`op=load.admission
-   phase=pressureRaised`, with the kernel's available share at its grant). It starts again
-   only when the kernel reports more available memory than that share (`kern.memorystatus_level`,
-   read by the room; its status `heldBy=memoryHeadroom` meanwhile), and behind every other
-   waiting load (before only readying a search). Nothing reports a rise in available memory,
-   so while such a load waits the room reads the kernel on its 5 s look (ADR 0057). Once it
-   runs to its release with no hold beginning, it is no longer marked; the room reopens on
-   one load, the next at its release, so each is seen alone. A hold for any other reason
-   marks nothing, and an unread share admits it, behind the others.
+8. **A load is admitted against the room it has been seen to take.** A background load starts
+   only while the kernel reports at least its requirement available (`kern.memorystatus_level`,
+   read by the room; `LoadAdmissionMachine.RoomNeed`): the share at which the owner's Mac goes
+   to warning, 32 % (`BackgroundLoad.warningLinePercent`: across the tours of
+   `docs/research/2026-11-17-launch-pressure-dips.md` the kernel read warning at as much as
+   31 %, never above, and returned to normal only at 33 % or more), plus the load's cost.
+   - **A description starts the session at a cost floor of 35 points**
+     (`BackgroundLoad.costFloorPercent`), so it needs 67 %. Its cost lands outside Otos, in the
+     system language model's service, and nothing a process can read says whether the model is
+     still loaded, so every request is admitted as if cold. A cold request took 34 points in
+     the sandbox (63 % to 29 %) and 31 beside a People pass on the owner's library (59 % to
+     28 %); a launch at 69–70 % with the same cold request stayed normal (12031093); a warm
+     request took a few points. 35 covers the largest cold fall seen.
+   - **A grant that raised the pressure ratchets the requirement.** Loads run one at a time, so
+     the background load granted last when the room's memory hold begins (ADR 0057) is the one
+     the machine was carrying as the level rose (`op=load.admission phase=pressureRaised`).
+     Its measured cost is the share at its grant less the lowest share read from the grant to
+     the hold, the warning's read included. Its requirement becomes the largest of what it
+     was, the line plus that cost, and one point above the share it was granted at, so the
+     same grant is never repeated into the same room; it never falls in the session. A load
+     with no floor (People, duplicates, the index, a pairing, the derived folder) has no
+     requirement until a grant of it raises the pressure, then the same rule.
+   - A load that raised the pressure also waits behind every other waiting load (before only
+     readying a search) for the session; the room reopens on one load, the next at its
+     release, so each is seen alone. A hold for any other reason measures nothing, and an
+     unread share admits a load: an error is not a fact. Nothing reports a rise in available
+     memory, so while a load waits for its requirement the room reads the kernel on its 5 s
+     look (ADR 0057); every admission step tells the room the requirement a waiting load needs
+     (`Admission`'s `afterStep`), so a description's first request starts the look too. The
+     waiting owner's status names `heldBy=memoryHeadroom` with `requiredPercent=` and
+     `availablePercent=` (`OwnerHold`).
+   - **Owner decision (2026-11-17): descriptions are optional background work.** On a machine
+     that stays fuller than a description's requirement, no description is written in the
+     session; that is preferred over dipping the machine. They still run only while the person
+     is not in the app (ADR 0057).
 
 The walks of enrichment, render signatures, preview faces, place names, and the search
 index's embedding drain are not admitted; descriptions' walk is not, its requests are. Each holds one bounded page at a time and
@@ -121,10 +145,16 @@ starve every bounded load behind it.
 - **Admitting the walks page by page.** Each page is bounded already; the memory and the cold
   reads the tours measured are the bounded loads', and a description request's, which is
   admitted on its own (decision 7).
-- **A size for each load, fixed in advance.** Admitting a load only when the share exceeds a
-  stated cost needs the kernel's warning line and the model's resident size, neither of which
-  a process can read. The share a load started from when it raised the pressure is a fact the
-  kernel reported; the rule needs nothing else.
+- **Re-admitting a load that raised the pressure once the share exceeds the one it was
+  granted at** (#941). On installed b1429daa, from 45 % available at launch, a description was
+  granted at 30–54 % thirteen times and twelve warnings followed one within about 5 s, 128.4 s
+  at warning in 617 s: each re-admission a few points higher fell back below the line, since
+  the bar did not cover what a request costs.
+- **A size for each load read from the model.** The model's resident size and whether it is
+  loaded are not readable by a process; the line and the costs are what the kernel reported.
+- **Lowering the requirement after a clean run.** A warm request costs a few points, but the
+  next one may be cold; a requirement that falls re-admits the request into the room it ran
+  out of.
 - **Only ordering a load that raised the pressure behind the others.** In a sandbox tour of a
   library with no faces, People passes took milliseconds and the description request was the
   only heavy load; every reopen re-granted it at once and the machine went back to warning
@@ -149,8 +179,10 @@ starve every bounded load behind it.
   load that ran into a memory hold.
 - A description waits for one running load, at most a People pass; with People passes asked
   continuously, requests alternate with them, so descriptions per minute fall while People
-  works. A description that took the machine to warning waits until the machine has more
-  room than it started with; on a machine that stays fuller, no description is written in
-  that session.
+  works. A description starts only with 67 % available or what it was seen to take above the
+  warning line; on a machine that stays fuller, no description is written in that session
+  (the owner's decision, decision 8), and the room reads the kernel every 5 s while one waits.
+  A heavy load that raised the pressure starts in the background only with the room it took,
+  for the session; the load a view needs starts whatever the room holds.
 - A test that makes an owner alone gets an open admission of its own; the window's owners
   share the window's.

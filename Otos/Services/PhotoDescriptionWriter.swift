@@ -27,6 +27,11 @@ import ImageIO
 /// another heavy load. Its turn waits for the background room (ADR 0057): while the person is
 /// in the app, or the machine is short of memory, hot, or in Low Power Mode, the walk waits
 /// there, its status naming the hold (`heldBy`), and goes on in the step that opens the room.
+/// A request is admitted only while the kernel reports at least the available share a
+/// description has been seen to take above the warning line, or its cost floor before one is
+/// seen (`LoadAdmissionMachine.RoomNeed`); meanwhile the status names `memoryHeadroom` with the
+/// share required and the share available. Descriptions are optional background work: on a
+/// machine that stays fuller than that, none is written in the session.
 ///
 /// One loop, woken by a doorbell (ADR 0032 rule 3) that two sources ring: a Store change of a
 /// kind its walk reads (`inputs`: a still's faces and people, place names, capture time,
@@ -362,8 +367,8 @@ actor PhotoDescriptionWriter: QuiescentOwner {
             // The turn ends the wait; the candidate is still the one read, and its write lands
             // only while its facts are those described.
             // While the request waits for its turn, the status names what holds it as of the
-            // moment it is read: a room's hold, or the room it took last time.
-            activity.heldNow = { [admission] in admission.hold(for: .description)?.rawValue }
+            // moment it is read: a room's hold, or the share it needs and the share there is.
+            activity.heldNow = { [admission] in admission.hold(for: .description) }
             let reading: Reading
             let start: ContinuousClock.Instant
             do {

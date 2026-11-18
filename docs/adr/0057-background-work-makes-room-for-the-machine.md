@@ -91,13 +91,17 @@ instruments to ADR 0015.
      transfers at once. The room adds the hold, not a smaller cap: no measurement shows a
      cap below four costs less per byte hashed.
    - Heavy loads: one at a time (ADR 0055), a description request among them.
-7. **A reopen starts one load, and not the one that raised the pressure.** The held loads
-   resume one at a time (ADR 0055's single turn), and the load granted last when the memory
-   hold began waits for more available memory than it started with, behind the others (ADR
-   0055, decision 8), so the room sees each load alone. The room keeps the kernel's
-   available share from each read and, while a load waits for a larger one
-   (`wantHeadroom(above:)`), reads it on the same 5 s look (`time: poll`: nothing reports a
-   rise), telling its observers in the step of the read that finds it. On a934ef17 every reopen restarted a description and a People pass together, and the
+7. **A reopen starts one load, and not the one that raised the pressure; a load starts only
+   into the room it takes.** The held loads resume one at a time (ADR 0055's single turn).
+   A level read normal is not room enough for a load that costs more than the margin above
+   the warning line: `LoadAdmission` admits each load against the share it has been seen to
+   take above that line, a description from a cost floor before any is seen (ADR 0055,
+   decision 8), and the load that raised the pressure waits behind the others. The room keeps
+   the kernel's available share from each read and, while a load waits for its requirement
+   (`wantHeadroom(atLeast:)`, told after every admission step), reads it on the same 5 s
+   look (`time: poll`: nothing reports a rise), telling its observers in the step of the read
+   that reaches it. On a machine that stays fuller, the room keeps that look for the session
+   (one `sysctl` read each 5 s) and no description starts. On a934ef17 every reopen restarted a description and a People pass together, and the
    machine went back to warning 3.7–5.6 s later, four times
    (`docs/research/2026-11-17-launch-pressure-dips.md`). Text reading (one helper, 80–169 MB)
    and downloads (the file cache) reopen in the same step: neither was the cost measured.
@@ -185,7 +189,9 @@ minute (ADR 0053), as before. Recorded in ADR 0009 and ADR 0053 too.
   source report is `phase=sourceReport` beside the kernel's level. The scorecard's MACHINE
   section reads the launch and changed lines, so a level the source never announced is in it.
 - The backlog drains only while the machine has room: on a machine that sits at `warning`,
-  it waits. Rows hashed and described per minute are lower on a loaded machine.
+  it waits, and descriptions wait on any machine with less available than a description
+  takes (67 % before one is seen; the owner's decision that descriptions are optional, ADR
+  0055 decision 8). Rows hashed and described per minute are lower on a loaded machine.
 - A test scripts the conditions (`BackgroundRoom(conditions:)`, `deliver(_:)`), and the
   kernel and its looks (`BackgroundRoom(memory:)` with a scripted `MemoryPressureReader`);
   owners made alone get a roomy room with no reader, so every existing owner test runs as

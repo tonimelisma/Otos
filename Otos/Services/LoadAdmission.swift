@@ -50,6 +50,26 @@ nonisolated enum BackgroundLoad: String, CaseIterable, Sendable {
         self == .searchPrepare
     }
 
+    /// The kernel's available share (percent) below which the owner's Mac has gone to
+    /// memory-pressure warning: across the tours of `docs/research/2026-11-17-launch-pressure-dips.md`
+    /// the kernel read warning at as much as 31 % available, never above, and returned to normal
+    /// only at 33 % or more. A load is admitted against this line plus what it costs
+    /// (`LoadAdmissionMachine.RoomNeed`).
+    static let warningLinePercent = 32
+
+    /// What a load is taken to cost the machine, in points of the kernel's available share,
+    /// before any grant of it raised the pressure in the session; nil for a load whose cost is
+    /// learned only when it raises the pressure.
+    ///
+    /// A description's cost lands outside Otos, in the system language model's service, and no
+    /// fact a process can read says whether the model is still loaded: a cold request took the
+    /// machine from 63 % to 29 % available (34 points) in the sandbox, from 59 % to 28 % beside
+    /// a People pass on the owner's library, and from 70 % to above the line without a dip on
+    /// 12031093, while warm requests took a few points. The floor covers the cold load: 35.
+    var costFloorPercent: Int? {
+        self == .description ? 35 : nil
+    }
+
     /// The load a query's view cannot show its answer without: a search needs the index, and
     /// People, a person, Duplicates and a group need their owner's build. Nil for the rest.
     static func needed(by descriptor: CatalogQueryDescriptor) -> BackgroundLoad? {
@@ -97,16 +117,21 @@ nonisolated extension TaskPriority {
 /// the rest start in the step that opens the room — one, since one runs at a time, and the
 /// next at its release.
 ///
-/// When the room's memory hold begins, the background load granted last is the one that ran
-/// into it (`pressureRaisers`, with the kernel's available share at its grant): loads run one
-/// at a time, so it is the load the machine was carrying when the level rose. It is admitted
-/// against the room it took: it starts again only when the kernel reports more available
-/// memory than it started with then (`headroomWanted` asks the room to read the kernel until
-/// it does), and behind every other waiting load, so the room reopens on the loads that did
-/// not raise the pressure and sees each alone. Once it runs to its release with no hold
-/// beginning, it is no longer marked. An unread share admits it, behind the others: an error
-/// is not a fact. `shutdown` refuses every waiting load and every later request, and grants
-/// nothing again.
+/// A background load is admitted against the room it has been seen to take (`roomNeeds`): it
+/// starts only while the kernel reports at least `RoomNeed.requiredPercent` available, the
+/// warning line plus its cost. A description starts the session at its cost floor
+/// (`BackgroundLoad.costFloorPercent`); another load has no requirement until it raises the
+/// pressure. When the room's memory hold begins, the background load granted last is the one
+/// that ran into it: loads run one at a time, so it is the load the machine was carrying when
+/// the level rose. Its measured cost is the share at its grant less the lowest share read
+/// since, the hold's own read included, and its requirement ratchets to the largest of what it
+/// was, the line plus that cost, and one point above the share it was granted at — so a grant
+/// that raised the pressure is never repeated into the same room. The requirement never falls
+/// in the session. Such a load also waits behind every other waiting load, so the room reopens
+/// on the loads that did not raise the pressure and sees each alone. `headroomRequired` asks
+/// the room to read the kernel until the share reaches the requirement. An unread share admits
+/// a load: an error is not a fact. `shutdown` refuses every waiting load and every later
+/// request, and grants nothing again.
 nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
     typealias Request = AdmissionRequest
 
@@ -177,32 +202,65 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
     private(set) var room = LoadRoomHolds.open
     /// Loads granted, by kind: what a test counts to see a held load start exactly once.
     private(set) var granted: [BackgroundLoad: Int] = [:]
-    /// The background load granted most recently, the available share it was granted into,
+    /// The background load granted most recently, the available shares read since its grant,
     /// and whether a memory hold began since.
     private(set) var lastGranted: LastGrant?
-    /// Loads that ran into the room's last memory holds, each with the kernel's available
-    /// share (percent) at the grant that ran into it: it starts again only with more.
-    private(set) var pressureRaisers: [BackgroundLoad: Int?] = [:]
+    /// What each load needs of the room to start, as learned in this session: a description
+    /// from the start (its cost floor), another load once a grant of it raised the pressure.
+    private(set) var roomNeeds: [BackgroundLoad: RoomNeed]
 
     struct LastGrant: Equatable, Sendable {
         let load: BackgroundLoad
+        /// The kernel's available share (percent) at the grant, or nil unread.
         let availablePercent: Int?
+        /// The lowest share read from the grant until a memory hold began, or nil unread.
+        var lowestPercent: Int?
         var ranIntoHold: Bool
     }
 
-    /// The available share above which a waiting load that raised the pressure may start:
-    /// the smallest such need not met now, or nil when none waits on one. The shell asks the
-    /// room to read the kernel until the share passes it, since nothing reports a rise.
-    var headroomWanted: Int? {
+    /// What a load needs of the room to start.
+    struct RoomNeed: Equatable, Sendable {
+        /// The kernel's available share (percent) at or above which it may start, or nil when
+        /// no read share gave one.
+        var requiredPercent: Int?
+        /// How many of its grants raised the pressure in this session.
+        var raises = 0
+
+        /// A load's need before any grant of it raised the pressure: the warning line plus its
+        /// cost floor, or nil for a load without one.
+        static func initial(for load: BackgroundLoad) -> RoomNeed? {
+            load.costFloorPercent.map { RoomNeed(requiredPercent: BackgroundLoad.warningLinePercent + $0) }
+        }
+
+        /// The need after `grant` raised the pressure: the largest of the requirement before,
+        /// the warning line plus the cost it was seen to take, and one point above the share it
+        /// was granted at. A grant whose share was unread measures nothing and moves nothing.
+        func raised(by grant: LastGrant) -> RoomNeed {
+            var required = requiredPercent
+            if let granted = grant.availablePercent {
+                let measured = grant.lowestPercent.map { BackgroundLoad.warningLinePercent + granted - $0 }
+                required = [required, measured, granted + 1].compactMap(\.self).max()
+            }
+            return RoomNeed(requiredPercent: required, raises: raises + 1)
+        }
+    }
+
+    /// The available share a waiting load needs and the room does not give now: the smallest
+    /// such requirement among loads the room does not hold, or nil when none waits on one. The
+    /// shell asks the room to read the kernel until the share reaches it, since nothing reports
+    /// a rise.
+    var headroomRequired: Int? {
         waiting.compactMap { waiting -> Int? in
-            guard room.hold(for: waiting.load) == nil, let need = pressureRaisers[waiting.load] ?? nil,
-                  !hasHeadroom(for: waiting.load) else { return nil }
-            return need
+            guard room.hold(for: waiting.load) == nil, !hasHeadroom(for: waiting.load) else { return nil }
+            return roomNeeds[waiting.load]?.requiredPercent
         }.min()
     }
 
     init(isOpen: Bool = false) {
         self.isOpen = isOpen
+        roomNeeds = Dictionary(uniqueKeysWithValues: BackgroundLoad.allCases.compactMap { load in
+            RoomNeed.initial(for: load).map { (load, $0) }
+        })
     }
 
     mutating func handle(_ event: Event) -> [Effect] {
@@ -228,10 +286,6 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
         case let .release(request):
             if let ended = running, ended.request == request {
                 running = nil
-                // A load that ran to its release with no hold beginning is not behind again.
-                if let last = lastGranted, last.load == ended.load, !last.ranIntoHold {
-                    pressureRaisers[ended.load] = nil
-                }
             } else if let index = runningForUser.firstIndex(where: { $0.request == request }) {
                 runningForUser.remove(at: index)
             } else {
@@ -240,9 +294,17 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
         case let .want(load):
             wanted = load
         case let .room(holds):
-            if holds.memory, !room.memory, let last = lastGranted {
-                pressureRaisers[last.load] = .some(last.availablePercent)
-                lastGranted?.ranIntoHold = true
+            if var last = lastGranted, !last.ranIntoHold {
+                if let available = holds.availablePercent {
+                    last.lowestPercent = min(last.lowestPercent ?? available, available)
+                }
+                // Each grant raises the pressure at most once: a later hold with no grant
+                // between is the same room, not a new cost.
+                if holds.memory, !room.memory {
+                    last.ranIntoHold = true
+                    roomNeeds[last.load] = (roomNeeds[last.load] ?? RoomNeed()).raised(by: last)
+                }
+                lastGranted = last
             }
             room = holds
         case .shutdown:
@@ -258,9 +320,8 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
     private mutating func grantIfIdle() -> [Effect] {
         guard isOpen, !isShutDown, running == nil, runningForUser.isEmpty, !waiting.isEmpty else { return [] }
         // The load the view cannot show its answer without starts whatever the room holds;
-        // any other waits while the room holds its kind, a load that ran into a memory hold
-        // waits for more room than it took, and it, or one that runs last, waits behind the
-        // rest.
+        // any other waits while the room holds its kind or gives less than it needs, and one
+        // that raised the pressure, or one that runs last, waits behind the rest.
         let wantedIndex = wanted.flatMap { load in waiting.firstIndex { $0.load == load } }
         let startable = waiting.indices.filter {
             room.hold(for: waiting[$0].load) == nil && hasHeadroom(for: waiting[$0].load)
@@ -272,24 +333,27 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
         let next = waiting.remove(at: index)
         running = next
         granted[next.load, default: 0] += 1
-        lastGranted = LastGrant(load: next.load, availablePercent: room.availablePercent, ranIntoHold: false)
+        lastGranted = LastGrant(
+            load: next.load, availablePercent: room.availablePercent, lowestPercent: room.availablePercent,
+            ranIntoHold: false
+        )
         return [.grant(next.request, next.load)]
     }
 
-    /// Whether the kernel now reports more available memory than `load` started with when it
-    /// raised the pressure. True for a load that never did, and when either share is unread.
-    private func hasHeadroom(for load: BackgroundLoad) -> Bool {
-        guard let need = pressureRaisers[load] ?? nil, let available = room.availablePercent else { return true }
-        return available > need
+    /// Whether the kernel now reports at least the share `load` needs. True for a load with no
+    /// requirement, and when the share is unread.
+    func hasHeadroom(for load: BackgroundLoad) -> Bool {
+        guard let required = roomNeeds[load]?.requiredPercent, let available = room.availablePercent else { return true }
+        return available >= required
     }
 
     /// Where a waiting load stands among the startable ones: those asked for first, then
-    /// those that ran into a memory hold, then readying a search.
+    /// those that raised the pressure in this session, then readying a search.
     private func order(of load: BackgroundLoad) -> Int {
         if load.runsLast {
             return 2
         }
-        return pressureRaisers[load] != nil ? 1 : 0
+        return (roomNeeds[load]?.raises ?? 0) > 0 ? 1 : 0
     }
 }
 
@@ -376,7 +440,13 @@ final nonisolated class LoadAdmission: Sendable {
         room: BackgroundRoom? = nil,
         footprint: @escaping @Sendable () -> UInt64? = ProcessResourceSample.currentFootprintBytes
     ) {
-        let admission = Admission(LoadAdmissionMachine(isOpen: isOpen))
+        // Every step tells the room the share a waiting load needs, in the step's order: a
+        // request that waits for headroom, a release that leaves one first in line, a read
+        // that gives one enough. Nothing reports a rise in available memory, so the room
+        // reads the kernel on its look while a requirement stands unmet (ADR 0057).
+        let admission = Admission(LoadAdmissionMachine(isOpen: isOpen)) { [weak room] machine in
+            room?.wantHeadroom(atLeast: machine.headroomRequired)
+        }
         self.admission = admission
         self.footprint = footprint
         self.room = room
@@ -433,8 +503,6 @@ final nonisolated class LoadAdmission: Sendable {
         defer {
             askRoom()
             admission.release(request)
-            // A release can leave a load that raised the pressure first in line.
-            room?.wantHeadroom(above: admission.machine.headroomWanted)
             // The footprint each load leaves: memory a load freed stays counted until reused,
             // and asking malloc to return it returns nothing on macOS 27
             // (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). Read once the
@@ -454,15 +522,18 @@ final nonisolated class LoadAdmission: Sendable {
 
     /// Why `load` would wait now, or nil: what an owner names in its status while it waits
     /// (`heldBy`). The room's hold for its kind (reading the kernel's level first), else
-    /// `memoryHeadroom` while it waits for more room than it took when it raised the pressure.
-    func hold(for load: BackgroundLoad) -> BackgroundHold? {
+    /// `memoryHeadroom`, with the share it needs and the share the kernel last reported, while
+    /// the room gives less than it has been seen to take.
+    func hold(for load: BackgroundLoad) -> OwnerHold? {
         if let hold = room?.hold(for: load.work) {
-            return hold
+            return OwnerHold(hold)
         }
         let machine = admission.machine
-        guard let need = machine.pressureRaisers[load] ?? nil, let available = machine.room.availablePercent,
-              available <= need else { return nil }
-        return .memoryHeadroom
+        guard !machine.hasHeadroom(for: load) else { return nil }
+        return OwnerHold(
+            .memoryHeadroom, requiredPercent: machine.roomNeeds[load]?.requiredPercent,
+            availablePercent: machine.room.availablePercent
+        )
     }
 
     /// Tells the machine what the room holds as of now: the room reads the kernel's level for
@@ -473,21 +544,24 @@ final nonisolated class LoadAdmission: Sendable {
         Self.tell(admission, room)
     }
 
-    /// Performs the room's holds and share, logs each load the machine found had run into a
-    /// memory hold that began in this step (`op=load.admission phase=pressureRaised`), and asks
-    /// the room for the share a waiting load needs.
+    /// Performs the room's holds and share, and logs the grant the machine found had raised
+    /// the pressure in this step (`op=load.admission phase=pressureRaised`) with the shares it
+    /// was measured between and the requirement it now has.
     private static func tell(_ admission: Admission<LoadAdmissionMachine>, _ room: BackgroundRoom) {
         let holds = LoadRoomHolds(room.conditions, availablePercent: room.availablePercent)
-        let (raised, wanted) = admission.performReading(.room(holds)) { before, after in
-            (after.pressureRaisers.filter { before.pressureRaisers[$0.key] == nil }, after.headroomWanted)
+        let raised = admission.performReading(.room(holds)) { before, after -> (LoadAdmissionMachine.LastGrant, LoadAdmissionMachine.RoomNeed)? in
+            guard let grant = after.lastGranted, let need = after.roomNeeds[grant.load],
+                  need.raises > (before.roomNeeds[grant.load]?.raises ?? 0) else { return nil }
+            return (grant, need)
         }
-        for (load, available) in raised.sorted(by: { $0.key.launchRank < $1.key.launchRank }) {
-            OtosLog.performance.noticeOperation("load.admission", phase: "pressureRaised", fields: [
-                "load": load.rawValue, "memory": holds.heavyLoad?.rawValue ?? "open",
-                "availableAtGrant": available.map { "\($0)" } ?? "unknown",
-                "available": holds.availablePercent.map { "\($0)" } ?? "unknown",
-            ])
-        }
-        room.wantHeadroom(above: wanted)
+        guard let (grant, need) = raised else { return }
+        OtosLog.performance.noticeOperation("load.admission", phase: "pressureRaised", fields: [
+            "load": grant.load.rawValue, "memory": holds.heavyLoad?.rawValue ?? "open",
+            "availableAtGrant": grant.availablePercent.map { "\($0)" } ?? "unknown",
+            "lowestAvailable": grant.lowestPercent.map { "\($0)" } ?? "unknown",
+            "available": holds.availablePercent.map { "\($0)" } ?? "unknown",
+            "requiredPercent": need.requiredPercent.map { "\($0)" } ?? "unknown",
+            "raises": "\(need.raises)",
+        ])
     }
 }

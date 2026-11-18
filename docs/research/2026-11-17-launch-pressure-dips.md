@@ -115,6 +115,72 @@ So the first cold request still takes a machine at 63–65 % available to warnin
 process can read says in advance what the model will take. What the fix removes is the
 repetition.
 
+## After the fix: re-admitted a few points higher, it dipped again (installed b1429daa)
+
+A read-only idle tour of the installed b1429daa on the owner's library (617.3 s, launched at
+45 % available) was at warning for 128.4 s across 13 dips; `memory pressure caused` failed.
+From the app's own log of that session, seconds from launch, the last grant before each
+warning and the kernel's shares:
+
+| Warning (s) | Available at warning | Last grant before it | Share at that grant |
+| --- | --- | --- | --- |
+| 13.1 | 31 % | description, 12.0 | 40 % |
+| 34.5 | 31 % | description, 30.5 (duplicates 30.2, People 30.3 before it) | 52 % at the reopen |
+| 48.2 | 27 % | description, 45.0 | 54 % |
+| 67.7 | 25 % | description, 64.7 | 45 % at the reopen |
+| 122.0 | 28 % | description, 117.8 | 30 % |
+| 129.9 | 26 % | description, 127.3 | 50 % |
+| 151.2 | 28 % | description, 149.4 | 28 % |
+| 165.3 | 29 % | description, 161.4 | 50 % |
+| 193.0 | 27 % | description, 188.1 | 30 % |
+| 201.6 | 24 % | description, 198.2 | 42 % |
+| 498.9 | 27 % | description, 494.3 | not logged |
+| 554.9 | 31 % | description, 551.1 | not logged |
+| 589.5 | 31 % | description, 584.7 | not logged |
+
+(A share is the `availableAtGrant` of a `phase=pressureRaised` line, else the last
+`op=system.pressure` read before the grant.) Every warning's last grant was a description;
+the other loads granted in the session (People and duplicates at 28.3–30.3 s and 508.9–517.4 s,
+the mirror pairing and the derived folder at 11.1 s and 613.4 s) were each followed by a
+description before any warning, and none by a warning of its own: no other load shows the
+pattern. #941's rule re-admitted the description once the share exceeded the one at its
+grant, and the first raise was measured at 40 % and later ones at 28–30 %, so the bar sat
+below the warning line: a request granted at 30 % had nowhere to fall. The kernel read
+warning at 24–31 % available, and returned to normal at 33–54 %, in this session; in the
+sandbox tours above, warning at 23–29 % and normal again at 42–57 %. The level stays normal
+below that while it falls (grants at 28 % and 30 % were made at normal), so no share above
+31 % was read at warning, and the line on this Mac is taken as 32 %.
+
+## The rule that follows
+
+A load is admitted against the line plus the room it has been seen to take (ADR 0055,
+decision 8): the share at its grant less the lowest share read until the hold it raised, and
+for a description, before any is seen, a floor of 35 points (the cold loads above took 31 and
+34 points; 12031093's cold request from 69–70 % did not dip). A description therefore needs
+67 % available. On the owner's machine, which launched at 45 % and stayed between 24 % and
+54 %, no description is written in such a session; that is the owner's decision
+(descriptions are optional background work).
+
+## The sandbox tour, before and after the rule
+
+`script/scorecard.sh --tour --dev --optimized --seed 160000 --seed-media small`, one tour on
+main b1429daa and one on the rule's tree, back to back on a machine whose share moved between
+them:
+
+| Tree | Available at launch | Session | Dips | Seconds at warning | Descriptions written | `memory pressure caused` |
+| --- | --- | --- | --- | --- | --- | --- |
+| b1429daa | 51 % | 155.5 s | 1 | 10.1 | 1 | FAIL |
+| the rule | 59 % | 157.8 s | 0 | 0.0 | 0 | PASS |
+
+On b1429daa the first description was granted at 132.7 s at 52 % available, took 11,283 ms,
+and the kernel went to warning at 144.0 s, 28 % (`phase=pressureRaised availableAtGrant=52
+available=28`); the room reopened at 154.1 s at 54 % and the description was granted again
+0.5 s later, above 52 %, as the session ended: the re-admission the rule removes. On the
+rule's tree no description was granted; the writer's last status was `heldBy=memoryHeadroom`,
+67 % required, 54 % available, and the machine stayed normal. Both tours were shorter than
+the 273.6 s before-run above, and neither machine state reached 67 %, so a grant under the
+rule was not observed in the sandbox; the machine tests cover it.
+
 ## What follows for the design (ADR 0055, ADR 0057)
 
 - A description request is a bounded load of the kind ADR 0055 admits: cold, it makes the
@@ -122,9 +188,9 @@ repetition.
   never stacks with a People pass, a duplicates build or the search index's build, at launch
   or at a reopen.
 - After a hold, the held loads resume one at a time (one turn), and the load the room let in
-  last before the level rose waits until the kernel reports more available memory than it
-  started with, behind the others, so a load that raised the pressure is not started again
-  into the same room.
+  last before the level rose waits behind the others. Every background load starts only into
+  the room it has been seen to take above the warning line, a description from a cost floor,
+  so a load that raised the pressure is not started again into the same room.
 - Reopening waits on the kernel's level. Neither tour's source ever reported (`source=none` on
   every change), so the room's 5 s look stays where nothing will report; when the source
   has reported the rise, the kernel owes it the return to normal and the room waits for that

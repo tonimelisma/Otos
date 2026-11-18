@@ -92,8 +92,8 @@ nonisolated enum BackgroundHold: String, Sendable {
     case thermal
     case lowPower
     case userInApp
-    /// A heavy load that ran into the room's last memory hold waits for the kernel to report
-    /// more available memory than it started with then (`LoadAdmission`, ADR 0055).
+    /// A load waits for the kernel to report the available share it has been seen to take
+    /// above the warning line, or its cost floor (`LoadAdmissionMachine.RoomNeed`, ADR 0055).
     case memoryHeadroom
 }
 
@@ -152,7 +152,7 @@ nonisolated enum MemoryPressureRead: String, Sendable {
 /// while, and only while, the level it holds is above normal: one loop, woken by a doorbell
 /// rung when the level rises, holding the room weakly and ending with it. The same loop reads
 /// the kernel while a load waits for more available memory than the last read gave
-/// (`wantHeadroom(above:)`, `LoadAdmission`), and the read that finds more tells every
+/// (`wantHeadroom(atLeast:)`, `LoadAdmission`), and the read that finds enough tells every
 /// observer. Without a reader (a test's scripted room), the source's report is the level.
 ///
 /// Every owner of heavy work asks before it starts a unit: a serial owner waits in
@@ -195,9 +195,9 @@ final nonisolated class BackgroundRoom: Sendable {
         var sourceOwesReturn = false
         /// The kernel's available share (percent) at the last read that gave one.
         var available: Int?
-        /// The share above which a waiting load may start (`wantHeadroom(above:)`): the room
-        /// reads the kernel on its look while the share is at or below it.
-        var headroomWanted: Int?
+        /// The share at which a waiting load may start (`wantHeadroom(atLeast:)`): the room
+        /// reads the kernel on its look while the share is below it.
+        var headroomRequired: Int?
         /// How many times the kernel's level was read: what a test counts.
         var kernelReads = 0
         /// The loop that reads a held level again.
@@ -275,8 +275,8 @@ final nonisolated class BackgroundRoom: Sendable {
         if state.conditions.memory != .normal, !state.sourceOwesReturn {
             return true
         }
-        guard let wanted = state.headroomWanted, let available = state.available else { return false }
-        return available <= wanted
+        guard let required = state.headroomRequired, let available = state.available else { return false }
+        return available < required
     }
 
     /// The kernel's available memory share (percent) at the room's last read, or nil unread.
@@ -284,12 +284,12 @@ final nonisolated class BackgroundRoom: Sendable {
         state.withLock { $0.available }
     }
 
-    /// A load waits until the kernel reports more than `percent` available (nil: none waits).
-    /// While the share read last is at or below it, the room reads the kernel on its look,
-    /// since nothing reports a rise; the read that finds it above tells every observer.
-    func wantHeadroom(above percent: Int?) {
+    /// A load waits until the kernel reports at least `percent` available (nil: none waits).
+    /// While the share read last is below it, the room reads the kernel on its look, since
+    /// nothing reports a rise; the read that finds it reached tells every observer.
+    func wantHeadroom(atLeast percent: Int?) {
         let look = state.withLock { state -> Bool in
-            state.headroomWanted = percent
+            state.headroomRequired = percent
             return Self.needsLook(state)
         }
         if look {
@@ -407,11 +407,11 @@ final nonisolated class BackgroundRoom: Sendable {
                 // own read is one the source may never announce.
                 state.sourceOwesReturn = false
             }
-            // A share above the one a load waits for is a fact its owner hears, whatever else
-            // changed; it is asked again by the owner when it still waits.
-            let headroom = state.headroomWanted.flatMap { wanted in state.available.map { $0 > wanted } } ?? false
+            // A share that reaches the one a load waits for is a fact its owner hears, whatever
+            // else changed; it is asked again by the owner when it still waits.
+            let headroom = state.headroomRequired.flatMap { required in state.available.map { $0 >= required } } ?? false
             if headroom {
-                state.headroomWanted = nil
+                state.headroomRequired = nil
             }
             guard before != conditions else {
                 return Applied(lines: lines, observers: headroom ? Array(state.observers.values) : [])

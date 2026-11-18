@@ -152,7 +152,7 @@ struct PhotoDescriptionTests {
         }, admission: admission)
 
         await writer.start()
-        try await waitUntil { await writer.status.heldBy == BackgroundHold.userInApp.rawValue }
+        try await waitUntil { await writer.status.heldBy == OwnerHold(.userInApp) }
         #expect(requests.withLock { $0 } == 0)
 
         room.deliver(.roomy)
@@ -160,6 +160,44 @@ struct PhotoDescriptionTests {
         #expect(requests.withLock { $0 } == 1)
         #expect(admission.snapshot.granted[.description] == 1)
         #expect(await writer.status.heldBy == nil)
+        await writer.shutdown()
+        await store.shutdown()
+    }
+
+    /// ADR 0055: on a machine with less available memory than the line plus a description's
+    /// cost floor, no request is made and the writer's status names the hold with the share
+    /// required and the share available; the look that reads enough starts the request.
+    @Test func noRequestIsMadeWhileTheMachineHasLessRoomThanADescriptionTakes() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        let still = library.id("a.jpg")
+        let store = library.store
+        let directory = try makeTestDirectory().appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try writeSubjectJPEG(to: directory.appending(path: "preview-a.jpg.heic"), center: CGPoint(x: 0.5, y: 0.5))
+        try await library.readFaces([library.result(for: "a.jpg", faces: [])])
+        try await Self.readText([], in: store)
+        try await Self.readLabels([], in: store)
+        let kernel = ScriptedKernel(.normal, available: 45)
+        let room = BackgroundRoom(memory: kernel.reader)
+        let admission = LoadAdmission(isOpen: true, room: room)
+        let requests = Mutex(0)
+        let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory, describe: { _, _ in
+            requests.withLock { $0 += 1 }
+            return .written("A lake.")
+        }, admission: admission)
+
+        await writer.start()
+        let held = OwnerHold(.memoryHeadroom, requiredPercent: 67, availablePercent: 45)
+        try await waitUntil { await writer.status.heldBy == held }
+        #expect(await writer.status.fields["requiredPercent"] == "67")
+        #expect(await writer.status.fields["availablePercent"] == "45")
+        #expect(requests.withLock { $0 } == 0)
+
+        try await waitUntil { kernel.looking }
+        kernel.set(.normal, available: 70)
+        kernel.tick()
+        try await waitUntil { try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("A lake.") }
+        #expect(requests.withLock { $0 } == 1)
         await writer.shutdown()
         await store.shutdown()
     }

@@ -637,7 +637,7 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
         var admitted = 0
         var rejections: [MaterializationAdmissionPolicy.Rejection: Int] = [:]
         var held: BackgroundHold?
-        defer { activity.heldBy = held?.rawValue }
+        defer { activity.heldBy = held.map { OwnerHold($0) } }
         let selectedPriority = selectedPendingPriority()
 
         if let selectedPriority {
