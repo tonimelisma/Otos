@@ -428,15 +428,40 @@ nonisolated struct DigestStanding: Equatable, Sendable {
 nonisolated struct ClaimedEnrichmentCandidate: Sendable {
     let asset: MediaAsset
     let scope: EnrichmentScope
+
+    /// The digest is the only product the row owes: its scope is the digest alone, and no
+    /// video's faces wait behind a held admission (`EnrichmentClaim.admitting`). Such a row is
+    /// never downloaded: its digest waits for local bytes (ADR 0009 §12).
+    var owesOnlyDigest: Bool {
+        scope == .hash && !asset.videoFacesStale
+    }
 }
 
 /// What a priority claim answered of the rows it was asked about: the rows it claimed, and
-/// the rows it read that owe nothing under the claim their root is first enriched under
-/// (`EnrichmentClaim`, at the video-faces admission asked). A row that owes nothing owes
-/// nothing until a write to it names it, so enrichment does not ask of it again until then.
+/// the rows it read that have nothing to claim until a change names them — rows that owe
+/// nothing under the claim their root is first enriched under (`EnrichmentClaim`, at the
+/// video-faces admission asked), and rows whose digest waits for local bytes (ADR 0009 §12),
+/// whose hold ends only in a write that names them or names none. Enrichment does not ask
+/// of either again until then.
 nonisolated struct PriorityEnrichmentClaims: Sendable {
     let claimed: [ClaimedEnrichmentCandidate]
     let owingNothing: Set<MediaAssetID>
+    let digestsAwaitingLocalBytes: Set<MediaAssetID>
+
+    init(
+        claimed: [ClaimedEnrichmentCandidate],
+        owingNothing: Set<MediaAssetID>,
+        digestsAwaitingLocalBytes: Set<MediaAssetID> = []
+    ) {
+        self.claimed = claimed
+        self.owingNothing = owingNothing
+        self.digestsAwaitingLocalBytes = digestsAwaitingLocalBytes
+    }
+
+    /// The rows enrichment need not ask of again until a change names them.
+    var nothingToClaim: Set<MediaAssetID> {
+        owingNothing.union(digestsAwaitingLocalBytes)
+    }
 }
 
 /// Catalog Store guide
@@ -4439,7 +4464,11 @@ extension CatalogStore {
             execMs: answer.claims.execMs,
             queryStart: queryStart
         )
-        return PriorityEnrichmentClaims(claimed: answer.claims.value, owingNothing: answer.owingNothing)
+        return PriorityEnrichmentClaims(
+            claimed: answer.claims.value,
+            owingNothing: answer.owingNothing,
+            digestsAwaitingLocalBytes: answer.digestsAwaitingLocalBytes
+        )
     }
 
     /// Claims up to `limit` background rows: removable sources first, then libraries, each
@@ -4580,7 +4609,11 @@ extension CatalogStore {
         limit: Int,
         videoFaces: VideoFacesAdmission,
         bytesAreLocal: Bool = false
-    ) async throws -> (claims: DatabaseTimedValue<[ClaimedEnrichmentCandidate]>, owingNothing: Set<MediaAssetID>) {
+    ) async throws -> (
+        claims: DatabaseTimedValue<[ClaimedEnrichmentCandidate]>,
+        owingNothing: Set<MediaAssetID>,
+        digestsAwaitingLocalBytes: Set<MediaAssetID>
+    ) {
         // Enrichment's claim: a background owner's read.
         let priorityAssetsByID = try await mediaAssets(for: ids, lane: backgroundReads.lane)
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
@@ -4599,10 +4632,11 @@ extension CatalogStore {
             firstClaim: firstClaim
         )
         guard !eligibleClaims.isEmpty else {
-            return (DatabaseTimedValue(value: [], waitMs: 0, execMs: 0), owingNothing)
+            return (DatabaseTimedValue(value: [], waitMs: 0, execMs: 0), owingNothing, [])
         }
         let timedClaim = try await timedWrite(dbWriter) { db in
             var candidates: [ClaimedEnrichmentCandidate] = []
+            var held: Set<MediaAssetID> = []
             candidates.reserveCapacity(min(limit, eligibleClaims.count))
             for (asset, rootID, claim) in eligibleClaims {
                 guard candidates.count < limit else {
@@ -4614,6 +4648,13 @@ extension CatalogStore {
                     claim: claim,
                     db: db
                 ) else {
+                    // Claimed by work in flight, which names the row when it writes, or held
+                    // for local bytes, whose end names it too.
+                    if try EnrichmentClaimGateway.holdsDigestHold(
+                        libraryRootID: rootID, relativePath: asset.relativePath, db: db
+                    ) {
+                        held.insert(asset.id)
+                    }
                     continue
                 }
                 candidates.append(ClaimedEnrichmentCandidate(
@@ -4621,9 +4662,15 @@ extension CatalogStore {
                     scope: EnrichmentScope(claim: claim, asset: asset)
                 ))
             }
-            return candidates
+            return (candidates, held)
         }
-        let result = timedClaim
+        var result = DatabaseTimedValue(
+            value: timedClaim.value.0, waitMs: timedClaim.waitMs, execMs: timedClaim.execMs
+        )
+        result.lockMs = timedClaim.lockMs
+        result.resumeMs = timedClaim.resumeMs
+        result.priority = timedClaim.priority
+        let digestsAwaitingLocalBytes = timedClaim.value.1
         if result.totalMs > Self.slowQueryDiagnosticThresholdMs {
             await recordSlowPriorityEnrichmentClaim(
                 priorityCount: ids.count,
@@ -4631,7 +4678,7 @@ extension CatalogStore {
                 result: result
             )
         }
-        return (result, owingNothing)
+        return (result, owingNothing, digestsAwaitingLocalBytes)
     }
 
     private func recordSlowPriorityEnrichmentClaim(
@@ -4772,12 +4819,90 @@ extension CatalogStore {
         knownMaterializationSuppression.begin(id: id)
     }
 
-    func endKnownMaterialization(for id: MediaAssetID, success: Bool) {
-        if success {
-            knownMaterializationSuppression.endSuccess(id: id)
-        } else {
+    /// A download Otos asked for ended. One that made the original local ends the row's digest
+    /// hold, if it holds one, and offers it ahead of other work while its bytes are here: the
+    /// user's full-size view, an export or a Move to Trash downloaded it (ADR 0009 §12).
+    func endKnownMaterialization(for id: MediaAssetID, success: Bool) async {
+        guard success else {
             knownMaterializationSuppression.endFailure(id: id)
+            return
         }
+        knownMaterializationSuppression.endSuccess(id: id)
+        await endDigestHold(id, reason: "downloaded")
+    }
+
+    // MARK: - Digests that wait for local bytes (ADR 0009 §12)
+
+    /// Holds the rows the coordinator claimed whose only owed product is their digest and
+    /// whose original is not local: no download is made for a digest alone. A held row is
+    /// out of every claim, as a claimed one is, and is no work of the coordinator's; the Store
+    /// ends the hold on the fact that ends the wait — an event on its file, Otos downloading
+    /// it, a scan finding its facts moved (`upsertScannedFile`), or the next launch, which
+    /// clears every claim. Returns the rows held.
+    func holdDigestsForLocalBytes(_ ids: [MediaAssetID]) async throws -> [MediaAssetID] {
+        guard !ids.isEmpty else { return [] }
+        let rootIDsByPath = roots.rowIDSnapshot()
+        let held = try await database().write { db in
+            try EnrichmentClaimGateway.holdDigestsForLocalBytes(ids: ids, rootIDsByPath: rootIDsByPath, db: db)
+        }
+        OtosLog.catalog.noticeOperation("enrichment.digestHold", phase: "held", fields: [
+            "asked": "\(ids.count)", "held": "\(held.count)",
+        ])
+        return held
+    }
+
+    /// Ends the digest holds of `ids` whose bytes the caller found local after it held them:
+    /// a file the provider made local between the coordinator's locality read and its hold,
+    /// whose event the Store saw before the hold was there to end.
+    func endDigestHolds(_ ids: [MediaAssetID], reason: String) async {
+        for id in ids {
+            await endDigestHold(id, reason: reason)
+        }
+    }
+
+    /// Rows whose digest waits for local bytes now: what `op=owners.held` reports.
+    func digestHoldCount() async throws -> Int {
+        try await reader(for: backgroundReads.lane).readFreeingConnection { db in
+            try Int.fetchOne(db, sql: EnrichmentClaimGateway.digestHoldCountSQL) ?? 0
+        }
+    }
+
+    /// Ends `id`'s digest hold, if it holds one, offers the row ahead of other work while its
+    /// bytes are local (`localBytesAwaitingProducts`), and names it in a `.detail` change, so
+    /// enrichment claims it. Nothing is written for a row of no root the Store holds; a failed
+    /// write is logged and the hold stays until the next fact or launch.
+    private func endDigestHold(_ id: MediaAssetID, reason: String) async {
+        guard let rootID = roots[id.libraryRootPath]?.rowID else { return }
+        let ended: Bool
+        do {
+            // Read first: every download Otos makes ends here, and almost none was held, so
+            // the writer is taken only for a row that holds a hold.
+            let holds = try await reader(for: backgroundReads.lane).readFreeingConnection { db in
+                try EnrichmentClaimGateway.holdsDigestHold(libraryRootID: rootID, relativePath: id.relativePath, db: db)
+            }
+            guard holds else { return }
+            ended = try await database().write { db in
+                try EnrichmentClaimGateway.endDigestHold(libraryRootID: rootID, relativePath: id.relativePath, db: db)
+            }
+        } catch {
+            OtosLog.catalog.errorOperation("enrichment.digestHold", phase: "endFailed", fields: [
+                "reason": reason, "relativePath": id.relativePath.rawValue, "error": String(describing: error),
+            ])
+            return
+        }
+        guard ended else { return }
+        digestHoldEnded(id, reason: reason)
+    }
+
+    /// A digest hold that ended in a write: logged, offered first, and announced.
+    private func digestHoldEnded(_ id: MediaAssetID, reason: String) {
+        OtosLog.catalog.noticeOperation("enrichment.digestHold", phase: "ended", fields: [
+            "reason": reason, "rootPath": id.libraryRootPath.rawValue, "relativePath": id.relativePath.rawValue,
+        ])
+        if !localBytesAwaitingProducts.contains(id) {
+            localBytesAwaitingProducts.append(id)
+        }
+        notifyCatalogChanged(.changed(.detail, rows: .rows([id])))
     }
 
     /// Every entry point that needs catalog truth awaits the same finite load.
@@ -9415,7 +9540,7 @@ private extension CatalogStore {
             guard isCurrent(witness) else {
                 return .deferred
             }
-            let changed = try await dbQueue.write { db in
+            let (changed, holdEnded) = try await dbQueue.write { db -> (Bool, Bool) in
                 switch observed {
                 case let .media(scannedFile):
                     // A path that was a companion and became media must leave the
@@ -9438,7 +9563,14 @@ private extension CatalogStore {
                         capabilities: rootCapabilities,
                         db: db
                     )
-                    return mediaChanged != .unchanged || pairingChanged
+                    // An event on a file is what reports its bytes becoming local: the
+                    // provider's download changes no fact the upsert compares, so the event
+                    // itself ends the file's digest hold (ADR 0009 §12). A hold whose facts
+                    // moved was ended by the upsert.
+                    let holdEnded = try EnrichmentClaimGateway.endDigestHold(
+                        libraryRootID: rootRowID, relativePath: scannedFile.relativePath, db: db
+                    )
+                    return (mediaChanged != .unchanged || pairingChanged, holdEnded)
                 case let .companion(companion):
                     // A path that was media and became a companion must leave media.
                     let mediaDeleted = try Self.deleteAssetRow(
@@ -9466,8 +9598,11 @@ private extension CatalogStore {
                             db: db
                         ) || companionChanged
                     }
-                    return mediaDeleted || companionChanged
+                    return (mediaDeleted || companionChanged, false)
                 }
+            }
+            if holdEnded {
+                digestHoldEnded(MediaAssetID(libraryRootPath: root, relativePath: relativePath), reason: "fileEvent")
             }
             return changed ? .changed : .unchanged
         } catch {

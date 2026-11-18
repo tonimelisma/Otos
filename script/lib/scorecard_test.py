@@ -770,6 +770,30 @@ class SessionKindTests(unittest.TestCase):
         # A session with no status line says so, never a bare dash.
         self.assertIn("owners never quiescent; which and why not measured (no op=owners.status line)", run(self.LAUNCH)[2])
 
+    def test_rows_held_for_a_fact_outside_their_owner_are_counted_at_the_sessions_end(self):
+        lines = self.LAUNCH[:-1] + [
+            line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=none quiescent=14"),
+            line(46.0, "op=owners.held phase=sessionEnd count=3219 owner=enrichment waitingFor=digestAwaitsLocalBytes"),
+            line(46.6, "op=tour phase=finish outcome=finished"),
+        ]
+        report, _, text = run(lines)
+        self.assertEqual(report["ownersAtEnd"]["held"],
+                         [{"owner": "enrichment", "waitingFor": "digestAwaitsLocalBytes", "count": 3219}])
+        self.assertIn("held at sessionEnd: digest waits for local bytes: 3219 (enrichment, op=owners.held)", text)
+        # A count the build could not read is unknown, never zero.
+        unknown = self.LAUNCH[:-1] + [
+            line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=none quiescent=14"),
+            line(46.0, "op=owners.held phase=sessionEnd count=unknown owner=enrichment waitingFor=digestAwaitsLocalBytes"),
+            line(46.6, "op=tour phase=finish outcome=finished"),
+        ]
+        self.assertIn("digest waits for local bytes: - (enrichment", run(unknown)[2])
+        # An older build logs no held line, and says so.
+        older = self.LAUNCH[:-1] + [
+            line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=none quiescent=14"),
+            line(46.6, "op=tour phase=finish outcome=finished"),
+        ]
+        self.assertIn("no op=owners.held line", run(older)[2])
+
     def test_a_settled_tour_waits_out_its_settle_deadline_before_it_is_stuck(self):
         self.assertEqual(scorecard.tour_silence_limit(60, 120, 900), 900 + scorecard.TOUR_SILENCE_MARGIN_SECONDS)
         self.assertEqual(scorecard.tour_silence_limit(60, 120), scorecard.tour_silence_limit(60, 120, 0))

@@ -341,7 +341,24 @@ A tour never runs while Otos is running and quits the app itself.
 ## What remains
 
 - **Owner decisions.**
-  - Whether to download the 389 GB cloud backlog (7,732 rows) for content hashes.
+  - Decided 2026-11-17, reversible by the owner: the cloud backlog is not downloaded for
+    content hashes. A cloud-only original is never downloaded only to take its digest; the
+    digest is taken when its bytes are local for another reason (ADR 0009 §12). On that day
+    3,219 library files (153 GB) owed only their digest, every other product already made.
+    Measured once, on b9f85b77 (2026-11-18, 729 s, the machine at memory-pressure warning
+    throughout): session disk read 19,625 → 5,330 MiB against the 8eec3c42 tour,
+    `originals hashed: enrichment` 14,572 → 0 MiB, `held at sessionEnd: digest waits for
+    local bytes: 3218`. Process CPU rose 180 → 323 s and store changes 582 → 7,008: with the
+    digest rows held, the walk reached an Immich account's backlog the earlier build never
+    got to behind one download at a time — 6,842 photos, each ranged-read once (none read
+    in any earlier retained session) and written in its own batch, each batch re-reading
+    the window's order (`orderedAssetIDs` 31 → 1,603 reads, 3.8 → 84.5 s) and the People
+    gallery (16 → 744, 1.4 → 57.6 s). No row was read twice; the build was reverted (#934)
+    on a reading of the log as a loop, and re-landed. Inside it, 22 paced rows were claimed
+    and released at every pass (4,336 claim and 2,674 release transactions); a paced row
+    now keeps its claim (ENR-035). The tour's Duplicates step timed out because the
+    memory-pressure hold grants no heavy load but the view's, and the tour waits for the
+    launch's build before it shows Duplicates. Not re-measured until the next tour.
   - Accepting the flagged `window.apply.republished.158k` case (`script/bench.sh accept`).
   - Three decisions of ADR 0057, recorded for confirmation: descriptions run only while Otos
     is not the active app; Low Power Mode and a serious or critical thermal state hold all

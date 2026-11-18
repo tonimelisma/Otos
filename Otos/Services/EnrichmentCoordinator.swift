@@ -105,6 +105,9 @@ actor EnrichmentCoordinator: QuiescentOwner {
         let isDeviceStaging: Bool
         /// What this enrichment reads and produces, as the Store's claim decided it.
         let scope: EnrichmentScope
+        /// The digest is the row's only owed product (`ClaimedEnrichmentCandidate.owesOnlyDigest`):
+        /// a read that finds the file not local holds the row instead of downloading it.
+        var owesOnlyDigest = false
     }
 
     nonisolated struct DownloadWork: Equatable, Sendable {
@@ -153,6 +156,10 @@ actor EnrichmentCoordinator: QuiescentOwner {
         let notBefore: ContinuousClock.Instant
         let attemptCount: Int
         let sourceSize: Int64?
+        /// The ledger holds the row's Store claim while it paces (`EnrichmentSchedule.holdPacedClaims`):
+        /// the row is out of every claim until its pacing passes or its source may have moved,
+        /// so no pass claims it only to give it back.
+        var holdsStoreClaim = false
     }
 
     let store: CatalogStore
@@ -221,6 +228,9 @@ actor EnrichmentCoordinator: QuiescentOwner {
     /// back, never all at once: a failing library can park every row.
     var demandRowsToCheck: Set<MediaAssetID> = []
     var activeDemandsToCheck = false
+    /// Paced rows whose claim hold a Store change ended (`EnrichmentSchedule.endPacedClaims`):
+    /// the next pass gives their claims back, since a change is heard synchronously.
+    var endedPacedClaims: [MediaAssetID] = []
     /// The roots the last pass found enrichable: parked demands are asked of a root's facts
     /// only when this set changes.
     var lastEnrichableRoots: Set<LibraryRootPath>?
@@ -564,10 +574,23 @@ extension EnrichmentCoordinator {
 extension EnrichmentCoordinator {
     /// A Store change: new claim inputs, and, when it may have removed, moved or resized a
     /// demanded row — a membership change that names one, or names none — a question for the
-    /// next pass of which demanded rows the Store still offers (`reconcileDemandSources`); and
-    /// the priority rows it may have made owe work are asked of again (`PriorityAnswers`).
+    /// next pass of which demanded rows the Store still offers (`reconcileDemandSources`), and
+    /// the end of the claim holds of paced rows it may have resized; and the priority rows it
+    /// may have made owe work are asked of again (`PriorityAnswers`).
     func noteStoreChange(_ change: CatalogStoreChange) {
         priorityAnswers.heard(change.rows)
+        if case let .changed(facts, rows) = change, facts.contains(.membership) {
+            // A paced row the change may have resized is claimed again, so the ledger compares
+            // its source (ENR-007); one it did not resize is found paced and held again.
+            switch rows {
+            case .unnamed:
+                endedPacedClaims += schedule.endPacedClaims { _ in true }
+            case let .named(rows):
+                endedPacedClaims += schedule.endPacedClaims { rows.ids.contains($0) }
+            case .none:
+                break
+            }
+        }
         if case let .changed(facts, rows) = change, facts.contains(.membership), schedule.hasDemands {
             switch rows {
             case .unnamed:
@@ -612,6 +635,25 @@ extension EnrichmentCoordinator {
 
     func ringIdle() {
         signal()
+    }
+
+    /// The rows whose digest waits for local bytes (ADR 0009 §12): the Store holds them, so
+    /// the Store counts them. A failed count is reported as unknown, never as none. Then the
+    /// paced rows whose claim the ledger holds (`EnrichmentSchedule.holdPacedClaims`).
+    func heldRows() async -> [OwnerHeldRows] {
+        let count: Int?
+        do {
+            count = try await store.digestHoldCount()
+        } catch {
+            OtosLog.metadata.errorOperation("enrichment.digestHold", phase: "countFailed", fields: [
+                "error": String(describing: error),
+            ])
+            count = nil
+        }
+        return [
+            OwnerHeldRows(waitingFor: "digestAwaitsLocalBytes", count: count),
+            OwnerHeldRows(waitingFor: "pacing", count: schedule.pacedClaimIDs.count),
+        ]
     }
 
     /// Asks the Store which of the rows to check it still offers, and ends the demands of rows

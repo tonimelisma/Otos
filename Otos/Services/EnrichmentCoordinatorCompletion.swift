@@ -53,10 +53,18 @@ extension EnrichmentCoordinator {
             guard locality != .fetchableForUserWork else {
                 // The read found no local file, and its source sends the whole original only
                 // for the user's work: nothing is asked of it (ADR 0046 §4). The row waits
-                // out the pacing ledger, as a ranged read its server did not answer does.
-                await releaseClaimIfOwned(record, id: id)
-                schedule.pace(id, sourceSize: work.sourceSize, now: ContinuousClock.now)
+                // out the pacing ledger, holding its claim, as a ranged read its server did not
+                // answer does.
+                schedule.pace(id, sourceSize: work.sourceSize, now: ContinuousClock.now, holdingClaim: record.ownsStoreClaim)
                 await recordVisibleThumbnailLifecycle(phase: "userWorkOnly", id: id)
+                return
+            }
+            if work.owesOnlyDigest, !work.isDeviceStaging, record.ownsStoreClaim, locality == .fetchable {
+                // The file went dataless after it was routed, and it owes only its digest: it
+                // is held for local bytes, never downloaded for the digest (ADR 0009 §12).
+                await holdDigestsForLocalBytes([id])
+                await recordVisibleThumbnailLifecycle(phase: "digestAwaitsLocalBytes", id: id)
+                signal()
                 return
             }
             let pending = DownloadWork(
@@ -81,11 +89,11 @@ extension EnrichmentCoordinator {
             )
         case .unanswered:
             // A server that serves this row in ranges did not answer. The row waits out
-            // the pacing ledger rather than being claimed again at once; an outage stops
-            // claims through the root's answering fact (`CatalogStore.setSourceAnswering`).
+            // the pacing ledger, which holds its claim, rather than being claimed again at
+            // once; an outage stops claims through the root's answering fact
+            // (`CatalogStore.setSourceAnswering`).
             readyClaims[id] = nil
-            await releaseClaimIfOwned(record, id: id)
-            schedule.pace(id, sourceSize: work.sourceSize, now: ContinuousClock.now)
+            schedule.pace(id, sourceSize: work.sourceSize, now: ContinuousClock.now, holdingClaim: record.ownsStoreClaim)
             await recordVisibleThumbnailLifecycle(phase: "unanswered", id: id)
         case .transient:
             // `.transient` means the byte source could not be opened. The metadata
@@ -296,7 +304,7 @@ extension EnrichmentCoordinator {
         let materializationClaimIDs = schedule.claimedIDs
         let ids = Set(readyClaims.compactMap { id, record in
             record.ownsStoreClaim ? id : nil
-        }).union(materializationClaimIDs).union(pendingApplyClaimIDs)
+        }).union(materializationClaimIDs).union(pendingApplyClaimIDs).union(schedule.pacedClaimIDs)
         guard !ids.isEmpty else {
             return
         }

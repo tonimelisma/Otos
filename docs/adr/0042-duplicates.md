@@ -201,7 +201,9 @@ on two different choices; versions of one photo still can.
 
 - Duplicates appear as digests arrive, because enrichment hashes libraries in the
   background (ENR-013). A library whose files are not yet hashed shows no groups for
-  them, and the list claims nothing about them.
+  them, and the list claims nothing about them. A cloud-only file is never downloaded for
+  its digest alone (ADR 0009 §12): its digest is taken once its bytes are local for another
+  reason, so an exact copy among cloud-only files is found only when both copies are.
 - The bar shows file sizes, as the trash bar does. Whether a move needs a download is
   asked at act time by APP-045, not predicted in the bar.
 ## Same photo

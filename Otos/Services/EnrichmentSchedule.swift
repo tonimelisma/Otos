@@ -533,13 +533,70 @@ nonisolated struct EnrichmentSchedule: Sendable {
     // MARK: - Pacing ledger
 
     /// Holds a row whose bytes a server did not answer for, for `ledgerPacing`, so it is not
-    /// claimed again until then (`ledgerAdmits`).
-    mutating func pace(_ id: MediaAssetID, sourceSize: Int64?, now: ContinuousClock.Instant) {
+    /// claimed again until then (`ledgerAdmits`). `holdingClaim` when the row's Store claim
+    /// passes to the ledger rather than back to the Store (`holdPacedClaims`).
+    mutating func pace(
+        _ id: MediaAssetID,
+        sourceSize: Int64?,
+        now: ContinuousClock.Instant,
+        holdingClaim: Bool = false
+    ) {
         retryLedger[id] = RetryLedgerEntry(
             notBefore: now.advanced(by: retrySchedule.ledgerPacing),
             attemptCount: (retryLedger[id]?.attemptCount ?? 0) + 1,
-            sourceSize: sourceSize
+            sourceSize: sourceSize,
+            holdsStoreClaim: holdingClaim
         )
+    }
+
+    /// Keeps the Store claims of paced rows a claim just found (`ledgerAdmits` said no): the
+    /// row cannot progress until its pacing passes, so its claim stays out of the Store, and
+    /// no later pass claims it only to give it back — a claim write and a release write each
+    /// time, at every completion's pass, for every paced row ahead of real work in the
+    /// Store's order (ADR 0032 rule 8). The hold ends when the pacing passes
+    /// (`releaseDuePacedClaims`), or sooner when its source may have moved or its root is no
+    /// longer offered (`endPacedClaims`). A row the ledger does not pace is not held.
+    mutating func holdPacedClaims(_ ids: [MediaAssetID]) {
+        for id in ids {
+            retryLedger[id]?.holdsStoreClaim = true
+        }
+    }
+
+    /// The paced rows whose claim the ledger holds and whose pacing has passed at `now`: their
+    /// claims go back to the Store, which offers them to the next claim, and the ledger admits
+    /// them then. time: backoff — the wake is the ledger's deadline (`nextWake`).
+    mutating func releaseDuePacedClaims(now: ContinuousClock.Instant) -> [MediaAssetID] {
+        var due: [MediaAssetID] = []
+        for (id, entry) in retryLedger where entry.holdsStoreClaim && entry.notBefore <= now {
+            retryLedger[id]?.holdsStoreClaim = false
+            due.append(id)
+        }
+        return due
+    }
+
+    /// Ends the claim holds of the paced rows `ends` names, and returns them for their claims
+    /// to go back: a change that may have resized one (its source may differ, which the
+    /// ledger compares when it is claimed again, ENR-007), or a root no longer offered. Their
+    /// pacing stays.
+    mutating func endPacedClaims(where ends: (MediaAssetID) -> Bool) -> [MediaAssetID] {
+        var ended: [MediaAssetID] = []
+        for (id, entry) in retryLedger where entry.holdsStoreClaim && ends(id) {
+            retryLedger[id]?.holdsStoreClaim = false
+            ended.append(id)
+        }
+        return ended
+    }
+
+    /// Whether the ledger holds `id`'s Store claim: a row on screen it holds is not asked of
+    /// the Store until the hold ends.
+    func holdsPacedClaim(_ id: MediaAssetID) -> Bool {
+        retryLedger[id]?.holdsStoreClaim == true
+    }
+
+    /// The rows whose Store claim the ledger holds: what `op=owners.held` reports and what
+    /// shutdown gives back.
+    var pacedClaimIDs: [MediaAssetID] {
+        retryLedger.compactMap { $0.value.holdsStoreClaim ? $0.key : nil }
     }
 
     /// Whether a row the Store just claimed may proceed at `now`. A row the ledger paces

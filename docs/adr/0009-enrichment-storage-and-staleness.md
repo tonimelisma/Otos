@@ -239,7 +239,8 @@ Adjacent decisions requiring separate ADRs or specs:
    one earlier hand-written backfill, `v5_heif_orientation_reread`, predates the revision.
 
 7. **Eager full-library materialization.** Otos submits every dataless media file
-   for background materialization after local enrichment drains, accepting the local
+   that owes a product other than its digest (§12) for background materialization after
+   local enrichment drains, accepting the local
    disk growth macOS has not yet evicted. A download that would take the volume below
    the free-space floor is not started: `MaterializationCoordinator` reads capacity
    off the actor for background- and device-priority work, returns
@@ -347,13 +348,25 @@ Adjacent decisions requiring separate ADRs or specs:
    is not asked again until a Store change or a claim the coordinator gave back moves its
    inputs (`claimInputsRevision`): an empty claim is still a write transaction, and an
    idle coordinator writes nothing (`BackgroundOwnersIdleTests`). A row whose source sends
-   the original only for the user's work, its ranges not served now, is paced through a
+   the original only for the user's work, its ranges not served now, a ranged read its
+   server did not answer, and a video whose faces could not be read are paced through a
    small process-local ledger (identity → earliest reclaim time, attempt count, and the
    `sourceSize` fragment of its `(size, mtime)` source signature), consulted when Store
-   re-offers a claim: a candidate whose earliest-reclaim time has not arrived is deferred
-   (its claim released back) unless its recorded source size no longer matches, which
-   resets pacing immediately. The ledger holds no work payload and resets on success,
-   source-signature change, or process restart (it is in-memory only). Device staging retries remain capped at
+   offers a claim: a candidate whose earliest-reclaim time has not arrived is paced unless
+   its recorded source size no longer matches, which resets pacing immediately. **A paced
+   row keeps its claim, held by the ledger** (`EnrichmentSchedule.holdPacedClaims`), for
+   the reason a held demand does: given back, the Store offered it first again, and every
+   pass — one per completion — claimed it and released it. On the owner's Mac (2026-11-18,
+   a session that walked an Immich account's backlog) 22 paced rows were claimed and
+   released at each of about 1,700 passes: 4,336 `claimedEnrichmentCandidates` and 2,674
+   `releaseEnrichmentClaims` write transactions, 34 s of the writer. The hold ends when the
+   pacing passes (the ledger's deadline is the coordinator's wake, `time: backoff`), when a
+   `.membership` change names the row or names none (its source may differ, which the
+   ledger compares at the next claim), or when its root is no longer offered; shutdown gives
+   it back and the next launch clears it. A held paced row takes no place in the claim
+   window and is reported as `op=owners.held waitingFor=pacing`. The ledger holds no work
+   payload and resets on success, source-signature change, or process restart (it is
+   in-memory only). Device staging retries remain capped at
    3 in-window attempts (unbounded for the `insufficientLocalSpace` waiting condition)
    and never enter the ledger, since staged device seeds hold no Store claim.
 
@@ -422,6 +435,71 @@ Adjacent decisions requiring separate ADRs or specs:
     create these indexes are frozen: the hint's safety only holds if the
     index text a shipped catalog actually has is provably implied by the predicate
     the query builds today.
+
+12. **A digest alone never downloads an original; it waits for local bytes.** Decided
+    2026-11-17 by the coordinator under the owner's standing rule to decide and build; the
+    owner may reverse it. A row of a folder library whose only owed product is its digest
+    (`ClaimedEnrichmentCandidate.owesOnlyDigest`: its scope is the digest alone and no
+    video's faces wait) and whose original is not local is not a download candidate. The
+    coordinator hands its claim to the Store's digest hold
+    (`CatalogStore.holdDigestsForLocalBytes`: `enrichment_claimed` takes
+    `EnrichmentClaimMark.digestAwaitsLocalBytes`), so the row is out of every claim, as a
+    claimed row is, and is no work of the coordinator's: the coordinator goes quiescent with
+    rows held. The digest is taken when the bytes are local anyway: a file that is local
+    is hashed in the background as before, and a file downloaded for work that needs its
+    bytes regardless (a rendering, metadata, a video's faces, the full-size view, an
+    export, an import) gives its digest from that same copy, in the same read.
+
+    The Store ends a hold on the fact that ends the wait (ADR 0032 rule 8), never on time:
+    - an event on the file (`upsertObservedFile`): the provider's download changes no fact
+      the scan compares, but FSEvents reports the file within about 0.2 s of its
+      `SF_DATALESS` clearing (the materialization-events capture of 2026-07-11);
+    - a download Otos made for other work landing (`endKnownMaterialization(success:)`),
+      read before it writes, since almost no download ends a hold;
+    - a scan's write finding the file's facts moved (the scan upsert ends the hold in the
+      same statement), since such a row may owe more than its digest now;
+    - the next launch, which clears every claim, so each held row's locality is read once a
+      launch. That also covers an event the provider did not deliver: the walks read no
+      `SF_DATALESS`, and no poll stands in for the missing event.
+
+    An ended hold is offered first while its bytes are here (`localBytesAwaitingProducts`)
+    and named in a `.detail` change. An event that came between the coordinator's locality
+    read and its hold found no hold to end, so the coordinator reads the locality of each row
+    once more after holding it, and ends the holds of the rows now local. A priority claim
+    reports a held row on screen as nothing to claim (`PriorityAnswers`), so the screen does
+    not re-read it each pass. `op=owners.held waitingFor=digestAwaitsLocalBytes count=` at a
+    status moment, and the scorecard's DISK READ BY OWNER, report how many rows are held.
+
+    Evidence (the owner's catalog read-only and the installed app's log, 2026-11-17): the
+    digest is used only for identical-copy detection — Duplicates within a library, the
+    one-copy rule in combined views, pairing with an account's uploaded assets (ADR 0042,
+    ADR 0054). Mirror pairing is by path (ADR 0054), move witnessing by file identifier
+    (ADR 0034), and no rendering reads it. 3,219 library files without a digest (153 GB:
+    417 videos 105 GB, 1,142 RAW 41 GB, 1,660 images 7 GB) all had their rendering, faces
+    and metadata: each was being downloaded a second time only to be hashed, 13–21 GB in
+    each ten-minute session, with the provider's process at 80–90 % CPU and the machine at
+    the memory-pressure warning (`docs/research/2026-11-16-idle-disk-read-attribution.md`,
+    `docs/research/2026-11-17-background-load-attribution.md`).
+
+    Cost: an exact copy among cloud-only files is not found until both copies are local.
+    Duplicates and the one-copy rule treat a row with no digest as in no identical group,
+    as they did while it waited for its download. A mirrored library file's account copy
+    takes the library file's digest (ADR 0054), so for a cloud-only file with no digest the
+    mirror's one-copy rule waits for local bytes too. A separate change is making a mirror
+    pair that its path confirms count as one photo without the digest.
+
+    Rejected:
+    - *Keep downloading for the digest* (§7's eager coverage): hours of open app and
+      hundreds of GB of provider traffic for copy detection alone, the largest load Otos
+      put on the machine.
+    - *A setting to choose*: a performance knob over a product fact the owner has not
+      asked to tune; the one behavior is the decided one, reversible here.
+    - *A hash the provider exposes without a download*: a placeholder lists only
+      `com.apple.FinderInfo` as an extended attribute (one of the owner's dataless files,
+      names only, 2026-11-17), and File Provider items expose an opaque content version,
+      not a digest. No same-algorithm (SHA-1) hash is readable locally, so nothing was
+      built on one; a provider's web API is a network source Otos does not use for
+      libraries.
 
 ## Alternatives Considered
 
@@ -639,8 +717,9 @@ Rejected with the walk cursor (`docs/research/2026-11-16-plan-0116-due-diligence
   complete coverage, not a leak.
 - Background downloads start only while the machine has room for them (ADR 0057): under
   memory pressure, a serious thermal state or Low Power Mode, no new background download
-  starts, and the waiting ones start in the step the room opens. Whether the backlog is
-  hashed is unchanged; how fast it runs follows the machine. **Decision for the owner to
+  starts, and the waiting ones start in the step the room opens; how fast the downloads
+  run follows the machine. No download is made for a digest alone (§12): a cloud-only
+  file's digest waits until its bytes are local for another reason. **Decision for the owner to
   confirm:** descriptions (ADR 0053), whose model service holds about 450 MB more while it
   answers, run only while Otos is not the active app.
 - A future metadata-driven feature (sort, filter, inspector) must use the scalar
