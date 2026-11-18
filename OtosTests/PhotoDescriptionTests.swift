@@ -128,8 +128,9 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
-    /// ADR 0057: while the person is in the app no request is made, and the writer's status
-    /// names the hold; once the app is left the still is described, with one request.
+    /// ADR 0055, ADR 0057: each request takes a load turn; while the person is in the app no
+    /// request is made, and the writer's status names the hold; once the app is left the still
+    /// is described, with one request in one turn.
     @Test func noRequestIsMadeWhileThePersonIsInTheApp() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
         let still = library.id("a.jpg")
@@ -143,11 +144,12 @@ struct PhotoDescriptionTests {
         var inApp = MachineConditions.roomy
         inApp.userInApp = true
         let room = BackgroundRoom(conditions: inApp)
+        let admission = LoadAdmission(isOpen: true, room: room)
         let requests = Mutex(0)
         let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory, describe: { _, _ in
             requests.withLock { $0 += 1 }
             return .written("A lake.")
-        }, room: room)
+        }, admission: admission)
 
         await writer.start()
         try await waitUntil { await writer.status.heldBy == BackgroundHold.userInApp.rawValue }
@@ -156,7 +158,7 @@ struct PhotoDescriptionTests {
         room.deliver(.roomy)
         try await waitUntil { try await store.windowReads.photoInfoOverlay(for: still)?.photoDescription == .written("A lake.") }
         #expect(requests.withLock { $0 } == 1)
-        #expect(room.counts.admitted[.description] == 1)
+        #expect(admission.snapshot.granted[.description] == 1)
         #expect(await writer.status.heldBy == nil)
         await writer.shutdown()
         await store.shutdown()

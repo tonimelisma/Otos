@@ -93,6 +93,18 @@ final nonisolated class Admission<Machine: AdmissionMachine>: Sendable {
         Self.resume(state.withLock { Self.step(event, in: &$0) })
     }
 
+    /// Performs `event` and returns what `read` makes of the machine before and after it, in
+    /// the same hold of the lock: a change no other event can fall inside.
+    func performReading<T>(_ event: Machine.Event, _ read: (Machine, Machine) -> T) -> T {
+        let (resumptions, value) = state.withLock { state in
+            let before = state.machine
+            let resumptions = Self.step(event, in: &state)
+            return (resumptions, read(before, state.machine))
+        }
+        Self.resume(resumptions)
+        return value
+    }
+
     private typealias Resumption = (continuation: CheckedContinuation<Void, any Error>, granted: Bool)
 
     private static func step(_ event: Machine.Event, in state: inout State) -> [Resumption] {

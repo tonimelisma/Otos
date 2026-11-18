@@ -92,6 +92,9 @@ nonisolated enum BackgroundHold: String, Sendable {
     case thermal
     case lowPower
     case userInApp
+    /// A heavy load that ran into the room's last memory hold waits for the kernel to report
+    /// more available memory than it started with then (`LoadAdmission`, ADR 0055).
+    case memoryHeadroom
 }
 
 /// Where the room reads the kernel's memory-pressure level, and when it looks again while the
@@ -108,9 +111,9 @@ nonisolated struct MemoryPressureReader: Sendable {
 
     /// The live kernel (`SystemPressure.kernelMemory()`).
     static let kernel = MemoryPressureReader(read: SystemPressure.kernelMemory) {
-        // time: poll — the kernel tells the memory-pressure source of a return to normal
-        // only in a process it told of the warning, so nothing reports it to the others;
-        // time decides only how often the held level is read again, never what it is.
+        // The kernel reports a return to normal only to a process it told of the warning,
+        // and a rise in available memory to none; the room looks only while it waits on one.
+        // time: poll — time decides only how often the kernel is read, never what it says.
         try await Task.sleep(for: lookInterval)
     }
 }
@@ -142,11 +145,15 @@ nonisolated enum MemoryPressureRead: String, Sendable {
 /// memory-pressure source (`sourceReported(_:)`) is only a doorbell: the kernel tells it of
 /// a warning in one process at a time, and of the return to normal only in a process it told
 /// of the warning, so its reports come late or never. On a report the room reads the kernel,
-/// and the kernel's level wins. Since nothing reports a return to normal to a process the
-/// kernel did not tell, the room reads the level again on the reader's cadence while, and
-/// only while, the level it holds is above normal: one loop, woken by a doorbell rung when
-/// the level rises, holding the room weakly and ending with it. Without a reader (a test's
-/// scripted room), the source's report is the level.
+/// and the kernel's level wins. Reopening waits on the kernel's level read normal. When the
+/// source announced the rise, the kernel owes this process the return to normal, and the
+/// room waits for that report. Since nothing reports a return to normal to a process the
+/// kernel did not tell, the room otherwise reads the level again on the reader's cadence
+/// while, and only while, the level it holds is above normal: one loop, woken by a doorbell
+/// rung when the level rises, holding the room weakly and ending with it. The same loop reads
+/// the kernel while a load waits for more available memory than the last read gave
+/// (`wantHeadroom(above:)`, `LoadAdmission`), and the read that finds more tells every
+/// observer. Without a reader (a test's scripted room), the source's report is the level.
 ///
 /// Every owner of heavy work asks before it starts a unit: a serial owner waits in
 /// `untilOpen(for:)`, which returns at once when the kind is open and otherwise in the step
@@ -182,6 +189,15 @@ final nonisolated class BackgroundRoom: Sendable {
         var loggedKernel: String?
         /// The memory-pressure source's last report, or nil before its first.
         var source: MachineConditions.Memory?
+        /// The source reported a level above normal since the level held was last normal: the
+        /// kernel tells this process of the return to normal, so the room waits for that
+        /// report and does not look.
+        var sourceOwesReturn = false
+        /// The kernel's available share (percent) at the last read that gave one.
+        var available: Int?
+        /// The share above which a waiting load may start (`wantHeadroom(above:)`): the room
+        /// reads the kernel on its look while the share is at or below it.
+        var headroomWanted: Int?
         /// How many times the kernel's level was read: what a test counts.
         var kernelReads = 0
         /// The loop that reads a held level again.
@@ -223,7 +239,7 @@ final nonisolated class BackgroundRoom: Sendable {
         // cancels the look, and the loop ends.
         let loop = Task { [weak self] in
             for await _ in doorbell {
-                while self?.memoryAboveNormal == true {
+                while self?.needsLook == true {
                     do {
                         try await memory.nextLook()
                     } catch {
@@ -248,8 +264,42 @@ final nonisolated class BackgroundRoom: Sendable {
         state.withLock { $0.conditions }
     }
 
-    private var memoryAboveNormal: Bool {
-        state.withLock { $0.conditions.memory != .normal }
+    /// The room looks again only while a fact it waits on has no report: the level held is
+    /// above normal and the source has not announced the rise, or a load waits for more
+    /// available memory than the kernel last reported.
+    private var needsLook: Bool {
+        state.withLock { Self.needsLook($0) }
+    }
+
+    private static func needsLook(_ state: State) -> Bool {
+        if state.conditions.memory != .normal, !state.sourceOwesReturn {
+            return true
+        }
+        guard let wanted = state.headroomWanted, let available = state.available else { return false }
+        return available <= wanted
+    }
+
+    /// The kernel's available memory share (percent) at the room's last read, or nil unread.
+    var availablePercent: Int? {
+        state.withLock { $0.available }
+    }
+
+    /// A load waits until the kernel reports more than `percent` available (nil: none waits).
+    /// While the share read last is at or below it, the room reads the kernel on its look,
+    /// since nothing reports a rise; the read that finds it above tells every observer.
+    func wantHeadroom(above percent: Int?) {
+        let look = state.withLock { state -> Bool in
+            state.headroomWanted = percent
+            return Self.needsLook(state)
+        }
+        if look {
+            recheckDoorbell?.yield()
+        }
+    }
+
+    /// Whether the room looks again at the held level now: what a test reads.
+    var looksAgain: Bool {
+        needsLook
     }
 
     /// Why `work` may not start now, or nil. Reads the kernel's level first.
@@ -303,6 +353,9 @@ final nonisolated class BackgroundRoom: Sendable {
         apply { state in
             state.source = level
             state.conditions.memory = level
+            if level != .normal {
+                state.sourceOwesReturn = true
+            }
             guard let memory else {
                 return [PressureLine(phase: "sourceReport", fields: ["source": level.rawValue])]
             }
@@ -327,6 +380,9 @@ final nonisolated class BackgroundRoom: Sendable {
         let level = kernel?.level.rawValue ?? "unknown"
         if let kernel {
             state.conditions.memory = kernel.level
+            if let available = kernel.availablePercent {
+                state.available = Int(available)
+            }
         }
         guard cause == .launch || state.loggedKernel != level else { return nil }
         state.loggedKernel = level
@@ -346,7 +402,20 @@ final nonisolated class BackgroundRoom: Sendable {
             let before = state.conditions
             let lines = change(&state)
             let conditions = state.conditions
-            guard before != conditions else { return Applied(lines: lines) }
+            if conditions.memory == .normal {
+                // The episode the source announced is over; a later rise the room finds by its
+                // own read is one the source may never announce.
+                state.sourceOwesReturn = false
+            }
+            // A share above the one a load waits for is a fact its owner hears, whatever else
+            // changed; it is asked again by the owner when it still waits.
+            let headroom = state.headroomWanted.flatMap { wanted in state.available.map { $0 > wanted } } ?? false
+            if headroom {
+                state.headroomWanted = nil
+            }
+            guard before != conditions else {
+                return Applied(lines: lines, observers: headroom ? Array(state.observers.values) : [])
+            }
             let open = state.waiters.filter { conditions.hold(for: $0.value.work) == nil }
             for (key, waiter) in open {
                 state.waiters[key] = nil
@@ -360,7 +429,12 @@ final nonisolated class BackgroundRoom: Sendable {
         for line in applied.lines {
             OtosLog.performance.noticeOperation("system.pressure", phase: line.phase, fields: line.fields)
         }
-        guard let conditions = applied.conditions else { return }
+        guard let conditions = applied.conditions else {
+            for observer in applied.observers {
+                observer()
+            }
+            return
+        }
         let resumed = applied.resumed
         let observers = applied.observers
         var fields = conditions.logFields

@@ -48,22 +48,28 @@ instruments to ADR 0015.
    starts on a level older than its own question; `LoadAdmission` asks at each request and
    release. The memory-pressure source (`DispatchSource.makeMemoryPressureSource`) is only a
    doorbell: on a report the room reads the kernel, and the kernel's level wins; when the
-   kernel cannot be read, the report is the level. While the level the room holds is above
-   normal, and only then, it reads the level again every 5 s (`time: poll`), since nothing
-   reports a return to normal to a process the kernel did not tell of the warning; the
-   interval is the kernel's own smoothing of a falling level (5 s), so a closer look finds no
-   newer fact. No timer stands in for any other fact (ADR 0033).
+   kernel cannot be read, the report is the level. **Reopening waits on the kernel's level
+   read normal.** When the source reported the rise, the kernel owes this process the return
+   to normal (it sends it to every process it warned), so the room waits for that report and
+   does not look. Otherwise — the rise found by the room's own read, as in every change of
+   the a934ef17 tours (`source=none`) — it reads the level again every 5 s while, and only
+   while, the level it holds is above normal (`time: poll`), since nothing reports a return to
+   normal to a process the kernel did not tell of the warning; the interval is the kernel's
+   own smoothing of a falling level (5 s), so a closer look finds no newer fact. The source's
+   claim ends when the level held is normal again. No timer stands in for any other fact
+   (ADR 0033).
 2. **The room decides, per kind of work, whether a new unit may start**
    (`MachineConditions.hold(for:)`). Four kinds (`BackgroundWork`): a background download of a
    cloud original, a page of text reading, a description request, and a background heavy
    load. Memory at `warning` or `critical`, a `serious` or `critical` thermal state, and Low
    Power Mode hold every kind. A description is also held while the person is in the app.
-3. **Every owner asks before a unit.** The description writer waits in `untilOpen(for:)`
-   before each request; the search index waits there before each page of text; the text
+3. **Every owner asks before a unit.** The description writer takes a load turn for each
+   request (ADR 0055), which waits while the room holds descriptions; the search index waits there before each page of text; the text
    reader asks before each reading. The materializer reads `hold(for: .download)` in its
    admission pass for background requests only and is rung by `observe(_:)`; `LoadAdmission`
-   performs `room(held:)` on every change and, while held, grants only the load the current
-   view needs. A waiter starts in the step that delivers the conditions that open its kind,
+   performs `room(_:)` with each kind's hold on every change and, while a load's kind is held,
+   grants it only if the current view needs it; a description request waits in it as
+   `BackgroundLoad.description`, held as `.description`. A waiter starts in the step that delivers the conditions that open its kind,
    exactly once (ADR 0032 rule 8). An owner waiting names the hold in its status (`heldBy`
    in `op=owners.status` / `op=owners.pending`), and every change logs
    `op=background.room phase=changed` with each kind's hold.
@@ -84,7 +90,17 @@ instruments to ADR 0015.
      two large videos, and a file larger than half the budget alone, so never two multi-GB
      transfers at once. The room adds the hold, not a smaller cap: no measurement shows a
      cap below four costs less per byte hashed.
-   - Heavy loads: one at a time (ADR 0055).
+   - Heavy loads: one at a time (ADR 0055), a description request among them.
+7. **A reopen starts one load, and not the one that raised the pressure.** The held loads
+   resume one at a time (ADR 0055's single turn), and the load granted last when the memory
+   hold began waits for more available memory than it started with, behind the others (ADR
+   0055, decision 8), so the room sees each load alone. The room keeps the kernel's
+   available share from each read and, while a load waits for a larger one
+   (`wantHeadroom(above:)`), reads it on the same 5 s look (`time: poll`: nothing reports a
+   rise), telling its observers in the step of the read that finds it. On a934ef17 every reopen restarted a description and a People pass together, and the
+   machine went back to warning 3.7–5.6 s later, four times
+   (`docs/research/2026-11-17-launch-pressure-dips.md`). Text reading (one helper, 80–169 MB)
+   and downloads (the file cache) reopen in the same step: neither was the cost measured.
 
 ### The two memory-pressure sources
 
@@ -160,8 +176,9 @@ minute (ADR 0053), as before. Recorded in ADR 0009 and ADR 0053 too.
 - Under `warning`, no new description, text page, background download or background heavy
   load starts; the window's own work does. The hold begins at the first decision after the
   kernel reaches warning, whatever the source says. When the level returns to `normal`, each
-  held owner resumes in the step that reads it: a source report or the next look, at most
-  5 s after the kernel lowered it.
+  held owner resumes in the step that reads it: the source's report when it announced the
+  rise, else the next look, at most 5 s after the kernel lowered it; held loads resume one at
+  a time.
 - `op=system.pressure` is the kernel's level over the session: `phase=launch` is the
   room's first read, each read whose level differs from the last logged is `phase=changed`
   (`cause` = `decision`, `sourceReport` or `recheck`, with the source's last report), and each

@@ -20,10 +20,13 @@ import ImageIO
 /// drain until `retryPacing` or `busyPacing` passes, since nothing reports when it would
 /// answer.
 ///
-/// Each request first waits for the background room (ADR 0057): while the person is in the
-/// app, or the machine is short of memory, hot, or in Low Power Mode, the walk waits there,
-/// its status naming the hold (`heldBy`), and goes on in the step that opens the room. The
-/// model's service holds about 450 MB more than at rest while it answers.
+/// Each request is a load that takes its turn in `LoadAdmission` (`BackgroundLoad.description`,
+/// ADR 0055): a cold request makes the system load its 3B model and image encoder, which took
+/// the owner's machine to memory-pressure warning beside a People pass
+/// (`docs/research/2026-11-17-launch-pressure-dips.md`), so a request never runs beside
+/// another heavy load. Its turn waits for the background room (ADR 0057): while the person is
+/// in the app, or the machine is short of memory, hot, or in Low Power Mode, the walk waits
+/// there, its status naming the hold (`heldBy`), and goes on in the step that opens the room.
 ///
 /// One loop, woken by a doorbell (ADR 0032 rule 3) that two sources ring: a Store change of a
 /// kind its walk reads (`inputs`: a still's faces and people, place names, capture time,
@@ -52,10 +55,9 @@ actor PhotoDescriptionWriter: QuiescentOwner {
     private let pageSize: Int
     private let retryPacing: Duration
     private let busyPacing: Duration
-    /// Whether a request may be made now (ADR 0057): each request runs the system language
-    /// model's service beside the app, so it waits while the person is in the app or the
-    /// machine is short of room.
-    private let room: BackgroundRoom
+    /// When a request may be made (ADR 0055, ADR 0057): one heavy load at a time, and only
+    /// while the room holds no description.
+    private let admission: LoadAdmission
     /// Stills whose last request failed, and when they may be offered again.
     private var failedUntil: [MediaAssetID: ContinuousClock.Instant] = [:]
     /// When requests may be made again after the model was unavailable or busy.
@@ -107,9 +109,9 @@ actor PhotoDescriptionWriter: QuiescentOwner {
         pageSize: Int = 16,
         retryPacing: Duration = PhotoDescriptionWriter.retryPacing,
         busyPacing: Duration = PhotoDescriptionWriter.busyPacing,
-        room: BackgroundRoom = BackgroundRoom()
+        admission: LoadAdmission = LoadAdmission(isOpen: true)
     ) {
-        self.room = room
+        self.admission = admission
         self.store = store
         self.thumbnailDirectory = thumbnailDirectory
         self.describe = describe
@@ -352,24 +354,30 @@ actor PhotoDescriptionWriter: QuiescentOwner {
         var stopped = false
     }
 
-    /// Asks the model for each candidate in turn, each request once the background room lets
-    /// it start (ADR 0057), until the model stops answering; returns what to write.
+    /// Asks the model for each candidate in turn, each request in its own load turn (ADR 0055,
+    /// ADR 0057), until the model stops answering; returns what to write.
     private func describe(_ candidates: [PhotoDescriptionCandidate], tally: inout DrainTally) async -> [PhotoDescriptionResult] {
         var results: [PhotoDescriptionResult] = []
         for candidate in candidates where !tally.stopped {
-            // The room's fact ends the wait; the candidate is still the one read, and its
-            // write lands only while its facts are those described.
-            activity.heldBy = room.hold(for: .description)?.rawValue
+            // The turn ends the wait; the candidate is still the one read, and its write lands
+            // only while its facts are those described.
+            // While the request waits for its turn, the status names what holds it as of the
+            // moment it is read: a room's hold, or the room it took last time.
+            activity.heldNow = { [admission] in admission.hold(for: .description)?.rawValue }
+            let reading: Reading
+            let start: ContinuousClock.Instant
             do {
-                try await room.untilOpen(for: .description)
+                (reading, start) = try await admission.run(.description) { [self] in
+                    activity.heldNow = nil
+                    let start = ContinuousClock.now
+                    return await (read(candidate), start)
+                }
             } catch {
-                activity.heldBy = nil
+                activity.heldNow = nil
                 tally.stopped = true
                 break
             }
-            activity.heldBy = nil
-            let start = ContinuousClock.now
-            switch await read(candidate) {
+            switch reading {
             case let .written(text):
                 results.append(PhotoDescriptionResult(id: candidate.id, source: candidate.source, text: text))
                 tally.written += 1

@@ -233,6 +233,9 @@ final nonisolated class OwnerActivity {
     var wake: OwnerWake?
     /// The background room's hold its next unit waits on, while it waits (ADR 0057).
     var heldBy: String?
+    /// Reads that hold as of the moment a status is taken, for an owner whose unit waits in an
+    /// admission that the hold can change under (a description's turn, ADR 0055).
+    var heldNow: (@Sendable () -> String?)?
     var work = OwnerWork()
     private var waiters: [UUID: (wait: OwnerWait, continuation: CheckedContinuation<OwnerQuiescence?, any Error>)] = [:]
 
@@ -343,7 +346,7 @@ final nonisolated class OwnerActivity {
             worksBacklog: worksBacklog,
             wake: wake,
             work: work,
-            heldBy: heldBy
+            heldBy: heldBy ?? heldNow?()
         )
     }
 

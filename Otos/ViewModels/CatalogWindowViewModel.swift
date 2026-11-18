@@ -1007,7 +1007,7 @@ final class CatalogWindowViewModel {
                 store: catalogStore,
                 thumbnailDirectory: catalogStore.thumbnailDirectory,
                 describe: PhotoDescriber.live,
-                room: backgroundRoom
+                admission: loadAdmission
             )
             : nil
         anniversaryTitleWriter = photoDescriptionWriter.map { writer in

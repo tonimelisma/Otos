@@ -199,8 +199,9 @@ not been run.
   session had started at 4.2 s and read 8 photos by 7.1 s while the People pass was running.
   At the warning the app released the text-reading session and held heavy loads
   (`background.room … memory=warning`), and reopened them 10 s later at the recheck. In the
-  long tour each later dip came about 4 s after the room reopened. Not established: which
-  process's memory grew, and why the tours of 12031093 an hour earlier showed no dip.
+  long tour each later dip came about 4 s after the room reopened. Attributed since to a cold
+  description request beside a People pass (`2026-11-17-launch-pressure-dips.md`, "Left
+  open").
 
 Established: before #926, Otos's background work took a quiet machine to warning within
 30 s; after it, five consecutive tours on the owner's library (one on 60199d89, two on
@@ -412,12 +413,19 @@ A tour never runs while Otos is running and quits the app itself.
 
 Findings, not work.
 
-- **The room can dip the machine repeatedly.** Both tours of a934ef17 dipped to memory-pressure
-  warning (43.6 s of 624.3 s; once in the short tour). The app holds at a warning and reopens
-  on a 10 s recheck, so a load that itself raises the pressure can dip the machine again and
-  again; in the long tour each later dip came about 4 s after the room reopened. Which
-  process's memory grew is not established, nor why the tours of 12031093 an hour earlier
-  showed no dip.
+- **The room can dip the machine repeatedly; attributed, a fix merged, not yet measured on
+  the owner's library.** Both tours of a934ef17 dipped to memory-pressure warning (43.6 s of
+  624.3 s; once in the short tour). Attributed
+  (`2026-11-17-launch-pressure-dips.md`): the first dip followed a description request from
+  Otos's process that made the system load its 3B language model and image encoder into the
+  model's service while a People pass ran (the machine's compressor grew 1.5 GB in those
+  3.6 s; Otos's footprint 63 MB, the text-reading helper's peak 80 MB). Each later dip came
+  3.7–5.6 s after a reopen restarted a cold description beside a People pass. The 12031093
+  tours ran the same stack from 69–70 % available and stayed normal; a934ef17's began at
+  59–63 %. Not proven: how much of the 1.5 GB is the model's own, and that the model service
+  drops its model at warning. A description request now takes a load turn (ADR 0055), a
+  reopen starts one load, and a load that ran into the hold starts again only into more room
+  than it took.
 - **The idle drains an account backlog.** While idle the app drains a backlog of account photos
   that earlier builds never reached: 5,067 one-row enrichment write transactions in the launch
   tour of 12031093, about 0.2 CPU-seconds a photo. The re-reads those writes trigger are shown:

@@ -123,6 +123,86 @@ struct LoadAdmissionMachineTests {
         #expect(machine.running == nil)
     }
 
+    /// A description asked for before the first grid runs after the launch's other loads and
+    /// before readying a search.
+    @Test func theFirstDescriptionRunsAfterTheLaunchsLoads() {
+        var machine = LoadAdmissionMachine()
+        _ = machine.handle(.request(1, .searchPrepare))
+        _ = machine.handle(.request(2, .description))
+        _ = machine.handle(.request(3, .people))
+        #expect(machine.handle(.open) == [.grant(3, .people)])
+        #expect(machine.handle(.release(3)) == [.grant(2, .description)])
+        #expect(machine.handle(.release(2)) == [.grant(1, .searchPrepare)])
+    }
+
+    /// The load granted last when the memory hold begins ran into it: at the reopen exactly one
+    /// load starts, not that one, and it runs only after the others waiting.
+    @Test func atTheReopenOneLoadStartsAndNotTheOneThatRanIntoTheHold() {
+        let warning = LoadRoomHolds(heavyLoad: .memoryWarning, description: .memoryWarning)
+        var machine = LoadAdmissionMachine(isOpen: true)
+        #expect(machine.handle(.request(1, .description)) == [.grant(1, .description)])
+        _ = machine.handle(.request(2, .people))
+        _ = machine.handle(.request(3, .duplicates))
+        #expect(machine.handle(.room(warning)).isEmpty)
+        #expect(Set(machine.pressureRaisers.keys) == [.description])
+        #expect(machine.handle(.release(1)).isEmpty, "nothing starts while the room holds")
+        _ = machine.handle(.request(4, .description))
+
+        #expect(machine.handle(.room(.open)) == [.grant(2, .people)], "one at a time")
+        #expect(machine.handle(.release(2)) == [.grant(3, .duplicates)])
+        _ = machine.handle(.request(5, .people))
+        #expect(machine.handle(.release(3)) == [.grant(5, .people)], "a load asked later still goes first")
+        #expect(machine.handle(.release(5)) == [.grant(4, .description)])
+        #expect(machine.handle(.release(4)).isEmpty)
+        #expect(machine.pressureRaisers.isEmpty)
+    }
+
+    /// A load that runs into the hold again stays behind; a hold that is not for memory marks
+    /// nothing.
+    @Test func aLoadThatRaisesThePressureAgainStaysBehind() {
+        let warning = LoadRoomHolds(heavyLoad: .memoryWarning, description: .memoryWarning)
+        var machine = LoadAdmissionMachine(isOpen: true)
+        _ = machine.handle(.request(1, .people))
+        _ = machine.handle(.release(1))
+        _ = machine.handle(.request(2, .description))
+        _ = machine.handle(.room(warning))
+        #expect(Set(machine.pressureRaisers.keys) == [.description])
+        _ = machine.handle(.release(2))
+        _ = machine.handle(.room(.open))
+        #expect(machine.handle(.request(3, .description)) == [.grant(3, .description)], "alone, it starts")
+        _ = machine.handle(.room(LoadRoomHolds(heavyLoad: .memoryCritical, description: .memoryCritical)))
+        _ = machine.handle(.release(3))
+        #expect(Set(machine.pressureRaisers.keys) == [.description])
+        _ = machine.handle(.room(.open))
+        _ = machine.handle(.request(4, .people))
+        _ = machine.handle(.room(LoadRoomHolds(heavyLoad: .thermal, description: .thermal)))
+        #expect(Set(machine.pressureRaisers.keys) == [.description])
+    }
+
+    /// A load that raised the pressure is admitted against the room it took: it starts again
+    /// only when the kernel reports more available memory than at the grant that ran into the
+    /// hold, and asks the room for that share while it waits.
+    @Test func aLoadThatRaisedThePressureWaitsForMoreRoomThanItTook() {
+        var machine = LoadAdmissionMachine(isOpen: true)
+        _ = machine.handle(.room(LoadRoomHolds(heavyLoad: nil, description: nil, availablePercent: 60)))
+        #expect(machine.handle(.request(1, .description)) == [.grant(1, .description)])
+        _ = machine.handle(.room(LoadRoomHolds(heavyLoad: .memoryWarning, description: .memoryWarning, availablePercent: 25)))
+        #expect(machine.pressureRaisers == [.description: 60])
+        _ = machine.handle(.release(1))
+        _ = machine.handle(.request(2, .description))
+        #expect(machine.headroomWanted == nil, "a held load asks for no share")
+
+        #expect(machine.handle(.room(LoadRoomHolds(heavyLoad: nil, description: nil, availablePercent: 55))).isEmpty)
+        #expect(machine.headroomWanted == 60)
+        #expect(machine.handle(.request(3, .people)) == [.grant(3, .people)], "a load that fits starts past it")
+        #expect(machine.handle(.release(3)).isEmpty)
+        #expect(machine.handle(.room(LoadRoomHolds(heavyLoad: nil, description: nil, availablePercent: 60))).isEmpty)
+        #expect(machine.handle(.room(LoadRoomHolds(heavyLoad: nil, description: nil, availablePercent: 61))) == [.grant(2, .description)])
+        #expect(machine.headroomWanted == nil)
+        _ = machine.handle(.release(2))
+        #expect(machine.pressureRaisers.isEmpty)
+    }
+
     @Test func aViewNeedsTheLoadItCannotAnswerWithout() {
         #expect(BackgroundLoad.needed(by: CatalogQueryDescriptor(scope: .people)) == .people)
         #expect(BackgroundLoad.needed(by: CatalogQueryDescriptor(scope: .duplicates)) == .duplicates)

@@ -41,11 +41,13 @@ publication to ADR 0005.
 2. **Heavy loads take turns.** One owner, `LoadAdmission`, admits the bounded loads that hold
    hundreds of megabytes or read much of the catalog, one at a time: a People pass, a
    duplicates build, a build of the search index's vector file from the catalog (ADR 0048;
-   opening a current file reads no table and is not admitted), and an account's mirror
-   pairing (`BackgroundLoad`). An owner wraps such a load in `run(_:_:)`, which waits for its turn and
+   opening a current file reads no table and is not admitted), an account's mirror
+   pairing, and each request for a photo's description (ADR 0053), whose memory is the
+   system language model's (`BackgroundLoad`). An owner wraps such a load in `run(_:_:)`, which waits for its turn and
    releases it when the body returns or throws. None runs before the window opens the
    admission at its first grid. Loads asked for before then run in `BackgroundLoad.launchRank`
-   order (People, duplicates, search index, mirror pairing); after it, in the order asked, so a
+   order (People, duplicates, search index, mirror pairing, the derived folder, the first
+   description); after it, in the order asked, so a
    load that asks again goes behind those already waiting and never starves them. Readying
    the first search query (`searchPrepare`, ADR 0048) runs last (`runsLast`): behind every other
    waiting load, whenever it asked.
@@ -80,8 +82,28 @@ publication to ADR 0005.
    released. Opening, wanting and shutting down are synchronous, so the main actor calls them
    in the step that applies the intent, and teardown from a deinit that cannot await.
 
-The walks of enrichment, render signatures, preview faces, place names, descriptions and the
-search index's embedding drain are not admitted. Each holds one bounded page at a time and
+7. **A description request takes a turn.** On the owner's library a cold request made the
+   system load its 3B model and image encoder into the model's service while a People pass
+   ran; the machine-wide compressor grew 1.5 GB in 3.6 s and the kernel went to
+   memory-pressure warning, and each time the background room reopened the two started
+   together again and the machine dipped again, four times in a minute
+   (`docs/research/2026-11-17-launch-pressure-dips.md`). The writer runs each request inside
+   `run(.description)`; a request is bounded (3–11 s), so its turn starves nothing, and the
+   walk between requests holds no turn.
+8. **A load that raised the pressure is admitted against the room it took.** Loads run one at
+   a time, so the background load granted last when the room's memory hold begins (ADR 0057)
+   is the one the machine was carrying as the level rose (`op=load.admission
+   phase=pressureRaised`, with the kernel's available share at its grant). It starts again
+   only when the kernel reports more available memory than that share (`kern.memorystatus_level`,
+   read by the room; its status `heldBy=memoryHeadroom` meanwhile), and behind every other
+   waiting load (before only readying a search). Nothing reports a rise in available memory,
+   so while such a load waits the room reads the kernel on its 5 s look (ADR 0057). Once it
+   runs to its release with no hold beginning, it is no longer marked; the room reopens on
+   one load, the next at its release, so each is seen alone. A hold for any other reason
+   marks nothing, and an unread share admits it, behind the others.
+
+The walks of enrichment, render signatures, preview faces, place names, and the search
+index's embedding drain are not admitted; descriptions' walk is not, its requests are. Each holds one bounded page at a time and
 runs for as long as its backlog lasts, up to hours: an exclusive turn held for that long would
 starve every bounded load behind it.
 
@@ -97,7 +119,19 @@ starve every bounded load behind it.
 - **Preempting the running load for the view's.** It throws away work already paid for, and
   a cancelled pass publishes nothing; the longest bounded load waited out is one pass.
 - **Admitting the walks page by page.** Each page is bounded already; the memory and the cold
-  reads the tours measured are the bounded loads'.
+  reads the tours measured are the bounded loads', and a description request's, which is
+  admitted on its own (decision 7).
+- **A size for each load, fixed in advance.** Admitting a load only when the share exceeds a
+  stated cost needs the kernel's warning line and the model's resident size, neither of which
+  a process can read. The share a load started from when it raised the pressure is a fact the
+  kernel reported; the rule needs nothing else.
+- **Only ordering a load that raised the pressure behind the others.** In a sandbox tour of a
+  library with no faces, People passes took milliseconds and the description request was the
+  only heavy load; every reopen re-granted it at once and the machine went back to warning
+  within 3–4 s, three times in 40 s (`docs/research/2026-11-17-launch-pressure-dips.md`).
+- **Re-granting the held loads in their old order at a reopen.** The load that was running
+  when the level rose starts again first and raises it again: four dips in one minute on
+  a934ef17.
 - **`.utility` or lower for the owners.** The walks that make visible thumbnails would run
   late whenever the window is busy; `.medium` is below the window and keeps them prompt.
 
@@ -111,6 +145,12 @@ starve every bounded load behind it.
   People or Duplicates shown, theirs runs next. A user's People act therefore waits at most
   one running load longer than before.
 - `op=load.admission phase=granted` (with `waitMs`) and `phase=released` (with `ms`) log every
-  turn, so a tour reads how long each load waited and ran.
+  turn, so a tour reads how long each load waited and ran; `phase=pressureRaised` names the
+  load that ran into a memory hold.
+- A description waits for one running load, at most a People pass; with People passes asked
+  continuously, requests alternate with them, so descriptions per minute fall while People
+  works. A description that took the machine to warning waits until the machine has more
+  room than it started with; on a machine that stays fuller, no description is written in
+  that session.
 - A test that makes an owner alone gets an open admission of its own; the window's owners
   share the window's.

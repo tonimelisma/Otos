@@ -121,6 +121,95 @@ struct BackgroundRoomTests {
         #expect(admission.snapshot.granted == [.people: 1, .duplicates: 1, .searchIndex: 1])
     }
 
+    /// A held room reopens one load at a time, and the load that was running when the level
+    /// rose is not the first started again: the room delivers the hold while a description's
+    /// request is under way, and at the reopen a People pass asked for later runs first, then
+    /// the description asked again.
+    @Test func aLoadThatRanIntoTheHoldResumesBehindTheOthers() async throws {
+        let room = BackgroundRoom()
+        let admission = LoadAdmission(isOpen: true, room: room)
+        let order = Mutex<[BackgroundLoad]>([])
+        let request = ArrivalGate()
+        let described = Task {
+            try await admission.run(.description) {
+                order.withLock { $0.append(.description) }
+                await request.arrive()
+            }
+        }
+        await request.waitForArrivals(1)
+        let people = Task { try await admission.run(.people) { order.withLock { $0.append(.people) } } }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
+
+        room.deliver(Self.warning)
+        #expect(Set(admission.snapshot.pressureRaisers.keys) == [.description])
+        await request.open()
+        try await described.value
+        let again = Task { try await admission.run(.description) { order.withLock { $0.append(.description) } } }
+        try await waitUntil { admission.snapshot.waiting.count == 2 }
+        #expect(admission.snapshot.running == nil, "nothing starts while the room holds")
+
+        room.deliver(.roomy)
+        try await people.value
+        try await again.value
+        #expect(order.withLock { $0 } == [.description, .people, .description])
+        #expect(admission.snapshot.pressureRaisers.isEmpty, "a description that ran clean is not behind again")
+    }
+
+    /// The live path of a load that raised the pressure: the kernel's share at its grant is
+    /// kept, the room's look goes on after the level is normal again while the share is no
+    /// larger, the owner's status names the wait, and the load starts in the step of the look
+    /// that reads more room than it took.
+    @Test func aLoadThatRaisedThePressureStartsAtTheLookThatFindsMoreRoom() async throws {
+        let kernel = ScriptedKernel(.normal, available: 60)
+        let room = BackgroundRoom(memory: kernel.reader)
+        let admission = LoadAdmission(isOpen: true, room: room)
+        let request = ArrivalGate()
+        let first = Task { try await admission.run(.description) { await request.arrive() } }
+        await request.waitForArrivals(1)
+        kernel.set(.warning, available: 25)
+        #expect(room.hold(for: .download) == .memoryWarning)
+        #expect(admission.snapshot.pressureRaisers == [.description: 60])
+        await request.open()
+        try await first.value
+
+        let ran = Mutex(false)
+        let again = Task { try await admission.run(.description) { ran.withLock { $0 = true } } }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
+        try await waitUntil { kernel.looking }
+        kernel.set(.normal, available: 55)
+        kernel.tick()
+        try await waitUntil { room.conditions.memory == .normal && kernel.looking }
+        #expect(admission.hold(for: .description) == .memoryHeadroom)
+        #expect(ran.withLock { $0 } == false)
+
+        kernel.set(.normal, available: 70)
+        kernel.tick()
+        try await again.value
+        #expect(ran.withLock { $0 })
+        #expect(admission.snapshot.pressureRaisers.isEmpty)
+        try await waitUntil { room.looksAgain == false }
+    }
+
+    /// A description waits while the person is in the app; a heavy load the room does not hold
+    /// starts past it, and the description starts once the app is left.
+    @Test func aHeldDescriptionDoesNotHoldBackAHeavyLoad() async throws {
+        var inApp = MachineConditions.roomy
+        inApp.userInApp = true
+        let room = BackgroundRoom(conditions: inApp)
+        let admission = LoadAdmission(isOpen: true, room: room)
+        let order = Mutex<[BackgroundLoad]>([])
+        let described = Task { try await admission.run(.description) { order.withLock { $0.append(.description) } } }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
+        #expect(admission.hold(for: .description) == .userInApp)
+        try await admission.run(.duplicates) { order.withLock { $0.append(.duplicates) } }
+        #expect(order.withLock { $0 } == [.duplicates])
+
+        room.deliver(.roomy)
+        try await described.value
+        #expect(order.withLock { $0 } == [.duplicates, .description])
+        #expect(admission.snapshot.pressureRaisers.isEmpty, "a hold that is not memory marks no load")
+    }
+
     /// The text reader starts no helper while the room holds text reading; the page stops
     /// before its first reading, and reads once the room opens.
     @Test func theTextReaderStartsNoHelperWhileHeld() async throws {
@@ -170,7 +259,7 @@ struct BackgroundRoomTests {
         let kernel = ScriptedKernel(.normal)
         let room = BackgroundRoom(memory: kernel.reader)
         let admission = LoadAdmission(isOpen: true, room: room)
-        #expect(admission.snapshot.roomHeld == false)
+        #expect(admission.snapshot.room.heavyLoad == nil)
 
         kernel.set(.warning)
         for work in BackgroundWork.allCases {
@@ -218,6 +307,30 @@ struct BackgroundRoomTests {
         kernel.set(.critical)
         #expect(room.hold(for: .download) == .memoryCritical)
         try await waitUntil { kernel.looks == 3 && kernel.looking }
+    }
+
+    /// A rise the source announced: the kernel owes this process the return to normal, so the
+    /// room does not look again on time; the source's normal report opens it in its step. A
+    /// later rise the room finds by its own read, with no report, is looked at again.
+    @Test func aRiseTheSourceAnnouncedWaitsForItsReturnReportNotALook() async throws {
+        let kernel = ScriptedKernel(.warning)
+        let room = BackgroundRoom(memory: kernel.reader)
+        room.sourceReported(.warning)
+        let waiter = Task { try await room.untilOpen(for: .textReading) }
+        try await waitUntil { room.counts.waiting[.textReading] == 1 }
+        #expect(room.looksAgain == false)
+        #expect(kernel.looks == 0)
+
+        kernel.set(.normal)
+        room.sourceReported(.normal)
+        try await waiter.value
+        #expect(room.counts.admitted[.textReading] == 1)
+        #expect(kernel.looks == 0)
+
+        kernel.set(.warning)
+        #expect(room.hold(for: .download) == .memoryWarning)
+        #expect(room.looksAgain)
+        try await waitUntil { kernel.looks == 1 && kernel.looking }
     }
 
     /// The source and the kernel disagree: the kernel's current level wins, either way.
@@ -275,6 +388,7 @@ struct BackgroundRoomTests {
 final nonisolated class ScriptedKernel: Sendable {
     private struct State {
         var level: MachineConditions.Memory?
+        var available: Int32 = 50
         var look: CheckedContinuation<Void, any Error>?
         var looks = 0
         var cancelledLooks = 0
@@ -282,19 +396,28 @@ final nonisolated class ScriptedKernel: Sendable {
 
     private let state: Mutex<State>
 
-    init(_ level: MachineConditions.Memory?) {
-        state = Mutex(State(level: level))
+    init(_ level: MachineConditions.Memory?, available: Int32 = 50) {
+        state = Mutex(State(level: level, available: available))
     }
 
     var reader: MemoryPressureReader {
         MemoryPressureReader(
-            read: { [self] in state.withLock { $0.level }.map { KernelMemoryPressure(level: $0, availablePercent: 50) } },
+            read: { [self] in
+                state.withLock { state in state.level.map { KernelMemoryPressure(level: $0, availablePercent: state.available) } }
+            },
             nextLook: { [self] in try await nextLook() }
         )
     }
 
     func set(_ level: MachineConditions.Memory?) {
         state.withLock { $0.level = level }
+    }
+
+    func set(_ level: MachineConditions.Memory?, available: Int32) {
+        state.withLock { state in
+            state.level = level
+            state.available = available
+        }
     }
 
     /// A look is waiting for the test's tick.

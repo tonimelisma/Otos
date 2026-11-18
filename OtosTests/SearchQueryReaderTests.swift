@@ -602,7 +602,7 @@ struct SearchQueryReaderTests {
         let admission = LoadAdmission(isOpen: true, room: room)
         let duplicates = Task { try await admission.run(.duplicates) {} }
         try await waitUntil { admission.snapshot.waiting.count == 1 }
-        #expect(admission.snapshot.roomHeld)
+        #expect(admission.snapshot.room.heavyLoad == .memoryWarning)
 
         let tower = ScriptedTower()
         let reader = Self.reader(on: tower, admission: admission)
