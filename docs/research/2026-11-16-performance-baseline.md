@@ -341,7 +341,13 @@ A tour never runs while Otos is running and quits the app itself.
 ## What remains
 
 - **Owner decisions.**
-  - Whether to download the 389 GB cloud backlog (7,732 rows) for content hashes.
+  - Decided 2026-11-17, reversible by the owner: the cloud backlog is not downloaded for
+    content hashes. A cloud-only original is never downloaded only to take its digest; the
+    digest is taken when its bytes are local for another reason (ADR 0009 §12). On that day
+    3,219 library files (153 GB) owed only their digest, every other product already made.
+    Not measured until the next tour on the owner's library: session disk read and
+    `originals hashed: enrichment` should fall from 13–21 GB per ten minutes to what local
+    files need, with `held at sessionEnd: digest waits for local bytes` near 3,219.
   - Accepting the flagged `window.apply.republished.158k` case (`script/bench.sh accept`).
   - Three decisions of ADR 0057, recorded for confirmation: descriptions run only while Otos
     is not the active app; Low Power Mode and a serious or critical thermal state hold all

@@ -59,6 +59,14 @@ extension EnrichmentCoordinator {
                 await recordVisibleThumbnailLifecycle(phase: "userWorkOnly", id: id)
                 return
             }
+            if work.owesOnlyDigest, !work.isDeviceStaging, record.ownsStoreClaim, locality == .fetchable {
+                // The file went dataless after it was routed, and it owes only its digest: it
+                // is held for local bytes, never downloaded for the digest (ADR 0009 §12).
+                await holdDigestsForLocalBytes([id])
+                await recordVisibleThumbnailLifecycle(phase: "digestAwaitsLocalBytes", id: id)
+                signal()
+                return
+            }
             let pending = DownloadWork(
                 id: id,
                 url: work.url,

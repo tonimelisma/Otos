@@ -64,7 +64,8 @@ ADR 0009): the set of its stale products the claim covers.
   rendering, digest, and its faces (ADR 0047) — and read once for all of them, with the deliberate background
   materialization libraries already get (ADR 0008). A row whose only stale product is
   its digest gets the digest alone: nothing is parsed or rendered again, and no planning
-  revision moves, because a digest names no file.
+  revision moves, because a digest names no file. Such a row is never downloaded: while
+  its original is not local, the Store holds it until its bytes are (ADR 0009 §12).
 - A **removable volume** is read for metadata first, with a provisional QuickLook
   thumbnail, because metadata is what an import waits on. Its rows are offered for
   their renderings and digests together, from one read, only once no row of that card

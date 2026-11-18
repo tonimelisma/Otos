@@ -38,46 +38,48 @@ nonisolated struct SchedulerRouteFacts: Equatable, Sendable {
     }
 }
 
-/// The priority rows the Store answered owe nothing (ADR 0032 rule 8), held until a Store
-/// change names one, a change names no rows, or the video-faces admission they were answered
-/// at moves. A pass asks the Store only of the priority rows not held, so a pass woken by
+/// The priority rows the Store answered have nothing to claim (ADR 0032 rule 8): they owe
+/// nothing, or their digest waits for local bytes (ADR 0009 §12). Held until a Store change
+/// names one, a change names no rows, or the video-faces admission they were answered at
+/// moves. A pass asks the Store only of the priority rows not held, so a pass woken by
 /// anything else — a completion, a wake, another row's write — reads none of the rows on
 /// screen again. Whether a row owes is its own stamps' answer, which only a write to the row
-/// moves, and every write names its rows or names none (`CatalogChangedRows`).
+/// moves; a digest hold ends only in a write; and every write names its rows or names none
+/// (`CatalogChangedRows`).
 ///
 /// A change heard while a read is out applies to that read's answer too: a row it names, or
 /// every row when it names none, is not held from it, since the read may predate the write.
 /// Only the current priority rows are held, so what it holds is bounded by the screen.
 nonisolated struct PriorityAnswers {
-    private(set) var owingNothing: Set<MediaAssetID> = []
+    private(set) var nothingToClaim: Set<MediaAssetID> = []
     private var admission: VideoFacesAdmission?
     private var reading: (named: Set<MediaAssetID>, unnamed: Bool)?
 
     func holds(_ id: MediaAssetID) -> Bool {
-        owingNothing.contains(id)
+        nothingToClaim.contains(id)
     }
 
     /// Before a pass asks: forgets answers given at another admission, and rows no longer
     /// among the priority rows.
     mutating func align(admission: VideoFacesAdmission, keeping priority: [MediaAssetID]) {
         if self.admission != admission {
-            owingNothing = []
+            nothingToClaim = []
             self.admission = admission
         }
-        owingNothing.formIntersection(priority)
+        nothingToClaim.formIntersection(priority)
     }
 
     mutating func beginRead() {
         reading = ([], false)
     }
 
-    /// Holds the rows the read answered owe nothing, less any a change heard during it may
-    /// have moved.
-    mutating func endRead(owingNothing answered: Set<MediaAssetID>) {
+    /// Holds the rows the read answered have nothing to claim, less any a change heard during
+    /// it may have moved.
+    mutating func endRead(nothingToClaim answered: Set<MediaAssetID>) {
         guard let heard = reading else { return }
         reading = nil
         guard !heard.unnamed else { return }
-        owingNothing.formUnion(answered.subtracting(heard.named))
+        nothingToClaim.formUnion(answered.subtracting(heard.named))
     }
 
     /// A Store change: the rows it names are asked of again, every row when it names none; a
@@ -87,10 +89,10 @@ nonisolated struct PriorityAnswers {
         case .none:
             return
         case .unnamed:
-            owingNothing = []
+            nothingToClaim = []
             reading?.unnamed = true
         case let .named(named):
-            owingNothing.subtract(named.ids)
+            nothingToClaim.subtract(named.ids)
             reading?.named.formUnion(named.ids)
         }
     }
@@ -131,9 +133,9 @@ extension EnrichmentCoordinator {
             if !unclaimedPriority.isEmpty {
                 priorityAnswers.beginRead()
                 let answer = try await store.priorityEnrichmentCandidates(unclaimedPriority, videoFaces: videoFaces)
-                priorityAnswers.endRead(owingNothing: answer.owingNothing)
+                priorityAnswers.endRead(nothingToClaim: answer.nothingToClaim)
                 let claimed = answer.claimed
-                activity.read(rows: claimed.count + answer.owingNothing.count)
+                activity.read(rows: claimed.count + answer.nothingToClaim.count)
                 for candidate in claimed {
                     await recordClaimedCandidate(candidate.asset)
                 }
@@ -176,7 +178,7 @@ extension EnrichmentCoordinator {
             await recordDispatchedWork(items)
             if !routing.readinessCounts.isEmpty {
                 OtosLog.metadata.notice(
-                    "op=catalog.enrichment.readiness phase=route probes=\(routing.examined, privacy: .public) ready=\(routing.readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(routing.readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(routing.readinessCounts["rangedReady", default: 0], privacy: .public) remoteReady=\(routing.readinessCounts["remoteReady", default: 0], privacy: .public) userWorkOnly=\(routing.readinessCounts["userWorkOnly", default: 0], privacy: .public) notDue=\(routing.readinessCounts["notDue", default: 0], privacy: .public) retryReadiness=\(routing.readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(routing.readinessCounts["materializationBound", default: 0], privacy: .public)"
+                    "op=catalog.enrichment.readiness phase=route probes=\(routing.examined, privacy: .public) ready=\(routing.readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(routing.readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(routing.readinessCounts["rangedReady", default: 0], privacy: .public) remoteReady=\(routing.readinessCounts["remoteReady", default: 0], privacy: .public) userWorkOnly=\(routing.readinessCounts["userWorkOnly", default: 0], privacy: .public) notDue=\(routing.readinessCounts["notDue", default: 0], privacy: .public) retryReadiness=\(routing.readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(routing.readinessCounts["materializationBound", default: 0], privacy: .public) digestAwaitsLocalBytes=\(routing.readinessCounts["digestAwaitsLocalBytes", default: 0], privacy: .public)"
                 )
             }
             logClaimBatch(
@@ -202,13 +204,16 @@ extension EnrichmentCoordinator {
     /// Routes claimed rows by where their bytes are: ready rows join the queue, dataless
     /// rows become materialization demand — held, with their claim, when the hand-off has no
     /// slot for them now — and rows whose readiness is unknown, or whose source sends the
-    /// original only for the user's work, are released back to the Store.
+    /// original only for the user's work, are released back to the Store. A dataless row that
+    /// owes only its digest is never downloaded for it: the Store holds it until its bytes
+    /// are local (ADR 0009 §12).
     private func route(
         _ candidates: [ClaimedEnrichmentCandidate],
         now: ContinuousClock.Instant,
         into routing: inout ClaimRouting
     ) async {
         var releasedIDs: [MediaAssetID] = []
+        var digestHolds: [MediaAssetID] = []
         for candidate in candidates {
             let asset = candidate.asset
             guard schedule.readinessProbeIsDue(asset.id, now: now) else {
@@ -248,6 +253,9 @@ extension EnrichmentCoordinator {
             case .local:
                 enqueueReadyCandidate(candidate)
                 routing.readinessCounts["ready", default: 0] += 1
+            case .fetchable where candidate.owesOnlyDigest && !deviceRootPaths.contains(asset.id.libraryRootPath):
+                digestHolds.append(asset.id)
+                routing.readinessCounts["digestAwaitsLocalBytes", default: 0] += 1
             case .fetchable:
                 let work = DownloadWork(
                     id: asset.id,
@@ -280,6 +288,40 @@ extension EnrichmentCoordinator {
         }
         if !releasedIDs.isEmpty {
             await releaseClaims(releasedIDs)
+        }
+        await holdDigestsForLocalBytes(digestHolds)
+    }
+
+    /// Hands the claims of rows that owe only their digest, and whose originals are not local,
+    /// to the Store's digest hold: no download is made for a digest alone, and a held row is
+    /// no work of this coordinator's (ADR 0009 §12, ADR 0032 rule 8). The Store ends a hold on
+    /// the fact that ends its wait, and an event on a file comes after its bytes landed, so a
+    /// file made local between the locality read and the hold is caught by reading its
+    /// locality once more after it. A failed hold gives the claims back.
+    func holdDigestsForLocalBytes(_ ids: [MediaAssetID]) async {
+        guard !ids.isEmpty else { return }
+        let held: [MediaAssetID]
+        do {
+            held = try await store.holdDigestsForLocalBytes(ids)
+        } catch {
+            OtosLog.metadata.errorOperation("enrichment.digestHold", phase: "holdFailed", fields: [
+                "count": "\(ids.count)", "error": String(describing: error),
+            ])
+            await releaseClaims(ids)
+            return
+        }
+        activity.wrote(held.count)
+        // A held row takes no place in the window, so the walk has more to claim: another
+        // pass is asked for, and the walk ends when a claim finds nothing (`exhaustedClaims`).
+        if !held.isEmpty {
+            signal()
+        }
+        var local: [MediaAssetID] = []
+        for id in held where await materializationRequester.locality(of: id) == .local {
+            local.append(id)
+        }
+        if !local.isEmpty {
+            await store.endDigestHolds(local, reason: "localAtHold")
         }
     }
 
@@ -631,7 +673,8 @@ extension EnrichmentCoordinator {
             isVideo: asset.bestKind == .video,
             captureLocalTime: asset.captureLocalTime,
             isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath),
-            scope: candidate.scope
+            scope: candidate.scope,
+            owesOnlyDigest: candidate.owesOnlyDigest
         )
     }
 
