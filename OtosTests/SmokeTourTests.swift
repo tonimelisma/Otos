@@ -342,6 +342,52 @@ struct SmokeTourTests {
         }
     }
 
+    /// A choice act is submitted only in the turn that finds its tile held. An apply that moves
+    /// the tile out of the held set while the act waits for the earlier choices to settle is
+    /// delivered at that exact suspension: the act brings the tile back and waits again before
+    /// it submits, so it never times the layout that would bring the tile back.
+    @MainActor @Test func aChoiceActIsSubmittedOnlyInTheTurnThatFindsItsTileHeld() async {
+        var held = true
+        var settles = 0
+        var log: [String] = []
+        let submission = await SmokeTour.submitWhileHeld(
+            settle: {
+                settles += 1
+                // The first wait is where a reorder lands and moves the tile away.
+                if settles == 1 {
+                    held = false
+                }
+                log.append("settled")
+                return true
+            },
+            holds: { held },
+            bringBack: {
+                held = true
+                log.append("broughtBack")
+                return true
+            },
+            submit: {
+                log.append(held ? "submittedHeld" : "submittedUnheld")
+            }
+        )
+        #expect(submission == .submitted(broughtBack: 1))
+        #expect(log == ["settled", "broughtBack", "settled", "submittedHeld"])
+    }
+
+    /// A choice act whose wait reaches its deadline submits nothing.
+    @MainActor @Test func aChoiceActThatCannotBeHeldSubmitsNothing() async {
+        var submitted = false
+        let unsettled = await SmokeTour.submitWhileHeld(
+            settle: { false }, holds: { true }, bringBack: { true }, submit: { submitted = true }
+        )
+        #expect(unsettled == .notSettled)
+        let offScreen = await SmokeTour.submitWhileHeld(
+            settle: { true }, holds: { false }, bringBack: { false }, submit: { submitted = true }
+        )
+        #expect(offScreen == .notOnScreen)
+        #expect(!submitted)
+    }
+
     /// The photo steps open four neighbours the loupe can show without a download, the first
     /// such run in the order, or none.
     @Test func thePhotoStepsChooseTheFirstRunOfOpenableNeighbours() {

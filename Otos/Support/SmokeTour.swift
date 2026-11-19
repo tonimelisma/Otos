@@ -413,6 +413,44 @@ extension PreferencesDomain {
             return text.count > 1 && text.hasSuffix("/") ? String(text.dropLast()) : text
         }
 
+        /// How a choice act reached its submission: submitted, after bringing its tile back on
+        /// screen `broughtBack` times, or stopped at a wait's deadline.
+        enum HeldSubmission: Equatable {
+            case submitted(broughtBack: Int)
+            case notSettled
+            case notOnScreen
+        }
+
+        /// Submits a choice act only in the main-actor turn that found its tile held, so the act
+        /// is timed to its own result. Every await comes before that check: an apply that lands
+        /// during one (enrichment reordering the grid as it learns capture dates) can move the
+        /// tile out of the held set, and an act submitted then would time the later layout that
+        /// brings the tile back, not the render that shows its choice. `settle` waits for the
+        /// window's earlier choices to be written and applied, so the act does not queue behind
+        /// one; `bringBack` brings the tile on screen and waits for a report that holds it.
+        @MainActor
+        static func submitWhileHeld(
+            settle: () async -> Bool,
+            holds: () -> Bool,
+            bringBack: () async -> Bool,
+            submit: () -> Void
+        ) async -> HeldSubmission {
+            var broughtBack = 0
+            while true {
+                guard await settle() else {
+                    return .notSettled
+                }
+                if holds() {
+                    submit()
+                    return .submitted(broughtBack: broughtBack)
+                }
+                guard await bringBack() else {
+                    return .notOnScreen
+                }
+                broughtBack += 1
+            }
+        }
+
         /// The three choices in turn, starting after `original` and ending on it, so every act
         /// changes what the tile shows and the last puts it back.
         static func choiceCycle(after original: MediaChoice) -> [MediaChoice] {
@@ -986,8 +1024,10 @@ extension PreferencesDomain {
         /// clamps to a stale document height and the photo it aims at is not laid out for the
         /// step's whole deadline (`docs/research/2026-11-17-act-result-in-an-occluded-window.md`).
         /// A tile the collection view holds is rendered in the same main-actor pass that
-        /// receives the choice, occluded or not, as a Move to Trash's order is committed. The
-        /// later acts bring the tile back on screen only when it has left the visible set.
+        /// receives the choice, occluded or not, as a Move to Trash's order is committed. Each act
+        /// is submitted in the turn that finds the tile held, after every wait
+        /// (`submitWhileHeld`); one whose tile has left the visible set brings it back on screen
+        /// first, and its step says how often (`broughtBack=`).
         /// `perform` runs it only where the acts may run (`actsRefusal`).
         func choiceAct(_ index: Int) async -> (String, String, Outcome) {
             guard let viewModel else {
@@ -1018,20 +1058,27 @@ extension PreferencesDomain {
             }
             let choice = SmokeTour.choiceCycle(after: original)[index]
             let name = WindowAct.choice(choice).name
-            if viewModel.tileContentStore.settledVisible?.ids.contains(photo) != true {
-                guard await onScreen(photo) else {
-                    return ("act", name, Outcome(result: "deadline", fields: ["reason": "notOnScreen"]))
-                }
-            }
             viewModel.selectAssets([photo])
-            // Each act is timed on its own: the one before has written its choice, so this
-            // one does not queue behind that write's publication.
-            guard await settled() else {
+            var before: UInt64 = 0
+            let submission = await SmokeTour.submitWhileHeld(
+                settle: { await self.settled() },
+                holds: { viewModel.tileContentStore.settledVisible?.ids.contains(photo) == true },
+                bringBack: { await self.onScreen(photo) },
+                submit: {
+                    before = viewModel.lastActResult?.revision ?? 0
+                    viewModel.submitMediaChoice(choice)
+                }
+            )
+            switch submission {
+            case .notSettled:
                 return ("act", name, Outcome(result: "deadline", fields: ["reason": "notSettled"]))
+            case .notOnScreen:
+                return ("act", name, Outcome(result: "deadline", fields: ["reason": "notOnScreen"]))
+            case let .submitted(broughtBack):
+                var outcome = await actResult(after: before)
+                outcome.fields["broughtBack"] = "\(broughtBack)"
+                return ("act", name, outcome)
             }
-            let before = viewModel.lastActResult?.revision ?? 0
-            viewModel.submitMediaChoice(choice)
-            return await ("act", name, actResult(after: before))
         }
 
         /// The first tile, in the grid's order, of the visible set the collection view holds

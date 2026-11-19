@@ -177,7 +177,13 @@ real backlog. Three instruments see those:
   the 100 ms target. The tour's choice acts act on a tile the collection view holds when the
   first one runs, never one scrolled to: an occluded window lays its views out only about once
   a second, so a scroll there lands short and its photo is not laid out within a step's
-  deadline (`docs/research/2026-11-17-act-result-in-an-occluded-window.md`). Nothing makes a
+  deadline (`docs/research/2026-11-17-act-result-in-an-occluded-window.md`). Each choice act
+  is submitted in the main-actor turn that finds its tile held, after every wait before it
+  (`SmokeTour.submitWhileHeld`): an apply that lands during a wait, such as enrichment
+  reordering the grid as it learns capture dates, can move the tile out of the held set, and
+  an act submitted then times the later layout that brings the tile back, not its own result
+  (`docs/research/2026-11-19-act-result-behind-a-reorder.md`). Such an act brings the tile
+  back on screen first, and its step says how often (`broughtBack=`). Nothing makes a
   tour's window visible on an unattended Mac without changing a user setting or waking the
   display, and the tour does not try. The scorecard reports a Move to Trash's
   and a Put Back's file work apart, matched by batch (`fileWorkDoneMs`). Projection's intents
