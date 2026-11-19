@@ -53,8 +53,8 @@ owner's catalog):
   run nobody watches; GitHub Actions, which has no runner with this repo's Xcode beta.
 - **What it measures, in order.**
   1. **The tour** of the installed app on the owner's library, read-only: a launch tour
-     with a 600 s idle, the shape the performance program measured with
-     (`script/scorecard.sh --tour --idle 600`). The tour never runs beside a running
+     with a 120 s idle (`script/scorecard.sh --tour --idle 120`). The owner set two
+     minutes on 2026-11-18; stall lines are still judged as a rate per 10 minutes. The tour never runs beside a running
      installed app. The run quits that app through the helper `script/install.sh` uses
      (`otos_quit_installed_app`, `script/lib/installed-app.sh`): never while an import or
      reorganization is in flight (then `phase=pending`, and it stays due), with a

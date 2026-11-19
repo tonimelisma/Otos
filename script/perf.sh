@@ -166,8 +166,9 @@ run() {
   local scorecard felt cpu output status=0
   mkdir -p "$ROOT_DIR/build/scorecards"
   scorecard="$ROOT_DIR/build/scorecards/$(/bin/date -u +%Y%m%dT%H%M%SZ)-weekly.json"
-  # A launch tour with the ten-minute idle the performance program measured with.
-  "$ROOT_DIR/script/scorecard.sh" --tour --idle 600 --json "$scorecard" || fail_run "$today" "$head" tour
+  # A launch tour with a two-minute idle (owner, 2026-11-18): long enough to see background
+  # work beside the window, short enough that the run stays a few minutes.
+  "$ROOT_DIR/script/scorecard.sh" --tour --idle 120 --json "$scorecard" || fail_run "$today" "$head" tour
   # The owner has the app back while the counts are measured.
   reopen_installed_app
   felt="$(felt_misses "$scorecard")" || fail_run "$today" "$head" tourJudgedNothing
