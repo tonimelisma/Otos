@@ -135,7 +135,7 @@ struct CatalogWindowViewModelViewModeTests {
         model.applyState(makeViewModeState(orderedIDs: [ids[3], ids[1], ids[0], ids[2]]))
         #expect(model.focusedAssetID == ids[2])
         let loupeTask = model.paneRequestTasks[.loupe]
-        await fake.release(id: ids[2], with: .image(makeViewModeCGImage(seed: 4), nativePixelSize: nil))
+        await fake.release(id: ids[2], with: .image(makeViewModeImage(seed: 4), nativePixelSize: nil))
         await loupeTask?.value
         #expect(model.panePreviews[.loupe]?.id == ids[2])
         // The last photo of the order has no next: the step moves nothing and says so.
@@ -158,11 +158,11 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.focusedAssetID == ids[1])
         try await fake.waitUntilPending(atLeast: 2)
 
-        let imageX = makeViewModeCGImage(seed: 1)
+        let imageX = makeViewModeImage(seed: 1)
         await fake.release(id: ids[0], with: .image(imageX, nativePixelSize: nil))
 
         let loupeTask = model.paneRequestTasks[.loupe]
-        let imageY = makeViewModeCGImage(seed: 2)
+        let imageY = makeViewModeImage(seed: 2)
         await fake.release(id: ids[1], with: .image(imageY, nativePixelSize: nil))
         await loupeTask?.value
 
@@ -172,7 +172,7 @@ struct CatalogWindowViewModelViewModeTests {
 
     @Test func loupeStripClickMovesFocusSelectionAndPreview() async {
         let fake = FakePreviewLoader()
-        let image = makeViewModeCGImage(seed: 3)
+        let image = makeViewModeImage(seed: 3)
         await fake.setDefaultOutcome(.image(image, nativePixelSize: nil))
         let model = makeViewModeModel(loader: fake)
         let ids = makeViewModeIDs(count: 4)
@@ -196,7 +196,7 @@ struct CatalogWindowViewModelViewModeTests {
     /// landing late must not leave the pane on a spinner that nothing will clear.
     @Test func failedTrashRestoresTheLoupePreviewForTheReselectedItem() async throws {
         let fake = FakePreviewLoader()
-        await fake.setDefaultOutcome(.image(makeViewModeCGImage(seed: 6), nativePixelSize: nil))
+        await fake.setDefaultOutcome(.image(makeViewModeImage(seed: 6), nativePixelSize: nil))
         let model = makeViewModeModel(loader: fake)
         let ids = makeViewModeIDs(count: 3)
         model.applyState(makeViewModeState(orderedIDs: ids))
@@ -212,9 +212,9 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.focusedAssetID == ids[0])
         try await fake.waitUntilPending(id: ids[0])
 
-        await fake.release(id: ids[1], with: .image(makeViewModeCGImage(seed: 7), nativePixelSize: nil))
+        await fake.release(id: ids[1], with: .image(makeViewModeImage(seed: 7), nativePixelSize: nil))
         let loupeTask = model.paneRequestTasks[.loupe]
-        await fake.release(id: ids[0], with: .image(makeViewModeCGImage(seed: 8), nativePixelSize: nil))
+        await fake.release(id: ids[0], with: .image(makeViewModeImage(seed: 8), nativePixelSize: nil))
         await loupeTask?.value
 
         #expect(model.panePreviews[.loupe]?.id == ids[0])
@@ -225,7 +225,7 @@ struct CatalogWindowViewModelViewModeTests {
     /// must decode it under that identity rather than hold the old one's slot.
     @Test func identityRemapReRequestsTheLoupePreviewUnderTheNewIdentity() async {
         let fake = FakePreviewLoader()
-        await fake.setDefaultOutcome(.image(makeViewModeCGImage(seed: 9), nativePixelSize: nil))
+        await fake.setDefaultOutcome(.image(makeViewModeImage(seed: 9), nativePixelSize: nil))
         let model = makeViewModeModel(loader: fake)
         let ids = makeViewModeIDs(count: 2)
         model.applyState(makeViewModeState(orderedIDs: ids))
@@ -286,7 +286,7 @@ struct CatalogWindowViewModelViewModeTests {
 
     @Test func pairChangeClearsOnlyChangedSlots() async {
         let fake = FakePreviewLoader()
-        let image = makeViewModeCGImage(seed: 4)
+        let image = makeViewModeImage(seed: 4)
         await fake.setDefaultOutcome(.image(image, nativePixelSize: nil))
         let model = makeViewModeModel(loader: fake)
         let ids = makeViewModeIDs(count: 4)
@@ -327,7 +327,7 @@ struct CatalogWindowViewModelViewModeTests {
         try await fake.waitUntilPending(atLeast: 2)
 
         let rightTask = model.paneRequestTasks[.compareRight]
-        let rightImage = makeViewModeCGImage(seed: 5)
+        let rightImage = makeViewModeImage(seed: 5)
         await fake.release(id: ids[1], with: .image(rightImage, nativePixelSize: nil))
         await rightTask?.value
         #expect(model.panePreviews[.compareRight]?.id == ids[1])
@@ -394,7 +394,7 @@ struct CatalogWindowViewModelViewModeTests {
 
     @Test func positionalClickReplacesNamedPane() async {
         let fake = FakePreviewLoader()
-        let image = makeViewModeCGImage(seed: 6)
+        let image = makeViewModeImage(seed: 6)
         await fake.setDefaultOutcome(.image(image, nativePixelSize: nil))
         let model = makeViewModeModel(loader: fake)
         let ids = makeViewModeIDs(count: 5)
@@ -473,17 +473,6 @@ private func makeViewModeState(orderedIDs: [MediaAssetID]) -> CatalogWindowState
     )
 }
 
-private func makeViewModeCGImage(seed: Int) -> CGImage {
-    let context = CGContext(
-        data: nil,
-        width: 16 + seed,
-        height: 16,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )!
-    context.setFillColor(red: CGFloat(seed % 5) / 5, green: 0.3, blue: 0.7, alpha: 1)
-    context.fill(CGRect(x: 0, y: 0, width: 16 + seed, height: 16))
-    return context.makeImage()!
+private func makeViewModeImage(seed: Int) -> DisplayImage {
+    DisplayImage.fixture(width: 16 + seed, height: 16, gray: CGFloat(seed % 5) / 5)
 }

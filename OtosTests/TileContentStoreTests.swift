@@ -291,16 +291,6 @@ private func makeDetail(
 }
 
 @MainActor
-private func makeImage(width: Int = 8) -> CGImage {
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    let context = CGContext(
-        data: nil,
-        width: width,
-        height: width,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: colorSpace,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )!
-    return context.makeImage()!
+private func makeImage(width: Int = 8) -> DisplayImage {
+    DisplayImage.fixture(width: width)
 }

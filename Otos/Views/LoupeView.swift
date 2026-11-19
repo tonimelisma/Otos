@@ -354,7 +354,7 @@ private struct ResizeCursorArea: NSViewRepresentable {
 /// it keeps while resized (width over height in fractions of the frame, or nil), and the
 /// intent its moves report to.
 struct CropEditorInput {
-    let image: CGImage
+    let image: DisplayImage
     let crop: EditCrop
     let fractionRatio: Double?
     let setCrop: @MainActor (EditCrop, Bool) -> Void

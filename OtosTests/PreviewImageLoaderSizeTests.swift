@@ -91,9 +91,9 @@ struct PreviewImageLoaderSizeTests {
             return
         }
         #expect(native == CGSize(width: 3600, height: 2400))
-        // A JPEG this size decodes whole for the preview's size anyway, so the pane shows it
-        // whole, as Image I/O returns it (`OriginalRoute.wholeShown`).
-        #expect(fit.width == 3600)
+        // A JPEG this size decodes whole for the preview's size anyway, and is drawn at the
+        // preview's size (`OriginalRoute.wholeDrawn`).
+        #expect(fit.width == ThumbnailStore.previewMaxPixelSize)
         #expect(full.width == 3600)
 
         // One whose half covers the preview's size is decoded at it.

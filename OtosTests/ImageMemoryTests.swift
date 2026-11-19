@@ -238,7 +238,7 @@ extension AppKitWindowTests {
             // surface's 64-byte alignment at most; a screenful a few MB, with the window, its
             // views and the decodes' transients well inside the bound.
             #expect(tiles.allSatisfy { tile in
-                tile.width <= 256 && tile.height <= 256 && tile.bytesPerRow <= (tile.width * 4 + 63) / 64 * 64
+                tile.width <= 256 && tile.height <= 256 && tile.cgImage.bytesPerRow <= (tile.width * 4 + 63) / 64 * 64
             })
             // Shown without a display copy: Core Animation's region does not grow by the tiles.
             let copies = ImageMemoryFixture.dirtyMB("CoreAnimation", in: paintedRegions) - ImageMemoryFixture.dirtyMB("CoreAnimation", in: startRegions)
@@ -268,7 +268,7 @@ extension AppKitWindowTests {
                 data: nil, width: 64, height: 48, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                 bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
             ))
-            func show(_ index: Int) async throws -> CGImage {
+            func show(_ index: Int) async throws -> DisplayImage {
                 let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "photo-\(index).heic"))
                 let detail = MediaTileDetail(
                     libraryRootPath: root, relativePath: id.relativePath, previewPath: previews[index],
@@ -278,7 +278,7 @@ extension AppKitWindowTests {
                     throw ImageMemoryError.noImage
                 }
                 // Painting reads every pixel, as the pane's layer does.
-                probe.draw(image, in: CGRect(x: 0, y: 0, width: 64, height: 48))
+                probe.draw(image.cgImage, in: CGRect(x: 0, y: 0, width: 64, height: 48))
                 return image
             }
             let start = ImageMemoryFixture.footprintMB()
@@ -288,7 +288,7 @@ extension AppKitWindowTests {
             }
             shown = try await show(previews.count - 2)
             let walked = ImageMemoryFixture.footprintMB()
-            let previewMB = shown.bytesPerRow * shown.height / 1_048_576
+            let previewMB = shown.byteCount / 1_048_576
             ImageMemoryFixture.record(
                 "op=imageMemory step=fullSizeView startMB=\(start) walkedMB=\(walked) previewMB=\(previewMB) photos=\(previews.count)"
             )
@@ -535,7 +535,7 @@ extension AppKitWindowTests {
                 // the stored thumbnail at its own size, no larger than the tile shows it.
                 for tile in tiles {
                     let image = try #require(tile.image, "\(step): a shown tile has no image")
-                    #expect(image === model.tileContentStore.content(for: tile.id)?.image, "\(step): the layer shows another image")
+                    #expect(image === model.tileContentStore.content(for: tile.id)?.image?.cgImage, "\(step): the layer shows another image")
                     #expect(max(image.width, image.height) <= ThumbnailStore.maxPixelSize)
                 }
                 return (footprint, regions)

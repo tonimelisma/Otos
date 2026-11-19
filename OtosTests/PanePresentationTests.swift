@@ -7,7 +7,7 @@ import Testing
 struct PanePresentationTests {
     @Test func matchingPreviewIDYieldsFull() {
         let id = makePaneID("a.jpg")
-        let image = makePaneCGImage()
+        let image = makePaneImage()
         let preview = PanePreview(id: id, image: image)
         #expect(PanePresentation.display(paneID: id, preview: preview) == .full(image))
     }
@@ -15,7 +15,7 @@ struct PanePresentationTests {
     @Test func mismatchedPreviewFallsBackToThumbnail() {
         let pane = makePaneID("pane.jpg")
         let other = makePaneID("other.jpg")
-        let preview = PanePreview(id: other, image: makePaneCGImage())
+        let preview = PanePreview(id: other, image: makePaneImage())
         #expect(PanePresentation.display(paneID: pane, preview: preview) == .thumbnail(pane))
     }
 
@@ -25,7 +25,7 @@ struct PanePresentationTests {
     /// place it where it knows the media's size, so the size is reported here and
     /// absent where the pane genuinely does not have it.
     @Test func onlyAFullImagePaneKnowsWhereItsMediaIs() {
-        let landscape = makePaneCGImage(width: 1600, height: 400)
+        let landscape = makePaneImage(width: 1600, height: 400)
         #expect(PanePresentation.Display.full(landscape).mediaPixelSize
             == CGSize(width: 1600, height: 400))
 
@@ -77,15 +77,6 @@ private func makePaneID(_ path: String) -> MediaAssetID {
     )
 }
 
-private func makePaneCGImage(width: Int = 8, height: Int = 8) -> CGImage {
-    let context = CGContext(
-        data: nil,
-        width: width,
-        height: height,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )!
-    return context.makeImage()!
+private func makePaneImage(width: Int = 8, height: Int = 8) -> DisplayImage {
+    DisplayImage.fixture(width: width, height: height)
 }

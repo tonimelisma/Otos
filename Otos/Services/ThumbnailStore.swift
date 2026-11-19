@@ -302,15 +302,10 @@ nonisolated enum ThumbnailStore {
     }
 
     /// A stored image for display (`DisplayImage.decode`) at its stored size, its file read
-    /// on the calling thread; callers run it off the main actor. `nil` if the file is missing
-    /// or unreadable (the tile then shows its placeholder). A stored thumbnail is never larger
-    /// than a grid tile shows it, so it is taken whole, as Image I/O returns it, and never drawn
-    /// again: that is the one form a layer shows without a copy. Its pixels are filled when Core
-    /// Animation first shows it, in the window's commit, not here: measured, the commit that
-    /// first showed 300 such images took as long as with the drawn form, so this form moves no
-    /// decode onto the main thread that was not there before
-    /// (`docs/research/2026-11-16-tile-images-shown-once.md`).
-    static func load(_ relativeName: String, in directory: URL) -> CGImage? {
+    /// and its pixels drawn on the calling thread; callers run it off the main actor. `nil` if
+    /// the file is missing or unreadable (the tile then shows its placeholder). A stored
+    /// thumbnail is never larger than a grid tile shows it, so it is decoded whole.
+    static func load(_ relativeName: String, in directory: URL) -> DisplayImage? {
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailLoad")
         defer {
             OtosSignpost.thumbnails.endInterval("ThumbnailLoad", signpost)

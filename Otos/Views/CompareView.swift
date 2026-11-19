@@ -210,7 +210,7 @@ struct CompareView: View {
 /// Animation shows from the decode's own pixels (an IOSurface from `PreviewImageLoader`), the
 /// way the loupe shows it. A pane taken down lets go of the photo.
 private struct PaneImageView: NSViewRepresentable {
-    let image: CGImage
+    let image: DisplayImage
 
     func makeNSView(context _: Context) -> PaneImageLayerView {
         PaneImageLayerView(frame: .zero)
@@ -226,10 +226,10 @@ private struct PaneImageView: NSViewRepresentable {
 }
 
 private final class PaneImageLayerView: NSView {
-    var image: CGImage? {
+    var image: DisplayImage? {
         didSet {
-            if image !== oldValue {
-                layer?.contents = image
+            if image?.cgImage !== oldValue?.cgImage {
+                layer?.contents = image?.cgImage
             }
         }
     }

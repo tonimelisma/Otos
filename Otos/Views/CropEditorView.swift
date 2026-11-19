@@ -19,7 +19,7 @@ import SwiftUI
 /// or while ⌘ is held, a drag anywhere on the canvas draws a line instead of moving the
 /// crop, and letting go reports it; the view model turns the photo so it is level.
 struct CropEditorView: View {
-    let image: CGImage
+    let image: DisplayImage
     let crop: EditCrop
     /// Width over height in fractions of the frame while the aspect is constrained.
     let fractionRatio: Double?
@@ -43,7 +43,7 @@ struct CropEditorView: View {
             let frame = fittedFrame(in: proxy.size)
             let cropRect = rect(of: crop, in: frame)
             ZStack(alignment: .topLeading) {
-                Image(decorative: image, scale: 1)
+                Image(decorative: image.cgImage, scale: 1)
                     .resizable()
                     .frame(width: frame.width, height: frame.height)
                     .offset(x: frame.minX, y: frame.minY)

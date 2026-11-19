@@ -239,7 +239,7 @@ extension CatalogWindowViewModel {
 
     /// A crop render landed: shown while it is for the photo being cropped and newer than
     /// any render shown.
-    func publishCropBase(id: MediaAssetID, recipe: EditRecipe, image: CGImage, sequence: UInt64) {
+    func publishCropBase(id: MediaAssetID, recipe: EditRecipe, image: DisplayImage, sequence: UInt64) {
         guard isCropping, editTarget?.id == id, sequence > editRenderPublished else { return }
         editRenderPublished = sequence
         editCropBase = EditLivePreview(id: id, image: image, recipe: recipe, revision: nil)

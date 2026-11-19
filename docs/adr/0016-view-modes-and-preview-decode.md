@@ -62,9 +62,9 @@ scale × window long edge). It:
    `ImageRenderer` (ADR 0035), at the stored preview's size short of full resolution, so a
    photo at fit is the same whether its preview is stored yet or not; the renderer shares
    its budget and any render of the same photo already asked for with enrichment. A
-   rendering Image I/O did not return in an IOSurface (a JPEG's scaled decode, a developed
-   RAW, an edited still) is drawn into one once (`DisplayImage.shown`), so Core Animation
-   keeps no second copy (`docs/research/2026-11-17-full-size-view-on-originals.md`).
+   rendering its decode did not already draw as a `DisplayImage` (a JPEG's scaled decode, a
+   HEIC's, a developed RAW, an edited still) is drawn into one once (`DisplayImage.shown`),
+   so Core Animation keeps no second copy (`docs/research/2026-11-17-full-size-view-on-originals.md`).
 4. Decodes video posters via `QLThumbnailGenerator` at the same target; loupe
    video playback after 0069 is via `VideoPreviewLoader` → `AVPlayerView` (not here).
 5. Coalesces per-id in-flight work and holds only what a pane can come back to: the
@@ -79,26 +79,35 @@ scale × window long edge). It:
    view lets go of all of them (`releaseHeldPhotos`, synchronous from `exitToGrid`): no pane
    is left to return. A decode whose every waiter is cancelled is cancelled with them, stops
    before it reads a byte, and is never held.
-6. Makes every image a layer shows — the loupe's and Compare's photos, the grid's
-   thumbnails, the face tiles — through one owner, `DisplayImage`
-   (`Otos/Support/DisplayImage.swift`), so each is held once and shown without a copy. A
-   stored file (a preview for a screen-sized request, a thumbnail) is decoded by Image I/O
-   at no more than the pixels it is shown at: whole, as `CGImageSourceCreateImageAtIndex`
-   returns it, when the file is no larger, else scaled by `CGImageSourceCreateThumbnailAtIndex`.
-   Either way Image I/O returns it in an IOSurface (a whole decode in the codec's YCbCr
-   layout, about 1.6 bytes a pixel), which Core Animation and SwiftUI display as it is. A
-   cut Otos draws itself (a face tile) is drawn into an IOSurface of its own and made an image
-   by `VTCreateCGImageFromCVPixelBuffer`. The loupe and both Compare panes show a decode as a
-   layer's contents. A stored thumbnail is never larger than a grid tile shows it, so it is
-   decoded whole.
-   Rejected: drawing a decode into a bitmap context or into mapped memory of Otos's own:
-   Core Animation copies either for
-   display and keeps the copy with the image, two full copies an image, and the context's
-   decode leaves its scratch in the malloc heap; Image I/O's thumbnail decode of a small JPEG,
-   which is not an IOSurface and is copied the same way, so a thumbnail is never scaled down
-   for a smaller tile; SwiftUI's `Image` for Compare, whose display list keeps the last image
-   it drew after the pane is gone (`docs/research/2026-11-16-full-size-view-memory.md`,
-   `docs/research/2026-11-16-tile-images-shown-once.md`).
+6. Makes every image a layer shows — the loupe's and Compare's photos, a live edit, the
+   grid's thumbnails, the face tiles, On This Day's covers, Places' and Duplicates' tiles —
+   a `DisplayImage` (`Otos/Support/DisplayImage.swift`), the one type a layer or SwiftUI's
+   `Image` is handed. Its only constructor draws the pixels, off the main actor, into an
+   IOSurface of its own (8-bit premultiplied BGRA), made an image by
+   `VTCreateCGImageFromCVPixelBuffer`: Core Animation shows it with no copy, and the
+   window's commit that first shows it does no work for it. A stored file (a preview for a
+   screen-sized request, a thumbnail) is decoded by Image I/O at no more than the pixels it
+   is shown at — whole when the file is no larger, else scaled by
+   `CGImageSourceCreateThumbnailAtIndex` — and drawn; a live edit is rendered by Core Image
+   straight into the surface; a cut Otos draws itself (a face tile) is drawn into it. A stored
+   thumbnail is never larger than a grid tile shows it, so it is decoded whole.
+   Rejected:
+   - Handing a layer Image I/O's whole decode of a JPEG as it returns it. It is an IOSurface
+     in the codec's YCbCr layout (about 1.6 bytes a pixel, where the drawn form is 4), but
+     the decoder fills it only when Core Animation first shows it, in the window's commit on
+     the main thread: 3–3.5 ms for each 256 px thumbnail, so every new row of a scroll
+     dropped frames, at any library size
+     (`docs/research/2026-11-18-display-images-drawn-before-shown.md`). The smaller form is
+     not worth a decode on the main thread.
+   - Converting the drawn pixels to a YCbCr surface off the main actor to keep the smaller
+     form: it shows as cheaply, but the decode still goes through BGRA, so it adds a second
+     conversion (2–3 ms a thumbnail) to save memory no measurement asked for.
+   - Drawing a decode into a bitmap context or into mapped memory of Otos's own: Core
+     Animation copies either for display and keeps the copy with the image, two full copies
+     an image.
+   - SwiftUI's `Image` for Compare, whose display list keeps the last image it drew after
+     the pane is gone (`docs/research/2026-11-16-full-size-view-memory.md`,
+     `docs/research/2026-11-16-tile-images-shown-once.md`).
 
 The 256 px enrichment thumbnail paints immediately in loupe; the full decode
 replaces it when ready (APP-015 monotonic rule — never blank, never regress to

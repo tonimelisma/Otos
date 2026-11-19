@@ -349,7 +349,7 @@ private final class GridSelectionTestHarness {
         let key = MediaAssetTilePresentation.imageContentKey(detail)
         controller.mergeTileDetails([id: detail], reason: "test")
         _ = controller.tileContents.applyDecoded(
-            makeTestCGImage(width: Int(pixelSize.width), height: Int(pixelSize.height)),
+            makeTestImage(width: Int(pixelSize.width), height: Int(pixelSize.height)),
             key: key,
             for: id
         )
@@ -521,15 +521,6 @@ private func makeAssetID(path: String) -> MediaAssetID {
     )
 }
 
-private func makeTestCGImage(width: Int, height: Int) -> CGImage {
-    let context = CGContext(
-        data: nil,
-        width: width,
-        height: height,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )!
-    return context.makeImage()!
+private func makeTestImage(width: Int, height: Int) -> DisplayImage {
+    DisplayImage.fixture(width: width, height: height)
 }

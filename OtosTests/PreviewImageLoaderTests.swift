@@ -378,7 +378,7 @@ struct PreviewImageLoaderRetentionTests {
         )
     }
 
-    private static func image(_ loader: PreviewImageLoader, _ id: MediaAssetID, edge: Int = 64) async throws -> CGImage {
+    private static func image(_ loader: PreviewImageLoader, _ id: MediaAssetID, edge: Int = 64) async throws -> DisplayImage {
         guard case let .image(image, _) = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: edge)) else {
             throw LoaderTestError.noImage
         }
@@ -410,7 +410,7 @@ struct PreviewImageLoaderRetentionTests {
     @Test func theLoaderHoldsOnlyThePhotosAPaneCanReturnTo() async throws {
         let ids = try Self.photos(PreviewImageLoader.retainedPhotos + 1)
         let loader = Self.loader()
-        var first: [CGImage] = []
+        var first: [DisplayImage] = []
         for id in ids {
             try await first.append(Self.image(loader, id))
         }
@@ -436,7 +436,7 @@ struct PreviewImageLoaderRetentionTests {
     @Test func leavingTheFullSizeViewLetsGoOfEveryHeldPhoto() async throws {
         let ids = try Self.photos(PreviewImageLoader.retainedPhotos)
         let loader = Self.loader()
-        var first: [CGImage] = []
+        var first: [DisplayImage] = []
         for id in ids {
             try await first.append(Self.image(loader, id))
         }

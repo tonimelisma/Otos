@@ -183,9 +183,10 @@ extension AppKitWindowTests {
 
         /// What the tour's photo steps on a new library's originals may add at their peak: the
         /// three photos held to return to, about 20 MB each at 2,560 pixels, and the decode of
-        /// the next, at most a 24 MP JPEG's by the thumbnail decode (59–63 MB); a 12 MP JPEG is
-        /// shown whole as Image I/O returns it (36–37 MB, `OriginalRoute.wholeShown`). Measured
-        /// at +101 MB (`docs/research/2026-11-17-jpeg-decode-routes.md`).
+        /// the next, at most a 24 MP JPEG's by the thumbnail decode (59–63 MB) or a 12 MP JPEG
+        /// decoded whole and drawn (86–92 MB, `OriginalRoute.wholeDrawn`)
+        /// (`docs/research/2026-11-17-jpeg-decode-routes.md`,
+        /// `docs/research/2026-11-18-display-images-drawn-before-shown.md`).
         static let photoStepsBoundMB = 120
 
         /// The peak above the footprint before `phase` began, in MB.
@@ -374,18 +375,18 @@ extension AppKitWindowTests {
                     return DisplayImage.draw(width: out.0, height: out.1, colorSpace: whole.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!) {
                         $0.interpolationQuality = .high
                         $0.draw(whole, in: CGRect(x: 0, y: 0, width: out.0, height: out.1))
-                    }
+                    }?.cgImage
                 }
                 switch self {
                 case let .thumbnail(cacheImmediately):
-                    return thumbnail([kCGImageSourceShouldCacheImmediately: cacheImmediately]).flatMap(DisplayImage.shown)
+                    return thumbnail([kCGImageSourceShouldCacheImmediately: cacheImmediately]).flatMap { DisplayImage.shown($0)?.cgImage }
                 case .thumbnailSubsampled:
                     var factor = 1
                     while factor < 8, max(width, height) / (factor * 2) >= edge {
                         factor *= 2
                     }
                     return thumbnail([kCGImageSourceShouldCacheImmediately: true, kCGImageSourceSubsampleFactor: factor])
-                        .flatMap(DisplayImage.shown)
+                        .flatMap { DisplayImage.shown($0)?.cgImage }
                 case .wholeAsReturned:
                     return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
                 case .wholeDrawnToSurface:

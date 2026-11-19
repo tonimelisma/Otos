@@ -353,13 +353,13 @@ struct PeopleStateTests {
         let rightHalf = EditRecipe(crop: EditCrop(left: 0.5, top: 0, width: 0.5, height: 1))
         try Self.writePreview("cropped.png", width: 200, height: 200, face: CGRect(x: 40, y: 80, width: 40, height: 40), in: directory)
         let cropped = try #require(await FaceCrop.decode(box, from: FacePreview(name: "cropped.png", recipe: rightHalf), in: directory, pixelEdge: 64))
-        #expect(Self.isFace(Self.centerPixel(of: cropped)))
+        #expect(Self.isFace(Self.centerPixel(of: cropped.cgImage)))
 
         // A quarter turn clockwise: the face at x 80–120, y 240–280 of a 200 × 400 preview.
         let turned = EditRecipe(quarterTurns: 1)
         try Self.writePreview("turned.png", width: 200, height: 400, face: CGRect(x: 80, y: 240, width: 40, height: 40), in: directory)
         let quarter = try #require(await FaceCrop.decode(box, from: FacePreview(name: "turned.png", recipe: turned), in: directory, pixelEdge: 64))
-        #expect(Self.isFace(Self.centerPixel(of: quarter)))
+        #expect(Self.isFace(Self.centerPixel(of: quarter.cgImage)))
 
         // The left half kept: the face is not on the preview.
         let leftHalf = EditRecipe(crop: EditCrop(left: 0, top: 0, width: 0.5, height: 1))
@@ -375,9 +375,11 @@ struct PeopleStateTests {
         let box = CGRect(x: 1200.0 / 2560, y: 900.0 / 1920, width: 100.0 / 2560, height: 100.0 / 1920)
         let tile = try #require(await FaceCrop.decode(box, from: FacePreview(name: "large.png", recipe: .neutral), in: directory, pixelEdge: 128))
         #expect(tile.width == 128 && tile.height == 128)
-        #expect(tile.bytesPerRow == tile.width * 4)
-        #expect(tile.dataProvider?.data.map(CFDataGetLength) == tile.bytesPerRow * tile.height)
-        #expect(Self.isFace(Self.centerPixel(of: tile)))
+        #expect(tile.cgImage.bytesPerRow == tile.width * 4)
+        // Its surface is its rows and the surface's own few bytes of alignment, a page at most:
+        // nothing of the 2560 px preview it was cut from.
+        #expect(tile.byteCount <= tile.cgImage.bytesPerRow * tile.height + 4096)
+        #expect(Self.isFace(Self.centerPixel(of: tile.cgImage)))
     }
 
     /// A face's outline on the edited photo: the box itself without an edit, mapped through
@@ -418,14 +420,11 @@ struct PeopleStateTests {
     /// The loupe and compare place outlines through the edit their own decode shows, so they
     /// need nothing the Info pane reads (DES-113): a decode carries the original's upright
     /// size and its edit, and its shown size follows from them.
-    @Test func aPaneDecodePlacesOutlinesThroughItsOwnEdit() throws {
+    @Test func aPaneDecodePlacesOutlinesThroughItsOwnEdit() {
         let box = CGRect(x: 0.1, y: 0.2, width: 0.2, height: 0.1)
         var cropped = EditRecipe()
         cropped.crop = EditCrop(left: 0, top: 0, width: 0.5, height: 1)
-        let image = try #require(CGContext(
-            data: nil, width: 4, height: 2, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )?.makeImage())
+        let image = DisplayImage.fixture(width: 4, height: 2)
         let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Lib"), relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let upright = CGSize(width: 400, height: 200)
 

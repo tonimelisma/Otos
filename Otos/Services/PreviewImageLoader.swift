@@ -28,7 +28,7 @@ nonisolated protocol PreviewLoading: Sendable {
 /// this actor asks the shared `MaterializationCoordinator` to make the original local
 /// (`ensureLocal`, interactive, because the user has opened loupe/compare), re-checks
 /// `FileMaterialization.status` immediately before every byte read, and returns a
-/// downsampled `CGImage` or `.unavailable`.
+/// downsampled `DisplayImage` or `.unavailable`.
 ///
 /// Per-id in-flight work is coalesced. Stale results are rejected by the ViewModel's
 /// expected-asset identity check — this actor returns whatever it decoded. A decode whose
@@ -37,12 +37,12 @@ nonisolated protocol PreviewLoading: Sendable {
 /// than they decode starts only the decodes still wanted.
 ///
 /// **What a decode is.** A screen-sized request decodes the stored preview at the requested
-/// long edge through `DisplayImage.decode`, the one decode of an image a layer shows. Image
-/// I/O returns it in an IOSurface that Core Animation displays as it is, so a shown photo's
-/// pixels exist once, in a region of their own that leaves the footprint when the image goes.
-/// A decode drawn into a bitmap context instead is copied again by Core Animation for display
-/// and kept with the image: two full copies a photo, and the decode's scratch left in the
-/// malloc heap (`docs/research/2026-11-16-full-size-view-memory.md`).
+/// long edge through `DisplayImage.decode`, the one decode of an image a layer shows: its
+/// pixels drawn here, off the main actor, into an IOSurface Core Animation displays as it is,
+/// so a shown photo's pixels exist once, in a region of their own that leaves the footprint
+/// when the image goes, and showing it costs the window's commit nothing
+/// (`docs/research/2026-11-16-full-size-view-memory.md`,
+/// `docs/research/2026-11-18-display-images-drawn-before-shown.md`).
 ///
 /// **What it holds.** A pane holds the image it shows (`PanePreview`), so the loader holds
 /// only what a pane can come back to: the screen-sized decodes of the last
@@ -65,7 +65,7 @@ actor PreviewImageLoader: PreviewLoading {
     enum Outcome {
         /// The decode plus the source's native pixel size (oriented), when the source
         /// reports one — the loupe sizes its zoom document from it (APP-040).
-        case image(CGImage, nativePixelSize: CGSize?)
+        case image(DisplayImage, nativePixelSize: CGSize?)
         case unavailable
     }
 
@@ -84,7 +84,7 @@ actor PreviewImageLoader: PreviewLoading {
     static let retainedPhotos = 3
 
     private nonisolated struct CacheEntry: Sendable {
-        let image: CGImage
+        let image: DisplayImage
         let longEdge: Int
         let nativePixelSize: CGSize?
         /// The rendered edit revision the image shows (ADR 0036); a newer one misses.
@@ -268,7 +268,7 @@ actor PreviewImageLoader: PreviewLoading {
     }
 
     private nonisolated static func bytes(of held: HeldPhotos) -> Int {
-        held.entries.values.reduce(0) { $0 + $1.image.bytesPerRow * $1.image.height }
+        held.entries.values.reduce(0) { $0 + $1.image.byteCount }
     }
 
     /// Awaits a shared decode. A waiter that is cancelled leaves it, and the last to leave
@@ -416,18 +416,17 @@ actor PreviewImageLoader: PreviewLoading {
     }
 
     private nonisolated struct DecodedImage: Sendable {
-        let image: CGImage
+        let image: DisplayImage
         let source: String
         let nativePixelSize: CGSize?
 
-        init(_ decoded: (CGImage, String, CGSize?)) {
+        init(_ decoded: (DisplayImage, String, CGSize?)) {
             (image, source, nativePixelSize) = decoded
         }
     }
 
-    /// The stored preview at `targetLongEdge` at most, as a layer shows it without a copy
-    /// (`DisplayImage.decode`).
-    private nonisolated static func decodeStoredPreview(at url: URL, targetLongEdge: Int) -> CGImage? {
+    /// The stored preview at `targetLongEdge` at most, as a layer shows it (`DisplayImage.decode`).
+    private nonisolated static func decodeStoredPreview(at url: URL, targetLongEdge: Int) -> DisplayImage? {
         DisplayImage.decode(url, maxPixelEdge: targetLongEdge)
     }
 
@@ -441,17 +440,14 @@ actor PreviewImageLoader: PreviewLoading {
         url: URL,
         targetLongEdge: Int,
         recipe: EditRecipe
-    ) async -> (CGImage, String, CGSize?)? {
+    ) async -> (DisplayImage, String, CGSize?)? {
         let longEdge = targetLongEdge == fullResolution ? nil : targetLongEdge
-        // Asked for display: an upright, unedited JPEG that decodes whole is shown as Image I/O
-        // returns it (`OriginalRoute.wholeShown`).
-        guard let rendered = try? await ImageRenderer.interactive.render(url, longEdge: longEdge, recipe: recipe, forDisplay: true) else {
+        guard let rendered = try? await ImageRenderer.interactive.render(url, longEdge: longEdge, recipe: recipe) else {
             return nil
         }
-        // A rendering in an IOSurface of its own is shown as it is; any other is in ordinary
-        // memory, and is drawn into a surface once rather than copied by Core Animation and
-        // kept twice (`DisplayImage.shown`).
-        guard let shown = rendered.isShownAsIs ? rendered.image : DisplayImage.shown(rendered.image) else {
+        // A rendering its decode drew as a `DisplayImage` is shown as it is; any other is drawn
+        // into one once, here, off the actor (`offActor`).
+        guard let shown = rendered.shown ?? DisplayImage.shown(rendered.image) else {
             return nil
         }
         return (shown, "render-\(rendered.decoder.rawValue)", rendered.nativePixelSize)
@@ -460,7 +456,7 @@ actor PreviewImageLoader: PreviewLoading {
     private nonisolated static func decodeVideoPoster(
         url: URL,
         targetLongEdge: Int
-    ) async -> (CGImage, String, CGSize?)? {
+    ) async -> (DisplayImage, String, CGSize?)? {
         let request = QLThumbnailGenerator.Request(
             fileAt: url,
             size: CGSize(width: targetLongEdge, height: targetLongEdge),
@@ -471,14 +467,14 @@ actor PreviewImageLoader: PreviewLoading {
             let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(
                 for: request
             )
-            return (representation.cgImage, "quicklook", nil)
+            return DisplayImage.shown(representation.cgImage).map { ($0, "quicklook", nil) }
         } catch {
             return nil
         }
     }
 
     private func insert(
-        _ image: CGImage,
+        _ image: DisplayImage,
         for id: MediaAssetID,
         longEdge: Int,
         nativePixelSize: CGSize?,

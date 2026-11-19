@@ -36,7 +36,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
             let loader = FakePreviewLoader()
-            let small = try #require(gradientImage(width: 400, height: 300))
+            let small = try #require(gradientImage(width: 400, height: 300).flatMap(DisplayImage.shown))
             await loader.setDefaultOutcome(.image(small, nativePixelSize: CGSize(width: 6000, height: 4500)))
             let model = CatalogWindowViewModel(
                 catalogStore: library.store,

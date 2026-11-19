@@ -3,6 +3,7 @@ import CoreImage
 import CoreVideo
 import Foundation
 import ImageIO
+import IOSurface
 import UniformTypeIdentifiers
 import VideoToolbox
 
@@ -14,21 +15,14 @@ nonisolated enum OriginalRoute: Hashable, Sendable {
     /// smallest half of itself that covers it, any other format whole.
     case thumbnail
     /// A JPEG that Image I/O would decode whole for the asked size anyway (a half of it falls
-    /// short): decoded whole and drawn once, upright and scaled, into an IOSurface of its own.
+    /// short): decoded whole and drawn once, upright and scaled, into a `DisplayImage`.
     /// A 12 MP JPEG at 2,560 pixels peaks at 86–92 MB this way, 103–111 MB by the thumbnail
     /// decode, and takes 58–62 ms rather than 84–89.
     case wholeDrawn
-    /// The same JPEG, upright and unedited, for a pane to show: the whole image as Image I/O
-    /// returns it, whose pixels are filled in the JPEG's own YCbCr layout in an IOSurface when
-    /// a layer first shows it. A 12 MP JPEG peaks at 36–37 MB through its first showing,
-    /// holds 18–19 MB, and is on screen in 17–19 ms. A preview to encode is drawn from its
-    /// pixels twice (the preview, its thumbnail), so only a pane asks for it.
-    case wholeShown
 
     /// The route for a rendering of an original with `header`, edited by `recipe`, whose long
-    /// edge is `longEdge` at most (the whole original when nil); `forDisplay` when a pane
-    /// shows the rendering as it is.
-    static func of(_ header: OriginalHeader?, longEdge: Int?, recipe: EditRecipe, forDisplay: Bool) -> OriginalRoute {
+    /// edge is `longEdge` at most (the whole original when nil).
+    static func of(_ header: OriginalHeader?, longEdge: Int?, recipe: EditRecipe) -> OriginalRoute {
         guard let header, header.decoding == .scaledByHalves else {
             return .thumbnail
         }
@@ -37,7 +31,7 @@ nonisolated enum OriginalRoute: Hashable, Sendable {
         guard max(header.width, header.height) / 2 < decodeLongEdge else {
             return .thumbnail
         }
-        return forDisplay && recipe.isNeutral && header.orientation == 1 ? .wholeShown : .wholeDrawn
+        return .wholeDrawn
     }
 }
 
@@ -88,106 +82,148 @@ nonisolated struct OriginalHeader: Hashable, Sendable {
 
 /// Display image guide
 ///
-/// **The rule: every image Otos makes for a layer to show comes from here.** Such an image
-/// keeps its pixels once, in an IOSurface of its own: Core Animation and SwiftUI show an
-/// IOSurface-backed image as it is, and the surface leaves the footprint when the image goes.
-/// Any other `CGImage` — a bitmap context's image, pixels in malloc or in mapped memory — is
-/// copied by Core Animation for display, and the copy is kept with the image for as long as
-/// the image lives, shown or not (`docs/research/2026-11-16-full-size-view-memory.md`,
-/// `docs/research/2026-11-16-tile-images-shown-once.md`).
+/// **The rule: a layer shows only a `DisplayImage`, and a `DisplayImage` holds its pixels when
+/// it is made.** Its pixels are drawn, off the main actor, into an IOSurface of its own, 8-bit
+/// premultiplied BGRA. Core Animation shows an IOSurface-backed image as it is, with no copy,
+/// and the surface leaves the footprint when the image goes
+/// (`docs/research/2026-11-16-full-size-view-memory.md`). Because they are already there, the
+/// window's commit that first shows the image does no work for it.
 ///
-/// - **`decode`** reads a stored image file — a thumbnail, a loupe preview — at no more than
-///   the pixels it is shown at. A file no larger than that is decoded whole by Image I/O,
-///   which returns a JPEG in an IOSurface as its decoder writes it (YCbCr, about 1.6 bytes a
-///   pixel), never drawn again. Neither form's pixels are filled when this returns: they are
-///   filled when Core Animation first shows the image, in the window's commit (measured,
-///   `docs/research/2026-11-16-tile-images-shown-once.md`). A larger one is scaled by Image I/O's thumbnail decode, which
-///   returns a HEIC in an IOSurface. The pixels are as stored: `ThumbnailStore` writes every
-///   derived image upright.
-/// - **`draw`** gives `body` a context over a new IOSurface's pixels, 8-bit premultiplied
-///   BGRA in the color space the caller names, and returns the image once `body` has drawn:
-///   a cut Otos draws itself, such as a face tile. Drawing into pixels of its own also keeps
-///   the image independent of what it was cut from (a `CGImage.cropping(to:)` holds the whole
-///   decode it came from, `docs/research/2026-11-16-image-memory-while-used.md`).
+/// Any other `CGImage` makes the main thread pay when a layer first shows it, in the window's
+/// commit (`docs/research/2026-11-18-display-images-drawn-before-shown.md`):
+/// - Image I/O's whole decode of a JPEG is an IOSurface whose pixels the JPEG decoder fills
+///   only then, about 3.5 ms for each 256 px thumbnail, which turned every new row of a scroll
+///   into a dropped frame.
+/// - A bitmap context's image, or pixels in malloc or mapped memory, is copied and the copy
+///   kept with the image (`docs/research/2026-11-16-tile-images-shown-once.md`).
 ///
-/// - **`original`** is the one decode of a still's original that is not a RAW, for both render
-///   lanes (`ImageRenderer`), by the route its format and size call for (`OriginalRoute`).
+/// The only way to make one is `draw`, which every other constructor goes through:
+/// - **`decode`** reads a stored image file — a thumbnail, a loupe preview — decoded by Image
+///   I/O at no more than the pixels it is shown at, and draws it. The pixels are as stored:
+///   `ThumbnailStore` writes every derived image upright.
+/// - **`shown`** draws a rendering made elsewhere: an original's decode, a developed RAW, a
+///   video's poster.
+/// - **`rendered`** renders a Core Image image, a live edit, straight into the surface.
+/// - **`draw`** gives `body` a context over the new surface's pixels in the color space the
+///   caller names: a cut Otos draws itself, such as a face tile. Drawing into pixels of its own
+///   also keeps the image independent of what it was cut from (a `CGImage.cropping(to:)` holds
+///   the whole decode it came from, `docs/research/2026-11-16-image-memory-while-used.md`).
+///
+/// `original` is the one decode of a still's original that is not a RAW, for both render lanes
+/// (`ImageRenderer`), by the route its format and size call for (`OriginalRoute`).
 ///
 /// They run on their caller's thread, and every caller runs them off the main actor.
-nonisolated enum DisplayImage {
+nonisolated struct DisplayImage: Sendable {
+    /// The image a layer or SwiftUI's `Image` shows: `surface`, wrapped without a copy.
+    let cgImage: CGImage
+    /// The surface `cgImage` shows, 8-bit premultiplied BGRA, filled when this was made:
+    /// reading it runs no decoder.
+    let surface: IOSurface
+
+    private init(_ cgImage: CGImage, surface: IOSurface) {
+        self.cgImage = cgImage
+        self.surface = surface
+    }
+
+    var width: Int {
+        cgImage.width
+    }
+
+    var height: Int {
+        cgImage.height
+    }
+
+    /// The bytes its pixels hold.
+    var byteCount: Int {
+        surface.allocationSize
+    }
+
+    /// Whether `self` and `other` are the same image, not merely equal pixels.
+    func isSame(as other: DisplayImage) -> Bool {
+        cgImage === other.cgImage
+    }
+
     /// The image file at `url`, at no more than `maxPixelEdge` on its long edge; nil when the
     /// file is missing or unreadable.
-    static func decode(_ url: URL, maxPixelEdge: Int) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+    static func decode(_ url: URL, maxPixelEdge: Int) -> DisplayImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int
         else {
             return nil
         }
-        if max(width, height) <= maxPixelEdge {
-            return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        let decoded: CGImage? = if max(width, height) <= maxPixelEdge {
+            CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
+        } else {
+            CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelEdge,
+                kCGImageSourceShouldCache: false,
+            ] as CFDictionary)
         }
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelEdge,
-            kCGImageSourceShouldCache: false,
-            kCGImageSourceShouldCacheImmediately: true,
-        ] as CFDictionary)
+        // Drawing it is what decodes it: the decode's own pixels exist only for the draw.
+        return decoded.flatMap(shown)
     }
 
-    /// A rendering of an original — Image I/O's scaled decode of a JPEG, a developed RAW, an
-    /// edited still: pixels in ordinary memory, which Core Animation would copy for display
-    /// and keep with the image — drawn once into an IOSurface of its own, shown as it is
-    /// (`docs/research/2026-11-17-full-size-view-on-originals.md`). Nil when `image` has no
-    /// RGB color space or no surface can be made.
-    static func shown(_ image: CGImage) -> CGImage? {
-        guard let colorSpace = image.colorSpace, colorSpace.model == .rgb else { return nil }
+    /// `image` drawn once into a `DisplayImage`, in its own color space when that is RGB and in
+    /// sRGB otherwise (a grayscale or CMYK file). Nil when no surface can be made.
+    static func shown(_ image: CGImage) -> DisplayImage? {
+        let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
         return draw(width: image.width, height: image.height, colorSpace: colorSpace) { context in
             context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         }
     }
 
+    /// `image`, a Core Image rendering such as a live edit, rendered by `context` straight into
+    /// a `DisplayImage` in Display P3. Nil when its extent is empty or no surface can be made.
+    static func rendered(_ image: CIImage, context: CIContext) -> DisplayImage? {
+        let extent = image.extent.integral
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.displayP3) else { return nil }
+        return draw(width: Int(extent.width), height: Int(extent.height), colorSpace: colorSpace) { drawing in
+            guard let pixels = drawing.data else { return }
+            // The surface's rows run top-down, as a bitmap Core Image renders does.
+            context.render(image, toBitmap: pixels, rowBytes: drawing.bytesPerRow, bounds: extent, format: .BGRA8, colorSpace: colorSpace)
+        }
+    }
+
     /// A still's original (not a RAW) decoded by `route` for a rendering whose long edge,
-    /// upright, is `decodeLongEdge` at most (the whole original when nil), and whether a layer
-    /// shows it as it is, its pixels in an IOSurface of their own (a HEIC's thumbnail decode,
-    /// either whole route); nil when Image I/O cannot decode it. A `wholeDrawn` original whose
-    /// pixels are not RGB is decoded by the thumbnail route, which converts them.
+    /// upright, is `decodeLongEdge` at most (the whole original when nil); nil when Image I/O
+    /// cannot decode it. The `wholeDrawn` route's upright draw is already a `DisplayImage`,
+    /// returned with it so a pane shows it without drawing it again; a `wholeDrawn` original
+    /// whose pixels are not RGB is decoded by the thumbnail route, which converts them.
     static func original(
         _ source: CGImageSource,
         header: OriginalHeader,
         decodeLongEdge: Int?,
         route: OriginalRoute
-    ) -> (image: CGImage, isSurface: Bool)? {
+    ) -> (image: CGImage, drawn: DisplayImage?)? {
         let native = max(header.width, header.height)
         let edge = min(decodeLongEdge ?? native, native)
-        func thumbnail() -> (image: CGImage, isSurface: Bool)? {
+        func thumbnail() -> (image: CGImage, drawn: DisplayImage?)? {
             CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceShouldCacheImmediately: true,
                 kCGImageSourceThumbnailMaxPixelSize: edge,
-            ] as CFDictionary).map { ($0, header.decoding == .atAskedSize) }
+            ] as CFDictionary).map { ($0, nil) }
         }
         switch route {
         case .thumbnail:
             return thumbnail()
-        case .wholeShown:
-            return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
-                .map { ($0, true) }
         case .wholeDrawn:
             guard let whole = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary),
                   let colorSpace = whole.colorSpace, colorSpace.model == .rgb
             else {
                 return thumbnail()
             }
-            return upright(whole, orientation: header.orientation, longEdge: edge, colorSpace: colorSpace).map { ($0, true) }
+            return upright(whole, orientation: header.orientation, longEdge: edge, colorSpace: colorSpace).map { ($0.cgImage, $0) }
         }
     }
 
     /// `image` turned upright by its EXIF `orientation` and scaled so its long edge is
-    /// `longEdge`, drawn once into an IOSurface of its own.
-    private static func upright(_ image: CGImage, orientation: Int, longEdge: Int, colorSpace: CGColorSpace) -> CGImage? {
+    /// `longEdge`, drawn once into a `DisplayImage`.
+    private static func upright(_ image: CGImage, orientation: Int, longEdge: Int, colorSpace: CGColorSpace) -> DisplayImage? {
         let source = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         // Core Image's orientation transform, in the same y-up coordinates as a bitmap context;
         // making it reads no pixels.
@@ -205,8 +241,9 @@ nonisolated enum DisplayImage {
         }
     }
 
-    /// A `width` × `height` image of what `body` draws, in `colorSpace` (an RGB one).
-    static func draw(width: Int, height: Int, colorSpace: CGColorSpace, _ body: (CGContext) -> Void) -> CGImage? {
+    /// A `width` × `height` image of what `body` draws, in `colorSpace` (an RGB one), its
+    /// pixels filled by the time this returns.
+    static func draw(width: Int, height: Int, colorSpace: CGColorSpace, _ body: (CGContext) -> Void) -> DisplayImage? {
         guard width > 0, height > 0, colorSpace.model == .rgb else { return nil }
         var created: CVPixelBuffer?
         let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary] as CFDictionary
@@ -234,7 +271,11 @@ nonisolated enum DisplayImage {
         // The image holds the buffer, and so its surface, until the last reference to the
         // image goes; nothing writes the pixels after this.
         var image: CGImage?
-        guard VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &image) == noErr else { return nil }
-        return image
+        guard VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &image) == noErr, let image,
+              let surface = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue()
+        else {
+            return nil
+        }
+        return DisplayImage(image, surface: surface as IOSurface)
     }
 }

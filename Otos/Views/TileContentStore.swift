@@ -29,7 +29,7 @@ import OSLog
 nonisolated struct TileContent: Equatable {
     var detail: MediaTileDetail
     var imageKey: String
-    var image: CGImage?
+    var image: DisplayImage?
     /// Cached `videoBadgeText` for the current detail; recomputed only when
     /// duration or kind changes so bind does not re-format every pass.
     var formattedDuration: String?
@@ -37,7 +37,7 @@ nonisolated struct TileContent: Equatable {
     static func == (lhs: TileContent, rhs: TileContent) -> Bool {
         lhs.detail == rhs.detail
             && lhs.imageKey == rhs.imageKey
-            && lhs.image === rhs.image
+            && lhs.image?.cgImage === rhs.image?.cgImage
             && lhs.formattedDuration == rhs.formattedDuration
     }
 }
@@ -330,7 +330,7 @@ final class TileContentStore {
     /// Inserts a decoded image only when `key` still matches the store's current key for
     /// that asset. The store, not the tile, owns this stale-completion check.
     @discardableResult
-    func applyDecoded(_ image: CGImage, key: String, for id: MediaAssetID) -> TileContentChange {
+    func applyDecoded(_ image: DisplayImage, key: String, for id: MediaAssetID) -> TileContentChange {
         guard var entry = entries[id] else {
             return .unchanged
         }
@@ -338,7 +338,7 @@ final class TileContentStore {
             return .unchanged
         }
         let hadImage = entry.content.image != nil
-        if hadImage, entry.content.image === image {
+        if hadImage, entry.content.image?.cgImage === image.cgImage {
             entry.accessStamp = nextAccessStamp()
             entries[id] = entry
             return .unchanged
@@ -465,24 +465,20 @@ final class TileContentStore {
     /// Hit test for pane thumbnail: returns the decoded image if the store already
     /// holds one for this asset, without triggering a decode. Used by PaneThumbnailView
     /// to avoid re-decoding an image the filmstrip is already showing.
-    func image(for id: MediaAssetID) -> CGImage? {
+    func image(for id: MediaAssetID) -> DisplayImage? {
         content(for: id)?.image
     }
 
     /// Warm the store with a newly decoded image for the pane. The detail's imageKey
     /// must be current; callers should have merged the detail first if needed.
-    func warm(id: MediaAssetID, image: CGImage, detail: MediaTileDetail) {
+    func warm(id: MediaAssetID, image: DisplayImage, detail: MediaTileDetail) {
         let key = MediaAssetTilePresentation.imageContentKey(detail)
         // Ensure an entry exists for this detail; mergeDetail is idempotent.
         _ = mergeDetail(detail)
         _ = applyDecoded(image, key: key, for: id)
     }
 
-    static func byteCost(of image: CGImage) -> Int {
-        let rowCost = image.bytesPerRow * image.height
-        if rowCost > 0 {
-            return rowCost
-        }
-        return max(1, image.width * image.height * 4)
+    static func byteCost(of image: DisplayImage) -> Int {
+        max(1, image.byteCount)
     }
 }

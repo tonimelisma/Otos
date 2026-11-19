@@ -173,7 +173,7 @@ private struct OnThisDayCard: View {
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
-    @State private var cover: (id: MediaAssetID, image: CGImage)?
+    @State private var cover: (id: MediaAssetID, image: DisplayImage)?
     @Environment(\.colorScheme) private var colorScheme
 
     private static let radius: CGFloat = 9
@@ -208,7 +208,7 @@ private struct OnThisDayCard: View {
     /// shared store already holds — read while rendering, so a card made again (after a
     /// story closes, or when the grid recycles it) paints its cover in its first frame
     /// instead of the placeholder.
-    private var displayedCover: CGImage? {
+    private var displayedCover: DisplayImage? {
         OnThisDayCover.displayed(painted: cover, keyItem: anniversary.keyItem, stored: tileContentStore?.image(for: anniversary.keyItem))
     }
 
@@ -221,7 +221,7 @@ private struct OnThisDayCard: View {
                 // A cover painted for this key item stays until a newer one replaces it;
                 // before the first decode, DES-063's glyph on the well.
                 if let image = displayedCover {
-                    Image(decorative: image, scale: 1)
+                    Image(decorative: image.cgImage, scale: 1)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                 } else {
@@ -272,10 +272,10 @@ private struct OnThisDayCard: View {
 /// item's first decode, never over a cover already painted for it.
 nonisolated enum OnThisDayCover {
     static func displayed(
-        painted: (id: MediaAssetID, image: CGImage)?,
+        painted: (id: MediaAssetID, image: DisplayImage)?,
         keyItem: MediaAssetID,
-        stored: CGImage?
-    ) -> CGImage? {
+        stored: DisplayImage?
+    ) -> DisplayImage? {
         if let painted, painted.id == keyItem {
             return painted.image
         }

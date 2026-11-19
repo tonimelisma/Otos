@@ -26,10 +26,10 @@ private final class PassThroughFlippedView: NSView {
 /// replace the painted thumbnail. An `NSImageView` cannot host it: AppKit owns that
 /// control's layer and repaints it from the control's own `image` on redisplay.
 private final class ThumbnailLayerView: NSView {
-    var image: CGImage? {
+    var image: DisplayImage? {
         didSet {
-            if image !== oldValue {
-                layer?.contents = image
+            if image?.cgImage !== oldValue?.cgImage {
+                layer?.contents = image?.cgImage
             }
         }
     }
@@ -50,7 +50,7 @@ private final class ThumbnailLayerView: NSView {
     }
 
     override func updateLayer() {
-        layer?.contents = image
+        layer?.contents = image?.cgImage
     }
 }
 
@@ -393,7 +393,7 @@ extension MediaAssetTileView {
         }
     }
 
-    private func applyImage(_ image: CGImage, fade: Bool) {
+    private func applyImage(_ image: DisplayImage, fade: Bool) {
         let effectiveFade = fade && !MediaGridAnimation.prefersReducedMotion
         if effectiveFade, let layer = thumbnailView.layer {
             let transition = CATransition()

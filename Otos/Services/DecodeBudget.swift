@@ -141,8 +141,7 @@ nonisolated enum DecodeWaiter: Sendable, Equatable {
 
 /// One render as asked of either lane: the file, the long edge (nil for the whole original),
 /// the recipe and the route that decodes it. Two asks for the same render share one decode
-/// (`ImageRenderer`); a pane's ask its route shows as it is (`OriginalRoute.wholeShown`) is
-/// a render of its own.
+/// (`ImageRenderer`), a pane's ask and the lane's alike.
 nonisolated struct RenderKey: Hashable, Sendable {
     let path: String
     let longEdge: Int?
@@ -215,9 +214,7 @@ nonisolated enum DecodeCost {
     /// - `thumbnail`: its decode and its rendering (`renderBytes`);
     /// - `wholeDrawn`: the whole decode, four bytes a pixel, the YCbCr image Image I/O decodes
     ///   it from, a byte and a half, and the rendering drawn from it: 87 MB for a 12 MP JPEG
-    ///   at 2,560 pixels, which peaked at 86–92 MB;
-    /// - `wholeShown`: three bytes a pixel, the YCbCr surface and what fills it: 37 MB for a
-    ///   12 MP JPEG, which peaked at 36–37 MB through its first showing.
+    ///   at 2,560 pixels, which peaked at 86–92 MB.
     static func renderBytes(_ header: OriginalHeader, longEdge: Int?, route: OriginalRoute) -> Int {
         let (width, height) = (header.width, header.height)
         switch route {
@@ -226,8 +223,6 @@ nonisolated enum DecodeCost {
         case .wholeDrawn:
             return width * height * 4 + width * height * 3 / 2
                 + bytes(width: width, height: height, longEdge: longEdge, decoding: .atAskedSize)
-        case .wholeShown:
-            return width * height * 3
         }
     }
 }

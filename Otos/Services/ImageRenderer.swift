@@ -42,16 +42,14 @@ final nonisolated class ImageRenderer: Sendable {
     }
 
     struct Rendered: Sendable {
-        /// An immutable 8-bit Display P3 bitmap, or for a pane the image its route shows as
-        /// it is (`OriginalRoute.wholeShown`).
+        /// An immutable 8-bit Display P3 bitmap, or an original's decode (`DisplayImage.original`).
         let image: CGImage
         let decoder: Decoder
         /// The original's oriented full-resolution size, for the loupe's 100% document.
         let nativePixelSize: CGSize
-        /// Whether a layer shows `image` as it is, its pixels in an IOSurface of their own: an
-        /// unedited HEIC's thumbnail decode and a JPEG's whole routes. Any other rendering is
-        /// in ordinary memory, which Core Animation would copy for display and keep.
-        let isShownAsIs: Bool
+        /// `image` as a layer shows it, when its decode already drew it as one (a JPEG's
+        /// `wholeDrawn` route); a pane draws any other rendering once (`DisplayImage.shown`).
+        let shown: DisplayImage?
     }
 
     enum RenderError: Error {
@@ -121,8 +119,8 @@ final nonisolated class ImageRenderer: Sendable {
     /// Renders `url` with `recipe` applied so the edited photo's long edge is at most
     /// `longEdge`, or at full size when nil. A cropped photo is developed from a frame
     /// large enough for its crop to reach that size.
-    func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral, forDisplay: Bool = false) async throws -> Rendered {
-        try await render(url, longEdge: longEdge, recipe: recipe, forDisplay: forDisplay) { $0 }
+    func render(_ url: URL, longEdge: Int?, recipe: EditRecipe = .neutral) async throws -> Rendered {
+        try await render(url, longEdge: longEdge, recipe: recipe) { $0 }
     }
 
     /// Renders `url` as `render(_:longEdge:recipe:)` does and hands the rendering to `finish`
@@ -143,17 +141,16 @@ final nonisolated class ImageRenderer: Sendable {
     /// that began runs to its end, and its pixels go to whoever still waits.
     ///
     /// **The route is the file's.** Its header, read first, names the route that decodes it
-    /// (`OriginalRoute`), which is part of the render asked for: `forDisplay` is a pane's ask
-    /// for what it shows as it is, which for most stills is the same render as the lane's.
+    /// (`OriginalRoute`), which is part of the render asked for, so a pane and the lane asking
+    /// for the same photo at the same size share one render.
     func render<Product: Sendable>(
         _ url: URL,
         longEdge: Int?,
         recipe: EditRecipe = .neutral,
-        forDisplay: Bool = false,
         finish: @escaping @Sendable (Rendered) -> Product
     ) async throws -> Product {
         let header = Self.isRAW(url) ? nil : await OriginalHeader.read(url)
-        let route = OriginalRoute.of(header, longEdge: longEdge, recipe: recipe, forDisplay: forDisplay)
+        let route = OriginalRoute.of(header, longEdge: longEdge, recipe: recipe)
         let key = RenderKey(url, longEdge: longEdge, recipe: recipe, route: route)
         let ask = Self.nextAsk.withLock { value in
             value &+= 1
@@ -392,7 +389,7 @@ final nonisolated class ImageRenderer: Sendable {
         let developed = applying(recipe, toDevelopedRAW: false, CIImage(cgImage: decoded.image))
         let adjusted = applyingEffects(recipe, applyingGeometry(recipe, developed))
         return try Rendered(
-            image: bitmap(adjusted), decoder: decoded.decoder, nativePixelSize: decoded.nativePixelSize, isShownAsIs: false
+            image: bitmap(adjusted), decoder: decoded.decoder, nativePixelSize: decoded.nativePixelSize, shown: nil
         )
     }
 
@@ -618,7 +615,7 @@ final nonisolated class ImageRenderer: Sendable {
     private static func developRAW(_ source: StillSource, longEdge: Int?, recipe: EditRecipe) throws -> Rendered {
         let opened = try openRAW(source, outputLongEdge: longEdge, recipe: recipe)
         let image = try applyingEffects(recipe, applyingGeometry(recipe, developed(opened.filter, recipe: recipe)))
-        return try Rendered(image: bitmap(image), decoder: opened.decoder, nativePixelSize: opened.nativeSize, isShownAsIs: false)
+        return try Rendered(image: bitmap(image), decoder: opened.decoder, nativePixelSize: opened.nativeSize, shown: nil)
     }
 
     /// Decodes a still that is not a RAW, upright, large enough for the recipe's edited
@@ -629,13 +626,13 @@ final nonisolated class ImageRenderer: Sendable {
             throw RenderError.unreadable
         }
         // A caller with no route of its own (the edit session's decode) takes the one its
-        // header names for a rendering to work from, never one shown as it is.
-        let route = route ?? OriginalRoute.of(header, longEdge: outputLongEdge, recipe: recipe, forDisplay: false)
+        // header names.
+        let route = route ?? OriginalRoute.of(header, longEdge: outputLongEdge, recipe: recipe)
         let decodeLongEdge = header.decodeLongEdge(output: outputLongEdge, recipe: recipe)
         guard let decoded = DisplayImage.original(source, header: header, decodeLongEdge: decodeLongEdge, route: route) else {
             throw RenderError.renderFailed
         }
-        return Rendered(image: decoded.image, decoder: .imageIO, nativePixelSize: header.orientedSize, isShownAsIs: decoded.isSurface)
+        return Rendered(image: decoded.image, decoder: .imageIO, nativePixelSize: header.orientedSize, shown: decoded.drawn)
     }
 
     /// Renders every pixel into an 8-bit Display P3 bitmap. `createCGImage` may return an

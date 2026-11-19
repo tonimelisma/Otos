@@ -13,7 +13,7 @@ import Foundation
 // loading placeholders keep kind labels for VoiceOver.
 
 struct LoadedTile {
-    let image: CGImage?
+    let image: DisplayImage?
     let pixelSize: CGSize?
 }
 
@@ -378,7 +378,7 @@ nonisolated enum MediaAssetTilePresentation {
         return "\(thumbnail)#\(size)#\(stamp)#\(detail.renderedRevision)"
     }
 
-    static func decodedThumbnailImage(detail: MediaTileDetail, thumbnailDirectory: URL?) -> CGImage? {
+    static func decodedThumbnailImage(detail: MediaTileDetail, thumbnailDirectory: URL?) -> DisplayImage? {
         loadImage(detail: detail, thumbnailDirectory: thumbnailDirectory).image
     }
 

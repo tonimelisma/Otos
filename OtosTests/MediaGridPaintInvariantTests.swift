@@ -151,9 +151,9 @@ extension AppKitWindowTests {
             harness.reconfigureVisible(id)
             harness.commitDisplay()
             let held = try #require(harness.controller.tileContents.content(for: id)?.image)
-            #expect(try harness.requireDisplayedThumbnail(for: id) === held)
+            #expect(try harness.requireDisplayedThumbnail(for: id) === held.cgImage)
             #expect(held.width == 256 && held.height == 192)
-            #expect(held.bytesPerRow * held.height <= 256 * 4 * 192)
+            #expect(held.cgImage.bytesPerRow * held.height <= 256 * 4 * 192)
         }
 
         @Test func repeatedVisibleIDsSkipScrollDetailQuery() throws {
@@ -289,16 +289,6 @@ private final class PaintInvariantHarness {
 }
 
 @MainActor
-private func makePaintImage(width: Int, height: Int) -> CGImage {
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    let context = CGContext(
-        data: nil,
-        width: width,
-        height: height,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: colorSpace,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )!
-    return context.makeImage()!
+private func makePaintImage(width: Int, height: Int) -> DisplayImage {
+    DisplayImage.fixture(width: width, height: height)
 }

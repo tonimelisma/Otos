@@ -15,7 +15,7 @@ nonisolated enum PaneSlot: CaseIterable, Hashable {
 /// harmless — no generation counters required.
 nonisolated struct PanePreview: Equatable {
     let id: MediaAssetID
-    let image: CGImage
+    let image: DisplayImage
     let mediaChoice: MediaChoice?
     /// The original's upright pixel size when the decode reported one. With `editRecipe` it
     /// is the geometry the image was rendered with: the loupe sizes its zoom document from
@@ -30,7 +30,7 @@ nonisolated struct PanePreview: Equatable {
 
     init(
         id: MediaAssetID,
-        image: CGImage,
+        image: DisplayImage,
         mediaChoice: MediaChoice? = nil,
         uprightPixelSize: CGSize? = nil,
         editRecipe: EditRecipe? = nil,
@@ -57,7 +57,7 @@ nonisolated struct PanePreview: Equatable {
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id && lhs.image === rhs.image && lhs.mediaChoice == rhs.mediaChoice
+        lhs.id == rhs.id && lhs.image.isSame(as: rhs.image) && lhs.mediaChoice == rhs.mediaChoice
             && lhs.uprightPixelSize == rhs.uprightPixelSize && lhs.editRecipe == rhs.editRecipe
             && lhs.renderedRevision == rhs.renderedRevision
     }

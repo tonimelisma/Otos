@@ -205,17 +205,6 @@ private func zoomWindowState(ids: [MediaAssetID]) -> CatalogWindowState {
     )
 }
 
-private func makeZoomImage(width: Int, height: Int) -> CGImage {
-    let context = CGContext(
-        data: nil,
-        width: width,
-        height: height,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )!
-    context.setFillColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
-    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-    return context.makeImage()!
+private func makeZoomImage(width: Int, height: Int) -> DisplayImage {
+    DisplayImage.fixture(width: width, height: height)
 }

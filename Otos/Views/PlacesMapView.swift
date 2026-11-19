@@ -305,7 +305,7 @@ private struct MapClusterStackView: View {
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
-    @State private var image: CGImage?
+    @State private var image: DisplayImage?
     @Environment(\.colorScheme) private var colorScheme
 
     private static let edge: CGFloat = 48
@@ -315,7 +315,7 @@ private struct MapClusterStackView: View {
             Rectangle()
                 .fill(DesignPalette.bar(for: colorScheme))
             if let image {
-                Image(decorative: image, scale: 1)
+                Image(decorative: image.cgImage, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: Self.edge, height: Self.edge)

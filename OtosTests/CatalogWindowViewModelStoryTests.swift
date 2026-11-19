@@ -104,12 +104,8 @@ struct CatalogWindowViewModelStoryTests {
         model.applyState(onThisDayState(model, ids: ids, years: years(ids), libraries: libraries))
     }
 
-    private func image(edge: Int = 8) -> CGImage {
-        let context = CGContext(
-            data: nil, width: edge, height: edge, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )
-        return context!.makeImage()!
+    private func image(edge: Int = 8) -> DisplayImage {
+        DisplayImage.fixture(width: edge)
     }
 
     /// A loader whose every decode is a picture.
@@ -399,7 +395,7 @@ struct CatalogWindowViewModelStoryTests {
             let tiles = TileContentStore(imageByteBudget: cost * 3)
             let model = makeModel(store: library.store, tiles: tiles)
             enterOnThisDay(model, ids: ids)
-            @MainActor func paint(_ id: MediaAssetID) -> CGImage {
+            @MainActor func paint(_ id: MediaAssetID) -> DisplayImage {
                 let picture = image(edge: 64)
                 tiles.warm(
                     id: id,

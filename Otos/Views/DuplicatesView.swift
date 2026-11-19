@@ -816,12 +816,12 @@ private struct DuplicateThumbnail: View {
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
-    @State private var image: CGImage?
+    @State private var image: DisplayImage?
     @State private var unavailable = false
     @Environment(\.colorScheme) private var colorScheme
 
     /// The picture's drawn size, aspect-fit in the cell.
-    private func fittedSize(of image: CGImage, in cell: CGSize) -> CGSize {
+    private func fittedSize(of image: DisplayImage, in cell: CGSize) -> CGSize {
         let scale = min(cell.width / CGFloat(max(image.width, 1)), cell.height / CGFloat(max(image.height, 1)))
         return CGSize(
             width: (CGFloat(image.width) * scale).rounded(),
@@ -847,7 +847,7 @@ private struct DuplicateThumbnail: View {
                 switch face {
                 case let .photo(_, fate, size, choice):
                     let fitted = fittedSize(of: image, in: cell)
-                    Image(decorative: image, scale: 1)
+                    Image(decorative: image.cgImage, scale: 1)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: fitted.width, height: fitted.height)
@@ -862,7 +862,7 @@ private struct DuplicateThumbnail: View {
                         }
                         .overlay { edge }
                 case .cropped:
-                    Image(decorative: image, scale: 1)
+                    Image(decorative: image.cgImage, scale: 1)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(width: cell.width, height: cell.height)
@@ -966,7 +966,7 @@ private struct DuplicateThumbnailBadges: View {
 
 private nonisolated enum DuplicateThumbnailDecode {
     @concurrent
-    static func decode(detail: MediaTileDetail, thumbnailDirectory: URL?) async -> CGImage? {
+    static func decode(detail: MediaTileDetail, thumbnailDirectory: URL?) async -> DisplayImage? {
         MediaAssetTilePresentation.decodedThumbnailImage(detail: detail, thumbnailDirectory: thumbnailDirectory)
     }
 }

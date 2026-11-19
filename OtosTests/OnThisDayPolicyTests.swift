@@ -282,16 +282,10 @@ struct OnThisDayPolicyTests {
     /// A card draws the cover it painted for its key item, else the store's decode for it —
     /// so a card made again shows the cover at once — and a cover painted for another key
     /// item never.
-    @Test func aCardDrawsItsKeyItemsCoverAndNeverAnotherItems() throws {
+    @Test func aCardDrawsItsKeyItemsCoverAndNeverAnotherItems() {
         let key = Self.id("key")
-        let painted = try #require(CGContext(
-            data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )?.makeImage())
-        let stored = try #require(CGContext(
-            data: nil, width: 3, height: 3, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )?.makeImage())
+        let painted = DisplayImage.fixture(width: 2)
+        let stored = DisplayImage.fixture(width: 3)
 
         #expect(OnThisDayCover.displayed(painted: (key, painted), keyItem: key, stored: stored) === painted)
         #expect(OnThisDayCover.displayed(painted: nil, keyItem: key, stored: stored) === stored)

@@ -8,12 +8,8 @@ import Testing
 /// unless the maximum makes room first.
 @MainActor
 struct LoupeZoomScrollViewTests {
-    private func image(edge: Int) throws -> CGImage {
-        let context = try #require(CGContext(
-            data: nil, width: edge, height: edge, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ))
-        return try #require(context.makeImage())
+    private func image(edge: Int) throws -> DisplayImage {
+        DisplayImage.fixture(width: edge)
     }
 
     @Test func aSmallImageAfterALargeOneFitsWithoutCrossingTheBounds() throws {

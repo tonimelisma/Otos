@@ -125,7 +125,7 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
             self.mergeTileDetails(activeDetails, reason: reason)
             return Array(activeDetails.values)
         }
-        var warmed: [(MediaAssetID, String, CGImage)] = []
+        var warmed: [(MediaAssetID, String, DisplayImage)] = []
         for detail in detailsToWarm where !Task.isCancelled {
             if let result = Self.decodePreheatImage(
                 detail: detail,
@@ -148,7 +148,7 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
     private nonisolated static func decodePreheatImage(
         detail: MediaTileDetail,
         thumbnailDirectory: URL?
-    ) -> (MediaAssetID, String, CGImage)? {
+    ) -> (MediaAssetID, String, DisplayImage)? {
         guard !Task.isCancelled,
               detail.thumbnailPath != nil
         else {

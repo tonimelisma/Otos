@@ -18,7 +18,7 @@ enum ThumbnailLoad {
         thumbnailDirectory: URL?,
         detailReader: MediaTileDetailReader?,
         operation: String
-    ) async -> CGImage? {
+    ) async -> DisplayImage? {
         if let cached = tileContentStore?.image(for: id) {
             return cached
         }
@@ -52,7 +52,7 @@ enum ThumbnailLoad {
 /// disagree about where a thumbnail is.
 private nonisolated enum ThumbnailDecode {
     @concurrent
-    static func decode(detail: MediaTileDetail, thumbnailDirectory: URL?) async -> CGImage? {
+    static func decode(detail: MediaTileDetail, thumbnailDirectory: URL?) async -> DisplayImage? {
         MediaAssetTilePresentation.decodedThumbnailImage(detail: detail, thumbnailDirectory: thumbnailDirectory)
     }
 }

@@ -23,20 +23,20 @@ import OSLog
 /// A saved recipe's render: the image the pane shows, and the preview and thumbnail
 /// staged from it for the store to promote.
 nonisolated struct RenderedEditImages: Sendable {
-    let image: CGImage
+    let image: DisplayImage
     let preview: StagedDerivedImage
     let thumbnail: StagedDerivedImage
 
     /// Encodes and writes the preview and thumbnail of `image`. Encoding is not rendering:
     /// it runs on the caller's executor, never on the renderer's queue, so a save's
     /// encode does not hold up the next live render.
-    static func staging(_ image: CGImage, id: MediaAssetID, directory: URL) throws -> RenderedEditImages {
+    static func staging(_ image: DisplayImage, id: MediaAssetID, directory: URL) throws -> RenderedEditImages {
         let preview = try ThumbnailStore.stagePreview(
-            image, finalRelativeName: ThumbnailStore.previewRelativeName(for: id), in: directory
+            image.cgImage, finalRelativeName: ThumbnailStore.previewRelativeName(for: id), in: directory
         )
         do {
             let thumbnail = try ThumbnailStore.stage(
-                ThumbnailStore.scaled(image, toLongEdge: ThumbnailStore.maxPixelSize),
+                ThumbnailStore.scaled(image.cgImage, toLongEdge: ThumbnailStore.maxPixelSize),
                 finalRelativeName: ThumbnailStore.relativeName(for: id),
                 in: directory
             )
@@ -83,10 +83,12 @@ actor LiveEditRenderer {
         return OpenedEditPhoto(facts: photo.facts, pixelSize: photo.nativeSize)
     }
 
-    /// The photo at `url` with `recipe` applied, at the preview's size.
-    func render(_ url: URL, recipe: EditRecipe) throws -> CGImage {
+    /// The photo at `url` with `recipe` applied, at the preview's size, as a pane shows it.
+    func render(_ url: URL, recipe: EditRecipe) throws -> DisplayImage {
         let start = ContinuousClock.now
-        let image = try ImageRenderer.bitmap(developed(url, recipe: recipe), context: context)
+        guard let image = try DisplayImage.rendered(developed(url, recipe: recipe), context: context) else {
+            throw ImageRenderer.RenderError.renderFailed
+        }
         // The size is logged because the scale factor decides it, and a wrong one costs a
         // fresh development (research 2026-10-26-live-edit-latency).
         OtosLog.rendering.debugOperation("render.liveEdit", phase: "finish", fields: [

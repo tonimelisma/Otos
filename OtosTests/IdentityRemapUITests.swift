@@ -49,7 +49,7 @@ struct IdentityRemapUITests {
         viewModel.comparePair = ComparePair(left: oldID, right: nil)
         let detail = MediaTileDetail(libraryRootPath: root, relativePath: oldID.relativePath, thumbnailPath: "t", bestKind: .image)
         _ = viewModel.tileContentStore.mergeDetail(detail)
-        let image = makeTestCGImage()
+        let image = makeTestImage()
         _ = viewModel.tileContentStore.applyDecoded(
             image,
             key: MediaAssetTilePresentation.imageContentKey(detail),
@@ -92,17 +92,7 @@ struct IdentityRemapUITests {
         return state
     }
 
-    private func makeTestCGImage() -> CGImage {
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let context = CGContext(
-            data: nil,
-            width: 2,
-            height: 2,
-            bitsPerComponent: 8,
-            bytesPerRow: 8,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        return context.makeImage()!
+    private func makeTestImage() -> DisplayImage {
+        DisplayImage.fixture(width: 2)
     }
 }

@@ -87,7 +87,7 @@ struct EditRenderingTests {
 
         #expect(opened.facts == .still)
         #expect(picked.temperature < 0)
-        let color = meanColor(corrected)
+        let color = meanColor(corrected.cgImage)
         #expect(abs(color.red - color.green) < 0.02)
         #expect(abs(color.blue - color.green) < 0.02)
     }
@@ -172,7 +172,7 @@ struct EditRenderingTests {
 
         #expect(live.width == 96 && live.height == 64)
         #expect(again.width == live.width && again.height == live.height)
-        #expect(abs(meanLuminance(live) - meanLuminance(stored.image)) < 0.02)
+        #expect(abs(meanLuminance(live.cgImage) - meanLuminance(stored.image)) < 0.02)
         for staged in [products.preview, products.thumbnail] {
             #expect(FileManager.default.fileExists(atPath: directory.appending(path: staged.stagedRelativePath).path))
         }

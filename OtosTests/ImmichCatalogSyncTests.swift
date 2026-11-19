@@ -569,7 +569,7 @@ struct ImmichCatalogSyncTests {
             MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: path))
         }
 
-        func image(_ name: String) -> CGImage? {
+        func image(_ name: String) -> DisplayImage? {
             ThumbnailStore.load(name, in: directory)
         }
     }

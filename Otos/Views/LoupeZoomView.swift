@@ -19,7 +19,7 @@ import SwiftUI
 /// generation. A new asset refits; a pane resize refits only if the view was at fit.
 struct LoupeZoomView: NSViewRepresentable {
     let assetID: MediaAssetID
-    let image: CGImage
+    let image: DisplayImage
     /// The original's long edge in pixels, which sets 100 percent; nil uses the decode's.
     let nativeLongEdge: CGFloat?
     let command: LoupeZoomCommand?
@@ -125,7 +125,7 @@ final class LoupeZoomScrollView: NSScrollView {
         currentAssetID = nil
     }
 
-    func setContent(image: CGImage, nativeLongEdge: CGFloat?, assetID: MediaAssetID) {
+    func setContent(image: DisplayImage, nativeLongEdge: CGFloat?, assetID: MediaAssetID) {
         document.image = image
         self.nativeLongEdge = nativeLongEdge
         let size = LoupeZoomPolicy.documentSize(
@@ -225,10 +225,10 @@ final class LoupeZoomDocumentView: NSView {
     var onDoubleClick: (CGPoint) -> Void = { _ in }
     var isPicking = false
     var onPick: (CGPoint) -> Void = { _ in }
-    var image: CGImage? {
+    var image: DisplayImage? {
         didSet {
-            if image !== oldValue {
-                layer?.contents = image
+            if image?.cgImage !== oldValue?.cgImage {
+                layer?.contents = image?.cgImage
             }
         }
     }

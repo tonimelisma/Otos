@@ -76,19 +76,8 @@ struct GridBacklogMemoryTests {
     }
 
     /// A 64 × 64 thumbnail of its own, as the small generated library's tiles decode.
-    private static func thumbnail() -> CGImage {
-        let context = CGContext(
-            data: nil,
-            width: 64,
-            height: 64,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        context.setFillColor(red: 0.4, green: 0.5, blue: 0.6, alpha: 1)
-        context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
-        return context.makeImage()!
+    private static func thumbnail() -> DisplayImage {
+        DisplayImage.fixture(width: 64)
     }
 
     private final class WeakContent {

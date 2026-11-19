@@ -25,8 +25,8 @@ final class FaceTileImages {
     }
 
     private final nonisolated class Entry {
-        let image: CGImage
-        init(_ image: CGImage) {
+        let image: DisplayImage
+        init(_ image: DisplayImage) {
             self.image = image
         }
     }
@@ -55,12 +55,12 @@ final class FaceTileImages {
         return cache
     }()
 
-    func image(for key: Key) -> CGImage? {
+    func image(for key: Key) -> DisplayImage? {
         cache.object(forKey: KeyBox(key))?.image
     }
 
-    func store(_ image: CGImage, for key: Key) {
-        cache.setObject(Entry(image), forKey: KeyBox(key), cost: image.bytesPerRow * image.height)
+    func store(_ image: DisplayImage, for key: Key) {
+        cache.setObject(Entry(image), forKey: KeyBox(key), cost: image.byteCount)
     }
 }
 
@@ -72,7 +72,7 @@ struct FaceTileView: View {
     let images: FaceTileImages?
     let derivedImageDirectory: URL?
 
-    @State private var image: CGImage?
+    @State private var image: DisplayImage?
     @State private var unavailable = false
     @Environment(\.displayScale) private var displayScale
     @Environment(\.colorScheme) private var colorScheme
@@ -80,7 +80,7 @@ struct FaceTileView: View {
     var body: some View {
         ZStack {
             if let image {
-                Image(decorative: image, scale: displayScale)
+                Image(decorative: image.cgImage, scale: displayScale)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: edge, height: edge)
@@ -142,7 +142,7 @@ nonisolated enum FaceCrop {
     /// as decoding the whole preview (25 MB) for the length of the draw; a whole decode held as
     /// an image costs 49–61 MB. A turned preview is first decoded upright at the tile's scale.
     @concurrent
-    static func decode(_ box: CGRect, from preview: FacePreview, in directory: URL, pixelEdge: Int) async -> CGImage? {
+    static func decode(_ box: CGRect, from preview: FacePreview, in directory: URL, pixelEdge: Int) async -> DisplayImage? {
         let signpost = OtosSignpost.thumbnails.beginInterval("FaceTileDecode")
         defer { OtosSignpost.thumbnails.endInterval("FaceTileDecode", signpost) }
         let url = ThumbnailStore.url(for: preview.name, in: directory)
@@ -196,7 +196,7 @@ nonisolated enum FaceCrop {
     /// (`DisplayImage.draw`), which the tile shows without a copy: a crop sharing `image`'s
     /// pixels would keep all of `image` alive for as long as the tile is held. Smaller than
     /// asked only when the image is.
-    static func crop(_ image: CGImage, box: CGRect, pixelEdge: Int = .max) -> CGImage? {
+    static func crop(_ image: CGImage, box: CGRect, pixelEdge: Int = .max) -> DisplayImage? {
         let width = CGFloat(image.width)
         let height = CGFloat(image.height)
         var side = max(box.width * width, box.height * height) * enlargement

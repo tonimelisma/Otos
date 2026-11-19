@@ -95,7 +95,7 @@ struct StoryPlayerView: View {
                     .aspectRatio(state.displaySize ?? CGSize(width: 16, height: 9), contentMode: .fit)
                     .overlay(alignment: .topLeading) { dateLabel }
             case let .full(image):
-                Image(decorative: image, scale: 1)
+                Image(decorative: image.cgImage, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .overlay(alignment: .topLeading) { dateLabel }

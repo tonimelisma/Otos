@@ -36,7 +36,7 @@ struct CatalogWindowViewModelEditCommandsTests {
             #expect(model.editHistogram == editedHistogram)
             let original = try #require(model.displayedPanePreview(.loupe)?.image)
             #expect(original !== edited)
-            #expect(meanBrightness(original) < meanBrightness(edited))
+            #expect(meanBrightness(original.cgImage) < meanBrightness(edited.cgImage))
 
             model.setEditValue(0.5, for: .exposure)
             #expect(!model.isShowingOriginal)

@@ -4,7 +4,7 @@ import SwiftUI
 /// Pure pane-content decision so the identity rule is unit-testable without views.
 nonisolated enum PanePresentation {
     enum Display: Equatable {
-        case full(CGImage)
+        case full(DisplayImage)
         case thumbnail(MediaAssetID)
         case video(LoupeVideoState)
         case empty
@@ -26,7 +26,7 @@ nonisolated enum PanePresentation {
         static func == (lhs: Self, rhs: Self) -> Bool {
             switch (lhs, rhs) {
             case let (.full(left), .full(right)):
-                left === right
+                left.isSame(as: right)
             case let (.thumbnail(left), .thumbnail(right)):
                 left == right
             case let (.video(left), .video(right)):
@@ -87,12 +87,12 @@ struct PaneThumbnailView: View {
     var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
-    @State private var image: CGImage?
+    @State private var image: DisplayImage?
 
     var body: some View {
         Group {
             if let image {
-                Image(decorative: image, scale: 1)
+                Image(decorative: image.cgImage, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .accessibilityElement()

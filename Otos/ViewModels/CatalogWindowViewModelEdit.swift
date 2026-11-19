@@ -53,12 +53,12 @@ nonisolated struct EditTarget: Equatable, Sendable {
 /// has; nil while it is still only a draft.
 nonisolated struct EditLivePreview: Equatable {
     let id: MediaAssetID
-    let image: CGImage
+    let image: DisplayImage
     let recipe: EditRecipe
     var revision: Int64?
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id && lhs.image === rhs.image && lhs.recipe == rhs.recipe && lhs.revision == rhs.revision
+        lhs.id == rhs.id && lhs.image.isSame(as: rhs.image) && lhs.recipe == rhs.recipe && lhs.revision == rhs.revision
     }
 }
 
@@ -565,7 +565,7 @@ extension CatalogWindowViewModel {
                     guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
                         continue
                     }
-                    let histogram = await EditHistogram.count(live.image)
+                    let histogram = await EditHistogram.count(live.image.cgImage)
                     self?.publishHistogram(id: id, histogram, sequence: sequence)
                 case let .render(id, recipe, sourceSize, sequence, purpose, requestedAt):
                     let startedAt = ContinuousClock.now
@@ -584,7 +584,7 @@ extension CatalogWindowViewModel {
                     // The histogram describes the edit; Show Original's render is a glance
                     // at what the edit replaced.
                     if purpose != .original {
-                        let histogram = await EditHistogram.count(live.image)
+                        let histogram = await EditHistogram.count(live.image.cgImage)
                         self?.publishHistogram(id: id, histogram, sequence: sequence)
                     }
                     switch purpose {
@@ -678,13 +678,13 @@ extension CatalogWindowViewModel {
         editHistogram = histogram
     }
 
-    private func publishOriginal(id: MediaAssetID, image: CGImage, sequence: UInt64) {
+    private func publishOriginal(id: MediaAssetID, image: DisplayImage, sequence: UInt64) {
         guard isShowingOriginal, editTarget?.id == id, sequence > editRenderPublished else { return }
         editRenderPublished = sequence
         editOriginalPreview = EditLivePreview(id: id, image: image, recipe: .neutral, revision: nil)
     }
 
-    private func publishLiveEdit(id: MediaAssetID, recipe: EditRecipe, image: CGImage, sequence: UInt64) {
+    private func publishLiveEdit(id: MediaAssetID, recipe: EditRecipe, image: DisplayImage, sequence: UInt64) {
         guard editTarget?.id == id, sequence > editRenderPublished else { return }
         editRenderPublished = sequence
         editLivePreview = EditLivePreview(id: id, image: image, recipe: recipe, revision: nil)
@@ -713,7 +713,7 @@ extension CatalogWindowViewModel {
 
     /// The saved recipe's render becomes the live image while the panel still shows that
     /// recipe — the render an undo produces, or a save of the draft on screen.
-    private func showRenderedEdit(id: MediaAssetID, saved: StoredEditRecipe, image: CGImage) {
+    private func showRenderedEdit(id: MediaAssetID, saved: StoredEditRecipe, image: DisplayImage) {
         guard editTarget?.id == id, editDraft == saved.recipe else { return }
         editRenderPublished = editRenderRequested
         editLivePreview = EditLivePreview(id: id, image: image, recipe: saved.recipe, revision: saved.revision)
@@ -821,7 +821,7 @@ nonisolated struct EditPipeline: Sendable {
         _ id: MediaAssetID,
         recipe: EditRecipe,
         sourceSize: Int64?
-    ) async -> (image: CGImage, opened: OpenedEditPhoto)? {
+    ) async -> (image: DisplayImage, opened: OpenedEditPhoto)? {
         guard await materialization.ensureLocal(.init(
             id: id, sourceSize: sourceSize, isVideo: false, priority: .interactive
         )).isLocal else {
@@ -845,7 +845,7 @@ nonisolated struct EditPipeline: Sendable {
         _ id: MediaAssetID,
         saved: StoredEditRecipe,
         result: EditRecipeMutationResult
-    ) async -> (image: CGImage, staged: RenderedEditProducts)? {
+    ) async -> (image: DisplayImage, staged: RenderedEditProducts)? {
         guard let directory else {
             return nil
         }
