@@ -573,7 +573,7 @@ struct DetailColumn: View {
                 focusedAssetID: viewModel.focusedAssetID,
                 focusedAssetKind: viewModel.focusedAssetKind,
                 panePreview: viewModel.displayedPanePreview(.loupe),
-                loupeVideoState: viewModel.loupeVideoState,
+                loupeVideo: viewModel.loupeVideo,
                 isDownloading: viewModel.downloadingSlots.contains(.loupe),
                 stripTileEdge: viewModel.stripTileEdge,
                 setStripTileEdge: viewModel.setStripTileEdge,
@@ -594,7 +594,7 @@ struct DetailColumn: View {
                 onMediaChoice: { id, choice in
                     viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
                 },
-                onPlayVideo: { id in viewModel.playLoupeVideo(id: id) },
+                onRetryVideo: viewModel.retryLoupeVideo,
                 focusedMediaChoice: viewModel.panePreviews[.loupe]?.mediaChoice,
                 onPreviewMediaChoice: { choice in
                     guard let id = viewModel.focusedAssetID else { return }

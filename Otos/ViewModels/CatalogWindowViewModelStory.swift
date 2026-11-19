@@ -289,13 +289,13 @@ extension CatalogWindowViewModel {
             storyHoldTask = nil
             if playsVideo {
                 loupeVideoState?.player.pause()
-                loupeVideoState?.isPlaying = false
+                updateLoupeVideoState { $0.isPlaying = false }
             }
         } else {
             story.hold = story.hold?.resuming(at: now)
             if playsVideo {
                 loupeVideoState?.player.play()
-                loupeVideoState?.isPlaying = true
+                updateLoupeVideoState { $0.isPlaying = true }
             }
         }
         self.story = story
@@ -417,7 +417,7 @@ extension CatalogWindowViewModel {
         let reports = StoryVideoReports(item: player.currentItem)
         if !story.isPaused {
             player.play()
-            loupeVideoState?.isPlaying = true
+            updateLoupeVideoState { $0.isPlaying = true }
         }
         storyVideoWatchTask?.cancel()
         storyVideoWatchTask = Task { [weak self] in

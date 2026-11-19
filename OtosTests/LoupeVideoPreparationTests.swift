@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// Loupe video preparation (APP-020, DES-087): opening a video prepares it for
@@ -53,7 +54,8 @@ struct LoupeVideoPreparationTests {
 
     private func makeModel(
         store: CatalogStore,
-        previewOutcome: PreviewImageLoader.Outcome
+        previewOutcome: PreviewImageLoader.Outcome,
+        videoLoader: VideoPreviewLoader? = nil
     ) async -> CatalogWindowViewModel {
         let previewLoader = FakePreviewLoader()
         await previewLoader.setDefaultOutcome(previewOutcome)
@@ -65,7 +67,7 @@ struct LoupeVideoPreparationTests {
             startsSourceMonitoring: false,
             preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
             previewLoader: previewLoader,
-            videoLoader: VideoPreviewLoader(
+            videoLoader: videoLoader ?? VideoPreviewLoader(
                 status: { _ in .materialized },
                 materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .testMaterialized }
             ),
@@ -88,7 +90,7 @@ struct LoupeVideoPreparationTests {
         model.openLoupe(id: id)
         try await waitForVideoState(model)
 
-        // No onPlayVideo call anywhere in this test: opening was enough.
+        // No Try Again anywhere in this test: opening was enough.
         let state = try #require(model.loupeVideoState)
         #expect(state.id == id)
         #expect(state.isPlaying == false)
@@ -103,8 +105,97 @@ struct LoupeVideoPreparationTests {
 
         model.exitToGrid()
 
-        #expect(model.loupeVideoState == nil)
+        #expect(model.loupeVideo == nil)
         #expect(model.loupeVideoPrepareTask == nil)
+    }
+
+    /// The defect this pins: a video whose bytes could not come left the pane as it was,
+    /// so a click on it did nothing anyone could see. Now the pane says why, and Try Again
+    /// shows its wait in the frame it is pressed (DES-086, DES-120) and asks by the same
+    /// path opening did.
+    @Test func aVideoThatCannotComeSaysWhyAndTryAgainShowsItsWaitAtOnce() async throws {
+        let (store, id) = try await makeVideoCatalog()
+        let source = HeldVideoSource()
+        let model = await makeModel(
+            store: store,
+            previewOutcome: .unavailable,
+            videoLoader: VideoPreviewLoader(status: source.status, materializationRequester: source.requester)
+        )
+        model.applyState(makeLoupeVideoState(orderedIDs: [id]))
+
+        model.openLoupe(id: id)
+        try await waitUntil { model.loupeVideo == .unavailable(id, .serverUnreachable) }
+
+        model.retryLoupeVideo()
+        #expect(model.loupeVideo == .preparing(id))
+
+        await source.gate.waitForArrivals(1)
+        await source.gate.open()
+        try await waitForVideoState(model)
+        #expect(model.loupeVideoState?.id == id)
+        #expect(source.attempts == 2)
+    }
+
+    /// Opening a video shows its wait from the frame it is opened in, once its kind is
+    /// known, rather than a poster that looks finished.
+    @Test func aVideoBeingPreparedIsShownAsAWait() async throws {
+        let (store, id) = try await makeVideoCatalog()
+        let source = HeldVideoSource(failsFirst: false)
+        let model = await makeModel(
+            store: store,
+            previewOutcome: .unavailable,
+            videoLoader: VideoPreviewLoader(status: source.status, materializationRequester: source.requester)
+        )
+        model.applyState(makeLoupeVideoState(orderedIDs: [id]))
+
+        model.openLoupe(id: id)
+        await source.gate.waitForArrivals(1)
+        #expect(model.loupeVideo == .preparing(id))
+        #expect(PanePresentation.overlay(
+            paneID: id, isDownloading: false, video: model.loupeVideo.map { ($0.id, $0.phase) }
+        ) == .waiting)
+
+        await source.gate.open()
+        try await waitForVideoState(model)
+    }
+}
+
+/// A cloud-only video whose download the test holds at its gate; the first attempt fails
+/// as an unreachable server does when `failsFirst`.
+private final class HeldVideoSource: Sendable {
+    let gate = ArrivalGate()
+    private let failsFirst: Bool
+    private let state = Mutex((attempts: 0, arrived: false))
+
+    init(failsFirst: Bool = true) {
+        self.failsFirst = failsFirst
+    }
+
+    var attempts: Int {
+        state.withLock(\.attempts)
+    }
+
+    var status: @Sendable (URL) -> FileMaterializationStatus {
+        { [self] _ in state.withLock(\.arrived) ? .materialized : .dataless }
+    }
+
+    var requester: ClosureMaterializationRequester {
+        ClosureMaterializationRequester(status: status) { [self] _ in
+            await attempt()
+        }
+    }
+
+    private func attempt() async -> MaterializationResult {
+        let attempt = state.withLock { value -> Int in
+            value.attempts += 1
+            return value.attempts
+        }
+        if failsFirst, attempt == 1 {
+            return MaterializationResult(outcome: .serverUnreachable, rerequestCount: 0, elapsedMs: 0)
+        }
+        await gate.arrive()
+        state.withLock { $0.arrived = true }
+        return .testMaterialized
     }
 }
 

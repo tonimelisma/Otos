@@ -13,7 +13,7 @@ struct LoupeView: View {
     let focusedAssetID: MediaAssetID?
     let focusedAssetKind: MediaKind?
     let panePreview: PanePreview?
-    let loupeVideoState: LoupeVideoState?
+    let loupeVideo: LoupeVideo?
     let isDownloading: Bool
     let stripTileEdge: CGFloat
     let setStripTileEdge: (CGFloat) -> Void
@@ -26,7 +26,8 @@ struct LoupeView: View {
     var onEscape: () -> Void = {}
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
-    var onPlayVideo: (MediaAssetID) -> Void = { _ in }
+    /// The pane's Try Again, after a video or Live Photo motion could not be prepared.
+    var onRetryVideo: () -> Void = {}
     var focusedMediaChoice: MediaChoice?
     var onPreviewMediaChoice: (MediaChoice) -> Void = { _ in }
     /// Context menu for the focused asset (pane) and the clicked tile (strip).
@@ -92,6 +93,11 @@ struct LoupeView: View {
             preview: panePreview,
             videoState: loupeVideoState
         )
+        let overlay = PanePresentation.overlay(
+            paneID: focusedAssetID,
+            isDownloading: isDownloading,
+            video: loupeVideo.map { ($0.id, $0.phase) }
+        )
         return MediaChoiceHoverRegion(
             currentChoice: focusedMediaChoice,
             mediaPixelSize: display.mediaPixelSize,
@@ -132,43 +138,28 @@ struct LoupeView: View {
                         .accessibilityAddTraits(.isImage)
                     }
                 case let .thumbnail(id):
-                    ZStack {
-                        PaneThumbnailView(
-                            id: id,
-                            tileContentStore: tileContentStore,
-                            thumbnailDirectory: thumbnailDirectory,
-                            detailReader: detailReader
-                        )
-                        // Poster-first — keep the thumbnail until the player is ready.
-                        // Retry affordance only: a video prepares itself on focus, so
-                        // this glyph appears when preparation produced no player, and
-                        // never beside the progress indicator that occupies its place.
-                        if !isDownloading, shouldShowPlayAffordance(for: id) {
-                            Image(systemName: "play.circle.fill")
-                                .resizable()
-                                .frame(width: 60, height: 60)
-                                .foregroundStyle(.white.opacity(0.92))
-                                .shadow(radius: 8)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        guard let focusedAssetID, focusedAssetKind == .video else {
-                            return
-                        }
-                        onPlayVideo(focusedAssetID)
-                    }
+                    // Poster-first: a video's thumbnail stands until its player is ready.
+                    PaneThumbnailView(
+                        id: id,
+                        tileContentStore: tileContentStore,
+                        thumbnailDirectory: thumbnailDirectory,
+                        detailReader: detailReader
+                    )
                 case .empty:
                     ContentUnavailableView("No Selection", systemImage: "photo")
                 }
-                // Centered, where the play glyph sits (DES-086): the wait belongs on
-                // the media the user is waiting for, not in a corner of the window.
-                if isDownloading {
+                // Centered (DES-086): the wait, or why there is nothing to wait for,
+                // belongs on the media the user is looking at, not in a corner.
+                switch overlay {
+                case .none:
+                    EmptyView()
+                case .waiting:
                     ProgressView()
                         .controlSize(.large)
                         .shadow(radius: 8)
                         .allowsHitTesting(false)
+                case let .unavailable(reason):
+                    VideoUnavailableView(reason: reason, retry: onRetryVideo)
                 }
             }
             .contentShape(Rectangle())
@@ -214,13 +205,12 @@ struct LoupeView: View {
         }
     }
 
-    private func shouldShowPlayAffordance(for id: MediaAssetID) -> Bool {
-        PanePresentation.shouldShowPlayAffordance(
-            kind: focusedAssetKind,
-            hasActiveVideo: loupeVideoState != nil,
-            paneID: id,
-            focusedID: focusedAssetID
-        )
+    private var loupeVideoState: LoupeVideoState? {
+        if case let .ready(state) = loupeVideo {
+            state
+        } else {
+            nil
+        }
     }
 
     private var paneAccessibilityLabel: String {
@@ -250,6 +240,55 @@ struct LoupeView: View {
             tileChoiceChange: tileChoiceChange,
             focusTargetID: focusedAssetID
         )
+    }
+}
+
+/// Why the loupe cannot play its video or Live Photo motion, at the pane's center over the
+/// poster (DES-086): L1 what failed, L3 why, and Try Again, which asks by the same path as
+/// opening did. A material plate, so the words read over any picture.
+struct VideoUnavailableView: View {
+    let reason: LoupeVideoUnavailable
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "play.slash")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text("Can\u{2019}t play this video")
+                .font(.headline)
+            Text(Self.explanation(reason))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Try Again", action: retry)
+                .padding(.top, 4)
+        }
+        .padding(20)
+        .frame(maxWidth: 320)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
+    }
+
+    /// The reason as a sentence (DES-037): a state of the source or of this Mac.
+    static func explanation(_ reason: LoupeVideoUnavailable) -> String {
+        switch reason {
+        case .serverUnreachable:
+            "The server didn\u{2019}t answer."
+        case .deviceUnavailable:
+            "The device it\u{2019}s on isn\u{2019}t connected."
+        case .libraryUnavailable:
+            "Its library isn\u{2019}t available."
+        case .insufficientSpace:
+            "There isn\u{2019}t enough free space to download it."
+        case .downloadsOff:
+            "Downloads are off in this session."
+        case .downloadFailed:
+            "It couldn\u{2019}t be downloaded."
+        case .detailUnreadable:
+            "Its details couldn\u{2019}t be read from the catalog."
+        }
     }
 }
 

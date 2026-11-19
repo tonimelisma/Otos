@@ -751,7 +751,26 @@ final class CatalogWindowViewModel {
     /// The newest hand-off of targets to LaunchServices (see `open(_:with:origin:)`).
     @ObservationIgnored var openTask: Task<Void, Never>?
     @ObservationIgnored let videoLoader: VideoPreviewLoader
-    var loupeVideoState: LoupeVideoState?
+    /// The loupe's video, or Live Photo motion: being prepared, playable, or not playable
+    /// and why. Set in the frame of the act that asks for it, so the pane answers at once
+    /// (DES-086, DES-120); cleared when focus or mode moves away from its asset.
+    var loupeVideo: LoupeVideo?
+    /// The loupe's player, when its video is ready.
+    var loupeVideoState: LoupeVideoState? {
+        if case let .ready(state) = loupeVideo {
+            state
+        } else {
+            nil
+        }
+    }
+
+    /// Changes the ready player's state in place; nothing when no player is ready.
+    func updateLoupeVideoState(_ change: (inout LoupeVideoState) -> Void) {
+        guard case var .ready(state) = loupeVideo else { return }
+        change(&state)
+        loupeVideo = .ready(state)
+    }
+
     /// The one in-flight loupe video preparation (materialize + build player). Named so
     /// a focus move can cancel the previous asset's preparation before starting another.
     @ObservationIgnored var loupeVideoPrepareTask: Task<Void, Never>?

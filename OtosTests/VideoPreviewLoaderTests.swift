@@ -31,7 +31,7 @@ struct VideoPreviewLoaderTests {
         )
         let imageDetail = detail(kind: .image)
         let result = await loader.preparePlayer(id: id("v.mp4"), detail: imageDetail)
-        #expect(result == nil)
+        #expect(result == .notVideo)
     }
 
     @Test func playMaterializesWhenDataless() async throws {
@@ -55,12 +55,12 @@ struct VideoPreviewLoaderTests {
             materializationRequester: requester
         )
         let videoDetail = detail(kind: .video)
-        let state = try #require(await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail))
+        let state = try #require(await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail).readyState)
         expectFreshPlayer(state, for: id("b.mp4"))
         #expect(counter.value == 1)
     }
 
-    @Test func playReturnsNilOnProviderUnavailable() async {
+    @Test func providerUnavailableAnswersWhyThereIsNoPlayer() async {
         let requester = ClosureMaterializationRequester(status: { _ in .dataless }) { _ in
             MaterializationResult(outcome: .providerUnavailable, rerequestCount: 2, elapsedMs: 2000)
         }
@@ -69,8 +69,26 @@ struct VideoPreviewLoaderTests {
             materializationRequester: requester
         )
         let videoDetail = detail(kind: .video)
-        let state = await loader.preparePlayer(id: id("c.mp4"), detail: videoDetail)
-        #expect(state == nil)
+        let result = await loader.preparePlayer(id: id("c.mp4"), detail: videoDetail)
+        #expect(result == .unavailable(.downloadFailed))
+    }
+
+    /// Each answer the request for the original's bytes can give names its own reason, so
+    /// the pane says what is wrong rather than only that something is.
+    @Test(arguments: [
+        (MaterializationOutcome.serverUnreachable, LoupeVideoUnavailable.serverUnreachable),
+        (.deviceUnavailable, .deviceUnavailable),
+        (.insufficientLocalSpace, .insufficientSpace),
+        (.refusedReadOnly, .downloadsOff),
+        (.timedOut, .downloadFailed),
+    ])
+    func unavailableNamesTheSourcesState(outcome: MaterializationOutcome, reason: LoupeVideoUnavailable) async {
+        let requester = ClosureMaterializationRequester(status: { _ in .dataless }) { _ in
+            MaterializationResult(outcome: outcome, rerequestCount: 0, elapsedMs: 0)
+        }
+        let loader = VideoPreviewLoader(status: { _ in .dataless }, materializationRequester: requester)
+        let result = await loader.preparePlayer(id: id("d.mp4"), detail: detail(kind: .video))
+        #expect(result == .unavailable(reason))
     }
 
     @Test func loupeVideoStateCleanupReplacesPlayer() async throws {
@@ -79,12 +97,12 @@ struct VideoPreviewLoaderTests {
             materializationRequester: ClosureMaterializationRequester(status: { _ in .materialized }) { _ in .cancelled }
         )
         let videoDetail = detail(kind: .video)
-        let first = try #require(await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail))
+        let first = try #require(await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail).readyState)
         loader.cleanup(first)
         #expect(first.player.currentItem == nil)
         #expect(first.player.rate == 0)
         // A play after cleanup gets its own player for the new asset.
-        let second = try #require(await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail))
+        let second = try #require(await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail).readyState)
         expectFreshPlayer(second, for: id("b.mp4"))
         #expect(second.player !== first.player)
     }
@@ -96,5 +114,16 @@ struct VideoPreviewLoaderTests {
         #expect(!state.isPlaying)
         #expect(state.displaySize == nil)
         #expect((state.player.currentItem?.asset as? AVURLAsset)?.url == id.fileURL)
+    }
+}
+
+extension LoupeVideoPreparation {
+    /// The player, when preparation made one.
+    var readyState: LoupeVideoState? {
+        if case let .ready(state) = self {
+            state
+        } else {
+            nil
+        }
     }
 }

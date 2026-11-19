@@ -35,12 +35,12 @@ final class VideoPreviewLoader {
     /// Makes the original local at interactive priority, re-checks before
     /// `AVPlayerItem` init, then creates the player — paused. Starting playback
     /// is the caller's intent, not this factory's.
-    /// Returns `nil` for `providerUnavailable`/`timedOut`/`unknown` and for
-    /// non-video kinds — caller keeps the poster thumbnail. Suspends at the
+    /// Answers why there is no player when the bytes cannot come, so the pane can say
+    /// so (DES-086), and `.notVideo` for any other kind. Suspends at the
     /// materialization await without blocking the main thread.
-    func preparePlayer(id: MediaAssetID, detail: MediaTileDetail?) async -> LoupeVideoState? {
+    func preparePlayer(id: MediaAssetID, detail: MediaTileDetail?) async -> LoupeVideoPreparation {
         guard detail?.bestKind == .video else {
-            return nil
+            return .notVideo
         }
         let url = id.fileURL
 
@@ -59,12 +59,16 @@ final class VideoPreviewLoader {
                 readiness=\(String(describing: readiness), privacy: .public)
                 """
             )
-            return nil
+            return .unavailable(LoupeVideoUnavailable(readiness))
         }
 
-        // Re-check immediately before the byte-backed player item (ADR 0008).
+        // Re-check immediately before the byte-backed player item (ADR 0008): a file the
+        // provider evicted again since is one whose download did not hold.
         guard status(url) == .materialized else {
-            return nil
+            OtosLog.mediaIO.noticeOperation("video.decode", phase: "unavailable", fields: [
+                "id": id.relativePath.rawValue, "readiness": "evictedBeforeRead",
+            ])
+            return .unavailable(.downloadFailed)
         }
 
         let asset = AVURLAsset(url: url)
@@ -81,7 +85,7 @@ final class VideoPreviewLoader {
             displaySize=\(displaySize.map { "\(Int($0.width))x\(Int($0.height))" } ?? "unknown", privacy: .public)
             """
         )
-        return state
+        return .ready(state)
     }
 
     /// The first video track's size as displayed — `naturalSize` through its
@@ -102,6 +106,88 @@ final class VideoPreviewLoader {
         state.player.pause()
         state.player.replaceCurrentItem(with: nil)
     }
+}
+
+/// What preparing a video for the loupe came to: a paused player, or why there is none.
+@MainActor
+enum LoupeVideoPreparation: Equatable {
+    case ready(LoupeVideoState)
+    case unavailable(LoupeVideoUnavailable)
+    /// The asset is not a video; nothing was asked for.
+    case notVideo
+}
+
+/// Why the loupe has no player for a video, or for a Live Photo's motion: the reason the
+/// pane names under `Can’t play this video` (DES-086). Each case is a state of the source
+/// or of this Mac, read from what the request for the original's bytes answered.
+nonisolated enum LoupeVideoUnavailable: Equatable, Sendable {
+    /// The Immich server did not answer the download.
+    case serverUnreachable
+    /// The camera or card the video is on is not connected.
+    case deviceUnavailable
+    /// The library the video is in is not reachable.
+    case libraryUnavailable
+    /// Downloading it would take the volume below the free-space floor (ADR 0027).
+    case insufficientSpace
+    /// This session never downloads originals: a read-only tour (`ReadOnlyOriginals`).
+    case downloadsOff
+    /// The provider was asked and the bytes did not arrive.
+    case downloadFailed
+    /// The catalog could not read the video's row, so nothing was asked for.
+    case detailUnreadable
+
+    init(_ readiness: EnsureLocalOutcome) {
+        switch readiness {
+        case .local:
+            self = .downloadFailed
+        case .unreachable:
+            self = .libraryUnavailable
+        case .userWorkOnly:
+            self = .downloadFailed
+        case let .notMaterialized(outcome):
+            switch outcome {
+            case .serverUnreachable: self = .serverUnreachable
+            case .deviceUnavailable: self = .deviceUnavailable
+            case .insufficientLocalSpace: self = .insufficientSpace
+            case .refusedReadOnly: self = .downloadsOff
+            case .alreadyMaterialized, .materialized, .requestFailed, .timedOut, .providerUnavailable,
+                 .cancelled, .statusUnavailable:
+                self = .downloadFailed
+            }
+        }
+    }
+}
+
+/// The loupe's one answer to "what about the video on screen": being prepared, playable,
+/// or not playable and why. Its id is the asset the pane shows — the video, or the Live
+/// Photo whose motion it plays — and the pane draws it only for that asset.
+@MainActor
+enum LoupeVideo: Equatable {
+    case preparing(MediaAssetID)
+    case ready(LoupeVideoState)
+    case unavailable(MediaAssetID, LoupeVideoUnavailable)
+
+    var id: MediaAssetID {
+        switch self {
+        case let .preparing(id), let .unavailable(id, _): id
+        case let .ready(state): state.id
+        }
+    }
+
+    /// The same answer without the player, for the pane's pure presentation decisions.
+    var phase: LoupeVideoPhase {
+        switch self {
+        case .preparing: .preparing
+        case .ready: .ready
+        case let .unavailable(_, reason): .unavailable(reason)
+        }
+    }
+}
+
+nonisolated enum LoupeVideoPhase: Equatable, Sendable {
+    case preparing
+    case ready
+    case unavailable(LoupeVideoUnavailable)
 }
 
 /// Loupe video state — identity-guarded like `PanePreview`.

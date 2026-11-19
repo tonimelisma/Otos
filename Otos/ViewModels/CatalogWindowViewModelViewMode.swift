@@ -65,7 +65,7 @@ extension CatalogWindowViewModel {
             // click stands between the user and a playable asset. Kind is only known
             // here, so this is the one place that can start it.
             if focusedAssetKind == .video, viewMode == .loupe {
-                prepareLoupeVideo(id: id, startPlaying: false)
+                prepareLoupeVideo(id: id)
             }
             guard let kind = focusedAssetKind, kind != .video else { return }
             let motion: MediaAssetID?
@@ -367,16 +367,11 @@ extension CatalogWindowViewModel {
                 requestPanePreview(expected, slot: slot)
             }
         }
-        // Loupe video follows loupe focus; clear stale video when focus changed
-        // or mode left loupe. Compare never shows video. Single owner is
-        // ViewModel's `loupeVideoState`; loader is stateless factory.
-        if loupeVideoState?.id != focusedAssetID || viewMode != .loupe {
-            if let stale = loupeVideoState {
-                loupeVideoPrepareTask?.cancel()
-                loupeVideoPrepareTask = nil
-                videoLoader.cleanup(stale)
-            }
-            loupeVideoState = nil
+        // Loupe video follows loupe focus; clear a stale one — being prepared, ready or
+        // unavailable — when focus changed or mode left loupe. Compare never shows video.
+        // Single owner is the ViewModel's `loupeVideo`; the loader is a stateless factory.
+        if let video = loupeVideo, video.id != focusedAssetID || viewMode != .loupe {
+            clearLoupeVideo()
         }
     }
 
@@ -507,83 +502,94 @@ extension CatalogWindowViewModel {
     // MARK: - Loupe video (prepared on focus, loupe only)
 
     /// The one implementation path for "make the focused video playable". `setFocus`
-    /// calls it with `startPlaying: false` the moment the focused asset's kind resolves
-    /// to video, so a video materializes by being opened, exactly like an image. The
-    /// poster's play glyph — which appears only when preparation produced no player —
-    /// calls the same function with `startPlaying: true`.
+    /// calls it the moment the focused asset's kind resolves to video, so a video
+    /// materializes by being opened, exactly like an image; the pane's Try Again calls it
+    /// again after an attempt that found no player.
     ///
-    /// This path deliberately does not touch `downloadingSlots`. The pane-preview
-    /// request for the same asset is already awaiting the same materialization and is
-    /// the single owner of the pane's progress indicator; a second writer could clear
-    /// the spinner while the other fetch was still running.
-    func prepareLoupeVideo(id: MediaAssetID, startPlaying: Bool) {
-        guard viewMode == .loupe, focusedAssetID == id, loupeVideoState?.id != id,
-              !isEjecting(id.libraryRootPath)
-        else {
+    /// `loupeVideo` turns `.preparing` in the frame of the call, so the pane shows its wait
+    /// at once (DES-086), and ends `.ready` or `.unavailable` with the reason — never
+    /// silently: a preparation that finds no player says so on the pane. This path does
+    /// not touch `downloadingSlots`, which the pane-preview request for the same asset
+    /// owns; the pane draws one indicator for either wait.
+    func prepareLoupeVideo(id: MediaAssetID) {
+        guard viewMode == .loupe, focusedAssetID == id, !isEjecting(id.libraryRootPath) else {
+            return
+        }
+        // Already being prepared or playable: nothing to ask. An unavailable one asks again.
+        if let video = loupeVideo, video.id == id, video.phase == .preparing || video.phase == .ready {
             return
         }
         let detailReader = tileDetailReader
         let loader = videoLoader
         let visit = focusVisit
         loupeVideoPrepareTask?.cancel()
+        loupeVideo = .preparing(id)
+        // `self` is weak across the awaits — a download can take as long as it takes — and
+        // held only to apply what they answered.
         loupeVideoPrepareTask = Task { @MainActor [weak self] in
-            guard let self else { return }
             let detail: MediaTileDetail?
             do {
                 detail = try await detailReader.detail(for: id)
             } catch {
-                // Nothing is prepared; the next focus change or the play glyph asks again.
+                guard let self, !Task.isCancelled, loupeVideo == .preparing(id) else { return }
+                loupeVideo = .unavailable(id, .detailUnreadable)
                 storyStalled(visit: visit, reason: "videoDetailFailed", error: error)
                 return
             }
-            guard !Task.isCancelled, detail?.bestKind == .video else { return }
-            guard let state = await loader.preparePlayer(id: id, detail: detail) else {
-                // A preparation cancelled by a focus move found nothing out about this
-                // video; only one that ran to its answer reports it unavailable.
-                guard !Task.isCancelled, focusedAssetID == id else { return }
-                OtosLog.ui.notice(
-                    "op=loupe.video phase=unavailable id=\(id.relativePath.rawValue, privacy: .public)"
-                )
+            let preparation = await loader.preparePlayer(id: id, detail: detail)
+            // Revalidate after every await: focus may have moved while bytes arrived. A
+            // preparation cancelled by a focus move found nothing out about this video.
+            guard let self, !Task.isCancelled, focusedAssetID == id, viewMode == .loupe,
+                  loupeVideo == .preparing(id)
+            else {
+                if case let .ready(state) = preparation {
+                    loader.cleanup(state)
+                }
+                return
+            }
+            switch preparation {
+            case let .ready(state):
+                loupeVideo = .ready(state)
+                storyVideoReady(state, visit: visit)
+                OtosLog.ui.noticeOperation("loupe.video", phase: "ready", fields: [
+                    "id": id.relativePath.rawValue,
+                ])
+            case let .unavailable(reason):
+                loupeVideo = .unavailable(id, reason)
+                OtosLog.ui.noticeOperation("loupe.video", phase: "unavailable", fields: [
+                    "id": id.relativePath.rawValue, "reason": "\(reason)",
+                ])
                 storyVideoUnavailable(visit: visit)
-                return
+            case .notVideo:
+                loupeVideo = nil
             }
-            // Revalidate after every await: focus may have moved while bytes arrived.
-            guard !Task.isCancelled, focusedAssetID == id, viewMode == .loupe else {
-                loader.cleanup(state)
-                return
-            }
-            var prepared = state
-            if startPlaying {
-                state.player.play()
-                prepared.isPlaying = true
-            }
-            loupeVideoState = prepared
-            storyVideoReady(prepared, visit: visit)
-            OtosLog.ui.notice(
-                """
-                op=loupe.video phase=\(startPlaying ? "play" : "ready", privacy: .public) \
-                id=\(id.relativePath.rawValue, privacy: .public)
-                """
-            )
         }
     }
 
-    /// Explicit play intent from the poster's play glyph — same path, playing.
-    func playLoupeVideo(id: MediaAssetID) {
-        prepareLoupeVideo(id: id, startPlaying: true)
+    /// The pane's Try Again: asks again for what the pane could not play — the focused
+    /// video, or the Live Photo's motion — by the same path that asked the first time.
+    func retryLoupeVideo() {
+        guard case let .unavailable(id, _) = loupeVideo, id == focusedAssetID else { return }
+        if focusedAssetKind == .video {
+            prepareLoupeVideo(id: id)
+        } else if focusedLivePhotoMotion != nil {
+            loupeVideo = nil
+            playLivePhoto()
+        }
     }
 
     /// Whether the loupe can play the focused Live Photo's motion now: it shows one, and
-    /// is not already playing it.
+    /// is not already preparing, playing or reporting it.
     var canPlayLivePhoto: Bool {
-        viewMode == .loupe && story == nil && focusedLivePhotoMotion != nil && loupeVideoState == nil
+        viewMode == .loupe && story == nil && focusedLivePhotoMotion != nil && loupeVideo == nil
     }
 
     /// Plays the focused Live Photo's motion in place of its still, once, then shows the
     /// still again (ADR 0041). The movie is materialized at interactive priority like any
-    /// video the loupe opens. Its player stands in the pane under the still's identity, so
-    /// the existing focus rule tears it down when focus or mode moves; the still is the
-    /// item, and nothing (trim, edit) can address the movie through it.
+    /// video the loupe opens, and the pane shows the wait and any failure as it does a
+    /// video's. Its player stands in the pane under the still's identity, so the existing
+    /// focus rule tears it down when focus or mode moves; the still is the item, and
+    /// nothing (trim, edit) can address the movie through it.
     func playLivePhoto() {
         guard canPlayLivePhoto, let still = focusedAssetID, let motion = focusedLivePhotoMotion,
               !isEjecting(still.libraryRootPath)
@@ -591,6 +597,7 @@ extension CatalogWindowViewModel {
         let detailReader = tileDetailReader
         let loader = videoLoader
         loupeVideoPrepareTask?.cancel()
+        loupeVideo = .preparing(still)
         loupeVideoPrepareTask = Task { @MainActor [weak self] in
             let detail: MediaTileDetail?
             do {
@@ -599,15 +606,16 @@ extension CatalogWindowViewModel {
                 OtosLog.ui.errorOperation("loupe.livePhoto", phase: "motionReadFailed", fields: [
                     "id": still.relativePath.rawValue, "error": String(describing: error),
                 ])
+                guard let self, !Task.isCancelled, loupeVideo == .preparing(still) else { return }
+                loupeVideo = .unavailable(still, .detailUnreadable)
                 return
             }
-            guard let prepared = await loader.preparePlayer(id: motion, detail: detail) else {
-                OtosLog.ui.noticeOperation("loupe.livePhoto", phase: "unavailable", fields: [
-                    "id": still.relativePath.rawValue,
-                ])
+            let preparation = await loader.preparePlayer(id: motion, detail: detail)
+            // `self` is held only for this applying step, not across the wait for the
+            // movie's end below.
+            guard let player = self?.applyLivePhotoMotion(preparation, still: still, cleanup: loader) else {
                 return
             }
-            let player = prepared.player
             // The movie reports its own end; the still comes back then. Observed before it
             // plays, so a short movie cannot end unseen. A focus or mode change meanwhile
             // tears the player down and cancels this task, which ends the wait.
@@ -615,19 +623,7 @@ extension CatalogWindowViewModel {
                 named: AVPlayerItem.didPlayToEndTimeNotification,
                 object: player.currentItem
             )
-            do {
-                guard let self, !Task.isCancelled, focusedAssetID == still, viewMode == .loupe else {
-                    loader.cleanup(prepared)
-                    return
-                }
-                loupeVideoState = LoupeVideoState(
-                    id: still, player: player, isPlaying: true, displaySize: prepared.displaySize
-                )
-                player.play()
-                OtosLog.ui.noticeOperation("loupe.livePhoto", phase: "play", fields: [
-                    "id": still.relativePath.rawValue,
-                ])
-            }
+            player.play()
             for await _ in ended {
                 break
             }
@@ -639,10 +635,46 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// Applies a Live Photo motion's preparation to the pane, if the still is still the one
+    /// waiting for it: the player, paused for its caller to start, or why there is none.
+    private func applyLivePhotoMotion(
+        _ preparation: LoupeVideoPreparation,
+        still: MediaAssetID,
+        cleanup loader: VideoPreviewLoader
+    ) -> AVPlayer? {
+        guard !Task.isCancelled, focusedAssetID == still, viewMode == .loupe, loupeVideo == .preparing(still) else {
+            if case let .ready(prepared) = preparation {
+                loader.cleanup(prepared)
+            }
+            return nil
+        }
+        switch preparation {
+        case let .ready(prepared):
+            loupeVideo = .ready(LoupeVideoState(
+                id: still, player: prepared.player, isPlaying: true, displaySize: prepared.displaySize
+            ))
+            OtosLog.ui.noticeOperation("loupe.livePhoto", phase: "play", fields: [
+                "id": still.relativePath.rawValue,
+            ])
+            return prepared.player
+        case let .unavailable(reason):
+            loupeVideo = .unavailable(still, reason)
+            OtosLog.ui.noticeOperation("loupe.livePhoto", phase: "unavailable", fields: [
+                "id": still.relativePath.rawValue, "reason": "\(reason)",
+            ])
+        case .notVideo:
+            loupeVideo = .unavailable(still, .downloadFailed)
+            OtosLog.ui.noticeOperation("loupe.livePhoto", phase: "unavailable", fields: [
+                "id": still.relativePath.rawValue, "reason": "motionNotVideo",
+            ])
+        }
+        return nil
+    }
+
     /// An eject of `root` is about to unmount it, and a player showing a file there holds
     /// that file open. The player, or its preparation, is released before the unmount.
     func releaseLoupeVideo(under root: LibraryRootPath) {
-        guard focusedAssetID?.libraryRootPath == root || loupeVideoState?.id.libraryRootPath == root else {
+        guard focusedAssetID?.libraryRootPath == root || loupeVideo?.id.libraryRootPath == root else {
             return
         }
         OtosLog.ui.noticeOperation("loupe.video", phase: "released", fields: [
@@ -664,6 +696,6 @@ extension CatalogWindowViewModel {
         if let state = loupeVideoState {
             videoLoader.cleanup(state)
         }
-        loupeVideoState = nil
+        loupeVideo = nil
     }
 }

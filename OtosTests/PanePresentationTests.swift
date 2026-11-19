@@ -48,6 +48,26 @@ struct PanePresentationTests {
         let unknown = MediaAssetTilePresentation.contentRect(imagePixelSize: nil, bounds: pane)
         #expect(unknown == pane)
     }
+
+    /// One thing at the pane's center (DES-086): the wait while bytes or a player are
+    /// coming, else why a video cannot play, else nothing — and only for the pane's asset.
+    @Test func paneOverlayShowsTheWaitOrWhyNeverBoth() {
+        let pane = makePaneID("v.mp4")
+        let other = makePaneID("w.mp4")
+        #expect(PanePresentation.overlay(paneID: pane, isDownloading: false, video: nil) == .none)
+        #expect(PanePresentation.overlay(paneID: pane, isDownloading: true, video: nil) == .waiting)
+        #expect(PanePresentation.overlay(paneID: pane, isDownloading: false, video: (pane, .preparing)) == .waiting)
+        #expect(PanePresentation.overlay(paneID: pane, isDownloading: false, video: (pane, .ready)) == .none)
+        #expect(PanePresentation.overlay(
+            paneID: pane, isDownloading: false, video: (pane, .unavailable(.serverUnreachable))
+        ) == .unavailable(.serverUnreachable))
+        #expect(PanePresentation.overlay(
+            paneID: pane, isDownloading: true, video: (pane, .unavailable(.serverUnreachable))
+        ) == .waiting)
+        #expect(PanePresentation.overlay(
+            paneID: pane, isDownloading: false, video: (other, .unavailable(.serverUnreachable))
+        ) == .none)
+    }
 }
 
 private func makePaneID(_ path: String) -> MediaAssetID {

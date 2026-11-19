@@ -52,21 +52,32 @@ nonisolated enum PanePresentation {
         return .thumbnail(paneID)
     }
 
-    /// Pure play-affordance decision — extracted for testability so a view-private
-    /// method does not hide the logic that once drew a play button on still photos
-    /// `nil` kind renders no affordance (MED-002).
-    /// `hasActiveVideo` is `loupeVideoState != nil` lifted to a Sendable Bool so this
-    /// pure function can remain `nonisolated` despite `LoupeVideoState` being
-    /// `@MainActor` (AVPlayer).
-    nonisolated static func shouldShowPlayAffordance(
-        kind: MediaKind?,
-        hasActiveVideo: Bool,
-        paneID: MediaAssetID,
-        focusedID: MediaAssetID?
-    ) -> Bool {
-        guard !hasActiveVideo else { return false }
-        guard paneID == focusedID else { return false }
-        return kind == .video
+    /// What sits at the center of the pane, over its picture (DES-086): the one wait
+    /// indicator while its photo's bytes or its video's player are coming, the reason a
+    /// video cannot play once asking found no player, or nothing. Never two at once: a
+    /// wait outranks an older failure, since the asking is still going on.
+    nonisolated enum Overlay: Equatable, Sendable {
+        case none
+        case waiting
+        case unavailable(LoupeVideoUnavailable)
+    }
+
+    /// `video` is the loupe video's asset and phase, lifted out of the `@MainActor`
+    /// `LoupeVideo` so this decision stays pure; a phase for another asset than the
+    /// pane's is stale and draws nothing.
+    nonisolated static func overlay(
+        paneID: MediaAssetID?,
+        isDownloading: Bool,
+        video: (id: MediaAssetID, phase: LoupeVideoPhase)?
+    ) -> Overlay {
+        let phase = video.flatMap { $0.id == paneID ? $0.phase : nil }
+        if isDownloading || phase == .preparing {
+            return .waiting
+        }
+        if case let .unavailable(reason) = phase {
+            return .unavailable(reason)
+        }
+        return .none
     }
 }
 

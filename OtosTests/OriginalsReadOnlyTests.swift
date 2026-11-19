@@ -208,7 +208,7 @@ struct OriginalsReadOnlyTests {
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )
-        if let state = await loader.preparePlayer(id: id, detail: detail) {
+        if case let .ready(state) = await loader.preparePlayer(id: id, detail: detail) {
             loader.cleanup(state)
         }
         try assertUnchanged(before, root: root)

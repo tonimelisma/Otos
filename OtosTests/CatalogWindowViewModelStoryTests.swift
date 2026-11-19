@@ -378,7 +378,7 @@ struct CatalogWindowViewModelStoryTests {
             model.playStory(anniversary: Self.today.inYear(2025))
             try await waitUntil { model.focusedAssetKind == .image }
             model.focusedAssetKind = .video
-            model.loupeVideoState = LoupeVideoState(id: id, player: AVPlayer(), isPlaying: false)
+            model.loupeVideo = .ready(LoupeVideoState(id: id, player: AVPlayer(), isPlaying: false))
 
             #expect(!model.canTrimVideo)
             #expect(!model.canCrop)

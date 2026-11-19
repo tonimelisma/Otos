@@ -703,7 +703,7 @@ extension CatalogWindowViewModel {
             }
         }
         if loupeVideoState?.id == command.id {
-            loupeVideoState?.applyTrim(saved.recipe)
+            updateLoupeVideoState { $0.applyTrim(saved.recipe) }
         }
         if var live = editLivePreview, live.id == command.id, live.recipe == saved.recipe {
             live.revision = saved.revision
