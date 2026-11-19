@@ -10,6 +10,10 @@
 #                             instructions on origin/main against the last run's head
 #                             (script/bench.sh compare). The session whose check reports
 #                             verdict=due starts it in the background.
+#   script/perf.sh not-reproduced <scorecard.json>
+#                             After verdict=fail: records that the one reproducing tour, whose
+#                             saved scorecard this is, met every target the run missed. The
+#                             verdict stays fail and stops asking for a fix until the next run.
 #   script/perf.sh self-test  The status and verdict rules against stubbed inputs. Measures
 #                             nothing.
 #
@@ -68,6 +72,8 @@ status_line() {
   fi
   if [[ -n "$due" ]]; then
     echo "op=perf.status verdict=due reason=$due lastRun=${day:-never} action=\"start script/perf.sh run in the background and keep working\""
+  elif [[ "$kind" == fail && -n "$(field "$verdict" notReproduced)" ]]; then
+    echo "op=perf.status verdict=$verdict action=\"none: the miss did not reproduce; the next weekly run judges it\""
   elif [[ "$kind" == fail ]]; then
     echo "op=perf.status verdict=$verdict action=\"fix the felt targets next, starting with one tour that reproduces the miss\""
   else
@@ -117,6 +123,48 @@ verdict_line() {
   local kind=pass
   [[ "$felt" != none ]] && kind=fail
   echo "$kind day=$day head=$head felt=$felt cpu=$cpu scorecard=$scorecard"
+}
+
+# The verdict line after a reproducing tour: unchanged when the tour missed any target the
+# run missed (exit 1, the misses on stdout), marked notReproduced=<day> otherwise.
+not_reproduced_line() {
+  local verdict="$1" today="$2" tour_misses="$3"
+  local still="" metric
+  for metric in $(field "$verdict" felt | tr ',' ' '); do
+    case ",$tour_misses," in *",$metric,"*) still="${still:+$still,}$metric" ;; esac
+  done
+  if [[ -n "$still" ]]; then
+    echo "$still"
+    return 1
+  fi
+  echo "$verdict notReproduced=$today"
+}
+
+not_reproduced() {
+  local scorecard="${1:-}" verdict tour_misses line
+  if [[ -z "$scorecard" ]]; then
+    usage
+    exit 2
+  fi
+  verdict="$(cat "$VERDICT_FILE" 2>/dev/null || true)"
+  if [[ "${verdict%% *}" != fail ]]; then
+    echo "op=perf.notReproduced phase=refused reason=verdictIsNotFail verdict=${verdict%% *}" >&2
+    exit 1
+  fi
+  if [[ -n "$(field "$verdict" notReproduced)" ]]; then
+    echo "op=perf.notReproduced phase=skipped reason=alreadyRecorded"
+    return
+  fi
+  if ! tour_misses="$(felt_misses "$scorecard")"; then
+    echo "op=perf.notReproduced phase=refused reason=tourJudgedNothing scorecard=$scorecard" >&2
+    exit 1
+  fi
+  if ! line="$(not_reproduced_line "$verdict" "$(/bin/date +%Y-%m-%d)" "$tour_misses")"; then
+    echo "op=perf.notReproduced phase=refused reason=reproduced felt=$line scorecard=$scorecard" >&2
+    exit 1
+  fi
+  echo "$line" > "$VERDICT_FILE"
+  echo "op=perf.notReproduced phase=recorded felt=$(field "$verdict" felt) tourMissed=$tour_misses scorecard=$scorecard"
 }
 
 reopen_installed_app() {
@@ -205,6 +253,16 @@ self_test() {
   expect weekPassed "$(status_line "pass day=2026-11-11 head=aaa felt=none cpu=none" 2026-11-18 bbb free)" "verdict=due reason=weekPassed lastRun=2026-11-11"
   expect mainUnmoved "$(status_line "pass day=2026-11-01 head=aaa felt=none cpu=x" 2026-11-18 aaa free)" "verdict=pass"
   expect failShown "$(status_line "fail day=2026-11-15 head=aaa felt=launch.firstGridMs cpu=none" 2026-11-18 bbb free)" "verdict=fail day=2026-11-15 head=aaa felt=launch.firstGridMs cpu=none action="
+  local failed="fail day=2026-11-15 head=aaa felt=mainThreadStalls.worstMs,click.returnMs cpu=none scorecard=s.json"
+  expect notReproduced "$(not_reproduced_line "$failed" 2026-11-16 memory.peakFootprintMB)" "cpu=none scorecard=s.json notReproduced=2026-11-16"
+  expect notReproducedClean "$(not_reproduced_line "$failed" 2026-11-16 none)" "notReproduced=2026-11-16"
+  expect reproduced "$(not_reproduced_line "$failed" 2026-11-16 launch.firstGridMs,click.returnMs || true)" "click.returnMs"
+  if not_reproduced_line "$failed" 2026-11-16 click.returnMs >/dev/null; then
+    echo "FAIL: reproducedRefused: a tour that misses the same target reproduces it" >&2
+    failures=$((failures + 1))
+  fi
+  expect notReproducedShown "$(status_line "$failed notReproduced=2026-11-16" 2026-11-18 bbb free)" "notReproduced=2026-11-16 action=\"none:"
+  expect notReproducedStillDue "$(status_line "$failed notReproduced=2026-11-16" 2026-11-22 bbb free)" "verdict=due reason=weekPassed"
   expect errorToday "$(status_line "error day=2026-11-18 head=aaa reason=tour" 2026-11-18 bbb free)" "verdict=error day=2026-11-18"
   expect errorTomorrow "$(status_line "error day=2026-11-17 head=aaa reason=tour" 2026-11-18 aaa free)" "verdict=due reason=lastRunFailed"
   expect passes "$(verdict_line 2026-11-18 aaa none window.publish.orderChanged.158k s.json)" "pass day=2026-11-18 head=aaa felt=none cpu=window.publish.orderChanged.158k"
@@ -237,6 +295,7 @@ self_test() {
 case "${1:-}" in
   status) status ;;
   run) run ;;
+  not-reproduced) not_reproduced "${2:-}" ;;
   self-test) self_test ;;
   *) usage; exit 2 ;;
 esac

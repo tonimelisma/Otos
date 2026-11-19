@@ -367,8 +367,9 @@ one `op=perf.status` line:
   start gets `phase=skipped`; `phase=pending` (an import in flight) leaves it due.
 - `verdict=fail`: a target in `docs/scorecard-targets.json` was missed on the owner's
   library (`felt=`). Fixing it is the next work, starting with one tour that reproduces it
-  (`script/scorecard.sh --tour`). One that does not reproduce is noted in the DoD and left to
-  the next weekly run. A target changes only with the owner's decision.
+  (`script/scorecard.sh --tour`). One that does not reproduce is recorded with
+  `script/perf.sh not-reproduced <that tour's scorecard>` and left to the next weekly run; a
+  `fail` that carries `notReproduced=` asks for nothing. A target changes only with the owner's decision.
 - Instruction rises (`cpu=`) decide nothing; the owner says whether one is work.
 
 Nothing else measures. No tour, `script/bench.sh compare` or `OTOS_BENCHMARK` run is part

@@ -70,8 +70,10 @@ owner's catalog):
   cases (`cpu=`). A tour that judged nothing, or a comparison that failed or was refused, is
   `error`, and it moves no baseline.
 - **What a failure means.** A `fail` is fixed next. The fix starts with one tour that
-  reproduces the miss. A miss that does not reproduce is noted in the DoD and left to the next
-  weekly run, because the weekly tour runs beside whatever else the machine is doing. A
+  reproduces the miss. A miss that does not reproduce is recorded with `script/perf.sh not-reproduced
+  <the tour's scorecard>` and left to the next weekly run, because the weekly tour runs beside
+  whatever else the machine is doing. The verdict stays `fail` and carries `notReproduced=`,
+  so no other session repeats the tour. A
   target changes only with the owner's decision, in `docs/scorecard-targets.json`.
 - **Instruction rises decide nothing.** They are listed in the verdict, and the baseline
   moves to each run's head. The owner decides whether a rise is work. The counts remain the
