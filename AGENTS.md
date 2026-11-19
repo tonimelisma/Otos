@@ -585,6 +585,28 @@ flight, and relaunches it; a `phase=pending` result is reported, not retried
 around (ADR 0030).
 The DoD report carries the `op=perf.status` line from the final `script/check.sh` run.
 
+**The agent looks at what it shipped** (owner, 2026-11-19: "do you do visual inspection of
+implemented features at all? can you add that to the process? you can use latchkey for it").
+Tests prove the code, but only a look proves what the owner sees: on 2026-11-19 every check was
+green while half of All Media's tiles were blank. After the install, look at the installed app
+on the owner's library through Latchkey, read-only, with
+`computer_look app: "Otos"`. It looks at Otos's own window in the background, without
+bringing it forward or moving the owner's pointer.
+- Take a screenshot of each surface the increment changed, and of All Media's grid after any
+  increment that changes the app. Read the same window with `show: ui`: its accessibility
+  labels name every tile, so a blank tile, a file shown twice, or a wrong badge or count is
+  read rather than guessed.
+- Name what the screenshot should show before taking it. Anything else is a finding: a blank
+  or placeholder tile, a duplicate, a wrong label, text clipped or overlapping, a state that
+  never settles, a status that contradicts the logs. A finding is fixed in this increment
+  when the increment caused it; one it did not cause is diagnosed from logs and catalog, then
+  fixed.
+- Navigation that changes no data is allowed: selecting a sidebar row, scrolling, opening a
+  photo, switching view mode. Never a Like, Trash, rename, import, edit or setting
+  (production-data rule above). Put the window back where the owner left it.
+- The DoD report says which surfaces were looked at and what each showed. When the Mac is
+  locked or Latchkey is offline, the look is a non-blocking after-DoD note, as below.
+
 Verification is **agent-owned**: never require the user to launch the app, operate
 the UI, or inspect visuals as a condition of DoD. Run every check available to the
 agent; when a useful check cannot be run in the agent environment, record the
