@@ -17,46 +17,20 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: v80's triggers dropped and v79's made again; each pair that took its
-    /// own key given its asset's path checksum, as v79 keyed it; the mirror table rebuilt with
-    /// one prefix per library (the first); the asked table dropped; and its record removed.
-    static let newest = CatalogSchema.mirrorPrefixesMigrationIdentifier
+    /// schema before it: the scratch table of copy keys made again with its key, the face
+    /// triggers v81 made dropped and v79's made again, and its record removed.
+    static let newest = CatalogSchema.triggerConflictPolicyMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
-        let rekeyed = [
-            "media_asset_copy_inserted", "media_asset_copy_updated", "immich_mirror_pair_inserted", "immich_mirror_pair_deleted",
-        ]
+        let faceTriggers = ["face_person_photo_inserted", "face_person_photo_updated"]
         let v79Triggers = CatalogSchema.photoCopyKeyStatements.filter { statement in
-            rekeyed.contains { statement.hasPrefix("CREATE TRIGGER \($0) ") }
+            faceTriggers.contains { statement.hasPrefix("CREATE TRIGGER \($0) ") }
         }
-        #expect(v79Triggers.count == rekeyed.count)
-        let pairKey = "substr(copy_key, 1, 5) = CAST('pair:' AS BLOB)"
-        return rekeyed.map { "DROP TRIGGER \($0)" } + [
-            """
-            UPDATE media_asset SET copy_key = COALESCE(
-                (SELECT a.source_path_sha1 FROM immich_mirror_pair AS p
-                 JOIN media_asset AS a ON a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
-                 WHERE p.library_root_id = media_asset.library_root_id AND p.file_path = media_asset.relative_path),
-                source_path_sha1)
-            WHERE \(pairKey)
-            """,
-            """
-            CREATE TABLE immich_mirror_v61 (
-                account_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
-                library_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
-                server_prefix TEXT NOT NULL,
-                PRIMARY KEY (account_root_id, library_root_id)
-            )
-            """,
-            """
-            INSERT OR IGNORE INTO immich_mirror_v61 (account_root_id, library_root_id, server_prefix)
-            SELECT account_root_id, library_root_id, server_prefix FROM immich_mirror ORDER BY server_prefix
-            """,
-            "DROP TABLE immich_mirror",
-            "ALTER TABLE immich_mirror_v61 RENAME TO immich_mirror",
-            "CREATE INDEX idx_immich_mirror_library ON immich_mirror(library_root_id)",
-            "DROP TABLE immich_mirror_asked",
-        ] + v79Triggers + [
+        #expect(v79Triggers.count == faceTriggers.count)
+        return [
+            "DROP TABLE copy_key_touched",
+            "CREATE TABLE copy_key_touched (key BLOB PRIMARY KEY) WITHOUT ROWID",
+        ] + faceTriggers.map { "DROP TRIGGER \($0)" } + v79Triggers + [
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }

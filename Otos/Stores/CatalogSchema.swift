@@ -3436,6 +3436,66 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// v81: no trigger program relies on a conflict clause of its own. SQLite runs a trigger's
+    /// statements under the conflict policy of the statement that fired it whenever that statement
+    /// has one, and the `DO UPDATE` of an upsert has ABORT. A scan's or a sync's upsert that moved
+    /// a copy-key input of a row whose key held — an Immich asset's size reported after its pair
+    /// was made, a missing file seen again — made `media_asset_copy_updated` put that key into
+    /// `copy_key_touched` twice, and the second `INSERT OR IGNORE` aborted the write. A sync batch
+    /// that failed so was never acknowledged, so every later pass replayed it and failed again.
+    /// - `copy_key_touched` is a set the regroup reads through `IN`, where a key held twice means
+    ///   what it means once: it is made again with no key, so no insert into it can conflict under
+    ///   any policy. The triggers that fill it stay as v80 made them.
+    /// - The face triggers add a person's photo only where none is, by `NOT EXISTS`, so a write to
+    ///   `face` with a policy of its own neither aborts nor replaces the row.
+    static let triggerConflictPolicyMigrationIdentifier = "v81_trigger_conflict_policy"
+
+    static let triggerConflictPolicyStatements: [String] = [
+        "DROP TABLE copy_key_touched",
+        "CREATE TABLE copy_key_touched (key BLOB)",
+        "DROP TRIGGER face_person_photo_inserted",
+        "DROP TRIGGER face_person_photo_updated",
+        """
+        CREATE TRIGGER face_person_photo_inserted AFTER INSERT ON face
+        WHEN NEW.person_id IS NOT NULL AND NEW.is_not_face = 0
+        BEGIN
+            INSERT INTO person_photo (\(v79PersonPhotoColumns))
+            SELECT NEW.person_id, \(v79PersonPhotoValues)
+            FROM media_asset AS m WHERE m.library_root_id = NEW.library_root_id AND m.relative_path = NEW.relative_path
+              AND \(v81NoPersonPhoto);
+        END
+        """,
+        """
+        CREATE TRIGGER face_person_photo_updated AFTER UPDATE OF person_id, is_not_face ON face
+        WHEN OLD.person_id IS NOT NEW.person_id OR OLD.is_not_face IS NOT NEW.is_not_face
+        BEGIN
+            DELETE FROM person_photo
+            WHERE OLD.person_id IS NOT NULL AND OLD.is_not_face = 0
+              AND person_id = OLD.person_id
+              AND library_root_id = OLD.library_root_id AND relative_path = OLD.relative_path
+              AND NOT EXISTS (
+                  SELECT 1 FROM face WHERE face.person_id = OLD.person_id
+                    AND face.library_root_id = OLD.library_root_id AND face.relative_path = OLD.relative_path
+                    AND face.is_not_face = 0
+              );
+            INSERT INTO person_photo (\(v79PersonPhotoColumns))
+            SELECT NEW.person_id, \(v79PersonPhotoValues)
+            FROM media_asset AS m
+            WHERE NEW.person_id IS NOT NULL AND NEW.is_not_face = 0
+              AND m.library_root_id = NEW.library_root_id AND m.relative_path = NEW.relative_path
+              AND \(v81NoPersonPhoto);
+        END
+        """,
+    ]
+
+    /// The face's person has no photo row for the face's photo yet.
+    private static let v81NoPersonPhoto = """
+    NOT EXISTS (
+        SELECT 1 FROM person_photo AS held WHERE held.person_id = NEW.person_id
+          AND held.library_root_id = NEW.library_root_id AND held.relative_path = NEW.relative_path
+    )
+    """
+
     static func indexStoredSearchTexts(_ db: Database) throws {
         let start = ContinuousClock.now
         let rows = try Row.fetchCursor(db, sql: """

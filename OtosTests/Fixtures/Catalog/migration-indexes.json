@@ -517,5 +517,9 @@
     "indexes": {
       "idx_immich_mirror_asked_asset": "CREATE INDEX idx_immich_mirror_asked_asset ON immich_mirror_asked(account_root_id, asset_path)"
     }
+  },
+  {
+    "migration": "v81_trigger_conflict_policy",
+    "indexes": {}
   }
 ]

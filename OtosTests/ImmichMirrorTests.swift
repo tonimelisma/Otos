@@ -288,6 +288,38 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
+    /// The server lists a new asset before it has read the file's size: the pair is made by
+    /// path, and the two are two photos while their versions cannot be compared. The next pass
+    /// lists the asset again with its size, an upsert of a row whose pair's key holds, and the
+    /// pair becomes one photo. The upsert's own conflict policy reaches the copy triggers, so
+    /// it once aborted there, the batch was never acknowledged, and every pass after failed on
+    /// it (owner's catalog, 2026-11-19).
+    @Test func aSizeListedAfterThePairIsMadeMakesItOnePhoto() async throws {
+        let fixture = try await fixture(digested: true)
+        let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
+        let unsized = listing.events.filter {
+            if case .asset = $0 {
+                true
+            } else {
+                false
+            }
+        }
+        let server = MirrorServer(
+            [unsized + [Self.complete], listing.events + [Self.complete]],
+            details: ["a": listing.detail]
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
+        #expect(try await ids(.allMedia, fixture.store).count == 2)
+
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
+        #expect(try await ids(.allMedia, fixture.store) == [fixture.file.id])
+        await fixture.store.shutdown()
+    }
+
     /// A same-named file of the same size in a folder the library does not have teaches no
     /// mirror: its path does not end with the library file's, so nothing pairs.
     @Test func aSameNamedFileFromAnotherFolderTeachesNoMirror() async throws {

@@ -142,6 +142,11 @@ is the question every copy answers, and the copies' rule is "identical copies ar
   stamps, its size or mtime, its presence, its path, or its pair's other row's. The pair
   table's triggers do the same when a pair comes or goes. The key is a projection of facts the
   catalog holds and the triggers rebuild in every write; nothing writes it by hand.
+- No trigger relies on a conflict clause of its own. SQLite runs a trigger's statements under
+  the policy of the statement that fired it whenever that statement has one, and an upsert's
+  `DO UPDATE` has ABORT: the scan's and the sync's upserts fire these triggers. So the keys a
+  program regroups are held in `copy_key_touched`, a table with no key, where a key put twice
+  is no conflict, and a person's photo is added only where `NOT EXISTS` finds none (v81).
 
 **The shown copy is a library's before an account's, then the first by root and path,
 among the scope's reachable roots.**
@@ -283,6 +288,11 @@ is never reported as none.
   request is made only if a file no prefix explains still has a candidate asset, and that one
   is remembered. Its cost on a generated owner-shaped catalog is in
   `docs/research/2026-11-17-mirror-pairs-by-path.md`.
+- Migration v81 makes `copy_key_touched` again with no key and the face triggers again with
+  `NOT EXISTS` in place of `OR IGNORE`. Before it, an Immich asset listed before the server read
+  its size, paired, and listed again with its size aborted its batch in the copy trigger; the
+  batch was never acknowledged, so every later pass failed on it and the pair stayed two photos
+  (owner's catalog, 2026-11-19: 151 assets). It rewrites one empty table and two triggers.
 - Duplicates never lists a file and its mirror (ADR 0042, owner 2026-11-15): an external
   library's asset is never a copy there, so nothing can keep it and send the only bytes to the
   Trash.

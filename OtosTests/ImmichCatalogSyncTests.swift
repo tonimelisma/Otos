@@ -420,9 +420,10 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
-    /// A pass reports that its server answered as soon as its first batch is applied and
-    /// acknowledged, once, and before the pass ends, so a first sync that takes minutes is
-    /// online while it runs. A stream that fails before any batch reports nothing.
+    /// A pass reports that its server answered as soon as the first line of its stream is
+    /// read, once, before any batch is applied and before the pass ends, so a first sync that
+    /// takes minutes is online while it runs. A stream that fails before any line reports
+    /// nothing.
     @Test func aPassReportsItsServerAnsweredBeforeItEnds() async throws {
         let fixture = try await Fixture.make()
         let lines = (0 ..< ImmichCatalogSync.batchSize * 2 + 1).map { Self.asset("x\($0)") }
@@ -439,10 +440,10 @@ struct ImmichCatalogSyncTests {
 
         let outcome = await sync.pass(onReport: record)
         #expect(outcome == .serverFailed(.unreachable(.networkConnectionLost)))
-        #expect(acksWhenAnswered.withLock { $0 } == [1])
+        #expect(acksWhenAnswered.withLock { $0 } == [0])
 
         _ = await sync.pass(onReport: record)
-        #expect(acksWhenAnswered.withLock { $0 } == [1])
+        #expect(acksWhenAnswered.withLock { $0 } == [0])
         await fixture.store.shutdown()
     }
 

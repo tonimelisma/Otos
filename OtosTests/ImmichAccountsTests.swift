@@ -133,6 +133,12 @@ struct ImmichAccountsTests {
         await waitForStatuses(in: accounts) { $0[path]?.reach == expected }
     }
 
+    /// Reads statuses until `path`'s first pass has applied its listing to the stream's end:
+    /// the account is online from the server's first line, before any row is written.
+    private func waitForListing(of path: LibraryRootPath, in accounts: ImmichAccounts) async {
+        await waitForStatuses(in: accounts) { $0[path]?.lastSynced != nil }
+    }
+
     private func waitForStatuses(
         in accounts: ImmichAccounts,
         until condition: ([LibraryRootPath: ImmichAccountStatus]) -> Bool
@@ -164,7 +170,7 @@ struct ImmichAccountsTests {
             Issue.record("Expected the account added, got \(outcome)")
             return
         }
-        await waitForStatus(.online, of: rootPath, in: accounts)
+        await waitForListing(of: rootPath, in: accounts)
         #expect(try await assetPaths(store, rootPath) == ["a1/IMG_1.JPG"])
         #expect(Array(sessions.all.values) == ["tok"])
         let account = try #require(await store.currentLibraries().first { $0.path == rootPath })
@@ -370,7 +376,7 @@ struct ImmichAccountsTests {
         )
 
         await accounts.start()
-        await waitForStatuses(in: accounts) { $0[saved]?.reach == .online && $0[unsaved]?.reach == .signedOut }
+        await waitForStatuses(in: accounts) { $0[saved]?.lastSynced != nil && $0[unsaved]?.reach == .signedOut }
         #expect(try await assetPaths(store, saved) == ["a1/IMG_1.JPG"])
         await accounts.shutdown()
         await store.shutdown()
@@ -420,7 +426,7 @@ struct ImmichAccountsTests {
             Issue.record("Expected the account added")
             return
         }
-        await waitForStatus(.online, of: rootPath, in: accounts)
+        await waitForListing(of: rootPath, in: accounts)
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "a1/IMG_1.JPG"))
         func request(_ priority: MaterializationCoordinator.Priority) -> MaterializationCoordinator.Request {
             MaterializationCoordinator.Request(id: id, sourceSize: 42, isVideo: false, priority: priority)

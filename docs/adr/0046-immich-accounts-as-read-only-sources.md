@@ -291,9 +291,10 @@ account's session, loop and status.
   standing, and the pass is retried on the backoff, as is a pass whose root could not get
   or keep its listing lease. A pass whose loop was stopped (signing in again replaces it,
   removing the account ends it) says nothing about the account and rings no further pass.
-- A pass's server has answered once its stream's first batch is applied and acknowledged,
-  so the account is online from then on, not only when the pass ends: a first sync of a
-  large library takes minutes.
+- A pass's server has answered once the first line of its stream is read, so the account is
+  online from then on, not only when the pass ends: a first sync of a large library takes
+  minutes. Whether Otos can apply what the server said is the pass's outcome, never the
+  server's reach: a batch the catalog refuses leaves the account online.
 
 ### 7. Immich's images until the original is local
 

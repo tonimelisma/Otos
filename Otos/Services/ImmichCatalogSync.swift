@@ -539,6 +539,7 @@ actor ImmichCatalogSync: QuiescentOwner {
         var batch = Batch()
         var pass = PassMemory()
         for try await event in try await source.events(fromZero: fromZero) {
+            await answered.reportOnce()
             switch event {
             case let .reset(ack):
                 guard let debt = try await store.requestSourceResync(rootPath: rootPath) else {
@@ -555,16 +556,15 @@ actor ImmichCatalogSync: QuiescentOwner {
             }
             if batch.lineCount >= Self.batchSize {
                 try await apply(&batch, pass: &pass, scan: scan, into: &tally)
-                await answered.reportOnce()
             }
         }
         try await apply(&batch, pass: &pass, scan: scan, into: &tally)
-        await answered.reportOnce()
         return nil
     }
 
-    /// A pass's one report that its server answered: its stream was read and a batch of it
-    /// applied and acknowledged.
+    /// A pass's one report that its server answered: a line of its stream was read. Whether
+    /// Otos could apply what the server said is the pass's outcome, not the server's reach,
+    /// so a batch the Store refuses never shows the server as unreachable.
     private struct Answered {
         let report: @Sendable () async -> Void
         private var reported = false
