@@ -37,6 +37,11 @@ design rules for user-facing surfaces; per-screen specs live beside it in
   caches, pools, background pipelines, generalized abstractions, split schemas, or
   scale machinery for anticipated load before measurement or a verified
   requirement proves the simple path insufficient.
+- The machine's free resources are for the work (owner, 2026-11-18: "if there's resources
+  on the computer, use them to do the work that needs doing!"). Never hold work or trade
+  throughput to keep Otos's own footprint small; only the machine's conditions hold it
+  (ADR 0057). Otos's footprint is a number, not a target; the pressure it causes is
+  judged. A leak — memory that never comes back — is still a bug.
 - Do not guess. Inspect the repo, read the relevant APIs, and verify claims with
   code, docs, tests, profiling, or runtime evidence.
 - The owner's production data is read, never changed (owner, 2026-11-15: "the rule says don't

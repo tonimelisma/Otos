@@ -117,6 +117,16 @@ instruments to ADR 0015.
    request in flight is never stopped by a level change (decision 5). The pressure
    description writing raises is accepted: the scorecard reports it as the descriptions'
    (ADR 0015), not as a failure.
+9. **Free memory is for the work; Otos's own size is not a condition.** The owner,
+   2026-11-18: "if there's resources on the computer, use them to do the work that needs
+   doing!" Work is held only by the machine's conditions above, never by how large Otos's
+   own footprint has grown: a peak that the machine has room for costs nothing, and holding
+   work to keep it small only makes the backlog take longer. The scorecard reports the
+   footprint as a number and judges the pressure Otos causes (`machine.pressureCaused`,
+   `docs/scorecard-targets.json`). On the tour of ed9454c2 with a camera card attached, the
+   footprint peaked at 1,317 MB for a few seconds while its RAWs were developed beside a
+   People pass, a duplicates build and description writing, and was 332 MB at the end; the
+   heavy loads that waited, waited only for the kernel's warning (32 % available) to end.
 
 ### The two memory-pressure sources
 
