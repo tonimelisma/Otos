@@ -518,9 +518,10 @@ Findings, not work.
 
 - **Acts.** Actions' results within 0.1 s are measured only in a sandbox library of the owner's
   size (at most 55 ms on the tree of 6dc46aa3, 75 ms on the tree of #923), because an act on
-  the owner's library would change his data. They were not measured on 2d1d7397.
+  the owner's library would change his data. They were not measured on 2d1d7397. The owner
+  approved sandbox evidence for acts on 2026-11-18.
 - **A brand-new library's first search with the text model evicted.** About 1.1–1.5 s against
-  1 s; the nearest achievable is about 1.1 s. Awaiting the owner's decision.
+  1 s; the nearest achievable is about 1.1 s. Approved by the owner on 2026-11-18.
 - **Descriptions wait for room — superseded by #949.** Descriptions wrote nothing while less
   than 67 % of memory was available, nor while Otos was the active app; on the owner's machine
   recent sessions had 24–62 % available, so 755 descriptions were owed at the end of the
@@ -590,7 +591,7 @@ Findings, not work.
   - Accepting the flagged `window.apply.republished.158k` case (`script/bench.sh accept`).
   - Decided 2026-11-18 (#949): descriptions run while Otos is the active app and at memory
     warning, so a description backlog keeps the machine at warning while it drains.
-  - Two decisions of ADR 0057, recorded for confirmation: Low Power Mode and a serious or
+  - Two decisions of ADR 0057, approved by the owner on 2026-11-18: Low Power Mode and a serious or
     critical thermal state hold all heavy background work; while held, only the current view's
     heavy load runs.
 - **Needs the owner.** A tour with every other app quit has not been run. A presented-frame
