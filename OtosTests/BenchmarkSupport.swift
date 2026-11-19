@@ -137,7 +137,7 @@ enum Benchmark {
 /// measures each case, only when `script/bench.sh` asks. `checked` runs the same scenario
 /// once, at a small size, in every `script/check.sh`, measuring nothing: what a scenario
 /// expects beyond its numbers (a read reused, a path taken, a row count) then fails the
-/// change that breaks it, not the next daily run, which records nothing for a failed case.
+/// change that breaks it, not the next weekly run, which records nothing for a failed case.
 struct BenchmarkRun: Sendable {
     let isMeasured: Bool
 

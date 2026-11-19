@@ -9,13 +9,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/xcode.sh"
-source "$ROOT_DIR/script/lib/operational-busy.sh"
+source "$ROOT_DIR/script/lib/installed-app.sh"
 source "$ROOT_DIR/script/lib/build-folder.sh"
 
 BUNDLE_ID="net.melisma.Otos"
-INSTALLED_APP="/Applications/Otos.app"
-INSTALLED_EXECUTABLE="$INSTALLED_APP/Contents/MacOS/Otos"
-CATALOG_DB="$HOME/Library/Application Support/$BUNDLE_ID/Catalog/catalog.sqlite"
+INSTALLED_APP="$OTOS_INSTALLED_APP"
 # Its own DerivedData: the installed binary's debug map points at these object
 # files, so they must survive until the next install replaces both — and dev
 # builds in build/DerivedData use different settings.
@@ -72,23 +70,17 @@ built_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$BUILT_APP/C
 /usr/bin/codesign -d --entitlements - --xml "$BUILT_APP" 2>/dev/null | grep -q "get-task-allow" \
   || { echo "Built app lacks get-task-allow; debugger and Instruments could not attach." >&2; exit 1; }
 
-was_running=0
-if pgrep -fx "$INSTALLED_EXECUTABLE" >/dev/null; then
-  if active_root="$(has_active_operational_work "$CATALOG_DB")"; then
-    echo "Not installing: the installed Otos has an import or reorganization in flight (root=$active_root)." >&2
-    echo "op=install phase=pending revision=$REVISION reason=busy"
-    exit 1
-  fi
-  was_running=1
-  # A normal Quit (same as ⌘Q), never a kill: the app gets its own termination
-  # path, including device-staging cleanup.
-  /usr/bin/osascript -e "tell application \"$INSTALLED_APP\" to quit" >/dev/null
-  # `caffeinate -w` returns when that process exits — the kernel reports the exit, so
-  # nothing here guesses how long termination takes.
-  for pid in $(pgrep -fx "$INSTALLED_EXECUTABLE" || true); do
-    /usr/bin/caffeinate -w "$pid"
-  done
+quit_status=0
+otos_quit_installed_app || quit_status=$?
+if [[ "$quit_status" == 1 ]]; then
+  echo "Not installing: the installed Otos has an import or reorganization in flight (root=$OTOS_INSTALLED_BUSY_ROOT)." >&2
+  echo "op=install phase=pending revision=$REVISION reason=busy"
+  exit 1
+elif [[ "$quit_status" != 0 ]]; then
+  echo "op=install phase=failed revision=$REVISION reason=quitFailed" >&2
+  exit 1
 fi
+was_running="$OTOS_INSTALLED_WAS_RUNNING"
 
 # Swap by rename so /Applications never holds a half-copied bundle. The built
 # bundle is moved, not copied: /Applications/Otos.app must be the only bundle on
@@ -122,8 +114,6 @@ done < <("$LSREGISTER" -dump 2>/dev/null | awk -v id="$BUNDLE_ID" '
   /^identifier:/ && $2 == id { print path }
 ' | sort -u)
 
-if [[ "$was_running" == 1 ]]; then
-  /usr/bin/open -g "$INSTALLED_APP"
-fi
+otos_reopen_installed_app
 
 echo "op=install phase=finish revision=$REVISION path=$INSTALLED_APP relaunched=$was_running unregisteredStrays=$unregistered"

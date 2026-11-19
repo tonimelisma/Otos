@@ -160,6 +160,11 @@ if ! /usr/bin/python3 -I "$ROOT_DIR/script/lib/scorecard_test.py" 2>&1 | tail -3
   echo "op=check.stage phase=fail stage=fast-gates reason=scorecardParser" >&2
   fast_failed=1
 fi
+# The weekly run's status and verdict rules, against stubbed inputs (ADR 0043).
+if ! "$ROOT_DIR/script/perf.sh" self-test; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=perfRules" >&2
+  fast_failed=1
+fi
 if [[ "$fast_failed" != "0" ]]; then
   echo "check: FAILED at fast-gates (cost you seconds, not a build)" >&2
   exit 1
@@ -200,9 +205,9 @@ fi
 echo "op=check.tier tier=$CHECK_TIER"
 export OTOS_CHECK_TIER="$CHECK_TIER"
 
-# Benchmarks run once a day, started by the session this line tells (ADR 0043): it says
-# whether a run is due, running, clean or flagged.
-"$ROOT_DIR/script/bench.sh" status || true
+# Performance is measured once a week, by the run the session this line tells starts
+# (ADR 0043): it says whether a run is due, running, passed or failed.
+"$ROOT_DIR/script/perf.sh" status || true
 
 # ── Stage 2: the real check, with a heartbeat so a stall is self-evident ─────
 # One run per build folder: a bench or a second check in this checkout waits here, before

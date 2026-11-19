@@ -72,20 +72,20 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
    installs, one benchmarks and one checks. Two `xcodebuild` runs against one DerivedData
    fail on its locked build database (exit 65). `otos_hold_build_folder` in
    `script/lib/build-folder.sh` holds the folder for the rest of the calling script:
-   `check.sh`, `build.sh`, `test.sh`, `bench.sh run`, `face-accuracy.sh` and
-   `build_and_run.sh` hold `build/DerivedData`, `install.sh` holds
+   `check.sh`, `build.sh`, `test.sh`, `face-accuracy.sh` and
+   `build_and_run.sh` hold `build/DerivedData`, `bench.sh` its measured checkout's, `install.sh` holds
    `build/InstallDerivedData`. A second run waits for the first to exit, which the
    kernel reports, and logs `op=<run>.wait reason=buildFolderBusy holder=<pid> op=<run>`.
    `check.sh` waits before its deadlock detector starts; a static-tier check (§10) builds
    nothing and holds nothing. A nested script inherits its caller's hold through
    `OTOS_HELD_BUILD_FOLDERS`. The lock lives in a holder process (`script/lib/hold-lock.py`,
-   which also holds the daily benchmark's lock, ADR 0043), not in a descriptor every build
+   which also holds the weekly performance run's lock, ADR 0043), not in a descriptor every build
    child would inherit.
 8. **A run names the tree it measured.** `otos_tree_identity` is the git tree id of the
    checkout with uncommitted and untracked files, built in a private copy of the index.
    `check.sh` prints it at the start (`op=check.tree`) and fails when it differs at the
    end, because a pull during the run leaves a result that describes neither tree.
-   `bench.sh run` reads the commit before building and records nothing if the tree
+   `bench.sh` reads the commit before building and records nothing if the tree
    changed, so a pull mid-run cannot record results on the commit it moved to.
    `install.sh` refuses to install a build whose tree changed under it.
 9. **A new worktree starts from the primary checkout's packages.** Each worktree resolves

@@ -6,14 +6,15 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-/// The benchmark cases (ADR 0043). Run with `script/bench.sh run`; skipped otherwise.
+/// The benchmark cases (ADR 0043). The weekly run measures them (`script/perf.sh`, through
+/// `script/bench.sh compare`); skipped otherwise.
 ///
 /// Each case is a path a user waits for, or one that runs in the background at a size where
 /// its cost shows. Every case also checks that it did its work, so a broken fixture fails
 /// rather than measuring nothing. A scenario that holds a store, a projection or the grid
 /// is a static function of its `BenchmarkRun`: `BenchmarkScenarioTests` runs each one
 /// `checked`, small and unmeasured, in every check, so what it expects beyond its numbers
-/// cannot break unseen between daily runs.
+/// cannot break unseen between weekly runs.
 @Suite(.serialized, .testScope, .enabled(if: Benchmark.isEnabled))
 struct BenchmarkTests {
     @Test func catalogCases() async throws {
@@ -1180,10 +1181,10 @@ struct BenchmarkTests {
         }
     }
 
-    /// The work enrichment does for each face it reads (ADR 0047): aligning five points, cutting
-    /// the opaque 112 px crop out of a 12-megapixel photo, and the embedding model's prediction.
-    /// Alignment and cropping are batched (20,000 and 16) so each case retires enough
-    /// instructions to be steady; one alignment alone is lost in the measurement's own cost.
+    /// Otos's own work around each face it reads and groups (ADR 0047): aligning five points,
+    /// batched 20,000 times so the case retires enough instructions to be steady, and assigning
+    /// faces to people. The crop (Core Image) and the embedding (Core ML) are Apple's work, which
+    /// no Otos change moves, so no case counts them (ADR 0043); their suites test their results.
     @Test func faceCases() async throws {
         let moved = CGAffineTransform(rotationAngle: 0.2).scaledBy(x: 5.5, y: 5.5).translatedBy(x: 380, y: 250)
         let points = FaceAlignment.template.applying(moved)
@@ -1193,17 +1194,6 @@ struct BenchmarkTests {
                 aligned += 1
             }
             #expect(aligned == 20000)
-        }
-
-        let photo = try CIImage(cgImage: FaceAnalyzerTests.patternImage(seed: 4, size: 4000))
-        let transform = try #require(FaceAlignment.similarity(from: points, to: FaceAlignment.template))
-        let context = CIContext()
-        try await Benchmark.measure("face.crop.x16") {
-            var crops = 0
-            for _ in 0 ..< 16 where FaceAnalyzer.alignedCrop(of: photo, transform: transform, context: context) != nil {
-                crops += 1
-            }
-            #expect(crops == 16)
         }
 
         // Assignment over a library the size of the bake-off's: 3,000 faces, 300 of them the
@@ -1243,19 +1233,13 @@ struct BenchmarkTests {
         try await Benchmark.measure("people.unnamedGroups.9k", iterations: 3) {
             #expect(!FaceAssignmentPolicy.unnamedGroups(unconfirmed).isEmpty)
         }
-
-        let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
-        let crop = try FaceAnalyzerTests.patternImage(seed: 5)
-        try await Benchmark.measure("face.embed") {
-            let embedding = try model.embedding(of: crop)
-            #expect(embedding.values.count == FaceEmbeddingModel.dimensions)
-        }
     }
 
-    /// Keyword search (ADR 0048): the resize and the image tower for one stored thumbnail, as
-    /// indexing reads each; a query's tokens and text tower; and the match over a 20,000-photo
-    /// library's embeddings, which every search pass runs. Translation is the system's, so a
-    /// case reads English.
+    /// Keyword search's own work (ADR 0048): the resize of one stored thumbnail, as indexing
+    /// reads each; naming a query's labels; the text match over a library's readings; and the
+    /// match over a 20,000-photo library's embeddings, which every search pass runs. The
+    /// towers' predictions (Core ML) and the text reading (Vision) are Apple's work, which no
+    /// Otos change moves, so no case counts them (ADR 0043); their suites test their results.
     @Test func searchCases() async throws {
         let bundle = Bundle(for: CatalogWindowViewModel.self)
         let thumbnail = SearchModelTests.solid(red: 0.3, green: 0.6, blue: 0.2, width: 256, height: 171)
@@ -1267,19 +1251,8 @@ struct BenchmarkTests {
             #expect(squares == 16)
         }
 
-        let image = try SearchImageModel(bundle: bundle)
-        try await Benchmark.measure("search.embedImage") {
-            let embedding = try image.embedding(of: thumbnail)
-            #expect(embedding.count == SearchEmbedding.dimensions)
-        }
-
         let tokenizer = try SearchTextTokenizer(bundle: bundle)
         let text = try SearchTextModel(bundle: bundle)
-        try await Benchmark.measure("search.embedQuery") {
-            let embedding = try text.embedding(of: tokenizer.tokenIDs(for: "children on a swing at the beach"))
-            #expect(embedding.count == SearchEmbedding.dimensions)
-        }
-
         let vocabulary = try SearchLabelVocabulary(bundle: bundle)
         let dog = try text.embedding(of: tokenizer.tokenIDs(for: "dog"))
         try await Benchmark.measure("search.nameLabels") {
@@ -1297,23 +1270,6 @@ struct BenchmarkTests {
         try await Benchmark.measure("search.textMatch.5k") {
             let query = SearchTextQuery("insurance")
             #expect(readings.count { query.matches(folded: $0) } == 100)
-        }
-
-        let sign = try #require(SearchReadingTests.picture(saying: "OTOS SEARCH 2026"))
-        // The cold reading compiles Vision's text models, which a loaded machine can make
-        // Vision give up on; it happens here, read again after a failure, so the case measures
-        // warm readings only. A reader lost for this process to a purge of those compiled
-        // models (`SearchTextReading.losesTheProcess`, by its error's type and status) is the
-        // machine's, not the commit's: no reading in this process can succeed, so this
-        // process records no `search.readText` and the other processes measure it.
-        try await withKnownIssue("Vision's text reader was lost for this process to a cache purge", isIntermittent: true) {
-            _ = try SearchReadingTests.readRetryingFailures(sign)
-            try await Benchmark.measure("search.readText") {
-                let read = try SearchTextReading.read(sign)
-                #expect(!read.isEmpty)
-            }
-        } matching: { issue in
-            issue.error.map(SearchTextReading.losesTheProcess) ?? false
         }
 
         var generator = SplitMix64(seed: 11)

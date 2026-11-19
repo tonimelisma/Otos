@@ -359,39 +359,24 @@ with `script/logs.sh stream [Category]` (live) or
 `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
 See `docs/adr/0015-observability.md`.
 
-Benchmarks run once a day, never per PR (ADR 0043), and a session runs them.
-`script/check.sh` prints one `op=bench.status` line:
-- `verdict=due`: no run has finished today and `main` has moved past the commit the
-  last run judged. Start `script/bench.sh daily` in the background, watch it like any
-  long run, and keep working. It measures `origin/main`'s newest commit on a generated
-  catalog, in three fresh test processes, against the baseline, the last commit that
-  measured clean. Only one session runs it; another gets `phase=skipped`. A due line
-  that carries `flagged=` still starts the run: it is the only way a fix that landed
-  clears the flag.
-- `verdict=flagged`: a case regressed. Fixing it is the next work, unless the owner
-  accepts it in chat (`script/bench.sh accept`, permission quoted in the DoD report).
-`script/bench.sh history [case]` reads the records back, and `script/bench.sh compare
-<base>` bisects a flagged range by hand. Compare instructions, not milliseconds: under
-the parallel load that moves wall time several-fold, a steady case's instructions hold
-within about 1%. A hot path that performance work touches gets a case in the suite, and
-the next daily run measures it.
+**Performance is measured once a week, in one run** (ADR 0043). `script/check.sh` prints
+one `op=perf.status` line:
+- `verdict=due`: start `script/perf.sh run` in the background, watch it like any long run,
+  and keep working. It tours the installed app on the owner's library, read-only, then
+  counts the benchmark cases on `origin/main`, and writes one verdict. Another session's
+  start gets `phase=skipped`; `phase=pending` (an import in flight) leaves it due.
+- `verdict=fail`: a target in `docs/scorecard-targets.json` was missed on the owner's
+  library (`felt=`). Fixing it is the next work, starting with one tour that reproduces it
+  (`script/scorecard.sh --tour`). One that does not reproduce is noted in the DoD and left to
+  the next weekly run. A target changes only with the owner's decision.
+- Instruction rises (`cpu=`) decide nothing; the owner says whether one is work.
 
-**Nothing but the daily run measures.** `script/bench.sh run`, `script/bench.sh compare`
-and an `OTOS_BENCHMARK` test run are never part of a PR, a brief to a subagent, or a
-DoD: no session and no agent starts one unless the owner asks for that run in chat, or
-a `verdict=flagged` range is being bisected. A change that may move a case says so in
-its DoD as "not measured until the next daily run".
-
-**Performance work is measured on what the owner feels** (owner, 2026-11-16; ADR 0015).
-The daily benchmarks guard CPU work against regression; they cannot see connection waits,
-cold reads, memory pressure or owners waking each other. Every performance PR names the
-scorecard number it moves (`script/scorecard.sh`) and reports it before and after from a
-tour on the owner's library (`script/scorecard.sh --tour`: read-only, the app quits
-itself, nothing else may be running), and attributes it with `--ablate` or
-`--ablation-matrix` when the cause is an owner. A deterministic twin in the tests guards
-each win: rows visited per row returned, stall lines in `StallReproductionTests`, peak
-footprint in a hosted test. The scorecard is a report, not a benchmark, and not part of
-`script/check.sh`; one check per PR and the daily run stay as above.
+Nothing else measures. No tour, `script/bench.sh compare` or `OTOS_BENCHMARK` run is part
+of a PR, a brief or a DoD, unless the owner asks for it in chat or a fix is reproducing a
+`fail`. A performance PR adds a deterministic twin test for its win (rows visited per row
+returned, stall lines in `StallReproductionTests`, a hosted footprint) and says "measured
+in the next weekly run". `script/scorecard.sh` (ADR 0015) and `script/bench.sh history`
+are for diagnosis.
 
 Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
 Application Support data; `/Applications/Otos.app` is the installed
@@ -592,7 +577,7 @@ primary checkout on `main` and include its `op=install` line in the DoD report.
 It quits a running installed Otos only when no import or reorganization is in
 flight, and relaunches it; a `phase=pending` result is reported, not retried
 around (ADR 0030).
-The DoD report carries the `op=bench.status` line from the final `script/check.sh` run.
+The DoD report carries the `op=perf.status` line from the final `script/check.sh` run.
 
 Verification is **agent-owned**: never require the user to launch the app, operate
 the UI, or inspect visuals as a condition of DoD. Run every check available to the

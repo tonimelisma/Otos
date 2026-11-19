@@ -508,7 +508,7 @@ ordering path, and #836 built it with the SQL's own comparator (`CatalogOrderPat
 | `StallReproductionTests` | the sidebar stall on a generated owner-shaped catalog; no known-issue marker. The owner-size test runs only with `OTOS_SCALE_TEST=1` and is skipped without it; its row-proportion bounds run in every check on a small catalog (#939) |
 | `CatalogMigrationCostTests` (`OTOS_SCALE_TEST=1`) | a migration's ms and WAL bytes |
 | `OrderReadSurveyTests` (`OTOS_SCALE_TEST=1`) | pages and time for every order the window asks for |
-| `script/bench.sh daily` | the daily CPU guard (ADR 0043); not a measure of felt time |
+| `script/perf.sh run` | the weekly run since 2026-11-18 (ADR 0043): this tour and the benchmark counts, one verdict |
 
 A tour never runs while Otos is running and quits the app itself.
 

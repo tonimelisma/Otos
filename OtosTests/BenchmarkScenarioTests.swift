@@ -5,8 +5,8 @@ import Testing
 /// The benchmark scenarios (`BenchmarkTests`), each run once at a small size and measured
 /// not at all (`BenchmarkRun.checked`). A scenario expects more than its numbers: that a
 /// pass reused the reads it held, took the keyed path, built the stacks once, moved the
-/// rows it named. The benchmark suite runs only in the daily run, so without this suite a
-/// change that breaks one of those expectations passes its check and the next daily run
+/// rows it named. The benchmark suite runs only in the weekly run, so without this suite a
+/// change that breaks one of those expectations passes its check and the next weekly run
 /// fails before it records anything.
 @Suite(.testScope)
 struct BenchmarkScenarioTests {

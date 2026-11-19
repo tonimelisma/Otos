@@ -1,37 +1,24 @@
 #!/usr/bin/env bash
 # Benchmarks (ADR 0043).
 #
-#   script/bench.sh run             Build, run the benchmark suite (OtosTests/BenchmarkTests)
-#                                   in OTOS_BENCH_PROCESSES fresh test processes (default 3),
-#                                   print the results, and record them on HEAD when the tree
-#                                   is clean.
-#   script/bench.sh daily           Measure origin/main's newest commit in a detached checkout
-#                                   and set it against the baseline, the last commit that
-#                                   measured clean, measuring either one first when this
-#                                   harness has not. Clean moves the baseline; a flagged case
-#                                   leaves it and stays flagged until a later run is clean or
-#                                   the owner accepts it; a side that records nothing fails the
-#                                   run and moves nothing. At most one run a day, one at a time:
-#                                   the session whose check.sh reports verdict=due starts it.
-#   script/bench.sh status          One line: running, due, clean or flagged. script/check.sh
-#                                   prints it.
-#   script/bench.sh accept          Move the baseline to the flagged commit. Only on the
-#                                   owner's word: a regression may be a feature's price.
+#   script/bench.sh compare [base] [head]
+#                                   head's processes (default: HEAD) against base's (default:
+#                                   the merge base with origin/main), measuring either side in
+#                                   a detached checkout first when this harness has not. Exits
+#                                   3 when a case retired more instructions than both 2%
+#                                   (OTOS_BENCH_FLAG_PERCENT) and the case's own
+#                                   process-to-process noise allow, beyond every process's
+#                                   range, and 4 when either side has no records. The weekly
+#                                   run (script/perf.sh) calls it; by hand only to find the
+#                                   commit behind a felt miss, or when the owner asks.
 #   script/bench.sh history [case]  Every recorded result, newest first, with the change in
 #                                   instructions from the previous record on the same machine.
-#   script/bench.sh compare [base]  HEAD's processes against base's (default: the merge base
-#                                   with origin/main), measuring base first when this harness
-#                                   has not. Exits 3 when a case retired more instructions
-#                                   than both 2% (OTOS_BENCH_FLAG_PERCENT) and the case's own
-#                                   process-to-process noise allow, beyond every process's
-#                                   range, and 4 when either side has no records. For
-#                                   bisecting a flagged run by hand.
 #
 # Results are recorded as git notes on the commit they measured (refs/notes/benchmarks),
 # one JSON object per case and test process. Instructions retired is the number to compare:
-# it barely moves under machine load, which wall time does several-fold. A run on a tree
-# with uncommitted changes prints its results but records nothing, because no commit is
-# what it measured.
+# it barely moves under machine load, which wall time does several-fold. Each side is
+# measured in a detached checkout of its commit, so a record always names the tree it
+# measured.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,17 +30,6 @@ HARNESS=2
 PROCESSES="${OTOS_BENCH_PROCESSES:-3}"
 # How many of the newest measured commits a case's process-to-process noise is read from.
 NOISE_COMMITS=10
-# The daily run's state, shared by every worktree of the clone: the baseline is a ref, the
-# verdict and the day of the last finished run are one-line files beside it, and the run in
-# progress holds a kernel lock on a file beside them (otos_hold_lock,
-# script/lib/build-folder.sh). The lock dies with the process that holds it, so a run killed
-# mid-way or a reboot leaves nothing a later run or `status` would have to judge stale.
-COMMON_DIR="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)"
-PRIMARY_DIR="$(dirname "$COMMON_DIR")"
-BASELINE_REF="refs/bench/baseline"
-VERDICT_FILE="$COMMON_DIR/otos-bench-verdict"
-LAST_RUN_FILE="$COMMON_DIR/otos-bench-last-run"
-LOCK_FILE="$COMMON_DIR/otos-bench-daily.flock"
 source "$ROOT_DIR/script/lib/build-folder.sh"
 
 usage() {
@@ -81,10 +57,9 @@ for name, rows in runs.items():
 PY
 }
 
-# Measures one checkout with this harness: this one by default, or base's detached
-# checkout for `compare`.
+# Measures one commit's detached checkout with this harness and records it on the commit.
 run() {
-  local tree="${1:-$ROOT_DIR}"
+  local tree="$1"
   source "$ROOT_DIR/script/lib/xcode.sh"
   source "$ROOT_DIR/script/lib/run-context.sh"
   source "$ROOT_DIR/script/lib/test-failures.sh"
@@ -92,10 +67,9 @@ run() {
   otos_hold_build_folder "$tree/build/DerivedData" bench
   # What this run measures, read before the build: a pull during the run must not
   # record these results on the commit it moved to.
-  local commit identity clean=1
+  local commit identity
   commit="$(git -C "$tree" rev-parse HEAD)"
   identity="$(otos_tree_identity "$tree")"
-  [[ -z "$(git -C "$tree" status --porcelain)" ]] || clean=0
   local log_file results measured
   log_file="$(otos_log_file "$tree" bench bench)"
   results="$tree/build/benchmarks/results.ndjson"
@@ -151,10 +125,6 @@ PY
   if [[ "$(otos_tree_identity "$tree")" != "$identity" ]]; then
     echo "op=bench phase=failed reason=treeChangedDuringRun commit=$commit" >&2
     exit 1
-  fi
-  if [[ "$clean" == 0 ]]; then
-    echo "op=bench phase=notRecorded reason=uncommittedChanges"
-    return
   fi
   local note
   note="$(/usr/bin/python3 -I - "$measured" "$commit" "$HARNESS" \
@@ -374,11 +344,10 @@ PY
 compare() {
   local base head threshold
   threshold="${OTOS_BENCH_FLAG_PERCENT:-2}"
-  head="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  head="$(git -C "$ROOT_DIR" rev-parse "${2:-HEAD}")"
   base="$(git -C "$ROOT_DIR" rev-parse "${1:-$(git -C "$ROOT_DIR" merge-base HEAD origin/main)}")"
   if [[ -z "$(records "$head")" ]]; then
-    echo "op=bench phase=compareFailed reason=headNotRecorded commit=$head harness=$HARNESS (run script/bench.sh run on a clean tree first)" >&2
-    exit 1
+    measure_commit "$head" "$ROOT_DIR/build/bench-head" head
   fi
   if [[ "$base" == "$head" ]]; then
     echo "op=bench phase=compareSkipped reason=headIsBase commit=$head"
@@ -409,133 +378,8 @@ judge_pair() {
   return "$status"
 }
 
-# Runs from the primary checkout, whichever session started it: a session may remove its
-# own worktree while the run is under way, and the primary checkout outlives every one.
-# origin/main is read as this clone last fetched it (every merge fetches it), so a network
-# that hangs never hangs the run.
-daily() {
-  if [[ "$ROOT_DIR" != "$PRIMARY_DIR" ]]; then
-    exec "$PRIMARY_DIR/script/bench.sh" daily
-  fi
-  local head baseline threshold output status=0 today
-  # One run at a time: a second gives up at once rather than queueing behind the first.
-  otos_hold_lock try "$LOCK_FILE" bench.daily
-  case "$OTOS_LOCK_OUTCOME" in
-    held) ;;
-    busy*)
-      echo "op=bench.daily phase=skipped reason=running ${OTOS_LOCK_OUTCOME#busy }"
-      return
-      ;;
-    *)
-      echo "op=bench.daily phase=failed reason=lockUnavailable lock=$LOCK_FILE" >&2
-      exit 1
-      ;;
-  esac
-  # Read under the lock, so a run that finished just before this one took it is seen.
-  today="$(/bin/date +%Y-%m-%d)"
-  if [[ "$(cut -d' ' -f1 "$LAST_RUN_FILE" 2>/dev/null)" == "$today" ]]; then
-    echo "op=bench.daily phase=skipped reason=ranToday day=$today"
-    return
-  fi
-  threshold="${OTOS_BENCH_FLAG_PERCENT:-2}"
-  head="$(git -C "$ROOT_DIR" rev-parse origin/main)"
-  baseline="$(git -C "$ROOT_DIR" rev-parse -q --verify "$BASELINE_REF" || true)"
-  echo "op=bench.daily phase=start head=$head baseline=${baseline:-none}"
-  # Both sides are measured with this harness before anything is judged or baselined: a
-  # side that cannot be measured fails the run, and the baseline stays where it was.
-  if [[ -z "$(records "$head")" ]]; then
-    measure_commit "$head" "$ROOT_DIR/build/bench-daily" head
-  fi
-  if [[ -z "$baseline" || "$head" == "$baseline" ]]; then
-    git -C "$ROOT_DIR" update-ref "$BASELINE_REF" "$head"
-    echo "clean baseline=$head" > "$VERDICT_FILE"
-    echo "$today $head" > "$LAST_RUN_FILE"
-    echo "op=bench.daily phase=baselined head=$head"
-    return
-  fi
-  if [[ -z "$(records "$baseline")" ]]; then
-    measure_commit "$baseline" "$ROOT_DIR/build/bench-daily" baseline
-  fi
-  output="$(judge_pair "$threshold" "$baseline" "$head")" || status=$?
-  printf '%s\n' "$output"
-  case "$status" in
-    0)
-      git -C "$ROOT_DIR" update-ref "$BASELINE_REF" "$head"
-      echo "clean baseline=$head" > "$VERDICT_FILE"
-      echo "op=bench.daily phase=clean baseline=$head"
-      ;;
-    3)
-      local cases
-      cases="$(printf '%s\n' "$output" | sed -n 's/^op=bench phase=flagged cases=//p')"
-      echo "flagged baseline=$baseline head=$head cases=$cases" > "$VERDICT_FILE"
-      echo "op=bench.daily phase=flagged baseline=$baseline head=$head cases=$cases"
-      ;;
-    *)
-      echo "op=bench.daily phase=failed reason=judge status=$status" >&2
-      exit 1
-      ;;
-  esac
-  echo "$today $head" > "$LAST_RUN_FILE"
-}
-
-# One field of a flagged verdict (`flagged baseline=… head=… cases=…`); empty for any other.
-verdict_field() {
-  printf '%s\n' "$1" | sed -n "s/^flagged .*$2=\([^ ]*\).*/\1/p"
-}
-
-# Due when no run finished today and origin/main has moved past the commit the last run
-# judged: the baseline, or the flagged head while a case stays flagged. A flagged verdict is
-# reported every time, whatever the day; a due one carries the flagged cases, because only
-# the next daily run can find that a fix landed and clear them.
-status() {
-  local baseline verdict last_day today judged flagged_cases=""
-  baseline="$(git -C "$ROOT_DIR" rev-parse -q --verify "$BASELINE_REF" || true)"
-  verdict="$(cat "$VERDICT_FILE" 2>/dev/null || true)"
-  last_day="$(cut -d' ' -f1 "$LAST_RUN_FILE" 2>/dev/null || true)"
-  today="$(/bin/date +%Y-%m-%d)"
-  judged="$baseline"
-  case "$verdict" in
-    flagged*)
-      judged="$(verdict_field "$verdict" head)"
-      flagged_cases="$(verdict_field "$verdict" cases)"
-      ;;
-  esac
-  # The kernel answers whether a run holds the lock; nothing is inferred from leftovers.
-  local lock_state
-  if ! lock_state="$(otos_lock_state "$LOCK_FILE")"; then
-    echo "op=bench.status verdict=unknown reason=lockQueryFailed lock=$LOCK_FILE" >&2
-    return 1
-  fi
-  if [[ "$lock_state" == held* ]]; then
-    echo "op=bench.status verdict=running ${lock_state#held }${flagged_cases:+ flagged=$flagged_cases}"
-  elif [[ "$last_day" != "$today" && "$(git -C "$ROOT_DIR" rev-parse origin/main)" != "$judged" ]]; then
-    echo "op=bench.status verdict=due lastRun=${last_day:-never}${flagged_cases:+ flagged=$flagged_cases} action=\"start script/bench.sh daily in the background and keep working\""
-  elif [[ -n "$flagged_cases" ]]; then
-    echo "op=bench.status verdict=$verdict action=\"fix the flagged cases first, or the owner accepts them (script/bench.sh accept)\""
-  else
-    echo "op=bench.status verdict=clean baseline=${baseline:-none} lastRun=${last_day:-never}"
-  fi
-}
-
-accept() {
-  local verdict head
-  verdict="$(cat "$VERDICT_FILE" 2>/dev/null || true)"
-  head="$(verdict_field "$verdict" head)"
-  if [[ -z "$head" ]]; then
-    echo "op=bench.accept phase=refused reason=nothingFlagged verdict=\"${verdict:-none}\"" >&2
-    exit 1
-  fi
-  git -C "$ROOT_DIR" update-ref "$BASELINE_REF" "$head"
-  echo "clean baseline=$head accepted=$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" > "$VERDICT_FILE"
-  echo "op=bench.accept phase=accepted baseline=$head"
-}
-
 case "${1:-}" in
-  run) run ;;
   history) history "${2:-}" ;;
-  compare) compare "${2:-}" ;;
-  daily) daily ;;
-  status) status ;;
-  accept) accept ;;
+  compare) compare "${2:-}" "${3:-}" ;;
   *) usage; exit 2 ;;
 esac

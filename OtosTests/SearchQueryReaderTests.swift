@@ -396,7 +396,10 @@ struct SearchQueryReaderTests {
         let people = ArrivalGate()
         let pass = Task { try await admission.run(.people) { await people.arrive() } }
         await people.waitForArrivals(1)
+        // Two tasks started back to back reach the admission in either order, so the second
+        // starts only once the first is waiting.
         let duplicates = Task { try await admission.run(.duplicates) {} }
+        try await waitUntil { admission.snapshot.waiting.count == 1 }
         let readying = Task { try await admission.run(.searchPrepare) {} }
         try await waitUntil { admission.snapshot.waiting.count == 2 }
 

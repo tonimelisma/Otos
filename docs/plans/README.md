@@ -14,7 +14,7 @@ separate database files), ADR 0005 (what changed is re-read by key; no second ho
 window's answer), ADR 0009 (one walk per drain over covering indexes; no ledger of owed work),
 ADR 0015 (the scorecard, the tour and its kinds), ADR 0030 (the installed app at `-O`), ADR
 0032 rule 8 (a background owner reports its quiescence as a fact), ADR 0042 (a duplicates build costs what
-changed), ADR 0043 (benchmarks once a day), ADR 0047 (People's mapped face vectors and its
+changed), ADR 0043 (the weekly performance run), ADR 0047 (People's mapped face vectors and its
 stored gallery), ADR 0048 (the mapped search vector file, the text index, the words and the
 tower race), ADR 0055 (staged launch and load admission) and ADR 0056 (mapped memory for
 transient buffers). The owner's open questions are listed in the baseline note.

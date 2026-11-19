@@ -70,11 +70,11 @@ consumes them; use a log line instead.
 
 ### The performance loop's instruments
 
-Performance work is measured on what the owner feels, on his library, and attributed
-before it is fixed (owner, 2026-11-16). The daily benchmarks (ADR 0043) count instructions
-on a generated catalog: they guard CPU work against regression, and they cannot see a read
-waiting for a connection, a cold disk read, memory pressure, owners waking each other or a
-real backlog. Three instruments see those:
+Performance is judged on what the owner feels, on his library (owner, 2026-11-16). The
+weekly run (ADR 0043) owns when it is measured and what a miss means. These instruments are
+what the run's tour and a diagnosis read. The benchmarks' instruction counts cannot see a
+read waiting for a connection, a cold disk read, memory pressure, owners waking each other
+or a real backlog, and these can:
 
 - **Resource checkpoints** (`ResourceCheckpoint`, `Otos/Support/ProcessResources.swift`).
   At events, never on a timer — session start, window attached, catalog open, first grid,
@@ -253,8 +253,9 @@ real backlog. Three instruments see those:
   whose owners never all settled names them and what each owed, ran or held. `--optimized` with `--dev` first builds the dev app with the
   installed app's compiler settings (ADR 0030) into a DerivedData of its own, so a sandbox
   tour times the code the owner runs; `--ablation-matrix` tours with every owner off, each alone
-  and none off, in one table. It is a report: it never fails a run and is not part of
-  `script/check.sh`; its parser is tested there against synthetic lines.
+  and none off, in one table. It never fails a run and is not part of `script/check.sh`; its
+  parser is tested there against synthetic lines. Its `FAIL` rows decide a verdict in one place
+  only, the weekly run (ADR 0043).
 
 ### Explicit rejections
 
@@ -266,7 +267,7 @@ real backlog. Three instruments see those:
 | MetricKit hang diagnostics for stall attribution | Delivered to the app later in a payload, not beside the stall's own log line; the agent reads logs as the stall happens |
 | Time Profiler as the only way to name a stalled frame | A stall at launch, or one that happens once a day, is over before a trace can be attached |
 | A periodic memory sampler | The kernel keeps the lifetime peak footprint, and the events a user feels already checkpoint it |
-| The daily benchmarks as the measure of a performance fix | They count CPU work on a generated catalog; the waits, cold reads and memory the owner feels never reach them |
+| The benchmarks as the measure of a performance fix | They count CPU work on a generated catalog; the waits, cold reads and memory the owner feels never reach them |
 
 ## Consequences
 
