@@ -26,6 +26,8 @@ TARGETS = {
     "search.firstResultsMs": {"metric": "search.firstResultsMs", "maxMs": 1000},
     "search.completeMs": {"metric": "search.completeMs", "maxMs": None},
     "photo.stepMs": {"metric": "photo.stepMs", "maxMs": 1000},
+    "scroll.hitchMsPerSecond": {"metric": "scroll.hitchMsPerSecond", "maxMs": 5},
+    "scroll.worstFrameMs": {"metric": "scroll.worstFrameMs", "maxMs": None},
     "act.resultMs": {"metric": "act.resultMs", "maxMs": 100},
     "stalls.count": {"metric": "stalls.count", "max": 0},
     "stalls.per10Min": {"metric": "stalls.per10Min", "max": 0},
@@ -322,6 +324,43 @@ class ScorecardTests(unittest.TestCase):
         by_label = {r["label"]: (r["value"], r["verdict"]) for r in rows}
         self.assertEqual(by_label["step 10 scroll down deadline"], (120060, "FAIL"))
         self.assertEqual(by_label["scroll down 600 tiles without thumbnail"], (4, "NO-TARGET"))
+
+    def test_a_continuous_scroll_is_held_to_its_hitch_rate_and_an_occluded_one_is_not_judged(self):
+        checked_in = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "scorecard-targets.json")
+        with open(checked_in, encoding="utf-8") as handle:
+            targets = {t["metric"]: t for t in json.load(handle)["targets"]}
+        self.assertEqual(targets["scroll.hitchMsPerSecond"]["maxMs"], 5)
+        janky = SESSION[:-1] + [
+            line(40.5, "op=tour phase=step index=12 kind=continuousScroll label=down outcome=reported ms=8100 "
+                       "ending=complete frames=520 durationMs=8000 hitchMs=1234 hitchMsPerSecond=154.3 worstFrameMs=220 "
+                       "refreshUs=8333 points=12000"),
+            SESSION[-1],
+        ]
+        _, rows, _ = run(janky)
+        by_label = {r["label"]: (r["value"], r["target"], r["verdict"]) for r in rows}
+        self.assertEqual(by_label["continuous scroll hitch ms per second"], (154.3, "5", "FAIL"))
+        self.assertEqual(by_label["continuous scroll worst frame ms"], (220, "none", "NO-TARGET"))
+
+        smooth = SESSION[:-1] + [
+            line(40.5, "op=tour phase=step index=12 kind=continuousScroll label=down outcome=reported ms=8100 "
+                       "ending=complete frames=960 durationMs=8000 hitchMs=17 hitchMsPerSecond=2.1 worstFrameMs=17 "
+                       "refreshUs=8333 points=12000"),
+            SESSION[-1],
+        ]
+        _, rows, _ = run(smooth)
+        by_label = {r["label"]: (r["value"], r["verdict"]) for r in rows}
+        self.assertEqual(by_label["continuous scroll hitch ms per second"], (2.1, "PASS"))
+
+        for occluded in ("outcome=skipped reason=windowOccluded",
+                         "outcome=reported ending=occluded frames=12 durationMs=100 hitchMs=0 hitchMsPerSecond=0.0"):
+            covered = SESSION[:-1] + [
+                line(40.5, f"op=tour phase=step index=12 kind=continuousScroll label=down ms=3 {occluded}"),
+                SESSION[-1],
+            ]
+            _, rows, _ = run(covered)
+            row = next(r for r in rows if r["label"] == "continuous scroll hitch ms per second")
+            self.assertEqual((row["value"], row["verdict"], row["state"]), (None, "OCCLUDED", "occluded"))
+            self.assertNotIn("continuous scroll worst frame ms", {r["label"] for r in rows})
 
     def test_an_act_is_timed_from_its_intent_to_the_grid(self):
         acted = SESSION[:-1] + [

@@ -139,7 +139,14 @@ or a real backlog, and these can:
   catalog holds for it now (its detail read, and its thumbnail decoded or none rendered
   yet), on a report whose visible set holds the step's target; the report counts the
   tiles with no thumbnail yet (`withoutThumbnail`), so a render backlog is a number, not a
-  deadline. A tour's loupe and Compare never download an original:
+  deadline. Those scrolls jump, and show one screenful in one commit; the continuous
+  scroll that follows them moves the grid down 12,000 points at 1,500 points a second,
+  frame by frame on the window's display link, as a trackpad scrolls it
+  (`ScrollHitchProbe`), and reports the frames the display delivered late
+  (`op=ui.scrollHitches`: `hitchMs`, `hitchMsPerSecond`, `worstFrameMs`), judged against
+  Apple's hitch-time ratio (`scroll.hitchMsPerSecond`,
+  `docs/research/2026-11-18-tour-scroll-hitches.md`). A window not on screen presents no
+  frames, so its scroll is printed `OCCLUDED` and judged by nothing. A tour's loupe and Compare never download an original:
   their requester refuses every download for the session (`PaneOriginalDownloads.never`,
   `ReadOnlyOriginals`), so a cloud-only photo shows its stored preview and nothing more.
   The act steps (Like, Dislike, Not Rated, Move to Trash then Undo, then five of each in a row, each issued once the one before shows its result) run only in a sandbox

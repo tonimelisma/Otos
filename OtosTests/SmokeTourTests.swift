@@ -220,6 +220,9 @@ struct SmokeTourTests {
         #expect(plan.contains(.scope(label: "people", selection: .people)))
         #expect(plan.contains(.duplicates))
         #expect(plan.contains(.openPhoto))
+        // The continuous scroll starts from the top, where the last jump left the grid.
+        let top = try #require(plan.firstIndex(of: .scroll(label: "top", position: .index(0))))
+        #expect(plan[top + 1] == .continuousScroll)
         #expect(plan.last == .idle)
 
         let short = try #require(SmokeTour.Configuration(environment: [

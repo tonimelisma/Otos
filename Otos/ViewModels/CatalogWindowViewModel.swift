@@ -523,6 +523,9 @@ final class CatalogWindowViewModel {
     /// The newest act whose result reached the grid (`op=ui.actToResult phase=finish`), the
     /// fact a sandboxed tour's act step waits on.
     private(set) var lastActResult: ActResultReport?
+    /// The newest measured continuous scroll's frames (`op=ui.scrollHitches phase=finish`),
+    /// the fact a tour's continuous-scroll step waits on.
+    private(set) var lastScrollHitches: ScrollHitchReport?
     /// How far this launch's background work has settled, once it has reached the first stage
     /// (`LaunchSettlement`, `op=owners.settled`). What a tour's Duplicates step waits on
     /// (`duplicatesBuilt`), and a tour that starts like a person's session
@@ -1107,6 +1110,9 @@ final class CatalogWindowViewModel {
         }
         stallMonitor.onActResult = { [weak self] report in
             self?.lastActResult = report
+        }
+        stallMonitor.onScrollHitches = { [weak self] report in
+            self?.lastScrollHitches = report
         }
     }
 

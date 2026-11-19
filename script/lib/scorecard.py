@@ -515,6 +515,13 @@ def int_or_none(value):
         return None
 
 
+def float_or_none(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def step_ms(step):
     """A step's own time: its `resultMs` (timed from the intent) when it carries one."""
     for key in ("resultMs", "ms"):
@@ -1186,6 +1193,22 @@ def verdicts(report, targets):
             # A step whose fact never came is a failure of its own, whatever it measures.
             rows.append({"metric": "tour.deadline", "label": f"step {step.get('index')} {step.get('kind')} {step.get('label')} deadline",
                          "value": step_ms(step), "target": "fact", "verdict": "FAIL"})
+            continue
+        if step.get("kind") == "continuousScroll":
+            # Frames come only from a window on screen: a scroll refused for an occluded window
+            # (`reason=windowOccluded`) or covered midway (`ending=occluded`) is printed as
+            # such and judged by nothing, never as a pass.
+            occluded = step.get("reason") == "windowOccluded" or step.get("ending") == "occluded"
+            measured = step.get("outcome") == "reported" and not occluded
+            add("scroll.hitchMsPerSecond", "continuous scroll hitch ms per second",
+                float_or_none(step.get("hitchMsPerSecond")) if measured else None)
+            if occluded:
+                rows[-1]["state"] = "occluded"
+                rows[-1]["verdict"] = UNPRESENTED_WINDOWS["occluded"]
+            elif step.get("outcome") != "reported":
+                rows[-1]["state"] = step.get("reason") or step.get("outcome")
+            if measured:
+                add("scroll.worstFrameMs", "continuous scroll worst frame ms", int_or_none(step.get("worstFrameMs")))
             continue
         if step.get("outcome") != "reported":
             continue

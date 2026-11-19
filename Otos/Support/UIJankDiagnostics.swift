@@ -126,6 +126,164 @@ final class ActPresentationProbe: NSObject {
     }
 }
 
+/// A continuous scroll of the grid measured by the frames the display delivered
+/// (`op=ui.scrollHitches phase=finish`): `revision` counts these reports. A frame that came
+/// later than the display's refresh interval after the one before is a hitch, and the time
+/// past that interval is its hitch time (Apple's hitch-time ratio, ms per second of scroll).
+nonisolated struct ScrollHitchReport: Equatable, Sendable {
+    enum Ending: String, Sendable {
+        /// The scroll covered the whole distance asked.
+        case complete
+        /// The document ended first; the report covers what was scrolled.
+        case documentEnd
+        /// The window stopped being on screen, which presents no frames; nothing is judged.
+        case occluded
+    }
+
+    let revision: UInt64
+    let ending: Ending
+    let frames: Int
+    let durationMs: Int
+    let hitchMs: Int
+    let worstFrameMs: Int
+    /// The display's refresh interval the frames were judged against, in microseconds.
+    let refreshMicroseconds: Int
+    let points: Int
+
+    /// Hitch time per second of scroll, to a tenth.
+    var hitchMsPerSecond: Double {
+        guard durationMs > 0 else { return 0 }
+        return (Double(hitchMs) * 10000 / Double(durationMs)).rounded() / 10
+    }
+}
+
+/// What a measured scroll has counted so far: the frames the display link delivered and how
+/// late each came. A value the probe folds each callback's timestamps into, so the rule is
+/// testable without a display.
+nonisolated struct ScrollFrameTally: Equatable, Sendable {
+    private(set) var frames = 0
+    private(set) var hitchSeconds: Double = 0
+    private(set) var worstFrameSeconds: Double = 0
+    private(set) var refreshSeconds: Double = 0
+    private(set) var firstTimestamp: Double?
+    private(set) var lastTimestamp: Double?
+
+    var durationSeconds: Double {
+        guard let firstTimestamp, let lastTimestamp else { return 0 }
+        return lastTimestamp - firstTimestamp
+    }
+
+    /// Folds in a callback at `timestamp` whose frame is due one refresh, `expected`, after
+    /// it. An interval within half a refresh of `expected` is the display's own jitter and on
+    /// time; a longer one adds the time past `expected` as hitch time.
+    mutating func record(timestamp: Double, expected: Double) {
+        defer { lastTimestamp = timestamp }
+        guard let lastTimestamp else {
+            firstTimestamp = timestamp
+            return
+        }
+        let interval = timestamp - lastTimestamp
+        frames += 1
+        refreshSeconds = expected
+        worstFrameSeconds = max(worstFrameSeconds, interval)
+        if interval > expected * 1.5 {
+            hitchSeconds += interval - expected
+        }
+    }
+}
+
+/// Scrolls a scroll view continuously, as a steady two-finger trackpad scroll does, and counts
+/// the frames that came late. Each callback of a display link on the scroll view moves the
+/// clip view to where a scroll at `pointsPerSecond` is at the frame being prepared
+/// (`targetTimestamp`), so a late frame jumps as far as the finger would have moved, and AppKit
+/// lays out, reconfigures and commits whatever that reveals on the main thread, as for a
+/// person's scroll. The scroll is bracketed by the live-scroll notifications AppKit posts
+/// around a gesture, so the grid treats it as one (`MediaGridViewController.liveScrolling`).
+///
+/// The display link is the platform's report of each frame, not a timer; its timestamps are
+/// the measurement (`ScrollFrameTally`). A main thread held past a refresh delays the next
+/// callback by as much, which is the hitch a person sees. An occluded window presents no
+/// frames and its link stops, so the window server's occlusion report ends the scroll.
+@MainActor
+final class ScrollHitchProbe: NSObject {
+    private weak var scrollView: NSScrollView?
+    private var link: CADisplayLink?
+    private let points: CGFloat
+    private let pointsPerSecond: CGFloat
+    private var finished: ((ScrollHitchReport.Ending, ScrollHitchProbe) -> Void)?
+    private let startY: CGFloat
+    private(set) var tally = ScrollFrameTally()
+    private(set) var scrolledPoints: CGFloat = 0
+
+    init(
+        on scrollView: NSScrollView,
+        points: CGFloat,
+        pointsPerSecond: CGFloat,
+        finished: @escaping (ScrollHitchReport.Ending, ScrollHitchProbe) -> Void
+    ) {
+        self.scrollView = scrollView
+        self.points = points
+        self.pointsPerSecond = pointsPerSecond
+        self.finished = finished
+        startY = scrollView.contentView.bounds.origin.y
+        super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(occlusionChanged),
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: scrollView.window
+        )
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scrollView)
+        let link = scrollView.displayLink(target: self, selector: #selector(step(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    /// Ends the scroll without a report: teardown. A display link retains its target.
+    func stop() {
+        link?.invalidate()
+        link = nil
+        finished = nil
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    private func end(_ ending: ScrollHitchReport.Ending) {
+        guard link != nil else { return }
+        let finished = finished
+        stop()
+        if let scrollView {
+            NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
+        }
+        finished?(ending, self)
+    }
+
+    @objc private func occlusionChanged() {
+        guard let window = scrollView?.window, !window.occlusionState.contains(.visible) else { return }
+        end(.occluded)
+    }
+
+    @objc private func step(_ link: CADisplayLink) {
+        guard let scrollView, let document = scrollView.documentView else {
+            end(.documentEnd)
+            return
+        }
+        tally.record(timestamp: link.timestamp, expected: link.targetTimestamp - link.timestamp)
+        let first = tally.firstTimestamp ?? link.timestamp
+        let travelled = min(points, CGFloat(link.targetTimestamp - first) * pointsPerSecond)
+        let clip = scrollView.contentView
+        let maxY = max(0, document.frame.height - clip.bounds.height)
+        let y = min(maxY, startY + travelled)
+        scrolledPoints = y - startY
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+        scrollView.reflectScrolledClipView(clip)
+        if travelled >= points {
+            end(.complete)
+        } else if y >= maxY {
+            end(.documentEnd)
+        }
+    }
+}
+
 @MainActor
 final class MainRunLoopStallMonitor {
     private struct OperationRecord {
@@ -175,6 +333,15 @@ final class MainRunLoopStallMonitor {
         let startedAt: ContinuousClock.Instant
     }
 
+    /// The grid's scroll view, registered by the grid's controller: what a measured
+    /// continuous scroll moves (`measureContinuousScroll`). Weak: the grid owns it.
+    private weak var gridScrollView: NSScrollView?
+    private var scrollProbe: ScrollHitchProbe?
+    private var scrollReports: UInt64 = 0
+    /// Told each time a measured continuous scroll ends: the fact the window's owner
+    /// republishes for whoever waits on it (the tour).
+    var onScrollHitches: ((ScrollHitchReport) -> Void)?
+
     private var pendingActToResult: PendingActToResult?
     private var actReports: UInt64 = 0
     /// The committed acts whose first presented frame has not come yet, by report revision:
@@ -204,6 +371,64 @@ final class MainRunLoopStallMonitor {
         for probe in presentationProbes.values {
             probe.stop()
         }
+        scrollProbe?.stop()
+    }
+
+    /// The grid's controller names the scroll view a measured scroll moves.
+    func registerGridScrollView(_ scrollView: NSScrollView) {
+        gridScrollView = scrollView
+    }
+
+    /// Why a measured continuous scroll did not start.
+    enum ScrollRefusal: String, Sendable {
+        case noGrid
+        case windowOccluded
+        case alreadyScrolling
+    }
+
+    /// Scrolls the grid down `points` at `pointsPerSecond`, frame by frame, and reports the
+    /// frames that came late through `onScrollHitches` when it ends (`ScrollHitchProbe`).
+    /// Nil when it started.
+    func measureContinuousScroll(points: CGFloat, pointsPerSecond: CGFloat) -> ScrollRefusal? {
+        guard scrollProbe == nil else { return .alreadyScrolling }
+        guard let scrollView = gridScrollView, let window = scrollView.window else { return .noGrid }
+        guard window.occlusionState.contains(.visible) else { return .windowOccluded }
+        OtosLog.ui.noticeOperation("ui.scrollHitches", phase: "start", fields: [
+            "points": "\(Int(points))",
+            "pointsPerSecond": "\(Int(pointsPerSecond))",
+            "startY": "\(Int(scrollView.contentView.bounds.origin.y))",
+        ])
+        scrollProbe = ScrollHitchProbe(on: scrollView, points: points, pointsPerSecond: pointsPerSecond) { [weak self] ending, probe in
+            self?.completeScroll(ending, probe)
+        }
+        return nil
+    }
+
+    private func completeScroll(_ ending: ScrollHitchReport.Ending, _ probe: ScrollHitchProbe) {
+        scrollProbe = nil
+        scrollReports &+= 1
+        let tally = probe.tally
+        let report = ScrollHitchReport(
+            revision: scrollReports,
+            ending: ending,
+            frames: tally.frames,
+            durationMs: Int((tally.durationSeconds * 1000).rounded()),
+            hitchMs: Int((tally.hitchSeconds * 1000).rounded()),
+            worstFrameMs: Int((tally.worstFrameSeconds * 1000).rounded()),
+            refreshMicroseconds: Int((tally.refreshSeconds * 1_000_000).rounded()),
+            points: Int(probe.scrolledPoints)
+        )
+        OtosLog.ui.noticeOperation("ui.scrollHitches", phase: "finish", fields: [
+            "ending": report.ending.rawValue,
+            "frames": "\(report.frames)",
+            "durationMs": "\(report.durationMs)",
+            "hitchMs": "\(report.hitchMs)",
+            "hitchMsPerSecond": "\(report.hitchMsPerSecond)",
+            "worstFrameMs": "\(report.worstFrameMs)",
+            "refreshUs": "\(report.refreshMicroseconds)",
+            "points": "\(report.points)",
+        ])
+        onScrollHitches?(report)
     }
 
     func reserveUpdateID() -> Int {
@@ -407,6 +632,8 @@ final class MainRunLoopStallMonitor {
             probe.stop()
         }
         presentationProbes.removeAll()
+        scrollProbe?.stop()
+        scrollProbe = nil
     }
 
     private func tick(now: ContinuousClock.Instant = .now) {

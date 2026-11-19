@@ -269,6 +269,10 @@ final class MediaGridViewController: NSViewController {
             stallMonitor?.additionalStallFields = { [weak self] in
                 self?.mutationGate.stallDiagnosticFields ?? [:]
             }
+            // The grid, not the loupe's strip, is what a measured continuous scroll moves.
+            if !presentation.isStrip {
+                stallMonitor?.registerGridScrollView(scrollView)
+            }
         }
     }
 

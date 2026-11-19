@@ -164,6 +164,12 @@ extension PreferencesDomain {
         static let fewResultsQuery = "lighthouse"
         /// How far apart the scroll steps land, in items, so each moves the viewport.
         static let scrollStride = 300
+        /// The continuous scroll's speed and distance: a steady two-finger trackpad scroll,
+        /// 1,500 points a second for 8 seconds, which reveals about 48 rows of the default
+        /// six-column grid in a 1,512-point window
+        /// (`docs/research/2026-11-18-tour-scroll-hitches.md`).
+        static let continuousScrollPointsPerSecond: CGFloat = 1500
+        static let continuousScrollPoints: CGFloat = 12000
         /// How many of a scope's first items are looked at for photos the loupe can open.
         static let openablePhotoSearchLimit = 400
         /// The photos the photo steps open, in order: the first, three next, three back.
@@ -226,6 +232,9 @@ extension PreferencesDomain {
             case duplicates
             /// The grid's focus moved to this position in the scope's order.
             case scroll(label: String, position: Position)
+            /// The grid scrolled down continuously, frame by frame, as a trackpad scrolls it,
+            /// counting the frames the display delivered late (`ScrollHitchProbe`).
+            case continuousScroll
             case openPhoto
             case nextPhoto
             case previousPhoto
@@ -302,6 +311,7 @@ extension PreferencesDomain {
                 .scroll(label: "middle", position: .middle),
                 .scroll(label: "end", position: .end),
                 .scroll(label: "top", position: .index(0)),
+                .continuousScroll,
                 .openPhoto,
                 .nextPhoto, .nextPhoto, .nextPhoto,
                 .previousPhoto, .previousPhoto, .previousPhoto,
@@ -753,6 +763,8 @@ extension PreferencesDomain {
                 return await ("scope", "duplicates", duplicates())
             case let .scroll(label, position):
                 return await ("scroll", label, scroll(to: position))
+            case .continuousScroll:
+                return await ("continuousScroll", "down", continuousScroll())
             case .openPhoto:
                 return await ("photo", "open", openPhoto())
             case .nextPhoto:
@@ -871,6 +883,37 @@ extension PreferencesDomain {
                 "visible": "\(report.visible)",
                 "withoutThumbnail": "\(report.withoutThumbnail)",
                 "thumbnailsMs": "\(report.milliseconds)",
+            ])
+        }
+
+        /// Scrolls the grid down continuously from where it is and waits for the probe's report
+        /// of the frames it took (`MainRunLoopStallMonitor.measureContinuousScroll`). An
+        /// occluded window presents no frames, so it is skipped, and a window covered midway
+        /// reports `ending=occluded`; the scorecard judges neither.
+        private func continuousScroll() async -> Outcome {
+            guard let viewModel, viewModel.viewMode == .grid else {
+                return .skipped("notGrid")
+            }
+            let before = viewModel.lastScrollHitches?.revision ?? 0
+            if let refusal = viewModel.uiStallMonitor.measureContinuousScroll(
+                points: SmokeTour.continuousScrollPoints,
+                pointsPerSecond: SmokeTour.continuousScrollPointsPerSecond
+            ) {
+                return .skipped(refusal.rawValue)
+            }
+            let ended = await until { ($0.lastScrollHitches?.revision ?? 0) > before }
+            guard ended, let report = self.viewModel?.lastScrollHitches else {
+                return .deadline
+            }
+            return .reported([
+                "ending": report.ending.rawValue,
+                "frames": "\(report.frames)",
+                "durationMs": "\(report.durationMs)",
+                "hitchMs": "\(report.hitchMs)",
+                "hitchMsPerSecond": "\(report.hitchMsPerSecond)",
+                "worstFrameMs": "\(report.worstFrameMs)",
+                "refreshUs": "\(report.refreshMicroseconds)",
+                "points": "\(report.points)",
             ])
         }
 
