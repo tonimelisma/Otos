@@ -59,6 +59,17 @@ publication to ADR 0005.
      (`docs/research/2026-11-16-first-search-after-launch.md`). Rejected: letting the user's
      load take the next turn, which still waits for the load running (a People pass ran 8.9 s
      in that session); and stopping the running load, which ADR 0032 rule 3 forbids.
+   - **A People pass that covers the user's own People act is a load they wait on.** A name
+     given or removed, a merge, an undo: the act's path asks `PeopleAssignment.requestForUser()`,
+     which records the request it made as a revision (`userAwaited`, ADR 0032 rule 2); the
+     pass that starts while it is uncovered runs `for: .user`, and a background People pass
+     already waiting is promoted to the user's (`LoadAdmission.promote`, machine event
+     `.promote`), granted at once. On the owner's library a face named Kim left its twin HEIC
+     Unidentified for 133 s, the People pass waiting in the room's memory hold (2026-11-19). A
+     pass owed only to background facts (faces read, catalog changes) waits its turn as before.
+     Rejected: marking the pass from the catalog change the act wrote, which the projection
+     forwards with every other change and so cannot tell whose it was; and a boolean a
+     finishing pass clears, which an act during the pass would lose.
 3. **The view's load goes first.** Every query the window applies says which load its view
    cannot answer without (`BackgroundLoad.needed(by:)`: a search needs the index, People and
    a person need People, Duplicates and a group need the duplicates build), and that load runs

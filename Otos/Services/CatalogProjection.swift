@@ -1057,9 +1057,11 @@ extension CatalogProjection {
 
     /// Asks the People gallery for a read after a People write the window made has landed,
     /// and returns the request a state must cover to have read it (`CatalogPeopleState.covers`);
-    /// 0 before the gallery has an owner, which any state covers. Assignment is asked by the
-    /// write's own change, like any other.
+    /// 0 before the gallery has an owner, which any state covers. Assignment is asked too, as a
+    /// load the user waits on (`PeopleAssignment.requestForUser`): the write was the user's act,
+    /// and they look for its twins and neighbours.
     func requestPeopleBuild() async -> UInt64 {
+        await peopleAssignment?.requestForUser()
         guard let peopleGallery else {
             return 0
         }

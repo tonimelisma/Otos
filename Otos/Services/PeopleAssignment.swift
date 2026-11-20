@@ -40,6 +40,16 @@ import OSLog
 /// photos could be (`candidates(for:)`); the ranker is built from it and the vectors on the
 /// first such question, and again after either changes.
 ///
+/// **The user's own act.** A pass that covers a People act the user made (a name given or
+/// removed, a merge, an undo: anything through the window's act stream) is a load the user
+/// waits on: they named one face and look for its twins and neighbours. The act's path asks
+/// for it with `requestForUser()`, which records the request it made (`userAwaited`, a
+/// revision, ADR 0032): while a pass has not covered it, the next pass runs
+/// `admission.run(.people, for: .user)`, granted at once whatever the background room holds
+/// (ADR 0055, 0057), and a background pass already waiting for its turn is promoted to the
+/// user's (`LoadAdmission.promote`). A pass owed only to background facts (faces read,
+/// catalog changes) waits its turn as before.
+///
 /// A failed pass leaves its request outstanding for the next request to retry. `stop()` is
 /// teardown: it ends the doorbell, so the loop ends with it. The requests, the pass and its
 /// reads are kept in `OwnerActivity` (`QuiescentOwner`).
@@ -100,6 +110,9 @@ actor PeopleAssignment: QuiescentOwner {
     /// The photos the changes asked for since the last read began, when every change named its
     /// rows; nil when one did not, and the next pass reads every face.
     private var owedRows: Set<MediaAssetID>? = []
+    /// The request the user's latest act made (`requestForUser`); owed to the user while no
+    /// successful pass has covered it.
+    private var userAwaited: UInt64 = 0
     private var loopTask: Task<Void, Never>?
 
     /// True when every request has been covered by a successful pass and none is running.
@@ -165,6 +178,26 @@ actor PeopleAssignment: QuiescentOwner {
         doorbell.yield()
     }
 
+    /// The user made a People act, already written: a pass that covers it is a load the user
+    /// waits on. Its write's change also reaches `request(rows:)` through the projection;
+    /// this request does not wait for that one, and the pass it rings reads the whole catalog.
+    func requestForUser() {
+        owedRows = nil
+        userAwaited = activity.request()
+        // A pass already waiting for its turn reads after its grant, so it reads the act: the
+        // user now waits on it.
+        admission.promote(.people)
+        OtosLog.catalog.debugOperation("people.request", phase: "user", fields: [
+            "request": "\(userAwaited)", "covered": "\(activity.covered)",
+        ])
+        doorbell.yield()
+    }
+
+    /// Whether a pass covering what is requested now covers a request the user's act made.
+    private var userOwed: Bool {
+        !activity.hasCovered(userAwaited)
+    }
+
     /// Asks for a pass with no rows named and no read owed again: the held read stands.
     func ringIdle() {
         request(rows: .none)
@@ -220,6 +253,8 @@ actor PeopleAssignment: QuiescentOwner {
     private func pass() async {
         guard activity.isOwed else { return }
         let startedFrom = activity.beginPass()
+        // Taken in this step with the request it covers: an act after it is the next pass's.
+        let waiter: LoadWaiter = userOwed ? .user : .background
         var answered: UInt64?
         defer {
             activity.endPass(covering: answered)
@@ -233,8 +268,8 @@ actor PeopleAssignment: QuiescentOwner {
             }
             // The snapshot and the vectors are the largest load Otos holds: one at a time with
             // the other heavy loads, none before the window's first grid.
-            try await admission.run(.people) {
-                try await readThenAssign()
+            try await admission.run(.people, for: waiter) {
+                try await readThenAssign(waiter: waiter)
             }
         } catch is CancellationError {
             owedRows = nil
@@ -261,7 +296,7 @@ actor PeopleAssignment: QuiescentOwner {
 
     /// Steps 1 to 3 (see the guide). Returns whether assignment ran.
     @discardableResult
-    private func readThenAssign() async throws -> Bool {
+    private func readThenAssign(waiter: LoadWaiter = .background) async throws -> Bool {
         let signpost = OtosSignpost.performance.beginInterval("PeopleAssignment")
         defer { OtosSignpost.performance.endInterval("PeopleAssignment", signpost) }
         let start = ContinuousClock.now
@@ -296,7 +331,7 @@ actor PeopleAssignment: QuiescentOwner {
         guard inputs != settled, spaceHold == nil else {
             OtosLog.catalog.debugOperation("people.pass", phase: spaceHold == nil ? "read" : "floorHeld", fields: [
                 "faces": "\(read.faces.count)", "people": "\(read.people.count)", "readMs": "\(readMs)",
-                "galleryRows": "\(galleryRows)", "assigned": "false",
+                "galleryRows": "\(galleryRows)", "assigned": "false", "waiter": waiter.rawValue,
             ])
             return false
         }
@@ -333,6 +368,7 @@ actor PeopleAssignment: QuiescentOwner {
             "vectorsMs": "\(vectorsMs)",
             "assignMs": "\(assignMs)",
             "assigned": "true",
+            "waiter": waiter.rawValue,
         ])
         return true
     }

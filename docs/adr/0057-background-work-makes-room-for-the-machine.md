@@ -73,7 +73,7 @@ instruments to ADR 0015.
    in `op=owners.status` / `op=owners.pending`), and every change logs
    `op=background.room phase=changed` with each kind's hold.
 4. **What the person waits on is never held**: an interactive, command or device download,
-   a load for the current view, a load the person waits on (`LoadWaiter.user`), a render
+   a load for the current view, a load the person waits on (`LoadWaiter.user`, which includes a People pass covering the person's own People act, ADR 0055), a render
    the person waits on, and every window read.
 5. **What runs is stopped only where it stops safely.** A text-reading helper is let go at
    once when the room holds text reading and no reading runs in it, and mid-reading at

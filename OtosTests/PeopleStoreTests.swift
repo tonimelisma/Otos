@@ -957,6 +957,56 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    /// The user's People act is a load they wait on (ADR 0055, 0057): with the background room
+    /// held at memory warning, a pass owed only to a catalog change keeps waiting, and the
+    /// user's act grants it at once, so their act's twins and neighbours are assigned while
+    /// the room still holds.
+    @Test func aUsersActRunsTheWaitingPassWhileTheRoomHolds() async throws {
+        let names = ["0.jpg", "1.jpg"]
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: names)
+        try await library.readFaces(names.enumerated().map { library.result(for: $1, faces: [Self.lookalike($0)]) })
+        let room = BackgroundRoom(conditions: BackgroundRoomTests.warning)
+        let admission = LoadAdmission(isOpen: true, room: room)
+        let owner = PeopleAssignment(store: library.store, vectorSpace: .ample, admission: admission)
+        await owner.start()
+        await owner.request()
+        try await waitUntil { admission.snapshot.waiting.contains { $0.load == .people } }
+        #expect(admission.snapshot.granted[.people] == nil, "a background pass waits while the room holds")
+
+        await owner.requestForUser()
+        let fact = try await owner.untilQuiescent()
+        #expect(admission.snapshot.granted[.people] == nil, "the user's passes are never the turn's")
+        #expect(fact.work.passes >= 1)
+        #expect(try await library.store.backgroundReads.settledPeopleAssignment() != nil, "the pass assigned")
+        #expect(admission.snapshot.waiting.isEmpty)
+        owner.stop()
+        await library.store.shutdown()
+    }
+
+    /// With nothing waiting, the user's act starts a pass of its own as theirs: granted under
+    /// the held room, while a later request owed only to a catalog change waits again.
+    @Test func aUsersActStartsItsOwnPassAndALaterChangeWaits() async throws {
+        let names = ["0.jpg", "1.jpg"]
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: names)
+        try await library.readFaces(names.enumerated().map { library.result(for: $1, faces: [Self.lookalike($0)]) })
+        let room = BackgroundRoom(conditions: BackgroundRoomTests.warning)
+        let admission = LoadAdmission(isOpen: true, room: room)
+        let owner = PeopleAssignment(store: library.store, vectorSpace: .ample, admission: admission)
+        await owner.start()
+        await owner.requestForUser()
+        _ = try await owner.untilQuiescent()
+        #expect(try await library.store.backgroundReads.settledPeopleAssignment() != nil, "the pass assigned")
+
+        await owner.request()
+        try await waitUntil { admission.snapshot.waiting.contains { $0.load == .people } }
+        #expect(admission.snapshot.runningForUser.isEmpty)
+        room.deliver(.roomy)
+        _ = try await owner.untilQuiescent()
+        #expect(admission.snapshot.granted[.people] == 1)
+        owner.stop()
+        await library.store.shutdown()
+    }
+
     /// How far a People pass over held vectors may leave the footprint above where it found it,
     /// at the owner's scale: the allocator's own reuse slack, nothing a pass holds.
     static let strandedMarginMB: UInt64 = 48

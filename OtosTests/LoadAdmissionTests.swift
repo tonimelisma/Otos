@@ -42,6 +42,26 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.release(3)) == [.grant(2, .duplicates)])
     }
 
+    /// The user comes to wait on a load already waiting (a People pass owed to their act):
+    /// it is granted at once as theirs, and holds the waiting ones back while it runs. With
+    /// none of its kind waiting, nothing changes.
+    @Test func aWaitingLoadTheUserComesToWaitOnRunsAtOnce() {
+        var machine = LoadAdmissionMachine(isOpen: true)
+        #expect(machine.handle(.request(1, .duplicates)) == [.grant(1, .duplicates)])
+        #expect(machine.handle(.request(2, .searchIndex)).isEmpty)
+        #expect(machine.handle(.request(3, .people)).isEmpty)
+        #expect(machine.handle(.promote(.people)) == [.grant(3, .people)])
+        #expect(machine.runningForUser.map(\.request) == [3])
+        #expect(machine.waiting.map(\.request) == [2])
+        #expect(machine.handle(.promote(.people)).isEmpty)
+        // The user's load holds the waiting one back after the turn's load ends.
+        #expect(machine.handle(.release(1)).isEmpty)
+        #expect(machine.handle(.release(3)) == [.grant(2, .searchIndex)])
+        _ = machine.handle(.request(4, .people))
+        _ = machine.handle(.shutdown)
+        #expect(machine.handle(.promote(.people)).isEmpty)
+    }
+
     @Test func aWantedLoadQueuedBeforeTheFirstGridRunsFirst() {
         var machine = LoadAdmissionMachine()
         _ = machine.handle(.request(1, .people))

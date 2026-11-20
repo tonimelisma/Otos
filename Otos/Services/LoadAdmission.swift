@@ -162,6 +162,10 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
         case request(Request, BackgroundLoad)
         /// A load the user waits on: granted at once.
         case requestForUser(Request, BackgroundLoad)
+        /// The user now waits on a load of this kind that is waiting: each waiting request of
+        /// it becomes one the user waits on, granted at once (a People pass owed to the user's
+        /// own act, asked before the act and still waiting in the room's hold).
+        case promote(BackgroundLoad)
         /// The asker stopped waiting (its task was cancelled): a waiting request is dropped.
         case withdraw(Request)
         /// A granted load ended, however it ended.
@@ -273,6 +277,12 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
             guard !isShutDown else { return [.refuse(request)] }
             runningForUser.append(Waiting(request: request, load: load))
             return [.grant(request, load)]
+        case let .promote(load):
+            guard !isShutDown else { return [] }
+            let promoted = waiting.filter { $0.load == load }
+            waiting.removeAll { $0.load == load }
+            runningForUser += promoted
+            return promoted.map { .grant($0.request, $0.load) }
         case let .withdraw(request):
             guard let index = waiting.firstIndex(where: { $0.request == request }) else { return [] }
             waiting.remove(at: index)
@@ -290,19 +300,7 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
         case let .want(load):
             wanted = load
         case let .room(holds):
-            if var last = lastGranted, !last.ranIntoHold {
-                if let available = holds.availablePercent {
-                    last.lowestPercent = min(last.lowestPercent ?? available, available)
-                }
-                // Each grant raises the pressure at most once: a later hold with no grant
-                // between is the same room, not a new cost.
-                if holds.memory, !room.memory {
-                    last.ranIntoHold = true
-                    roomNeeds[last.load] = (roomNeeds[last.load] ?? RoomNeed()).raised(by: last)
-                }
-                lastGranted = last
-            }
-            room = holds
+            applyRoom(holds)
         case .shutdown:
             guard !isShutDown else { return [] }
             isShutDown = true
@@ -311,6 +309,24 @@ nonisolated struct LoadAdmissionMachine: AdmissionMachine, Equatable {
             return refused
         }
         return grantIfIdle()
+    }
+
+    /// What the room holds now; the grant that ran into a memory hold beginning is charged
+    /// the cost it was seen to take (`RoomNeed.raised(by:)`).
+    private mutating func applyRoom(_ holds: LoadRoomHolds) {
+        if var last = lastGranted, !last.ranIntoHold {
+            if let available = holds.availablePercent {
+                last.lowestPercent = min(last.lowestPercent ?? available, available)
+            }
+            // Each grant raises the pressure at most once: a later hold with no grant
+            // between is the same room, not a new cost.
+            if holds.memory, !room.memory {
+                last.ranIntoHold = true
+                roomNeeds[last.load] = (roomNeeds[last.load] ?? RoomNeed()).raised(by: last)
+            }
+            lastGranted = last
+        }
+        room = holds
     }
 
     private mutating func grantIfIdle() -> [Effect] {
@@ -488,6 +504,12 @@ final nonisolated class LoadAdmission: Sendable {
         admission.perform(.want(load))
     }
 
+    /// The user now waits on `load`: a request of it that waits is granted at once, as a load
+    /// the user waits on (`LoadWaiter.user`). Nothing waiting, nothing changes.
+    func promote(_ load: BackgroundLoad) {
+        admission.perform(.promote(load))
+    }
+
     /// Teardown: every waiting load is refused and none is granted again.
     func shutdown() {
         admission.perform(.shutdown)
@@ -500,8 +522,10 @@ final nonisolated class LoadAdmission: Sendable {
         let asked = ContinuousClock.now
         askRoom()
         let request = try await admission.admit(LoadAdmissionMachine.Ask(load: load, waiter: waiter))
+        // A background request the user came to wait on (`promote`) was granted as theirs.
+        let grantedFor: LoadWaiter = admission.machine.runningForUser.contains { $0.request == request } ? .user : waiter
         OtosLog.performance.noticeOperation("load.admission", phase: "granted", fields: [
-            "load": load.rawValue, "request": "\(request)", "waiter": waiter.rawValue,
+            "load": load.rawValue, "request": "\(request)", "waiter": grantedFor.rawValue,
             "waitMs": "\(DiagnosticsTiming.milliseconds(since: asked))",
             // The turn is held at this priority: one below the owners' holds every waiting
             // load behind work the system throttles.
