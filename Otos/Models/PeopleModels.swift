@@ -625,9 +625,6 @@ nonisolated struct PersonSummary: Hashable, Sendable, Identifiable {
     /// The faces the user gave this person, newest first: the facts the hard rules hold
     /// them to.
     let userFaces: [PersonAnchor]
-    /// The photos and videos of the faces that define this person (the user's and the
-    /// seeds), each with whether it is a video, which two people merged may not share.
-    var anchorMedia: [MediaAssetID: Bool] = [:]
 
     /// How many of a person's faces the Person sheet shows, newest first and one per photo
     /// (`CatalogStore.newestFaces(of:limit:)`).
@@ -736,15 +733,14 @@ nonisolated struct PeopleGalleryRead: Equatable, Sendable {
         }
     }
 
-    /// One face that defines a person: the user's word, or a seed.
-    nonisolated struct Anchor: Equatable, Sendable {
+    /// One face the user gave a person.
+    nonisolated struct UserFace: Equatable, Sendable {
         let person: PersonID
         let face: PersonAnchor
-        let isUsers: Bool
     }
 
     var people: [Person]
-    var anchors: [Anchor] = []
+    var userFaces: [UserFace] = []
     var unchecked = MediaCount()
     var hasFaces = false
 }
@@ -790,12 +786,8 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
     /// newest face.
     init(gallery read: PeopleGalleryRead, covers: UInt64 = 0) {
         var userFaces: [PersonID: [PersonAnchor]] = [:]
-        var anchorMedia: [PersonID: [MediaAssetID: Bool]] = [:]
-        for anchor in read.anchors {
-            anchorMedia[anchor.person, default: [:]][anchor.face.photo] = anchor.face.isInVideo
-            if anchor.isUsers {
-                userFaces[anchor.person, default: []].append(anchor.face)
-            }
+        for given in read.userFaces {
+            userFaces[given.person, default: []].append(given.face)
         }
         let people = read.people.compactMap { person -> PersonSummary? in
             guard let facts = person.facts, facts.media.total > 0 || !person.isBare else { return nil }
@@ -807,8 +799,7 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
                 isFavorite: person.isFavorite,
                 media: facts.media,
                 cover: person.keyPhoto ?? person.newest,
-                userFaces: (userFaces[person.id] ?? []).sorted(by: Self.newestFirst),
-                anchorMedia: anchorMedia[person.id] ?? [:]
+                userFaces: (userFaces[person.id] ?? []).sorted(by: Self.newestFirst)
             )
         }.sorted(by: Self.galleryOrder)
         self.init(people: people, unchecked: read.unchecked, hasFaces: read.hasFaces, covers: covers)

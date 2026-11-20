@@ -56,8 +56,7 @@ nonisolated enum PeopleGalleryFixture {
                 isFavorite: person % 100 == 0,
                 media: MediaCount(tiles: tiles),
                 cover: tiles.first,
-                userFaces: user,
-                anchorMedia: Dictionary(user.map { ($0.photo, false) }, uniquingKeysWith: { first, _ in first })
+                userFaces: user
             ))
         }
         return CatalogPeopleState(

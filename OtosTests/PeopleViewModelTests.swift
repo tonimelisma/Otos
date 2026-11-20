@@ -35,18 +35,19 @@ struct PeopleViewModelTests {
             FaceID(asset: library.id("clip.mov"), index: 0)
         }
 
-        /// `others` are more stills, none read for faces. Without `consumesIntents` the People
+        /// `others` are more stills, none read for faces. `hersTaken` dates a.jpg, Sam's photo on
+        /// the user's word; the others are undated. Without `consumesIntents` the People
         /// intent consumer is not started: the test takes each intent off the stream, runs it
         /// through the store and applies what the store did itself, so it can deliver a People
         /// state at the very suspension between the store's write and its answer.
         static func make(
-            in directory: URL, withVideo: Bool = false, others: [String] = [], consumesIntents: Bool = true
+            in directory: URL, withVideo: Bool = false, others: [String] = [], hersTaken: Date? = nil, consumesIntents: Bool = true
         ) async throws -> Fixture {
             let library = try await FaceEnrichmentTests.ScannedLibrary.make(
                 in: directory, files: ["a.jpg", "b.jpg"] + (withVideo ? ["clip.mov"] : []) + others
             )
             try await library.readFaces([
-                library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.1)]),
+                library.result(for: "a.jpg", faces: [PeopleStoreTests.face(x: 0.1)], captured: hersTaken),
                 library.result(for: "b.jpg", faces: [PeopleStoreTests.face(x: 0.1), PeopleStoreTests.face(x: 0.65)]),
             ])
             if withVideo {
@@ -74,6 +75,18 @@ struct PeopleViewModelTests {
                 like: FaceID(asset: library.id("b.jpg"), index: 0),
                 stranger: FaceID(asset: library.id("b.jpg"), index: 1)
             )
+        }
+
+        /// When a fixture made with `hersTaken: Fixture.twentyTen` dates Sam's photo.
+        static let twentyTen = Date(timeIntervalSince1970: 1_262_304_000)
+
+        /// A person the hard rules refuse to merge into Sam, given the stranger and born in
+        /// 2015: the birthday the merge would keep, since Sam has none, comes after her
+        /// photo, which a fixture made with `hersTaken: Fixture.twentyTen` dates 2010.
+        func personBornAfterSamsPhoto() async throws -> PersonID {
+            try #require(try await store.perform(
+                .moveToNewPerson([stranger], name: nil, birthday: PersonBirthday("2015"))
+            ).person)
         }
 
         /// People as the store holds it, assigned.
@@ -415,17 +428,16 @@ struct PeopleViewModelTests {
     /// since no surface but the gallery offers them; a name with another birthday for
     /// `Someone Else…` asks for the birthday to be cleared.
     @Test func aSheetSaveThatCannotHappenIsDisabledWithItsReason() async throws {
-        let fixture = try await Fixture.make(in: makeTestDirectory())
-        _ = try await fixture.store.perform(.move([fixture.like], to: fixture.sam))
-        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        let fixture = try await Fixture.make(in: makeTestDirectory(), hersTaken: Fixture.twentyTen)
+        let other = try await fixture.personBornAfterSamsPhoto()
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([], name: "Ian")).person)
         _ = try await fixture.store.perform(.setHidden(ian, true))
         try await fixture.show(fixture.people(), scope: .people)
 
         let refusal = try #require(fixture.model.mergeRefusal(other, into: fixture.sam))
-        #expect(fixture.model.personSheetRefusal(.person(other), name: "Sam", birthday: nil) == refusal)
+        #expect(fixture.model.personSheetRefusal(.person(other), name: "Sam", birthday: "2015") == refusal)
         fixture.model.beginEditingPerson(other)
-        fixture.model.savePersonSheet(.person(other), name: "Sam", birthday: nil)
+        fixture.model.savePersonSheet(.person(other), name: "Sam", birthday: "2015")
         #expect(fixture.model.peopleSession.mergeQuestion == nil)
         #expect(fixture.model.peopleSession.sheet?.subject == .person(other))
 
@@ -530,18 +542,18 @@ struct PeopleViewModelTests {
 
     /// Merge answered while an act ahead of it in the People stream is unpublished: the
     /// question was judged when asked, so the answer submits the merge and the store, applying
-    /// it after that act, judges it — here This Is Not Sam frees the photo both shared, and
-    /// the merge lands though the published state still refuses it. What the window does with
+    /// it after that act, judges it — here This Is Not Sam frees the photo from before the
+    /// birthday the merge keeps, and the merge lands though the published state still refuses
+    /// it. What the window does with
     /// the merged people waits for the store's confirmation.
     @Test func aMergeAnsweredBeforeTheActAheadOfItPublishesIsJudgedByTheStore() async throws {
-        let fixture = try await Fixture.make(in: makeTestDirectory())
-        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
-        _ = try await fixture.store.perform(.move([fixture.like], to: fixture.sam))
+        let fixture = try await Fixture.make(in: makeTestDirectory(), hersTaken: Fixture.twentyTen)
+        let other = try await fixture.personBornAfterSamsPhoto()
         try await fixture.show(fixture.people(), scope: .people)
         #expect(fixture.model.mergeRefusal(other, into: fixture.sam) != nil)
         fixture.model.setPeopleFilter(other, included: true)
 
-        fixture.model.removeNames([fixture.like])
+        fixture.model.removeNames([fixture.hers])
         // The question as asked against the state the act ahead of it changes; no People
         // state publishes before the answer.
         fixture.model.peopleSession.mergeQuestion = PeopleMergeQuestion(from: other, into: fixture.sam)
@@ -560,9 +572,8 @@ struct PeopleViewModelTests {
     /// uses (DES-038), and the window keeps showing and filtering the person it would have
     /// merged away.
     @Test func aMergeTheStoreRefusesSaysWhyAndMovesNothing() async throws {
-        let fixture = try await Fixture.make(in: makeTestDirectory())
-        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
-        _ = try await fixture.store.perform(.move([fixture.like], to: fixture.sam))
+        let fixture = try await Fixture.make(in: makeTestDirectory(), hersTaken: Fixture.twentyTen)
+        let other = try await fixture.personBornAfterSamsPhoto()
         let people = try await fixture.people()
         fixture.show(people, scope: .people)
         fixture.model.openPerson(other)
@@ -573,7 +584,7 @@ struct PeopleViewModelTests {
         fixture.model.answerMerge(true)
         try await Self.waitForMergeRefusal(fixture.model)
 
-        #expect(fixture.model.peopleSession.refusal?.reason == "Unnamed Person and Sam are both in 1 photo")
+        #expect(fixture.model.peopleSession.refusal?.reason == "1 photo is from before the birthday")
         #expect(fixture.model.queryDescriptor.scope == .person(other))
         #expect(fixture.model.queryDescriptor.filter.people == [other])
         #expect(try await fixture.assignment(of: fixture.stranger) == .user(other))
@@ -672,9 +683,8 @@ struct PeopleViewModelTests {
     /// published state: here they were hidden while the merge was on its way, so its refusal
     /// returns the window to the gallery and the filter lets go of them.
     @Test func aRefusedMergeHandsThePersonBackToThePublishedState() async throws {
-        let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
-        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
-        _ = try await fixture.store.perform(.move([fixture.like], to: fixture.sam))
+        let fixture = try await Fixture.make(in: makeTestDirectory(), hersTaken: Fixture.twentyTen, consumesIntents: false)
+        let other = try await fixture.personBornAfterSamsPhoto()
         let people = try await fixture.people()
         fixture.show(people, scope: .people)
         fixture.model.openPerson(other)
@@ -693,7 +703,7 @@ struct PeopleViewModelTests {
         #expect(fixture.model.queryDescriptor.scope == .person(other))
 
         fixture.model.applyPeopleIntentEvent(answer)
-        #expect(fixture.model.peopleSession.refusal?.reason == "Unnamed Person and Sam are both in 1 photo")
+        #expect(fixture.model.peopleSession.refusal?.reason == "1 photo is from before the birthday")
         #expect(fixture.model.queryDescriptor.scope == .people)
         #expect(fixture.model.queryDescriptor.filter.people.isEmpty)
         await fixture.store.shutdown()

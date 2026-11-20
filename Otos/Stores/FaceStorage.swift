@@ -302,8 +302,6 @@ nonisolated enum PeopleRuleViolation: Error, Equatable {
     case beforeBirthday
     /// The photos and videos the user gave the person predate the birthday.
     case confirmedBeforeBirthday(MediaCount)
-    /// The user gave both people a face in these photos and videos.
-    case bothIn(MediaCount)
     /// Another person already has the name; merging them is the act.
     case nameTaken
     /// The face's library is not cataloged.
@@ -400,14 +398,15 @@ nonisolated enum PeopleGallerySQL {
     static let anchorIndexName = "idx_face_anchor"
     static let anchorPredicate = "assignment IN (2, 3) AND is_not_face = 0 AND person_id IS NOT NULL"
 
-    /// Each face on the user's word or a seed, of a photo out of the Trash: its person, photo,
-    /// whose word, the photo's capture time and whether it is a video.
-    static let anchors = """
-    SELECT f.person_id, f.library_root_id, f.relative_path, f.assignment,
+    /// Each face on the user's word, of a photo out of the Trash: its person, photo, the
+    /// photo's capture time and whether it is a video. The anchor index's own condition is
+    /// repeated so the partial index serves it.
+    static let userFaces = """
+    SELECT f.person_id, f.library_root_id, f.relative_path,
            m.best_capture_local, m.best_kind = 'video'
     FROM face f INDEXED BY \(anchorIndexName)
     JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
-    WHERE f.assignment IN (2, 3) AND f.is_not_face = 0 AND f.person_id IS NOT NULL
+    WHERE f.assignment IN (2, 3) AND f.assignment = 3 AND f.is_not_face = 0 AND f.person_id IS NOT NULL
       AND m.trash_path IS NULL AND NOT \(LivePhotoSQL.isPairedMotion("m"))
     """
 

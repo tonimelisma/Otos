@@ -445,6 +445,32 @@ nonisolated enum FaceAssignmentPolicy {
         let b: Int32
     }
 
+    /// Each candidate's best similarity to a person, as `likeness` measures it: to `members`,
+    /// the faces that define the person, one per photo and none in a candidate's photo. A
+    /// merge keeps, of the faces two people had in one photo, the one most like the person
+    /// they become (`CatalogStore.mergePerson`). A candidate the model cannot tell anyone by,
+    /// or with no member within its reach, has none.
+    static func likeness(of candidates: [FaceFact], toPersonWith members: [FaceFact], birthday: Double?) -> [FaceID: Float] {
+        let candidatePhotos = Set(candidates.map(\.id.asset))
+        var seen: Set<MediaAssetID> = []
+        let columns = PersonRun(
+            faces: members.filter { $0.isRecognisable && !candidatePhotos.contains($0.id.asset) && seen.insert($0.id.asset).inserted },
+            birthday: birthday
+        )
+        let rows = candidates.filter(\.isRecognisable)
+        guard !columns.faces.isEmpty, !rows.isEmpty else { return [:] }
+        var likeness: [FaceID: Float] = [:]
+        BlockedSimilarity(rows: rows, columns: columns.faces).forEachBlock { block, values in
+            for row in block {
+                let face = rows[row]
+                if let best = columns.best(for: face, row: values, rowStart: (row - block.lowerBound) * columns.faces.count) {
+                    likeness[face.id] = best
+                }
+            }
+        }
+        return likeness
+    }
+
     /// Each face's best similarity to its person's faces within reach in their other photos:
     /// one face per photo is compared with, the first of the photo's files in face order, and
     /// a face is never compared with its own photo's.

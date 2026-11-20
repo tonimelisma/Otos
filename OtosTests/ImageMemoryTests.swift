@@ -58,7 +58,7 @@ nonisolated enum ImageMemoryFixture {
             )
             return PersonSummary(
                 id: PersonID(rawValue: Int64(index + 1)), name: "Person \(index)", birthday: nil, isHidden: false,
-                isFavorite: false, media: MediaCount(photos: count - index), cover: cover, userFaces: [], anchorMedia: [:]
+                isFavorite: false, media: MediaCount(photos: count - index), cover: cover, userFaces: []
             )
         }
         return CatalogPeopleState(people: people.sorted(by: CatalogPeopleState.galleryOrder), unchecked: MediaCount(photos: 0), hasFaces: true)

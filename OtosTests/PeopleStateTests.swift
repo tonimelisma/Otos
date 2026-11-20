@@ -86,7 +86,7 @@ struct PeopleStateTests {
         #expect(state.person(Self.sam)?.cover?.id == faces[0].id)
         #expect(state.person(tyler)?.cover?.id == faces[4].id)
         #expect(state.person(Self.sam)?.userFaces.map(\.photo) == [faces[0].id.asset])
-        #expect(state.person(Self.ian)?.anchorMedia.keys.map(\.self) == [faces[3].id.asset])
+        #expect(state.person(Self.ian)?.userFaces.isEmpty == true, "A seed is not the user's word")
     }
 
     /// A likeness is written when it appears, goes, or moves past its precision, never for
@@ -267,16 +267,14 @@ struct PeopleStateTests {
             .init(id: Self.sam, name: "Sam", birthday: nil),
             .init(id: Self.ian, name: "Ian", birthday: nil),
         ]
-        func index(_ paths: [String], ianToo: Bool = false) -> CatalogPeopleState {
-            let faces = paths.flatMap { path in
-                [Fixture.face(path, index: 0, toward: [0: 1], at: 0, assignment: .user(Self.sam))]
-                    + (ianToo ? [Fixture.face(path, index: 1, toward: [1: 1], at: 0, assignment: .user(Self.ian))] : [])
+        func index(_ paths: [String]) -> CatalogPeopleState {
+            let faces = paths.map { path in
+                Fixture.face(path, index: 0, toward: [0: 1], at: 0, assignment: .user(Self.sam))
             }
             return Self.state(Self.snapshot(faces, people: people))
         }
         for (paths, said) in [(["a.jpg", "b.jpg"], "2 photos"), (["a.mov", "b.mov"], "2 videos"), (["a.jpg", "b.mov"], "2 photos and videos")] {
             #expect(index(paths).sheetRefusal(.person(Self.sam), name: "Sam", birthday: "2030", faces: .none) == "\(said) of Sam are from before this date")
-            #expect(index(paths, ianToo: true).mergeRefusal(Self.sam, into: Self.ian) == "Sam and Ian are both in \(said)")
         }
         // Two faces of one video are in the same video; a video Ian was given holds him.
         let video = Self.state(Self.snapshot(
@@ -293,14 +291,17 @@ struct PeopleStateTests {
         #expect(PeopleText.beforeTheBirthday(MediaCount(videos: 1)) == "1 video is from before the birthday")
     }
 
-    @Test func mergingIsRefusedWhenTheUserGaveBothAFaceOfOnePhoto() {
+    /// Merging says two people are one (owner, 2026-11-19): a photo both are in, even on the
+    /// user's word, never refuses it. The store keeps the face there most like them.
+    @Test func aPhotoBothAreInNeverRefusesAMerge() {
         let faces = [
             Fixture.face("g.jpg", index: 0, toward: [0: 1], at: 0, assignment: .user(Self.sam)),
-            Fixture.face("g.jpg", index: 1, toward: [1: 1], at: 0, assignment: .seed(Self.ian)),
+            Fixture.face("g.jpg", index: 1, toward: [1: 1], at: 0, assignment: .user(Self.ian)),
         ]
         let index = Self.state(Self.snapshot(faces))
 
-        #expect(index.mergeRefusal(Self.sam, into: Self.ian) == "Sam and Ian are both in 1 photo")
+        #expect(index.mergeRefusal(Self.sam, into: Self.ian) == nil)
+        #expect(index.sheetRefusal(.person(Self.sam), name: "Ian", birthday: nil, faces: .none) == nil)
         #expect(index.mergeRefusal(Self.sam, into: Self.sam) == "Choose another person")
     }
 

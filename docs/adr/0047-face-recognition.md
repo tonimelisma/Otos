@@ -310,7 +310,18 @@ grouping had put with the right child.
   person is forgotten once no face is theirs. A person the user said anything about keeps
   their seeds.
 - **Hard rules:**
-  - Two faces in one photo are never the same person.
+  - Two faces in one photo are never the same person. A merge is the user's word that two
+    people are one (owner decision, 2026-11-19: "If I merge, I know they're the same"), so a
+    photo both are in never refuses it: in each such photo the face most like the merged
+    person stays theirs and the others are released for assignment. "Most like" is
+    assignment's likeness, each face's best similarity to both people's other defining faces
+    (the user's and the seeds) within reach of the merged birthday
+    (`FaceAssignmentPolicy.likeness(of:toPersonWith:birthday:)`, `CatalogStore.mergePerson`);
+    a face with none ranks last, and on a tie the person merged into keeps theirs. Otos's
+    guesses of either in the other's photo are dropped for assignment to redo. The release is
+    one act with the merge, so Undo Merge restores it. Rejected: refusing the merge (the user
+    could not merge two people a misread photo joined, and could not see why), and keeping
+    the face with the stronger word (a seed Otos found can be the wrong face of the photo).
   - A face from before a person's birthday is never theirs. A birthday may be only a year,
     which counts from 1 January (owner decision, 2026-11-10). One rule holds Set Birthday and
     a merge: the user's faces from before it refuse the act, and Otos's guesses and seeds

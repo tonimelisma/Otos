@@ -1935,22 +1935,21 @@ extension CatalogStore {
                     newest: Self.faceTile(row, at: coverAt, pathsByRowID: pathsByRowID)
                 )
             }
-            let anchors = try Row.fetchAll(db, sql: PeopleGallerySQL.anchors).compactMap { row -> PeopleGalleryRead.Anchor? in
+            let userFaces = try Row.fetchAll(db, sql: PeopleGallerySQL.userFaces).compactMap { row -> PeopleGalleryRead.UserFace? in
                 guard let root = pathsByRowID[row[1]] else { return nil }
-                return PeopleGalleryRead.Anchor(
+                return PeopleGalleryRead.UserFace(
                     person: PersonID(rawValue: row[0]),
                     face: PersonAnchor(
                         photo: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: row[2])),
-                        isInVideo: (row[5] as Int) != 0,
-                        captureSeconds: row[4]
-                    ),
-                    isUsers: (row[3] as Int) == FaceAssignmentColumn.user.rawValue
+                        isInVideo: (row[4] as Int) != 0,
+                        captureSeconds: row[3]
+                    )
                 )
             }
             let hasFaces = try Bool.fetchOne(db, sql: PeopleGallerySQL.hasFaces) ?? false
             return try PeopleGalleryRead(
                 people: people,
-                anchors: anchors,
+                userFaces: userFaces,
                 unchecked: Self.uncheckedForFaces(rootIDs: faceRootIDs, db: db),
                 hasFaces: hasFaces
             )
@@ -2626,7 +2625,7 @@ extension CatalogStore {
                 try Self.updatePerson(person, name: name, birthday: birthday, db: db)
             case let .merge(from, into):
                 given = into
-                try Self.mergePerson(from, into: into, db: db)
+                try Self.mergePerson(from, into: into, pathsByRowID: pathsByRowID, db: db)
             case let .setHidden(person, hidden):
                 try db.execute(sql: "UPDATE person SET is_hidden = ? WHERE id = ?", arguments: [hidden ? 1 : 0, person.rawValue])
             case let .setFavorite(person, favorite):
@@ -2775,6 +2774,88 @@ extension CatalogStore {
         return count
     }
 
+    /// In each photo where `from` and `into` both have a face the user gave or Otos seeded,
+    /// keeps the face most like the person they become and releases the others to `.open`;
+    /// returns how many it released. "Most like" is assignment's likeness
+    /// (`FaceAssignmentPolicy.likeness(of:toPersonWith:birthday:)`): the best similarity to
+    /// both people's other defining faces within reach of the merged birthday. A face with no
+    /// likeness ranks below one with any; on a tie, `into`'s face stays.
+    private static func keepLikeliestFace(
+        _ from: PersonID, into: PersonID, birthday: PersonBirthday?, pathsByRowID: [Int64: LibraryRootPath], db: Database
+    ) throws -> Int {
+        let anchors = FaceAssignmentColumn.sqlList { $0.isAnchor }
+        let shared = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT DISTINCT a.library_root_id, a.relative_path FROM face a JOIN face b
+              ON a.library_root_id = b.library_root_id AND a.relative_path = b.relative_path
+            WHERE a.person_id = ? AND b.person_id = ? AND a.assignment IN \(anchors) AND b.assignment IN \(anchors)
+            """,
+            arguments: [from.rawValue, into.rawValue]
+        ).map { FaceRowKey.Photo(rootID: $0["library_root_id"], path: MediaRelativePath(rawValue: $0["relative_path"])) }
+        guard !shared.isEmpty else { return 0 }
+        let sharedPhotos = Set(shared)
+        struct Defining {
+            let key: FaceRowKey
+            let isInto: Bool
+            let fact: FaceFact?
+        }
+        let defining = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT f.library_root_id, f.relative_path, f.face_index, f.person_id, f.assignment,
+                   m.best_capture_local, e.embedding
+            FROM face f
+            JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
+            \(FaceEmbeddingSQL.join(face: "f", embedding: "e"))
+            WHERE f.person_id IN (?, ?) AND f.assignment IN \(anchors)
+            """,
+            arguments: [from.rawValue, into.rawValue]
+        ).map { row -> Defining in
+            let key = FaceRowKey(row)
+            let person: Int64 = row["person_id"]
+            let fact: FaceFact? = {
+                guard let rootPath = pathsByRowID[key.rootID],
+                      let embedding = (row["embedding"] as Data?).flatMap(FaceStorage.embedding(from:)),
+                      let assignment = try? FaceAssignmentColumn.assignment(column: row["assignment"], person: person)
+                else { return nil }
+                return FaceFact(
+                    id: FaceID(asset: MediaAssetID(libraryRootPath: rootPath, relativePath: key.path), index: key.index),
+                    captureSeconds: row["best_capture_local"],
+                    embedding: embedding,
+                    assignment: assignment,
+                    rejected: []
+                )
+            }()
+            return Defining(key: key, isInto: person == into.rawValue, fact: fact)
+        }
+        let candidates = defining.filter { sharedPhotos.contains($0.key.photo) }
+        let likeness = FaceAssignmentPolicy.likeness(
+            of: candidates.compactMap(\.fact),
+            toPersonWith: defining.compactMap(\.fact),
+            birthday: birthday?.seconds
+        )
+        var released = 0
+        for (_, faces) in Dictionary(exactlyGrouping: candidates, by: \.key.photo) where faces.count > 1 {
+            let ranked = faces.sorted { lhs, rhs in
+                let left = lhs.fact.flatMap { likeness[$0.id] } ?? -.infinity
+                let right = rhs.fact.flatMap { likeness[$0.id] } ?? -.infinity
+                if left != right {
+                    return left > right
+                }
+                if lhs.isInto != rhs.isInto {
+                    return lhs.isInto
+                }
+                return lhs.key.index < rhs.key.index
+            }
+            for face in ranked.dropFirst() {
+                try setFace(face.key, person: nil, assignment: .open, db: db)
+                released += 1
+            }
+        }
+        return released
+    }
+
     private static func holdToBirthday(_ birthday: PersonBirthday?, faces people: [PersonID], db: Database) throws {
         guard let birthdaySeconds = birthday?.seconds, !people.isEmpty else { return }
         let placeholders = Array(repeating: "?", count: people.count).joined(separator: ", ")
@@ -2863,25 +2944,18 @@ extension CatalogStore {
         )
     }
 
-    /// The first person's faces become the second's. Refused when the user gave both a face
-    /// of one photo, or gave either a photo from before the merged birthday; Otos's guesses and
-    /// seeds from before it lose their person (`holdToBirthday`). Where Otos had guessed both
-    /// into one photo, the guesses there are dropped for assignment to redo.
+    /// The first person's faces become the second's. Merging says the two are one person
+    /// (owner, 2026-11-19), so a photo both are in never refuses it: of the faces the user
+    /// gave or Otos seeded for either in one photo, the one most like the merged person stays
+    /// theirs and the others are released for assignment (`keepLikeliestFace`); Otos's guesses
+    /// of either in a photo the other is in are dropped for assignment to redo. Refused only
+    /// when the user gave either a photo from before the merged birthday; Otos's guesses and
+    /// seeds from before it lose their person (`holdToBirthday`).
     /// The second keeps its name, birthday and key photo, taking the first's where it
     /// has none, and is a favourite if either was.
-    private static func mergePerson(_ from: PersonID, into: PersonID, db: Database) throws {
-        let anchors = FaceAssignmentColumn.sqlList { $0.isAnchor }
-        let shared = try mediaCount(
-            db,
-            sql: """
-            SELECT DISTINCT a.library_root_id, a.relative_path, m.best_kind = 'video' FROM face a JOIN face b
-              ON a.library_root_id = b.library_root_id AND a.relative_path = b.relative_path
-            JOIN media_asset m ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
-            WHERE a.person_id = ? AND b.person_id = ? AND a.assignment IN \(anchors) AND b.assignment IN \(anchors)
-            """,
-            arguments: [from.rawValue, into.rawValue]
-        )
-        guard shared.total == 0 else { throw PeopleRuleViolation.bothIn(shared) }
+    private static func mergePerson(
+        _ from: PersonID, into: PersonID, pathsByRowID: [Int64: LibraryRootPath], db: Database
+    ) throws {
         guard let target = try Row.fetchOne(db, sql: "SELECT * FROM person WHERE id = ?", arguments: [into.rawValue]).map(person),
               let source = try Row.fetchOne(db, sql: "SELECT * FROM person WHERE id = ?", arguments: [from.rawValue]).map(person)
         else {
@@ -2901,6 +2975,12 @@ extension CatalogStore {
             """,
             arguments: [from.rawValue, into.rawValue, from.rawValue, into.rawValue]
         )
+        let released = try keepLikeliestFace(from, into: into, birthday: birthday, pathsByRowID: pathsByRowID, db: db)
+        OtosLog.catalog.noticeOperation("people.merge", phase: "applied", fields: [
+            "from": "\(from.rawValue)",
+            "into": "\(into.rawValue)",
+            "released": "\(released)",
+        ])
         let targetHasKeyPhoto = try Int.fetchOne(
             db, sql: "SELECT COUNT(*) FROM face WHERE person_id = ? AND is_key_photo = 1", arguments: [into.rawValue]
         ) ?? 0 > 0

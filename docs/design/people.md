@@ -101,10 +101,11 @@ act.
 
 **Merging:** the person dragged (or named) is merged into the one dropped on (or holding
 the name), which keeps its name, birthday and key photo, taking the other's where it
-has none, and is a favourite if either was. Refused, by a disabled act with its reason
-(DES-038), when the user's faces or the faces a person was first found from put both in
-one photo (`Sam and Ian are both in 3 photos`) or a photo the user gave either predates
-the birthday kept. The question is judged when asked; the answer `Merge` is judged by the
+has none, and is a favourite if either was. A photo both are in never refuses it: merging
+says they are one person, so in each such photo the face most like the merged person stays
+theirs and the other goes back to Otos to assign (owner decision, 2026-11-19). Refused, by a
+disabled act with its reason (DES-038), only when a photo the user gave either predates the
+birthday kept. The question is judged when asked; the answer `Merge` is judged by the
 catalog when the merge is applied, after any act submitted before it (a birthday saved with
 a taken name). Should it refuse there, `Couldn’t Merge These People` says why in the same
 words, with `OK`, and nothing moves. Until the catalog answers, the person merged away is
@@ -350,3 +351,5 @@ and redoing one keeps the rest to redo. The guesses that followed are rebuilt by
   sections People, Location, File first; a Places filter in the same filter popover (its
   own increment).
 - 2026-11-10: merges ask first; a birthday may be a year alone.
+- 2026-11-19: a photo both people are in never refuses a merge; the face there most like the
+  merged person stays theirs, the other is released ("If I merge, I know they're the same").

@@ -237,9 +237,8 @@ struct PeopleStoreTests {
     }
 
     /// Merging gives the first person's faces to the second, which keeps its name and takes
-    /// the first's when it has none, and is a favourite if either was. Refused when the user's
-    /// faces or seeds put both in one photo; Otos's guess of one in the other's photo is
-    /// dropped.
+    /// the first's when it has none, and is a favourite if either was. Otos's guess of one in
+    /// the other's photo is dropped.
     @Test func mergingPeople() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
         try await library.readFaces([
@@ -266,9 +265,77 @@ struct PeopleStoreTests {
         _ = try await library.store.perform(.removeName([b0]))
         #expect(try await library.store.backgroundReads.peopleSnapshot().faces.first { $0.id == b0 }?.rejected == [found])
 
-        let other = try #require(try await library.store.perform(.moveToNewPerson([a1], name: "Ian")).person)
-        await #expect(throws: PeopleRuleViolation.bothIn(MediaCount(photos: 1))) {
-            _ = try await library.store.perform(.merge(other, into: found))
+        await library.store.shutdown()
+    }
+
+    /// Merging says two people are one (owner, 2026-11-19), so a photo the user gave both a
+    /// face of never refuses it: the face there most like the merged person's other faces
+    /// stays theirs, and the other is released for assignment, whichever person it was.
+    @Test func aMergeKeepsTheFaceMostLikeTheMergedPerson() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg"])
+        try await library.readFaces([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1, toward: [0: 1]), Self.face(x: 0.6, toward: [1: 1])]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3, toward: [0: 1, 2: 0.2])]),
+            library.result(for: "c.jpg", faces: [Self.face(x: 0.3, toward: [0: 1, 3: 0.2])]),
+        ])
+        let like = FaceID(asset: library.id("a.jpg"), index: 0)
+        let unlike = FaceID(asset: library.id("a.jpg"), index: 1)
+        let sam = try #require(try await library.store.perform(
+            .moveToNewPerson([like, FaceID(asset: library.id("b.jpg"), index: 0)], name: "Sam")
+        ).person)
+        let ian = try #require(try await library.store.perform(
+            .moveToNewPerson([unlike, FaceID(asset: library.id("c.jpg"), index: 0)], name: "Ian")
+        ).person)
+
+        _ = try await library.store.perform(.merge(sam, into: ian))
+
+        let faces = try await library.store.backgroundReads.peopleSnapshot().faces
+        #expect(faces.first { $0.id == like }?.assignment == .user(ian), "the face like the merged person stays, though it was Sam's")
+        #expect(faces.first { $0.id == unlike }?.assignment == .open)
+        #expect(faces.filter { $0.assignment == .user(ian) }.count == 3)
+        await library.store.shutdown()
+    }
+
+    /// When the two faces of one photo are equally like the merged person, the face of the
+    /// person merged into stays.
+    @Test func aMergeKeepsThePersonMergedIntoOnATie() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.readFaces([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1, toward: [0: 1]), Self.face(x: 0.6, toward: [0: 1])]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3, toward: [0: 1, 2: 1])]),
+        ])
+        let first = FaceID(asset: library.id("a.jpg"), index: 0)
+        let second = FaceID(asset: library.id("a.jpg"), index: 1)
+        let sam = try #require(try await library.store.perform(
+            .moveToNewPerson([first, FaceID(asset: library.id("b.jpg"), index: 0)], name: "Sam")
+        ).person)
+        let ian = try #require(try await library.store.perform(.moveToNewPerson([second], name: "Ian")).person)
+
+        _ = try await library.store.perform(.merge(sam, into: ian))
+
+        let faces = try await library.store.backgroundReads.peopleSnapshot().faces
+        #expect(faces.first { $0.id == second }?.assignment == .user(ian))
+        #expect(faces.first { $0.id == first }?.assignment == .open)
+        await library.store.shutdown()
+    }
+
+    /// The merged birthday still refuses a merge: a face the user gave either person from
+    /// before it.
+    @Test func aMergeIsRefusedForAFaceTheUserGaveFromBeforeTheMergedBirthday() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.readFaces([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)], captured: Date(timeIntervalSince1970: 1_262_304_000)),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)], captured: Date(timeIntervalSince1970: 1_577_836_800)),
+        ])
+        let early = try #require(try await library.store.perform(
+            .moveToNewPerson([FaceID(asset: library.id("a.jpg"), index: 0)], name: nil)
+        ).person)
+        let sam = try #require(try await library.store.perform(
+            .moveToNewPerson([FaceID(asset: library.id("b.jpg"), index: 0)], name: "Sam", birthday: PersonBirthday("2015"))
+        ).person)
+
+        await #expect(throws: PeopleRuleViolation.confirmedBeforeBirthday(MediaCount(photos: 1))) {
+            _ = try await library.store.perform(.merge(early, into: sam))
         }
         await library.store.shutdown()
     }
@@ -756,7 +823,7 @@ struct PeopleStoreTests {
         // Its parts, each alone: the people with their covers, the anchors, the unchecked tally.
         let reader = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         _ = try await phase("galleryPeople") { try await reader.read { try Row.fetchAll($0, sql: PeopleGallerySQL.people).count } }
-        _ = try await phase("galleryAnchors") { try await reader.read { try Row.fetchAll($0, sql: PeopleGallerySQL.anchors).count } }
+        _ = try await phase("galleryUserFaces") { try await reader.read { try Row.fetchAll($0, sql: PeopleGallerySQL.userFaces).count } }
         _ = try await phase("galleryHasFaces") { try await reader.read { try Bool.fetchOne($0, sql: PeopleGallerySQL.hasFaces) } }
         _ = try await phase("galleryUnchecked") { try await store.backgroundReads.uncheckedForFaces(availableLibraryPaths: paths) }
         try reader.close()
@@ -1088,19 +1155,19 @@ struct PeopleStoreTests {
         _ = try await library.store.perform(.moveToNewPerson([FaceID(asset: library.id("a.jpg"), index: 0)], name: "Sam"))
         let database = try makeTestDatabaseQueue(path: #require(library.databaseURL).path(percentEncoded: false))
         let plans = try await database.read { db in
-            try [PeopleGallerySQL.people, PeopleGallerySQL.anchors].map { sql in
+            try [PeopleGallerySQL.people, PeopleGallerySQL.userFaces].map { sql in
                 try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(sql)").map { $0["detail"] as String }
             }
         }
-        let (people, anchors) = (plans[0], plans[1])
+        let (people, userFaces) = (plans[0], plans[1])
         #expect(people.contains { $0.hasPrefix("SCAN p") }, "\(people)")
         for alias in ["s", "k", "km", "c", "cm"] {
             #expect(people.contains { $0.hasPrefix("SEARCH \(alias) USING") }, "\(alias): \(people)")
         }
         #expect(people.contains { $0.contains("idx_face_key_photo") }, "\(people)")
-        #expect(anchors.first?.contains("COVERING INDEX idx_face_anchor") == true, "\(anchors)")
-        #expect(anchors.contains { $0.hasPrefix("SEARCH m USING") }, "\(anchors)")
-        for plan in [people, anchors] {
+        #expect(userFaces.first?.contains("COVERING INDEX idx_face_anchor") == true, "\(userFaces)")
+        #expect(userFaces.contains { $0.hasPrefix("SEARCH m USING") }, "\(userFaces)")
+        for plan in [people, userFaces] {
             #expect(!plan.contains { $0.hasPrefix("SCAN") && !$0.hasPrefix("SCAN p") && !$0.contains("idx_face_anchor") && !$0.contains("member") }, "\(plan)")
         }
         try await database.close()
@@ -1131,6 +1198,19 @@ struct PeopleStoreTests {
     }
 
     static func face(x: Double) -> DetectedFace {
+        face(x: x, embedding: FaceEnrichmentTests.face(seed: Int(x * 100)).embedding)
+    }
+
+    /// A face whose embedding points along `weights`' axes, so a test sets how alike two are.
+    static func face(x: Double, toward weights: [Int: Float]) -> DetectedFace {
+        var vector = [Float](repeating: 0, count: FaceEmbeddingModel.dimensions)
+        for (axis, weight) in weights {
+            vector[axis] = weight
+        }
+        return face(x: x, embedding: FaceEmbedding(normalizing: vector)!)
+    }
+
+    private static func face(x: Double, embedding: FaceEmbedding) -> DetectedFace {
         DetectedFace(
             box: CGRect(x: x, y: 0.3, width: 0.2, height: 0.25),
             landmarks: FaceAlignment.Landmarks(
@@ -1139,7 +1219,7 @@ struct PeopleStoreTests {
                 rightMouth: CGPoint(x: x + 4 / 64, y: 0.375)
             ),
             quality: 0.5,
-            embedding: FaceEnrichmentTests.face(seed: Int(x * 100)).embedding
+            embedding: embedding
         )
     }
 }

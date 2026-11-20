@@ -88,12 +88,11 @@ extension PeopleGalleryRead {
                     newest: facts[person.id]?.newestFace.flatMap { tiles[$0] }
                 )
             },
-            anchors: snapshot.faces.compactMap { face in
-                guard face.assignment.isAnchor, let person = face.assignment.person else { return nil }
-                return PeopleGalleryRead.Anchor(
+            userFaces: snapshot.faces.compactMap { face in
+                guard case let .user(person) = face.assignment else { return nil }
+                return PeopleGalleryRead.UserFace(
                     person: person,
-                    face: PersonAnchor(photo: face.id.asset, isInVideo: face.isInVideo, captureSeconds: face.captureSeconds),
-                    isUsers: face.assignment == .user(person)
+                    face: PersonAnchor(photo: face.id.asset, isInVideo: face.isInVideo, captureSeconds: face.captureSeconds)
                 )
             },
             unchecked: unchecked,

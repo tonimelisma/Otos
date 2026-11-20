@@ -71,8 +71,7 @@ nonisolated extension PersonSummary {
             isFavorite: edit.isFavorite ?? isFavorite,
             media: media,
             cover: edit.keyFace ?? cover,
-            userFaces: userFaces,
-            anchorMedia: anchorMedia
+            userFaces: userFaces
         )
     }
 }

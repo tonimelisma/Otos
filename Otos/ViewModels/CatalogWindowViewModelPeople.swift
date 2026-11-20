@@ -381,13 +381,6 @@ nonisolated extension CatalogPeopleState {
         if let refusal = Self.mergeSourceRefusal(of: source) ?? Self.mergeSourceRefusal(of: target) {
             return refusal
         }
-        // Walks the smaller of the two: a menu offering every person judges each against one.
-        let (fewer, more) = source.anchorMedia.count <= target.anchorMedia.count
-            ? (source.anchorMedia, target.anchorMedia) : (target.anchorMedia, source.anchorMedia)
-        let shared = MediaCount(items: fewer.filter { more[$0.key] != nil }.map { ($0.key, $0.value) })
-        if shared.total > 0 {
-            return PeopleText.bothIn(source.displayName, target.displayName, media: shared)
-        }
         // Only a face older than the birthday can refuse, so the oldest of each decides
         // whether the faces are counted at all.
         if let birthday = (target.birthday ?? sourceBirthday)?.seconds,
@@ -405,8 +398,6 @@ nonisolated extension CatalogPeopleState {
     /// would have shown (`mergeRefusal`).
     func mergeRefusal(_ violation: PeopleRuleViolation, from: PersonID, into: PersonID) -> String {
         switch violation {
-        case let .bothIn(media):
-            PeopleText.bothIn(name(from), name(into), media: media)
         case let .confirmedBeforeBirthday(media):
             PeopleText.beforeTheBirthday(media)
         case .twoFacesOfOnePhoto, .personAlreadyInPhoto, .beforeBirthday, .nameTaken, .unknownFace:
@@ -491,12 +482,6 @@ nonisolated extension MediaCount {
 nonisolated enum PeopleText {
     static func count(_ value: Int, _ noun: String) -> String {
         "\(value.formatted()) \(value == 1 ? noun : noun + "s")"
-    }
-
-    /// A merge refused because the user gave both people a face in the same photos and
-    /// videos, named by what they are (`MediaCount`).
-    static func bothIn(_ first: String, _ second: String, media: MediaCount) -> String {
-        "\(first) and \(second) are both in \(media.text)"
     }
 
     /// A merge refused because photos and videos the user gave either predate the birthday
