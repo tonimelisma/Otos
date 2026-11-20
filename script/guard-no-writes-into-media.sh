@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/guard-scan.sh"
 ROOT_DIR="${GUARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ALLOWLIST=(
   # Explicit import/reorganization transfers are user initiated.
@@ -37,6 +38,7 @@ ALLOWLIST=(
 is_allowlisted() { local p="$1" a; for a in "${ALLOWLIST[@]}"; do [[ "$p" == "$a" ]] && return 0; done; return 1; }
 check_root() {
   local root="$1" line abs rel
+  guard_scans guard-no-writes-into-media "$root/Otos" || return 1
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue; abs="${line%%:*}"; rel="${abs#"$root/"}"
     if ! is_allowlisted "$rel"; then echo "FAIL: unexpected filesystem writer may write into user media: $line" >&2; return 1; fi
@@ -44,6 +46,7 @@ check_root() {
 }
 self_test() {
   local d; d="$(mktemp -d)"; trap 'rm -rf "$d"' RETURN
+  if check_root "$d/missing" 2>/dev/null; then echo "guard-no-writes-into-media self-test failed (a missing scan root passed)" >&2; return 1; fi
   mkdir -p "$d/Otos/Services"; printf 'try data.write(to: url)\n' > "$d/Otos/Services/Bad.swift"
   if check_root "$d"; then echo "guard-no-writes-into-media self-test failed" >&2; return 1; fi
   mv "$d/Otos/Services/Bad.swift" "$d/Otos/Services/MediaImportExecutor.swift"; check_root "$d"

@@ -5,12 +5,14 @@
 # It skips binary files (-I): Otos/ holds about 500 MB of Core ML weights and embedding
 # tables, and reading them took 24 of this gate's 25 seconds for no citation.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/guard-scan.sh"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 check_root() {
   local root="$1"
   local documents plans document plan status=0
+  guard_scans check-doc-citations "$root/Otos" "$root/script" || return 1
   documents="$(grep -rIhoE 'docs/[A-Za-z0-9._/-]+\.md' "$root/Otos" "$root/script" 2>/dev/null | sort -u || true)"
   while IFS= read -r document; do
     [[ -z "$document" ]] && continue
@@ -58,6 +60,10 @@ self-test)
   temp_dir="$(mktemp -d)"
   trap 'rm -rf "$temp_dir"' EXIT
   mkdir -p "$temp_dir/Otos" "$temp_dir/script" "$temp_dir/docs"
+  if check_root "$temp_dir/missing" 2>/dev/null; then
+    echo "check-doc-citations self-test failed: a missing scan root passed" >&2
+    exit 1
+  fi
   missing_doc="docs/plans"
   printf '%s\n' "/// $missing_doc/9999-missing.md" > "$temp_dir/Otos/Bad.swift"
   if check_root "$temp_dir"; then

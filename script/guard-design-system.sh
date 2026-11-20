@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/guard-scan.sh"
 ROOT_DIR="${GUARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # DES-001/DES-020: no font-size or color literals anywhere in the app target
@@ -105,7 +106,6 @@ check_domain_nouns() {
 LYING_DEFAULT_FILE="Otos/Views/ImportBarPresentation.swift"
 check_lying_defaults() {
   local root="$1" file="$root/$LYING_DEFAULT_FILE" line
-  [[ -f "$file" ]] || return 0
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     echo "FAIL: D9 lying default (?? 0 / ?? \"\"): $line" >&2; return 1
@@ -114,12 +114,18 @@ check_lying_defaults() {
 
 check_root() {
   local root="$1"
+  guard_scans guard-design-system "$root/Otos" "$root/Otos/Views" "$root/$LYING_DEFAULT_FILE" || return 1
   check_fonts_colors "$root" && check_font_styles "$root" && check_domain_nouns "$root" && check_lying_defaults "$root"
 }
 
 self_test() {
   local d; d="$(mktemp -d)"; trap 'rm -rf "$d"' RETURN
   mkdir -p "$d/Otos/Views" "$d/Otos/Services"
+  : > "$d/Otos/Views/ImportBarPresentation.swift"
+  if check_root "$d/missing" 2>/dev/null; then echo "guard-design-system self-test failed (a missing scan root passed)" >&2; return 1; fi
+  rm "$d/Otos/Views/ImportBarPresentation.swift"
+  if check_root "$d" 2>/dev/null; then echo "guard-design-system self-test failed (a missing import bar mapper passed)" >&2; return 1; fi
+  : > "$d/Otos/Views/ImportBarPresentation.swift"
 
   printf 'Text("hi").font(.system(size: 60))\n' > "$d/Otos/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (font literal)" >&2; return 1; fi
@@ -189,7 +195,7 @@ self_test() {
 
   printf 'let x = count ?? 100\n' > "$d/Otos/Views/ImportBarPresentation.swift"
   check_root "$d" || { echo "guard-design-system self-test failed (false positive on ?? 100)" >&2; return 1; }
-  rm -f "$d/Otos/Views/ImportBarPresentation.swift"
+  : > "$d/Otos/Views/ImportBarPresentation.swift"
 
   printf 'Text("Import 3 Items").font(.body)\n' > "$d/Otos/Views/Bad.swift"
   check_root "$d"
