@@ -18,6 +18,10 @@ struct InfoPaneView: View, Equatable {
     /// (`CatalogWindowViewModel.toggleInfoSectionFold`).
     let folded: Set<PhotoInfo.SectionID>
     let toggleFold: (PhotoInfo.SectionID) -> Void
+    /// The RAW+JPEG pair shown, for the `JPG`/`RAW` switch under the name as the edit panel
+    /// has it (DES-117); nil for any other photo.
+    var pair: PairSwitchTarget?
+    var showPairMember: (MediaAssetID) -> Void = { _ in }
 
     /// What the pane shows. The window rebuilds its inspector for every state it applies,
     /// and closures never compare equal, so without this every publication — a one-tile hide,
@@ -27,7 +31,8 @@ struct InfoPaneView: View, Equatable {
     /// (`docs/research/2026-11-16-window-state-turns.md`). An equal pane is not rendered again
     /// (`.equatable()` where `ContentView` hosts it); its intents are not part of what it shows.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.info == rhs.info && lhs.folded == rhs.folded && InfoPanePeople.showSame(lhs.people, rhs.people)
+        lhs.info == rhs.info && lhs.folded == rhs.folded && lhs.pair == rhs.pair
+            && InfoPanePeople.showSame(lhs.people, rhs.people)
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -51,6 +56,10 @@ struct InfoPaneView: View, Equatable {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityLabel("Captured \(shown.captured)")
+                    if let pair {
+                        PairSwitch(pair: pair.pair, shown: pair.shown, onSelect: showPairMember)
+                            .padding(.top, 4)
+                    }
                 }
                 ForEach(shown.sections) { section in
                     // The Edit pane's hairline above each section (DES-092).

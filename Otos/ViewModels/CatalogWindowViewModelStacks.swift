@@ -97,10 +97,11 @@ extension CatalogWindowViewModel {
         singleTarget.flatMap(parts.gridStacks.pair(shownBy:))
     }
 
-    /// The pair the loupe offers its own `JPG`/`RAW` switch for: none while the edit panel
-    /// shows, whose header holds the one switch then (DES-117).
-    var loupePair: PhotoStack? {
-        isEditPanelPresented ? nil : shownPair
+    /// The pair the inspector's `JPG`/`RAW` switch is for, with the file of it shown: Info's
+    /// header and Edit's carry it (DES-117).
+    var pairSwitch: PairSwitchTarget? {
+        guard let id = singleTarget, let pair = parts.gridStacks.pair(shownBy: id) else { return nil }
+        return PairSwitchTarget(pair: pair, shown: id)
     }
 
     /// The `JPG`/`RAW` switch: shows `member` in its pair's place. The focus and the
@@ -201,4 +202,10 @@ extension CatalogWindowViewModel {
             setFocus(shown)
         }
     }
+}
+
+/// A RAW+JPEG pair and the file of it the window shows, for the `JPG`/`RAW` switch (DES-117).
+nonisolated struct PairSwitchTarget: Equatable, Sendable {
+    let pair: PhotoStack
+    let shown: MediaAssetID
 }

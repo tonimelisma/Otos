@@ -49,8 +49,8 @@ struct PhotoStackTests {
         #expect(Set(pair.members) == [id("a/DSC1.ARW"), id("a/dsc1.jpg")])
         #expect(pair.key == id("a/dsc1.jpg"))
         #expect(pair.rawMembers == [id("a/DSC1.ARW")])
-        #expect(pair.label == "RAW+JPG")
         #expect(pair.label(of: id("a/dsc1.jpg")) == "JPG")
+        #expect(pair.label(of: id("a/DSC1.ARW")) == "RAW")
     }
 
     @Test func anyOtherCountPairsNothing() {
@@ -108,12 +108,14 @@ struct PhotoStackTests {
         #expect(result.grid == .empty)
     }
 
+    /// A collapsed pair is one photo and is not marked (owner, 2026-11-19); expanded, each file
+    /// shows its own type.
     @Test func theTileShowsTheStacksBadge() throws {
         let pair = try #require(stacks([candidate("DSC1.ARW", .raw), candidate("DSC1.JPG", .image)]).first)
         let ids = [id("DSC1.ARW"), id("DSC1.JPG")]
         let collapsed = collapse(ids, [pair]).grid
         let shown = TileStackPresentation.of(pair.key, in: collapsed)
-        #expect(shown.badgeLabel == "RAW+JPG" && !shown.onBand)
+        #expect(shown == .none)
         let expanded = collapse(ids, [pair], expanded: [pair.id]).grid
         let raw = TileStackPresentation.of(id("DSC1.ARW"), in: expanded)
         let jpeg = TileStackPresentation.of(id("DSC1.JPG"), in: expanded)
@@ -218,7 +220,7 @@ struct PhotoStackTests {
         let framesShown = collapse(ids, found, expanded: [burst.id])
         #expect(framesShown.ids == [id("IMG_1.JPG"), id("IMG_2.JPG")])
         let pairFrame = TileStackPresentation.of(id("IMG_1.JPG"), in: framesShown.grid)
-        #expect(pairFrame.badgeLabel == "RAW+JPG" && pairFrame.onBand)
+        #expect(pairFrame.badgeLabel == nil && pairFrame.onBand)
         #expect(framesShown.grid.collapsed(shownBy: id("IMG_1.JPG")) == pair)
         #expect(framesShown.grid.expanded(shownBy: id("IMG_2.JPG")) == burst)
         #expect(framesShown.grid.files(reachedThrough: id("IMG_2.JPG")) == [id("IMG_2.JPG")])

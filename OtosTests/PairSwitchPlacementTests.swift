@@ -2,12 +2,12 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// DES-117, APP-076: a RAW+JPEG pair has one `JPG`/`RAW` switch on screen at a time — the
-/// loupe's while the loupe shows the pair alone, the edit panel's while it shows.
+/// DES-117, APP-076: a RAW+JPEG pair's `JPG`/`RAW` switch is in the inspector's header, Info's
+/// and Edit's alike, for the file shown; the loupe carries none (owner, 2026-11-19).
 @Suite(.testScope)
 @MainActor
 struct PairSwitchPlacementTests {
-    @Test func theLoupesSwitchLeavesWhileTheEditPanelShows() async throws {
+    @Test func theInspectorsSwitchIsForThePairShown() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Photos", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -48,16 +48,12 @@ struct PairSwitchPlacementTests {
                 deviceConnectionBanner: nil
             ))
             model.openLoupe(id: jpeg)
-            try await waitUntil { model.shownPair == pair }
-            #expect(model.loupePair == pair)
+            model.toggleInspector(.info)
+            try await waitUntil { model.pairSwitch == PairSwitchTarget(pair: pair, shown: jpeg) }
 
             model.toggleInspector(.edit)
             #expect(model.isEditPanelPresented)
-            #expect(model.shownPair == pair)
-            #expect(model.loupePair == nil)
-
-            model.toggleInspector(.edit)
-            #expect(model.loupePair == pair)
+            #expect(model.pairSwitch == PairSwitchTarget(pair: pair, shown: jpeg))
         } catch {
             await models.finish()
             await store.shutdown()

@@ -23,6 +23,7 @@ Which item the facts describe: its file name, `No Selection`, or `3 Items`.
 | String | Level |
 | --- | --- |
 | File name / `No Selection` / `3 Items` | L1 (`title2`, semibold, middle-truncated) |
+| The `HEIC`/`RAW` switch of a RAW+JPEG pair, under the date (DES-117) | a small segmented control, as in the edit panel's header |
 | The description (`Jamie holds Tyler by the fence…`) | L2 (`body`), selectable |
 | `Written by Apple Intelligence`, `No Description`, `Not Written Yet` | L2 in secondary color (`body`) |
 | When it was taken (`Saturday, November 7, 2026 at 3:42 PM UTC+02:00`) | L2 in secondary color (`body`) |

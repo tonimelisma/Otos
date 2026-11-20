@@ -23,8 +23,9 @@ nonisolated enum TileBadgeContent: Equatable {
     case durationText(String)
     case filmIcon
     case rawLabel
-    /// A stack's badge (DES-116): `RAW+JPG` on a collapsed pair, a member's own file type
-    /// on an expanded one, the number of photos on a burst. It is the stack's expand-and-collapse control.
+    /// A stack's badge (DES-116): a member's own file type on an expanded pair, the number of
+    /// photos on a burst. A collapsed pair is one photo and has none. It is the stack's
+    /// expand-and-collapse control.
     case stackLabel(String)
 }
 
@@ -51,12 +52,14 @@ nonisolated struct TileStackPresentation: Equatable {
         var presentation = TileStackPresentation()
         presentation.onBand = tile.expanded != nil
         if let collapsed = tile.collapsed {
-            presentation.badgeLabel = collapsed.label
             switch collapsed.id.kind {
             case .pair:
-                presentation.spokenBadge = collapsed.label
-                presentation.accessibilitySuffix = ", stack"
+                // A RAW and its processed file are one photo, unmarked, as Lightroom shows
+                // them (owner, 2026-11-19: "let's not mark the pairs at all"); the loupe's and
+                // the edit panel's switch tell the files apart (DES-117).
+                break
             case .burst:
+                presentation.badgeLabel = collapsed.label
                 presentation.accessibilitySuffix = ", burst of \(collapsed.photos.count) photos"
             }
         } else if let pair = tile.pair, tile.pairExpanded {
@@ -83,15 +86,9 @@ extension PhotoStack {
         isRaw(member) ? "RAW" : member.relativePath.fileExtension.uppercased()
     }
 
-    /// The collapsed tile's badge (DES-116): `RAW+JPG` for a pair, the number of photos for a
-    /// burst.
+    /// A collapsed burst's badge (DES-116): the number of photos.
     nonisolated var label: String {
-        switch id.kind {
-        case .pair:
-            (members.filter(isRaw) + members.filter { !isRaw($0) }).map(label(of:)).joined(separator: "+")
-        case .burst:
-            "\(photos.count)"
-        }
+        "\(photos.count)"
     }
 }
 

@@ -624,9 +624,7 @@ struct DetailColumn: View {
                 onVideoTrimmed: viewModel.finishTrim(id:),
                 showsOriginal: viewModel.loupeShowsOriginal,
                 canPlayLivePhoto: viewModel.canPlayLivePhoto,
-                onPlayLivePhoto: { viewModel.playLivePhoto() },
-                switchedPair: viewModel.loupePair,
-                onShowPairMember: { viewModel.showPairMember($0) }
+                onPlayLivePhoto: { viewModel.playLivePhoto() }
             )
         case .compare:
             CompareView(
@@ -695,7 +693,9 @@ struct InspectorColumn: View {
                 ),
                 search: viewModel.searchForLabel,
                 folded: viewModel.foldedInfoSections,
-                toggleFold: viewModel.toggleInfoSectionFold
+                toggleFold: viewModel.toggleInfoSectionFold,
+                pair: viewModel.pairSwitch,
+                showPairMember: { viewModel.showPairMember($0) }
             )
             .equatable()
         case .edit:
