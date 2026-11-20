@@ -296,6 +296,7 @@
 				Views/MediaGridMutationGate.swift,
 				Views/MediaGridPrefetch.swift,
 				Views/MediaGridPresentation.swift,
+				Views/MediaGridScrub.swift,
 				Views/MediaGridSelectionController.swift,
 				Views/MediaGridStructuralApply.swift,
 				Views/MediaGridStructure.swift,

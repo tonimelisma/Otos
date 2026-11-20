@@ -136,6 +136,12 @@ final class MediaGridViewController: NSViewController {
     /// frame cannot fall behind the tiles the way a pinned supplementary's does
     /// (`MediaGridDayBar.swift`).
     let dayBar = MediaGridDayBarView()
+    /// The grid's vertical scroller, which reports knob drags for the scrub label.
+    let gridScroller = MediaGridScroller()
+    /// DES-123: the date beside the knob while it is dragged.
+    let scrubLabel = MediaGridScrubLabelView()
+    /// How finely the scrub label names a date during a knob drag; nil when none is.
+    var scrubGranularity: MediaGridScrubPolicy.Granularity?
     /// What the collection view shows: sections, their days, and the identity at every
     /// index path. The controller is the collection view's data source and answers from
     /// this alone, and so does every other reader of sections or index paths (day bar,
@@ -676,6 +682,7 @@ extension MediaGridViewController {
             scrollView.horizontalScrollElasticity = .allowed
             scrollView.verticalScrollElasticity = .none
         } else {
+            scrollView.verticalScroller = gridScroller
             scrollView.hasVerticalScroller = true
             scrollView.hasHorizontalScroller = false
         }
@@ -693,6 +700,10 @@ extension MediaGridViewController {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(scrollView)
         container.addSubview(dayBar)
+        container.addSubview(scrubLabel)
+        gridScroller.onKnobTracking = { [weak self] tracking in
+            self?.knobTrackingChanged(tracking)
+        }
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),

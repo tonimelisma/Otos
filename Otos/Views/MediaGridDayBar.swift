@@ -44,12 +44,55 @@ extension MediaGridViewController {
             return
         }
         let viewportMinY = scrollView.documentVisibleRect.minY
+        let day = MediaGridDayBarPolicy.barDay(topEdge: dayBarTopEdge(), viewportMinY: viewportMinY)
         dayBar.render(
-            MediaGridDayBarPolicy.barPresentation(
-                topEdge: dayBarTopEdge(),
-                viewportMinY: viewportMinY
-            ),
+            day.map { .map(date: $0.date, itemCount: $0.itemCount) },
             showsHairline: MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: viewportMinY)
+        )
+        // The scroller starts below the bar, never under it: the bar is opaque and spans
+        // the grid's full width (DES-069, DES-123).
+        let scrollerTop = day == nil ? 0 : MediaGridDayHeaderView.height
+        if scrollView.scrollerInsets.top != scrollerTop {
+            scrollView.scrollerInsets.top = scrollerTop
+        }
+        updateScrubLabel(day: day)
+    }
+
+    /// A knob drag starts or ends (`MediaGridScroller`). The granularity is fixed for the
+    /// drag: the grid's span and the scroller's track do not change under it.
+    func knobTrackingChanged(_ tracking: Bool) {
+        if tracking {
+            let dates = (0 ..< structure.numberOfSections).lazy.compactMap { self.structure.day(inSection: $0)?.date }
+            let track = gridScroller.rect(for: .knobSlot).height
+            scrubGranularity = MediaGridScrubPolicy.granularity(
+                span: MediaGridScrubPolicy.span(of: dates),
+                trackHeight: track
+            )
+            OtosLog.ui.debugOperation("grid.scrub", phase: "start", fields: [
+                "granularity": "\(scrubGranularity!)",
+                "sections": "\(structure.numberOfSections)",
+                "track": "\(Int(track))",
+            ])
+        } else {
+            scrubGranularity = nil
+            OtosLog.ui.debugOperation("grid.scrub", phase: "end", fields: [:])
+        }
+        updateDayBar()
+    }
+
+    /// Beside the knob while it is dragged and the grid has days; hidden otherwise.
+    private func updateScrubLabel(day: MediaGridDayBarPolicy.Day?) {
+        guard let granularity = scrubGranularity, let day, let container = scrubLabel.superview else {
+            scrubLabel.hide()
+            return
+        }
+        let knob = container.convert(gridScroller.rect(for: .knob), from: gridScroller)
+        let scroller = container.convert(gridScroller.bounds, from: gridScroller)
+        scrubLabel.show(
+            MediaGridScrubPolicy.text(for: day.date, granularity: granularity),
+            trailingX: scroller.minX,
+            centerY: knob.midY,
+            within: container.bounds
         )
     }
 

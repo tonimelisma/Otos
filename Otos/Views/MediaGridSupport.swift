@@ -166,6 +166,14 @@ nonisolated enum MediaGridDayBarPolicy {
         now: Date = .now,
         calendar: Calendar = .current
     ) -> MediaGridDayLabelPresentation? {
+        barDay(topEdge: topEdge, viewportMinY: viewportMinY).map {
+            presentation(for: $0, now: now, calendar: calendar)
+        }
+    }
+
+    /// The day the bar names, by the rule `barPresentation` states; the scrub label
+    /// (DES-123) names the same day.
+    static func barDay(topEdge: TopEdge?, viewportMinY: CGFloat) -> Day? {
         guard let topEdge else {
             return nil
         }
@@ -173,9 +181,9 @@ nonisolated enum MediaGridDayBarPolicy {
            headerMinY > viewportMinY,
            let preceding = topEdge.precedingDay
         {
-            return presentation(for: preceding, now: now, calendar: calendar)
+            return preceding
         }
-        return presentation(for: topEdge.day, now: now, calendar: calendar)
+        return topEdge.day
     }
 
     private static func presentation(
