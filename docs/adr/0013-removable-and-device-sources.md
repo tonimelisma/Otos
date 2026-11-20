@@ -98,7 +98,14 @@ Adjacent decisions requiring separate ADRs or specs:
    source re-attaches, a source that is not attached and whose `last_seen_at` is more
    than 90 days old (`RemovableSourceRetention.unseenPeriod`) is forgotten through the
    same removal as Forget, likes on never-imported photos included (owner decision
-   2026-10-25). A source with no stamp is kept. A source still attached
+   2026-10-25). A source with no stamp is kept. Retention re-reads each root and takes its
+   namespace lease in one step, so a root a source attached to meanwhile, or that any owner
+   holds, is left. An attachment that takes over a root's row — a known identity, or a new
+   card at the mount point of an unavailable one — holds that root's lease
+   (`sourceAttachment`) through its writes; one that finds a removal or another attachment
+   holding the root waits for it and decides again, so a card mounted where a forgotten
+   card's root is being removed becomes a new source, never a row the removal deletes or a
+   root with no row. A source still attached
    when Otos quits keeps its arrival stamp, so retention can count from up to one
    session early. The period is a product rule, not a stand-in for a fact (ADR 0033):
    no report can say an absent device will never return. Transient camera identities are removed on detach because they have no

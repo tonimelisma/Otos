@@ -180,6 +180,9 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// How many passes ran to their end: what a test waits on.
     private(set) var passesFinished = 0
     private var changeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+    /// Runs in `start()` between its awaits, once the Store's changes are subscribed: where a
+    /// test parks one start for another to arrive (ADR 0032 rule 7).
+    private let startDidSubscribe: @Sendable () async -> Void
 
     init(
         store: CatalogStore,
@@ -195,8 +198,10 @@ actor PhotoSearchIndex: QuiescentOwner {
         compactionFloor: Int = PhotoSearchIndex.compactionFloor,
         availableBytes: @escaping SearchVectorFile.AvailableBytes = FreeSpaceFloor.availableBytes(onVolumeOf:),
         admission: LoadAdmission = LoadAdmission(isOpen: true),
-        room: BackgroundRoom = BackgroundRoom()
+        room: BackgroundRoom = BackgroundRoom(),
+        startDidSubscribe: @escaping @Sendable () async -> Void = {}
     ) {
+        self.startDidSubscribe = startDidSubscribe
         self.availableBytes = availableBytes
         self.admission = admission
         self.room = room
@@ -376,10 +381,14 @@ actor PhotoSearchIndex: QuiescentOwner {
         startPreparing()
         let (doorbell, ring) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let changes = await store.changeNotifications(deliveries: activity.deliveries)
+        await startDidSubscribe()
+        let inputs = await Self.inputs.facts(in: store, owner: "search.index")
+        // Read after the awaits: a concurrent `start()` may have won, and its subscription
+        // and loop are the index's; this one's stream ends as it goes out of scope.
+        guard loop == nil else { return }
         self.ring = ring
         ring.yield()
         activity.request()
-        let inputs = await Self.inputs.facts(in: store, owner: "search.index")
         forwarder = Task { [weak self] in
             for await change in changes {
                 guard let self else { break }

@@ -4,32 +4,37 @@ import GRDB
 import Testing
 
 /// An applied migration's outcome never changes (ADR 0002): a catalog upgraded through a
-/// migration holds the index text that migration wrote, a new catalog the text it writes
-/// now, and `INDEXED BY` matches a partial index by its text. These guard both halves: each
-/// migration still builds exactly the indexes it was frozen with, and every partial index a
-/// query names is implied by that query's own predicate in the schema the migrations build.
+/// migration holds the schema text that migration wrote — every index's, table's, trigger's
+/// and view's `CREATE` as `sqlite_master` stores it — and a new catalog the text it writes
+/// now. `INDEXED BY` matches a partial index by its text, and a trigger or a generated column
+/// runs as it was written. These guard both halves: each migration still builds exactly the
+/// schema objects it was frozen with, and every partial index a query names is implied by
+/// that query's own predicate in the schema the migrations build.
 @Suite(.testScope)
 struct CatalogMigrationFreezeTests {
-    /// Each migration's indexes as it built them when it was applied, by migration: an
-    /// index's stored `CREATE` text, or null for one it dropped. A new migration adds its
-    /// entry here; an applied migration's entry never changes.
-    private static let frozenURL = SourceTree.root.appending(path: "OtosTests/Fixtures/Catalog/migration-indexes.json")
+    /// Each migration's schema objects as it built them when it was applied, by migration and
+    /// kind: an object's stored `CREATE` text, or null for one it dropped. A new migration
+    /// adds its entry here; an applied migration's entry never changes.
+    private static let frozenURL = SourceTree.root.appending(path: "OtosTests/Fixtures/Catalog/migration-schema.json")
 
-    @Test func everyMigrationBuildsTheIndexesItWasFrozenWith() async throws {
-        let frozen = try Self.frozenIndexes()
-        let built = try await Self.indexesByMigration()
+    /// The kinds of schema object `sqlite_master` holds text for, as the fixture names them.
+    private static let kinds = ["index": "indexes", "table": "tables", "trigger": "triggers", "view": "views"]
+
+    @Test func everyMigrationBuildsTheSchemaItWasFrozenWith() async throws {
+        let frozen = try Self.frozenSteps()
+        let built = try await Self.schemaByMigration()
         #expect(built.map(\.migration) == frozen.map(\.migration), "a migration was added, removed or reordered")
-        let frozenByMigration = Dictionary(uniqueKeysWithValues: frozen.map { ($0.migration, $0.indexes) })
+        let frozenByMigration = Dictionary(uniqueKeysWithValues: frozen.map { ($0.migration, $0.objects) })
         for step in built {
             guard let expected = frozenByMigration[step.migration] else {
-                Issue.record("\(step.migration) has no frozen entry; add {\"migration\": \"\(step.migration)\", \"indexes\": \(Self.json(step.indexes))}")
+                Issue.record("\(step.migration) has no frozen entry; add \(Self.json(step))")
                 continue
             }
-            for name in Set(expected.keys).union(step.indexes.keys).sorted() where expected[name] != step.indexes[name] {
+            for key in Set(expected.keys).union(step.objects.keys).sorted() where expected[key] != step.objects[key] {
                 Issue.record("""
-                \(step.migration) changed what it builds for \(name): an applied migration's outcome never changes.
-                frozen: \(String(describing: expected[name] ?? nil))
-                built:  \(String(describing: step.indexes[name] ?? nil))
+                \(step.migration) changed what it builds for \(key.kind) \(key.name): an applied migration's outcome never changes.
+                frozen: \(String(describing: expected[key] ?? nil))
+                built:  \(String(describing: step.objects[key] ?? nil))
                 """)
             }
         }
@@ -75,9 +80,19 @@ struct CatalogMigrationFreezeTests {
 
     // MARK: - Support
 
+    private struct ObjectKey: Hashable, Comparable {
+        /// The fixture's name for the kind: `indexes`, `tables`, `triggers` or `views`.
+        let kind: String
+        let name: String
+
+        static func < (lhs: ObjectKey, rhs: ObjectKey) -> Bool {
+            (lhs.kind, lhs.name) < (rhs.kind, rhs.name)
+        }
+    }
+
     private struct Step {
         let migration: String
-        let indexes: [String: String?]
+        let objects: [ObjectKey: String?]
     }
 
     private static func migratedQueue() async throws -> DatabaseQueue {
@@ -87,46 +102,58 @@ struct CatalogMigrationFreezeTests {
     }
 
     /// Runs the migrations one at a time on an empty catalog and records what each changed.
-    private static func indexesByMigration() async throws -> [Step] {
+    /// GRDB's own bookkeeping table is not the catalog's schema.
+    private static func schemaByMigration() async throws -> [Step] {
         let dbQueue = try makeTestDatabaseQueue(path: makeTestDirectory().appending(path: "catalog.sqlite").path(percentEncoded: false))
         let migrator = CatalogStore.migrator
-        var previous: [String: String] = [:]
+        var previous: [ObjectKey: String] = [:]
         var steps: [Step] = []
         for identifier in migrator.migrations {
             try migrator.migrate(dbQueue, upTo: identifier)
             let now = try await dbQueue.read { db in
                 try Dictionary(uniqueKeysWithValues: Row.fetchAll(
-                    db, sql: "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
-                ).map { ($0["name"] as String, $0["sql"] as String) })
+                    db, sql: "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name <> 'grdb_migrations'"
+                ).compactMap { row -> (ObjectKey, String)? in
+                    guard let kind = kinds[row["type"] as String] else { return nil }
+                    return (ObjectKey(kind: kind, name: row["name"]), row["sql"] as String)
+                })
             }
-            var changed: [String: String?] = [:]
-            for (name, sql) in now where previous[name] != sql {
-                changed[name] = sql
+            var changed: [ObjectKey: String?] = [:]
+            for (key, sql) in now where previous[key] != sql {
+                changed[key] = sql
             }
-            for name in previous.keys where now[name] == nil {
-                changed[name] = .some(nil)
+            for key in previous.keys where now[key] == nil {
+                changed[key] = .some(nil)
             }
-            steps.append(Step(migration: identifier, indexes: changed))
+            steps.append(Step(migration: identifier, objects: changed))
             previous = now
         }
         return steps
     }
 
-    private static func frozenIndexes() throws -> [Step] {
+    private static func frozenSteps() throws -> [Step] {
         let entries = try #require(
             JSONSerialization.jsonObject(with: Data(contentsOf: frozenURL)) as? [[String: Any]]
         )
         return try entries.map { entry in
-            let indexes = try #require(entry["indexes"] as? [String: Any])
-            return try Step(
-                migration: #require(entry["migration"] as? String),
-                indexes: indexes.mapValues { $0 as? String }
-            )
+            var objects: [ObjectKey: String?] = [:]
+            for kind in kinds.values {
+                for (name, sql) in entry[kind] as? [String: Any] ?? [:] {
+                    objects[ObjectKey(kind: kind, name: name)] = .some(sql as? String)
+                }
+            }
+            return try Step(migration: #require(entry["migration"] as? String), objects: objects)
         }
     }
 
-    private static func json(_ indexes: [String: String?]) -> String {
-        let object = indexes.mapValues { $0.map { $0 as Any } ?? NSNull() }
+    /// A step as its fixture entry: the migration, and a map for each kind it changed.
+    private static func json(_ step: Step) -> String {
+        var object: [String: Any] = ["migration": step.migration]
+        for (key, sql) in step.objects {
+            var kind = object[key.kind] as? [String: Any] ?? [:]
+            kind[key.name] = sql.map { $0 as Any } ?? NSNull()
+            object[key.kind] = kind
+        }
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }

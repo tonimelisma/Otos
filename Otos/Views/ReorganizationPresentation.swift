@@ -64,6 +64,8 @@ nonisolated enum ReorganizationOutcomePresentation {
                 "This library is already being reorganized."
             case .libraryRemoval:
                 "This library is being removed from Otos."
+            case .sourceAttachment:
+                "This library is still connecting. Try again in a moment."
             }
         case .libraryUnavailable:
             "This library is no longer in Otos."

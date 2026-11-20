@@ -98,6 +98,9 @@ nonisolated enum RootNamespaceMutationOwner: String, Equatable, Sendable {
     case reorganization
     case mediaTrash
     case libraryRemoval
+    /// A card, camera or phone taking over its root's row as it attaches: a few writes, which
+    /// a removal waits out rather than deferring behind (`CatalogStore.attachRemovableRoot`).
+    case sourceAttachment
 }
 
 /// The outcome of asking for a root's namespace lease.
@@ -135,6 +138,18 @@ nonisolated struct RootNamespaceMutationLease: Equatable, Sendable {
     let generation: UInt64
     let owner: RootNamespaceMutationOwner
     var markedDirtyByExternalEvents: Bool
+}
+
+/// A step of a root's namespace mutation at which the Store suspends, named for the test
+/// that parks one mutation there while a competing one arrives (ADR 0032 rule 7).
+nonisolated enum NamespaceMutationPoint: Equatable, Sendable {
+    /// A removal has read the root's rows and is about to delete it.
+    case removalWillDelete(LibraryRootPath)
+    /// An attachment is about to write the source's facts onto the root row it takes over.
+    case attachmentWillWrite(LibraryRootPath)
+    /// An attachment found the root's namespace held by a removal or another attachment, and
+    /// waits for it to be released.
+    case attachmentWaits(LibraryRootPath)
 }
 
 nonisolated enum ReorganizationRecoveryObservation: Equatable, Sendable {

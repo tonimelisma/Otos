@@ -142,6 +142,8 @@ enum LibraryRemovalNoticePresentation {
             "It will be removed from Otos when its reorganization finishes."
         case .libraryRemoval:
             "It is already being removed from Otos."
+        case .sourceAttachment:
+            "It will be removed from Otos when it finishes connecting."
         }
     }
 }

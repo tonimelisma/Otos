@@ -12,10 +12,14 @@ import MapKit
 ///
 /// Only an answer is stored (ADR 0032 rule 4). The namer returns names, or no names when
 /// Maps's answer means there are none (`placemarkNotFound`, an empty result); it throws for
-/// everything else. A thrown naming stores nothing and is logged; the reader waits
-/// (`time: backoff`, doubling up to `maximumBackoff`) and goes on to the next cell, and a pass
-/// that left a cell unnamed is followed by another, so the cell is asked again. Nothing it
-/// already stored is touched by a failure.
+/// everything else. A thrown naming stores nothing and is logged, and ends the pass: the
+/// reader arms its backoff (`time: backoff`, doubling up to `maximumBackoff`, back to
+/// `firstBackoff` after a cell is named) and names it as its wake (`OwnerWake`), so while Maps
+/// is out it is quiet until then rather than a pass that runs as long as Maps does (ADR 0032
+/// rule 8). Until the wake rings a pass asks Maps nothing and leaves what it owes owed. The
+/// wake goes on with the walk after the cell that failed (`PausedWalk`), and a walk that left
+/// a cell unnamed starts over at its end, so a cell Maps keeps failing on is asked again
+/// without holding back the cells after it. Nothing it already stored is touched by a failure.
 ///
 /// One loop, woken by a doorbell (ADR 0032 rule 3) that a Store change of a kind its read
 /// reads (`inputs`; its own name writes do not) and a change of the user's locale ring; each
@@ -84,7 +88,20 @@ actor PlaceNameReader: QuiescentOwner {
     private var loop: Task<Void, Never>?
     private var forwarder: Task<Void, Never>?
     private var doorbell: AsyncStream<Void>.Continuation?
+    /// The armed backoff after a failed naming: it rings the doorbell when it ends.
+    private var backoff: Task<Void, Never>?
+    /// The wait the next failed naming arms.
+    private var nextBackoff = PlaceNameReader.firstBackoff
+    /// The walk of every cell a failed naming stopped, which the next drain goes on with.
+    private var pausedWalk: PausedWalk?
     let activity = OwnerActivity(owner: "placeNames")
+
+    /// Where a walk of every cell stopped: in which language, and the cell it failed to name,
+    /// which it goes on after and asks again when it starts over at its end.
+    private struct PausedWalk {
+        let language: PlaceNameLanguage
+        let after: PlaceCell
+    }
 
     init(
         store: CatalogStore,
@@ -207,20 +224,53 @@ actor PlaceNameReader: QuiescentOwner {
     func shutdown() {
         forwarder?.cancel()
         loop?.cancel()
+        backoff?.cancel()
         forwarder = nil
         loop = nil
+        backoff = nil
+        activity.wake = nil
         doorbell = nil
+    }
+
+    /// Arms the backoff after a failed naming and names it as the reader's wake; when it ends
+    /// it asks for the drain that goes on. One at a time: each waits twice the last, up to
+    /// `maximumBackoff`.
+    private func armBackoff() {
+        guard backoff == nil else { return }
+        let delay = nextBackoff
+        nextBackoff = min(nextBackoff * 2, Self.maximumBackoff)
+        activity.wake = OwnerWake(kind: .backoff, at: ContinuousClock.now.advanced(by: delay))
+        backoff = Task { [weak self, sleep] in
+            do {
+                // time: backoff — Maps failed to name a cell (throttled, unreachable, or an
+                // error it does not explain); nothing reports when it would answer
+                try await sleep(delay)
+            } catch {
+                return
+            }
+            await self?.backoffEnded()
+        }
+    }
+
+    private func backoffEnded() {
+        backoff = nil
+        activity.wake = nil
+        request()
     }
 
     /// Names what is owed: every unnamed cell, a page at a time in cell order, until a pass
     /// names them all; or, when only named rows changed, the unnamed cells of those rows. A
     /// read or write that fails leaves what it owed owed, and is logged. Returns whether the
     /// drain named what it owed without a failed read or write.
+    ///
+    /// While the backoff is armed it asks Maps nothing and leaves what it owes owed: the wake
+    /// asks for the drain that names it, and the reader is quiet until then.
     @discardableResult
     func drain() async -> Bool {
+        guard backoff == nil else { return true }
         let locale = locale()
         let language = PlaceNameLanguage(locale)
-        let full = owesFullDrain || keptLanguage != language
+        let full = owesFullDrain || keptLanguage != language || pausedWalk != nil
         let rows = owedRows
         owesFullDrain = false
         owedRows = []
@@ -247,9 +297,10 @@ actor PlaceNameReader: QuiescentOwner {
             }
         }
         var named = 0
-        var backoff = Self.firstBackoff
-        var after: PlaceCell?
-        var passLeftCells = false
+        let paused = pausedWalk?.language == language ? pausedWalk : nil
+        pausedWalk = nil
+        var after = paused?.after
+        var passLeftCells = paused != nil
         while !Task.isCancelled {
             let page: [PlaceCell]
             do {
@@ -262,23 +313,23 @@ actor PlaceNameReader: QuiescentOwner {
             activity.read(rows: page.count)
             guard let last = page.last else {
                 guard passLeftCells else { break }
-                // Another pass for the cells this one could not name; each failure has
-                // already waited its backoff.
+                // Another walk for the cells this one could not name; each failure has
+                // already been waited out.
                 after = nil
                 passLeftCells = false
                 continue
             }
-            let naming = await name(page, locale: locale, backoff: &backoff)
-            passLeftCells = passLeftCells || naming.leftCells
+            let naming = await name(page, locale: locale)
             guard await apply(naming.names, language: language) else {
                 owesFullDrain = true
                 return false
             }
             named += naming.names.count
-            guard !naming.cancelled else {
-                // A drain stopped mid-walk leaves cells unnamed: the next drain walks them all.
-                owesFullDrain = true
-                return false
+            if let failed = naming.failed {
+                // The wake goes on after the cell that failed; the walk starts over at its end.
+                pausedWalk = PausedWalk(language: language, after: failed)
+                armBackoff()
+                break
             }
             after = last
         }
@@ -304,12 +355,16 @@ actor PlaceNameReader: QuiescentOwner {
         guard !cells.isEmpty else {
             return true
         }
-        var backoff = Self.firstBackoff
-        let naming = await name(cells, locale: locale, backoff: &backoff)
-        guard await apply(naming.names, language: language), !naming.leftCells else {
+        let naming = await name(cells, locale: locale)
+        guard await apply(naming.names, language: language) else {
             owesFullDrain = true
-            guard !naming.cancelled else { return false }
-            return await drainEveryCell(language: language, locale: locale)
+            return false
+        }
+        guard naming.failed == nil else {
+            // A cell Maps could not name leaves a whole walk owed, which the wake runs.
+            owesFullDrain = true
+            armBackoff()
+            return true
         }
         OtosLog.metadata.noticeOperation("place.names", phase: "named", fields: [
             "cells": "\(naming.names.count)", "rows": "\(rows.count)",
@@ -317,37 +372,25 @@ actor PlaceNameReader: QuiescentOwner {
         return true
     }
 
-    /// Asks Maps to name each cell, waiting out a doubling backoff after each failure.
-    private func name(
-        _ cells: [PlaceCell],
-        locale: Locale,
-        backoff: inout Duration
-    ) async -> (names: [PlaceCell: PlaceNames], leftCells: Bool, cancelled: Bool) {
+    /// Asks Maps to name each cell in order, until one fails: the names it gave, and the cell
+    /// that failed, if one did. A cell named resets the backoff.
+    private func name(_ cells: [PlaceCell], locale: Locale) async -> (names: [PlaceCell: PlaceNames], failed: PlaceCell?) {
         var names: [PlaceCell: PlaceNames] = [:]
-        var leftCells = false
         for cell in cells {
             do {
                 names[cell] = try await namer.name(cell.center, locale)
-                backoff = Self.firstBackoff
+                nextBackoff = Self.firstBackoff
             } catch {
                 let nsError = error as NSError
                 OtosLog.metadata.noticeOperation("place.names", phase: "backoff", fields: [
-                    "seconds": "\(backoff.components.seconds)",
+                    "seconds": "\(nextBackoff.components.seconds)",
                     "domain": nsError.domain, "code": "\(nsError.code)",
                     "error": String(describing: error),
                 ])
-                leftCells = true
-                do {
-                    // time: backoff — Maps failed to name a cell (throttled, unreachable, or
-                    // an error it does not explain); the next naming waits
-                    try await sleep(backoff)
-                } catch {
-                    return (names, leftCells, true)
-                }
-                backoff = min(backoff * 2, Self.maximumBackoff)
+                return (names, cell)
             }
         }
-        return (names, leftCells, false)
+        return (names, nil)
     }
 
     /// Stores `names`; false, logged, when the write failed.

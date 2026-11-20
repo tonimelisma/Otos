@@ -842,6 +842,9 @@ actor CatalogStore {
     /// displayed timestamps). Injected so retention is testable without waiting 90 days.
     private let wallClock: @Sendable () -> Date
     private let initialLoadDidRead: (@Sendable () async -> Void)?
+    /// Runs where a root's namespace mutation reaches each `NamespaceMutationPoint`: where a
+    /// test parks it for a competing one to arrive (ADR 0032 rule 7). Nil in the app.
+    private let namespaceMutationReached: (@Sendable (NamespaceMutationPoint) async -> Void)?
     private let importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)?
     private var dbWriter: CatalogWriter?
     /// What the open is doing, for the window while it waits (DES-121): one consumer, the
@@ -978,9 +981,14 @@ actor CatalogStore {
     private var integrityScanTask: Task<Void, Never>?
     private var knownMaterializationSuppression = KnownMaterializationSuppressionState()
     /// Typed namespace-mutation lease per root. Import publication, library
-    /// reorganization, and system Trash share this one exclusion boundary;
-    /// deferred dirty-only reconciliation runs when the owner releases it.
+    /// reorganization, system Trash, a removal and a removable source's attachment share
+    /// this one exclusion boundary; deferred dirty-only reconciliation runs when the owner
+    /// releases it.
     private var namespaceMutationLeases: [LibraryRootPath: RootNamespaceMutationLease] = [:]
+    /// Mutations waiting for a root's lease to be released (`untilNamespaceMutationLeaseReleased`):
+    /// an attachment behind a removal or another attachment, a removal behind an attachment.
+    /// Each is resumed in the step that drops the lease, and re-reads the catalog then.
+    private var namespaceLeaseReleaseWaiters: [LibraryRootPath: [CheckedContinuation<Void, Never>]] = [:]
     private var nextNamespaceMutationLeaseGeneration: UInt64 = 0
     /// Roots whose reorganization lease the journal holds: installed at load for every
     /// root with a journaled component, so nothing touches a half-moved library before
@@ -1009,6 +1017,7 @@ actor CatalogStore {
         scanCadence: Duration = .seconds(1),
         wallClock: @escaping @Sendable () -> Date = { Date() },
         initialLoadDidRead: (@Sendable () async -> Void)? = nil,
+        namespaceMutationReached: (@Sendable (NamespaceMutationPoint) async -> Void)? = nil,
         importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil,
         walByteBudget: Int64 = CatalogStore.defaultWALByteBudget,
         stagingContainers: StagingContainers? = nil,
@@ -1025,6 +1034,7 @@ actor CatalogStore {
         self.scanCadence = scanCadence
         self.wallClock = wallClock
         self.initialLoadDidRead = initialLoadDidRead
+        self.namespaceMutationReached = namespaceMutationReached
         self.importJournalFailure = importJournalFailure
     }
 
@@ -1054,7 +1064,10 @@ actor CatalogStore {
 extension CatalogStore {
     /// Counts the changes the Store has yielded to one subscriber, recorded in the same
     /// step as each yield. A subscriber that counts what it has handled can compare the
-    /// two and know it has acted on every change, which the stream alone cannot say.
+    /// two and know it has acted on every change, which the stream alone cannot say. Only a
+    /// change its stream enqueued is counted: a stream its subscriber dropped (a `start()`
+    /// that lost to a concurrent one) ends at once, before the Store forgets it, and what it
+    /// is yielded meanwhile reaches no one.
     final nonisolated class DeliveryCount: Sendable {
         private let count = Mutex<UInt64>(0)
 
@@ -5701,6 +5714,11 @@ extension CatalogStore {
     /// outcome says which, and names the holder the removal waits for.
     func removeLibrary(path: LibraryRootPath) async throws -> LibraryRemovalOutcome {
         try await ensureStartedForMutation()
+        // An attachment holds a root for a few writes, never for work the user waits on: the
+        // removal waits for it and then removes what the root has become.
+        while namespaceMutationLeases[path]?.owner == .sourceAttachment {
+            await untilNamespaceMutationLeaseReleased(at: path)
+        }
         guard let rootState = roots[path] else {
             return .notInCatalog
         }
@@ -5747,6 +5765,7 @@ extension CatalogStore {
                 try Self.fetchExistingAssetRows(libraryRootID: rootRowID, db: db)
             }.flatMap(\.derivedImagePaths)
             let derivedFolder = derivedFolder
+            await namespaceMutationReached?(.removalWillDelete(path))
             removal = try await dbQueue.write { db in
                 try Self.deleteLibraryRoot(rootRowID: rootRowID, db: db)
                 return try derivedFolder?.unname(purgedThumbnails, db: db) ?? .nothing
@@ -5760,7 +5779,7 @@ extension CatalogStore {
             throw error
         }
 
-        namespaceMutationLeases.removeValue(forKey: path)
+        dropNamespaceMutationLease(at: path)
         removeRoot(path: path)
         removal.perform()
         deleteStagingIfNeeded(root)
@@ -5801,7 +5820,7 @@ extension CatalogStore {
         {
             guard let rootState = roots[path], ownsNamespaceMutationLease(lease) else {
                 if namespaceMutationLeases[path]?.generation == lease.generation {
-                    namespaceMutationLeases.removeValue(forKey: path)
+                    dropNamespaceMutationLease(at: path)
                 }
                 continue
             }
@@ -5822,7 +5841,7 @@ extension CatalogStore {
     private func restoreAfterFailedRemoval(_ lease: RootNamespaceMutationLease) {
         let path = lease.libraryRootPath
         guard namespaceMutationLeases[path]?.generation == lease.generation else { return }
-        namespaceMutationLeases.removeValue(forKey: path)
+        dropNamespaceMutationLease(at: path)
         filesystemWatchingArmed.insert(path)
         watchRoot(path)
         enqueueScans([path], reason: .requested)
@@ -5926,51 +5945,111 @@ extension CatalogStore {
         }
     }
 
+    /// Attaches a card, a camera or a phone. A source Otos knows by its identity, or a new one
+    /// mounted where an unavailable source's root still is (a card swapped at the same
+    /// `/Volumes/…`), takes over that root's row: a mutation of the root's namespace, so it
+    /// holds the root's lease (`sourceAttachment`) from its decision through its writes. While a
+    /// removal or another attachment holds that root, it waits for it to be released and
+    /// decides again: after a removal, the source is a new root. When another owner (an
+    /// import, a Trash move, an erase) holds the root, it attaches without the lease, and each
+    /// write re-checks that the root is still the row it read; a root removed meanwhile is
+    /// decided again. Releasing the lease and making the source available are one step, so
+    /// retention, which leaves a root under a lease, never meets it half attached.
     private func attachRemovableRoot(_ attachment: RemovableRootAttachment) async throws {
         let lastSeenAt = wallClock()
         let dbQueue = try database()
-        if let existingRoot = rootForDeviceIdentity(attachment.identity),
-           let rootRowID = roots[existingRoot.path]?.rowID
-        {
-            try await updateExistingRemovableRoot(
-                attachment,
-                existingRoot: existingRoot,
-                rootRowID: rootRowID,
-                lastSeenAt: lastSeenAt,
-                dbWriter: dbQueue
-            )
-        } else if let existingState = roots[attachment.path] {
-            // Same mount point reused with different identity after detach (e.g. card swap at same /Volumes/Card).
-            // The old entry is still present as unavailable; reuse its row and update identity.
-            try validateNoOverlap(attachment.path, ignoring: existingState.rowID)
-            try await dbQueue.write { db in
-                try db.execute(
-                    sql: """
-                    UPDATE library_root
-                    SET device_identity = ?, display_name = ?, last_seen_at = ?,
-                        case_sensitive_names = ?, device_model = ?
-                    WHERE id = ?
-                    """,
-                    arguments: [
-                        attachment.identity,
-                        attachment.displayName,
-                        lastSeenAt.timeIntervalSince1970,
-                        attachment.capabilities.storedCaseSensitiveColumn,
-                        attachment.deviceModel,
-                        existingState.rowID,
-                    ]
-                )
+        var lease: RootNamespaceMutationLease?
+        defer {
+            // Reached only on a throw: the attachment releases its lease before it finishes.
+            if let lease {
+                releaseNamespaceMutationLease(lease)
             }
-            moveRootRuntimeState(
-                oldPath: existingState.root.path,
-                newRoot: attachment.root(lastSeenAt: lastSeenAt),
-                rootRowID: existingState.rowID
-            )
-        } else {
-            try await insertRemovableRoot(attachment, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
+        }
+        while true {
+            let identified = rootForDeviceIdentity(attachment.identity).flatMap { roots[$0.path] }
+            guard let existing = identified ?? roots[attachment.path] else {
+                try await insertRemovableRoot(attachment, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
+                break
+            }
+            if let holder = namespaceMutationLeases[existing.path],
+               holder.owner == .libraryRemoval || holder.owner == .sourceAttachment
+            {
+                OtosLog.catalog.noticeOperation("catalog.removable.attach", phase: "waits", fields: [
+                    "rootPath": existing.path.rawValue, "heldBy": holder.owner.rawValue,
+                ])
+                await namespaceMutationReached?(.attachmentWaits(existing.path))
+                await untilNamespaceMutationLeaseReleased(at: existing.path)
+                continue
+            }
+            if namespaceMutationLeases[existing.path] == nil {
+                lease = installNamespaceMutationLease(for: existing.path, owner: .sourceAttachment)
+            }
+            let tookOver = if identified != nil {
+                try await updateExistingRemovableRoot(attachment, existing: existing, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
+            } else {
+                try await reuseRemovableRoot(existing, for: attachment, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
+            }
+            if tookOver {
+                break
+            }
+            // The root was removed while this attachment wrote: decide again.
+            if let held = lease {
+                releaseNamespaceMutationLease(held)
+                lease = nil
+            }
         }
         await markRetainedRowsAwaitingPresence(attachment, dbWriter: dbQueue)
+        if let held = lease {
+            lease = nil
+            releaseNamespaceMutationLease(held)
+        }
         await finishRemovableRootAttachment(attachment)
+    }
+
+    /// Whether `rowID` is still the root at `path`: what an attachment re-reads after each of
+    /// its writes before it applies one.
+    private func rootStill(_ rowID: Int64, at path: LibraryRootPath) -> Bool {
+        roots[path]?.rowID == rowID
+    }
+
+    /// A source of a different identity mounted where an unavailable source's root still is:
+    /// it takes over that row. False when the row was gone by the time the write ran.
+    private func reuseRemovableRoot(
+        _ existing: RootRuntimeState,
+        for attachment: RemovableRootAttachment,
+        lastSeenAt: Date,
+        dbWriter: CatalogWriter
+    ) async throws -> Bool {
+        try validateNoOverlap(attachment.path, ignoring: existing.rowID)
+        await namespaceMutationReached?(.attachmentWillWrite(attachment.path))
+        let updated = try await dbWriter.write { db in
+            try db.execute(
+                sql: """
+                UPDATE library_root
+                SET device_identity = ?, display_name = ?, last_seen_at = ?,
+                    case_sensitive_names = ?, device_model = ?
+                WHERE id = ?
+                """,
+                arguments: [
+                    attachment.identity,
+                    attachment.displayName,
+                    lastSeenAt.timeIntervalSince1970,
+                    attachment.capabilities.storedCaseSensitiveColumn,
+                    attachment.deviceModel,
+                    existing.rowID,
+                ]
+            )
+            return db.changesCount > 0
+        }
+        guard updated, rootStill(existing.rowID, at: existing.path) else {
+            return false
+        }
+        moveRootRuntimeState(
+            oldPath: existing.path,
+            newRoot: attachment.root(lastSeenAt: lastSeenAt),
+            rootRowID: existing.rowID
+        )
+        return true
     }
 
     /// What the source held when it was last read is not what it holds now: a card may
@@ -6005,23 +6084,27 @@ extension CatalogStore {
         ])
     }
 
+    /// A source Otos knows by its identity, at its root's path or a new one. False when the
+    /// root was removed by the time a write ran.
     private func updateExistingRemovableRoot(
         _ attachment: RemovableRootAttachment,
-        existingRoot: LibraryRoot,
-        rootRowID: Int64,
+        existing: RootRuntimeState,
         lastSeenAt: Date,
         dbWriter: CatalogWriter
-    ) async throws {
+    ) async throws -> Bool {
+        let rootRowID = existing.rowID
+        let oldPath = existing.path
         try validateNoOverlap(attachment.path, ignoring: rootRowID)
-        if existingRoot.path != attachment.path {
+        if oldPath != attachment.path {
             let derivedFolder = derivedFolder
             try await dbWriter.write { db in
                 let migrations = try Self.updateLibraryRootPath(rootRowID: rootRowID, path: attachment.path, db: db)
                 try derivedFolder?.journalRenames(migrations.map { ($0.oldRelativeName, $0.newRelativeName) }, db: db)
             }
             try await applyPendingDerivedRenames(lane: backgroundReads.lane)
+            guard rootStill(rootRowID, at: oldPath) else { return false }
         }
-        try await dbWriter.write { db in
+        let updated = try await dbWriter.write { db in
             try Self.updateLibraryRootSourceFacts(
                 rootRowID: rootRowID,
                 path: attachment.path,
@@ -6031,12 +6114,17 @@ extension CatalogStore {
                 deviceModel: attachment.deviceModel,
                 db: db
             )
+            return db.changesCount > 0
+        }
+        guard updated, rootStill(rootRowID, at: oldPath) else {
+            return false
         }
         moveRootRuntimeState(
-            oldPath: existingRoot.path,
+            oldPath: oldPath,
             newRoot: attachment.root(lastSeenAt: lastSeenAt),
             rootRowID: rootRowID
         )
+        return true
     }
 
     private func insertRemovableRoot(
@@ -6352,25 +6440,34 @@ extension CatalogStore {
     /// ADR 0013). It runs at launch, before any source re-attaches, so a source
     /// present now is judged by its stamp from an earlier session. A source with no
     /// last-seen stamp is kept: nothing says how long it has been away. Each removal
-    /// re-reads the catalog, so a source that attaches meanwhile is not removed.
+    /// re-reads its root and takes its lease in one step, so a root that a source attached
+    /// to meanwhile — available, stamped now, or a different row — or that any owner holds,
+    /// an attachment among them, is left; a source that attaches while the removal runs waits
+    /// for it and attaches as a new source.
     func forgetRemovableSourcesUnseenForRetentionPeriod() async {
         let cutoff = wallClock().addingTimeInterval(-RemovableSourceRetention.unseenPeriod)
-        let expired = roots.values.filter { state in
+        func isExpired(_ state: RootRuntimeState) -> Bool {
             state.root.kind.isRemovable
                 && state.availability != .available
                 && (state.root.lastSeenAt.map { $0 < cutoff } ?? false)
-        }.map(\.root)
-        for root in expired.sorted(by: { $0.path.rawValue < $1.path.rawValue }) {
-            guard roots[root.path]?.availability != .available else {
+        }
+        let expired = roots.values.filter(isExpired).map { ($0.root, $0.rowID) }
+        for (root, rowID) in expired.sorted(by: { $0.0.path.rawValue < $1.0.path.rawValue }) {
+            guard let state = roots[root.path], state.rowID == rowID, isExpired(state) else {
+                continue
+            }
+            if let holder = namespaceMutationLeases[root.path] {
+                OtosLog.catalog.noticeOperation("catalog.removable.retention", phase: "left", fields: [
+                    "rootPath": root.path.rawValue, "heldBy": holder.owner.rawValue,
+                ])
                 continue
             }
             do {
-                let outcome = try await removeLibrary(path: root.path)
+                try await removeLibrary(state, holding: installNamespaceMutationLease(for: root.path, owner: .libraryRemoval))
                 OtosLog.catalog.noticeOperation("catalog.removable.retention", phase: "forgotten", fields: [
                     "rootPath": root.path.rawValue,
                     "kind": root.kind.rawValue,
                     "lastSeenAt": root.lastSeenAt.map { "\(Int64($0.timeIntervalSince1970))" } ?? "none",
-                    "outcome": String(describing: outcome),
                 ])
             } catch {
                 OtosLog.catalog.errorOperation("catalog.removable.retention", phase: "failed", fields: [
@@ -7216,6 +7313,10 @@ extension CatalogStore {
             namespaceMutationLeases.removeValue(forKey: path)
         }
         handedOffLibraryRemovals.removeAll()
+        // A mutation waiting for a lease goes on and finds the Store shut down.
+        let waiting = namespaceLeaseReleaseWaiters.values.flatMap(\.self)
+        namespaceLeaseReleaseWaiters.removeAll()
+        waiting.forEach { $0.resume() }
         for task in scanTasks.values {
             task.cancel()
         }
@@ -8649,8 +8750,9 @@ private extension CatalogStore {
         }
         changeTally.record(change)
         for (id, continuation) in changeContinuations {
-            continuation.yield(change)
-            changeDeliveries[id]?.recordDelivery()
+            if case .enqueued = continuation.yield(change) {
+                changeDeliveries[id]?.recordDelivery()
+            }
         }
     }
 
@@ -8675,8 +8777,9 @@ private extension CatalogStore {
             ]
         )
         for (id, continuation) in planningChangeContinuations {
-            continuation.yield(change)
-            planningChangeDeliveries[id]?.recordDelivery()
+            if case .enqueued = continuation.yield(change) {
+                planningChangeDeliveries[id]?.recordDelivery()
+            }
         }
     }
 
@@ -10127,6 +10230,20 @@ extension CatalogStore {
         return lease
     }
 
+    /// Drops a root's lease and resumes every mutation waiting for it.
+    private func dropNamespaceMutationLease(at rootPath: LibraryRootPath) {
+        namespaceMutationLeases.removeValue(forKey: rootPath)
+        namespaceLeaseReleaseWaiters.removeValue(forKey: rootPath)?.forEach { $0.resume() }
+    }
+
+    /// Returns once no lease holds `rootPath`: at once when none does, else in the step that
+    /// drops it. The caller reads the catalog again after: another lease may be installed in
+    /// that same step (a removal handed off at a release).
+    private func untilNamespaceMutationLeaseReleased(at rootPath: LibraryRootPath) async {
+        guard namespaceMutationLeases[rootPath] != nil else { return }
+        await withCheckedContinuation { namespaceLeaseReleaseWaiters[rootPath, default: []].append($0) }
+    }
+
     func ownsNamespaceMutationLease(_ lease: RootNamespaceMutationLease) -> Bool {
         guard roots[lease.libraryRootPath] != nil,
               let current = namespaceMutationLeases[lease.libraryRootPath]
@@ -10234,7 +10351,7 @@ extension CatalogStore {
             return false
         }
         let dirty = current.markedDirtyByExternalEvents
-        namespaceMutationLeases.removeValue(forKey: lease.libraryRootPath)
+        dropNamespaceMutationLease(at: lease.libraryRootPath)
         OtosLog.catalog.notice(
             """
             op=namespaceMutation.lease phase=release rootPath=\(lease.libraryRootPath.rawValue, privacy: .public) \

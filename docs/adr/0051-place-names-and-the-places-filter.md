@@ -64,9 +64,13 @@ descriptor (APP-013, ADR 0011); the owner-state rules the reader follows (ADR 00
   there are none: `MKError.placemarkNotFound`, a result with no map item, or a coordinate
   the request refuses. Every other outcome — `loadingThrottled`, `serverFailure`, `unknown`,
   `decodingFailed`, a network error, a cancellation — is a failure: nothing is stored, it is
-  logged with its domain and code, the reader waits (`time: backoff`, 2 s doubling to 5 min)
-  and goes on to the next cell, and a pass that left cells unnamed is followed by another.
-  A failure never replaces a stored name.
+  logged with its domain and code, and the pass ends. The reader arms its backoff
+  (`time: backoff`, 2 s doubling to 5 min, back to 2 s once a cell is named) and names it as
+  its wake (ADR 0032 rule 8), so while Maps is out it is quiet until the backoff rather than a
+  pass that runs as long as Maps does; until then a pass asks Maps nothing and leaves what it
+  owes owed. The wake goes on with the walk after the cell that failed, and a walk that left
+  cells unnamed starts over at its end, so a failed cell is asked again without holding back
+  the cells after it. A failure never replaces a stored name.
 - **One owner, one loop.** `PlaceNameReader` (an actor) drains unnamed cells in pages,
   woken by the Store's change notifications (ADR 0032 rule 3).
 - **The filter.** `MediaFilter.places` is a `PlaceFilter`: countries and towns by their

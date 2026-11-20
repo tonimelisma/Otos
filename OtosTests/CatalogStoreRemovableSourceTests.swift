@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 @testable import OtosKit
 import Synchronization
 import Testing
@@ -467,6 +468,190 @@ struct CatalogStoreRemovableSourceTests {
         let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
         #expect(Set(watcherHarness.roots()) == Set([fixedPath, cardPath]))
+    }
+
+    /// ADR 0013: a card the launch forgets for being unseen 90 days, and a different card that
+    /// mounts at its mount point while the removal runs. The removal owns the old card's
+    /// root from its start; the new card waits for it and attaches as a source of its own, so
+    /// the catalog's rows and the Store's roots agree and the new card is kept.
+    @Test func aCardAttachingWhileRetentionForgetsTheOldOneAtItsMountIsKept() async throws {
+        let fixture = try await RetentionRaceFixture.make()
+        let points = NamespacePoints()
+        let store = fixture.launch(points)
+        let launch = Task { try await store.start(scansSavedLibraries: false) }
+        await points.waitFor { $0 == .point(.removalWillDelete(fixture.mountPath)) }
+
+        let attach = Task { try await fixture.attachNewCard(to: store) }
+        // The attachment has read the root at the mount: it writes, or waits for the removal.
+        await points.waitFor { $0 == .point(.attachmentWillWrite(fixture.mountPath)) || $0 == .point(.attachmentWaits(fixture.mountPath)) }
+        await points.openRemovals()
+        try await launch.value
+        await points.openAttachments()
+        try await attach.value
+
+        let sources = try await fixture.sources(in: store)
+        #expect(sources.roots == sources.rows, "the Store's roots and the catalog's rows name the same sources")
+        #expect(sources.rootAtMount == RetentionRaceFixture.newCard, "the new card is kept")
+        #expect(sources.rowAtMount == RetentionRaceFixture.newCard, "the new card's row is kept")
+    }
+
+    /// The same two at the other order: the new card's attachment holds the mount's root when
+    /// the launch's retention reaches it, so retention leaves it, and the new card is kept.
+    @Test func retentionLeavesTheRootACardIsAttachingTo() async throws {
+        let fixture = try await RetentionRaceFixture.make()
+        let points = NamespacePoints()
+        let store = fixture.launch(points)
+        let attach = Task { try await fixture.attachNewCard(to: store) }
+        await points.waitFor { $0 == .point(.attachmentWillWrite(fixture.mountPath)) }
+
+        let launch = Task {
+            do {
+                try await store.start(scansSavedLibraries: false)
+            } catch {
+                await points.launchEnded()
+                throw error
+            }
+            await points.launchEnded()
+        }
+        // Retention has run: it reached the removal, or it left the root and the launch ended.
+        await points.waitFor { $0 == .point(.removalWillDelete(fixture.mountPath)) || $0 == .launchEnded }
+        await points.openAttachments()
+        try await attach.value
+        await points.openRemovals()
+        try await launch.value
+
+        let sources = try await fixture.sources(in: store)
+        #expect(sources.roots == sources.rows, "the Store's roots and the catalog's rows name the same sources")
+        #expect(sources.rootAtMount == RetentionRaceFixture.newCard, "the new card is kept")
+        #expect(sources.rowAtMount == RetentionRaceFixture.newCard, "the new card's row is kept")
+    }
+}
+
+/// A catalog holding one card, unavailable and last seen 96 days before the launch the test
+/// makes, at a mount point a different card is about to take.
+private struct RetentionRaceFixture {
+    let database: URL
+    let mount: URL
+    let mountPath: LibraryRootPath
+    let launchedAt: Date
+    static let oldCard = DeviceIdentity.volume(uuid: "old-card")
+    static let newCard = DeviceIdentity.volume(uuid: "new-card")
+
+    static func make() async throws -> RetentionRaceFixture {
+        let temp = try makeTestDirectory()
+        let database = temp.appending(path: "catalog.sqlite")
+        let mount = temp.appending(path: "Untitled", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(mount.appending(path: "card.jpg"), contents: "jpeg")
+        let seenAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = makeTestStore(location: .databaseFile(database), wallClock: { seenAt })
+        try await first.start(scansSavedLibraries: false)
+        try await first.attachRemovableVolume(
+            mountURL: mount, identity: oldCard, displayName: "Old", isEjectable: true, capabilities: .unknown
+        )
+        _ = try await waitForCatalogStoreState(first) { !$0.isScanning }
+        try await first.detachRemovableSource(identity: oldCard, reason: .unmounted)
+        await first.shutdown()
+        return try RetentionRaceFixture(
+            database: database, mount: mount, mountPath: CatalogPath.normalizedDirectoryPath(for: mount),
+            launchedAt: seenAt.addingTimeInterval(96 * 24 * 60 * 60)
+        )
+    }
+
+    func launch(_ points: NamespacePoints) -> CatalogStore {
+        let launchedAt = launchedAt
+        return makeTestStore(
+            location: .databaseFile(database), wallClock: { launchedAt },
+            namespaceMutationReached: { await points.reach($0) }
+        )
+    }
+
+    func attachNewCard(to store: CatalogStore) async throws {
+        try await store.attachRemovableVolume(
+            mountURL: mount, identity: Self.newCard, displayName: "New", isEjectable: true, capabilities: .unknown
+        )
+    }
+
+    /// The sources the Store's roots and the catalog's `library_root` rows name, by path, and
+    /// the identity each holds at the mount.
+    struct Sources {
+        let roots: Set<String>
+        let rows: Set<String>
+        let rootAtMount: DeviceIdentity?
+        let rowAtMount: DeviceIdentity?
+    }
+
+    /// Reads `Sources`, then shuts the store down.
+    func sources(in store: CatalogStore) async throws -> Sources {
+        let roots = await store.currentLibraries()
+        let rows = try await makeTestDatabaseQueue(path: database.path(percentEncoded: false)).read { db in
+            try Row.fetchAll(db, sql: "SELECT path, device_identity FROM library_root").map {
+                ($0["path"] as String, $0["device_identity"] as DeviceIdentity?)
+            }
+        }
+        await store.shutdown()
+        return Sources(
+            roots: Set(roots.map(\.path.rawValue)), rows: Set(rows.map(\.0)),
+            rootAtMount: roots.first { $0.path == mountPath }?.root.deviceIdentity,
+            rowAtMount: rows.first { $0.0 == mountPath.rawValue }?.1
+        )
+    }
+}
+
+/// Where the Store's namespace mutations reached, and the launch's end, in order. A removal
+/// about to delete and an attachment about to write park there until the test opens their kind.
+private actor NamespacePoints {
+    enum Reached: Equatable, Sendable {
+        case point(NamespaceMutationPoint)
+        case launchEnded
+    }
+
+    private var reached: [Reached] = []
+    private var removalsOpen = false
+    private var attachmentsOpen = false
+    private var parkedRemovals: [CheckedContinuation<Void, Never>] = []
+    private var parkedAttachments: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [(matches: @Sendable (Reached) -> Bool, continuation: CheckedContinuation<Void, Never>)] = []
+
+    func reach(_ point: NamespaceMutationPoint) async {
+        record(.point(point))
+        switch point {
+        case .removalWillDelete where !removalsOpen:
+            await withCheckedContinuation { parkedRemovals.append($0) }
+        case .attachmentWillWrite where !attachmentsOpen:
+            await withCheckedContinuation { parkedAttachments.append($0) }
+        default:
+            return
+        }
+    }
+
+    func launchEnded() {
+        record(.launchEnded)
+    }
+
+    private func record(_ event: Reached) {
+        reached.append(event)
+        let resumed = waiters.filter { $0.matches(event) }
+        waiters.removeAll { $0.matches(event) }
+        resumed.forEach { $0.continuation.resume() }
+    }
+
+    /// Returns once an event `matches` has been reached.
+    func waitFor(_ matches: @escaping @Sendable (Reached) -> Bool) async {
+        guard !reached.contains(where: matches) else { return }
+        await withCheckedContinuation { waiters.append((matches, $0)) }
+    }
+
+    func openRemovals() {
+        removalsOpen = true
+        parkedRemovals.forEach { $0.resume() }
+        parkedRemovals.removeAll()
+    }
+
+    func openAttachments() {
+        attachmentsOpen = true
+        parkedAttachments.forEach { $0.resume() }
+        parkedAttachments.removeAll()
     }
 }
 

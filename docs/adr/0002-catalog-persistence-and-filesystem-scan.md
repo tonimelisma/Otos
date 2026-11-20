@@ -286,9 +286,11 @@ none, and the log said nothing about the wait
   holds its SQL as literal text, never a Swift constant a later change could edit: an edited
   constant would build other indexes in a new catalog than in an upgraded one, and a partial
   index whose condition no longer matches its query fails that query at prepare
-  (`INDEXED BY`). `CatalogMigrationFreezeTests` runs every migration on an empty catalog and
-  compares the indexes each builds with the text frozen for it
-  (`OtosTests/Fixtures/Catalog/migration-indexes.json`, where a new migration adds its own
+  (`INDEXED BY`); an edited constant in a trigger or a generated column would make a new
+  catalog run other SQL than an upgraded one. `CatalogMigrationFreezeTests` runs every
+  migration on an empty catalog and compares every schema object each builds — index, table,
+  trigger and view, as `sqlite_master` stores its text — with the text frozen for it
+  (`OtosTests/Fixtures/Catalog/migration-schema.json`, where a new migration adds its own
   entry), and prepares each partial index a query names against that query's predicate.
 - **The open compacts a file a tenth free.** SQLite reuses a dropped table's pages but
   never returns them, and `VACUUM` cannot run inside a migration's transaction, so after the

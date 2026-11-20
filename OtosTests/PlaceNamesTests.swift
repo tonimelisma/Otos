@@ -39,9 +39,9 @@ struct PlaceNamesTests {
 
     /// The reader names every cell holding a located item once, from its center, in the Mac's
     /// language; a photo's own coordinate never reaches Maps. A failed naming — a throttle,
-    /// or an error Maps does not explain — stores nothing: it is waited out, the next cell is
-    /// asked, and another pass asks the failed cell again. A cell Maps names nothing for is
-    /// stored with no names.
+    /// or an error Maps does not explain — stores nothing: it is waited out, the wake asks the
+    /// next cell, and the walk asks the failed cell again at its end. A cell Maps names nothing
+    /// for is stored with no names.
     @Test func everyCellIsNamedOnceAndAFailureIsAskedAgain() async throws {
         let library = try await Self.library(in: makeTestDirectory())
         let asked = Asked()
@@ -63,11 +63,17 @@ struct PlaceNamesTests {
         let waits = Asked()
         let reader = PlaceNameReader(
             store: library.store, namer: namer, locale: { Locale(identifier: "fi_FI") },
+            localeChanges: { AsyncStream { _ in } },
             sleep: { _ in await waits.add(PlaceCoordinate(latitude: 0, longitude: 0)) }
         )
         let finnish = PlaceNameLanguage(Locale(identifier: "fi_FI"))
 
-        await reader.drain()
+        await reader.start()
+        let quiet = try await waitForValue { () async throws -> OwnerQuiescence? in
+            guard try await library.store.backgroundReads.unnamedPlaceCells(language: finnish, limit: 10).isEmpty else { return nil }
+            return try await reader.untilQuiescent()
+        }
+        await reader.shutdown()
 
         let centers = await asked.coordinates
         #expect(centers.allSatisfy { PlaceCell($0).center == $0 })
@@ -75,7 +81,7 @@ struct PlaceNamesTests {
         #expect(await asked.count(of: PlaceCell(Self.espoo)) == 2)
         #expect(await asked.count(of: PlaceCell(Self.sydney)) == 1)
         #expect(await waits.coordinates.count == 2)
-        #expect(try await library.store.backgroundReads.unnamedPlaceCells(language: finnish, limit: 10).isEmpty)
+        #expect(quiet.wake == nil, "a drain that named every cell arms no backoff")
         let options = try await Self.options(library)
         #expect(options.countries == [PlaceFilterCountry(name: "Suomi", towns: ["Helsinki", "Espoo"])])
         await library.store.shutdown()
@@ -138,6 +144,40 @@ struct PlaceNamesTests {
 
         let english = PlaceNameLanguage(Locale(identifier: "en_US"))
         #expect(try await library.store.backgroundReads.unnamedPlaceCells(language: english, limit: 10).count == 3)
+        await library.store.shutdown()
+    }
+
+    /// While Maps keeps failing, the reader is quiet until its backoff, never a pass that
+    /// runs for as long as Maps is out (ADR 0032 rule 8): a failed naming ends the pass, which
+    /// names its wake, and the wake starts the next one. The sleeps stand in for the backoff:
+    /// the first returns at once, the second waits until the teardown.
+    @Test func aFailingMapsLeavesTheReaderQuietUntilItsBackoff() async throws {
+        let library = try await Self.library(in: makeTestDirectory())
+        let sleeps = Asked()
+        let reader = PlaceNameReader(
+            store: library.store,
+            namer: PlaceNameReader.Namer { _, _ in throw MKError(.serverFailure) },
+            locale: { Locale(identifier: "en_US") },
+            localeChanges: { AsyncStream { _ in } },
+            sleep: { _ in
+                guard await sleeps.add(PlaceCoordinate(latitude: 0, longitude: 0)) > 1 else { return }
+                await suspendUntilCancelled()
+                throw CancellationError()
+            }
+        )
+        await reader.start()
+        try await waitUntil { await sleeps.coordinates.count == 2 }
+
+        // The second backoff began: the pass that met the first failure has ended, and the
+        // wake started another.
+        let passes = await reader.status.work.passes
+        try #require(passes >= 2, "a failed naming waited inside the pass, which never ended (passes=\(passes))")
+        let quiet = try await reader.untilQuiescent()
+        #expect(quiet.wake?.kind == .backoff)
+        #expect(await reader.status.runningPasses == 0)
+        let english = PlaceNameLanguage(Locale(identifier: "en_US"))
+        #expect(try await library.store.backgroundReads.unnamedPlaceCells(language: english, limit: 10).count == 3)
+        await reader.shutdown()
         await library.store.shutdown()
     }
 
@@ -300,7 +340,7 @@ struct PlaceNamesTests {
                 return PlaceNames(country: locale.language.languageCode == .finnish ? "Suomi" : "Finland", town: nil)
             },
             locale: { locale.withLock { $0 } },
-            sleep: { _ in throw CancellationError() }
+            sleep: { _ in }
         )
         await reader.drain()
         let options = try await Self.options(library)
@@ -327,6 +367,8 @@ struct PlaceNamesTests {
         #expect(try await library.store.windowReads.placeNameLanguages().isEmpty)
         #expect(try await resolved() == MediaFilter(kinds: [.image]))
 
+        // The failure's backoff ends (at once here) before the next drain asks Maps again.
+        try await waitUntil { await reader.status.wake == nil }
         renameable.withLock { $0 = true }
         await reader.drain()
         #expect(try await library.store.windowReads.placeNameLanguages() == [Self.finnish])
