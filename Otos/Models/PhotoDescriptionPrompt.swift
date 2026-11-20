@@ -26,7 +26,7 @@ import Foundation
 nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
     /// What the stored descriptions were written from; raised whenever the instructions or the
     /// facts' wording change.
-    static let revision = 4
+    static let revision = 5
 
     /// What the model is asked to be for this photo (`init`).
     let instructions: String
@@ -50,9 +50,7 @@ nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
         }
         let named = faces.filter { $0.name != nil }.sorted { ($0.box.midX, $0.box.midY) < ($1.box.midX, $1.box.midY) }
         let othersUnnamed = named.count < faces.count
-        instructions = Self.instructions(
-            naming: !named.isEmpty, othersUnnamed: othersUnnamed, agesGiven: named.contains { $0.age != nil }
-        )
+        instructions = Self.instructions(naming: !named.isEmpty, othersUnnamed: othersUnnamed)
         if !named.isEmpty {
             lines.append("People in the photo, by where their faces are:")
             for face in named {
@@ -73,28 +71,31 @@ nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
         self.facts = lines.joined(separator: "\n")
     }
 
-    /// The instructions for a photo: whether it names anyone, whether anyone else in it is
-    /// unnamed, and whether any named person's age is given. Asked to mention an age "only when
-    /// it adds something" with none given, the model gave named children ages of its own
-    /// ("Sam, 10", "Ian, age 5": 3 of 24 named photos in the eval, revision 3).
-    static func instructions(naming: Bool, othersUnnamed: Bool, agesGiven: Bool) -> String {
+    /// The instructions for a photo: whether it names anyone, and whether anyone else in it is
+    /// unnamed. The owner asked for "an extremely simple, matter of fact description of the
+    /// image" (2026-11-19): asked for "lively, playful sentences", the model wrote "a superhero
+    /// car ready for action" and "numbers and letters dancing across the screen" for a
+    /// screenshot. A given age is never written: told to mention one "only when it adds
+    /// something", the model wrote the owner's own age and gave unnamed children ages of its own
+    /// ("Baby, 4"). Ages stay in the facts, where they tell a baby from an adult.
+    static func instructions(naming: Bool, othersUnnamed: Bool) -> String {
         var parts = [
-            "You write short descriptions of photos in a family's photo library, for the family to enjoy reading.",
-            "Write two or three lively, playful sentences about what you see in the photo and what makes it fun to look at.",
+            "You write captions for photos in a family's photo library.",
+            "Write one short, plain, matter-of-fact sentence that says what the photo shows.",
+            "State only what is clearly visible: the main subject, what is happening, and the setting.",
+            "No opinions, jokes, feelings, guesses or exclamation marks.",
+            "If the photo is a screenshot or a document, say what it is and what it is about, without copying its text or numbers.",
         ]
         if naming {
             parts.append("The facts give the names of people in the photo and where their faces are: call each of them by name.")
             parts.append("Use no other names.")
             if othersUnnamed {
-                parts.append("Everyone else stays unnamed: call them a child, a boy, a girl, a woman, a man or someone.")
+                parts.append("Everyone else stays unnamed and is called only what they clearly are, such as a child, a woman or another person.")
                 parts.append("Never make up a name.")
             }
-            parts.append(
-                agesGiven ? "Mention a given age only when it adds something, and no other age." : "Never state anyone's age."
-            )
+            parts.append("Never state anyone's age.")
         }
-        parts.append("Describe only what is visible, and do not invent events, feelings or relationships.")
-        parts.append("Do not end with a remark about memories. Write in English.")
+        parts.append("Write in English.")
         return parts.joined(separator: " ")
     }
 

@@ -64,9 +64,20 @@ model is told:
   given names and add people who were not there (revision 3);
 - the text Vision is certain of and its confident scene labels.
 
-Every photo's instructions ask for two or three lively, playful sentences for the family to
-enjoy, nothing invented, and no closing remark about memories (the first version closed nearly
-every description with one). English only: the system model
+Every photo's instructions ask for **one short, plain, matter-of-fact sentence** that says what
+the photo shows: its main subject, what is happening and the setting, only what is clearly
+visible, with no opinions, jokes, feelings, guesses or exclamation marks. A screenshot or a
+document is said to be one, with what it is about, and its text and numbers are not copied.
+No age is ever written; ages stay in the facts, where they tell a baby from an adult. The owner
+asked for "an extremely simple, matter of fact description of the image" (2026-11-19) after
+revision 4, which asked for "two or three lively, playful sentences", wrote "a superhero car
+ready for action", "numbers and letters dancing across the screen" for a bank-transfer
+screenshot, a fork read as "a cigarette", the owner's own age, and ages of its own for
+unnamed children. Unnamed people are called only what they clearly are: an instruction that
+listed the words to use ("a child, a boy, a girl, a woman, a man") made adult women "a boy".
+The model samples greedily (`GenerationOptions(sampling: .greedy)`): the
+same photo and facts give the same sentence, and no sampled embellishment. English only: the
+system model
 does not write Finnish, and search reads English (ADR 0048).
 
 ### When a description is written
@@ -145,19 +156,32 @@ first.
 
 ### The eval
 
-A unit test checks what the model is told; only the model shows what it writes, and its first
-answers on the owner's library invented names. `script/description-eval.sh` runs the app's own
-facts reader, prompt, face placement and model call (`PhotoDescriptionEvalTests`) on a fixed
-sample of the owner's stills, read from the installed catalog opened read-only: twelve that name
-no one, twelve whose faces are all named, twelve with named and unnamed faces, chosen by a
-stable hash of their path so every run describes the same photos. Each answer is scored
-(`PhotoDescriptionScore`, itself tested on answers the model gave): a personal name Natural
-Language finds that the facts and the photo's text did not give, or letters standing in for
-people; an age the facts did not give; a given name left out; a closing remark about memories.
+A unit test checks what the model is told; only the model shows what it writes. `script/description-eval.sh`
+runs the app's own facts reader, prompt, face placement and model call (`PhotoDescriptionEvalTests`)
+on a fixed sample of the owner's stills, read from the installed catalog opened read-only, in
+five groups chosen by a stable hash of their path so every run describes the same photos:
+screenshots, photos with much text (four or more lines read), photos that name no one, photos
+whose faces are all named, and photos with named and unnamed faces. The hash also splits each
+group in halves: a prompt is tuned on `tune` and kept only when `holdout` does not get worse.
+
+Each answer is scored twice:
+
+- **By its text** (`PhotoDescriptionScore`, itself tested on answers the model gave): a
+  personal name the facts and the photo's text did not give, or letters standing in for
+  people; any stated age; a given name left out; a closing remark about memories; wording that
+  is not plain (an exclamation, a word that says how the photo should feel); more than one
+  sentence; the photo's own text copied.
+- **Against its picture:** whether every claim is visible, the main subject is right, and the
+  sentence is plain. A script cannot see the picture, so the agent grades each answer by
+  looking at the preview its row names, against reference facts it wrote once per sampled
+  photo. The answers and the references name the owner's family and never enter the
+  repository; the counts are recorded per revision in
+  `docs/research/2026-11-19-plain-photo-descriptions.md`.
+
 It asserts no budget, like the face accuracy run (ADR 0047): a change to the prompt, its
-revision or the model is run through it before it ships, and the counts are recorded in the
-research note. It never runs in `script/check.sh`: the photos and the names in them never enter
-the repository, and the model's answers vary from run to run.
+revision, the facts or the model is run through it before it ships, one change at a time. It
+never runs in `script/check.sh`: the photos never enter the repository, and the model's answers
+can change with the system model.
 
 ## Alternatives Considered
 

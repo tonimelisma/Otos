@@ -92,8 +92,8 @@ has a location to show, as a control whose subject does not exist is omitted (DE
 
 ## Description
 
-What Apple's on-device model wrote about the still (ADR 0053): two or three sentences naming
-the people at their faces, written again whenever a fact it was written from changes. The
+What Apple's on-device model wrote about the still (ADR 0053): one plain, matter-of-fact sentence
+naming the people at their faces, written again whenever a fact it was written from changes. The
 owner chose it for the top of the pane and asked for no editing (2026-11-14), so it has no
 Edit, Retry or Revert control. Generated text is identified, as the HIG asks
 (`Written by Apple Intelligence`). It stays in the inspector, never over the photo: Photos

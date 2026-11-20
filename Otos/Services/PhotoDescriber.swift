@@ -37,7 +37,12 @@ nonisolated enum PhotoDescriber {
         }
         let session = LanguageModelSession(model: model, instructions: prompt.instructions)
         do {
-            let response = try await session.respond(generating: GeneratedPhotoDescription.self) {
+            // Greedy sampling: the most likely words, the same answer for the same photo and
+            // facts, and no sampled embellishment.
+            let response = try await session.respond(
+                generating: GeneratedPhotoDescription.self,
+                options: GenerationOptions(sampling: .greedy)
+            ) {
                 prompt.facts
                 Attachment(image)
             }
@@ -106,7 +111,7 @@ nonisolated enum PhotoDescriptionAvailability: Equatable, Sendable {
 /// The model's typed answer for one photo.
 @Generable
 nonisolated struct GeneratedPhotoDescription {
-    @Guide(description: "Two or three lively, playful sentences about the photo.")
+    @Guide(description: "One short, plain, matter-of-fact sentence saying what the photo shows.")
     var description: String
 }
 

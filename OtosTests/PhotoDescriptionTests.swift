@@ -436,7 +436,8 @@ struct PhotoDescriptionTests {
         let aged = PhotoDescriptionPrompt(
             faces: [PhotoDescriptionPrompt.Face(box: mia.box, name: "Mia", age: "8 years old")], facts: facts
         )
-        #expect(aged.instructions.contains("Mention a given age only when it adds something, and no other age."))
+        #expect(aged.instructions.contains("Never state anyone's age."))
+        #expect(aged.facts.contains("Mia, 8 years old"))
         let mixed = PhotoDescriptionPrompt(faces: [mia, unnamed], facts: facts)
         #expect(mixed.facts.hasSuffix("Everyone else in the photo is unnamed."))
         #expect(mixed.instructions.contains("Everyone else stays unnamed"))
