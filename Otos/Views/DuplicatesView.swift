@@ -157,6 +157,9 @@ struct DuplicatesView: View {
             }
             .background(DesignPalette.content(for: colorScheme))
             .focusable()
+            // The arrows move the selection, which shows where the keys are: no ring around the
+            // whole gallery (HIG, Focus and selection; DES-081).
+            .focusEffectDisabled()
             .focused($listFocused)
             .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
                 guard let direction = DuplicatesTileOrder.Direction(press.key),

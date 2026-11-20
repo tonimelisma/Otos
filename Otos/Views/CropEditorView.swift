@@ -358,13 +358,4 @@ final class CropKeyView: NSView {
             super.keyUp(with: event)
         }
     }
-
-    /// A visible focus ring around the canvas while it holds the keyboard (DES-081).
-    override var focusRingMaskBounds: NSRect {
-        bounds
-    }
-
-    override func drawFocusRingMask() {
-        bounds.fill()
-    }
 }

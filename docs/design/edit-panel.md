@@ -137,7 +137,7 @@ edge handle about the opposite edge, staying centered across it. Under a constra
 aspect the crop keeps its shape and shrinks to stay in the frame. With Custom, Shift
 during a handle drag keeps the shape the crop had when the drag began (Keyboards).
 
-While the tool is on, the canvas holds the keyboard, with a focus ring (DES-081). The
+While the tool is on, the canvas holds the keyboard; its handles show it, with no ring around the canvas (DES-081). The
 arrow keys move the crop one pixel of the frame, ten with Shift, and a held key saves as
 one step on release. Escape ends the tool. When it ends, the keyboard goes back to where
 it was, usually the filmstrip. Choosing an aspect

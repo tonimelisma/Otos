@@ -49,9 +49,10 @@ struct StoryPlayerView: View {
             )
             picture
         }
-        // The player is the keyboard target while it plays, and its focus ring shows it
-        // (DES-081); its buttons take focus with their own rings on Tab.
+        // The player is the keyboard target while it plays, filling the window: no ring around
+        // it (DES-081). Its buttons take focus with their own rings on Tab.
         .focusable()
+        .focusEffectDisabled()
         .focused($isFocused)
         .onAppear { isFocused = true }
         .onKeyPress(.space) { handled(actions.togglePause) }

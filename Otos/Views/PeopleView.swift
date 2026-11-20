@@ -137,6 +137,9 @@ struct PeopleView: View, Equatable {
                 }
             }
             .focusable()
+            // A collection shows the keyboard by its selection, never a ring around the whole
+            // gallery (HIG, Focus and selection; DES-081): the arrows move the selection.
+            .focusEffectDisabled()
             .focused($listFocused)
             .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
                 let step: PeopleGalleryStep = switch press.key {

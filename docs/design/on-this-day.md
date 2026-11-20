@@ -132,7 +132,7 @@ it, paused.
 | ← / → | Previous / next item, across anniversaries |
 | Esc | Close: back to the cards, focus on the anniversary it was on |
 
-The player is the keyboard target while it plays and shows the system focus ring
+The player is the keyboard target while it plays and draws no ring around itself
 (DES-081); Tab moves to its buttons, each with its own ring.
 | P / X / U, I, E | The Photo commands and the inspector, on the item on screen |
 

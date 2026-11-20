@@ -293,8 +293,9 @@ The first section (DES-088), `People`:
   is dimmed and under its own header.
 - **Keyboard (DES-080, DES-081):** in the gallery the arrows move — Up and Down keep the
   column within the visible people's rows and the hidden people's, crossing the `Hidden`
-  header into the nearest row — Return opens, Escape clears the selection, and the gallery
-  draws its focus ring. The context menu's acts for the selected person (the one the keys
+  header into the nearest row — Return opens, Escape clears the selection, and the selection
+  shows where the keys are; the gallery draws no ring around itself. The context menu's acts
+  for the selected person (the one the keys
   last reached) are also at the end of the menu bar's Photo menu, in the same words, with no
   keys of their own, disabled with `Select a person in People` while none is selected; every
   face act is in a menu reachable from the keyboard.
