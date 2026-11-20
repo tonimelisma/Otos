@@ -51,8 +51,9 @@ struct LoupeView: View {
     /// The focused photo is a Live Photo whose motion can play now (DES-106).
     var canPlayLivePhoto = false
     var onPlayLivePhoto: () -> Void = {}
-    /// The RAW+JPEG pair the loupe shows, for its `JPG`/`RAW` switch (DES-117); nil hides it.
-    var shownPair: PhotoStack?
+    /// The RAW+JPEG pair the loupe shows its own `JPG`/`RAW` switch for (DES-117): nil when
+    /// the photo is not a pair, or while the edit panel shows and holds the switch.
+    var switchedPair: PhotoStack?
     var onShowPairMember: (MediaAssetID) -> Void = { _ in }
     @Environment(\.colorScheme) private var colorScheme
 
@@ -181,8 +182,8 @@ struct LoupeView: View {
             // Original mark (top center, DES-098).
             .overlay(alignment: .topTrailing) {
                 // A camera pair is never a Live Photo, so the two never share the corner.
-                if let shownPair, let focusedAssetID {
-                    PairSwitch(pair: shownPair, shown: focusedAssetID, onSelect: onShowPairMember)
+                if let switchedPair, let focusedAssetID {
+                    PairSwitch(pair: switchedPair, shown: focusedAssetID, onSelect: onShowPairMember)
                         .controlSize(.small)
                         .padding(4)
                         .background(.regularMaterial, in: Capsule())

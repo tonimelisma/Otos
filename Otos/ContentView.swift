@@ -625,7 +625,7 @@ struct DetailColumn: View {
                 showsOriginal: viewModel.loupeShowsOriginal,
                 canPlayLivePhoto: viewModel.canPlayLivePhoto,
                 onPlayLivePhoto: { viewModel.playLivePhoto() },
-                shownPair: viewModel.shownPair,
+                switchedPair: viewModel.loupePair,
                 onShowPairMember: { viewModel.showPairMember($0) }
             )
         case .compare:

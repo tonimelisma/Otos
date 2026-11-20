@@ -97,6 +97,12 @@ extension CatalogWindowViewModel {
         singleTarget.flatMap(parts.gridStacks.pair(shownBy:))
     }
 
+    /// The pair the loupe offers its own `JPG`/`RAW` switch for: none while the edit panel
+    /// shows, whose header holds the one switch then (DES-117).
+    var loupePair: PhotoStack? {
+        isEditPanelPresented ? nil : shownPair
+    }
+
     /// The `JPG`/`RAW` switch: shows `member` in its pair's place. The focus and the
     /// selection follow it when the new state arrives (`carrySelectionIntoStacks`).
     func showPairMember(_ member: MediaAssetID) {
