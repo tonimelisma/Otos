@@ -42,6 +42,42 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    /// A section with changes has a checkmark that turns its changes off in the loupe, saving
+    /// nothing, until the edit changes or another photo is opened (DES-122).
+    @Test func aSectionsCheckmarkTurnsItsChangesOffInTheLoupeUntilTheEditChanges() async throws {
+        try await withEditableLibrary(fileCount: 2) { library in
+            let edited = library.ids[0]
+            let model = library.makeEditModel()
+            model.toggleInspector(.edit)
+            model.setViewMode(.loupe)
+            model.selectAssets([edited])
+            try await waitUntil { model.editTarget?.id == edited && model.canEdit }
+            model.setEditValue(1, for: .exposure)
+            try await waitUntil { model.hasSettledEdits }
+
+            model.toggleEditSection(.color)
+            #expect(model.sectionsTurnedOff.isEmpty, "a section without changes has no checkmark to turn off")
+            model.toggleEditSection(.light)
+            #expect(model.sectionsTurnedOff == [.light])
+            #expect(model.shownRecipe == .neutral)
+            try await waitUntil { model.editLivePreview?.recipe == .neutral }
+            #expect(try await library.store.windowReads.editRecipe(for: edited)?.recipe == EditRecipe(exposure: 1))
+
+            model.toggleEditSection(.light)
+            #expect(model.sectionsTurnedOff.isEmpty)
+            try await waitUntil { model.editLivePreview?.recipe == EditRecipe(exposure: 1) }
+
+            model.toggleEditSection(.light)
+            model.setEditValue(0.5, for: .exposure)
+            #expect(model.sectionsTurnedOff.isEmpty, "a change to the edit turns every section back on")
+
+            model.toggleEditSection(.light)
+            model.selectAssets([library.ids[1]])
+            try await waitUntil { model.editTarget?.id == library.ids[1] }
+            #expect(model.sectionsTurnedOff.isEmpty)
+        }
+    }
+
     /// The pane's progress indicator marks a pane waiting for its photo (DES-086): loading
     /// raises it, and refreshing the photo the pane already shows — an edit's new preview —
     /// does not.

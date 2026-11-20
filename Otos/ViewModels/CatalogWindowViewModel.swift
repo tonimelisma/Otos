@@ -278,8 +278,20 @@ final class CatalogWindowViewModel {
     /// The one still photo the panel edits; nil disables its controls.
     var editTarget: EditTarget?
     /// The panel's values for `editTarget`: the saved recipe plus any change still being
-    /// dragged.
-    var editDraft = EditRecipe.neutral
+    /// dragged. Any change to it turns every section the person turned off back on.
+    var editDraft = EditRecipe.neutral {
+        didSet {
+            if editDraft != oldValue {
+                editSectionsOff = nil
+            }
+        }
+    }
+
+    /// The edited sections the person turned off with their heading's checkmark, for the photo
+    /// they were turned off on: the loupe shows the photo without those sections' changes,
+    /// and nothing is saved (Photos' adjustment checkmarks). Back on with any change to the
+    /// edit, and moot on another photo.
+    var editSectionsOff: EditSectionsOff?
     /// The newest live render of the draft, shown in place of the pane's stored preview
     /// until that preview carries the saved edit.
     var editLivePreview: EditLivePreview?

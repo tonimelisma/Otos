@@ -747,7 +747,9 @@ struct InspectorColumn: View {
                 },
                 showPairMember: { viewModel.showPairMember($0) },
                 folded: viewModel.foldedEditSections,
-                toggleFold: viewModel.toggleEditSectionFold
+                toggleFold: viewModel.toggleEditSectionFold,
+                sectionsOff: viewModel.sectionsTurnedOff,
+                toggleSection: viewModel.toggleEditSection
             )
         }
     }

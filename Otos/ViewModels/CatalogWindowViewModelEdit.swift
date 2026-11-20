@@ -453,10 +453,31 @@ extension CatalogWindowViewModel {
         editCommandContinuation.yield(.save(command))
     }
 
-    /// The recipe the pane shows the photo with: the draft, uncropped while the crop tool
-    /// shows the whole frame.
+    /// The recipe the pane shows the photo with: the draft without the sections turned off,
+    /// uncropped while the crop tool shows the whole frame.
     var shownRecipe: EditRecipe {
-        isCropping ? editDraft.uncropped : editDraft
+        let shown = sectionsTurnedOff.reduce(editDraft) { recipe, section in section.reset(recipe) }
+        return isCropping ? shown.uncropped : shown
+    }
+
+    /// The sections of the open photo the person turned off.
+    var sectionsTurnedOff: Set<EditSection> {
+        guard let off = editSectionsOff, off.id == editTarget?.id else { return [] }
+        return off.sections
+    }
+
+    /// A section heading's checkmark: turns the section's changes off in the loupe, or back
+    /// on. Only a section with changes has one; nothing is saved.
+    func toggleEditSection(_ section: EditSection) {
+        guard let target = editTarget, !section.isNeutral(in: editDraft) else { return }
+        var sections = sectionsTurnedOff
+        if sections.contains(section) {
+            sections.remove(section)
+        } else {
+            sections.insert(section)
+        }
+        editSectionsOff = sections.isEmpty ? nil : EditSectionsOff(id: target.id, sections: sections)
+        requestLiveEditRender()
     }
 
     /// Renders the draft for the pane. Any change to the edit shows the edited photo, so it
@@ -1064,4 +1085,10 @@ actor EditAnalyzer {
         level = model
         return model
     }
+}
+
+/// The sections turned off on one photo (`CatalogWindowViewModel.editSectionsOff`).
+nonisolated struct EditSectionsOff: Equatable, Sendable {
+    let id: MediaAssetID
+    let sections: Set<EditSection>
 }

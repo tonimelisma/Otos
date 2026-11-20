@@ -42,6 +42,9 @@ struct EditPanelView: View {
     /// The sections the person folded, and the intent that folds or opens one.
     let folded: Set<EditSection>
     let toggleFold: @MainActor (EditSection) -> Void
+    /// The edited sections turned off in the loupe, and the intent that turns one off or on.
+    var sectionsOff: Set<EditSection> = []
+    var toggleSection: @MainActor (EditSection) -> Void = { _ in }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -165,6 +168,22 @@ struct EditPanelView: View {
                 .accessibilityValue(open ? "expanded" : "collapsed")
                 .accessibilityAddTraits(.isHeader)
                 .help(open ? "Hide \(section.title)" : "Show \(section.title)")
+                // A section with changes says so beside its name, as Photos' adjustments and
+                // Lightroom's panels do: a checkmark in the accent, which turns the section's
+                // changes off in the loupe to compare, and on again (DES-122).
+                if unavailableHelp == nil, !section.isNeutral(in: recipe) {
+                    let off = sectionsOff.contains(section)
+                    Button {
+                        toggleSection(section)
+                    } label: {
+                        Image(systemName: off ? "circle" : "checkmark.circle.fill")
+                            .foregroundStyle(off ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
+                    }
+                    .buttonStyle(.plain)
+                    .help(off ? "Show the photo with its \(section.title) changes" : "Show the photo without its \(section.title) changes")
+                    .accessibilityLabel("\(section.title) changes")
+                    .accessibilityValue(off ? "off" : "on")
+                }
                 Spacer()
                 // Quiet beside the heading: a text button, so a column of section headings
                 // does not read as a column of push buttons.
@@ -174,7 +193,7 @@ struct EditPanelView: View {
                     .controlSize(.small)
                     // A forced color would hide the disabled state, so it steps down a
                     // level of its own when there is nothing to reset.
-                    .foregroundStyle(resetDisabled ? .tertiary : .secondary)
+                    .foregroundStyle(resetDisabled ? .tertiary : .primary)
                     .disabled(resetDisabled)
                     .help(unavailableHelp ?? section.resetActionName)
             }

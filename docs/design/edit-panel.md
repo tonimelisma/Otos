@@ -50,8 +50,12 @@ A hairline sits above each section, so where one ends and the next begins reads 
 counting whitespace. Each section is a heading row over its controls: the disclosure
 triangle, the section's symbol (`crop`, `sun.max`, `paintpalette`, `circle.dashed`,
 `triangle.lefthalf.filled`, `camera.aperture`) and its title on the left; on the right a quiet
-borderless `Reset` in secondary text (tertiary while there is nothing to reset), so six
-headings do not read as six push buttons.
+borderless `Reset`, so six headings do not read as six push buttons. A section with changes
+says so (DES-122): a checkmark in the accent right after its title, and its `Reset` in primary
+text; a section without changes has no checkmark and its `Reset` is tertiary. The checkmark
+turns the section's changes off in the loupe to compare, as Photos' adjustment checkmarks do:
+it becomes an empty circle, nothing is saved, and any change to the edit or another photo
+turns every section back on.
 The controls are indented 16 pt under the heading, which puts them under its symbol.
 
 Crop's rows stand in three groups 12 pt apart (rows are 4 pt apart), so the section reads as
