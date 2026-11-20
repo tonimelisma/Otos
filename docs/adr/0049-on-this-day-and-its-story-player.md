@@ -103,7 +103,7 @@ view mode for it.
    shown when it is a file of a stack whose key is Disliked (ADR 0052), so the match
    judges the year's rows by stacks from the same transaction: the stacks the caller holds,
    or else only the stacks that hold those rows, built from their folders and bursts
-   (`PhotoStackSQL.build(rootPaths:holding:db:)`), which judge them exactly as every stack
+   (`PhotoStackSQL.build(rootPaths:holding:pairing:db:)`), which judge them exactly as every stack
    would.
    Because the filter takes no part, it only narrows: a video filter on a scope whose
    year holds only photos shows nothing, never last month's videos. Every read decides

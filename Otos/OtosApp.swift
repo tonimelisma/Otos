@@ -528,6 +528,8 @@ public struct OtosApp: App {
                 setAsksBeforeLargeTrashDownload: catalogViewModel.setAsksBeforeLargeTrashDownload,
                 findsDuplicatesAcrossLibraries: catalogViewModel.findsDuplicatesAcrossLibraries,
                 setFindsDuplicatesAcrossLibraries: catalogViewModel.setFindsDuplicatesAcrossLibraries,
+                showsRawPairsAsOne: catalogViewModel.showsRawPairsAsOne,
+                setShowsRawPairsAsOne: catalogViewModel.setShowsRawPairsAsOne,
                 searchLanguages: catalogViewModel.searchLanguages,
                 searchLanguageChoices: catalogViewModel.searchLanguageChoices,
                 setSearchLanguages: catalogViewModel.setSearchLanguages,

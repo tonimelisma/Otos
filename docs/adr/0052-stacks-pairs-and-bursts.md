@@ -49,6 +49,13 @@ and never stacks; the overlay lifecycle (ADR 0008); the tile and loupe surfaces
 
 - **A pair:** in one root and one folder, one file of kind RAW and one processed still whose
   stem keys match, and no third still with that stem key. Any other count pairs nothing.
+- **Pairs are the user's choice.** Settings ▸ General ▸ "Show a RAW photo and its JPEG or
+  HEIF as one photo" is on by default. Off, the rule makes no pair (`RawPairing.separate`) and
+  every file is its own photo, everywhere the stacks are read; bursts still stack. The choice
+  is a view preference (`@AppStorage` key `stacks.rawPairsAsOne`), handed to the Store as a
+  mutation at launch and on each change; the Store reads it with every read it starts and
+  notifies `.stacks` when it changes, so each scope re-reads under the new rule. Nothing is
+  stored about a pair either way, so turning it off and on loses no key choice.
 - **A burst:** in one root, two or more frames whose stills carry the same burst identifier
   (an iPhone's). A pair is one frame of the burst; its two files expand as a pair inside the
   expanded burst.

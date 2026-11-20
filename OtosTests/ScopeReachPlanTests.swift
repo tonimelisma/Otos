@@ -151,12 +151,12 @@ struct ScopeReachPlanTests {
         try await dbQueue.read { db in
             var queries = try sorts.map { sort in
                 try #require(try CatalogQueryGateway.orderedAssetIDQuery(
-                    descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort), scope: scope, db: db
+                    descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort), scope: scope, stacks: .readWhenNeeded(.paired), db: db
                 ))
             }
-            try queries.append(#require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db)))
+            try queries.append(#require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, pairing: .paired, db: db)))
             if !scope.isAnniversary {
-                try queries.append(#require(try CatalogQueryGateway.countQuery(scope: scope, db: db)))
+                try queries.append(#require(try CatalogQueryGateway.countQuery(scope: scope, pairing: .paired, db: db)))
             }
             let plans = try queries.map { query in
                 try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(query.sql)", arguments: query.arguments)
@@ -167,11 +167,12 @@ struct ScopeReachPlanTests {
                 scope: scope,
                 stackRootPaths: [1: LibraryRootPath(rawValue: "/tmp/otos-reach-a/")],
                 held: nil,
+                pairing: .paired,
                 db: db
             )
             return try Reads(
                 plans: plans, span: order.stacks.span, rows: order.rows.count,
-                count: CatalogQueryGateway.countAssets(scope: scope, db: db)
+                count: CatalogQueryGateway.countAssets(scope: scope, pairing: .paired, db: db)
             )
         }
     }

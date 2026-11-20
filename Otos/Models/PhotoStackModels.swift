@@ -127,6 +127,14 @@ nonisolated struct CatalogStacks: Equatable, Sendable {
 }
 
 /// The pure rule that turns one root's candidates into stacks.
+/// Whether a RAW and the camera's processed still of the same shot are one photo or two
+/// (Settings ▸ General; Lightroom Classic's "Treat JPEG files next to raw files as separate
+/// photos"). The Store holds the user's choice and every stack build reads it.
+nonisolated enum RawPairing: String, Sendable {
+    case paired
+    case separate
+}
+
 nonisolated enum PhotoStackRule {
     /// Pairs and the bursts built from them.
     ///
@@ -141,13 +149,17 @@ nonisolated enum PhotoStackRule {
     /// stack: the frame number a camera records says where a frame stands in its sequence
     /// but not which sequence, so after the user deletes a burst's leading frames nothing
     /// tells them from the burst before (ADR 0052).
+    ///
+    /// With `pairing` `.separate` (Settings) a RAW and its processed file are two photos: no
+    /// pair is made, and each is its own frame of a burst.
     static func stacks(
         candidates: [PhotoStackCandidate],
-        libraryRootPath: LibraryRootPath
+        libraryRootPath: LibraryRootPath,
+        pairing: RawPairing
     ) -> [PhotoStack] {
         // Built as `MappedArrayBuilder` says: a root's candidates are owner-scale.
         let stills = MappedArrayBuilder.collect(candidates) { $0.kind != .video ? $0 : nil }
-        let pairs = pairs(stills, libraryRootPath: libraryRootPath)
+        let pairs = pairing == .paired ? pairs(stills, libraryRootPath: libraryRootPath) : []
         return pairs + bursts(stills, pairs: pairs, libraryRootPath: libraryRootPath)
     }
 

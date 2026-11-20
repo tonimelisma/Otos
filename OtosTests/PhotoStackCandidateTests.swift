@@ -61,8 +61,8 @@ struct PhotoStackCandidateTests {
                     .joined(separator: "\n")
             )
         }
-        let narrowStacks = CatalogStacks(PhotoStackSQL.stacks(of: narrow, rootPaths: rootPaths))
-        let everyStacks = CatalogStacks(PhotoStackSQL.stacks(of: every, rootPaths: rootPaths))
+        let narrowStacks = CatalogStacks(PhotoStackSQL.stacks(of: narrow, rootPaths: rootPaths, pairing: .paired))
+        let everyStacks = CatalogStacks(PhotoStackSQL.stacks(of: every, rootPaths: rootPaths, pairing: .paired))
         #expect(narrowStacks == everyStacks)
         let kinds = narrowStacks.stacks.values.map(\.id.kind)
         #expect(kinds.count { $0 == .pair } == OwnerShapedCatalog.scaled(5384, scale) + OwnerShapedCatalog.scaled(464, scale))

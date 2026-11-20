@@ -21,6 +21,8 @@ struct SettingsView: View {
     let setAsksBeforeLargeTrashDownload: (Bool) -> Void
     let findsDuplicatesAcrossLibraries: Bool
     let setFindsDuplicatesAcrossLibraries: (Bool) -> Void
+    let showsRawPairsAsOne: Bool
+    let setShowsRawPairsAsOne: (Bool) -> Void
     let searchLanguages: [String]
     let searchLanguageChoices: [SearchLanguageChoice]
     let setSearchLanguages: ([String]) -> Void
@@ -44,6 +46,13 @@ struct SettingsView: View {
                     )
                 )
                 Toggle(
+                    "Show a RAW photo and its JPEG or HEIF as one photo",
+                    isOn: Binding(
+                        get: { showsRawPairsAsOne },
+                        set: { value in setShowsRawPairsAsOne(value) }
+                    )
+                )
+                Toggle(
                     "Find duplicates across libraries and accounts",
                     isOn: Binding(
                         get: { findsDuplicatesAcrossLibraries },
@@ -57,7 +66,7 @@ struct SettingsView: View {
                 )
             }
             .formStyle(.grouped)
-            .frame(width: 520, height: 250)
+            .frame(width: 520, height: 280)
             .tabItem {
                 Label("General", systemImage: "gearshape")
             }
@@ -497,6 +506,8 @@ private struct LibrariesSettingsView: View {
         setAsksBeforeLargeTrashDownload: { _ in },
         findsDuplicatesAcrossLibraries: false,
         setFindsDuplicatesAcrossLibraries: { _ in },
+        showsRawPairsAsOne: true,
+        setShowsRawPairsAsOne: { _ in },
         searchLanguages: ["fi", "en"],
         searchLanguageChoices: [
             SearchLanguageChoice(code: "en", name: "English"),

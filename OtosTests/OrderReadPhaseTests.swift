@@ -48,9 +48,9 @@ struct OrderReadPhaseTests {
             return value
         }
         let rows = try measure("sqlRowsMs") {
-            try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, db: db)
+            try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, stacks: .readWhenNeeded(.paired), db: db)
         }
-        let built = try measure("stacksMs") { try PhotoStackSQL.build(rootPaths: rootPaths, db: db) }
+        let built = try measure("stacksMs") { try PhotoStackSQL.build(rootPaths: rootPaths, pairing: .paired, db: db) }
         phases.append(("stackReadMs", DiagnosticsTiming.milliseconds(built.readDuration)))
         phases.append(("stackRuleMs", DiagnosticsTiming.milliseconds(built.ruleDuration)))
         let ordered = measure("mapMs") {

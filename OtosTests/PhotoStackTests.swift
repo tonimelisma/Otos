@@ -22,7 +22,7 @@ struct PhotoStackTests {
     }
 
     private func stacks(_ candidates: [PhotoStackCandidate]) -> [PhotoStack] {
-        PhotoStackRule.stacks(candidates: candidates, libraryRootPath: root)
+        PhotoStackRule.stacks(candidates: candidates, libraryRootPath: root, pairing: .paired)
     }
 
     /// Cutting a stored name key gives the key of the cut path, so the rule reads stems from
@@ -205,6 +205,21 @@ struct PhotoStackTests {
         #expect(result.grid.shownForHiddenMember[id("IMG_1.DNG")] == id("IMG_1.JPG"))
         #expect(result.grid.shownForHiddenMember[id("IMG_2.JPG")] == id("IMG_1.JPG"))
         #expect(TileStackPresentation.of(id("IMG_1.JPG"), in: result.grid).badgeLabel == "2")
+    }
+
+    /// Shown separately (Settings), a RAW and its processed file pair nothing: each is its own
+    /// photo, and a burst's frames are the stills that carry its identifier.
+    @Test func separatelyARawAndItsProcessedFileAreTwoPhotos() throws {
+        let files = [
+            frame("IMG_1.DNG", .raw, burst: nil, at: 1), frame("IMG_1.JPG", at: 1), frame("IMG_2.JPG", at: 2),
+            candidate("DSC1.ARW", .raw), candidate("DSC1.JPG", .image),
+        ]
+        let separate = PhotoStackRule.stacks(candidates: files, libraryRootPath: root, pairing: .separate)
+        #expect(!separate.contains { $0.id.kind == .pair })
+        let burst = try burst(in: separate)
+        #expect(burst.photos == [id("IMG_1.JPG"), id("IMG_2.JPG")])
+        #expect(!burst.members.contains(id("IMG_1.DNG")))
+        #expect(stacks(files).contains { $0.id.kind == .pair }, "paired, the same files make pairs")
     }
 
     /// An expanded burst shows every frame on its band, a pair frame still collapsed with its

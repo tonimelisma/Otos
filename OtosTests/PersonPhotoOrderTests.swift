@@ -101,7 +101,8 @@ struct PersonPhotoOrderTests {
                 let name = "\(sort.field.rawValue)-\(sort.direction.rawValue) \(filter.kinds.isEmpty ? "all" : "video")"
                 let (plan, loops, rows) = try await queue.read { db in
                     let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
-                        descriptor: CatalogQueryDescriptor(scope: .person(person), filter: filter, sort: sort), scope: scope, db: db
+                        descriptor: CatalogQueryDescriptor(scope: .person(person), filter: filter, sort: sort), scope: scope,
+                        stacks: .readWhenNeeded(.paired), db: db
                     ))
                     let plan = try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(query.sql)", arguments: query.arguments)
                         .map { ($0["detail"] as String).trimmingCharacters(in: .whitespaces) }
@@ -155,7 +156,7 @@ struct PersonPhotoOrderTests {
                 try CatalogQueryGateway.readOrder(
                     descriptor: CatalogQueryDescriptor(scope: .person(PersonID(rawValue: person))),
                     scope: CatalogScopePredicate(rootIDs: [1], content: .person(person)),
-                    stackRootPaths: [1: LibraryRootPath(rawValue: "/generated/first/")], held: nil, db: db
+                    stackRootPaths: [1: LibraryRootPath(rawValue: "/generated/first/")], held: nil, pairing: .paired, db: db
                 )
             }
             #expect(order.rows.count == rows, "person \(person)")
@@ -211,7 +212,7 @@ struct PersonPhotoOrderTests {
     }
 
     static func order(_ read: Read, _ db: Database) throws -> [String] {
-        try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: read.descriptor, scope: read.scope, db: db)
+        try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: read.descriptor, scope: read.scope, stacks: .readWhenNeeded(.paired), db: db)
             .map { "\($0.libraryRootID)/\($0.relativePath.rawValue)" }
     }
 

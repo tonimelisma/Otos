@@ -28,7 +28,7 @@ struct CatalogStoreQueryPlanTests {
         let ids = try await dbQueue.read { db in
             try CatalogQueryGateway.fetchOrderedAssetIDRows(
                 descriptor: descriptor,
-                scope: CatalogScopePredicate(rootIDs: [rootID]),
+                scope: CatalogScopePredicate(rootIDs: [rootID]), stacks: .readWhenNeeded(.paired),
                 db: db
             )
         }
@@ -42,7 +42,7 @@ struct CatalogStoreQueryPlanTests {
                     scope: .allMedia,
                     filter: MediaFilter(fileTypes: [FilterFileType(kind: .image, format: MediaFormatToken(rawValue: "DNG"))])
                 ),
-                scope: CatalogScopePredicate(rootIDs: [rootID]),
+                scope: CatalogScopePredicate(rootIDs: [rootID]), stacks: .readWhenNeeded(.paired),
                 db: db
             )
         }
@@ -139,15 +139,15 @@ struct CatalogStoreQueryPlanTests {
                 let orders = try sorts.map { sort in
                     let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
                         descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort),
-                        scope: scope,
+                        scope: scope, stacks: .readWhenNeeded(.paired),
                         db: db
                     ))
                     return try explainPlan(db, query: query)
                 } + [
                     // The counts reach the rows the same way.
-                    explainPlan(db, query: #require(try CatalogQueryGateway.countQuery(scope: scope, db: db))),
+                    explainPlan(db, query: #require(try CatalogQueryGateway.countQuery(scope: scope, pairing: .paired, db: db))),
                 ]
-                let options = try #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db))
+                let options = try #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, pairing: .paired, db: db))
                 return try (name, index, orders, explainPlan(db, query: options))
             }
         }
@@ -205,12 +205,12 @@ struct CatalogStoreQueryPlanTests {
                 var reads = try sorts.map { sort in
                     try explainPlan(db, query: #require(try CatalogQueryGateway.orderedAssetIDQuery(
                         descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort),
-                        scope: scope,
+                        scope: scope, stacks: .readWhenNeeded(.paired),
                         db: db
                     )))
                 }
-                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db))))
-                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.countQuery(scope: scope, db: db))))
+                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, pairing: .paired, db: db))))
+                try reads.append(explainPlan(db, query: #require(try CatalogQueryGateway.countQuery(scope: scope, pairing: .paired, db: db))))
                 return (name, firstLine, reads)
             }
         }
@@ -289,11 +289,11 @@ struct CatalogStoreQueryPlanTests {
                 explainPlan(db, query: rootLocated),
                 explainPlan(db, query: globalLocated),
                 explainPlan(db, query: #require(try CatalogQueryGateway.orderedAssetIDQuery(
-                    descriptor: .default, scope: onePlace, db: db
+                    descriptor: .default, scope: onePlace, stacks: .readWhenNeeded(.paired), db: db
                 ))),
                 CatalogQueryGateway.fetchOrderedAssetIDRows(
                     descriptor: .default,
-                    scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2], location: .located),
+                    scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2], location: .located), stacks: .readWhenNeeded(.paired),
                     db: db
                 )
             )
@@ -351,7 +351,7 @@ struct CatalogStoreQueryPlanTests {
         let scope = CatalogScopePredicate(rootIDs: [rootID1, rootID2])
 
         let (unnamedPlan, nextPagePlan, optionsPlan, undecodablePlans, cells) = try await dbQueue.read { db in
-            let optionsQuery = try #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db))
+            let optionsQuery = try #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, pairing: .paired, db: db))
             return try (
                 explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: false), arguments: ["en-Latn", 32]),
                 explainPlan(db, sql: CatalogQueryGateway.unnamedPlaceCellsSQL(after: true), arguments: [0, 0, "en-Latn", 32]),
@@ -527,7 +527,7 @@ struct CatalogStoreQueryPlanTests {
         let orders = orderQueries
         let (plans, typesPlan, batchesPlan, batchIDsPlan, claimsPlan, editsPlan, indexColumns) = try await dbQueue.read { db in
             let types = try #require(try CatalogQueryGateway.filterOptionRowsQuery(
-                scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2]), db: db
+                scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2]), pairing: .paired, db: db
             ))
             var columns: [String: Set<String>] = [:]
             for index in orders.map(\.0) + ["idx_media_asset_stack_candidate", "idx_media_asset_import_batch"] {
@@ -659,7 +659,7 @@ struct CatalogStoreQueryPlanTests {
         let (plans, languagesPlan) = try await dbQueue.read { db in
             var plans: [(String, String)] = []
             for (name, scope) in scopes {
-                let options = try #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db))
+                let options = try #require(try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, pairing: .paired, db: db))
                 try plans.append((name, explainPlan(db, query: options)))
             }
             return try (plans, explainPlan(db, sql: CatalogQueryGateway.placeNameLanguagesSQL))
@@ -716,7 +716,7 @@ struct CatalogStoreQueryPlanTests {
                 try reaches.flatMap { reach in
                     let scope = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
                         descriptor: CatalogQueryDescriptor(scope: .duplicates),
-                        scope: CatalogScopePredicate(rootIDs: roots, content: .duplicated(reach)),
+                        scope: CatalogScopePredicate(rootIDs: roots, content: .duplicated(reach)), stacks: .readWhenNeeded(.paired),
                         db: db
                     ))
                     return try [
@@ -765,7 +765,9 @@ struct CatalogStoreQueryPlanTests {
             }
         let plans = try await dbQueue.read { db in
             try reads.map { name, descriptor, scope in
-                let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(descriptor: descriptor, scope: scope, db: db))
+                let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                    descriptor: descriptor, scope: scope, stacks: .readWhenNeeded(.paired), db: db
+                ))
                 return try (name, explainPlan(db, query: query))
             }
         }
@@ -794,7 +796,7 @@ struct CatalogStoreQueryPlanTests {
             try [[rootID1], [rootID1, rootID2]].map { roots in
                 let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
                     descriptor: CatalogQueryDescriptor(scope: .people),
-                    scope: CatalogScopePredicate(rootIDs: roots, content: .withPerson),
+                    scope: CatalogScopePredicate(rootIDs: roots, content: .withPerson), stacks: .readWhenNeeded(.paired),
                     db: db
                 ))
                 return try explainPlan(db, query: query)
@@ -1374,14 +1376,16 @@ extension CatalogStoreQueryPlanTests {
                 ]
                 for (choices, seeks) in filters {
                     let descriptor = CatalogQueryDescriptor(scope: .allMedia, filter: MediaFilter(choices: Set(choices)), sort: sort)
-                    let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(descriptor: descriptor, scope: scope, db: db))
+                    let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
+                        descriptor: descriptor, scope: scope, stacks: .readWhenNeeded(.paired), db: db
+                    ))
                     let plan = try explainPlan(db, query: query)
                     #expect(plan.contains(ChosenRowsSQL.indexName) == seeks, "\(choices) \(sort): \(plan)")
-                    let count = try #require(try CatalogQueryGateway.countQuery(scope: scope, filter: descriptor.filter, db: db))
+                    let count = try #require(try CatalogQueryGateway.countQuery(scope: scope, filter: descriptor.filter, pairing: .paired, db: db))
                     #expect(try explainPlan(db, query: count).contains(ChosenRowsSQL.indexName) == seeks, "\(choices)")
                     let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments).map { $0[1] as String }
                     let walked = try CatalogQueryGateway.orderedAssetIDQuery(
-                        descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort), scope: scope, db: db
+                        descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: sort), scope: scope, stacks: .readWhenNeeded(.paired), db: db
                     ).map { try Row.fetchAll(db, sql: $0.sql, arguments: $0.arguments) } ?? []
                     let named = choices.map { "'\($0.rawValue)'" }.joined(separator: ", ")
                     let chosen = try Set(String.fetchAll(db, sql: "SELECT relative_path FROM media_asset WHERE media_choice IN (\(named))"))

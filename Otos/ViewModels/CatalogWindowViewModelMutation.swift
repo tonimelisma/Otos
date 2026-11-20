@@ -129,6 +129,9 @@ extension CatalogWindowViewModel {
         case let .setDuplicatesReach(reach):
             await store.setDuplicatesReach(reach)
             return nil
+        case let .setRawPairing(pairing):
+            await store.setRawPairing(pairing)
+            return nil
         }
     }
 }

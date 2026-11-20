@@ -300,7 +300,7 @@ enum WindowReadPages {
                 reads: [
                     VariantRead(name: "stackCandidates") { _ in PhotoStackSQL.candidateQuery(rootIDs: roots) },
                     VariantRead(name: "filterOptions") { db in
-                        try CatalogQueryGateway.filterOptionRowsQuery(scope: CatalogScopePredicate(rootIDs: roots), db: db)
+                        try CatalogQueryGateway.filterOptionRowsQuery(scope: CatalogScopePredicate(rootIDs: roots), pairing: .paired, db: db)
                     },
                 ]
             ),
@@ -312,14 +312,14 @@ enum WindowReadPages {
                 shown_copy_root_id, has_copies)
                 """,
                 reads: [VariantRead(name: "onThisDay") { db in
-                    try CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: onThisDay, db: db)
+                    try CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: onThisDay, stacks: .readWhenNeeded(.paired), db: db)
                 }]
             ),
             Variant(
                 index: "idx_media_asset_import_batch",
                 other: "(import_batch_unix_ms, library_root_id, relative_path) WHERE import_batch_unix_ms IS NOT NULL",
                 reads: [VariantRead(name: "importBatch") { db in
-                    try CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: batch, db: db)
+                    try CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: batch, stacks: .readWhenNeeded(.paired), db: db)
                 }]
             ),
         ]
@@ -387,27 +387,28 @@ enum WindowReadPages {
             }
         }
         try read("defaultOrder") { db in
-            try CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: scope, db: db)
+            try CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: scope, stacks: .readWhenNeeded(.paired), db: db)
         }
         try read("nameOrder") { db in
-            try CatalogQueryGateway.orderedAssetIDQuery(descriptor: byName, scope: scope, db: db)
+            try CatalogQueryGateway.orderedAssetIDQuery(descriptor: byName, scope: scope, stacks: .readWhenNeeded(.paired), db: db)
         }
         try read("likedFilter") { db in
-            try CatalogQueryGateway.orderedAssetIDQuery(descriptor: liked, scope: scope, db: db)
+            try CatalogQueryGateway.orderedAssetIDQuery(descriptor: liked, scope: scope, stacks: .readWhenNeeded(.paired), db: db)
         }
         try read("filterOptions") { db in
-            try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, db: db)
+            try CatalogQueryGateway.filterOptionRowsQuery(scope: scope, pairing: .paired, db: db)
         }
         // All Media's one-copy rule, with every copy root and with the mirrored library away:
         // the second asks the copy key's index whether a better copy is reachable.
         try read("allMediaOneCopy") { db in
             try CatalogQueryGateway.orderedAssetIDQuery(
-                descriptor: .default, scope: CatalogScopePredicate(rootIDs: roots, showsOneCopy: true, holdsEveryCopyRoot: true), db: db
+                descriptor: .default, scope: CatalogScopePredicate(rootIDs: roots, showsOneCopy: true, holdsEveryCopyRoot: true),
+                stacks: .readWhenNeeded(.paired), db: db
             )
         }
         try read("allMediaLibraryAway") { db in
             try CatalogQueryGateway.orderedAssetIDQuery(
-                descriptor: .default, scope: CatalogScopePredicate(rootIDs: [6, 15], showsOneCopy: true), db: db
+                descriptor: .default, scope: CatalogScopePredicate(rootIDs: [6, 15], showsOneCopy: true), stacks: .readWhenNeeded(.paired), db: db
             )
         }
         try read("peopleFaceAssetJoin") { _ in

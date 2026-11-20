@@ -104,7 +104,7 @@ struct PhotoCopiesTests {
                 var scope = CatalogScopePredicate(rootIDs: read.roots, content: read.content)
                 scope.showsOneCopy = true
                 let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
-                    descriptor: CatalogQueryDescriptor(scope: .allMedia, filter: read.filter), scope: scope, db: db
+                    descriptor: CatalogQueryDescriptor(scope: .allMedia, filter: read.filter), scope: scope, stacks: .readWhenNeeded(.paired), db: db
                 ))
                 let plan = try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(query.sql)", arguments: query.arguments)
                     .map { $0["detail"] as String }
@@ -283,7 +283,7 @@ struct PhotoCopiesTests {
         var scope = CatalogScopePredicate(rootIDs: [1, 2], content: content)
         scope.showsOneCopy = true
         let query = try #require(try CatalogQueryGateway.orderedAssetIDQuery(
-            descriptor: CatalogQueryDescriptor(scope: .allMedia, filter: filter), scope: scope, db: db
+            descriptor: CatalogQueryDescriptor(scope: .allMedia, filter: filter), scope: scope, stacks: .readWhenNeeded(.paired), db: db
         ))
         let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
         let plan = try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(query.sql)", arguments: query.arguments)
@@ -292,7 +292,7 @@ struct PhotoCopiesTests {
         return try Read(
             paths: Set(rows.map { $0[1] as String }),
             readsPersonRows: plan.contains { $0.hasPrefix("SEARCH media_asset USING PRIMARY KEY (person_id=?") },
-            count: CatalogQueryGateway.countAssets(scope: scope, filter: filter, db: db)
+            count: CatalogQueryGateway.countAssets(scope: scope, filter: filter, pairing: .paired, db: db)
         )
     }
 

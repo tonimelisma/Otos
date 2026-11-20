@@ -23,10 +23,10 @@ struct CatalogQueryGatewayTests {
         let batchScope = CatalogScopePredicate(rootIDs: [1], importBatchUnixMs: 100)
 
         let wholeRootCount = try await dbQueue.read { db in
-            try CatalogQueryGateway.countAssets(scope: CatalogScopePredicate(rootIDs: [1]), db: db)
+            try CatalogQueryGateway.countAssets(scope: CatalogScopePredicate(rootIDs: [1]), pairing: .paired, db: db)
         }
         let batchCount = try await dbQueue.read { db in
-            try CatalogQueryGateway.countAssets(scope: batchScope, db: db)
+            try CatalogQueryGateway.countAssets(scope: batchScope, pairing: .paired, db: db)
         }
 
         #expect(wholeRootCount == 3)
@@ -80,7 +80,7 @@ struct CatalogQueryGatewayTests {
             try CatalogQueryGateway.fetchOrderedAssetIDRows(
                 descriptor: descriptor,
                 scope: CatalogScopePredicate(rootIDs: [1]),
-                db: db
+                stacks: .readWhenNeeded(.paired), db: db
             ).map(\.relativePath.rawValue)
         }
         #expect(paths == ["disliked.jpg", "liked.jpg"])
@@ -107,7 +107,7 @@ struct CatalogQueryGatewayTests {
             try CatalogQueryGateway.fetchOrderedAssetIDRows(
                 descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: .dateNewest),
                 scope: CatalogScopePredicate(rootIDs: [1]),
-                db: db
+                stacks: .readWhenNeeded(.paired), db: db
             )
         }
         let byPath = Dictionary(uniqueKeysWithValues: rows.map { ($0.relativePath.rawValue, $0.captureLocalTime) })

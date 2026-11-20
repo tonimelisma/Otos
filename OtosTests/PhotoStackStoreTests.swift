@@ -20,6 +20,22 @@ struct PhotoStackStoreTests {
         }
     }
 
+    /// Shown separately (Settings), the Store builds no pair: the order holds both files as
+    /// photos of their own, and paired again the pair is back.
+    @Test func separatelyTheOrderHoldsNoPair() async throws {
+        try await withLibrary(["DSC1.ARW", "DSC1.JPG"]) { library in
+            let raw = library.id("DSC1.ARW")
+            let paired = try await library.ordered()
+            await library.store.setRawPairing(.separate)
+            let separate = try await library.ordered()
+            await library.store.setRawPairing(.paired)
+            let pairedAgain = try await library.ordered()
+            #expect(paired.stacks.stack(containing: raw) != nil)
+            #expect(separate.stacks.stack(containing: raw) == nil)
+            #expect(pairedAgain.stacks.stack(containing: raw) != nil)
+        }
+    }
+
     /// A filter that shows only RAWs still reads the pair, so the RAW is known to be one.
     @Test func aFilterNeverUnpairs() async throws {
         try await withLibrary(["DSC1.ARW", "DSC1.JPG"]) { library in

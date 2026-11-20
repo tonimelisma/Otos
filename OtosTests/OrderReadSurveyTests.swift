@@ -181,7 +181,9 @@ enum OrderReadSurvey {
         let queue = try makeTestDatabaseQueue(path: path, configuration: configuration)
         defer { try? queue.close() }
         return try queue.read { db -> Measured? in
-            guard let query = try CatalogQueryGateway.orderedAssetIDQuery(descriptor: read.descriptor, scope: read.scope, db: db) else {
+            guard let query = try CatalogQueryGateway.orderedAssetIDQuery(
+                descriptor: read.descriptor, scope: read.scope, stacks: .readWhenNeeded(.paired), db: db
+            ) else {
                 return nil
             }
             let plan = try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN \(query.sql)", arguments: query.arguments)

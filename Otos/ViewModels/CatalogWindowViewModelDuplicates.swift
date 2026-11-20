@@ -423,3 +423,21 @@ extension CatalogWindowViewModel {
         submitCatalogMutation(.setDuplicatesReach(reach))
     }
 }
+
+extension CatalogWindowViewModel {
+    /// How stacks pair a RAW with its processed file, from the user's preference.
+    var rawPairing: RawPairing {
+        showsRawPairsAsOne ? .paired : .separate
+    }
+
+    /// The one writer of the preference (Settings ▸ General). The Store builds its stacks again
+    /// on it, so every scope, count and People's photos follow.
+    func setShowsRawPairsAsOne(_ shows: Bool) {
+        guard showsRawPairsAsOne != shows else { return }
+        showsRawPairsAsOne = shows
+        preferences.set(shows, forKey: Self.showsRawPairsAsOneDefaultsKey)
+        let pairing = rawPairing
+        OtosLog.ui.noticeOperation("stacks.rawPairing", phase: "chosen", fields: ["pairing": pairing.rawValue])
+        submitCatalogMutation(.setRawPairing(pairing))
+    }
+}

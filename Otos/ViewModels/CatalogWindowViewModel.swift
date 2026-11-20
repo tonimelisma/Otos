@@ -51,6 +51,7 @@ final class CatalogWindowViewModel {
         case detachRemovableSource(DeviceIdentity, RemovableSourceDetachReason)
         case acknowledgeIdentityRemaps([Int64])
         case setDuplicatesReach(DuplicatesReach)
+        case setRawPairing(RawPairing)
     }
 
     /// What a finished mutation tells the user, when it tells them anything.
@@ -445,6 +446,10 @@ final class CatalogWindowViewModel {
     /// a library and the Immich server that mirrors it (ADR 0042). Off by default: a mirror
     /// the user keeps on purpose is not waste. Settings ▸ General is its one editor.
     var findsDuplicatesAcrossLibraries: Bool
+    /// Whether a RAW and its processed file (JPEG, HEIF) show as one photo (ADR 0052). On by
+    /// default, as Apple Photos and Lightroom Classic pair them; Settings ▸ General is its one
+    /// editor.
+    var showsRawPairsAsOne: Bool
     /// The large-download question awaiting an answer; nil when none.
     var largeTrashDownloadPrompt: LargeTrashDownloadPrompt?
     /// Full-size decodes keyed by pane slot and bound to the asset they belong to.
@@ -915,6 +920,7 @@ final class CatalogWindowViewModel {
         asksBeforeLargeTrashDownload = preferences.object(forKey: Self.asksBeforeLargeTrashDownloadDefaultsKey)
             as? Bool ?? true
         findsDuplicatesAcrossLibraries = preferences.bool(forKey: Self.findsDuplicatesAcrossLibrariesDefaultsKey)
+        showsRawPairsAsOne = preferences.object(forKey: Self.showsRawPairsAsOneDefaultsKey) as? Bool ?? true
         searchLanguages = SearchLanguages.resolved(
             stored: preferences.object(forKey: Self.searchLanguagesDefaultsKey) as? [String],
             systemPreferred: Locale.preferredLanguages
@@ -1297,6 +1303,9 @@ extension CatalogWindowViewModel {
         // build that the catalog's load lets run before it is followed by another, since the
         // handoff is a change of which files are copies.
         submitCatalogMutation(.setDuplicatesReach(duplicatesReach))
+        // And it pairs a RAW with its processed file as the user chose, before the first order
+        // read builds stacks.
+        submitCatalogMutation(.setRawPairing(rawPairing))
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startMediaChoiceForwarding(writer: .store(store))
         startStackKeyForwarding(store: store)
@@ -2318,6 +2327,7 @@ extension CatalogWindowViewModel {
     static let asksBeforeLargeTrashDownloadDefaultsKey = "trash.asksBeforeLargeDownload"
     static let searchLanguagesDefaultsKey = "search.languages"
     static let findsDuplicatesAcrossLibrariesDefaultsKey = "duplicates.acrossLibraries"
+    static let showsRawPairsAsOneDefaultsKey = "stacks.rawPairsAsOne"
     static let dismissedCameraBannersDefaultsKey = "dismissedCameraConnectionBannerIdentities"
     static let foldedInfoSectionsDefaultsKey = "infoPane.foldedSections"
     static let foldedEditSectionsDefaultsKey = "editPanel.foldedSections"

@@ -801,6 +801,11 @@ actor CatalogStore {
     /// preference, which the window's owner hands over before the catalog starts and on
     /// every change (`setDuplicatesReach`).
     private(set) var duplicatesReach: DuplicatesReach = .withinEachLibrary
+    /// Whether a RAW and its processed file are one photo (ADR 0052, Settings ▸ General): every
+    /// stack build reads this one value, so the grid, the counts, People and the imports agree.
+    /// The user's preference, handed over before the catalog starts and on every change
+    /// (`setRawPairing`).
+    private(set) var rawPairing: RawPairing = .paired
     /// Bytes the WAL file may reach before a bulk write checkpoints it, and the size SQLite
     /// truncates it to when it restarts the log (64 MiB). While readers overlap one another
     /// back to back — the window, enrichment and the derived owners during a listing —
@@ -1407,8 +1412,9 @@ extension CatalogStore {
     /// `roots` capture.
     func importBatches(counting: ImportBatchCounting, lane: CatalogReadLane) async throws -> [ImportBatchSummary] {
         let rootPaths = roots.pathsByRowID
+        let pairing = rawPairing
         let timed = try await timedRead(reader(for: lane)) { db in
-            try CatalogQueryGateway.fetchImportBatches(counting: counting, rootPaths: rootPaths, db: db)
+            try CatalogQueryGateway.fetchImportBatches(counting: counting, rootPaths: rootPaths, pairing: pairing, db: db)
         }
         OtosLog.catalog.debugOperation("catalog.store.importBatches", phase: "finish", fields: [
             "batches": "\(timed.value.count)",
@@ -1657,6 +1663,7 @@ extension CatalogStore {
         let allFaceRootIDs = Set(roots.values.filter(\.root.kind.readsFaces).map(\.rowID))
         let accountRowIDs = Set(roots.values.filter { $0.root.kind == .immichAccount }.map(\.rowID))
         let operation = asked == nil ? "peopleSnapshot" : "peopleFaces"
+        let pairing = rawPairing
         let (snapshot, malformed) = try await reader(for: lane).readFreeingConnection(operation: operation) { db -> (PeopleSnapshot, Set<FaceRowKey.Photo>) in
             var malformed: Set<FaceRowKey.Photo> = []
             var rejections: [FaceRowKey: Set<PersonID>] = [:]
@@ -1787,9 +1794,9 @@ extension CatalogStore {
                         burstIdentifier: String.fetchOne(burst, arguments: [rootID, photo.relativePath.rawValue])
                     ) : nil
                 }
-                stacks = try PhotoStackSQL.build(rootPaths: stackRoots, holding: rows, db: db).stacks
+                stacks = try PhotoStackSQL.build(rootPaths: stackRoots, holding: rows, pairing: pairing, db: db).stacks
             } else {
-                stacks = try PhotoStackSQL.build(rootPaths: stackRoots, db: db).stacks
+                stacks = try PhotoStackSQL.build(rootPaths: stackRoots, pairing: pairing, db: db).stacks
             }
             let photoOf = PeopleSnapshot.photos(stackKeys: stacks.keyOfMember, copies: copies)
             // A malformed row's photo is left out whole: its other faces were read before the
@@ -2142,6 +2149,7 @@ extension CatalogStore {
         let faceRootPaths = pathsByRowID.filter { rowID, _ in
             roots.values.contains { $0.rowID == rowID && $0.root.kind.readsFaces }
         }
+        let pairing = rawPairing
         return try await reader(for: lane).readFreeingConnection { db in
             let rows = try Row.fetchAll(db, sql: """
             SELECT \(FaceTileColumn.selectList(face: "f", asset: "m")),
@@ -2177,7 +2185,7 @@ extension CatalogStore {
                     captureLocalTime: face.tile.captureLocalTime, coordinate: nil, burstIdentifier: face.burst
                 )
             }
-            let stacks = try PhotoStackSQL.build(rootPaths: faceRootPaths, holding: stackRows, db: db).stacks.keyOfMember
+            let stacks = try PhotoStackSQL.build(rootPaths: faceRootPaths, holding: stackRows, pairing: pairing, db: db).stacks.keyOfMember
             var photos: Set<MediaAssetID> = []
             return Array(byDigest.map(\.tile).filter { photos.insert(stacks[$0.id.asset] ?? $0.id.asset).inserted }.prefix(limit))
         }
@@ -3090,6 +3098,7 @@ extension CatalogStore {
         // (`docs/research/2026-11-15-shared-reader-waits.md`).
         // `readDuration` is the order's read with its stacks'; `mapDuration` makes the rows
         // the window's IDs.
+        let pairing = rawPairing
         let timedRows = try await timedRead(reader(for: lane)) { db in
             let readStart = ContinuousClock.now
             let order = try CatalogQueryGateway.readOrder(
@@ -3097,6 +3106,7 @@ extension CatalogStore {
                 scope: scope,
                 stackRootPaths: stackRootPaths,
                 held: held,
+                pairing: pairing,
                 db: db
             )
             let mapStart = ContinuousClock.now
@@ -3210,8 +3220,11 @@ extension CatalogStore {
             showsOneCopy: scope.showsOneCopy,
             holdsEveryCopyRoot: scope.holdsEveryCopyRoot
         )
+        let pairing = rawPairing
         let timed = try await timedRead(reader(for: lane)) { db in
-            let rows = try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, scope: members, db: db)
+            let rows = try CatalogQueryGateway.fetchOrderedAssetIDRows(
+                descriptor: descriptor, scope: members, stacks: .readWhenNeeded(pairing), db: db
+            )
             return Self.orderedAssets(from: rows, stacks: .empty, rootPathsByRowID: rootPaths, scope: members, groupsByDate: true)
         }
         OtosLog.catalog.noticeOperation("catalog.store.query.order", phase: "keyed", fields: [
@@ -3346,8 +3359,9 @@ extension CatalogStore {
         guard !scope.selectsNothing else {
             return 0
         }
+        let pairing = rawPairing
         let timedCount = try await timedRead(reader(for: lane)) { db in
-            try CatalogQueryGateway.countAssets(scope: scope, db: db)
+            try CatalogQueryGateway.countAssets(scope: scope, pairing: pairing, db: db)
         }
         OtosLog.catalog.notice(
             "op=catalog.store.query.catalogedCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) lockMs=\(timedCount.lockMs, privacy: .public) resumeMs=\(timedCount.resumeMs, privacy: .public) priority=\(timedCount.priorityName, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
@@ -3369,8 +3383,9 @@ extension CatalogStore {
         guard !scope.selectsNothing else {
             return 0
         }
+        let pairing = rawPairing
         let timedCount = try await timedRead(reader(for: lane)) { db in
-            try CatalogQueryGateway.countAssets(scope: scope, filter: filter, db: db)
+            try CatalogQueryGateway.countAssets(scope: scope, filter: filter, pairing: pairing, db: db)
         }
         OtosLog.catalog.notice(
             "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) filtered=\(filter.isActive, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) lockMs=\(timedCount.lockMs, privacy: .public) resumeMs=\(timedCount.resumeMs, privacy: .public) priority=\(timedCount.priorityName, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
@@ -3409,10 +3424,11 @@ extension CatalogStore {
         guard let scope = optionsScope(of: row, availableLibraryPaths: availableLibraryPaths) else {
             return CatalogFilterOptionTally(language: nil)
         }
+        let pairing = rawPairing
         let timed = try await timedRead(reader(for: lane), operation: "filterOptions") { db in
             var tally = CatalogFilterOptionTally(language: language)
             // A scope that turns out to select nothing (a day with no photos) offers nothing.
-            guard try CatalogQueryGateway.tallyFilterOptionRows(scope: scope, into: &tally, db: db) else {
+            guard try CatalogQueryGateway.tallyFilterOptionRows(scope: scope, into: &tally, pairing: pairing, db: db) else {
                 return CatalogFilterOptionTally(language: nil)
             }
             if let language {
@@ -3463,10 +3479,11 @@ extension CatalogStore {
             showsOneCopy: scope.showsOneCopy,
             holdsEveryCopyRoot: scope.holdsEveryCopyRoot
         )
+        let pairing = rawPairing
         let timed = try await timedRead(reader(for: lane)) { db in
             var rows: [CatalogFilterOptionTally.Row] = []
             if !keys.isEmpty {
-                rows = try CatalogQueryGateway.filterOptionRows(scope: members, db: db)
+                rows = try CatalogQueryGateway.filterOptionRows(scope: members, pairing: pairing, db: db)
                 let counted = Set(rows.map(\.rowID))
                 let statement = try db.cachedStatement(sql: CatalogQueryGateway.rowIDOfKeySQL)
                 for key in keys {
@@ -10437,6 +10454,17 @@ extension CatalogStore {
 // MARK: - Duplicates (ADR 0042)
 
 extension CatalogStore {
+    /// A RAW and its processed file are one photo, or two, from now on. A change is a change
+    /// of what decides the stacks, so every reader of stacks reads again.
+    func setRawPairing(_ pairing: RawPairing) {
+        guard rawPairing != pairing else {
+            return
+        }
+        rawPairing = pairing
+        OtosLog.catalog.noticeOperation("stacks.rawPairing", phase: "set", fields: ["pairing": pairing.rawValue])
+        notifyCatalogChanged(.changed(.stacks))
+    }
+
     /// Duplicates compares these copies from now on. A change is a change of which files
     /// are duplicates of which, so the groups and the Duplicates scopes are read again.
     func setDuplicatesReach(_ reach: DuplicatesReach) {

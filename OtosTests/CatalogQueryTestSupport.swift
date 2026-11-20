@@ -11,7 +11,7 @@ extension CatalogQueryGateway {
         scope: CatalogScopePredicate
     ) throws -> SQLQuery? {
         try DatabaseQueue().read { db in
-            try orderedAssetIDQuery(descriptor: descriptor, scope: scope, db: db)
+            try orderedAssetIDQuery(descriptor: descriptor, scope: scope, stacks: .readWhenNeeded(.paired), db: db)
         }
     }
 }

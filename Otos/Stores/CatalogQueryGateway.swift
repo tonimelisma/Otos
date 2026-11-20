@@ -41,7 +41,7 @@ nonisolated enum CatalogQueryGateway {
     static func fetchOrderedAssetIDRows(
         descriptor: CatalogQueryDescriptor,
         scope: CatalogScopePredicate,
-        stacks: AnniversaryStacks = .readWhenNeeded,
+        stacks: AnniversaryStacks,
         db: Database
     ) throws -> [OrderedAssetIDRow] {
         guard let clause = try scopeClause(scope, stacks: stacks, ordering: true, db: db) else {
@@ -93,7 +93,7 @@ nonisolated enum CatalogQueryGateway {
     /// moved — is used when given. Otherwise a scope whose reads seek its rows
     /// (`ScopeClause.Seek`) reads its rows first and, while they are at most
     /// `PhotoStackSQL.rowsSpanMostRows`, builds only the stacks that hold them
-    /// (`PhotoStackSQL.build(rootPaths:holding:db:)`); more rows, and a scope whose reads walk
+    /// (`PhotoStackSQL.build(rootPaths:holding:pairing:db:)`); more rows, and a scope whose reads walk
     /// the order, build every stack of its roots: a build from thousands of rows' folders reads
     /// about every candidate and costs more than reading them all does
     /// (`docs/research/2026-11-15-large-narrow-scopes.md`,
@@ -103,21 +103,22 @@ nonisolated enum CatalogQueryGateway {
         scope: CatalogScopePredicate,
         stackRootPaths: [Int64: LibraryRootPath],
         held: PhotoStackSQL.Built?,
+        pairing: RawPairing,
         db: Database
     ) throws -> (rows: [OrderedAssetIDRow], stacks: PhotoStackSQL.Built) {
         guard let clause = try scopeClause(
-            scope, stacks: held.map(AnniversaryStacks.built) ?? .readWhenNeeded, ordering: true, db: db
+            scope, stacks: held.map(AnniversaryStacks.built) ?? .readWhenNeeded(pairing), ordering: true, db: db
         ) else {
-            return try ([], held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, holding: [], db: db))
+            return try ([], held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, holding: [], pairing: pairing, db: db))
         }
         if held == nil, clause.seek != nil {
             let rows = try fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, clause: clause, db: db)
             guard rows.count <= PhotoStackSQL.rowsSpanMostRows else {
-                return try (rows, PhotoStackSQL.build(rootPaths: stackRootPaths, db: db))
+                return try (rows, PhotoStackSQL.build(rootPaths: stackRootPaths, pairing: pairing, db: db))
             }
-            return try (rows, PhotoStackSQL.build(rootPaths: stackRootPaths, holding: rows, db: db))
+            return try (rows, PhotoStackSQL.build(rootPaths: stackRootPaths, holding: rows, pairing: pairing, db: db))
         }
-        let stacks = try held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, db: db)
+        let stacks = try held ?? PhotoStackSQL.build(rootPaths: stackRootPaths, pairing: pairing, db: db)
         return try (fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, clause: clause, db: db), stacks)
     }
 
@@ -131,7 +132,7 @@ nonisolated enum CatalogQueryGateway {
         /// Read only for On This Day, which puts a day's Liked photos first.
         var isLiked = false
         /// The burst a still carries, read only for a narrow scope, whose stacks are built from
-        /// its rows (`PhotoStackSQL.build(rootPaths:holding:db:)`).
+        /// its rows (`PhotoStackSQL.build(rootPaths:holding:pairing:db:)`).
         var burstIdentifier: String?
     }
 
@@ -141,7 +142,7 @@ nonisolated enum CatalogQueryGateway {
     static func orderedAssetIDQuery(
         descriptor: CatalogQueryDescriptor,
         scope: CatalogScopePredicate,
-        stacks: AnniversaryStacks = .readWhenNeeded,
+        stacks: AnniversaryStacks,
         db: Database
     ) throws -> SQLQuery? {
         try scopeClause(scope, stacks: stacks, ordering: true, db: db).map { clause in
@@ -233,9 +234,10 @@ nonisolated enum CatalogQueryGateway {
     static func tallyFilterOptionRows(
         scope: CatalogScopePredicate,
         into tally: inout CatalogFilterOptionTally,
+        pairing: RawPairing,
         db: Database
     ) throws -> Bool {
-        guard let query = try filterOptionRowsQuery(scope: scope, db: db) else {
+        guard let query = try filterOptionRowsQuery(scope: scope, pairing: pairing, db: db) else {
             return false
         }
         let statement = try db.cachedStatement(sql: query.sql)
@@ -286,8 +288,12 @@ nonisolated enum CatalogQueryGateway {
 
     /// Each row of `scope` with what it gives the options: what a keyed re-read reads for the
     /// few rows its changes name (`CatalogStore.filterOptionsOfRows`).
-    static func filterOptionRows(scope: CatalogScopePredicate, db: Database) throws -> [CatalogFilterOptionTally.Row] {
-        guard let query = try filterOptionRowsQuery(scope: scope, db: db) else {
+    static func filterOptionRows(
+        scope: CatalogScopePredicate,
+        pairing: RawPairing,
+        db: Database
+    ) throws -> [CatalogFilterOptionTally.Row] {
+        guard let query = try filterOptionRowsQuery(scope: scope, pairing: pairing, db: db) else {
             return []
         }
         let statement = try db.cachedStatement(sql: query.sql)
@@ -319,8 +325,8 @@ nonisolated enum CatalogQueryGateway {
     /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`) — and 21 s for an import
     /// batch of 210 rows (`docs/research/2026-11-15-keyed-scope-query-plans.md`). The join
     /// order is fixed: the planner cannot tell a wide scope from a keyed one.
-    static func filterOptionRowsQuery(scope: CatalogScopePredicate, db: Database) throws -> SQLQuery? {
-        guard let scopeClause = try scopeClause(scope, db: db) else {
+    static func filterOptionRowsQuery(scope: CatalogScopePredicate, pairing: RawPairing, db: Database) throws -> SQLQuery? {
+        guard let scopeClause = try scopeClause(scope, stacks: .readWhenNeeded(pairing), db: db) else {
             return nil
         }
         let rows = scopeClause.seekFrom ?? "media_asset INDEXED BY \(PhotoStackSQL.candidateIndexName)\(scopeClause.join)"
@@ -404,8 +410,13 @@ nonisolated enum CatalogQueryGateway {
 
     /// The count of a scope other than On This Day's (whose count judges its stacks in
     /// Swift, `countAssets`); a narrow scope counts from its seek (`ScopeClause.from`).
-    static func countQuery(scope: CatalogScopePredicate, filter: MediaFilter = .all, db: Database) throws -> SQLQuery? {
-        guard let scopeClause = try scopeClause(scope, db: db) else {
+    static func countQuery(
+        scope: CatalogScopePredicate,
+        filter: MediaFilter = .all,
+        pairing: RawPairing,
+        db: Database
+    ) throws -> SQLQuery? {
+        guard let scopeClause = try scopeClause(scope, stacks: .readWhenNeeded(pairing), db: db) else {
             return nil
         }
         let filterPredicate = filterPredicate(for: filter)
@@ -432,15 +443,16 @@ nonisolated enum CatalogQueryGateway {
     static func countAssets(
         scope: CatalogScopePredicate,
         filter: MediaFilter = .all,
+        pairing: RawPairing,
         db: Database
     ) throws -> Int {
         guard scope.isAnniversary, !scope.selectsNothing else {
-            guard let query = try countQuery(scope: scope, filter: filter, db: db) else {
+            guard let query = try countQuery(scope: scope, filter: filter, pairing: pairing, db: db) else {
                 return 0
             }
             return try Int.fetchOne(db, sql: query.sql, arguments: query.arguments) ?? 0
         }
-        guard let scopeClause = try scopeClause(scope, stacks: .readWhenNeeded, db: db) else {
+        guard let scopeClause = try scopeClause(scope, stacks: .readWhenNeeded(pairing), db: db) else {
             return 0
         }
         var arguments = scopeClause.arguments
@@ -458,7 +470,7 @@ nonisolated enum CatalogQueryGateway {
             ),
             db: db
         )
-        let picks = try AnniversaryStacks.readWhenNeeded.judging(
+        let picks = try AnniversaryStacks.readWhenNeeded(pairing).judging(
             rows, rootIDs: scope.rootIDs, span: scopeClause.seek != nil ? .rows : .roots, db: db
         )
         return rows.count { row in
@@ -620,12 +632,13 @@ nonisolated enum CatalogQueryGateway {
 
     /// Every nonempty import batch, newest first, with how many photos it shows (ADR 0052: a
     /// stack counts once) for the batches `counting` names, and no count for the rest. A batch counts as its grid does: its rows collapsed by the
-    /// stacks that hold them (`PhotoStackSQL.build(rootPaths:holding:db:)`), so a RAW+JPEG
+    /// stacks that hold them (`PhotoStackSQL.build(rootPaths:holding:pairing:db:)`), so a RAW+JPEG
     /// pair imported together is one photo, and a pair whose files came in two batches is a
     /// file in each.
     static func fetchImportBatches(
         counting: ImportBatchCounting,
         rootPaths: [Int64: LibraryRootPath],
+        pairing: RawPairing,
         db: Database
     ) throws -> [ImportBatchSummary] {
         let ids = try Int64.fetchAll(db.cachedStatement(sql: importBatchIDsSQL)).map(ImportBatchID.init(unixMilliseconds:))
@@ -651,7 +664,7 @@ nonisolated enum CatalogQueryGateway {
         for rows in rowsByBatch.values {
             held += rows
         }
-        let stacks = try PhotoStackSQL.build(rootPaths: rootPaths, holding: held, db: db).stacks
+        let stacks = try PhotoStackSQL.build(rootPaths: rootPaths, holding: held, pairing: pairing, db: db).stacks
         return ids.map { id in
             guard let rows = rowsByBatch[id] else {
                 return ImportBatchSummary(batchID: id, photoCount: nil)
@@ -1177,11 +1190,11 @@ nonisolated enum PhotoStackSQL {
 
     /// Every stack of `rootPaths`' roots, from every candidate (`Span.roots`), in the
     /// caller's read, so the stacks come from the snapshot its rows do.
-    static func build(rootPaths: [Int64: LibraryRootPath], db: Database) throws -> Built {
+    static func build(rootPaths: [Int64: LibraryRootPath], pairing: RawPairing, db: Database) throws -> Built {
         let candidates = try fetchCandidates(rootIDs: rootPaths.keys.sorted(), db: db)
         let ruleStart = ContinuousClock.now
         return Built(
-            stacks: CatalogStacks(stacks(of: candidates, rootPaths: rootPaths)),
+            stacks: CatalogStacks(stacks(of: candidates, rootPaths: rootPaths, pairing: pairing)),
             rootPaths: rootPaths,
             span: .roots,
             candidateCount: candidates.count,
@@ -1201,6 +1214,7 @@ nonisolated enum PhotoStackSQL {
     static func build(
         rootPaths: [Int64: LibraryRootPath],
         holding rows: [CatalogQueryGateway.OrderedAssetIDRow],
+        pairing: RawPairing,
         db: Database
     ) throws -> Built {
         let start = ContinuousClock.now
@@ -1238,7 +1252,7 @@ nonisolated enum PhotoStackSQL {
                 db: db
             )
         let ruleStart = ContinuousClock.now
-        var stacks = stacks(of: candidates, rootPaths: rootPaths)
+        var stacks = stacks(of: candidates, rootPaths: rootPaths, pairing: pairing)
         if !stacks.isEmpty {
             var held = Set<MediaAssetID>(minimumCapacity: rows.count)
             for row in rows {
@@ -1310,13 +1324,13 @@ nonisolated enum PhotoStackSQL {
         return String(path.rawValue[...slash])
     }
 
-    static func stacks(of candidates: Candidates, rootPaths: [Int64: LibraryRootPath]) -> [PhotoStack] {
+    static func stacks(of candidates: Candidates, rootPaths: [Int64: LibraryRootPath], pairing: RawPairing) -> [PhotoStack] {
         var stacks = MappedArrayBuilder<PhotoStack>()
         for (rowID, rootCandidates) in candidates.byRoot {
             guard let rootPath = rootPaths[rowID] else {
                 continue
             }
-            for stack in PhotoStackRule.stacks(candidates: rootCandidates, libraryRootPath: rootPath) {
+            for stack in PhotoStackRule.stacks(candidates: rootCandidates, libraryRootPath: rootPath, pairing: pairing) {
                 stacks.append(stack)
             }
         }
@@ -1700,7 +1714,7 @@ private nonisolated func orderPlan(
 /// rows (`PersonPhotoSQL`); every other read finds them from the person's faces.
 private nonisolated func scopeClause(
     _ scope: CatalogScopePredicate,
-    stacks: AnniversaryStacks = .readWhenNeeded,
+    stacks: AnniversaryStacks,
     ordering: Bool = false,
     db: Database
 ) throws -> ScopeClause? {
@@ -1844,12 +1858,13 @@ private nonisolated let mediaAssetKeyIndexName = "sqlite_autoindex_media_asset_1
 /// The stacks On This Day's match judges a stack's files by (`OnThisDayPicks.shows`): every
 /// stack of the scope's roots, which the read's caller holds, or none yet, built in the read
 /// when rows are judged — `span` `.rows`: only the stacks that hold one of them
-/// (`PhotoStackSQL.build(rootPaths:holding:db:)`), which judge those rows exactly as every
+/// (`PhotoStackSQL.build(rootPaths:holding:pairing:db:)`), which judge those rows exactly as every
 /// stack would; `.roots`: every stack of the roots, for rows that are a large share of them.
 /// Either way they come from the snapshot the rows do.
 nonisolated enum AnniversaryStacks {
     case built(PhotoStackSQL.Built)
-    case readWhenNeeded
+    /// Built when a read needs them, under the Store's pairing.
+    case readWhenNeeded(RawPairing)
 
     func judging(
         _ rows: [CatalogQueryGateway.OrderedAssetIDRow],
@@ -1860,7 +1875,7 @@ nonisolated enum AnniversaryStacks {
         switch self {
         case let .built(built):
             return built
-        case .readWhenNeeded:
+        case let .readWhenNeeded(pairing):
             var rootPaths: [Int64: LibraryRootPath] = [:]
             let roots = try Row.fetchAll(
                 db,
@@ -1872,16 +1887,16 @@ nonisolated enum AnniversaryStacks {
             }
             switch span {
             case .rows:
-                return try PhotoStackSQL.build(rootPaths: rootPaths, holding: rows, db: db)
+                return try PhotoStackSQL.build(rootPaths: rootPaths, holding: rows, pairing: pairing, db: db)
             case .roots:
-                return try PhotoStackSQL.build(rootPaths: rootPaths, db: db)
+                return try PhotoStackSQL.build(rootPaths: rootPaths, pairing: pairing, db: db)
             }
         }
     }
 }
 
 /// Rows read to be judged by their stacks, with what builds the stacks that hold them
-/// (`PhotoStackSQL.build(rootPaths:holding:db:)`): each row's key and its still's burst.
+/// (`PhotoStackSQL.build(rootPaths:holding:pairing:db:)`): each row's key and its still's burst.
 private nonisolated enum StackJudgedRows {
     /// The columns `fetch` reads, in its order.
     static let columns = """

@@ -167,7 +167,7 @@ struct OrderReadDifferentialTests {
     static func rows(_ descriptor: CatalogQueryDescriptor, _ scope: CatalogScopePredicate, _ db: Database) throws
         -> [CatalogQueryGateway.OrderedAssetIDRow]
     {
-        try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, db: db)
+        try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, scope: scope, stacks: .readWhenNeeded(.paired), db: db)
     }
 
     static func ids(_ descriptor: CatalogQueryDescriptor, _ scope: CatalogScopePredicate, _ db: Database) throws -> [Data] {
