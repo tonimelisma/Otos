@@ -1,3 +1,4 @@
+import AppKit
 import DiskArbitration
 import Foundation
 import OSLog
@@ -44,23 +45,40 @@ nonisolated struct RemovableVolumeDisk: Equatable {
 /// type translates platform reports into stable `volume:<uuid>` attachments, quiesce,
 /// resume and detach.
 ///
-/// DiskArbitration is the single source. Its appeared, description-changed (volume path),
-/// unmount-approval and disappeared callbacks all arrive on one serial queue, and each
-/// becomes one `Event` in one ordered stream, so a detach can never be handled before the
-/// quiesce that preceded it. One loop consumes the stream: it enumerates mounted volumes
-/// off the main actor when the set may have changed, then applies the event to
-/// `RemovableVolumeTracker` synchronously and performs the tracker's effects. The loop
-/// holds the monitor weakly and ends when the monitor is gone.
+/// DiskArbitration is the single source of every report that quiesces, resumes or detaches
+/// a source. Its appeared, description-changed (volume path), unmount-approval and
+/// disappeared callbacks all arrive on one serial queue, and each becomes one `Event` in
+/// one ordered stream, so a detach can never be handled before the quiesce that preceded
+/// it. One more report only asks for the mounted set to be read again: a mount completed
+/// (`NSWorkspace.didMountNotification`). A freshly inserted card is mounted through FSKit,
+/// and DiskArbitration can report its volume path before the mounted-volume listing holds
+/// it, so the read that path change asks for misses the card and nothing else asks again
+/// (`docs/research/2026-11-19-card-mount-reported-before-listed.md`). The read returns the
+/// set as it is when it runs, so this report's order against DiskArbitration's does not
+/// matter. One loop consumes the stream: it enumerates mounted volumes off the main actor
+/// when the set may have changed, then applies the event to `RemovableVolumeTracker`
+/// synchronously and performs the tracker's effects. The loop holds the monitor weakly and
+/// ends when the monitor is gone.
 @MainActor
 final class RemovableVolumeMonitor {
     nonisolated enum Event: Equatable {
-        /// A disk appeared or a volume path changed: the mounted set may be different.
-        case volumesChanged
+        /// The mounted set may be different; read it again.
+        case volumesChanged(VolumesChangedReport)
         /// Someone asked to unmount this disk. DiskArbitration asks for approval of every
         /// unmount, Otos's own included, before it happens.
         case unmountRequested(RemovableVolumeDisk)
         case disappeared(RemovableVolumeDisk)
         case refusalLimitElapsed(identity: DeviceIdentity, request: UInt64)
+    }
+
+    /// What asked for the mounted set to be read, logged with the read's result.
+    nonisolated enum VolumesChangedReport: String, Equatable {
+        /// The monitor started: a Mac with no removable disk still has a current set.
+        case start
+        /// DiskArbitration reported a disk appeared or a volume path changed.
+        case diskArbitration
+        /// A mount completed (`NSWorkspace.didMountNotification`).
+        case mountCompleted
     }
 
     private let onAttach: @MainActor @Sendable (RemovableVolumeAttachment) -> Void
@@ -71,6 +89,7 @@ final class RemovableVolumeMonitor {
     private var tracker = RemovableVolumeTracker()
     private var events: AsyncStream<Event>.Continuation?
     private var diskArbitration: DiskArbitrationEvents?
+    private var mountObserver: (any NSObjectProtocol)?
     private var loop: Task<Void, Never>?
     private var refusalLimits: [DeviceIdentity: Task<Void, Never>] = [:]
 
@@ -94,13 +113,14 @@ final class RemovableVolumeMonitor {
         events = continuation
         // The first enumeration does not wait for a disk to appear: a Mac with no
         // removable disk still has a current set, and it is empty.
-        continuation.yield(.volumesChanged)
+        continuation.yield(.volumesChanged(.start))
         diskArbitration = DiskArbitrationEvents(events: continuation)
+        mountObserver = Self.observeMountCompletions(on: NSWorkspace.shared.notificationCenter, into: continuation)
         loop = Task { [weak self] in
             for await event in stream {
                 // Off the main actor, and before the owner is upgraded: the enumeration
                 // touches each volume. `nil` is a failed read, which changes nothing.
-                let mounted: [RemovableVolumeAttachment]? = if event == .volumesChanged {
+                let mounted: [RemovableVolumeAttachment]? = if case .volumesChanged = event {
                     await Self.currentAttachments()
                 } else {
                     nil
@@ -116,6 +136,10 @@ final class RemovableVolumeMonitor {
     func stop() {
         diskArbitration?.stop()
         diskArbitration = nil
+        if let mountObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(mountObserver)
+        }
+        mountObserver = nil
         events?.finish()
         events = nil
         loop?.cancel()
@@ -138,8 +162,9 @@ final class RemovableVolumeMonitor {
         case let .refusalLimitElapsed(identity, request):
             tracker.refusalLimitElapsed(identity: identity, request: request)
         }
-        if case .volumesChanged = event, let mounted {
+        if case let .volumesChanged(report) = event, let mounted {
             OtosLog.fileAccess.noticeOperation("removableVolume.refresh", phase: "finish", fields: [
+                "report": report.rawValue,
                 "count": "\(mounted.count)",
             ])
         }
@@ -219,6 +244,18 @@ final class RemovableVolumeMonitor {
         return path
     }
 
+    /// Turns each completed mount into a request to read the mounted set again. The
+    /// observer only yields into the monitor's stream, which any thread may do; it never
+    /// applies anything itself.
+    nonisolated static func observeMountCompletions(
+        on center: NotificationCenter,
+        into events: AsyncStream<Event>.Continuation
+    ) -> any NSObjectProtocol {
+        center.addObserver(forName: NSWorkspace.didMountNotification, object: nil, queue: nil) { _ in
+            events.yield(.volumesChanged(.mountCompleted))
+        }
+    }
+
     /// The removable physical volumes mounted now, or `nil` when the system does not
     /// answer — which is not an empty set, and must not detach anything.
     @concurrent
@@ -245,13 +282,22 @@ final class RemovableVolumeMonitor {
         // there are typically 0-2 candidates per call.
         let session = DASessionCreate(kCFAllocatorDefault)
         let attachments = urls.compactMap { url -> RemovableVolumeAttachment? in
-            guard let values = try? url.resourceValues(forKeys: Set(keys)),
-                  values.volumeIsRemovable == true,
-                  isPhysicalRemovableDevice(deviceModel: deviceModel(forVolumeAt: url, session: session))
-            else {
+            let path = url.path(percentEncoded: false)
+            let values: URLResourceValues
+            do {
+                values = try url.resourceValues(forKeys: Set(keys))
+            } catch {
+                logRejected(path: path, reason: "resourceValuesUnavailable", error: error)
                 return nil
             }
-            let path = url.path(percentEncoded: false)
+            guard values.volumeIsRemovable == true else {
+                return nil
+            }
+            let model = deviceModel(forVolumeAt: url, session: session)
+            guard isPhysicalRemovableDevice(deviceModel: model) else {
+                logRejected(path: path, reason: model == nil ? "noDeviceModel" : "notPhysical", model: model)
+                return nil
+            }
             let identity = values.volumeUUIDString.map { DeviceIdentity.volume(uuid: $0) } ?? .volume(mountPath: path)
             return RemovableVolumeAttachment(
                 mountURL: url,
@@ -259,7 +305,7 @@ final class RemovableVolumeMonitor {
                 displayName: values.volumeName ?? url.lastPathComponent,
                 isEjectable: values.volumeIsEjectable == true,
                 capabilities: FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: url),
-                deviceModel: deviceModel(forVolumeAt: url, session: session),
+                deviceModel: model,
                 volumeFormat: values.volumeLocalizedFormatDescription
             )
         }
@@ -267,6 +313,25 @@ final class RemovableVolumeMonitor {
             .sorted { left, right in
                 left.identity.rawValue.localizedStandardCompare(right.identity.rawValue) == .orderedAscending
             }
+    }
+
+    /// A removable volume the read left out, with the fact that excluded it: a card that
+    /// does not appear must say why in the log.
+    private nonisolated static func logRejected(
+        path: String,
+        reason: String,
+        model: String? = nil,
+        error: (any Error)? = nil
+    ) {
+        var fields = ["path": path, "reason": reason]
+        if let model {
+            fields["deviceModel"] = model
+        }
+        if let error = error as NSError? {
+            fields["errorDomain"] = error.domain
+            fields["errorCode"] = "\(error.code)"
+        }
+        OtosLog.fileAccess.noticeOperation("removableVolume.rejected", phase: "finish", fields: fields)
     }
 
     /// Whether a `DiskArbitration` device-model fact proves a mounted volume
@@ -479,11 +544,11 @@ private final nonisolated class DiskArbitrationContext {
 }
 
 private nonisolated func diskAppeared(_: DADisk, _ context: UnsafeMutableRawPointer?) {
-    DiskArbitrationContext.from(context)?.events.yield(.volumesChanged)
+    DiskArbitrationContext.from(context)?.events.yield(.volumesChanged(.diskArbitration))
 }
 
 private nonisolated func diskDescriptionChanged(_: DADisk, _: CFArray, _ context: UnsafeMutableRawPointer?) {
-    DiskArbitrationContext.from(context)?.events.yield(.volumesChanged)
+    DiskArbitrationContext.from(context)?.events.yield(.volumesChanged(.diskArbitration))
 }
 
 private nonisolated func diskUnmountApproval(

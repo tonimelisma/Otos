@@ -102,12 +102,18 @@ Adjacent decisions requiring separate ADRs or specs:
    when Otos quits keeps its arrival stamp, so retention can count from up to one
    session early. The period is a product rule, not a stand-in for a fact (ADR 0033):
    no report can say an absent device will never return. Transient camera identities are removed on detach because they have no
-   durable source identity to preserve. Every removable report comes from
-   DiskArbitration alone — disk appeared, volume path changed, unmount requested,
-   disk disappeared — on one serial queue into one ordered stream with one consumer,
-   so a detach is never handled before the quiesce that preceded it; NSWorkspace's
-   mount notifications are not used, because two sources on two queues cannot agree
-   on an order. ImageCaptureCore's browser and session reports likewise feed one
+   durable source identity to preserve. Every report that quiesces, resumes or detaches
+   a source comes from DiskArbitration alone — disk appeared, volume path changed,
+   unmount requested, disk disappeared — on one serial queue into one ordered stream
+   with one consumer, so a detach is never handled before the quiesce that preceded
+   it; NSWorkspace's unmount notifications are not used, because two sources on two
+   queues cannot agree on an order. NSWorkspace's mount notification feeds the same
+   stream for one purpose only: to read the mounted set again. A freshly inserted card
+   is mounted through FSKit, and DiskArbitration reported its volume path before
+   `mountedVolumeURLs` listed it, so the read that report asked for missed the card and
+   no later report asked again (`docs/research/2026-11-19-card-mount-reported-before-listed.md`).
+   A read returns the set as it is when it runs, so its trigger's order against
+   DiskArbitration's reports changes nothing. ImageCaptureCore's browser and session reports likewise feed one
    ordered stream per owner.
 
 5. **MTP cameras use ImageCapture plus local staging.** ImageCapture provides

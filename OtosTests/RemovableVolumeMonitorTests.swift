@@ -1,3 +1,4 @@
+import AppKit
 import DiskArbitration
 import Foundation
 @testable import OtosKit
@@ -109,5 +110,42 @@ struct RemovableVolumeTrackerTests {
         #expect(tracker.disappeared(RemovableVolumeDisk(volumePath: "/Volumes/CARD", volumeUUID: nil))
             == [.detach(Self.card.identity, .disconnected)])
         #expect(tracker.disappeared(Self.cardDisk).isEmpty, "an unknown disk changes nothing")
+    }
+}
+
+/// APP-017: a freshly inserted card's FSKit mount can be reported by DiskArbitration before
+/// the mounted-volume listing holds it, so a completed mount asks for the set to be read
+/// again (`docs/research/2026-11-19-card-mount-reported-before-listed.md`).
+struct RemovableVolumeMountCompletionTests {
+    @Test func aCompletedMountAsksForTheMountedSetToBeReadAgain() async {
+        let center = NotificationCenter()
+        let (events, continuation) = AsyncStream.makeStream(of: RemovableVolumeMonitor.Event.self)
+        let observer = RemovableVolumeMonitor.observeMountCompletions(on: center, into: continuation)
+        defer { center.removeObserver(observer) }
+
+        center.post(name: NSWorkspace.didMountNotification, object: nil)
+        continuation.finish()
+
+        var received: [RemovableVolumeMonitor.Event] = []
+        for await event in events {
+            received.append(event)
+        }
+        #expect(received == [.volumesChanged(.mountCompleted)])
+    }
+
+    @Test func anUnmountAsksForNothing() async {
+        let center = NotificationCenter()
+        let (events, continuation) = AsyncStream.makeStream(of: RemovableVolumeMonitor.Event.self)
+        let observer = RemovableVolumeMonitor.observeMountCompletions(on: center, into: continuation)
+        defer { center.removeObserver(observer) }
+
+        center.post(name: NSWorkspace.didUnmountNotification, object: nil)
+        continuation.finish()
+
+        var received: [RemovableVolumeMonitor.Event] = []
+        for await event in events {
+            received.append(event)
+        }
+        #expect(received.isEmpty)
     }
 }
