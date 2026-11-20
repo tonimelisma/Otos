@@ -26,7 +26,7 @@ import Foundation
 nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
     /// What the stored descriptions were written from; raised whenever the instructions or the
     /// facts' wording change.
-    static let revision = 6
+    static let revision = 7
 
     /// What the model is asked to be for this photo (`init`).
     let instructions: String
@@ -49,16 +49,19 @@ nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
             lines.append(taken)
         }
         let named = faces.filter { $0.name != nil }.sorted { ($0.box.midX, $0.box.midY) < ($1.box.midX, $1.box.midY) }
-        let othersUnnamed = named.count < faces.count
-        instructions = Self.instructions(naming: !named.isEmpty, othersUnnamed: othersUnnamed)
+        let unnamed = faces.count - named.count
+        instructions = Self.instructions(naming: !named.isEmpty, othersUnnamed: unnamed > 0)
         if !named.isEmpty {
             lines.append("People in the photo, by where their faces are:")
             for face in named {
                 let who = face.name.map { name in face.age.map { "\(name), \($0)" } ?? name } ?? ""
                 lines.append("- \(who): face \(Self.position(of: face.box)).")
             }
-            if othersUnnamed {
-                lines.append("Everyone else in the photo is unnamed.")
+            if unnamed > 0 {
+                // How many, so the model counts the people: told only that "everyone else" was
+                // unnamed, it wrote "Ian and two children" of Ian beside one other child
+                // (revision 6). Listing each unnamed face by place made it drop given names.
+                lines.append(Self.othersUnnamed(unnamed))
             }
         }
         let text = facts.textLines.prefix(Self.maximumTextLines).joined(separator: " / ")
@@ -97,6 +100,16 @@ nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
         }
         parts.append("Write in English.")
         return parts.joined(separator: " ")
+    }
+
+    /// The faces in the photo no name is given for, counted.
+    static func othersUnnamed(_ count: Int) -> String {
+        switch count {
+        case 1: "One other person in the photo is not named."
+        case 2: "Two other people in the photo are not named."
+        case 3: "Three other people in the photo are not named."
+        default: "\(count) other people in the photo are not named."
+        }
     }
 
     static let maximumTextLines = 8

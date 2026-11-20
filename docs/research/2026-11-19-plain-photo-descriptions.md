@@ -59,3 +59,23 @@ half does not get worse.
   written again in the background.
 - The next rungs, one run each: the preview size the model sees (1,024 px now), and whether the
   scene labels Vision is confident of help or mislead ("wood processed" appears in answers).
+
+## Follow-up: counting the unnamed (revisions 6 and 7)
+
+The owner: "why does it say Ian and two children?" of Ian beside one other, unnamed child.
+The model was told the named faces by place and only that "everyone else in the photo is
+unnamed", so it guessed how many others there were. Same 60 photos, while the installed app was
+re-reading text (text facts partly missing, equally for every candidate):
+
+| Candidate | Some named, tune clean | Some named, holdout clean | Holdout names missed |
+| --- | --- | --- | --- |
+| 6 (baseline) | 5 / 6 | 4 / 6 | 2 |
+| 7a: every unnamed face listed by place ("someone not named: face on the right") | 6 / 6 | 1 / 5 (1 declined) | 4 |
+| 7b: the count ("One other person in the photo is not named.") | 6 / 6 | 4 / 6 | 2 |
+
+- 7a is rejected: listed like the named ones, the model dropped given names ("a man holds the
+  child's hands" for Taylor), the revision-3 lesson again.
+- 7b is kept as revision 7: the held-out half is no worse, and graded against the pictures the
+  counts improved ("Taylor holds a child on their lap, and a woman stands nearby"; two people, not
+  three, under the tent). Photos that name no one get the same prompt as before; their
+  differences between runs are the text re-read changing their facts.

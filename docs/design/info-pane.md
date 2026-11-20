@@ -112,8 +112,13 @@ shown only as far as Vision is sure of it (2026-11-12).
   that label itself, whatever the Mac's language, and the toolbar field shows its name; its
   tooltip says `Search for “pool”`. A chip is never wider than the pane: a long name
   truncates on its one line.
-- **Text** is the lines Vision read with full confidence, in reading order, selectable so a
-  line can be copied. No line is shown that Vision was unsure of; search still matches those.
+- **Text** is the lines a person reads as the photo's text (`SearchTextReading.shown`): those
+  Vision read with full confidence, in reading order, each once, without a phone screenshot's
+  status bar, selectable so a line can be copied. No line is shown that Vision was unsure of;
+  search still matches every line. Long text shows its first 8 lines and a **Show More** link
+  button under them; open, it reads **Show Less**. HIG (Typography): text in a scrolling region
+  is not cut short unless the rest is one step away. The button has no ellipsis, as it asks
+  for nothing more before it acts. The next photo's text starts closed (owner, 2026-11-19).
 - There is no sidebar row for text (owner, 2026-11-12): finding photos by their text is the
   search field's.
 

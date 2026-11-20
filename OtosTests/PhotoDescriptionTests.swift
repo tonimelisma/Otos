@@ -407,7 +407,7 @@ struct PhotoDescriptionTests {
         Taken on Saturday, 18 July 2026, in the afternoon, in Espoo, Finland.
         People in the photo, by where their faces are:
         - Jamie, 38 years old: face at the top left.
-        Everyone else in the photo is unnamed.
+        One other person in the photo is not named.
         Text in the photo: "SAUNA / OPEN".
         Recognized in the scene: blue sky.
         """)
@@ -415,7 +415,7 @@ struct PhotoDescriptionTests {
 
     /// A photo naming no one is described with instructions that never mention names or ages;
     /// one whose faces are all named asks for each by name and no other; only one with unnamed
-    /// faces too says that everyone else stays unnamed.
+    /// faces too says how many others are not named and that they stay unnamed.
     @Test func theInstructionsSpeakOfNamesOnlyWhenThePhotoGivesThem() {
         let facts = PhotoDescriptionFacts(faces: [], capturedAt: nil, town: nil, country: nil, textLines: [], labels: [])
         let unnamed = PhotoDescriptionPrompt.Face(box: CGRect(x: 0.7, y: 0.4, width: 0.1, height: 0.1), name: nil, age: nil)
@@ -439,7 +439,9 @@ struct PhotoDescriptionTests {
         #expect(aged.instructions.contains("Never state anyone's age."))
         #expect(aged.facts.contains("Mia, 8 years old"))
         let mixed = PhotoDescriptionPrompt(faces: [mia, unnamed], facts: facts)
-        #expect(mixed.facts.hasSuffix("Everyone else in the photo is unnamed."))
+        #expect(mixed.facts.hasSuffix("One other person in the photo is not named."))
+        #expect(PhotoDescriptionPrompt(faces: [mia, unnamed, unnamed], facts: facts).facts
+            .hasSuffix("Two other people in the photo are not named."))
         #expect(mixed.instructions.contains("Everyone else stays unnamed"))
     }
 

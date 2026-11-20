@@ -219,7 +219,8 @@ private struct InfoPaneDescriptionSection: View {
 }
 
 /// The In This Photo section: Vision's confident scene labels as buttons that search for
-/// them, then the text it is certain of, selectable. `Not Checked Yet` while the thumbnail's
+/// them, then the text a person reads in the photo, selectable, its first lines and Show More
+/// when it is long (`PhotoInfo.Recognized.shownText`). `Not Checked Yet` while the thumbnail's
 /// reading is owed; `Nothing Recognized` only when both readings are made and found nothing (a
 /// movie has no text reading); `Text` reads `Not Checked Yet` while the preview's reading is
 /// owed; with no single item, `—`.
@@ -228,6 +229,9 @@ private struct InfoPaneRecognizedSection: View {
     /// Searches for a label, by its Vision identifier.
     let search: (String) -> Void
     @Environment(\.locale) private var locale
+    /// The lines Show More opened. The section opens long text only for those lines, so the
+    /// next photo's text starts closed again.
+    @State private var expandedLines: [String]?
 
     var body: some View {
         if let recognized {
@@ -252,13 +256,22 @@ private struct InfoPaneRecognizedSection: View {
                     }
                     switch recognized.text {
                     case let .read(lines) where !lines.isEmpty:
+                        let expanded = expandedLines == lines
+                        let shown = PhotoInfo.Recognized.shownText(lines, expanded: expanded)
                         Text("Text")
                             .foregroundStyle(.secondary)
-                        Text(lines.joined(separator: "\n"))
+                        Text(shown.lines.joined(separator: "\n"))
                             .foregroundStyle(.primary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                        if shown.hidden > 0 || expanded, lines.count > PhotoInfo.Recognized.collapsedTextLines {
+                            Button(expanded ? "Show Less" : "Show More") {
+                                expandedLines = expanded ? nil : lines
+                            }
+                            .buttonStyle(.link)
+                            .help(expanded ? "Show the first lines of the text" : "Show all \(lines.count) lines of the text")
+                        }
                     case .owed:
                         Text("Text")
                             .foregroundStyle(.secondary)

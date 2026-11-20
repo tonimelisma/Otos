@@ -149,6 +149,21 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             text != .none
         }
 
+        /// The lines `Text` shows before Show More: a sign or a label in full, while a page of a
+        /// letter or a long screenshot (forty lines and more) waits for the click. HIG
+        /// (Typography): text in a scrolling region is not cut short unless the rest is one
+        /// step away.
+        static let collapsedTextLines = 8
+
+        /// The lines `Text` shows: all of them when `expanded` or when they fit, else the first
+        /// `collapsedTextLines`; and how many are left for Show More.
+        static func shownText(_ lines: [String], expanded: Bool) -> (lines: [String], hidden: Int) {
+            guard !expanded, lines.count > collapsedTextLines else {
+                return (lines, 0)
+            }
+            return (Array(lines.prefix(collapsedTextLines)), lines.count - collapsedTextLines)
+        }
+
         /// A label's name as a chip shows it: its first letter capitalised in `locale`.
         static func chipTitle(_ name: String, locale: Locale) -> String {
             guard let first = name.first else { return name }

@@ -170,6 +170,17 @@ struct PhotoInfoTests {
 
     /// In This Photo holds the named labels and the certain text; a reading still owed stays
     /// unknown rather than empty, and with no single item there is nothing to show.
+    /// Long text shows its first lines and Show More; a sign or a label shows in full.
+    @Test func longTextShowsItsFirstLinesUntilShowMore() {
+        let letter = (1 ... 40).map { "Line \($0)" }
+        let collapsed = PhotoInfo.Recognized.shownText(letter, expanded: false)
+        #expect(collapsed.lines == Array(letter.prefix(PhotoInfo.Recognized.collapsedTextLines)))
+        #expect(collapsed.hidden == 40 - PhotoInfo.Recognized.collapsedTextLines)
+        #expect(PhotoInfo.Recognized.shownText(letter, expanded: true) == (letter, 0))
+        let sign = ["BRIDGE CLOSED AHEAD", "DETOUR"]
+        #expect(PhotoInfo.Recognized.shownText(sign, expanded: false) == (sign, 0))
+    }
+
     @Test func inThisPhotoShowsWhatSearchRecognised() {
         let overlay = PhotoInfoOverlay(
             companionFileNames: [], importedAt: nil, isEdited: false,
