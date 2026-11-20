@@ -225,6 +225,9 @@ struct ImmichAccountsTests {
             return
         }
         await waitForStatus(.online, of: rootPath, in: accounts)
+        // Online means the server answered, not that its listing is written: the next sign-in
+        // rings a pass that may replace this one before its row lands.
+        await waitForListing(of: rootPath, in: accounts)
         _ = await accounts.add(server: address, email: "a", password: "right")
         await waitForStatus(.offline, of: rootPath, in: accounts)
         _ = await accounts.add(server: address, email: "a", password: "right")
