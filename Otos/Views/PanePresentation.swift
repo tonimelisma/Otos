@@ -103,9 +103,10 @@ struct PaneThumbnailView: View {
             }
         }
         .task(id: id) {
-            // Store hit: the filmstrip is already showing this asset, so the decoded
-            // image is almost always present. Synchronous assignment, no I/O.
-            if let hit = tileContentStore?.image(for: id) {
+            // Store hit: the filmstrip already holds this asset's current thumbnail, so it is
+            // almost always present. Never an older one its tile still paints: an edited
+            // photo would show unedited until its full decode lands.
+            if let hit = tileContentStore?.currentImage(for: id) {
                 image = hit
                 return
             }

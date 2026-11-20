@@ -209,7 +209,7 @@ private struct OnThisDayCard: View {
     /// story closes, or when the grid recycles it) paints its cover in its first frame
     /// instead of the placeholder.
     private var displayedCover: DisplayImage? {
-        OnThisDayCover.displayed(painted: cover, keyItem: anniversary.keyItem, stored: tileContentStore?.image(for: anniversary.keyItem))
+        OnThisDayCover.displayed(painted: cover, keyItem: anniversary.keyItem, stored: tileContentStore?.currentImage(for: anniversary.keyItem))
     }
 
     private var face: some View {
@@ -250,7 +250,7 @@ private struct OnThisDayCard: View {
 
     /// Keeps the cover the store holds, and decodes one only on a miss.
     private func loadCover() async {
-        if let cached = tileContentStore?.image(for: anniversary.keyItem) {
+        if let cached = tileContentStore?.currentImage(for: anniversary.keyItem) {
             cover = (anniversary.keyItem, cached)
             return
         }

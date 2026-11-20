@@ -19,7 +19,7 @@ enum ThumbnailLoad {
         detailReader: MediaTileDetailReader?,
         operation: String
     ) async -> DisplayImage? {
-        if let cached = tileContentStore?.image(for: id) {
+        if let cached = tileContentStore?.currentImage(for: id) {
             return cached
         }
         guard let detailReader else {

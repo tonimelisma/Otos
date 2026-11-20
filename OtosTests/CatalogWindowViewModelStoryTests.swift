@@ -424,9 +424,9 @@ struct CatalogWindowViewModelStoryTests {
             model.closeStory()
 
             // The store was over budget: the oldest unpinned picture went.
-            #expect(tiles.image(for: others[0]) == nil)
-            let firstShown = OnThisDayCover.displayed(painted: nil, keyItem: ids[0], stored: tiles.image(for: ids[0]))
-            let secondShown = OnThisDayCover.displayed(painted: nil, keyItem: ids[2], stored: tiles.image(for: ids[2]))
+            #expect(tiles.currentImage(for: others[0]) == nil)
+            let firstShown = OnThisDayCover.displayed(painted: nil, keyItem: ids[0], stored: tiles.currentImage(for: ids[0]))
+            let secondShown = OnThisDayCover.displayed(painted: nil, keyItem: ids[2], stored: tiles.currentImage(for: ids[2]))
             #expect(firstShown === firstCover)
             #expect(secondShown === secondCover)
 
@@ -446,7 +446,7 @@ struct CatalogWindowViewModelStoryTests {
                 _ = paint(other)
             }
             // Released with the scope, the covers are ordinary entries again.
-            #expect(tiles.image(for: ids[0]) == nil)
+            #expect(tiles.currentImage(for: ids[0]) == nil)
         }
     }
 

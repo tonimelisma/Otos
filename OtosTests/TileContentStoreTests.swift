@@ -35,6 +35,27 @@ struct TileContentStoreTests {
         #expect(content.detail.thumbnailPath == "t2.jpg")
     }
 
+    /// The grid tile keeps painting its older thumbnail until the new one decodes, but no
+    /// other surface is handed that older one as the photo's picture: an edited photo's
+    /// pre-edit thumbnail showed in the loupe until its full decode landed (owner, 2026-11-19).
+    @Test func anOlderThumbnailIsNeverHandedOutAsTheCurrentOne() throws {
+        let store = TileContentStore()
+        let unedited = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg", size: 10, mtime: 1)
+        let edited = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg", size: 20, mtime: 2)
+        _ = store.mergeDetail(unedited)
+        let before = makeImage()
+        _ = store.applyDecoded(before, key: MediaAssetTilePresentation.imageContentKey(unedited), for: unedited.id)
+        #expect(store.currentImage(for: unedited.id) === before)
+
+        _ = store.mergeDetail(edited)
+        #expect(try #require(store.content(for: edited.id)).image === before, "the tile keeps painting")
+        #expect(store.currentImage(for: edited.id) == nil)
+
+        let after = makeImage()
+        _ = store.applyDecoded(after, key: MediaAssetTilePresentation.imageContentKey(edited), for: edited.id)
+        #expect(store.currentImage(for: edited.id) === after)
+    }
+
     @Test func mergeDetailSameKeyUpdatesBadgeFieldsAsDetailOnly() {
         let store = TileContentStore()
         let first = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg", kind: .video, duration: nil)

@@ -893,7 +893,7 @@ private struct DuplicateThumbnail: View {
     }
 
     private func load() async {
-        if let cached = tileContentStore?.image(for: id) {
+        if let cached = tileContentStore?.currentImage(for: id) {
             image = cached
             return
         }

@@ -78,6 +78,42 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    /// Returning to an edited photo shows its edit from the first image the loupe paints, with
+    /// the edit panel open and closed (owner, 2026-11-19: "it shows in the loupe the unedited
+    /// version for a subsecond before switching to the edited one").
+    @Test(arguments: [true, false])
+    func anEditedPhotoIsNeverShownUnedited(panelOpen: Bool) async throws {
+        try await withEditableLibrary(fileCount: 2) { library in
+            let edited = library.ids[0], other = library.ids[1]
+            let model = library.makeEditModel()
+            model.toggleInspector(.edit)
+            model.setViewMode(.loupe)
+            model.selectAssets([edited])
+            try await waitUntil { model.editTarget?.id == edited && model.canEdit }
+            model.setEditValue(1, for: .exposure)
+            try await waitUntil { model.hasSettledEdits && model.panePreviews[.loupe]?.renderedRevision == 1 }
+            if !panelOpen {
+                model.toggleInspector(.edit)
+            }
+
+            model.selectAssets([other])
+            try await waitUntil { model.displayedPanePreview(.loupe)?.id == other }
+            let shown = Observations { @MainActor in
+                model.displayedPanePreview(.loupe).map { ($0.id, $0.renderedRevision, $0.editRecipe) }
+            }
+            model.selectAssets([edited])
+            var seen: [(MediaAssetID, Int64, EditRecipe?)] = []
+            for await preview in shown {
+                guard let preview, preview.0 == edited else { continue }
+                seen.append(preview)
+                if preview.1 >= 1 {
+                    break
+                }
+            }
+            #expect(seen.allSatisfy { $0.1 >= 1 }, "the loupe showed \(seen.map { "revision \($0.1)" })")
+        }
+    }
+
     /// The pane's progress indicator marks a pane waiting for its photo (DES-086): loading
     /// raises it, and refreshing the photo the pane already shows — an edit's new preview —
     /// does not.

@@ -29,7 +29,11 @@ import OSLog
 nonisolated struct TileContent: Equatable {
     var detail: MediaTileDetail
     var imageKey: String
+    /// The thumbnail the tile paints: the decode of `imageKey`, or an older one it keeps until
+    /// that decode lands, as a painted tile never blanks.
     var image: DisplayImage?
+    /// The key `image` was decoded for; `imageKey` when it is current.
+    var imageDecodedKey: String?
     /// Cached `videoBadgeText` for the current detail; recomputed only when
     /// duration or kind changes so bind does not re-format every pass.
     var formattedDuration: String?
@@ -38,6 +42,7 @@ nonisolated struct TileContent: Equatable {
         lhs.detail == rhs.detail
             && lhs.imageKey == rhs.imageKey
             && lhs.image?.cgImage === rhs.image?.cgImage
+            && lhs.imageDecodedKey == rhs.imageDecodedKey
             && lhs.formattedDuration == rhs.formattedDuration
     }
 }
@@ -346,6 +351,7 @@ final class TileContentStore {
         imageBytes -= entry.imageCost
         let cost = Self.byteCost(of: image)
         entry.content.image = image
+        entry.content.imageDecodedKey = key
         entry.imageCost = cost
         imageBytes += cost
         entry.accessStamp = nextAccessStamp()
@@ -434,6 +440,7 @@ final class TileContentStore {
             var entry = candidate
             imageBytes -= entry.imageCost
             entry.content.image = nil
+            entry.content.imageDecodedKey = nil
             entry.imageCost = 0
             entries[id] = entry
         }
@@ -462,11 +469,14 @@ final class TileContentStore {
         return accessClock
     }
 
-    /// Hit test for pane thumbnail: returns the decoded image if the store already
-    /// holds one for this asset, without triggering a decode. Used by PaneThumbnailView
-    /// to avoid re-decoding an image the filmstrip is already showing.
-    func image(for id: MediaAssetID) -> DisplayImage? {
-        content(for: id)?.image
+    /// The asset's current thumbnail, for a surface other than its grid tile (the loupe's
+    /// placeholder, a cover, a duplicate), so it is not decoded again: nil while the store
+    /// holds none, or only an older one its tile keeps painted until the current decode lands.
+    /// An edited photo's pre-edit thumbnail is never handed out as its picture (owner,
+    /// 2026-11-19: "it shows in the loupe the unedited version for a subsecond").
+    func currentImage(for id: MediaAssetID) -> DisplayImage? {
+        guard let content = content(for: id), content.imageDecodedKey == content.imageKey else { return nil }
+        return content.image
     }
 
     /// Warm the store with a newly decoded image for the pane. The detail's imageKey
