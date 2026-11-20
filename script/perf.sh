@@ -47,7 +47,11 @@ field() {
 
 days_between() {
   local from="$1" to="$2"
-  echo $(( ($(/bin/date -j -f %Y-%m-%d "$to" +%s) - $(/bin/date -j -f %Y-%m-%d "$from" +%s)) / 86400 ))
+  # Each day at a fixed noon: `date -j -f` takes every field its format leaves out from the
+  # clock, so two calls a second apart measured a week as 604,799 s, six days (2026-11-19).
+  # Noon keeps a daylight-saving change from moving the count either.
+  echo $(( ($(/bin/date -j -f '%Y-%m-%d %H:%M:%S' "$to 12:00:00" +%s) \
+    - $(/bin/date -j -f '%Y-%m-%d %H:%M:%S' "$from 12:00:00" +%s)) / 86400 ))
 }
 
 # The status line for a stored verdict, today's date, origin/main's head and the lock's
