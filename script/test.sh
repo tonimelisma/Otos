@@ -30,7 +30,11 @@ echo "Capturing test output to $LOG_FILE"
 # macOS ships bash 3.2, where `"${ARR[@]}"` on a zero-element array is an unbound
 # -variable error under `set -u`; the argument array therefore always starts
 # non-empty and only grows.
-TEST_HOST_FOOTPRINT_LIMIT_MB="${OTOS_TEST_HOST_FOOTPRINT_LIMIT_MB:-2048}"
+# The ceiling catches runaway growth, not the suite's own peak: under full parallel load the
+# host measured 2.85-2.9 GB for about 15 s and fell back to 1.7 GB, with nothing leaked
+# (docs/research/2026-11-19-test-host-peak-under-parallel-load.md). It sits about 40% above
+# that peak, as 2,048 MB once sat above the 1.4 GB measured on 2026-11-15.
+TEST_HOST_FOOTPRINT_LIMIT_MB="${OTOS_TEST_HOST_FOOTPRINT_LIMIT_MB:-4096}"
 
 test_host_descendants() {
   local parent="$1"
