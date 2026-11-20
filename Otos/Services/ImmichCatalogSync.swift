@@ -95,9 +95,13 @@ nonisolated enum ImmichSyncPassOutcome: Equatable, Sendable {
 ///
 /// `run()` is the one loop, woken by `requestSync()` (a newest-wins doorbell, ADR 0032):
 /// passes never overlap, and a request during a pass is one more pass. Both doorbells are
-/// rung from anywhere, so each ring is counted as it is made (`RequestCount`) against the
-/// rings a pass has taken up: the sync owes nothing while every ring is taken up and no pass
-/// or fetch runs (`QuiescentOwner`).
+/// rung from anywhere, outside the actor, so each ring is counted in the step that makes it
+/// (`RequestCount`; `OwnerActivity.request()` would count it only once a hop onto the actor
+/// landed) against the rings a pass or fetch that succeeded has answered: the sync owes
+/// nothing while every ring is answered and no pass or fetch runs (`QuiescentOwner`). A pass
+/// or fetch that failed answers nothing (ADR 0032 rule 4): its ring stays owed until one that
+/// succeeds, which the account's retry rings (`ImmichAccounts`), so a server that does not
+/// answer keeps the account owing its sync rather than reading as caught up.
 actor ImmichCatalogSync: QuiescentOwner {
     /// Lines applied per Store transaction, and acknowledged together after it.
     static let batchSize = 500
@@ -118,11 +122,11 @@ actor ImmichCatalogSync: QuiescentOwner {
     /// row on screen owed its images (listed, or sized by a later line).
     private let visibleDoorbell: AsyncStream<Void>
     private let visibleRing: AsyncStream<Void>.Continuation
-    /// Rings of each doorbell, and the ring the last pass or fetch took up.
+    /// Rings of each doorbell, and the newest ring a pass or fetch that succeeded answered.
     private nonisolated let syncRequests = RequestCount()
     private nonisolated let visibleRequests = RequestCount()
-    private var syncsTaken: UInt64 = 0
-    private var visibleTaken: UInt64 = 0
+    private var syncsAnswered: UInt64 = 0
+    private var visibleAnswered: UInt64 = 0
     /// Listing batches this sync applied that changed the catalog: each can list an asset a
     /// library file pairs with, or a file a mirror is learned from (ADR 0054).
     private var listingsApplied: UInt64 = 0
@@ -181,10 +185,13 @@ actor ImmichCatalogSync: QuiescentOwner {
                 return
             }
             let taking = visibleRequests.value
+            // The activity counts no request of its own here (the rings are counted in
+            // `RequestCount`s): its pass is only the one running.
             activity.beginPass()
             let ids = visibleRows.withLock { $0 }
-            _ = await fetchVisibleProducts(ids)
-            visibleTaken = taking
+            if await fetchVisibleProducts(ids).answers {
+                visibleAnswered = max(visibleAnswered, taking)
+            }
             activity.endPass(covering: nil)
             settleQuiescence()
         }
@@ -196,9 +203,9 @@ actor ImmichCatalogSync: QuiescentOwner {
         ring.yield()
     }
 
-    /// A ring of either doorbell not yet taken up by a pass or a fetch.
+    /// A ring of either doorbell that no pass or fetch that succeeded has answered yet.
     var holdsWork: Bool {
-        syncRequests.value != syncsTaken || visibleRequests.value != visibleTaken
+        syncRequests.value != syncsAnswered || visibleRequests.value != visibleAnswered
     }
 
     /// Rings the pass, as the account's poll does.
@@ -222,10 +229,17 @@ actor ImmichCatalogSync: QuiescentOwner {
                 return
             }
             let taking = syncRequests.value
+            let visibleTaking = visibleRequests.value
             activity.noteInput()
             activity.beginPass()
-            let outcome = await pass(onReport: onReport)
-            syncsTaken = taking
+            let (outcome, answers) = await answeringPass(onReport: onReport)
+            if answers {
+                syncsAnswered = max(syncsAnswered, taking)
+                // The pass's walk tried every row owed images, those on screen when it began
+                // among them, so it answers the screen's rings from before it as well: one a
+                // failed fetch left owed is answered by the next pass that succeeds.
+                visibleAnswered = max(visibleAnswered, visibleTaking)
+            }
             activity.endPass(covering: nil)
             settleQuiescence()
             await onReport(.ended(outcome))
@@ -238,14 +252,25 @@ actor ImmichCatalogSync: QuiescentOwner {
     /// one the server says it does not have is not.
     /// `onReport` hears `answered` and `listed`; the caller reports the outcome.
     func pass(onReport: @escaping @Sendable (ImmichSyncReport) async -> Void = { _ in }) async -> ImmichSyncPassOutcome {
+        await answeringPass(onReport: onReport).outcome
+    }
+
+    /// One pass, and whether it answered the request it took up: its stream synced, its mirror
+    /// walk did not fail, and its walk over the rows owed images did not fail (a floor hold
+    /// answers it: free space, a fact outside the sync, ends that wait). What failed stays
+    /// owed for the next pass, and so does the request.
+    private func answeringPass(
+        onReport: @escaping @Sendable (ImmichSyncReport) async -> Void
+    ) async -> (outcome: ImmichSyncPassOutcome, answers: Bool) {
         var answered = Answered(report: { await onReport(.answered) })
         let outcome = await syncListing(answered: &answered)
-        if case .synced = outcome {
-            await onReport(.listed)
-            await pairMirrors()
-            _ = await fetchProducts()
+        guard case .synced = outcome else {
+            return (outcome, false)
         }
-        return outcome
+        await onReport(.listed)
+        let mirrorsAnswered = await pairMirrors()
+        let products = await fetchProducts()
+        return (outcome, mirrorsAnswered && products.answers)
     }
 
     // MARK: - Mirrors (ADR 0054)
@@ -256,7 +281,8 @@ actor ImmichCatalogSync: QuiescentOwner {
     /// pair. It walks only when what it reads has moved since the last walk that did not fail
     /// (`MirrorInputs`): this account listed something, or a library's paths, sizes or dates
     /// changed; a pass with neither reads nothing (ADR 0032 rule 8). A read that fails pairs
-    /// nothing new, is logged, and leaves the walk owed for the next pass.
+    /// nothing new, is logged, and leaves the walk owed for the next pass; it returns whether
+    /// the walk answered (held, or every read and write in it succeeded).
     ///
     /// Learning is bounded by facts, not time (ADR 0033): each round asks the server one path
     /// for each library with a file no prefix explains that has a candidate asset
@@ -264,17 +290,17 @@ actor ImmichCatalogSync: QuiescentOwner {
     /// as asked (`immich_mirror_asked`), and its library asks nothing more this pass; another
     /// round runs only while the prefixes the last one learned paired files. So a pass asks one
     /// path per prefix it learns, plus at most one per library it learns nothing for.
-    private func pairMirrors() async {
+    private func pairMirrors() async -> Bool {
         let inputs = await MirrorInputs(libraryNamespace: store.libraryNamespaceRevision, listings: listingsApplied)
         guard inputs != mirrorsCovered else {
             OtosLog.catalog.noticeOperation("immich.mirror", phase: "held", fields: [
                 "rootPath": rootPath.rawValue, "libraryNamespace": "\(inputs.libraryNamespace)",
                 "listings": "\(inputs.listings)",
             ])
-            return
+            return true
         }
         guard await walkMirrors() != nil else {
-            return
+            return false
         }
         var answered = true
         var settled: Set<Int64> = []
@@ -286,7 +312,7 @@ actor ImmichCatalogSync: QuiescentOwner {
                 OtosLog.catalog.errorOperation("immich.mirror", phase: "probeFailed", fields: [
                     "rootPath": rootPath.rawValue, "error": String(describing: error),
                 ])
-                return
+                return false
             }
             activity.read(rows: probes.count)
             var taught: [(probe: MirrorGateway.Probe, candidate: MirrorGateway.Candidate)] = []
@@ -308,7 +334,7 @@ actor ImmichCatalogSync: QuiescentOwner {
                 break
             }
             guard let walk = await walkMirrors() else {
-                return
+                return false
             }
             guard walk.paired > 0 else {
                 // A confirmed prefix names its own candidate, so a file or an asset went, or was
@@ -326,6 +352,7 @@ actor ImmichCatalogSync: QuiescentOwner {
         if answered {
             mirrorsCovered = inputs
         }
+        return answered
     }
 
     /// One walk of every mirror's pairs (`CatalogStore.pairMirroredCopies`), one heavy load at
@@ -805,6 +832,15 @@ actor ImmichCatalogSync: QuiescentOwner {
         /// The Store could not read the rows owed images or write a page of them; the
         /// rest stay owed.
         case catalogFailed(made: Int)
+
+        /// Whether the fetch answered what it was asked: every owed row tried, or held at the
+        /// floor, a wait free space ends. A server or Store that failed answers nothing.
+        var answers: Bool {
+            switch self {
+            case .finished, .floorHeld: true
+            case .serverFailed, .catalogFailed: false
+            }
+        }
     }
 
     /// Rows read from the Store per page.

@@ -129,7 +129,12 @@ nonisolated enum SourceEraser {
 /// staging when present, revalidate `ICCameraFile` facts, and stamp
 /// `destination_modified_at`. Cancellation aborts the in-flight transfer, removes
 /// staging, settles any already-published entries, and stops scheduling new ones.
-actor MediaImportExecutor {
+///
+/// One executor runs one import (`ImportExecuting`): the coordinator makes it when the run
+/// starts and holds it until the run's result is delivered. Its cancel flag is set once and
+/// never cleared, so a cancel that arrives before `execute` begins stops the run before it
+/// takes a lease or copies a byte.
+actor MediaImportExecutor: ImportExecuting {
     static let workerCount = 8
     /// Suffix of the hidden adjacent staging file Otos writes into the destination
     /// root while copying (`.\(UUID().uuidString).otos-import-staging`). Shared with
@@ -259,7 +264,7 @@ actor MediaImportExecutor {
         self.transfer = transfer
     }
 
-    func cancel() {
+    nonisolated func cancel() {
         cancelFlag.cancel()
     }
 
@@ -272,7 +277,6 @@ actor MediaImportExecutor {
         runID: String,
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult {
-        cancelFlag.reset()
         guard case let .import(_, destination) = plan.mode else {
             return .failed(.unexpected(detail: "notAnImportPlan"), publishedCount: 0)
         }
@@ -293,6 +297,21 @@ actor MediaImportExecutor {
                 return true
             }
             return false
+        }
+        // A cancel that came before the run began: nothing was attempted, and nothing is.
+        if cancelFlag.isCancelled {
+            OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "cancelledBeforeStart", fields: [
+                "batch": "\(batch.unixMilliseconds)",
+                "run": runID,
+                "files": "\(copyEntries.count)",
+            ])
+            return .stopped(.user, MediaImportRunTally(
+                publishedCount: 0,
+                hasBlockedEntries: hasBlockedEntries,
+                hasEntryFailures: false,
+                skippedForeignCount: 0,
+                failedCount: 0
+            ))
         }
         let allowSourceDeletion = deleteSourceRequested && !hasBlockedEntries
         let namespaceLease: RootNamespaceMutationLease?
@@ -1968,11 +1987,9 @@ private final nonisolated class ByteProgressTracker: Sendable {
 }
 
 /// Thread-safe cancel flag for copyfile callbacks off the executor actor.
+/// Set once and never cleared: one executor is one run.
 private final nonisolated class CancelFlag: Sendable {
     private let flag = Mutex(false)
-    nonisolated func reset() {
-        flag.withLock { $0 = false }
-    }
 
     nonisolated func cancel() {
         flag.withLock { $0 = true }

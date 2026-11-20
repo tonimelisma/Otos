@@ -52,8 +52,8 @@ actor MediaOperationCoordinator {
     private var executions: [ImportBatchID: ExecutionHandle] = [:]
     private var buildTasks: [BuildID: Task<Void, Never>] = [:]
     private var retryTasks: [LibraryRootPath: Task<Void, Never>] = [:]
-    /// Short-lived tasks the machine's effects asked for (an executor cancel, a batch
-    /// count read, an auto-eject). Tracked so quiescence and shutdown can see them.
+    /// Short-lived tasks the machine's effects asked for (a batch count read, an
+    /// auto-eject). Tracked so quiescence and shutdown can see them.
     private var effectTasks: [UUID: Task<Void, Never>] = [:]
     /// Last state logged per source, so `publish()` records transitions rather than a
     /// sample of whatever a timer happened to catch (B3). Keyed with the attachment so a
@@ -125,7 +125,7 @@ actor MediaOperationCoordinator {
             let capturedMaterialization = materializationRequester
             // The executor's floor reads the same volumes the plan's presentation does.
             self.makeExecutor = { [volumeCapacity] _ in
-                LiveImportExecutor(
+                MediaImportExecutor(
                     store: capturedStore,
                     cameraImport: capturedCamera,
                     materializationRequester: capturedMaterialization,
@@ -202,9 +202,7 @@ actor MediaOperationCoordinator {
         retryTasks.removeAll()
         for handle in ownedExecutions {
             handle.task.cancel()
-        }
-        for handle in ownedExecutions {
-            await handle.executor.cancel()
+            handle.executor.cancel()
         }
         _ = await consumerTask?.value
         consumerTask = nil
@@ -324,11 +322,17 @@ actor MediaOperationCoordinator {
         case let .startExecution(request):
             startExecution(request)
         case let .cancelExecution(batch, alsoCancelTask):
+            // The run's executor is registered in the step that started it, so a cancel
+            // reaches it whether or not `execute` has begun, and lands in this same step.
+            // A user's cancel leaves the task running: the executor's flag stops admission and
+            // aborts the copy in flight, while the awaits that settle what already landed (the
+            // Store's journal writes) are not cancelled under it, so the run's outcome counts
+            // them. Only a source that went away also cancels the task.
             guard let handle = executions[batch] else { return nil }
             if alsoCancelTask {
                 handle.task.cancel()
             }
-            return spawnEffectTask { _ in await handle.executor.cancel() }
+            handle.executor.cancel()
         case let .scheduleUnreadableRetry(source, attachment, delay):
             retryTasks[source]?.cancel()
             retryTasks[source] = Task { [weak self] in
@@ -578,6 +582,9 @@ actor MediaOperationCoordinator {
 
     // MARK: - Executions
 
+    /// Makes the run's executor and registers it with its task before anything awaits, so a
+    /// cancel delivered at any suspension of the run — its source-read bracket, its hop onto
+    /// the executor — reaches the executor that runs it.
     private func startExecution(_ request: Machine.ExecutionRequest) {
         let executor = makeExecutor(request.source)
         let batch = request.batch

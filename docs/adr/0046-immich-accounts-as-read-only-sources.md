@@ -268,6 +268,17 @@ back. Each pass reads the stream from its cursor, never a full listing. A refuse
 session stops the passes until the user signs in again. `ImmichAccounts` owns every
 account's session, loop and status.
 
+A request for a sync is answered only by a pass that succeeded: its stream synced, its
+mirror walk and its walk over the rows owed the server's images did not fail (a walk held at
+the free-space floor answers it, since free space, not the server, ends that wait). A pass
+that failed answers nothing (ADR 0032 rule 4), and neither does a fetch of the rows on screen
+that failed; the next pass that succeeds, which the poll or the backoff rings, answers both.
+So an account whose server does not answer is never quiescent or caught up
+(`QuiescentOwner`): a launch's settlement stage `launchWork` waits for it, a settled tour
+meets its deadline instead (`by=deadline`), and the session's end names it
+(`op=owners.pending owner=immichSync holdsWork=true`). Reporting it caught up would claim a
+sync that did not happen.
+
 ### 6. Unreachable is a state, not an absence
 
 - An account's rows stay in the grid while it is unreachable.

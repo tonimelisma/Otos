@@ -475,7 +475,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 if source == cardAPath {
                     ControlledImportExecutor(control: execControl)
                 } else {
-                    LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity)
+                    MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity)
                 }
             }
         )
@@ -582,7 +582,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 if source == cardAPath {
                     ControlledImportExecutor(control: execControl)
                 } else {
-                    LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity)
+                    MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity)
                 }
             }
         )
@@ -1406,7 +1406,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             preferencesDomain: defaults,
             planBuilder: builder,
             volumeCapacity: ampleVolumeCapacity,
-            makeExecutor: { _ in LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity) }
+            makeExecutor: { _ in MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity) }
         )
         await coordinator.start()
         let proven = try await waitForReady(coordinator, source: cardPath)
@@ -1483,7 +1483,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             store: store,
             preferencesDomain: defaults,
             volumeCapacity: ampleVolumeCapacity,
-            makeExecutor: { _ in LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity) }
+            makeExecutor: { _ in MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity) }
         )
         await coordinator.start()
         await coordinator.setDestination(firstPath, for: cardPath)
@@ -1689,7 +1689,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             preferencesDomain: defaults,
             volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in
-                LiveImportExecutor(store: store, volumeCapacity: { _ in FreeSpaceFloor.bytes + 2500 })
+                MediaImportExecutor(store: store, volumeCapacity: { _ in FreeSpaceFloor.bytes + 2500 })
             }
         )
         await coordinator.start()
@@ -2077,7 +2077,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             store: store,
             preferencesDomain: defaults,
             volumeCapacity: ampleVolumeCapacity,
-            makeExecutor: { _ in LiveImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity) }
+            makeExecutor: { _ in MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity) }
         )
         await coordinator.start()
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)

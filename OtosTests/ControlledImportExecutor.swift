@@ -3,9 +3,13 @@ import Foundation
 
 /// An `ImportExecuting` a coordinator test drives: it records what ran, can hold a
 /// source's execution until the test resumes it with a chosen result, and otherwise
-/// completes at once, or hands off to a live executor when one is given.
+/// completes at once, or hands off to a live executor when one is given. With a live
+/// executor it can also hold the run at its start, before the live executor's `execute`
+/// begins, so a test delivers an event at that suspension.
 actor ControlledExecutionControl {
     private var suspendNext: [LibraryRootPath: Int] = [:]
+    private var holdNextStart: Set<LibraryRootPath> = []
+    private var heldStarts: [LibraryRootPath: CheckedContinuation<Void, Never>] = [:]
     private var pending: [LibraryRootPath: [CheckedContinuation<MediaImportExecutionResult, Never>]] = [:]
     private(set) var cancelled: Set<LibraryRootPath> = []
     private(set) var executed: [LibraryRootPath] = []
@@ -17,6 +21,27 @@ actor ControlledExecutionControl {
     /// terminal result — without needing a real executor.
     func sendProgress(_ progress: MediaOperationProgress, for source: LibraryRootPath) {
         progressCallbacks[source]?(progress)
+    }
+
+    /// The next run for `source` waits at its start, before the live executor's `execute`
+    /// begins, until `releaseStart(for:)`.
+    func holdStartOfNextExecution(for source: LibraryRootPath) {
+        holdNextStart.insert(source)
+    }
+
+    func heldStartSources() -> Set<LibraryRootPath> {
+        Set(heldStarts.keys)
+    }
+
+    func releaseStart(for source: LibraryRootPath) {
+        heldStarts.removeValue(forKey: source)?.resume()
+    }
+
+    fileprivate func waitAtStartIfHeld(for source: LibraryRootPath) async {
+        guard holdNextStart.remove(source) != nil else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            heldStarts[source] = continuation
+        }
     }
 
     func suspendNextExecution(for source: LibraryRootPath) {
@@ -137,12 +162,11 @@ actor ControlledExecutionControl {
 
 actor ControlledImportExecutor: ImportExecuting {
     private let control: ControlledExecutionControl
-    private let liveFallback: LiveImportExecutor?
-    private var activeLive: LiveImportExecutor?
+    private let live: MediaImportExecutor?
 
-    init(control: ControlledExecutionControl, liveFallback: LiveImportExecutor? = nil) {
+    init(control: ControlledExecutionControl, live: MediaImportExecutor? = nil) {
         self.control = control
-        self.liveFallback = liveFallback
+        self.live = live
     }
 
     func execute(
@@ -163,8 +187,9 @@ actor ControlledImportExecutor: ImportExecuting {
         if shouldSuspend {
             return await control.suspendAndWait(for: source)
         }
-        if let liveFallback {
-            return await liveFallback.execute(
+        if let live {
+            await control.waitAtStartIfHeld(for: source)
+            return await live.execute(
                 plan: plan,
                 batch: batch,
                 sourceKind: sourceKind,
@@ -174,16 +199,13 @@ actor ControlledImportExecutor: ImportExecuting {
                 onProgress: onProgress
             )
         }
-        // No fallback: synthesize a minimal completed result so ledger tests can proceed without real I/O.
+        // No live executor: synthesize a minimal completed result so ledger tests can proceed without real I/O.
         return .completed(.nothingAttempted, incompleteItems: [], erase: nil)
     }
 
-    func cancel() async {
-        // Cancellation is observed via withTaskCancellationHandler in execute.
-        // Also record for tests that call cancelImport explicitly.
-        // No underlying live to cancel unless we delegated.
-        if let activeLive {
-            await activeLive.cancel()
-        }
+    /// Forwards to the live executor. A held run with no live executor observes cancellation
+    /// only as its task's (`suspendAndWait`).
+    nonisolated func cancel() {
+        live?.cancel()
     }
 }

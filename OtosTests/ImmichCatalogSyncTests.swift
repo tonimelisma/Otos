@@ -1253,3 +1253,91 @@ extension ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 }
+
+// MARK: - A failed pass answers nothing (ADR 0032 rule 4)
+
+extension ImmichCatalogSyncTests {
+    /// A pass whose server did not answer leaves its request owed: the account never reads as
+    /// caught up on a sync it did not make. The next pass that syncs answers it.
+    @Test func aPassTheServerFailedLeavesItsRequestOwedUntilOneSyncs() async throws {
+        let fixture = try await Fixture.make()
+        let server = ScriptedServer([[Self.asset("a"), Self.complete], [Self.asset("a"), Self.complete]], failAfter: [0])
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        let (ended, endedSink) = AsyncStream.makeStream(of: ImmichSyncPassOutcome.self)
+        let loop = Task {
+            await sync.run { report in
+                if case let .ended(outcome) = report {
+                    endedSink.yield(outcome)
+                }
+            }
+        }
+        var outcomes = ended.makeAsyncIterator()
+
+        sync.requestSync()
+        let failed = await outcomes.next()
+        guard case .serverFailed = failed else {
+            Issue.record("expected the first pass to fail at its server, got \(String(describing: failed))")
+            return
+        }
+        // Reported after the pass ended: nothing runs, and the request is still owed.
+        #expect(await sync.status.runningPasses == 0)
+        #expect(await sync.holdsWork, "a failed pass answers nothing")
+        #expect(await sync.quiescence == nil)
+
+        sync.requestSync()
+        #expect(await outcomes.next() == .synced(listed: 1, deleted: 0, full: false))
+        #expect(await sync.holdsWork == false)
+        #expect(await sync.quiescence != nil)
+
+        sync.finish()
+        await loop.value
+        endedSink.finish()
+        await fixture.store.shutdown()
+    }
+
+    /// A fetch of the rows on screen that the server failed answers nothing either: the sync
+    /// keeps owing it, and the next pass whose walk fetches those rows' images answers it.
+    @Test func aFailedFetchOfTheRowsOnScreenStaysOwedUntilAPassFetchesThem() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 300, height: 200)
+        let serves = Flag()
+        let server = ScriptedServer(
+            [[Self.asset("a"), Self.exif("a", size: 1), Self.complete], [Self.complete]],
+            previews: { _ in
+                guard serves.isSet else {
+                    throw URLError(.networkConnectionLost)
+                }
+                return preview
+            }
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        // The pass lists the row; its walk stops at the preview the server fails.
+        _ = await sync.pass()
+        let visibleLoop = Task { await sync.runVisible() }
+        let row = fixture.id("a/IMG.JPG")
+
+        sync.showVisible([row])
+        // The screen's fetch asked for the preview and ended.
+        try await waitUntil {
+            let running = await sync.status.runningPasses
+            return server.requestedPreviews.count == 2 && running == 0
+        }
+        #expect(await sync.holdsWork, "the screen's ring is owed")
+        #expect(await sync.quiescence == nil)
+
+        serves.set()
+        let loop = Task { await sync.run() }
+        sync.requestSync()
+        _ = try await sync.untilQuiescent()
+        #expect(try await fixture.store.windowReads.mediaAssets(for: [row])[row]?.thumbnailPath != nil)
+
+        sync.finish()
+        await loop.value
+        await visibleLoop.value
+        await fixture.store.shutdown()
+    }
+}
