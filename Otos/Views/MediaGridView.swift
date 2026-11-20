@@ -22,8 +22,6 @@ struct MediaGridView: View {
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
     var onStackBadge: (MediaAssetID) -> Void = { _ in }
     var contextMenu: () -> NSMenu? = { nil }
-    /// The outlined faces' boxes by photo (ADR 0047), drawn on their tiles.
-    var faceOutlines: [MediaAssetID: [CGRect]] = [:]
     /// The tiles a choice just changed, reconfigured in place (DES-120).
     var tileChoiceChange = TileChoiceChange()
     /// Centers the grid on this asset after loupe/compare exit (fresh controller).
@@ -79,7 +77,6 @@ struct MediaGridView: View {
                         onMediaChoice: onMediaChoice,
                         onStackBadge: onStackBadge,
                         contextMenu: contextMenu,
-                        faceOutlines: faceOutlines,
                         tileChoiceChange: tileChoiceChange,
                         focusTargetID: focusTargetID
                     )

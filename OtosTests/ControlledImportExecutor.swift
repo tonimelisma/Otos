@@ -14,6 +14,9 @@ actor ControlledExecutionControl {
     private(set) var cancelled: Set<LibraryRootPath> = []
     private(set) var executed: [LibraryRootPath] = []
     private var progressCallbacks: [LibraryRootPath: @Sendable (MediaOperationProgress) -> Void] = [:]
+    /// Every result a live executor returned, in order: the run's own report that it ended,
+    /// which a test waits on instead of sampling a presentation that a later re-plan replaces.
+    nonisolated let liveResults = AsyncValueRecorder<MediaImportExecutionResult>()
 
     /// Delivers `progress` through the `onProgress` callback `execute()` was
     /// called with for `source`, letting a test observe how the coordinator's
@@ -189,7 +192,7 @@ actor ControlledImportExecutor: ImportExecuting {
         }
         if let live {
             await control.waitAtStartIfHeld(for: source)
-            return await live.execute(
+            let result = await live.execute(
                 plan: plan,
                 batch: batch,
                 sourceKind: sourceKind,
@@ -198,6 +201,8 @@ actor ControlledImportExecutor: ImportExecuting {
                 runID: runID,
                 onProgress: onProgress
             )
+            await control.liveResults.append(result)
+            return result
         }
         // No live executor: synthesize a minimal completed result so ledger tests can proceed without real I/O.
         return .completed(.nothingAttempted, incompleteItems: [], erase: nil)

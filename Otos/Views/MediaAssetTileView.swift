@@ -9,17 +9,6 @@ private final class FlippedView: NSView {
     }
 }
 
-/// A flipped view that draws and never takes a click: clicks reach the tile beneath.
-private final class PassThroughFlippedView: NSView {
-    override var isFlipped: Bool {
-        true
-    }
-
-    override func hitTest(_: NSPoint) -> NSView? {
-        nil
-    }
-}
-
 /// Layer-backed host for the tile's thumbnail. Its layer contents belong to Otos: the
 /// view draws nothing of its own, and `updateLayer` re-asserts `image`, so an AppKit
 /// redisplay — every view in the window redisplays on a light/dark switch — can never
@@ -141,24 +130,10 @@ final class MediaAssetTileView: NSView, NSCollectionViewElement {
     private let filmIconView = NSImageView()
     private let placeholderIconView = NSImageView()
     private let choiceControl = NSVisualEffectView()
-    /// Outlined faces (ADR 0047) in DES-061's accent border, on the thumbnail and under the
-    /// badges. A flipped view hosts the layer so a box is measured from the top-left corner,
-    /// as the loupe's is; it never takes a click.
-    private let faceOutlineView = PassThroughFlippedView()
-    private let faceOutlineLayer: CAShapeLayer = {
-        let layer = CAShapeLayer()
-        layer.fillColor = nil
-        layer.lineWidth = MediaAssetTilePresentation.selectionBorderWidth
-        layer.isHidden = true
-        return layer
-    }()
-
-    /// The outlined faces' boxes, as fractions of the upright photo; `MediaGridBridge` owns them.
-    private var faceOutlineBoxes: [CGRect] = []
     private var choiceButtons: [MediaChoiceButton] = []
     var onMediaChoice: ((MediaChoice) -> Void)?
     /// How this tile shows the stack it is in (ADR 0052); `MediaGridBridge` owns it and
-    /// re-asserts it on every render, as it does hover and face outlines.
+    /// re-asserts it on every render, as it does hover.
     private(set) var stackPresentation: TileStackPresentation = .none
 
     /// Aspect-fit face size for the currently painted image; nil while placeholder.
@@ -200,9 +175,6 @@ final class MediaAssetTileView: NSView, NSCollectionViewElement {
         addSubview(contentView)
 
         contentView.addSubview(thumbnailView)
-        faceOutlineView.wantsLayer = true
-        faceOutlineView.layer?.addSublayer(faceOutlineLayer)
-        contentView.addSubview(faceOutlineView)
 
         kindBadge.wantsLayer = true
         kindBadge.layer?.backgroundColor = DesignPalette.badgeNSColor.cgColor
@@ -417,11 +389,9 @@ extension MediaAssetTileView {
         badgeLabel.isHidden = true
         filmIconView.isHidden = true
         kindBadge.isHidden = true
-        // Hover and face outlines are re-asserted by `MediaGridBridge` on every render, so
-        // clearing them here cannot outlive this pass.
+        // Hover is re-asserted by `MediaGridBridge` on every render, so clearing it here
+        // cannot outlive this pass.
         choiceControl.isHidden = true
-        faceOutlineBoxes = []
-        faceOutlineLayer.isHidden = true
         stackPresentation = .none
         applyStackBand()
         for button in choiceButtons {
@@ -497,7 +467,6 @@ extension MediaAssetTileView {
             bounds: bounds
         )
         thumbnailView.frame = contentView.bounds
-        layoutFaceOutlines()
         updatePlaceholderPresentation()
         layoutKindBadge()
         layoutEditBadge()
@@ -515,31 +484,6 @@ extension MediaAssetTileView {
                 height: choiceButtonSize
             )
         }
-    }
-
-    func setFaceOutlines(_ boxes: [CGRect]) {
-        guard faceOutlineBoxes != boxes else {
-            return
-        }
-        faceOutlineBoxes = boxes
-        layoutFaceOutlines()
-    }
-
-    /// The boxes carried through the photo's saved edit onto the painted thumbnail; none
-    /// while a placeholder shows, since there is no picture to place them on.
-    private func layoutFaceOutlines() {
-        let outlines = paintedImagePixelSize == nil ? [] : faceOutlineBoxes.compactMap {
-            FaceOutline.onEditedPhoto($0, recipe: renderedDetail?.editRecipe, upright: renderedDetail?.nativePixelSize)
-        }
-        guard !outlines.isEmpty else {
-            faceOutlineLayer.isHidden = true
-            return
-        }
-        faceOutlineView.frame = contentView.bounds
-        faceOutlineLayer.frame = faceOutlineView.bounds
-        faceOutlineLayer.strokeColor = NSColor.controlAccentColor.cgColor
-        faceOutlineLayer.path = FaceOutline.path(outlines, in: faceOutlineView.bounds)
-        faceOutlineLayer.isHidden = false
     }
 
     func setSelected(_ selected: Bool, animated: Bool) {

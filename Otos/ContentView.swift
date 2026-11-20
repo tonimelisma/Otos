@@ -560,7 +560,6 @@ struct DetailColumn: View {
                 },
                 onStackBadge: { viewModel.toggleStack(shownBy: $0) },
                 contextMenu: viewModel.makeMediaItemContextMenu,
-                faceOutlines: viewModel.outlinedFaceBoxes,
                 tileChoiceChange: viewModel.tileChoiceChange,
                 focusTargetID: viewModel.focusedAssetID,
                 dismissedCameraBannerIdentities: viewModel.dismissedCameraBannerIdentities,

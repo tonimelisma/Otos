@@ -227,10 +227,11 @@ The grid, filmstrip, loupe and compare context menu, after `Reveal in Finder`:
 Highlighting a face item in a photo menu outlines the faces it acts on: a person's entry and
 every act under it, that person's faces; a choice, the faces it would give. Two people
 without a name both read `Unnamed Person`; the outline is how they are told apart. The
-faces are outlined wherever their photos show — the loupe, both compare panes, grid and
-filmstrip tiles — whether or not the Info pane is open, in DES-061's 3 pt accent border,
-carried through the edit the picture shows (its crop and straighten); a tile still showing
-a placeholder draws none. A video's face is never outlined: its box belongs to the frame
+faces are outlined wherever their photos show large — the loupe and both compare panes —
+whether or not the Info pane is open, in DES-061's 3 pt accent border, carried through the
+edit the picture shows (its crop and straighten). A thumbnail, in the grid or the filmstrip,
+never carries one: there the border reads as the tile's selection, and the photo is too
+small to point at a face (owner decision, 2026-11-19). A video's face is never outlined: its box belongs to the frame
 it was read in, not to what the video shows (owner decision, 2026-11-13). A face is outlined
 only on the copy it was read from: a person listed from another copy of the photo (below) has
 no outline on this one, since its box is of that copy's pixels. Closing the menu clears them.

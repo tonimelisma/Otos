@@ -38,8 +38,8 @@ struct LoupeView: View {
     var onZoomDoubleClick: (CGPoint) -> Void = { _ in }
     var isPickingNeutral = false
     var onPickNeutral: (CGPoint) -> Void = { _ in }
-    /// The outlined faces' boxes by photo (ADR 0047): the filmstrip's tiles draw them, and
-    /// the pane draws its photo's through the edit its decode shows.
+    /// The outlined faces' boxes by photo (ADR 0047): the pane draws its photo's through the
+    /// edit its decode shows; the filmstrip's thumbnails never carry them (DES-113).
     var faceOutlineBoxes: [MediaAssetID: [CGRect]] = [:]
     var tileChoiceChange = TileChoiceChange()
     /// While the crop tool is on: the whole frame it draws over, and the crop.
@@ -227,7 +227,6 @@ struct LoupeView: View {
             onMediaChoiceKey: onMediaChoiceKey,
             onMediaChoice: onMediaChoice,
             contextMenu: contextMenu,
-            faceOutlines: faceOutlineBoxes,
             tileChoiceChange: tileChoiceChange,
             focusTargetID: focusedAssetID
         )

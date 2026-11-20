@@ -1425,9 +1425,9 @@ extension CatalogWindowViewModel {
     }
 
     /// The outlined faces' boxes, by photo, as fractions of the upright photo from its
-    /// top-left corner. Each surface places them on the picture it shows: a grid tile on
-    /// its edited thumbnail, the loupe and compare panes through their decode's edit. A
-    /// video's faces are never outlined.
+    /// top-left corner. The loupe and compare panes place them through their decode's edit;
+    /// a thumbnail, in the grid or the filmstrip, never carries one (DES-113). A video's
+    /// faces are never outlined.
     var outlinedFaceBoxes: [MediaAssetID: [CGRect]] {
         var boxes: [MediaAssetID: [CGRect]] = [:]
         for face in outlinedFaces {

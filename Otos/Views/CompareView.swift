@@ -38,8 +38,8 @@ struct CompareView: View {
     /// Context menu for the active pane's asset (pane) and the clicked tile (strip).
     /// A pane context click activates that pane first, so the menu describes it.
     var contextMenu: () -> NSMenu? = { nil }
-    /// The outlined faces' boxes by photo (ADR 0047): the filmstrip's tiles draw them, and
-    /// each pane draws its photo's through the edit its decode shows.
+    /// The outlined faces' boxes by photo (ADR 0047): each pane draws its photo's through the
+    /// edit its decode shows; the filmstrip's thumbnails never carry them (DES-113).
     var faceOutlineBoxes: [MediaAssetID: [CGRect]] = [:]
     var tileChoiceChange = TileChoiceChange()
     @Environment(\.colorScheme) private var colorScheme
@@ -199,7 +199,6 @@ struct CompareView: View {
             onMediaChoiceKey: onMediaChoiceKey,
             onMediaChoice: onMediaChoice,
             contextMenu: contextMenu,
-            faceOutlines: faceOutlineBoxes,
             tileChoiceChange: tileChoiceChange,
             focusTargetID: focusTargetID
         )

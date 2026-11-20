@@ -46,11 +46,6 @@ final class MediaGridItem: NSCollectionViewItem {
         tileView?.setChoiceControlVisible(visible)
     }
 
-    /// The tile's outlined face boxes, owned by `MediaGridBridge` like hover.
-    func setFaceOutlines(_ boxes: [CGRect]) {
-        tileView?.setFaceOutlines(boxes)
-    }
-
     func setStackPresentation(_ presentation: TileStackPresentation) {
         tileView?.setStackPresentation(presentation)
     }

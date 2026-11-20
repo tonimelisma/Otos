@@ -2320,29 +2320,35 @@ struct MediaOperationCoordinatorAdversarialTests {
         prefs.deleteSourceAfterImport = true
         ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
-        // Use live executor for this test so deletion actually happens.
+        // The live executor runs, so the deletion really happens; the control records the
+        // result it returns. The run's own result is the fact waited on: the presentation's
+        // `.completed` lasts only until the re-plan of the now-empty card lands, so sampling
+        // it can miss it.
+        let execControl = ControlledExecutionControl()
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
-            volumeCapacity: ampleVolumeCapacity
+            volumeCapacity: ampleVolumeCapacity,
+            makeExecutor: { _ in
+                ControlledImportExecutor(
+                    control: execControl,
+                    live: MediaImportExecutor(store: store, volumeCapacity: ampleVolumeCapacity)
+                )
+            }
         )
         await coordinator.start()
         let plan = try await waitForReady(coordinator, source: cardPath)
         #expect(plan.totals.copyCount == 0, "Should be zero-copy")
         await coordinator.queueImport(for: cardPath)
-        // For zero-copy with delete, the executor should run and delete source.
-        // Poll for source file deletion or for completed state.
-        // Zero-copy with delete deletes the source file and settles as completed.
-        try await waitUntil(every: .milliseconds(50)) {
-            guard !FileManager.default.fileExists(atPath: srcFile.path) else {
-                return false
-            }
-            let pres = await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
-            if case .completed = pres?.state {
-                return true
-            }
-            return false
+        let results = await execControl.liveResults.waitForValues { !$0.isEmpty }
+        guard case let .completed(_, incompleteItems, erase) = results.first else {
+            Issue.record("Zero-copy with delete should complete, got \(String(describing: results.first))")
+            await coordinator.shutdown()
+            return
         }
+        #expect(incompleteItems.isEmpty)
+        #expect(erase?.deletedCount == 1, "The run erases its one source file")
+        #expect(!FileManager.default.fileExists(atPath: srcFile.path), "The source file is deleted")
         await coordinator.shutdown()
     }
 

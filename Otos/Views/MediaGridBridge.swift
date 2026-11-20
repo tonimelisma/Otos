@@ -82,8 +82,6 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     /// Builds the context menu for the current targets after the controller has made
     /// the clicked tile a target (APP-037). `nil` shows no menu.
     var contextMenu: () -> NSMenu? = { nil }
-    /// The outlined faces' boxes by photo, as fractions of the upright photo (ADR 0047).
-    var faceOutlines: [MediaAssetID: [CGRect]] = [:]
     /// The tiles a choice just changed in the tile store (DES-120): the visible ones among them
     /// are reconfigured in place, never through a structural apply.
     var tileChoiceChange = TileChoiceChange()
@@ -115,7 +113,6 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.onMediaChoice = onMediaChoice
         controller.onStackBadge = onStackBadge
         controller.contextMenu = contextMenu
-        controller.receiveFaceOutlines(faceOutlines)
         controller.receiveTileChoiceChange(tileChoiceChange)
         controller.applyPresentation(presentation)
         if case .grid = presentation {
@@ -187,9 +184,6 @@ final class MediaGridViewController: NSViewController {
     /// the whole grid. Kept as an *identity*, not an index path, so a structural
     /// apply that renumbers rows cannot leave the highlight on the wrong tile.
     private var hoveredAssetID: MediaAssetID?
-    /// The outlined faces' boxes by photo (ADR 0047), owned by the view model; each visible
-    /// tile draws its own, re-asserted on every render like hover.
-    private var faceOutlines: [MediaAssetID: [CGRect]] = [:]
     /// The last `TileChoiceChange` rendered, so a SwiftUI update re-renders a change once.
     private var lastTileChoiceRevision: UInt64 = 0
     /// How the last received grid state shows its stacks (ADR 0052).
@@ -1117,17 +1111,6 @@ extension MediaGridViewController {
         applyHoverToVisibleTiles()
     }
 
-    func receiveFaceOutlines(_ outlines: [MediaAssetID: [CGRect]]) {
-        guard faceOutlines != outlines else {
-            return
-        }
-        faceOutlines = outlines
-        for case let item as MediaGridItem in collectionView.visibleItems() {
-            let id = collectionView.indexPath(for: item).flatMap { structure.id(at: $0) }
-            item.setFaceOutlines(id.flatMap { faceOutlines[$0] } ?? [])
-        }
-    }
-
     /// Re-renders the visible tiles among `change.ids` from the tile store, once per change:
     /// a choice changes a tile's badge and its accessibility value, never its image or place.
     func receiveTileChoiceChange(_ change: TileChoiceChange) {
@@ -1171,12 +1154,6 @@ extension MediaGridViewController {
         item.setChoiceControlVisible(assetID == hoveredAssetID)
     }
 
-    /// Re-asserts the tile's face outlines after it renders, for the reason `applyHover`
-    /// gives: a render resets them, and the outlines may belong to a recycled view.
-    private func applyFaceOutlines(to item: MediaGridItem, assetID: MediaAssetID) {
-        item.setFaceOutlines(faceOutlines[assetID] ?? [])
-    }
-
     /// Whether a scroll flush would start a new visible detail query for `visibleIDs`.
     func wouldStartVisibleDetailQuery(for visibleIDs: [MediaAssetID]) -> Bool {
         !visibleIDs.isEmpty && visibleIDs != lastDetailQueryIDs
@@ -1208,7 +1185,6 @@ extension MediaGridViewController {
         // The tile now shows what the store holds, a choice's result included.
         stallMonitor?.completeChoiceToResult(rendered: assetID, in: collectionView)
         applyHover(to: item, assetID: assetID)
-        applyFaceOutlines(to: item, assetID: assetID)
         item.setStackPresentation(TileStackPresentation.of(assetID, in: gridStacks))
     }
 
@@ -1301,7 +1277,6 @@ extension MediaGridViewController {
         item.render(content: tileContents.content(for: id), change: change)
         stallMonitor?.completeChoiceToResult(rendered: id, in: collectionView)
         applyHover(to: item, assetID: id)
-        applyFaceOutlines(to: item, assetID: id)
     }
 }
 
