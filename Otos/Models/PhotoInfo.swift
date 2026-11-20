@@ -599,8 +599,8 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
 
 /// The overlay Otos holds for one asset that the Info pane shows: companion files, the
 /// import it arrived in, whether it is edited, and what search recognised in it — Vision's
-/// confident scene-label identifiers and the certain lines of its text, each nil while that
-/// reading is owed.
+/// confident scene labels with their confidences, and the lines of its text a person reads as
+/// the photo's text (`SearchTextReading.shown`), each nil while that reading is owed.
 nonisolated struct PhotoInfoOverlay: Equatable, Sendable {
     var companionFileNames: [String]
     var importedAt: Date?
@@ -608,8 +608,15 @@ nonisolated struct PhotoInfoOverlay: Equatable, Sendable {
     /// The library or account of each other present copy with the item's digest (ADR 0054),
     /// in the order copies are shown in; nil while the item's digest is owed.
     var otherCopyRoots: [LibraryRootPath]?
-    var sceneLabels: [String]?
+    var sceneLabels: [SceneLabel]?
     var textLines: [String]?
     /// The still's current description; nil while one is owed.
     var photoDescription: PhotoDescriptionReading?
+}
+
+/// One of Vision's confident scene labels for a photo, with the confidence Vision gave it; nil
+/// when the photo's loose reading does not hold it.
+nonisolated struct SceneLabel: Equatable, Sendable {
+    let identifier: String
+    let confidence: Float?
 }

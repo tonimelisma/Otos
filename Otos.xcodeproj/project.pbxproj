@@ -350,6 +350,7 @@
 				Resources/SearchLabelEmbeddings.bin,
 				Resources/SearchGlossary-et.tsv,
 				Resources/SceneLabelNames.tsv,
+				Resources/SceneLabelHierarchy.tsv,
 				Services/BundledModel.swift,
 				Services/SceneLabelNames.swift,
 				Services/SearchGlossary.swift,

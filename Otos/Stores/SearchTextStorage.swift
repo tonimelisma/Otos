@@ -11,9 +11,10 @@ import GRDB
 /// changes. A preview that does not decode is not read, so nothing is recorded for it and it
 /// stays owed.
 ///
-/// `lines` is the reading as JSON: each recognised line with the confidence Vision gave it
-/// (`RecognizedTextLine`), so search can match every line and the Info pane show the certain
-/// ones.
+/// `lines` is the reading as JSON (`TextReading`): the size of the picture read, and each
+/// recognised line with the confidence Vision gave it and where it sits in the picture, so
+/// search can match every line and the Info pane show the ones a person reads as the photo's
+/// text (`SearchTextReading.shown`).
 ///
 /// Each reading that holds a word is also in the text index (v74): its folded text in
 /// `search_text_folded` and its words in the FTS5 table `search_text_word` (`SearchTextWords`),
@@ -78,13 +79,14 @@ nonisolated enum SearchTextStorage {
     static let insertFoldedSQL = "INSERT INTO search_text_folded (library_root_id, relative_path, folded) VALUES (?, ?, ?)"
     static let insertWordsSQL = "INSERT INTO search_text_word (rowid, words) VALUES (?, ?)"
 
-    /// Replaces one reading's rows in the text index with those of `lines`, in the caller's
-    /// write, so the index changes in the transaction that stores the reading: the old folded
-    /// row goes (its trigger takes its words), and a reading that holds a word gets new ones.
-    /// Returns whether it was indexed.
-    static func index(_ lines: [RecognizedTextLine], rootID: Int64, path: String, db: Database) throws -> Bool {
+    /// Replaces one reading's rows in the text index with those of `searchable`, the reading's
+    /// text as search matches it (`SearchTextReading.searchable`), in the caller's write, so the
+    /// index changes in the transaction that stores the reading: the old folded row goes (its
+    /// trigger takes its words), and a reading that holds a word gets new ones. Returns whether
+    /// it was indexed.
+    static func index(searchable: String, rootID: Int64, path: String, db: Database) throws -> Bool {
         try db.cachedStatement(sql: deleteFoldedSQL).execute(arguments: [rootID, path])
-        let folded = SearchTextReading.folded(SearchTextReading.searchable(lines))
+        let folded = SearchTextReading.folded(searchable)
         let words = SearchTextWords.of(folded: folded)
         guard !words.isEmpty else { return false }
         try db.cachedStatement(sql: insertFoldedSQL).execute(arguments: [rootID, path, folded])
@@ -116,12 +118,12 @@ nonisolated enum SearchTextStorage {
         return each.count == 1 ? each[0] : each.map { "(\($0))" }.joined(separator: " OR ")
     }
 
-    static func linesJSON(_ lines: [RecognizedTextLine]) throws -> String {
-        try String(decoding: JSONEncoder().encode(lines), as: UTF8.self)
+    static func readingJSON(_ reading: TextReading) throws -> String {
+        try String(decoding: JSONEncoder().encode(reading), as: UTF8.self)
     }
 
-    static func lines(fromJSON json: String) throws -> [RecognizedTextLine] {
-        try JSONDecoder().decode([RecognizedTextLine].self, from: Data(json.utf8))
+    static func reading(fromJSON json: String) throws -> TextReading {
+        try JSONDecoder().decode(TextReading.self, from: Data(json.utf8))
     }
 }
 
@@ -132,10 +134,36 @@ nonisolated struct SearchTextMatches: Sendable, Equatable {
     let candidates: Int
 }
 
-/// One line Vision recognised in a preview, with its confidence (0–1).
+/// What Vision read in one picture: the picture's size in pixels, and each line it recognised,
+/// in reading order; no lines when it holds no text.
+nonisolated struct TextReading: Codable, Equatable, Sendable {
+    let width: Int
+    let height: Int
+    let lines: [RecognizedTextLine]
+
+    /// A picture `width` × `height` with no text.
+    static func empty(width: Int, height: Int) -> TextReading {
+        TextReading(width: width, height: height, lines: [])
+    }
+}
+
+/// One line Vision recognised in a picture, with its confidence (0–1) and where it sits.
 nonisolated struct RecognizedTextLine: Codable, Equatable, Sendable {
     let text: String
     let confidence: Float
+    let box: TextBox
+}
+
+/// Where a line sits in the picture it was read from, as fractions of the picture's width and
+/// height from its top-left corner: `top` is the line's top edge, `bottom` its bottom edge.
+nonisolated struct TextBox: Codable, Equatable, Sendable {
+    let left: Double
+    let top: Double
+    let right: Double
+    let bottom: Double
+
+    /// The whole picture.
+    static let whole = TextBox(left: 0, top: 0, right: 1, bottom: 1)
 }
 
 /// A still whose stored preview has no current text reading.
@@ -145,10 +173,10 @@ nonisolated struct SearchTextCandidate: Equatable, Sendable {
     let source: String
 }
 
-/// What reading one preview found: its lines, empty when it holds none — so it is not offered
-/// again until it changes.
+/// What reading one preview found: its reading, with no lines when it holds none — so it is not
+/// offered again until it changes.
 nonisolated struct SearchTextResult: Equatable, Sendable {
     let id: MediaAssetID
     let source: String
-    let lines: [RecognizedTextLine]
+    let reading: TextReading
 }

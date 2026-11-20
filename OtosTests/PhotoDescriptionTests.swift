@@ -293,7 +293,7 @@ struct PhotoDescriptionTests {
         let owedText = try await store.backgroundReads.searchTextCandidates(limit: 10).candidates
         let first = try #require(owedText.first { $0.id == library.id("a.jpg") })
         let second = try #require(owedText.first { $0.id == library.id("b.jpg") })
-        _ = try await store.applySearchTexts([SearchTextResult(id: first.id, source: first.source, lines: [])])
+        _ = try await store.applySearchTexts([SearchTextResult(id: first.id, source: first.source, reading: TextReading([]))])
         for path in ["a.jpg", "b.jpg"] {
             try writeSubjectJPEG(to: directory.appending(path: "preview-\(path).heic"), center: CGPoint(x: 0.5, y: 0.5))
         }
@@ -306,7 +306,7 @@ struct PhotoDescriptionTests {
         }
         let walksBefore = transactions("photoDescriptionCandidates")
 
-        _ = try await store.applySearchTexts([SearchTextResult(id: second.id, source: second.source, lines: [])])
+        _ = try await store.applySearchTexts([SearchTextResult(id: second.id, source: second.source, reading: TextReading([]))])
         try await waitUntil { try await store.backgroundReads.currentPhotoDescriptions(for: [second.id]).count == 1 }
         _ = try await writer.untilQuiescent()
         #expect(transactions("photoDescriptionCandidates") == walksBefore)
@@ -473,7 +473,7 @@ struct PhotoDescriptionTests {
         _ = try await store.applySearchTexts(owed.map { candidate in
             SearchTextResult(
                 id: candidate.id, source: candidate.source,
-                lines: lines.map { RecognizedTextLine(text: $0, confidence: 1) }
+                reading: TextReading(lines.map { RecognizedTextLine(text: $0, confidence: 1) })
             )
         })
     }

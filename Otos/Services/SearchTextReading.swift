@@ -21,17 +21,18 @@ import Vision
 /// misreads texture as text at both (`*•9>•'•` at 0.5, beside real menu lines); the accurate
 /// level reports 1.0 for the lines it is sure of, and on the owner's previews those read
 /// cleanly (`docs/research/2026-11-12-text-and-labels-in-the-info-pane.md`). Every line from
-/// 0.3 is kept with its confidence: search matches them all, and the Info pane shows the
-/// certain ones (`certainConfidence`).
+/// 0.3 is kept with its confidence and its box: search matches them all, and the Info pane and
+/// the description's facts show the lines a person reads as the photo's text (`shown`).
 nonisolated enum SearchTextReading {
-    /// The recognition settings; stored with every reading, so a change makes them stale.
-    static let revision = 2
+    /// The recognition settings and what a reading holds; stored with every reading, so a
+    /// change makes them stale. Revision 3 keeps each line's box and the picture's size.
+    static let revision = 3
     static let minimumConfidence: Float = 0.3
     /// A line the Info pane shows: what the accurate level reports for the lines it is sure of.
     static let certainConfidence: Float = 1
 
-    /// The recognised lines of `image`, in reading order; empty when it holds no text.
-    static func read(_ image: CGImage) throws -> [RecognizedTextLine] {
+    /// What `image` holds: its size, and its recognised lines in reading order.
+    static func read(_ image: CGImage) throws -> TextReading {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.automaticallyDetectsLanguage = true
@@ -40,10 +41,19 @@ nonisolated enum SearchTextReading {
             request.setComputeDevice(cpu, for: .main)
         }
         try VNImageRequestHandler(cgImage: image).perform([request])
-        return (request.results ?? [])
-            .compactMap { $0.topCandidates(1).first }
-            .filter { $0.confidence >= minimumConfidence }
-            .map { RecognizedTextLine(text: $0.string, confidence: $0.confidence) }
+        let lines = (request.results ?? []).compactMap { observation -> RecognizedTextLine? in
+            guard let candidate = observation.topCandidates(1).first, candidate.confidence >= minimumConfidence else {
+                return nil
+            }
+            // Vision's box is normalized with its origin at the bottom left.
+            let box = observation.boundingBox
+            return RecognizedTextLine(
+                text: candidate.string,
+                confidence: candidate.confidence,
+                box: TextBox(left: box.minX, top: 1 - box.maxY, right: box.maxX, bottom: 1 - box.minY)
+            )
+        }
+        return TextReading(width: image.width, height: image.height, lines: lines)
     }
 
     /// Whether `error` loses Vision's text reader for the rest of its process.
@@ -77,14 +87,43 @@ nonisolated enum SearchTextReading {
     private static let lostE5RTStatus = 13
 
     /// What search matches a query against: every kept line.
-    static func searchable(_ lines: [RecognizedTextLine]) -> String {
-        lines.map(\.text).joined(separator: "\n")
+    static func searchable(_ reading: TextReading) -> String {
+        reading.lines.map(\.text).joined(separator: "\n")
     }
 
-    /// The lines the Info pane shows.
-    static func certain(_ lines: [RecognizedTextLine]) -> [String] {
-        lines.filter { $0.confidence >= certainConfidence }.map(\.text)
+    /// The lines a person reads as the photo's text, which the Info pane shows and a
+    /// description is told: each line Vision is certain of, once, in reading order, without a
+    /// phone screenshot's status bar. `sceneLabels` are the photo's confident scene labels.
+    ///
+    /// Measured on the owner's library (`docs/research/2026-11-19-info-labels-and-text.md`):
+    /// 3,792 stills showed a line more than once ("dreamforce" three times, one banner per
+    /// stand), and every phone screenshot began with its clock, signal and battery
+    /// ("23:11 1", "25", "SOS"). Those lines end within the top `statusBarDepth` of a phone's
+    /// portrait screen on every device sampled, from 640×1136 to 1179×2556, and the screen's
+    /// own content starts below it; a cropped screenshot can hold a real title there, so only
+    /// a picture of a phone screen's proportions loses that band. Search still matches every
+    /// line.
+    static func shown(_ reading: TextReading, sceneLabels: [String]) -> [String] {
+        let phoneScreen = sceneLabels.contains(screenshotLabel) && reading.height > 0
+            && Double(reading.width) / Double(reading.height) <= phoneScreenMaximumAspect
+        var seen: Set<String> = []
+        return reading.lines.compactMap { line in
+            guard line.confidence >= certainConfidence,
+                  !(phoneScreen && line.box.bottom <= statusBarDepth),
+                  seen.insert(folded(line.text)).inserted
+            else { return nil }
+            return line.text
+        }
     }
+
+    /// Vision's scene label for a screenshot.
+    static let screenshotLabel = "screenshot"
+    /// A phone screen in portrait is at most this wide for its height: 0.46 for an iPhone with
+    /// a Dynamic Island, 0.56 for one with a home button.
+    static let phoneScreenMaximumAspect = 0.6
+    /// The status bar's depth on a phone's portrait screen, as a fraction of its height: its
+    /// lines ended at 0.031–0.048 on every device measured, the screen's content began at 0.047.
+    static let statusBarDepth = 0.05
 
     private static func isCPU(_ device: MLComputeDevice) -> Bool {
         if case .cpu = device {
@@ -225,8 +264,8 @@ nonisolated enum SearchTextWords {
 
 /// What reading one preview came to, in a session (`SearchTextSession`).
 nonisolated enum SearchTextPreviewReading: Codable, Equatable, Sendable {
-    /// The recognised lines; empty when the picture holds no text.
-    case lines([RecognizedTextLine])
+    /// What the picture holds; no lines when it holds no text.
+    case read(TextReading)
     /// The preview did not decode: no reading, so the still stays owed.
     case undecodable
     /// The recognition failed about this picture: no reading, so the still stays owed.
@@ -245,7 +284,7 @@ nonisolated enum SearchTextPreviewReading: Codable, Equatable, Sendable {
     /// The case's name, for a log line.
     var outcomeName: String {
         switch self {
-        case .lines: "lines"
+        case .read: "read"
         case .undecodable: "undecodable"
         case .failed: "failed"
         case .ended: "ended"
@@ -259,7 +298,7 @@ nonisolated extension SearchTextReading {
     /// recognised by `recognize`, Vision's reading unless a test gives its own.
     static func readPreview(
         at url: URL,
-        recognize: (CGImage) throws -> [RecognizedTextLine] = read
+        recognize: (CGImage) throws -> TextReading = read
     ) -> SearchTextPreviewReading {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -267,7 +306,7 @@ nonisolated extension SearchTextReading {
             return .undecodable
         }
         do {
-            return try .lines(recognize(image))
+            return try .read(recognize(image))
         } catch where losesTheProcess(error) {
             return .ended(String(describing: error))
         } catch {
@@ -510,8 +549,8 @@ actor SearchTextReader {
             let reading = session.read(directory.appending(path: candidate.previewPath))
             lifetime.withLock { $0.reading = false }
             switch reading {
-            case let .lines(lines):
-                results.append(SearchTextResult(id: candidate.id, source: candidate.source, lines: lines))
+            case let .read(reading):
+                results.append(SearchTextResult(id: candidate.id, source: candidate.source, reading: reading))
             case .undecodable:
                 OtosLog.thumbnails.errorOperation("search.text", phase: "undecodable", fields: [
                     "id": candidate.id.relativePath.rawValue,

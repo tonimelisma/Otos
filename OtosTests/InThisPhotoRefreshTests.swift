@@ -32,7 +32,9 @@ struct InThisPhotoRefreshTests {
                 id: id, source: candidate.source, embedding: [Float](repeating: 1, count: SearchEmbedding.dimensions),
                 labels: ["pool": 0.88], confidentLabels: ["pool"]
             )])
-            let named = try await model.sceneLabelNames.labels(of: ["pool"], in: Locale.current.language)
+            let named = try await model.sceneLabelNames.labels(
+                of: [SceneLabel(identifier: "pool", confidence: 0.88)], in: Locale.current.language
+            )
             model.readingsDoorbell?.yield()
             try await waitUntil { model.photoInfo?.recognized?.labels == named }
             #expect(model.photoInfo?.id == id)

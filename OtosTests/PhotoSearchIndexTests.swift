@@ -114,7 +114,7 @@ struct PhotoSearchIndexTests {
             count.withLock { $0 }
         }
 
-        func recognize(_: CGImage) throws -> [RecognizedTextLine] {
+        func recognize(_: CGImage) throws -> TextReading {
             let attempt = count.withLock {
                 $0 += 1
                 return $0
@@ -122,7 +122,7 @@ struct PhotoSearchIndexTests {
             if attempt <= failing {
                 throw error
             }
-            return [RecognizedTextLine(text: "OPEN", confidence: 1)]
+            return TextReading([RecognizedTextLine(text: "OPEN", confidence: 1)])
         }
     }
 
@@ -1376,7 +1376,7 @@ struct PhotoSearchIndexTests {
         )])
         let candidate = try #require(try await store.backgroundReads.searchTextCandidates(limit: 10).candidates.first { $0.id == catalog.blue })
         _ = try await store.applySearchTexts([SearchTextResult(
-            id: blue.id, source: candidate.source, lines: [RecognizedTextLine(text: "Proof of Insurance", confidence: 1)]
+            id: blue.id, source: candidate.source, reading: TextReading([RecognizedTextLine(text: "Proof of Insurance", confidence: 1)])
         )])
         let index = PhotoSearchIndex(
             store: store, thumbnailDirectory: catalog.thumbnails, vectorDirectory: catalog.vectors,
@@ -1739,7 +1739,7 @@ struct PhotoSearchIndexTests {
         )])
         let candidate = try #require(try await store.backgroundReads.searchTextCandidates(limit: 10).candidates.first { $0.id == asset.id })
         _ = try await store.applySearchTexts([SearchTextResult(
-            id: asset.id, source: candidate.source, lines: [RecognizedTextLine(text: text, confidence: 1)]
+            id: asset.id, source: candidate.source, reading: TextReading([RecognizedTextLine(text: text, confidence: 1)])
         )])
     }
 

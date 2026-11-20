@@ -182,7 +182,7 @@ nonisolated struct PhotoDescriptionFacts: Equatable, Sendable {
     var capturedAt: CaptureLocalTime?
     var town: String?
     var country: String?
-    /// The lines of text Vision is certain of.
+    /// The lines a person reads as the photo's text (`SearchTextReading.shown`).
     var textLines: [String]
     /// Vision's confident scene labels, as identifiers.
     var labels: [String]

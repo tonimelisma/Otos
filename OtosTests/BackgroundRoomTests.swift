@@ -286,7 +286,7 @@ struct BackgroundRoomTests {
         let starts = Mutex(0)
         let reader = SearchTextReader(startSession: {
             starts.withLock { $0 += 1 }
-            return RecognizingSession { _ in [] }
+            return RecognizingSession { _ in TextReading([]) }
         }, room: room)
         let directory = try makeTestDirectory()
         let page = Self.page(in: directory)

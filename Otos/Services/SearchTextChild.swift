@@ -369,13 +369,13 @@ public nonisolated enum SearchTextReadingProcess {
     /// How a child started with `arguments` (those after `argument`) recognises a picture's
     /// text: Vision, or the fixed line `answeringArgument` names. `nil` for arguments it does
     /// not know.
-    static func recognizer(for arguments: [String]) -> ((CGImage) throws -> [RecognizedTextLine])? {
+    static func recognizer(for arguments: [String]) -> ((CGImage) throws -> TextReading)? {
         switch arguments.count {
         case 0:
             return SearchTextReading.read
         case 2 where arguments[0] == answeringArgument:
-            let line = RecognizedTextLine(text: arguments[1], confidence: SearchTextReading.certainConfidence)
-            return { _ in [line] }
+            let line = RecognizedTextLine(text: arguments[1], confidence: SearchTextReading.certainConfidence, box: .whole)
+            return { image in TextReading(width: image.width, height: image.height, lines: [line]) }
         default:
             return nil
         }
@@ -404,7 +404,7 @@ public nonisolated enum SearchTextReadingProcess {
     /// that never reads a picture, and at the input's end it exits the process at once
     /// (`_exit`), mid-reading or not. No one is left to read that reading's answer, and its
     /// picture stays owed in Otos's catalog, which only a written reading stamps.
-    private static func serve(recognize: @escaping (CGImage) throws -> [RecognizedTextLine]) -> Never {
+    private static func serve(recognize: @escaping (CGImage) throws -> TextReading) -> Never {
         let readings = DispatchSerialQueue(label: "net.melisma.Otos.search.text.child", qos: .utility)
         let input = Thread {
             while let line = readLine(strippingNewline: true) {
@@ -424,7 +424,7 @@ public nonisolated enum SearchTextReadingProcess {
 
     /// Reads one request's picture and writes its answer. The process exits after an answer
     /// that ends it, and when an answer cannot be written.
-    private static func answer(_ line: String, recognize: (CGImage) throws -> [RecognizedTextLine]) {
+    private static func answer(_ line: String, recognize: (CGImage) throws -> TextReading) {
         let reading: SearchTextPreviewReading
         do {
             let request = try JSONDecoder().decode(Request.self, from: Data(line.utf8))

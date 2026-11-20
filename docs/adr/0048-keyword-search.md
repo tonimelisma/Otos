@@ -477,6 +477,11 @@ gain), and a stricter cut (less precision for the same loss).
 
 ### Text in the photo
 
+A reading keeps the picture's size and each line's text, confidence and box (revision 3), so
+what is shown can be told from what is searched: search matches every line from 0.3, and the
+Info pane and a description show `SearchTextReading.shown` (ADR 0050). The v74 migration
+decodes the readings it indexed with its own frozen line type, so it does what it always did.
+
 Searched for a word Vision reads in the owner's photos, SigLIP alone put a photo holding it in
 its top 10 for 21% of them. So each still's stored preview is read for text (`search_text`,
 `SearchTextReading`), and a photo whose text holds every typed word, at the start of a word,

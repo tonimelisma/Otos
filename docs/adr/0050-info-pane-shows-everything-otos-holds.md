@@ -60,13 +60,24 @@ primary location and Places (ADR 0040); confirmed faces (ADR 0047); how search r
   identified in the image, show text only with confidence, in the Mac's language, a label
   click searches, no sidebar row for text). Between People and Location, the section holds:
   - the scene labels that pass Vision's high-precision test, stored with the search
-    embedding (ADR 0048), most confident first, each name once (every language names some
+    embedding (ADR 0048), most confident first, without a label that only repeats a more
+    specific one: Vision names every ancestor with a label ("Machine, Vehicle, Automobile")
+    and publishes no taxonomy, so its scores' own hierarchy is shipped
+    (`SceneLabelHierarchy.tsv`, made by `script/scene-label-hierarchy.sh` from stored
+    readings), and an ancestor is left out when a shown descendant scores within 0.05 of it.
+    An ancestor seen in its own right scores well above (an automobile at 0.52 beside its
+    licence plate at 0.34) and stays; leaving out every ancestor would have shown a car as
+    "License plate" (`docs/research/2026-11-19-info-labels-and-text.md`). Each name once (every language names some
     pairs of labels alike: Finnish "koira" for dog and canine), each a small bordered button
     that searches for the label itself (`searchForLabel`): its English name read as English,
     with no language to recognise and no facts, so a chip finds its own label whatever the
     Mac's language and whether its Translation pack is installed; the field shows the chip's
     name. A chip is never wider than the pane; a long name truncates;
-  - under `Text`, the lines of the still's text reading at full confidence, selectable.
+  - under `Text`, the lines a person reads as the photo's text (`SearchTextReading.shown`),
+    selectable: those at full confidence, each once, without a phone screenshot's status bar
+    (a picture labelled `screenshot` of a phone's portrait proportions loses the lines ending in
+    its top 5%, where every phone measured holds its clock and battery). A description is told
+    the same lines.
   `CatalogStore.photoInfoOverlay` reads both from the current readings only, so a reading
   still owed reads `Not Checked Yet` and a new thumbnail or preview hides the old one. The
   text is read after every embedding is made, so labels often arrive first: then the labels

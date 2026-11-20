@@ -3496,6 +3496,12 @@ nonisolated enum CatalogSchema {
     )
     """
 
+    /// A stored line as v74 found readings: a JSON array of lines, each with its text. Frozen
+    /// here, so the migration indexes what it always did whatever a reading holds later.
+    private struct V74TextLine: Decodable {
+        let text: String
+    }
+
     static func indexStoredSearchTexts(_ db: Database) throws {
         let start = ContinuousClock.now
         let rows = try Row.fetchCursor(db, sql: """
@@ -3503,8 +3509,9 @@ nonisolated enum CatalogSchema {
         """)
         var indexed = 0
         while let row = try rows.next() {
-            let lines = try SearchTextStorage.lines(fromJSON: row["lines"])
-            if try SearchTextStorage.index(lines, rootID: row["library_root_id"], path: row["relative_path"], db: db) {
+            let lines = try JSONDecoder().decode([V74TextLine].self, from: Data((row["lines"] as String).utf8))
+            let searchable = lines.map(\.text).joined(separator: "\n")
+            if try SearchTextStorage.index(searchable: searchable, rootID: row["library_root_id"], path: row["relative_path"], db: db) {
                 indexed += 1
             }
         }

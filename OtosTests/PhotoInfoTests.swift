@@ -173,7 +173,8 @@ struct PhotoInfoTests {
     @Test func inThisPhotoShowsWhatSearchRecognised() {
         let overlay = PhotoInfoOverlay(
             companionFileNames: [], importedAt: nil, isEdited: false,
-            sceneLabels: ["document", "screenshot"], textLines: ["BRIDGE CLOSED AHEAD"]
+            sceneLabels: [SceneLabel(identifier: "document", confidence: 0.9), SceneLabel(identifier: "screenshot", confidence: 0.9)],
+            textLines: ["BRIDGE CLOSED AHEAD"]
         )
         let labels = [
             PhotoInfo.Recognized.Label(identifier: "document", name: "asiakirja"),

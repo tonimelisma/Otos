@@ -17,12 +17,24 @@ import Foundation
 /// - **Shipped, not translated at run time:** Translation took seconds for a photo's few
 ///   labels under load, and a Mac without the language's pack could not translate at all.
 ///
-/// An actor, so the table is read from the bundle once, off the main actor, when the pane
-/// first needs it. A table that cannot be read throws, and the pane's refresh fails rather
+/// A chip that only repeats a more specific one is left out. Vision names every ancestor with a
+/// label (people with adult, machine and vehicle with automobile, liquid, water and water body
+/// with ocean) and publishes no taxonomy; its scores show one, measured once and shipped as
+/// `SceneLabelHierarchy.tsv` (`script/scene-label-hierarchy.sh`). An ancestor inherited from its
+/// descendant scores what the descendant does: 70% of shown ancestor–descendant pairs on the
+/// owner's library were within 0.02, and the gaps tail off past 0.04. One that scores well above
+/// every shown descendant was seen in its own right — an automobile at 0.52 beside its licence
+/// plate at 0.34 — and stays. So an ancestor is left out when a shown descendant scores within
+/// `inheritedConfidence` of it (`docs/research/2026-11-19-info-labels-and-text.md`). Search
+/// keeps every label.
+///
+/// An actor, so the tables are read from the bundle once, off the main actor, when the pane
+/// first needs them. A table that cannot be read throws, and the pane's refresh fails rather
 /// than showing English as if no name existed.
 actor SceneLabelNames {
     private let bundle: Bundle
     private var table: Table?
+    private var hierarchy: Hierarchy?
 
     init(bundle: Bundle) {
         self.bundle = bundle
@@ -41,12 +53,14 @@ actor SceneLabelNames {
         }
     }
 
-    /// `identifiers` as the Info pane's chips, named in `language`, in order, each name once:
-    /// every language names some pairs of Vision's labels alike (Finnish "koira" for canine and
-    /// dog), and the chip keeps the first, most confident one's identifier.
-    func labels(of identifiers: [String], in language: Locale.Language) throws -> [PhotoInfo.Recognized.Label] {
+    /// `labels` as the Info pane's chips, named in `language`, in order, each name once: a label
+    /// another of them only inherits from is left out (`Hierarchy.shown`). Every language names
+    /// some pairs of Vision's labels alike (Finnish "koira" for canine and dog), and the chip
+    /// keeps the first, most confident one's identifier.
+    func labels(of labels: [SceneLabel], in language: Locale.Language) throws -> [PhotoInfo.Recognized.Label] {
+        let specific = try loadedHierarchy().shown(labels)
         var seen: Set<String> = []
-        return try zip(identifiers, names(of: identifiers, in: language)).compactMap { identifier, name in
+        return try zip(specific, names(of: specific, in: language)).compactMap { identifier, name in
             seen.insert(name).inserted ? PhotoInfo.Recognized.Label(identifier: identifier, name: name) : nil
         }
     }
@@ -64,6 +78,63 @@ actor SceneLabelNames {
             return language.script?.identifier == "Hant" ? "zh-Hant" : "zh-Hans"
         }
         return code
+    }
+
+    /// How far below its ancestor a descendant may score for the ancestor to add nothing.
+    static let inheritedConfidence: Float = 0.05
+
+    private func loadedHierarchy() throws -> Hierarchy {
+        if let hierarchy {
+            return hierarchy
+        }
+        let read = try Hierarchy(bundle: bundle)
+        hierarchy = read
+        return read
+    }
+
+    /// `SceneLabelHierarchy.tsv`: `#` comment lines, a header (`identifier`, `ancestors`,
+    /// `readings`), then one label a line with its ancestors, comma-separated, and the number of
+    /// readings they were measured on. A label not in it has no known ancestor.
+    struct Hierarchy {
+        let ancestors: [String: Set<String>]
+
+        init(bundle: Bundle) throws {
+            guard let url = bundle.url(forResource: "SceneLabelHierarchy", withExtension: "tsv") else {
+                throw Table.ReadError.missingResource
+            }
+            try self.init(text: String(contentsOf: url, encoding: .utf8))
+        }
+
+        init(text: String) throws {
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: true).filter { !$0.hasPrefix("#") }
+            guard lines.first?.split(separator: "\t").first == "identifier" else {
+                throw Table.ReadError.missingHeader
+            }
+            var ancestors: [String: Set<String>] = [:]
+            for line in lines.dropFirst() {
+                let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+                guard fields.count == 3, !fields[0].isEmpty, !fields[1].isEmpty else {
+                    throw Table.ReadError.malformedRow(String(line))
+                }
+                ancestors[String(fields[0])] = Set(fields[1].split(separator: ",").map(String.init))
+            }
+            self.ancestors = ancestors
+        }
+
+        /// The identifiers of `labels` in order, without each one a descendant among them scores
+        /// within `inheritedConfidence` of. A label whose confidence is unknown is kept, and
+        /// leaves out no ancestor.
+        func shown(_ labels: [SceneLabel]) -> [String] {
+            labels.filter { label in
+                guard let confidence = label.confidence else { return true }
+                return !labels.contains { other in
+                    guard let descendant = other.confidence, ancestors[other.identifier]?.contains(label.identifier) == true else {
+                        return false
+                    }
+                    return confidence - descendant <= SceneLabelNames.inheritedConfidence
+                }
+            }.map(\.identifier)
+        }
     }
 
     private func loaded() throws -> Table {

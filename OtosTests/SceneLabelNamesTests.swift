@@ -55,7 +55,7 @@ struct SceneLabelNamesTests {
         let finnish = Locale.Language(identifier: "fi")
         let identifiers = ["dog", "canine", "pool"]
         let named = try await names.names(of: identifiers, in: finnish)
-        let chips = try await names.labels(of: identifiers, in: finnish)
+        let chips = try await names.labels(of: identifiers.map { SceneLabel(identifier: $0, confidence: nil) }, in: finnish)
         #expect(chips.map(\.name) == named.reduce(into: [String]()) {
             if !$0.contains($1) {
                 $0.append($1)
@@ -63,5 +63,35 @@ struct SceneLabelNamesTests {
         })
         #expect(chips.first?.identifier == "dog")
         #expect(Set(chips.map(\.identifier)).count == chips.count)
+    }
+
+    /// A chip that only repeats a more specific one is left out, by the shipped hierarchy and
+    /// the confidences Vision gave (`SceneLabelHierarchy.tsv`). The owner's red SUV and a
+    /// family photo, as Vision scored them.
+    @Test func aChipThatOnlyRepeatsAMoreSpecificOneIsLeftOut() async throws {
+        let names = SceneLabelNames(bundle: Bundle(for: CatalogWindowViewModel.self))
+        let english = Locale.Language(identifier: "en-US")
+        func scored(_ pairs: KeyValuePairs<String, Float>) -> [SceneLabel] {
+            pairs.map { SceneLabel(identifier: $0.key, confidence: $0.value) }
+        }
+        let suv = try await names.labels(of: scored([
+            "machine": 0.535, "vehicle": 0.523, "automobile": 0.523, "outdoor": 0.514, "land": 0.514, "license_plate": 0.339,
+        ]), in: english)
+        #expect(suv.map(\.identifier) == ["automobile", "land", "license_plate"])
+        let family = try await names.labels(of: scored(["people": 0.901, "adult": 0.881, "child": 0.566, "baby": 0.454]), in: english)
+        #expect(family.map(\.identifier) == ["adult", "child", "baby"])
+        let unknown = try await names.labels(
+            of: [SceneLabel(identifier: "people", confidence: nil), SceneLabel(identifier: "adult", confidence: 0.9)], in: english
+        )
+        #expect(unknown.map(\.identifier) == ["people", "adult"])
+    }
+
+    @Test func aHierarchyRowWithoutAncestorsIsRefused() {
+        #expect(throws: SceneLabelNames.Table.ReadError.self) {
+            try SceneLabelNames.Hierarchy(text: "identifier\tancestors\treadings\nadult\t\t5\n")
+        }
+        #expect(throws: (any Error).self) {
+            try SceneLabelNames.Hierarchy(text: "adult\tpeople\t5\n")
+        }
     }
 }

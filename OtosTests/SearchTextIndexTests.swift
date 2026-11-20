@@ -218,7 +218,7 @@ struct SearchTextIndexTests {
         func read(_ id: MediaAssetID, text: String) async throws {
             let source = try #require(sources[id])
             let lines = text.isEmpty ? [] : text.split(separator: "\n").map { RecognizedTextLine(text: String($0), confidence: 1) }
-            #expect(try await store.applySearchTexts([SearchTextResult(id: id, source: source, lines: lines)]).count == 1)
+            #expect(try await store.applySearchTexts([SearchTextResult(id: id, source: source, reading: TextReading(lines))]).count == 1)
         }
 
         /// The folded readings the index holds, read from the file.

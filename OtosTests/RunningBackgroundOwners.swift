@@ -93,7 +93,7 @@ actor RunningBackgroundOwners {
             vectorDirectory: #require(store.searchIndexDirectory),
             bundle: Bundle(for: BundleMarker.self),
             backoff: backoffs.searchIndex,
-            textReader: SearchTextReader { RecognizingSession { _ in [] } },
+            textReader: SearchTextReader { RecognizingSession { _ in TextReading([]) } },
             admission: admission
         )
         descriptions = PhotoDescriptionWriter(

@@ -161,7 +161,7 @@ extension CatalogWindowViewModel {
 
     /// A photo's scene labels named in the Mac's language (`Locale.current`, as place names
     /// are, ADR 0051), each name once; nil while the reading is owed.
-    private nonisolated static func name(_ labels: [String]?, labelNames: SceneLabelNames) async throws -> [PhotoInfo.Recognized.Label]? {
+    private nonisolated static func name(_ labels: [SceneLabel]?, labelNames: SceneLabelNames) async throws -> [PhotoInfo.Recognized.Label]? {
         guard let labels else { return nil }
         return try await labelNames.labels(of: labels, in: Locale.current.language)
     }

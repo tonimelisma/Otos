@@ -500,22 +500,24 @@ struct OwnerShapedCatalog {
         shape.embeddings = db.changesCount
         // Text readings: every library preview but a few, under half of the account's; most
         // read no text. One in six holds text, as his 13,545 of 75,823 do: eleven lines of
-        // about 14 characters (his 10.9 lines and 478 bytes of stored JSON a reading), words
+        // about 14 characters (his 10.9 lines a reading), each with its box, in a reading of the
+        // preview's size, as reading revision 3 stores them (`TextReading`), words
         // that vary from row to row, numbers, and a line of Japanese in one reading of 18 (his
         // 757 readings with Chinese or Japanese).
         let textRow = """
         SELECT a.library_root_id, a.relative_path, \(SearchTextStorage.currentSource("a")),
-               CASE WHEN a.rowid % 6 = 0 THEN (
+               json_object('width', 2560, 'height', 1920, 'lines', CASE WHEN a.rowid % 6 = 0 THEN (
                    SELECT json_group_array(json_object('confidence', 0.93, 'text',
                        CASE WHEN n.k = 1 AND a.rowid % 18 = 0 THEN '営業時間 ' || (a.rowid % 24) || '時'
                        ELSE substr('OPEN EXIT CAFE MENU SALE STOP Straße café niño ÉCOLE Rua Praça Gare Platz',
                                    1 + ((a.rowid * n.k * 7) % 60), 9)
                             || ' ' || printf('%x', (a.rowid * 2654435761 + n.k) % 1048573)
-                            || ' ' || ((a.rowid + n.k) % 1000) END))
+                            || ' ' || ((a.rowid + n.k) % 1000) END,
+                       'box', json_object('left', 0.1, 'top', n.k * 0.08, 'right', 0.9, 'bottom', n.k * 0.08 + 0.05)))
                    FROM (SELECT 1 AS k UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5
                          UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
                          UNION ALL SELECT 10 UNION ALL SELECT 11) AS n
-               ) ELSE '[]' END
+               ) ELSE json_array() END)
         FROM media_asset AS a
         """
         try db.execute(
@@ -536,7 +538,13 @@ struct OwnerShapedCatalog {
         )
         shape.texts += db.changesCount
         // Their words in the text index, as the Store writes them with each reading.
-        try CatalogSchema.indexStoredSearchTexts(db)
+        let readings = try Row.fetchAll(db, sql: "SELECT library_root_id, relative_path, lines FROM search_text")
+        for row in readings {
+            let reading = try SearchTextStorage.reading(fromJSON: row["lines"])
+            _ = try SearchTextStorage.index(
+                searchable: SearchTextReading.searchable(reading), rootID: row["library_root_id"], path: row["relative_path"], db: db
+            )
+        }
         shape.textsOwed = try Int.fetchOne(db, sql: """
         SELECT count(*) FROM media_asset AS a WHERE a.library_root_id IN (6, 7, 15) AND a.preview_path IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM search_text AS t WHERE t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path)

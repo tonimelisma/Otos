@@ -1171,7 +1171,7 @@ actor PhotoSearchIndex: QuiescentOwner {
         let written = results.isEmpty ? [] : try await store.applySearchTexts(results)
         activity.wrote(results.count)
         tally.unread.formUnion(Set(candidates.map(\.id)).subtracting(written.map(\.id)))
-        tally.withText += written.count { !$0.lines.isEmpty }
+        tally.withText += written.count { !$0.reading.lines.isEmpty }
         tally.read += written.count
     }
 

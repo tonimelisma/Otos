@@ -26,7 +26,7 @@ import Foundation
 nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
     /// What the stored descriptions were written from; raised whenever the instructions or the
     /// facts' wording change.
-    static let revision = 5
+    static let revision = 6
 
     /// What the model is asked to be for this photo (`init`).
     let instructions: String

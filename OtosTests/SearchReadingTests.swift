@@ -8,11 +8,11 @@ import Testing
 /// A session that reads in the test's own process with the test's recognition, as Otos's
 /// reading process reads with Vision's (`SearchTextReading.readPreview`).
 final class RecognizingSession: SearchTextSession {
-    private let recognize: (CGImage) throws -> [RecognizedTextLine]
+    private let recognize: (CGImage) throws -> TextReading
     /// It has no process of its own to end.
     let end: @Sendable () async -> Void = {}
 
-    init(_ recognize: @escaping (CGImage) throws -> [RecognizedTextLine]) {
+    init(_ recognize: @escaping (CGImage) throws -> TextReading) {
         self.recognize = recognize
     }
 
@@ -26,7 +26,7 @@ extension SearchTextReader {
     /// picture: an index test reads its pictures' text without starting Otos's reading process
     /// or the system's text model, whose cold load can take many minutes.
     static func readingNoText() -> SearchTextReader {
-        SearchTextReader { RecognizingSession { _ in [] } }
+        SearchTextReader { RecognizingSession { _ in TextReading([]) } }
     }
 }
 
@@ -42,7 +42,7 @@ final class ExitingSession: SearchTextSession {
     func read(_ url: URL) -> SearchTextPreviewReading {
         exitsOn.contains(url.lastPathComponent)
             ? .exited("ended while reading")
-            : .lines([RecognizedTextLine(text: "OPEN", confidence: 1)])
+            : .read(TextReading([RecognizedTextLine(text: "OPEN", confidence: 1)]))
     }
 }
 
@@ -139,14 +139,14 @@ struct SearchReadingTests {
                 if attempt == 1 {
                     throw VisionTextError.e5rtError("e5rt_stream_completion_handler call failed", 10)
                 }
-                return []
+                return TextReading([])
             }
         }
         #expect(await once.read(page, directory: directory) == .read([
-            SearchTextResult(id: page[1].id, source: "rendered", lines: []),
+            SearchTextResult(id: page[1].id, source: "rendered", reading: TextReading([])),
         ]))
         #expect(await once.read([page[0]], directory: directory) == .read([
-            SearchTextResult(id: page[0].id, source: "rendered", lines: []),
+            SearchTextResult(id: page[0].id, source: "rendered", reading: TextReading([])),
         ]))
         #expect(await once.sessionsStarted == 1)
     }
@@ -167,16 +167,16 @@ struct SearchReadingTests {
                 if attempt == 2 {
                     throw Self.readerLostError
                 }
-                return [RecognizedTextLine(text: "OPEN", confidence: 1)]
+                return TextReading([RecognizedTextLine(text: "OPEN", confidence: 1)])
             }
         }
-        let open = [RecognizedTextLine(text: "OPEN", confidence: 1)]
+        let open = TextReading([RecognizedTextLine(text: "OPEN", confidence: 1)])
         #expect(await reader.read(page, directory: directory) == .sessionEnded(before: [
-            SearchTextResult(id: page[0].id, source: "rendered", lines: open),
+            SearchTextResult(id: page[0].id, source: "rendered", reading: open),
         ]))
         #expect(await reader.read(Array(page.dropFirst()), directory: directory) == .read([
-            SearchTextResult(id: page[1].id, source: "rendered", lines: open),
-            SearchTextResult(id: page[2].id, source: "rendered", lines: open),
+            SearchTextResult(id: page[1].id, source: "rendered", reading: open),
+            SearchTextResult(id: page[2].id, source: "rendered", reading: open),
         ]))
         #expect(await reader.sessionsStarted == 2)
         #expect(attempts.withLock { $0 } == 4)
@@ -195,7 +195,10 @@ struct SearchReadingTests {
             executable: SearchTextChild.executable(),
             arguments: [SearchTextReadingProcess.argument, SearchTextReadingProcess.answeringArgument, "OTOS SEARCH 2026"]
         )
-        #expect(child.read(sign) == .lines([RecognizedTextLine(text: "OTOS SEARCH 2026", confidence: 1)]))
+        let signImage = try #require(Self.picture(saying: "OTOS SEARCH 2026"))
+        #expect(child.read(sign) == .read(TextReading(
+            width: signImage.width, height: signImage.height, lines: [RecognizedTextLine(text: "OTOS SEARCH 2026", confidence: 1)]
+        )))
         #expect(child.read(directory.appending(path: "missing.jpg")) == .undecodable)
 
         #expect(kill(child.processIdentifier, SIGKILL) == 0)
@@ -247,10 +250,10 @@ struct SearchReadingTests {
         let reader = SearchTextReader {
             ExitingSession(exitsOn: [URL(filePath: page[0].previewPath).lastPathComponent])
         }
-        let open = [RecognizedTextLine(text: "OPEN", confidence: 1)]
+        let open = TextReading([RecognizedTextLine(text: "OPEN", confidence: 1)])
         #expect(await reader.read(page, directory: directory) == .read([
-            SearchTextResult(id: page[1].id, source: "rendered", lines: open),
-            SearchTextResult(id: page[2].id, source: "rendered", lines: open),
+            SearchTextResult(id: page[1].id, source: "rendered", reading: open),
+            SearchTextResult(id: page[2].id, source: "rendered", reading: open),
         ]))
         #expect(await reader.sessionsStarted == 2)
     }
@@ -268,12 +271,34 @@ struct SearchReadingTests {
 
     /// Search matches every kept line; the Info pane shows only the certain ones.
     @Test func searchReadsEveryLineAndTheInfoPaneTheCertainOnes() {
-        let lines = [
+        let reading = TextReading([
             RecognizedTextLine(text: "BRIDGE CLOSED AHEAD", confidence: 1),
             RecognizedTextLine(text: "S6H3", confidence: 0.3),
+        ])
+        #expect(SearchTextReading.searchable(reading) == "BRIDGE CLOSED AHEAD\nS6H3")
+        #expect(SearchTextReading.shown(reading, sceneLabels: []) == ["BRIDGE CLOSED AHEAD"])
+    }
+
+    /// What a person reads as the photo's text: a phone screenshot's status bar is not shown,
+    /// nor a line twice; a cropped screenshot keeps a title at its top, and a photo keeps text
+    /// at its top. Search keeps every line.
+    @Test func theShownTextLeavesAPhoneScreenshotsStatusBarAndRepeats() {
+        func line(_ text: String, top: Double, bottom: Double) -> RecognizedTextLine {
+            RecognizedTextLine(text: text, confidence: 1, box: TextBox(left: 0.1, top: top, right: 0.9, bottom: bottom))
+        }
+        let lines = [
+            line("23:11 1", top: 0.026, bottom: 0.044),
+            line("25", top: 0.029, bottom: 0.041),
+            line("Send your money", top: 0.083, bottom: 0.102),
+            line("dreamforce", top: 0.3, bottom: 0.32),
+            line("Dreamforce", top: 0.5, bottom: 0.52),
         ]
-        #expect(SearchTextReading.searchable(lines) == "BRIDGE CLOSED AHEAD\nS6H3")
-        #expect(SearchTextReading.certain(lines) == ["BRIDGE CLOSED AHEAD"])
+        let phone = TextReading(width: 1179, height: 2556, lines: lines)
+        #expect(SearchTextReading.shown(phone, sceneLabels: ["document", "screenshot"]) == ["Send your money", "dreamforce"])
+        #expect(SearchTextReading.shown(phone, sceneLabels: ["people"]) == ["23:11 1", "25", "Send your money", "dreamforce"])
+        let cropped = TextReading(width: 753, height: 1032, lines: lines)
+        #expect(SearchTextReading.shown(cropped, sceneLabels: ["screenshot"]).first == "23:11 1")
+        #expect(SearchTextReading.searchable(phone).hasPrefix("23:11 1\n25\n"))
     }
 
     /// Vision's classification keeps the gate's loose labels and the confident ones apart:
@@ -306,9 +331,9 @@ struct SearchReadingTests {
         )])
         let candidate = try #require(try await store.backgroundReads.searchTextCandidates(limit: 10).candidates.first)
         #expect(candidate.previewPath == "sign-preview.heic")
-        let open = [RecognizedTextLine(text: "OPEN", confidence: 1), RecognizedTextLine(text: "0p3n", confidence: 0.3)]
-        #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: "stale", lines: open)]).isEmpty)
-        #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: candidate.source, lines: open)]).count == 1)
+        let open = TextReading([RecognizedTextLine(text: "OPEN", confidence: 1), RecognizedTextLine(text: "0p3n", confidence: 0.3)])
+        #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: "stale", reading: open)]).isEmpty)
+        #expect(try await store.applySearchTexts([SearchTextResult(id: asset.id, source: candidate.source, reading: open)]).count == 1)
         #expect(try await store.backgroundReads.searchTextCandidates(limit: 10).candidates.isEmpty)
         #expect(try await store.windowReads.searchTextMatches([SearchTextQuery("open")]).ids == [asset.id])
         #expect(try await store.windowReads.searchTextMatches([SearchTextQuery("0p3n")]).ids == [asset.id], "every kept line is matched")
@@ -342,7 +367,9 @@ struct SearchReadingTests {
             id: asset.id, source: candidate.source, embedding: [Float](repeating: 1, count: SearchEmbedding.dimensions),
             labels: ["water": 0.88, "pool": 0.88, "horse": 0.07], confidentLabels: ["pool", "water"]
         )])
-        #expect(try await store.windowReads.photoInfoOverlay(for: asset.id)?.sceneLabels == ["pool", "water"])
+        #expect(try await store.windowReads.photoInfoOverlay(for: asset.id)?.sceneLabels == [
+            SceneLabel(identifier: "pool", confidence: 0.88), SceneLabel(identifier: "water", confidence: 0.88),
+        ])
         let stored = try await store.backgroundReads.currentSearchEmbeddings(for: [asset.id]).first
         #expect(SearchEmbeddingStorage.labels(from: stored?.labels)["horse"] == 0.07)
         await enrich(thumbnail: "pool-thumb-2.jpg")
@@ -358,7 +385,7 @@ struct SearchReadingTests {
     /// attempt throws the last error, so a Vision that cannot read still fails. An error that
     /// loses the reader for the process (`SearchTextReading.losesTheProcess`) is thrown at
     /// once: no later attempt in this process can read, and only a new process would.
-    static func readRetryingFailures(_ image: CGImage) throws -> [RecognizedTextLine] {
+    static func readRetryingFailures(_ image: CGImage) throws -> TextReading {
         let attempts = 3
         for attempt in 1 ... attempts {
             do {
@@ -415,9 +442,9 @@ struct SearchTextLiveReadingTests {
             ])
             let searchable = SearchTextReading.folded(SearchTextReading.searchable(read))
             #expect(SearchTextQuery("otos search").matches(folded: searchable))
-            #expect(SearchTextReading.certain(read) == ["OTOS SEARCH 2026"])
+            #expect(SearchTextReading.shown(read, sceneLabels: []) == ["OTOS SEARCH 2026"])
             let blank = SearchModelTests.solid(red: 0.4, green: 0.5, blue: 0.6, width: 1200, height: 800)
-            #expect(try SearchReadingTests.readRetryingFailures(blank).isEmpty)
+            #expect(try SearchReadingTests.readRetryingFailures(blank).lines.isEmpty)
         } matching: { issue in
             issue.error.map(SearchTextReading.losesTheProcess) ?? false
         }
@@ -437,7 +464,7 @@ struct SearchTextLiveReadingTests {
         var reading = child.read(sign)
         for _ in 1 ..< 3 {
             switch reading {
-            case .lines, .undecodable:
+            case .read, .undecodable:
                 break
             case .failed:
                 reading = child.read(sign)
@@ -449,10 +476,10 @@ struct SearchTextLiveReadingTests {
             }
             break
         }
-        guard case let .lines(lines) = reading else {
+        guard case let .read(read) = reading else {
             Issue.record("the reading process answered \(reading)")
             return
         }
-        #expect(SearchTextReading.certain(lines) == ["OTOS SEARCH 2026"])
+        #expect(SearchTextReading.shown(read, sceneLabels: []) == ["OTOS SEARCH 2026"])
     }
 }
