@@ -4,6 +4,7 @@ import Foundation
 import MediaMetadata
 import OSLog
 import QuickLookThumbnailing
+import Synchronization
 import UniformTypeIdentifiers
 
 /// Media enricher guide
@@ -216,14 +217,19 @@ nonisolated struct MediaEnricher {
             let remote = RemoteVideoAsset(reader: reader, filename: relativePath.rawValue)
             let faces: EnrichedVideoFaces?
             let readError: String?
+            var syncFrames = "none"
             // A frame the server did not send is neither an unreadable nor an undecodable
             // video: `remote.failed` below makes it `.unanswered`, whatever AVFoundation said.
             // The read has one outcome line, `videoFaces.remote`, carrying what AVFoundation said.
-            switch await Self.readVideoFaces(remote.asset, id: id, analyzeFaces: analyzeFaces, directory: thumbnailDirectory) {
+            switch await Self.readVideoFaces(
+                remote.asset, id: id, analyzeFaces: analyzeFaces, directory: thumbnailDirectory,
+                bytesUnanswered: { remote.failed }
+            ) {
             case let .success(read):
                 faces = read.faces
                 facesVerdict = read.verdict
                 readError = read.undecodableError
+                syncFrames = read.syncFramesField
             case let .failure(failure):
                 faces = nil
                 facesUnread = failure.unread
@@ -252,6 +258,7 @@ nonisolated struct MediaEnricher {
                 "faces": faces.map { "\($0.faces.count)" } ?? "unread",
                 "unread": facesUnread.map { "\($0)" } ?? "none",
                 "error": readError ?? "none",
+                "syncFrames": syncFrames,
                 "reads": "\(cost.reads)",
                 "bytes": "\(cost.bytes)",
                 "fileBytes": "\(reader.size)",
@@ -473,6 +480,9 @@ nonisolated struct MediaEnricher {
                 videoFaces = read.faces
                 facesVerdict = read.verdict
                 products.append(read.verdict == .decoded ? "videoFaces=\(read.faces.faces.count)" : "videoFacesUndecodable")
+                if !read.syncFrames.isEmpty {
+                    products.append("videoFacesSyncFrames=\(read.syncFramesField)")
+                }
             case let .failure(failure):
                 facesUnread = failure.unread
                 products.append("videoFacesUnread=\(failure.unread)")
@@ -533,12 +543,19 @@ nonisolated struct MediaEnricher {
         return facesUnread.map { .facesUnread(result, $0) } ?? .complete(result)
     }
 
-    /// A video's faces as read, with what its frame reader said about the video, and the
-    /// error it said it with when it cannot decode the video.
+    /// A video's faces as read, with what its frame reader said about the video, the error
+    /// it said it with when it cannot decode the video, and the samples read at a sync frame
+    /// because the frame at their time failed to decode (`VideoFaceReader.frame(at:)`).
     private struct VideoFacesRead {
         let faces: EnrichedVideoFaces
         let verdict: DecodeVerdict
         var undecodableError: String?
+        var syncFrames: [Int] = []
+
+        /// The samples read at a sync frame, for an outcome line.
+        var syncFramesField: String {
+            syncFrames.isEmpty ? "none" : syncFrames.map(String.init).joined(separator: ",")
+        }
     }
 
     /// Why a video's faces could not be read, with the error that said so.
@@ -558,16 +575,18 @@ nonisolated struct MediaEnricher {
         _ asset: AVURLAsset,
         id: MediaAssetID,
         analyzeFaces: @escaping FaceAnalysisReader,
-        directory: URL
+        directory: URL,
+        bytesUnanswered: @escaping @Sendable () -> Bool = { false }
     ) async -> Result<VideoFacesRead, VideoFacesFailure> {
+        let syncFrames = Mutex<[Int]>([])
         do {
-            return try await .success(VideoFacesRead(
-                faces: VideoFaceReader.read(
-                    asset, analyzeFaces: analyzeFaces,
-                    framesRelativeName: ThumbnailStore.faceFramesRelativeName(for: id), in: directory
-                ),
-                verdict: .decoded
-            ))
+            let faces = try await VideoFaceReader.read(
+                asset, analyzeFaces: analyzeFaces,
+                framesRelativeName: ThumbnailStore.faceFramesRelativeName(for: id), in: directory,
+                bytesUnanswered: bytesUnanswered,
+                atSyncFrame: { sample in syncFrames.withLock { $0.append(sample) } }
+            )
+            return .success(VideoFacesRead(faces: faces, verdict: .decoded, syncFrames: syncFrames.withLock { $0 }))
         } catch where VideoFaceReader.isUndecodable(error) {
             return .success(VideoFacesRead(
                 faces: .noneFound,

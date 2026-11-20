@@ -94,14 +94,22 @@ grouping had put with the right child.
   background and above the free-space floor (ADR 0027); a library's 1,939 videos are
   627 GB (owner decision, 2026-11-13). `VideoFaceReader` decodes the frames at 0, 10, 25,
   50, 75 and 90% upright at full resolution with no time tolerance, so a re-read finds the
-  same frames, and reads each with `FaceAnalyzer` before decoding the next: one
+  same frames. A sampled frame AVFoundation fails to decode (`decodeFailed`) is read at the
+  sync frame after it, else the one before (never a frame whose bytes a server did not send,
+  which ends the read as unanswered): in some HEVC videos with open groups of
+  pictures AVFoundation's seek fails on the few frames just before a sync frame on every
+  read, though they decode in order, and a sync frame needs no other frame
+  (`docs/research/2026-11-19-account-videos-unread-faces.md`). It reads each frame with
+  `FaceAnalyzer` before decoding the next: one
   full-resolution frame is held at a time, and a frame that holds faces is kept only at the
   preview's size it is staged at. An iPhone's 4K HDR frame is about 66 MB, and two videos
   holding all six frames each added 890 MB (`docs/research/2026-11-16-first-launch-footprint.md`).
 - **A video AVFoundation cannot decode** is no failed read: its faces are stamped with none
   and the decoder that said so is stored, and it is read again once that decoder changes
   (ADR 0009, ENR-031). An Immich account's MKV videos are among them: AVFoundation does not
-  read the format.
+  read the format. So are VP9 movies: their track says it is not decodable on this Mac
+  (`AVAssetTrack.isDecodable`), which the reader asks before any frame, so no frame's bytes
+  are fetched for it.
 - **A read that fails:** a frame that cannot be read or a failed analysis stamps no faces,
   and is its own outcome, never the whole read's failure: the video's other products are
   written and only its faces stay owed, paced for 900 s on the retry ledger. A model that

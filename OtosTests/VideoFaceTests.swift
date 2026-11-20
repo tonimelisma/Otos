@@ -233,7 +233,8 @@ struct VideoFaceTests {
     /// A library's video owes its faces until its frames are read; a still never does, since
     /// A remote video whose server stops answering partway is an error whose asset says the
     /// server failed, so enrichment paces the row (`.unanswered`) instead of stamping the
-    /// frames it got, or calling the video unreadable.
+    /// frames it got, or calling the video unreadable. A frame whose bytes never came is not
+    /// read at a sync frame instead: the read ends at it.
     @Test func aRemoteVideoTheServerStopsSendingIsAFailedReadNotAFacelessOne() async throws {
         let data = try Data(contentsOf: SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov"))
         struct Unanswered: Error {}
@@ -247,16 +248,28 @@ struct VideoFaceTests {
             return .settled
         }
         let remote = RemoteVideoAsset(reader: reader, filename: "clip.mov")
+        let analysed = Mutex(0)
         await #expect(throws: (any Error).self) {
             try await VideoFaceReader.read(
                 remote.asset,
                 analyzeFaces: { _ in
-                    FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
+                    analysed.withLock { $0 += 1 }
+                    return FaceAnalysis(faces: [], rejectedForQuality: 0, rejectedAsNoPerson: 0, rejectedForAlignment: 0, rejectedForLandmarks: 0)
                 },
-                framesRelativeName: "frames.heic", in: makeTestDirectory()
+                framesRelativeName: "frames.heic", in: makeTestDirectory(),
+                bytesUnanswered: { remote.failed },
+                atSyncFrame: { _ in Issue.record("a frame whose bytes never came was read at a sync frame") }
             )
         }
         #expect(remote.failed)
+        #expect(analysed.withLock { $0 } < VideoFaceReader.samples.count)
+        let enricher = try MediaEnricher.live(thumbnailDirectory: makeTestDirectory(), analyzeFaces: { _ in Self.analysis([]) })
+        let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Account"), relativePath: MediaRelativePath(rawValue: "abc/clip.mov"))
+        let outcome = await enricher.enrich(id, .remoteRanges(reader, relativePath: id.relativePath), Int64(data.count), 1000, [.videoFaces], nil)
+        guard case .unanswered = outcome else {
+            Issue.record("expected .unanswered, got \(outcome)")
+            return
+        }
     }
 
     /// A video whose frames cannot be read is an error to the reader, not a video without
@@ -660,5 +673,163 @@ extension VideoFaceTests {
         for failure in failures {
             #expect(!VideoFaceReader.isUndecodable(failure), "\(failure)")
         }
+        #expect(VideoFaceReader.isUndecodable(VideoFaceReaderError.trackNotDecodable))
+    }
+}
+
+// MARK: - Videos AVFoundation cannot decode, or cannot seek in
+
+extension VideoFaceTests {
+    /// The fixture with its video track's codec renamed to VP9, which this Mac has no decoder
+    /// for: AVFoundation answers every frame of it `noSourceTrack` over -12430, as it does the
+    /// owner's VP9 movies.
+    static func noDecoderVideo() throws -> Data {
+        var data = try Data(contentsOf: fixture)
+        let description = try #require(data.firstRange(of: Data("stsd".utf8)))
+        let codec = try #require(data.firstRange(of: Data("avc1".utf8), in: description.upperBound ..< data.endIndex))
+        data.replaceSubrange(codec, with: Data("vp09".utf8))
+        return data
+    }
+
+    /// A video whose track AVFoundation says it cannot decode is read, before any frame is
+    /// asked for, as one no decoder reads: a library's is stamped with no faces by the frame
+    /// reader's decoder, and an account's too, read in ranges — never a read left owed and
+    /// downloaded again at every pacing.
+    @Test func aVideoWhoseTrackHasNoDecoderIsStampedUndecodable() async throws {
+        let directory = try makeTestDirectory()
+        let file = try Self.noDecoderVideo()
+        let video = directory.appending(path: "clip.mov")
+        try file.write(to: video)
+        let enricher = MediaEnricher.live(
+            thumbnailDirectory: directory.appending(path: "Thumbnails", directoryHint: .isDirectory),
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            analyzeFaces: { _ in
+                Issue.record("a frame reached the analyser")
+                return Self.analysis([])
+            }
+        )
+        let local = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: directory.path), relativePath: MediaRelativePath(rawValue: "clip.mov"))
+        let account = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Account"), relativePath: MediaRelativePath(rawValue: "abc/clip.mov"))
+
+        let outcomes = await [
+            enricher.enrich(local, .localFile(video), Int64(file.count), 1000, [.videoFaces], nil),
+            enricher.enrich(
+                account, .remoteRanges(Self.reader(serving: file), relativePath: account.relativePath), Int64(file.count), 1000, [.videoFaces], nil
+            ),
+        ]
+
+        for outcome in outcomes {
+            guard case let .complete(result) = outcome else {
+                Issue.record("expected .complete, got \(outcome)")
+                continue
+            }
+            #expect(result.videoFaces == .noneFound)
+            #expect(result.decodeVerdict == .undecodable(decoder: VideoFaceReader.decoderIdentity))
+        }
+    }
+
+    /// A sampled frame AVFoundation fails to decode is read at the sync frame near it, and
+    /// says so; one whose fallback does not exist, or whose error is not a failed decode, is
+    /// still a failed read.
+    @Test func aFrameThatFailsToDecodeIsReadAtItsSyncFrame() async throws {
+        let sampled = CMTime(value: 8, timescale: 1)
+        let sync = CMTime(value: 9, timescale: 1)
+        let image = Self.image()
+        let decoded = Mutex<[CMTime]>([])
+        let heard = Mutex(0)
+        func decode(failing error: any Error) -> (CMTime) async throws -> CGImage {
+            { time in
+                decoded.withLock { $0.append(time) }
+                guard time == sync else { throw error }
+                return image
+            }
+        }
+
+        let read = try await VideoFaceReader.frame(
+            at: sampled, decode: decode(failing: AVError(.decodeFailed)),
+            syncFrame: { $0 == sampled ? sync : nil }, atSyncFrame: { heard.withLock { $0 += 1 } }
+        )
+        #expect(read === image)
+        #expect(decoded.withLock { $0 } == [sampled, sync])
+        #expect(heard.withLock { $0 } == 1)
+
+        await #expect(throws: AVError.self) {
+            try await VideoFaceReader.frame(
+                at: sampled, decode: decode(failing: AVError(.decodeFailed)), syncFrame: { _ in nil }, atSyncFrame: {}
+            )
+        }
+        await #expect(throws: URLError.self) {
+            try await VideoFaceReader.frame(
+                at: sampled, decode: decode(failing: URLError(.timedOut)), syncFrame: { _ in sync }, atSyncFrame: {}
+            )
+        }
+        #expect(heard.withLock { $0 } == 1)
+    }
+
+    /// The sync frame for a frame that is not one is the next sync frame, else the last
+    /// before it; a sync frame has none, since nothing but the decoder can fail it.
+    @Test func aFramesSyncFrameIsTheNextElseTheLast() async throws {
+        let directory = try makeTestDirectory()
+        let video = directory.appending(path: "keyframes.mov")
+        try await Self.writeVideo(to: video, frames: 30, keyFrameInterval: 10)
+        let track = try #require(try await AVURLAsset(url: video).loadTracks(withMediaType: .video).first)
+        func isSync(_ time: CMTime) throws -> Bool {
+            try #require(track.makeSampleCursor(presentationTimeStamp: time)).currentSampleSyncInfo.sampleIsFullSync.boolValue
+        }
+        let frame = { (index: Int64) in CMTime(value: index, timescale: 30) }
+
+        let next = try #require(VideoFaceReader.syncFrameTime(near: frame(5), in: track))
+        #expect(next > frame(5))
+        #expect(try isSync(next))
+        #expect(VideoFaceReader.syncFrameTime(near: next, in: track) == nil)
+        let last = try #require(VideoFaceReader.syncFrameTime(near: frame(29), in: track))
+        #expect(try isSync(last))
+        #expect(last < frame(29))
+        #expect(try !isSync(frame(29)))
+    }
+
+    /// An H.264 video of `frames` frames at 30 fps, a sync frame at most every
+    /// `keyFrameInterval` frames.
+    static func writeVideo(to url: URL, frames: Int, keyFrameInterval: Int) async throws {
+        let width = 64, height = 48
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [AVVideoMaxKeyFrameIntervalKey: keyFrameInterval],
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+        ])
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0 ..< frames {
+            while !input.isReadyForMoreMediaData {
+                // time: poll — the writer reports readiness only through this flag here.
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            let pool = try #require(adaptor.pixelBufferPool)
+            var made: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+            let buffer = try #require(made)
+            CVPixelBufferLockBaseAddress(buffer, [])
+            let base = try #require(CVPixelBufferGetBaseAddress(buffer)).assumingMemoryBound(to: UInt8.self)
+            let row = CVPixelBufferGetBytesPerRow(buffer)
+            for y in 0 ..< height {
+                for x in 0 ..< width {
+                    let pixel = base + y * row + x * 4
+                    pixel[0] = UInt8((x + frame * 9) & 0xFF)
+                    pixel[1] = UInt8((y + frame * 5) & 0xFF)
+                    pixel[2] = UInt8((x ^ y) & 0xFF)
+                    pixel[3] = 0xFF
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            #expect(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30)))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        #expect(writer.status == .completed)
     }
 }

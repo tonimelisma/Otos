@@ -37,7 +37,9 @@ nonisolated enum VideoFaceReader {
 
     /// Whether `error`, thrown by `read`, is AVFoundation's word that it cannot decode this
     /// video's bytes: their format is not one it recognises, they do not parse, it has no
-    /// decoder for them, or it has no image at a sampled time. Each is the platform's answer
+    /// decoder for them — said by its track before any frame is asked for
+    /// (`VideoFaceReaderError.trackNotDecodable`), or by a frame's read — or it has no image
+    /// at a sampled time. Each is the platform's answer
     /// to the bytes it was given, and every read of them gives it again (measured on the
     /// owner's library: 67 videos each answered the same code on every read, up to 33 reads
     /// in three days, `docs/research/2026-11-14-videos-avfoundation-cannot-decode.md`).
@@ -52,6 +54,9 @@ nonisolated enum VideoFaceReader {
     /// cleanly, a failed analysis — is not a verdict: the read failed, and the video's faces
     /// stay owed.
     static func isUndecodable(_ error: any Error) -> Bool {
+        if case VideoFaceReaderError.trackNotDecodable = error {
+            return true
+        }
         guard let error = error as? AVError else { return false }
         switch error.code {
         case .fileFormatNotRecognized, .fileFailedToParse, .failedToParse, .decoderNotFound, .noImageAtTime:
@@ -68,18 +73,27 @@ nonisolated enum VideoFaceReader {
     static let truncatedAVIStatus = -12344
 
     /// A video's faces, one per person, with their frames staged under `finalRelativeName`.
-    /// No faces when the video has no video track. Throws when the duration or a frame could
-    /// not be read, or a frame not analysed: an unread frame is not a frame without faces (ADR
-    /// 0032), so a partial read is never stamped and the video is read again. The caller logs
-    /// what the read came to, once, with the error.
+    /// No faces when the video has no video track. Throws `trackNotDecodable` before any
+    /// frame is asked for when AVFoundation says its video track is not decodable on this Mac
+    /// (a VP9 movie, with no VP9 decoder for it). Throws when the duration or a frame could
+    /// not be read, or a frame not analysed: an unread frame is not a frame without faces
+    /// (ADR 0032), so a partial read is never stamped and the video is read again.
+    /// `atSyncFrame` hears each sample read at a sync frame instead (`frame(at:)`).
+    /// `bytesUnanswered` says whether the asset's source failed to send bytes it was asked
+    /// for (`RemoteVideoAsset.failed`): a frame that failed for want of its bytes is not one
+    /// AVFoundation cannot seek to, so it has no sync-frame fallback and the read ends at it.
+    /// The caller logs what the read came to, once, with the error.
     @concurrent
     static func read(
         _ asset: AVURLAsset,
         analyzeFaces: FaceAnalysisReader,
         framesRelativeName: String,
-        in directory: URL
+        in directory: URL,
+        bytesUnanswered: @escaping @Sendable () -> Bool = { false },
+        atSyncFrame: @escaping @Sendable (_ sample: Int) -> Void = { _ in }
     ) async throws -> EnrichedVideoFaces {
-        guard try await !asset.loadTracks(withMediaType: .video).isEmpty else { return .noneFound }
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else { return .noneFound }
+        guard try await track.load(.isDecodable) else { throw VideoFaceReaderError.trackNotDecodable }
         let duration = try await asset.load(.duration)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
@@ -87,10 +101,60 @@ nonisolated enum VideoFaceReader {
         generator.requestedTimeToleranceAfter = .zero
         return try await read(
             frame: { index in
-                try await generator.image(at: CMTimeMultiplyByFloat64(duration, multiplier: samples[index])).image
+                try await frame(
+                    at: CMTimeMultiplyByFloat64(duration, multiplier: samples[index]),
+                    decode: { try await generator.image(at: $0).image },
+                    syncFrame: { bytesUnanswered() ? nil : syncFrameTime(near: $0, in: track) },
+                    atSyncFrame: { atSyncFrame(index) }
+                )
             },
             analyzeFaces: analyzeFaces, framesRelativeName: framesRelativeName, in: directory
         )
+    }
+
+    /// The frame at `time`, or, when AVFoundation fails to decode it (`decodeFailed`), the
+    /// sync frame `syncFrame` names near it. AVFoundation decodes a frame by seeking to the
+    /// sync frame before it and decoding forward; in some HEVC videos with open groups of
+    /// pictures its seek fails on the few frames just before a sync frame every time they
+    /// are asked for, though the same frames decode in order (measured on the owner's
+    /// account videos, `docs/research/2026-11-19-account-videos-unread-faces.md`). A sync
+    /// frame needs no other frame, so a seek always reaches it, and it is the same frame on
+    /// every read. A sampled frame that is itself a sync frame has no fallback: its failure
+    /// is the decoder's, and it is thrown.
+    static func frame(
+        at time: CMTime,
+        decode: (CMTime) async throws -> CGImage,
+        syncFrame: (CMTime) -> CMTime?,
+        atSyncFrame: () -> Void
+    ) async throws -> CGImage {
+        do {
+            return try await decode(time)
+        } catch let error as AVError where error.code == .decodeFailed {
+            guard let sync = syncFrame(time) else { throw error }
+            atSyncFrame()
+            return try await decode(sync)
+        }
+    }
+
+    /// The presentation time of the sync frame nearest after the frame shown at `time`, else
+    /// the nearest before it; nil when that frame is itself a sync frame, or the track cannot
+    /// say.
+    static func syncFrameTime(near time: CMTime, in track: AVAssetTrack) -> CMTime? {
+        guard track.canProvideSampleCursors,
+              let sampled = track.makeSampleCursor(presentationTimeStamp: time),
+              !sampled.currentSampleSyncInfo.sampleIsFullSync.boolValue
+        else {
+            return nil
+        }
+        for direction: Int64 in [1, -1] {
+            guard let cursor = track.makeSampleCursor(presentationTimeStamp: time) else { return nil }
+            while cursor.stepInPresentationOrder(byCount: direction) == direction {
+                if cursor.currentSampleSyncInfo.sampleIsFullSync.boolValue {
+                    return cursor.presentationTimeStamp
+                }
+            }
+        }
+        return nil
     }
 
     /// The read over `frame`, which decodes the frame at `samples[index]`. One full-resolution
@@ -175,4 +239,10 @@ nonisolated enum VideoFaceReader {
         }
         return people.map { ($0[0].frame, $0[0].face) }.sorted { ($0.frame, $0.face) < ($1.frame, $1.face) }
     }
+}
+
+nonisolated enum VideoFaceReaderError: Error, Equatable {
+    /// AVFoundation says the video's track is not decodable on this Mac
+    /// (`AVAssetTrack.isDecodable`): it has no decoder for its codec.
+    case trackNotDecodable
 }
