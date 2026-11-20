@@ -42,6 +42,15 @@ attached the card (`op=removableVolume.refresh count=1`), six of the next seven 
 ended in `count=0` while the card stayed mounted, and the card stayed out of the sidebar
 until a later remount happened to win. The physical insert at 17:46:59 is the same race.
 
+With the fix installed (f1769ef3), three more remounts each ended with the card
+attached: DiskArbitration's read came first with `count=0` and was followed by a
+`report=mountCompleted` read with `count=1`. The new rejection log named the second form
+of the race once: the listing already held the card, but reading its volume facts failed
+(`op=removableVolume.rejected reason=resourceValuesUnavailable errorDomain=NSCocoaErrorDomain
+errorCode=260`, file not found). So a read on DiskArbitration's report can miss a fresh
+FSKit card in two ways: unlisted, or listed but not yet answering. A read on the
+mount notification found it every time.
+
 ## Conclusion
 
 - A completed mount (`NSWorkspace.didMountNotification`) asks the monitor to read the
