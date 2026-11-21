@@ -309,13 +309,6 @@ paths:
 
 ## Open observations
 
-- **A People act whose covering state arrives before its answer is never retired by it.**
-  The window still shows the truth: the overlay equals the state, and every later People
-  state retires it. But the answer step compares nothing with the state already applied, and
-  rings no faces read. Two failing tests are on the local branch
-  `test/people-act-chain-failing`. The fix is to the answer step (`didAnswerPeopleWrite`),
-  not to the owner (`docs/research/2026-11-20-people-act-chain.md`, Findings).
-
 - **Duplicates waited behind People.** A Duplicates build waited 102 s for the heavy-load turn
   behind a People pass. ADR 0055 runs one heavy load at a time by design. Whether that wait is
   felt belongs to the weekly run's tour, not to this plan.

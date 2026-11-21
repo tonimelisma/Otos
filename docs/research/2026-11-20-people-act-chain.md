@@ -205,6 +205,11 @@ guards.
 
 ### Findings: two retirement tests fail
 
+**Fixed in the follow-up (`fix/people-act-retires-at-answer`):** `PendingPeopleActs` keeps the newest
+People request an applied state covers (`builtThrough`), so an answer that arrives after its
+covering state retires the act in its own step, and an answer to a landed act on faces rings
+a read of the targets' faces. Both tests below now pass and live in `PeopleActChainTests`.
+
 Two more tests assert ADR 0004's retirement rule itself, beyond what the window shows. An act
 "retires when a state whose build covers the request the write's answer named arrives". Both
 deliver that state *before* the answer, at the hop step 4 names. Neither lands on `main`.

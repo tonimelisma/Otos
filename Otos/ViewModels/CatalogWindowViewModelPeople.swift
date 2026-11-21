@@ -146,6 +146,10 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
     private var merges: [UInt64: Merge] = [:]
     /// Each write's effect, by its request, until People is built with it.
     private var shown: [UInt64: Shown] = [:]
+    /// The newest People request a state the window applied covers. The state and the
+    /// store's answer reach the window by separate paths, so a state covering a write can
+    /// arrive before the answer that names its request; the answer then finds it here.
+    private(set) var builtThrough: UInt64 = 0
 
     /// Numbers a write's submission; `merge` is the merge it makes, if it makes one, and
     /// `effect` what it shows until People is built with it.
@@ -159,21 +163,33 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
     }
 
     /// The store answered `request`: wrote it, and a People build covering `covers` has it; or
-    /// did not (`covers` nil), and what it shows is withdrawn. Returns the merge it was making,
-    /// if it was one still outstanding.
+    /// did not (`covers` nil), and what it shows is withdrawn. A write whose covering state
+    /// already arrived (`builtThrough`) is in People from its answer. Returns the merge it was
+    /// making, if it was one still outstanding.
     mutating func answer(_ request: UInt64, covers: UInt64?) -> Merge? {
         answered = max(answered, request)
         if let covers {
             shown[request]?.covers = covers
+            if covers <= builtThrough {
+                shown[request]?.isInPeople = true
+            }
         } else {
             shown[request] = nil
         }
+        _ = dropRetired()
         return merges.removeValue(forKey: request)
+    }
+
+    /// Whether a landed write on faces still waits for a read of the targets' faces asked
+    /// after its answer: such a read retires it (`retireFaces`), so its answer asks for one.
+    var owesFacesRead: Bool {
+        shown.contains { $0.value.covers != nil && !$0.value.isInFaces }
     }
 
     /// A People state covering `covers` arrived: every write it has stops being shown over it
     /// once the targets' faces have it too. True when one did.
     mutating func retire(coveredBy covers: UInt64) -> Bool {
+        builtThrough = max(builtThrough, covers)
         for (request, entry) in shown where (entry.covers ?? .max) <= covers {
             shown[request]?.isInPeople = true
         }
@@ -795,10 +811,13 @@ extension CatalogWindowViewModel {
         if let merge, covers != nil {
             didMerge(merge.from, into: merge.into)
         }
-        // A write the store did not make no longer shows; one it made shows until a build has it.
-        if covers == nil {
-            showPendingPeopleActs()
+        // A write the store did not make no longer shows; one it made shows until a build has
+        // it, which may already be the state shown. A write on faces leaves once a read of the
+        // targets' faces asked after this answer has it, so the answer asks for that read.
+        if covers != nil, pendingPeopleActs.owesFacesRead {
+            facesReadDoorbell?.yield()
         }
+        showPendingPeopleActs()
         if merge != nil {
             reconcileShownPeople()
         }

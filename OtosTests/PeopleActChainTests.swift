@@ -263,4 +263,60 @@ struct PeopleActChainTests {
             return event
         }
     }
+
+    /// The People state that covers an act's request can reach the window before the store's
+    /// answer does: `PeopleGallery.request()` rings its loop, whose read can publish before the
+    /// intent consumer's main-actor turn applies the answer. That state has the act in it, so
+    /// the answer retires the act against it (`PendingPeopleActs.builtThrough`).
+    @Test func aCoveringStateBeforeTheAnswerRetiresTheAct() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
+        try await fixture.show(fixture.people(), scope: .people)
+        var intents = fixture.model.peopleIntentStream.makeAsyncIterator()
+
+        fixture.model.setHidden(fixture.sam, true)
+        guard case let .perform(act, record, request) = try #require(await intents.next()) else {
+            Issue.record("the hide is a perform")
+            return
+        }
+        let outcome = try await fixture.store.perform(act)
+        var covering = try await fixture.people()
+        covering.covers = 5
+        fixture.show(covering, scope: .people)
+        fixture.model.applyPeopleIntentEvent(.performed(act, record: record, request: request, outcome: outcome, covers: 5))
+
+        #expect(fixture.model.peopleState.hiddenPeople.map(\.id) == [fixture.sam])
+        #expect(fixture.model.pendingPeopleActs.effect.isEmpty, "the state that covers the answer's request has arrived")
+        await fixture.store.shutdown()
+    }
+
+    /// The same for an act on a face: the read of the photo's faces the covering state rang was
+    /// asked before the answer, so the answer asks for one after it, and that read retires the
+    /// face's override.
+    @Test func aCoveringStateBeforeTheAnswerRetiresTheFaceAct() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
+        try await fixture.show(fixture.people(), scope: .allMedia)
+        try await fixture.select([fixture.stranger.asset])
+        var intents = fixture.model.peopleIntentStream.makeAsyncIterator()
+
+        fixture.model.nameFaces([fixture.stranger], as: fixture.sam)
+        guard case let .perform(act, record, request) = try #require(await intents.next()) else {
+            Issue.record("the move is a perform")
+            return
+        }
+        let outcome = try await fixture.store.perform(act)
+        var covering = try await fixture.people()
+        covering.covers = 5
+        fixture.show(covering, scope: .allMedia, grid: fixture.model.state.mediaGrid.orderedAssetIDs)
+        try await fixture.waitForFaces()
+        fixture.model.applyPeopleIntentEvent(.performed(act, record: record, request: request, outcome: outcome, covers: 5))
+        try await fixture.waitForFaces()
+
+        #expect(fixture.model.shownTargetFaces.face(fixture.stranger)?.person == fixture.sam)
+        #expect(
+            fixture.model.targetPhotoFaces.landedThrough == fixture.model.pendingPeopleActs.answered,
+            "a read of the photo's faces asked after the answer"
+        )
+        #expect(fixture.model.pendingPeopleActs.effect.isEmpty)
+        await fixture.store.shutdown()
+    }
 }
