@@ -80,8 +80,9 @@ People and the harness first.
 ## Steps
 
 Each step is its own increment, in this order. Steps 1, 4, 5 and 6 change what is already
-understood. Steps 2, 3 and 7 measure or guard before they change anything, because each can
-fail silently: a wrong owner, a missed notification, a cross-feature write.
+understood. Steps 3 and 7 measure or guard before they change anything, because each can
+fail silently: a missed notification, a cross-feature write. Step 2, one owner for People's
+act overlay, was measured and stopped (below).
 
 ### 1. Synchronous O(n) work and file deletion leave the Store actor
 
@@ -115,48 +116,6 @@ only the cause it shows. The other four causes are read from the code already.
 
 **Not changed.** The open and migration also exceed the bar, 18–47 ms on an owner-size
 catalog. Nothing that needs the catalog can run before it, so moving it buys nothing.
-
-### 2. People: one owner for showing an act before its write lands
-
-**Evidence.**
-- People is the most-fixed product area.
-- Of its 41 fixes, at least six were an act's result shown too early, too late or on the wrong
-  person: #985, #781, #734, #732, #728, #644.
-- Four mechanisms show an act before its write lands (ADR 0004):
-
-| Act | Where its result is held |
-| --- | --- |
-| Hide (Move to Trash) | a Projection `WindowHold` |
-| Like or Dislike | `MediaChoiceOverlay` beside the tile-detail read, plus a Projection hold |
-| Stack expansion | Projection's `showExpansion` |
-| People | `PendingPeopleActs`, in the view model, laid over the published People state and retired by `CatalogPeopleState.covers` |
-
-- ADR 0004 rejects a pending-choice overlay in the view model as "a second owner of what is
-  shown". People's overlay is exactly that shape.
-
-**Hypothesis.** People's overlay belongs with Projection, beside the hide and choose holds, so
-one owner decides what a People act shows and when it retires.
-
-**De-risk first. This step measures and changes nothing until it has.**
-- Classify every People fix since 2026-10-20 by root cause: overlay timing or retirement,
-  build cost, face-reading correctness, copy identity (ADR 0054), or UI and keys. Cite the
-  diff that fixed each.
-- Write the act chain each People act travels: view model intent → Store write → change
-  notification → `PeopleAssignment` → Projection publication → view model apply. For each
-  hop, say what can arrive between it and the next.
-- Write deterministic interleaving tests that deliver the competing event at each of those
-  suspensions (ADR 0032), on unmodified code.
-
-**Stop if** fewer than a third of the classified fixes are overlay timing and no
-interleaving test fails. Then People's fixes are spread across causes, and no owner change
-removes them.
-
-**Change, only if not stopped.** People acts become Projection holds on the lossless intent
-stream, and `PendingPeopleActs` leaves the view model. ADR 0004 is rewritten to one rule for
-every act.
-
-**Done when.** The interleaving tests pass, and the People act tests pass with only their
-access path changed.
 
 ### 3. Change notifications say what changed: narrow the `.all` sites
 
@@ -278,8 +237,9 @@ statement that names the key. Recording, not a one-time `EXPLAIN`, keeps a later
   is a heuristic: generic names such as `state` add noise.
 
 **Why Edit, and why seventh.** Edit had 10 fixes, People 41. Edit goes first because the
-matrix shows it is the cleanest seam, not because it hurts most. If step 2 moves People's
-overlay out of the view model, People becomes the next candidate and pays more.
+matrix shows it is the cleanest seam, not because it hurts most. Step 2 left People's overlay
+in the view model (measured and dropped, below), so People stays the next candidate after
+Edit.
 
 **De-risk first.** Replace the heuristic with the compiler: on a throwaway branch, make every
 edit property `private` to an `EditSession` type. Every compile error is a real outside access,
@@ -344,9 +304,17 @@ paths:
 | Room holds for decode, embeddings, faces | Rejected with measurement in ADR 0057. |
 | Moving footprint tests out of the unit host | Already gated behind `OTOS_SCALE_TEST=1`. The default run asserts counts. |
 | Replacing every polling test wait | ADR 0033 keeps them. Only waits with a reported fact convert. |
+| Move People's act overlay (`PendingPeopleActs`) into Projection (step 2) | 8 of 57 People fixes since 2026-10-20 were overlay timing (14 %, under the third the step set). Three of the seven distinct ones are where a merge leaves the window's scope and filter, which is view-model state. Six interleaving tests of what the window shows pass on unmodified code and landed as guards (`PeopleActChainTests`). `docs/research/2026-11-20-people-act-chain.md`. |
 | Dropping the six never-read import columns | Required provenance: ARC-046A, ADR 0008. |
 
 ## Open observations
+
+- **A People act whose covering state arrives before its answer is never retired by it.**
+  The window still shows the truth: the overlay equals the state, and every later People
+  state retires it. But the answer step compares nothing with the state already applied, and
+  rings no faces read. Two failing tests are on the local branch
+  `test/people-act-chain-failing`. The fix is to the answer step (`didAnswerPeopleWrite`),
+  not to the owner (`docs/research/2026-11-20-people-act-chain.md`, Findings).
 
 - **Duplicates waited behind People.** A Duplicates build waited 102 s for the heavy-load turn
   behind a People pass. ADR 0055 runs one heavy load at a time by design. Whether that wait is
