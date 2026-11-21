@@ -76,6 +76,17 @@ People and the harness first.
 - **#980.** A VP9 video is undecodable before any frame is fetched, and a frame AVFoundation
   cannot seek to is read at its sync frame. Fourteen account videos had cost about 3.4 GB of
   re-reads in 6.5 hours (ENR-031, ADR 0047).
+- **#990.** Step 2's study, which stopped the owner change. Its six act-chain guards are in
+  `PeopleActChainTests`.
+- **#991.** A People act whose covering state arrives before its answer retires at the answer
+  (APP-087). This was the latent defect step 2's study found.
+- **#992.** Step 5's de-risk: every runtime statement naming an asset's key has a recorded
+  query plan. Also step 1's attribution: the 79 ms was a test-only wrapper.
+- **#993.** Step 3's de-risk: the change-coverage guard is in every test's Store. On
+  unmodified code it found three writes that announced nothing (ARC-018), and they are fixed:
+  - a listing's changed source facts;
+  - a server-absent preview;
+  - cleared video face frames.
 
 ## Steps
 
@@ -244,11 +255,17 @@ matrix shows it is the cleanest seam, not because it hurts most. Step 2 left Peo
 in the view model (measured and dropped, below), so People stays the next candidate after
 Edit.
 
-**De-risk first.** Replace the heuristic with the compiler: on a throwaway branch, make every
-edit property `private` to an `EditSession` type. Every compile error is a real outside access,
-the exact list the heuristic only estimated.
+**De-risked: go** (`docs/research/2026-11-20-edit-access-and-move-replay.md`, E7). With the 40
+edit properties private to an `EditSession`, the compiler reported 307 errors:
+- 276 are inside Edit, Crop and EditCommands.
+- 31 are outside, none a write from another feature:
+  - reads from `ContentView`, the Image menu and Escape;
+  - the lanes' own wiring in the window's init and teardown.
 
-**Stop if** any error is a write from outside Edit other than to the undo manager or view mode.
+The stop rule does not fire. Two writes go the other way and change the step:
+- Trim's `videoTrimCommand`/`videoTrimGeneration` move into `EditSession`.
+- Clearing the loupe's full-resolution requests (`refreshEditedPanes`) becomes a window
+  intent.
 
 **Change.**
 - An `EditSession` (`@Observable`, MainActor) owns the edit's state, lanes and tasks.
@@ -275,13 +292,23 @@ paths:
 - 22 in ADRs, across 12 files
 - 1 in `architecture.md`
 
-**De-risk first.**
-- **Concurrent work.** 264 commits touched `Otos/` in the week before the plan.
-  - A branch that modifies a moved file rebases through git's rename detection.
-  - A branch that adds a new file under the old folder must fail loudly, not build it into the
-    wrong target. A guard rejects any `.swift` file under `Otos/` other than `main.swift`. It
-    lands in the move's own PR, and #978 already makes a guard pointed at a stale path fail.
-- **Timing.** The move merges when no open PR changes `Otos/`.
+**De-risked: go, with two amendments** (`docs/research/2026-11-20-edit-access-and-move-replay.md`,
+E8). The last 30 commits that touched `Otos/` were replayed onto the move with rename
+detection:
+- 28 picked cleanly, carrying all 163 file changes.
+- The 2 that added a file conflicted loudly, and git placed both files at the right `OtosKit/`
+  path.
+- The replayed tree compiles.
+
+The one silent case: a new file in a **new** folder picks cleanly and lands where the app
+target builds it. So:
+- **Guard.** It rejects every file under `Otos/` except `main.swift`, `Assets.xcassets/` and
+  `Otos.icon/`, not only `.swift`; a resource in a new folder would otherwise go into the app
+  bundle. It lands in the move's own PR. #978 already makes a guard pointed at a stale path
+  fail.
+- **Scripts.** The move rewrites every script that names an `Otos/` path, not only the gates:
+  `scene-label-hierarchy.sh` still wrote to `Otos/Resources` and nothing failed.
+- **Timing.** The move merges when no open PR changes `Otos/`. There were none on 2026-11-20.
 
 **Change.**
 - The move.
