@@ -152,6 +152,11 @@ struct PeopleView: View, Equatable {
                 proxy.scrollTo(reached)
                 return .handled
             }
+            // A merge's person, once People shows them where they now sort.
+            .onChange(of: session.reveal) { _, reveal in
+                guard let reveal else { return }
+                proxy.scrollTo(reveal.person)
+            }
             .onKeyPress(.return) {
                 guard let cursor = session.cursor else { return .ignored }
                 actions.open(cursor)

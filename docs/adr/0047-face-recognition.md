@@ -510,7 +510,8 @@ grouping had put with the right child.
   and rings the projection before its answer returns, so the People state without the person
   merged away can arrive first: while that merge is outstanding, the person stays shown and
   filtered. Its confirmation takes the window to the person merged into, who takes their
-  place; its refusal hands them back to the published state. A redo of a merge is that merge,
+  place, and once a People state covering the merge is shown, whichever of the two arrives
+  last, the gallery scrolls to them where their new count sorts them (`takeReveal`); its refusal hands them back to the published state. A redo of a merge is that merge,
   answered on the same path (`didAnswerPeopleWrite`), though it writes back the state the
   merge left rather than merging again; an undo of one puts the person back and takes no one
   away. Hide, and a person Otos deletes once empty, have no successor: the window returns to

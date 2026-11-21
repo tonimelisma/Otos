@@ -289,6 +289,60 @@ struct PeopleActChainTests {
         await fixture.store.shutdown()
     }
 
+    /// A merge brings the person merged into to where their new photo count sorts them, often
+    /// far from where the user dropped (owner, 2026-11-20: "do both faces disappear from the
+    /// people list?"). The gallery scrolls to them once People shows them there: here the
+    /// state covering the merge arrives before the answer, so the answer reveals them.
+    @Test func aMergeRevealsThePersonMergedIntoWhenItsStateCameFirst() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
+        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        try await fixture.show(fixture.people(), scope: .people)
+        var intents = fixture.model.peopleIntentStream.makeAsyncIterator()
+
+        fixture.model.peopleSession.mergeQuestion = PeopleMergeQuestion(from: other, into: fixture.sam)
+        fixture.model.answerMerge(true)
+        let answer = try await answering(#require(await intents.next()), fixture: fixture, covers: 5)
+        var covering = try await fixture.people()
+        covering.covers = 5
+        fixture.show(covering, scope: .people)
+        #expect(fixture.model.peopleSession.reveal == nil, "not answered yet")
+
+        fixture.model.applyPeopleIntentEvent(answer)
+        #expect(fixture.model.peopleSession.reveal?.person == fixture.sam)
+        await fixture.store.shutdown()
+    }
+
+    /// The other order: the answer first, then a state covering only an older request, which
+    /// still sorts the person merged into by their old count and reveals nothing, then the
+    /// state that covers the merge, which reveals them, once.
+    @Test func aMergeRevealsThePersonMergedIntoWhenItsStateCameLast() async throws {
+        let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
+        let other = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: nil)).person)
+        let before = try await fixture.people()
+        fixture.show(before, scope: .people)
+        var intents = fixture.model.peopleIntentStream.makeAsyncIterator()
+
+        fixture.model.peopleSession.mergeQuestion = PeopleMergeQuestion(from: other, into: fixture.sam)
+        fixture.model.answerMerge(true)
+        let answer = try await answering(#require(await intents.next()), fixture: fixture, covers: 5)
+        fixture.model.applyPeopleIntentEvent(answer)
+        #expect(fixture.model.peopleSession.reveal == nil, "People has not been built with the merge")
+        var older = before
+        older.covers = 4
+        fixture.show(older, scope: .people)
+        #expect(fixture.model.peopleSession.reveal == nil, "a state covering an older request")
+
+        var covering = try await fixture.people()
+        covering.covers = 5
+        fixture.show(covering, scope: .people)
+        let reveal = try #require(fixture.model.peopleSession.reveal)
+        #expect(reveal.person == fixture.sam)
+        covering.covers = 6
+        fixture.show(covering, scope: .people)
+        #expect(fixture.model.peopleSession.reveal == reveal, "revealed once")
+        await fixture.store.shutdown()
+    }
+
     /// The same for an act on a face: the read of the photo's faces the covering state rang was
     /// asked before the answer, so the answer asks for one after it, and that read retires the
     /// face's override.

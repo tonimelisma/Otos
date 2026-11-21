@@ -79,6 +79,18 @@ struct PeopleSession: Equatable {
     var mergeQuestion: PeopleMergeQuestion?
     /// An act the store refused or could not write, with its title and reason (DES-038).
     var refusal: PeopleActRefusal?
+    /// The person the gallery scrolls to: the one a merge became, once People shows them in
+    /// their new place (`PendingPeopleActs.takeReveal`).
+    var reveal: PeopleGalleryReveal?
+}
+
+/// A person the gallery brings into view. A merge moves the person merged into to where their
+/// new photo count sorts them, often far from the cell the user dropped on, so without it both
+/// people seem to leave the gallery. `revision` makes each reveal a new one, also of the same
+/// person.
+struct PeopleGalleryReveal: Equatable {
+    let person: PersonID
+    let revision: UInt64
 }
 
 /// An act the window showed that the store refused or could not write: a merge the user
@@ -144,6 +156,15 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
     private(set) var answered: UInt64 = 0
     /// Each outstanding merge, by its request.
     private var merges: [UInt64: Merge] = [:]
+    /// The person the newest merge the store wrote became, and the People request a state must
+    /// cover to show them in their new place; the gallery scrolls to them then (`takeReveal`).
+    private var revealing: Merged?
+
+    private struct Merged: Equatable, Sendable {
+        let person: PersonID
+        let covers: UInt64
+    }
+
     /// Each write's effect, by its request, until People is built with it.
     private var shown: [UInt64: Shown] = [:]
     /// The newest People request a state the window applied covers. The state and the
@@ -177,7 +198,20 @@ nonisolated struct PendingPeopleActs: Equatable, Sendable {
             shown[request] = nil
         }
         _ = dropRetired()
-        return merges.removeValue(forKey: request)
+        let merge = merges.removeValue(forKey: request)
+        if let merge, let covers {
+            revealing = Merged(person: merge.into, covers: covers)
+        }
+        return merge
+    }
+
+    /// The person a written merge became, once a People state covering it has arrived, so the
+    /// gallery shows them where they now sort; nil until then, and after it was taken. The
+    /// answer and the state reach the window by separate paths, so both ask.
+    mutating func takeReveal() -> PersonID? {
+        guard let revealing, revealing.covers <= builtThrough else { return nil }
+        self.revealing = nil
+        return revealing.person
     }
 
     /// Whether a landed write on faces still waits for a read of the targets' faces asked
@@ -555,6 +589,7 @@ extension CatalogWindowViewModel {
         guard let published = next.people, published != previous.people else { return }
         _ = pendingPeopleActs.retire(coveredBy: published.covers)
         shownPeople = published.overlaying(pendingPeopleActs.effect)
+        revealMergedPerson()
         let people = peopleState
         let kept = peopleSession.selectedPeople.filter { people.person($0) != nil }
         if kept != peopleSession.selectedPeople {
@@ -821,6 +856,15 @@ extension CatalogWindowViewModel {
         if merge != nil {
             reconcileShownPeople()
         }
+        revealMergedPerson()
+    }
+
+    /// Scrolls the gallery to the person a merge became once People shows them, wherever
+    /// their new photo count sorts them.
+    private func revealMergedPerson() {
+        guard let person = pendingPeopleActs.takeReveal(), peopleState.person(person) != nil else { return }
+        peopleSession.reveal = PeopleGalleryReveal(person: person, revision: (peopleSession.reveal?.revision ?? 0) &+ 1)
+        OtosLog.ui.noticeOperation("people.reveal", phase: "requested", fields: ["person": "\(person.rawValue)"])
     }
 
     /// The store merged `from` into `into`: the person they became is selected, and takes
