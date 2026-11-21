@@ -3,8 +3,13 @@
 A review of the whole codebase asked of every part: "built from a blank slate today, would it
 look like this?" Each recommendation was then argued against from the ADRs, research notes and
 requirement rows, and every one that survived was measured or prototyped against a kill
-criterion set in advance. This plan keeps only what survived the evidence. It names the
-evidence, the done-criterion and the result that would stop each item.
+criterion set in advance. This plan keeps only what survived the evidence. It names, for each
+step:
+
+- the evidence;
+- what is measured or guarded before the change ("de-risk first");
+- the done-criterion;
+- the result that stops it.
 
 The evidence:
 
@@ -15,7 +20,45 @@ The evidence:
 - `docs/research/2026-11-19-account-videos-unread-faces.md`: account videos re-read every
   15 minutes.
 - A dependency matrix of the window view model: which feature writes which other feature's
-  stored state (method under step 5).
+  stored state (method under step 7).
+- The fix history of the two weeks before the plan (below).
+
+## Where the fixes go
+
+`main` took 202 `fix:` commits between 2026-11-06 and 2026-11-20. Counted by subject:
+
+| Area | Fixes |
+| --- | --- |
+| Tests, checks and benchmarks | 58 |
+| People and faces | 41 |
+| Import, cards and Trash | 26 |
+| Search and descriptions | 16 |
+| Grid, tiles and thumbnails | 16 |
+| Places and the map | 15 |
+| Immich | 14 |
+| Edit, crop and loupe | 10 |
+
+The files most often in them:
+
+| File | Commits |
+| --- | --- |
+| `PeopleModels.swift` | 37 |
+| `CatalogWindowViewModelPeople.swift` | 34 |
+| `PeopleAssignment.swift` | 31 |
+| `FaceStorage.swift` | 25 |
+
+The two hotspots are People and the test harness, so step 2 investigates People.
+
+The harness's own share has a structural cause the repo has already largely removed:
+- test-owned stores, temporary folders and queues (#823, #835, #843);
+- footprint gates under `OTOS_SCALE_TEST`.
+
+What remains is a test waiting on a fact it does not own, for example #964 (waited for online,
+not the first listing), #933, #821, #685 and #981. That is six in the month before the plan, a
+rate this plan does not chase.
+
+**The plan's success signal** is this table recounted when the plan closes: fixes per area,
+People and the harness first.
 
 ## Landed from this review
 
@@ -36,7 +79,9 @@ The evidence:
 
 ## Steps
 
-Each step is its own increment, in this order.
+Each step is its own increment, in this order. Steps 1, 4, 5 and 6 change what is already
+understood. Steps 2, 3 and 7 measure or guard before they change anything, because each can
+fail silently: a wrong owner, a missed notification, a cross-feature write.
 
 ### 1. Synchronous O(n) work and file deletion leave the Store actor
 
@@ -54,22 +99,66 @@ Each step is its own increment, in this order.
 - The owner's app logged no `malformedFaceRow` in seven days. That failure is a generator
   artifact, but the shape (cost proportional to the rows, held on the actor) is real.
 
+**De-risk first.** Attribute `filterOptionTally`'s 79 ms with the hold harness on
+`experiment/2026-11-19-store-change-facts-actor-hold` (local, rebased on `main`), and fix
+only the cause it shows. The other four causes are read from the code already.
+
 **Change.**
 - Log once per page with a count.
 - Sort inside the read that returns the keys.
-- Attribute `filterOptionTally`, then fix its cause.
 - Delete files through a named off-actor mechanism, applying only the result on the actor.
 
 **Done when.**
 - A deterministic test bounds the work each entry does on the actor: rows visited, log lines
   per page.
-- The hold measurement on the experiment branch `experiment/2026-11-19-store-change-facts-actor-hold`
-  (`d401c1f6`, local) shows no entry over 50 ms at the stock shape.
+- The hold harness shows no entry over 50 ms at the stock shape.
 
 **Not changed.** The open and migration also exceed the bar, 18–47 ms on an owner-size
 catalog. Nothing that needs the catalog can run before it, so moving it buys nothing.
 
-### 2. Change notifications say what changed: narrow the `.all` sites
+### 2. People: one owner for showing an act before its write lands
+
+**Evidence.**
+- People is the most-fixed product area.
+- Of its 41 fixes, at least six were an act's result shown too early, too late or on the wrong
+  person: #985, #781, #734, #732, #728, #644.
+- Four mechanisms show an act before its write lands (ADR 0004):
+
+| Act | Where its result is held |
+| --- | --- |
+| Hide (Move to Trash) | a Projection `WindowHold` |
+| Like or Dislike | `MediaChoiceOverlay` beside the tile-detail read, plus a Projection hold |
+| Stack expansion | Projection's `showExpansion` |
+| People | `PendingPeopleActs`, in the view model, laid over the published People state and retired by `CatalogPeopleState.covers` |
+
+- ADR 0004 rejects a pending-choice overlay in the view model as "a second owner of what is
+  shown". People's overlay is exactly that shape.
+
+**Hypothesis.** People's overlay belongs with Projection, beside the hide and choose holds, so
+one owner decides what a People act shows and when it retires.
+
+**De-risk first. This step measures and changes nothing until it has.**
+- Classify every People fix since 2026-10-20 by root cause: overlay timing or retirement,
+  build cost, face-reading correctness, copy identity (ADR 0054), or UI and keys. Cite the
+  diff that fixed each.
+- Write the act chain each People act travels: view model intent → Store write → change
+  notification → `PeopleAssignment` → Projection publication → view model apply. For each
+  hop, say what can arrive between it and the next.
+- Write deterministic interleaving tests that deliver the competing event at each of those
+  suspensions (ADR 0032), on unmodified code.
+
+**Stop if** fewer than a third of the classified fixes are overlay timing and no
+interleaving test fails. Then People's fixes are spread across causes, and no owner change
+removes them.
+
+**Change, only if not stopped.** People acts become Projection holds on the lossless intent
+stream, and `PendingPeopleActs` leaves the view model. ADR 0004 is rewritten to one rule for
+every act.
+
+**Done when.** The interleaving tests pass, and the People act tests pass with only their
+access path changed.
+
+### 3. Change notifications say what changed: narrow the `.all` sites
 
 **Evidence.** Across the full suite, 3,079 notifications were `.all` or `.libraryRemoved`.
 
@@ -88,16 +177,26 @@ catalog. Nothing that needs the catalog can run before it, so moving it buys not
 
 Each `.all` wakes every background owner and the window.
 
+**De-risk first.** Narrowing a notification can only fail one way: an owner stops hearing a
+write it reads, and work stays owed with nothing logged. So before any site narrows, the
+experiment's differential becomes a permanent guard:
+- In every test's Store (`TestScope`), a writer-side observer checks that each committed write
+  is covered by a notification that names every fact kind the write's tables and columns map
+  to.
+- Value-diff narrowing is allowed only where it is written down: the enrichment overlay's
+  `best_*` comparison, the copy-key triggers and the claim owner's own state.
+- A write with no covering notification fails the test that made it.
+- On today's code it must pass; the experiment found no missed notification. It also has a
+  self-test that drops one notification and sees the failure.
+
 **Change.**
-- Each site names the kinds it wrote.
+- Each `.all` site names the kinds it wrote.
 - A site that wrote nothing sends nothing.
 - Add `.location` to the `asset_metadata` insert's facts.
 
-**Done when.** The differential harness on the experiment branch shows:
-- no hand-named notification narrower than its write;
-- no `.all` that follows a write of named kinds.
-
-A test pins each corrected site.
+**Done when.**
+- The guard passes across the full suite with no `.all` that follows a write of named kinds.
+- A test pins each corrected site.
 
 **Rejected, measured.** Deriving notifications from the writer (a GRDB `TransactionObserver`)
 would be broader, not safer:
@@ -107,7 +206,9 @@ would be broader, not safer:
 - 3,104 notifications report runtime state that no write carries: scan, listing,
   availability and reach.
 
-### 3. Every thumbnail outside the grid loads through `ThumbnailLoad`
+The observer serves as a guard, never as the source of notifications.
+
+### 4. Every thumbnail outside the grid loads through `ThumbnailLoad`
 
 **Evidence.**
 - `DuplicatesView` carries a private decoder byte-identical to `ThumbnailDecode`.
@@ -116,17 +217,17 @@ would be broader, not safer:
 - Face tiles are different on purpose and stay separate: they crop from the stored preview
   through the edit's geometry, and keep their own no-blank cache.
 
+**De-risk first.** Nothing to measure. The existing Duplicates and pane tests are the oracle
+and must pass unmodified.
+
 **Change.**
 - `ThumbnailLoad` returns image, unavailable, or not yet.
 - Duplicates and the pane call it.
 - The pane's read error is logged.
 
-**Done when.**
-- Both copies are deleted.
-- The existing Duplicates and pane tests pass unmodified, plus one test for the unavailable
-  glyph.
+**Done when.** Both copies are deleted, and one test covers the unavailable glyph.
 
-### 4. One typed asset-key predicate and SQL grouped by table
+### 5. One typed asset-key predicate and SQL grouped by table
 
 **Evidence.**
 - `library_root_id = ? AND relative_path = ?` is written out about 100 times across 10 files.
@@ -136,18 +237,30 @@ would be broader, not safer:
   which one it means.
 - Migrations keep their SQL literal (ADR 0002); the freeze test holds them.
 
+**De-risk first.** Before converting, `CatalogStoreQueryPlanTests` records the plan of every
+statement that names the key. Recording, not a one-time `EXPLAIN`, keeps a later edit honest.
+
 **Change.**
 - An `AssetKey` predicate and binder.
 - The statements in `CatalogStore.swift` move into per-table-group SQL enums, following
   `FaceStorage` and `PhotoDescriptionStorage`.
 
-**Done when.**
-- `EXPLAIN QUERY PLAN` of every converted statement on a generated owner-shaped catalog still
-  names the unique key's index.
+**Done when.** Every converted statement's recorded plan is unchanged.
 
 **Stop if** any plan changes.
 
-### 5. Edit becomes the window's first feature model
+### 6. Errors the Store turns into nothing
+
+- People undo's `restore` skips a face whose library is gone without counting or logging it
+  (`CatalogStore.swift`, `try? FaceRowKey`). `applyAssignment` already counts its skips.
+- `rootIsAvailable` turns any error into "unavailable" with no log.
+- `planningMedia` logs its failure without the error.
+
+**Change.** Each is counted or logged by error domain and code (lint `error_becomes_value`).
+
+**Done when.** Each has a test that sees the log or count.
+
+### 7. Edit becomes the window's first feature model
 
 **Evidence.**
 - The window view model holds 310 stored properties. Across its 26 files, cross-feature writes
@@ -164,6 +277,16 @@ would be broader, not safer:
   every assignment, compound assignment or mutating call from another file was counted. This
   is a heuristic: generic names such as `state` add noise.
 
+**Why Edit, and why seventh.** Edit had 10 fixes, People 41. Edit goes first because the
+matrix shows it is the cleanest seam, not because it hurts most. If step 2 moves People's
+overlay out of the view model, People becomes the next candidate and pays more.
+
+**De-risk first.** Replace the heuristic with the compiler: on a throwaway branch, make every
+edit property `private` to an `EditSession` type. Every compile error is a real outside access,
+the exact list the heuristic only estimated.
+
+**Stop if** any error is a write from outside Edit other than to the undo manager or view mode.
+
 **Change.**
 - An `EditSession` (`@Observable`, MainActor) owns the edit's state, lanes and tasks.
 - It reads a narrow context the window gives it: target, view mode, undo manager.
@@ -173,10 +296,7 @@ would be broader, not safer:
 - The window model no longer declares edit state.
 - The edit tests pass with only the access path changed.
 
-**Stop if** the edit needs to write window state anywhere other than the undo manager and view
-mode.
-
-### 6. Move the sources into `OtosKit/`
+### 8. Move the sources into `OtosKit/`
 
 **Evidence.** A trial move (`f7360fdb`):
 - deleted the app target's 307-entry exception list and OtosKit's 2;
@@ -192,34 +312,30 @@ paths:
 - 22 in ADRs, across 12 files
 - 1 in `architecture.md`
 
+**De-risk first.**
+- **Concurrent work.** 264 commits touched `Otos/` in the week before the plan.
+  - A branch that modifies a moved file rebases through git's rename detection.
+  - A branch that adds a new file under the old folder must fail loudly, not build it into the
+    wrong target. A guard rejects any `.swift` file under `Otos/` other than `main.swift`. It
+    lands in the move's own PR, and #978 already makes a guard pointed at a stale path fail.
+- **Timing.** The move merges when no open PR changes `Otos/`.
+
 **Change.**
 - The move.
 - The script and lint path updates the trial listed.
 - A mechanical rewrite of those references.
 - ADR 0023 rewritten: no file stays in a folder the app target also sees.
 
-**Done when.** The full `script/check.sh` is green on the moved tree. Since #978, a guard
-pointed at a stale path fails instead of passing.
-
-### 7. Errors the Store turns into nothing
-
-- People undo's `restore` skips a face whose library is gone without counting or logging it
-  (`CatalogStore.swift`, `try? FaceRowKey`). `applyAssignment` already counts its skips.
-- `rootIsAvailable` turns any error into "unavailable" with no log.
-- `planningMedia` logs its failure without the error.
-
-**Change.** Each is counted or logged by error domain and code (lint `error_becomes_value`).
-
-**Done when.** Each has a test that sees the log or count.
+**Done when.** The full `script/check.sh` is green on the moved tree.
 
 ## Measured and dropped
 
 | Proposal | Why it is dropped |
 | --- | --- |
 | Split `CatalogStore` into several actors | Stock holds: p50 0.02 ms, p95 0.44 ms, p99 1.9 ms. Every hold over 50 ms is one of step 1's local fixes. Writes span domains in one transaction (trash carry, import settlement, library removal, face undo). ADR 0002 keeps one owner. |
-| Derive change notifications from the writer | Step 2's evidence: broader, not safer. |
+| Derive change notifications from the writer | Step 3's evidence: broader, not safer. Kept only as step 3's guard. |
 | Promote a wanted People or Duplicates build's background reads | Their reads waited p95 0.10–0.20 ms, at most 0.20 % of a build. Small sample: 4 People and 3 Duplicates builds at owner size. |
-| A generic `SerialLane` | Saves about 11 lines a port against a 25-line bar. Its awaitable `untilSettled()` would replace 45 polling waits only after all four lanes moved. |
+| A generic `SerialLane` | Saves about 11 lines a port against a 25-line bar. Lines were the wrong criterion; what it would buy is an awaitable "settled" fact for tests. Measured that way it still does not pay: six test fixes in a month waited on a fact they did not own, and only some were lane settles. |
 | A subscribe-then-loop helper for background owners | `PhotoDescriptionWriter` needed four hooks beyond `drain`. About half the owners do not share the shape. The three subscribe-race answers are one guarantee. |
 | A generic retry ledger | `PacingLedger` passed every requirement test and saved 2 lines in total. Timings are pinned by ENR-009/026/027/030/031/032 and APP-029/068. |
 | Publish People and Duplicates outside the window state | `CatalogWindowParts` already removed the 45–60 ms cost (now 34 ms worst). The Duplicates sidebar row and People's act overlay depend on the shared publication. |
@@ -240,4 +356,5 @@ pointed at a stale path fails instead of passing.
 - **Measurement conditions.** The actor-hold and read-turn numbers come from a Debug test host
   at load average 164–227. They rank causes; they are not felt latencies.
 
-Each step's increment deletes its section here. The plan is deleted when the last one lands.
+Each step's increment deletes its section here. The plan is deleted when the last one lands,
+after the fix table above is recounted for the same span of time.
