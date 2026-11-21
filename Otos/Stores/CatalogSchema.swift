@@ -1669,20 +1669,6 @@ nonisolated enum CatalogSchema {
         """
     }
 
-    /// Where one row stands among copies (`DigestStanding`): its stored digest and the facts
-    /// it was read at, its copy key (v79), and whether another row, of any presence, shares
-    /// that key. Binds the root and the path; one probe of the copy key's index.
-    static let digestStandingSQL = """
-    SELECT a.content_sha1, a.content_hash_source_size, a.content_hash_source_mtime,
-           a.copy_key AS copy_key,
-           CASE WHEN \(PhotoCopySQL.isCopy("a")) THEN EXISTS (
-               SELECT 1 FROM media_asset AS copy INDEXED BY \(PhotoCopySQL.indexName)
-               WHERE \(PhotoCopySQL.isCopy("copy", of: "a")) AND copy.rowid <> a.rowid
-           ) ELSE 0 END AS shared
-    FROM media_asset AS a
-    WHERE a.library_root_id = ? AND a.relative_path = ?
-    """
-
     /// Whether `copy` is a copy of the copy `row` (itself included), whatever its presence:
     /// the rows a choice is written on.
     static func isCopy(_ copy: String, of row: String) -> String {

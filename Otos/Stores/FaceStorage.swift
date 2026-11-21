@@ -132,13 +132,8 @@ nonisolated struct FaceRowKey: Hashable {
     let index: Int
 
     /// The photo the face is in.
-    var photo: Photo {
-        Photo(rootID: rootID, path: path)
-    }
-
-    struct Photo: Hashable {
-        let rootID: Int64
-        let path: MediaRelativePath
+    var photo: AssetKey {
+        AssetKey(rootID: rootID, path: path)
     }
 
     init(_ row: Row) {
@@ -521,7 +516,7 @@ nonisolated enum PreviewFaceSQL {
            \(previewSize) AS preview_source_size,
            \(previewMTime) AS preview_source_mtime
     FROM media_asset
-    WHERE library_root_id = ? AND relative_path = ?
+    WHERE \(AssetKey.exactText())
       AND \(stillOwesFaces)
       AND \(previewEditIsKnown)
     """

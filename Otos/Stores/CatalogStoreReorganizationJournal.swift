@@ -10,12 +10,7 @@ extension CatalogStore {
         db: Database
     ) throws {
         try db.execute(
-            sql: """
-            INSERT INTO active_reorganization_component (
-                component_key, library_root_path, plan_generation, planned_root_revision,
-                phase, next_step_index, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            sql: ReorganizationJournalSQL.insertComponentSQL,
             arguments: [
                 component.componentKey.rawValue,
                 component.libraryRootPath.rawValue,
@@ -29,13 +24,7 @@ extension CatalogStore {
         )
         for member in component.members {
             try db.execute(
-                sql: """
-                INSERT INTO active_reorganization_member (
-                    component_key, member_index, member_kind,
-                    logical_source_relative_path, current_relative_path, final_relative_path,
-                    byte_size, content_modified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                sql: ReorganizationJournalSQL.insertMemberSQL,
                 arguments: [
                     component.componentKey.rawValue,
                     member.memberIndex,
@@ -50,12 +39,7 @@ extension CatalogStore {
         }
         for step in component.steps {
             try db.execute(
-                sql: """
-                INSERT INTO active_reorganization_step (
-                    component_key, step_index, member_index,
-                    source_relative_path, destination_relative_path, phase
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
+                sql: ReorganizationJournalSQL.insertStepSQL,
                 arguments: [
                     component.componentKey.rawValue,
                     step.stepIndex,
@@ -68,11 +52,7 @@ extension CatalogStore {
         }
         for directory in component.directories {
             try db.execute(
-                sql: """
-                INSERT INTO active_reorganization_directory (
-                    component_key, relative_path, phase
-                ) VALUES (?, ?, ?)
-                """,
+                sql: ReorganizationJournalSQL.insertDirectorySQL,
                 arguments: [
                     component.componentKey.rawValue,
                     directory.relativePath.rawValue,
@@ -87,7 +67,7 @@ extension CatalogStore {
         db: Database
     ) throws {
         try db.execute(
-            sql: "DELETE FROM active_reorganization_component WHERE component_key = ?",
+            sql: ReorganizationJournalSQL.deleteComponentSQL,
             arguments: [key.rawValue]
         )
     }
@@ -95,7 +75,7 @@ extension CatalogStore {
     static func fetchAllActiveReorganizationComponents(db: Database) throws -> [ActiveReorganizationComponent] {
         let rows = try Row.fetchAll(
             db,
-            sql: "SELECT * FROM active_reorganization_component ORDER BY created_at"
+            sql: ReorganizationJournalSQL.componentsSQL
         )
         return try rows.compactMap { try activeReorganizationComponent(from: $0, db: db) }
     }
@@ -106,7 +86,7 @@ extension CatalogStore {
     ) throws -> ActiveReorganizationComponent? {
         guard let row = try Row.fetchOne(
             db,
-            sql: "SELECT * FROM active_reorganization_component WHERE component_key = ?",
+            sql: ReorganizationJournalSQL.componentSQL,
             arguments: [key.rawValue]
         ) else {
             return nil
@@ -122,11 +102,7 @@ extension CatalogStore {
         db: Database
     ) throws {
         try db.execute(
-            sql: """
-            UPDATE active_reorganization_component
-            SET phase = ?, next_step_index = ?, updated_at = ?
-            WHERE component_key = ?
-            """,
+            sql: ReorganizationJournalSQL.setComponentPhaseSQL,
             arguments: [phase.rawValue, nextStepIndex, updatedAt.timeIntervalSince1970, key.rawValue]
         )
     }
@@ -138,11 +114,7 @@ extension CatalogStore {
         db: Database
     ) throws {
         try db.execute(
-            sql: """
-            UPDATE active_reorganization_step
-            SET phase = ?
-            WHERE component_key = ? AND step_index = ?
-            """,
+            sql: ReorganizationJournalSQL.setStepPhaseSQL,
             arguments: [phase.rawValue, key.rawValue, stepIndex]
         )
     }
@@ -154,11 +126,7 @@ extension CatalogStore {
         db: Database
     ) throws {
         try db.execute(
-            sql: """
-            UPDATE active_reorganization_member
-            SET current_relative_path = ?
-            WHERE component_key = ? AND member_index = ?
-            """,
+            sql: ReorganizationJournalSQL.setMemberPathSQL,
             arguments: [currentRelativePath.rawValue, key.rawValue, memberIndex]
         )
     }
@@ -170,11 +138,7 @@ extension CatalogStore {
         db: Database
     ) throws {
         try db.execute(
-            sql: """
-            UPDATE active_reorganization_directory
-            SET phase = ?
-            WHERE component_key = ? AND relative_path = ?
-            """,
+            sql: ReorganizationJournalSQL.setDirectoryPhaseSQL,
             arguments: [phase.rawValue, key.rawValue, relativePath.rawValue]
         )
     }
@@ -258,16 +222,13 @@ extension CatalogStore {
         db: Database
     ) throws -> CatalogIdentityRemapBatch {
         try db.execute(
-            sql: "INSERT INTO pending_identity_remap_batch (library_root_path) VALUES (?)",
+            sql: ReorganizationJournalSQL.insertRemapBatchSQL,
             arguments: [libraryRootPath.rawValue]
         )
         let batchID = db.lastInsertedRowID
         for (ordinal, remap) in remaps.enumerated() {
             try db.execute(
-                sql: """
-                INSERT INTO pending_identity_remap (batch_id, ordinal, old_relative_path, new_relative_path)
-                VALUES (?, ?, ?, ?)
-                """,
+                sql: ReorganizationJournalSQL.insertRemapSQL,
                 arguments: [batchID, ordinal, remap.oldID.relativePath.rawValue, remap.newID.relativePath.rawValue]
             )
         }
@@ -279,16 +240,12 @@ extension CatalogStore {
     static func fetchPendingIdentityRemapBatches(db: Database) throws -> [CatalogIdentityRemapBatch] {
         let batchRows = try Row.fetchAll(
             db,
-            sql: "SELECT id, library_root_path FROM pending_identity_remap_batch ORDER BY id"
+            sql: ReorganizationJournalSQL.remapBatchesSQL
         )
         guard !batchRows.isEmpty else { return [] }
         let remapRows = try Row.fetchAll(
             db,
-            sql: """
-            SELECT batch_id, old_relative_path, new_relative_path
-            FROM pending_identity_remap
-            ORDER BY batch_id, ordinal
-            """
+            sql: ReorganizationJournalSQL.remapsSQL
         )
         var remapsByBatch: [Int64: [(old: String, new: String)]] = [:]
         for row in remapRows {
@@ -313,22 +270,15 @@ extension CatalogStore {
     /// Deletes acknowledged batches. Idempotent: a batch already gone is acknowledged.
     static func deletePendingIdentityRemapBatches(ids: [Int64], db: Database) throws {
         guard !ids.isEmpty else { return }
-        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
         try db.execute(
-            sql: "DELETE FROM pending_identity_remap_batch WHERE id IN (\(placeholders))",
+            sql: ReorganizationJournalSQL.deleteRemapBatchesSQL(count: ids.count),
             arguments: StatementArguments(ids)
         )
     }
 
     static func deleteAllPendingIdentityRemapBatches(db: Database) throws {
-        try db.execute(sql: "DELETE FROM pending_identity_remap_batch")
+        try db.execute(sql: ReorganizationJournalSQL.deleteAllRemapBatchesSQL)
     }
-
-    nonisolated static let remapCompanionPathSQL = """
-    UPDATE media_companion
-    SET relative_path = ?, relative_path_key = ?
-    WHERE library_root_id = ? AND relative_path = ?
-    """
 
     private static func remapCompanionPathsForSettlement(
         rootRowID: Int64,
@@ -341,39 +291,28 @@ extension CatalogStore {
         for (index, member) in companions.enumerated() {
             let privatePath = MediaRelativePath(rawValue: "\(privatePrefix)/companion/\(index)")
             try db.execute(
-                sql: Self.remapCompanionPathSQL,
+                sql: MediaCompanionSQL.remapCompanionPathSQL,
                 arguments: [
                     privatePath.rawValue,
                     FilesystemNamespaceSemantics.nameKey(relativePath: privatePath, capabilities: capabilities).rawValue,
-                    rootRowID,
-                    member.logicalSourceRelativePath.rawValue,
                 ]
+                    + AssetKey(rootID: rootRowID, path: member.logicalSourceRelativePath).arguments
             )
         }
         for (index, member) in companions.enumerated() {
             let privatePath = MediaRelativePath(rawValue: "\(privatePrefix)/companion/\(index)")
             try db.execute(
-                sql: Self.remapCompanionPathSQL,
-                arguments: [
-                    member.finalRelativePath.rawValue,
-                    FilesystemNamespaceSemantics.nameKey(
-                        relativePath: member.finalRelativePath,
-                        capabilities: capabilities
-                    ).rawValue,
-                    rootRowID,
-                    privatePath.rawValue,
-                ]
+                sql: MediaCompanionSQL.remapCompanionPathSQL,
+                arguments: [member.finalRelativePath.rawValue, FilesystemNamespaceSemantics.nameKey(
+                    relativePath: member.finalRelativePath,
+                    capabilities: capabilities
+                ).rawValue] + AssetKey(rootID: rootRowID, path: privatePath).arguments
             )
         }
         for (index, remap) in remaps.enumerated() {
             let privatePrimary = MediaRelativePath(rawValue: "\(privatePrefix)/primary/\(index)")
             try db.execute(
-                sql: """
-                UPDATE media_companion
-                SET primary_relative_path = ?
-                WHERE library_root_id = ?
-                  AND primary_relative_path = ?
-                """,
+                sql: MediaCompanionSQL.remapPrimaryPathSQL,
                 arguments: [
                     privatePrimary.rawValue,
                     rootRowID,
@@ -384,12 +323,7 @@ extension CatalogStore {
         for (index, remap) in remaps.enumerated() {
             let privatePrimary = MediaRelativePath(rawValue: "\(privatePrefix)/primary/\(index)")
             try db.execute(
-                sql: """
-                UPDATE media_companion
-                SET primary_relative_path = ?
-                WHERE library_root_id = ?
-                  AND primary_relative_path = ?
-                """,
+                sql: MediaCompanionSQL.remapPrimaryPathSQL,
                 arguments: [
                     remap.newID.relativePath.rawValue,
                     rootRowID,
@@ -398,21 +332,6 @@ extension CatalogStore {
             )
         }
     }
-
-    nonisolated static let remapAssetPathRenamingSQL = """
-    UPDATE media_asset
-    SET relative_path = ?,
-        relative_path_key = ?,
-        name_sort_key = ?,
-        name = ?
-    WHERE library_root_id = ? AND relative_path = ?
-    """
-
-    nonisolated static let remapAssetPathSQL = """
-    UPDATE media_asset
-    SET relative_path = ?, relative_path_key = ?
-    WHERE library_root_id = ? AND relative_path = ?
-    """
 
     private static func remapMediaAssetPath(
         rootRowID: Int64,
@@ -426,20 +345,14 @@ extension CatalogStore {
         if recomputeDerived {
             let name = to.rawValue.split(separator: "/").last.map(String.init) ?? to.rawValue
             try db.execute(
-                sql: Self.remapAssetPathRenamingSQL,
-                arguments: [
-                    to.rawValue,
-                    key,
-                    MediaSortKey.naturalKey(name),
-                    name,
-                    rootRowID,
-                    from.rawValue,
-                ]
+                sql: AssetRowSQL.remapAssetPathRenamingSQL,
+                arguments: [to.rawValue, key, MediaSortKey.naturalKey(name), name]
+                    + AssetKey(rootID: rootRowID, path: from).arguments
             )
         } else {
             try db.execute(
-                sql: Self.remapAssetPathSQL,
-                arguments: [to.rawValue, key, rootRowID, from.rawValue]
+                sql: AssetRowSQL.remapAssetPathSQL,
+                arguments: [to.rawValue, key] + AssetKey(rootID: rootRowID, path: from).arguments
             )
         }
     }
@@ -454,29 +367,17 @@ extension CatalogStore {
         let key = ReorganizationComponentKey(rawValue: row["component_key"])
         let members = try Row.fetchAll(
             db,
-            sql: """
-            SELECT * FROM active_reorganization_member
-            WHERE component_key = ?
-            ORDER BY member_index
-            """,
+            sql: ReorganizationJournalSQL.membersSQL,
             arguments: [key.rawValue]
         ).compactMap(activeReorganizationMember(from:))
         let steps = try Row.fetchAll(
             db,
-            sql: """
-            SELECT * FROM active_reorganization_step
-            WHERE component_key = ?
-            ORDER BY step_index
-            """,
+            sql: ReorganizationJournalSQL.stepsSQL,
             arguments: [key.rawValue]
         ).compactMap(activeReorganizationStep(from:))
         let directories = try Row.fetchAll(
             db,
-            sql: """
-            SELECT * FROM active_reorganization_directory
-            WHERE component_key = ?
-            ORDER BY relative_path
-            """,
+            sql: ReorganizationJournalSQL.directoriesSQL,
             arguments: [key.rawValue]
         ).compactMap(activeReorganizationDirectory(from:))
         let created: Double = row["created_at"]
@@ -535,5 +436,112 @@ extension CatalogStore {
             relativePath: MediaRelativePath(rawValue: row["relative_path"]),
             phase: phase
         )
+    }
+}
+
+/// Reorganization journal SQL guide (ADR 0002)
+///
+/// The statements of the reorganization journal: `active_reorganization_component` and its
+/// members, steps and directories, which let an interrupted reorganization resume or roll back,
+/// and `pending_identity_remap`, the path changes a settled reorganization owes the rest of the
+/// app. The rows it moves are `AssetRowSQL`'s and `MediaCompanionSQL`'s. `CatalogStore` owns
+/// when each runs; this enum owns only the text.
+nonisolated enum ReorganizationJournalSQL {
+    static let insertComponentSQL = """
+    INSERT INTO active_reorganization_component (
+        component_key, library_root_path, plan_generation, planned_root_revision,
+        phase, next_step_index, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    static let insertMemberSQL = """
+    INSERT INTO active_reorganization_member (
+        component_key, member_index, member_kind,
+        logical_source_relative_path, current_relative_path, final_relative_path,
+        byte_size, content_modified_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    static let insertStepSQL = """
+    INSERT INTO active_reorganization_step (
+        component_key, step_index, member_index,
+        source_relative_path, destination_relative_path, phase
+    ) VALUES (?, ?, ?, ?, ?, ?)
+    """
+
+    static let insertDirectorySQL = """
+    INSERT INTO active_reorganization_directory (
+        component_key, relative_path, phase
+    ) VALUES (?, ?, ?)
+    """
+
+    static let deleteComponentSQL = "DELETE FROM active_reorganization_component WHERE component_key = ?"
+
+    static let componentsSQL = "SELECT * FROM active_reorganization_component ORDER BY created_at"
+
+    static let componentSQL = "SELECT * FROM active_reorganization_component WHERE component_key = ?"
+
+    static let setComponentPhaseSQL = """
+    UPDATE active_reorganization_component
+    SET phase = ?, next_step_index = ?, updated_at = ?
+    WHERE component_key = ?
+    """
+
+    static let setStepPhaseSQL = """
+    UPDATE active_reorganization_step
+    SET phase = ?
+    WHERE component_key = ? AND step_index = ?
+    """
+
+    static let setMemberPathSQL = """
+    UPDATE active_reorganization_member
+    SET current_relative_path = ?
+    WHERE component_key = ? AND member_index = ?
+    """
+
+    static let setDirectoryPhaseSQL = """
+    UPDATE active_reorganization_directory
+    SET phase = ?
+    WHERE component_key = ? AND relative_path = ?
+    """
+
+    static let insertRemapBatchSQL = "INSERT INTO pending_identity_remap_batch (library_root_path) VALUES (?)"
+
+    static let insertRemapSQL = """
+    INSERT INTO pending_identity_remap (batch_id, ordinal, old_relative_path, new_relative_path)
+    VALUES (?, ?, ?, ?)
+    """
+
+    static let remapBatchesSQL = "SELECT id, library_root_path FROM pending_identity_remap_batch ORDER BY id"
+
+    static let remapsSQL = """
+    SELECT batch_id, old_relative_path, new_relative_path
+    FROM pending_identity_remap
+    ORDER BY batch_id, ordinal
+    """
+
+    static let deleteAllRemapBatchesSQL = "DELETE FROM pending_identity_remap_batch"
+
+    static let membersSQL = """
+    SELECT * FROM active_reorganization_member
+    WHERE component_key = ?
+    ORDER BY member_index
+    """
+
+    static let stepsSQL = """
+    SELECT * FROM active_reorganization_step
+    WHERE component_key = ?
+    ORDER BY step_index
+    """
+
+    static let directoriesSQL = """
+    SELECT * FROM active_reorganization_directory
+    WHERE component_key = ?
+    ORDER BY relative_path
+    """
+
+    /// Deletes `count` remap batches by id (bound).
+    static func deleteRemapBatchesSQL(count: Int) -> String {
+        "DELETE FROM pending_identity_remap_batch WHERE id IN (\(Array(repeating: "?", count: count).joined(separator: ",")))"
     }
 }

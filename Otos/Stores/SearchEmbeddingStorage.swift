@@ -85,7 +85,7 @@ nonisolated enum SearchEmbeddingStorage {
     FROM media_asset AS a
     LEFT JOIN search_embedding AS e
         ON e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
-    WHERE a.library_root_id = ? AND a.relative_path = ?
+    WHERE \(AssetKey.exactText("a"))
       AND \(owedPredicate)
     """
 
@@ -143,7 +143,7 @@ nonisolated enum SearchEmbeddingStorage {
     SELECT e.embedding, e.labels
     FROM search_embedding AS e
     JOIN media_asset AS a ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path
-    WHERE e.library_root_id = ? AND e.relative_path = ?
+    WHERE \(AssetKey.exactText("e"))
       AND e.source = \(currentSource("a"))
     """
 
@@ -180,6 +180,30 @@ nonisolated enum SearchEmbeddingStorage {
     static func embedding(from data: Data) -> [Float]? {
         Float32Storage.floats(from: data, count: SearchEmbedding.dimensions)
     }
+
+    static let photoInfoLabelsSQL = """
+    SELECT e.confident_labels, e.labels FROM search_embedding AS e
+    JOIN media_asset AS a ON a.library_root_id = e.library_root_id AND a.relative_path = e.relative_path
+    WHERE \(AssetKey.exactText("e"))
+      AND e.source = \(SearchEmbeddingStorage.currentSource("a"))
+    """
+
+    static let onThisDayLeftOutSQL = """
+    SELECT \(OnThisDayPicks.leftOutSQL("media_asset")) FROM media_asset WHERE \(AssetKey.exactText())
+    """
+
+    static let embeddingSourceIsCurrentSQL = """
+    SELECT \(SearchEmbeddingStorage.currentSource("media_asset")) = ?
+    FROM media_asset WHERE \(AssetKey.exactText())
+    """
+
+    static let writeEmbeddingSQL = """
+    INSERT INTO search_embedding (library_root_id, relative_path, source, embedding, labels, confident_labels)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (library_root_id, relative_path)
+    DO UPDATE SET source = excluded.source, embedding = excluded.embedding, labels = excluded.labels,
+        confident_labels = excluded.confident_labels
+    """
 }
 
 /// An asset whose stored thumbnail has no current search embedding.

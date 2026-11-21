@@ -56,7 +56,7 @@ nonisolated enum SearchTextStorage {
     FROM media_asset AS a
     LEFT JOIN search_text AS t
         ON t.library_root_id = a.library_root_id AND t.relative_path = a.relative_path
-    WHERE a.library_root_id = ? AND a.relative_path = ?
+    WHERE \(AssetKey.exactText("a"))
       AND \(owedPredicate)
     """
 
@@ -75,7 +75,7 @@ nonisolated enum SearchTextStorage {
 
     /// The text index's rows for a reading (v74, `SearchTextWords`): the reading folded as
     /// matching compares it, keyed by an id the words are stored under.
-    static let deleteFoldedSQL = "DELETE FROM search_text_folded WHERE library_root_id = ? AND relative_path = ?"
+    static let deleteFoldedSQL = "DELETE FROM search_text_folded WHERE \(AssetKey.exactText())"
     static let insertFoldedSQL = "INSERT INTO search_text_folded (library_root_id, relative_path, folded) VALUES (?, ?, ?)"
     static let insertWordsSQL = "INSERT INTO search_text_word (rowid, words) VALUES (?, ?)"
 
@@ -85,7 +85,9 @@ nonisolated enum SearchTextStorage {
     /// trigger takes its words), and a reading that holds a word gets new ones. Returns whether
     /// it was indexed.
     static func index(searchable: String, rootID: Int64, path: String, db: Database) throws -> Bool {
-        try db.cachedStatement(sql: deleteFoldedSQL).execute(arguments: [rootID, path])
+        try db.cachedStatement(sql: deleteFoldedSQL).execute(
+            arguments: AssetKey(rootID: rootID, path: MediaRelativePath(rawValue: path)).arguments
+        )
         let folded = SearchTextReading.folded(searchable)
         let words = SearchTextWords.of(folded: folded)
         guard !words.isEmpty else { return false }
@@ -125,6 +127,23 @@ nonisolated enum SearchTextStorage {
     static func reading(fromJSON json: String) throws -> TextReading {
         try JSONDecoder().decode(TextReading.self, from: Data(json.utf8))
     }
+
+    static let photoInfoLinesSQL = """
+    SELECT t.lines FROM search_text AS t
+    JOIN media_asset AS a ON a.library_root_id = t.library_root_id AND a.relative_path = t.relative_path
+    WHERE \(AssetKey.exactText("t"))
+      AND t.source = \(SearchTextStorage.currentSource("a"))
+    """
+
+    static let textSourceIsCurrentSQL = """
+    SELECT \(SearchTextStorage.currentSource("media_asset")) = ?
+    FROM media_asset WHERE \(AssetKey.exactText())
+    """
+
+    static let writeReadingSQL = """
+    INSERT INTO search_text (library_root_id, relative_path, source, lines) VALUES (?, ?, ?, ?)
+    ON CONFLICT (library_root_id, relative_path) DO UPDATE SET source = excluded.source, lines = excluded.lines
+    """
 }
 
 /// What one read of the text index found (`CatalogStore.searchTextMatches`): the assets

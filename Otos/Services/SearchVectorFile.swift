@@ -482,6 +482,12 @@ nonisolated struct SearchVectorFileState: Equatable, Sendable {
     let slots: Int
 
     static let addSlotsSQL = "UPDATE search_vector_file SET slots = slots + ?"
+
+    static let fileSQL = "SELECT file_id, slots FROM search_vector_file"
+
+    static let deleteFileSQL = "DELETE FROM search_vector_file"
+
+    static let insertFileSQL = "INSERT INTO search_vector_file (file_id, slots) VALUES (?, ?)"
 }
 
 /// Why a vector file is not current, and is rebuilt.

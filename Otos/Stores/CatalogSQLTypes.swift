@@ -384,7 +384,7 @@ nonisolated enum SourceProductsSQL {
     source_item_id IS NOT NULL
       AND hidden_by_source = 0
       AND byte_size IS NOT NULL
-      AND \(CatalogStore.showsSourceProductsSQL)
+      AND \(AssetEnrichmentSQL.showsSourceProductsSQL)
       AND source_products_absent = 0
       AND (
           source_products_size IS NOT byte_size

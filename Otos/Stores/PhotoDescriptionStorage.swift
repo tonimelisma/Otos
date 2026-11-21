@@ -116,7 +116,7 @@ nonisolated enum PhotoDescriptionStorage {
     FROM media_asset AS a
     LEFT JOIN photo_description AS d INDEXED BY \(sourceIndexName)
         ON d.library_root_id = a.library_root_id AND d.relative_path = a.relative_path
-    WHERE a.library_root_id = ? AND a.relative_path = ?
+    WHERE \(AssetKey.exactText("a"))
       AND \(describableStill)
       AND d.source IS NOT \(currentSource("a"))
     """
@@ -126,7 +126,7 @@ nonisolated enum PhotoDescriptionStorage {
     static let currentRowSQL = """
     SELECT d.text FROM photo_description AS d
     JOIN media_asset AS a ON a.library_root_id = d.library_root_id AND a.relative_path = d.relative_path
-    WHERE d.library_root_id = ? AND d.relative_path = ?
+    WHERE \(AssetKey.exactText("d"))
       AND d.source = \(currentSource("a"))
     """
 
@@ -134,7 +134,7 @@ nonisolated enum PhotoDescriptionStorage {
     static let facesSQL = """
     SELECT f.box_x, f.box_y, f.box_width, f.box_height, p.name, p.birthday, IFNULL(p.is_hidden, 0) AS hidden
     FROM face AS f LEFT JOIN person AS p ON p.id = f.person_id
-    WHERE f.library_root_id = ? AND f.relative_path = ? AND f.is_not_face = 0 AND f.frame_index IS NULL
+    WHERE \(AssetKey.exactText("f")) AND f.is_not_face = 0 AND f.frame_index IS NULL
     ORDER BY f.face_index
     """
 
@@ -153,7 +153,17 @@ nonisolated enum PhotoDescriptionStorage {
     LEFT JOIN search_embedding AS e
       ON e.library_root_id = a.library_root_id AND e.relative_path = a.relative_path
       AND e.source = \(SearchEmbeddingStorage.currentSource("a"))
-    WHERE a.library_root_id = ? AND a.relative_path = ?
+    WHERE \(AssetKey.exactText("a"))
+    """
+
+    static let descriptionSourceIsCurrentSQL = """
+    SELECT \(PhotoDescriptionStorage.currentSource("media_asset")) = ?
+    FROM media_asset WHERE \(AssetKey.exactText())
+    """
+
+    static let writeDescriptionSQL = """
+    INSERT INTO photo_description (library_root_id, relative_path, source, text) VALUES (?, ?, ?, ?)
+    ON CONFLICT (library_root_id, relative_path) DO UPDATE SET source = excluded.source, text = excluded.text
     """
 }
 

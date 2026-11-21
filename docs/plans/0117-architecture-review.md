@@ -110,39 +110,24 @@ People and the harness first.
   `.location`. A witnessed move whose file facts were unchanged had announced nothing; it is
   announced as a moved row. Rejected, measured: deriving notifications from the writer (a GRDB
   `TransactionObserver`), which serves as the guard only.
+- **Step 5.** One typed asset key, and the Store's SQL grouped by table:
+  - `AssetKey` writes both path equalities, `exactText` (`library_root_id`, `relative_path`)
+    and `volumeAware` (`relative_path_key`, ADR 0025), and binds the key. No runtime statement
+    writes either out by hand, and the hand-written argument pairs are gone. `FaceRowKey.Photo`
+    and the search reads' private row key were the same fact, and are `AssetKey`.
+  - The statements of `CatalogStore.swift`, `CatalogStorePersistence.swift` and the two
+    journals moved into per-table enums: `AssetRowSQL`, `AssetEnrichmentSQL`, `PeopleSQL`,
+    `MediaCompanionSQL`, `LibraryRootSQL`, `ImportJournalSQL`, `ReorganizationJournalSQL`,
+    and the search, description, place-cell, duplicates and vector-file owners. Only
+    connection pragmas and maintenance stay where they run.
+  - Every recorded plan is unchanged. Two statements that named a key without being listed
+    are now recorded: `AssetRowSQL.digestStandingSQL` (a runtime read that sat in
+    `CatalogSchema`) and `MediaCompanionSQL.otherSpellingSQL`.
 
 ## Steps
 
-Each step is its own increment, in this order. Step 5 changes what is already understood.
-Step 2, one owner for People's act overlay, was measured and stopped (below). Steps 3 and 7
-have landed (above).
-
-### 5. One typed asset-key predicate and SQL grouped by table
-
-**Evidence.**
-- `library_root_id = ? AND relative_path = ?` is written out about 100 times across 10 files.
-- None of the 95 `INDEXED BY` pins pairs with it. The key's index is the non-partial unique
-  key, so sharing its text cannot break a partial-index prepare.
-- The volume-aware `relative_path_key` (ADR 0025) is a second equality, so the typed key names
-  which one it means.
-- Migrations keep their SQL literal (ADR 0002); the freeze test holds them.
-
-**De-risked.** Every runtime statement that names the key reads its text from a name, and
-`CatalogStoreQueryPlanTests.everyStatementThatNamesAnAssetsKeyKeepsItsRecordedPlan` records the
-plan of all 129 on an owner-shaped catalog (`OtosTests/Fixtures/Catalog/asset-key-query-plans.txt`).
-126 find their row through the unique key's autoindex. Two seek `idx_face_person_photo`, which
-also names the person, and one seeks its pinned `idx_media_asset_same_photo_candidate`. None
-scans a table. The five temp B-trees, in four statements, each sort one photo's rows.
-
-**Change.**
-- An `AssetKey` predicate and binder.
-- The statements in `CatalogStore.swift` move into per-table-group SQL enums, following
-  `FaceStorage` and `PhotoDescriptionStorage`.
-
-**Done when.** Every converted statement's recorded plan is unchanged.
-
-**Stop if** any plan changes.
-
+Each step is its own increment, in this order. Step 2, one owner for People's act overlay,
+was measured and stopped (below). Steps 3, 5 and 7 have landed (above).
 
 ### 8. Move the sources into `OtosKit/`
 

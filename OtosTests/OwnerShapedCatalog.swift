@@ -19,7 +19,7 @@ import GRDB
 ///
 /// Whether a derived row is current is decided by the product's own SQL
 /// (`StoredThumbnailSQL`, `SearchEmbeddingStorage`, `SearchTextStorage`,
-/// `PhotoDescriptionStorage`, `CatalogStore.currentExtractionRevisionSQL`), so the generated
+/// `PhotoDescriptionStorage`, `AssetEnrichmentSQL.currentExtractionRevisionSQL`), so the generated
 /// backlog is what the candidate reads find, as they evolve. The earlier owner-shaped
 /// catalogs (#779, #793, #795) were temporary probes never committed; this is the one the
 /// tests keep. Generation is SQL inside one transaction; its time and size at each scale are
@@ -596,13 +596,13 @@ struct OwnerShapedCatalog {
         )
         shape.metadataRecords += db.changesCount
         try db.execute(sql: """
-        UPDATE asset_metadata AS m SET extraction_revision = \(CatalogStore.currentExtractionRevisionSQL)
+        UPDATE asset_metadata AS m SET extraction_revision = \(AssetEnrichmentSQL.currentExtractionRevisionSQL)
         WHERE m.rowid % 1000 >= \(Owner.staleMetadataPermille)
         """)
         shape.metadataStaleInLibraries = try Int.fetchOne(
             db, sql: """
             SELECT count(*) FROM asset_metadata AS m WHERE m.library_root_id IN (6, 7)
-              AND COALESCE(m.extraction_revision, 0) < \(CatalogStore.currentExtractionRevisionSQL)
+              AND COALESCE(m.extraction_revision, 0) < \(AssetEnrichmentSQL.currentExtractionRevisionSQL)
             """
         ) ?? 0
         // Descriptions: the first stills of the libraries and the account that can be

@@ -119,15 +119,17 @@ nonisolated enum MirrorGateway {
     INSERT OR REPLACE INTO immich_mirror_asked (library_root_id, file_path, account_root_id, asset_path, asset_path_sha1)
     SELECT file.library_root_id, file.relative_path, asset.library_root_id, asset.relative_path, asset.source_path_sha1
     FROM media_asset AS file, media_asset AS asset
-    WHERE file.library_root_id = ? AND file.relative_path = ?
-      AND asset.library_root_id = ? AND asset.relative_path = ? AND asset.source_path_sha1 = ?
+    WHERE \(AssetKey.exactText("file"))
+      AND \(AssetKey.exactText("asset")) AND asset.source_path_sha1 = ?
     """
 
     static func recordAsked(_ candidate: Candidate, libraryRootID: Int64, accountRootID: Int64, db: Database) throws -> Bool {
-        try db.execute(sql: recordAskedSQL, arguments: [
-            libraryRootID, candidate.relativePath.rawValue, accountRootID, candidate.assetPath.rawValue,
-            candidate.pathChecksum.data,
-        ])
+        try db.execute(
+            sql: recordAskedSQL,
+            arguments: AssetKey(rootID: libraryRootID, path: candidate.relativePath).arguments
+                + AssetKey(rootID: accountRootID, path: candidate.assetPath).arguments
+                + [candidate.pathChecksum.data]
+        )
         return db.changesCount > 0
     }
 
@@ -263,8 +265,8 @@ nonisolated enum MirrorGateway {
     INSERT OR IGNORE INTO immich_mirror_pair (library_root_id, file_path, account_root_id, asset_path)
     SELECT file.library_root_id, file.relative_path, asset.library_root_id, asset.relative_path
     FROM media_asset AS file, media_asset AS asset INDEXED BY idx_media_asset_source_path_sha1
-    WHERE file.library_root_id = ? AND file.relative_path = ?
-      AND asset.library_root_id = ? AND asset.source_path_sha1 = ? AND asset.relative_path = ?
+    WHERE \(AssetKey.exactText("file"))
+      AND \(AssetKey.exactText("asset")) AND asset.source_path_sha1 = ?
     """
 
     /// Writes the owed pairs of one batch: a pair its file's path no longer names goes, and
@@ -285,7 +287,11 @@ nonisolated enum MirrorGateway {
                 unpaired += db.changesCount
             }
             if let named = file.named {
-                try pair.execute(arguments: [libraryRootID, file.filePath, accountRootID, named.checksum.data, named.asset])
+                try pair.execute(
+                    arguments: AssetKey(rootID: libraryRootID, path: MediaRelativePath(rawValue: file.filePath)).arguments
+                        + AssetKey(rootID: accountRootID, path: MediaRelativePath(rawValue: named.asset)).arguments
+                        + [named.checksum.data]
+                )
                 paired += db.changesCount
             }
         }

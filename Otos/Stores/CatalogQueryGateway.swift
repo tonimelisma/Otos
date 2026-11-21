@@ -16,7 +16,7 @@ import SQLite3
 /// `StoredAsset` / `StoredTileDetail` / `SQLQuery` / `CatalogScopePredicate` types,
 /// not on `CatalogStore` itself.
 nonisolated enum CatalogQueryGateway {
-    static let metadataExtraSQL = "SELECT metadata_extra_json FROM asset_metadata WHERE library_root_id = ? AND relative_path = ?"
+    static let metadataExtraSQL = "SELECT metadata_extra_json FROM asset_metadata WHERE \(AssetKey.exactText())"
 
     /// Reads one asset's full preserved metadata JSON on demand. The scalar
     /// columns stay queryable; this JSON preserves the long-tail extraction payload
@@ -29,7 +29,7 @@ nonisolated enum CatalogQueryGateway {
         let json: String? = try Row.fetchOne(
             db,
             sql: Self.metadataExtraSQL,
-            arguments: [libraryRootID, relativePath.rawValue]
+            arguments: AssetKey(rootID: libraryRootID, path: relativePath).arguments
         )?["metadata_extra_json"]
         return try json.map(CatalogStore.decodeMetadataExtraJSON)
     }
@@ -366,7 +366,7 @@ nonisolated enum CatalogQueryGateway {
     static let placeCellNameSQL = "SELECT country, town FROM place_cell WHERE cell_latitude = ? AND cell_longitude = ? AND language = ?"
 
     /// The row id of the row at a key; a key with no row has none.
-    static let rowIDOfKeySQL = "SELECT rowid FROM media_asset WHERE library_root_id = ? AND relative_path = ?"
+    static let rowIDOfKeySQL = "SELECT rowid FROM media_asset WHERE \(AssetKey.exactText())"
 
     /// The languages the catalog holds place names in (ADR 0051): one, once the reader has
     /// forgotten every other; none before anything is named. A scan of `place_cell`, which
@@ -740,7 +740,7 @@ nonisolated enum CatalogQueryGateway {
     static let captureWallSQL = """
     SELECT capture_wall_compact, capture_wall_precision
     FROM media_asset
-    WHERE library_root_id = ? AND relative_path = ?
+    WHERE \(AssetKey.exactText())
     """
 
     static func fetchCaptureWall(
@@ -751,7 +751,7 @@ nonisolated enum CatalogQueryGateway {
         guard let row = try Row.fetchOne(
             db,
             sql: captureWallSQL,
-            arguments: [rootRowID, id.relativePath.rawValue]
+            arguments: AssetKey(rootID: rootRowID, path: id.relativePath).arguments
         ) else {
             return nil
         }
@@ -1069,6 +1069,14 @@ nonisolated enum PlaceCellSQL {
         let west: Int
         let east: Int
     }
+
+    static let writeNamesSQL = """
+    INSERT INTO place_cell (cell_latitude, cell_longitude, country, town, language) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(cell_latitude, cell_longitude) DO UPDATE SET
+        country = excluded.country, town = excluded.town, language = excluded.language
+    """
+
+    static let deleteOtherLanguagesSQL = "DELETE FROM place_cell WHERE language <> ?"
 }
 
 /// The located rows' coordinates by key (schema v63): what the Places scope's reads join
@@ -1590,7 +1598,7 @@ nonisolated enum LivePhotoSQL {
     JOIN media_asset AS m
         ON m.library_root_id = k.library_root_id AND m.content_identifier = k.content_identifier
         AND m.parent_path = k.parent_path AND m.relative_path != k.relative_path
-    WHERE k.library_root_id = ? AND k.relative_path = ? AND k.content_identifier IS NOT NULL
+    WHERE \(AssetKey.exactText("k")) AND k.content_identifier IS NOT NULL
     """
 
     /// True for a movie that a Live Photo's still stands for. `row` names the table or

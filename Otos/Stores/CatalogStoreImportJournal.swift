@@ -56,12 +56,7 @@ nonisolated struct LandedImport {
 
 extension CatalogStore {
     nonisolated static func insertActiveSourceErase(_ operation: ActiveSourceEraseOperation, db: Database) throws {
-        try db.execute(sql: """
-        INSERT OR REPLACE INTO active_source_erase
-            (operation_key, source_kind, source_device_identity, source_root_path,
-             source_relative_path, source_byte_size, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, arguments: [
+        try db.execute(sql: ImportJournalSQL.writeEraseSQL, arguments: [
             operation.key.rawValue,
             operation.sourceKind.rawValue,
             operation.sourceDeviceIdentity,
@@ -73,13 +68,13 @@ extension CatalogStore {
     }
 
     nonisolated static func deleteActiveSourceErase(key: ActiveSourceEraseKey, db: Database) throws {
-        try db.execute(sql: "DELETE FROM active_source_erase WHERE operation_key = ?", arguments: [key.rawValue])
+        try db.execute(sql: ImportJournalSQL.deleteEraseSQL, arguments: [key.rawValue])
     }
 
     /// A row whose source kind this build does not know is kept and reported, never
     /// read as some other kind: an erase acts on the source it names.
     nonisolated static func fetchAllActiveSourceErases(db: Database) throws -> [ActiveSourceEraseOperation] {
-        try Row.fetchAll(db, sql: "SELECT * FROM active_source_erase ORDER BY operation_key").compactMap { row in
+        try Row.fetchAll(db, sql: ImportJournalSQL.erasesSQL).compactMap { row in
             let key = ActiveSourceEraseKey(rawValue: row["operation_key"])
             guard let kind = LibraryRootKind(rawValue: row["source_kind"]) else {
                 OtosLog.catalog.faultOperation("import.erase.journal", phase: "unknownSourceKind", fields: [
@@ -104,16 +99,7 @@ extension CatalogStore {
 extension CatalogStore {
     static func insertActiveFileOperation(_ operation: ActiveFileOperation, db: Database) throws {
         try db.execute(
-            sql: """
-            INSERT INTO active_file_operation (
-                operation_key, source_kind, source_device_identity,
-                source_root_path, source_relative_path,
-                destination_root_path, destination_relative_path,
-                staging_path, content_sha1, import_batch_unix_ms,
-                source_byte_size, source_modified_at, destination_modified_at,
-                phase, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            sql: ImportJournalSQL.insertOperationSQL,
             arguments: [
                 operation.operationKey.rawValue,
                 operation.sourceKind.rawValue,
@@ -137,15 +123,7 @@ extension CatalogStore {
 
     static func updateActiveFileOperation(_ operation: ActiveFileOperation, db: Database) throws {
         try db.execute(
-            sql: """
-            UPDATE active_file_operation SET
-                staging_path = ?,
-                content_sha1 = ?,
-                destination_modified_at = ?,
-                phase = ?,
-                updated_at = ?
-            WHERE operation_key = ?
-            """,
+            sql: ImportJournalSQL.updateOperationSQL,
             arguments: [
                 operation.stagingURL?.path(percentEncoded: false),
                 operation.contentHash?.data,
@@ -163,12 +141,12 @@ extension CatalogStore {
 
     private static func replaceCompanionStaging(_ operation: ActiveFileOperation, db: Database) throws {
         try db.execute(
-            sql: "DELETE FROM active_file_operation_companion_staging WHERE operation_key = ?",
+            sql: ImportJournalSQL.deleteCompanionStagingSQL,
             arguments: [operation.operationKey.rawValue]
         )
         for url in operation.companionStagingURLs {
             try db.execute(
-                sql: "INSERT INTO active_file_operation_companion_staging (operation_key, staging_path) VALUES (?, ?)",
+                sql: ImportJournalSQL.insertCompanionStagingSQL,
                 arguments: [operation.operationKey.rawValue, url.path(percentEncoded: false)]
             )
         }
@@ -176,7 +154,7 @@ extension CatalogStore {
 
     static func deleteActiveFileOperation(key: ActiveFileOperationKey, db: Database) throws {
         try db.execute(
-            sql: "DELETE FROM active_file_operation WHERE operation_key = ?",
+            sql: ImportJournalSQL.deleteOperationSQL,
             arguments: [key.rawValue]
         )
         guard db.changesCount == 1 else {
@@ -189,7 +167,7 @@ extension CatalogStore {
     static func fetchAllActiveFileOperations(db: Database) throws -> [ActiveFileOperation] {
         let stagingRows = try Row.fetchAll(
             db,
-            sql: "SELECT operation_key, staging_path FROM active_file_operation_companion_staging ORDER BY staging_path"
+            sql: ImportJournalSQL.companionStagingSQL
         )
         var companionStaging: [String: [URL]] = [:]
         for row in stagingRows {
@@ -197,40 +175,10 @@ extension CatalogStore {
             let path: String = row["staging_path"]
             companionStaging[key, default: []].append(URL(fileURLWithPath: path, isDirectory: false))
         }
-        return try Row.fetchAll(db, sql: "SELECT * FROM active_file_operation ORDER BY updated_at").compactMap { row in
+        return try Row.fetchAll(db, sql: ImportJournalSQL.operationsSQL).compactMap { row in
             activeFileOperation(from: row, companionStaging: companionStaging)
         }
     }
-
-    nonisolated static let settleImportedAssetSQL = """
-    UPDATE media_asset
-    SET import_batch_unix_ms = ?,
-        import_source_root_path = ?,
-        import_source_relative_path = ?,
-        import_source_byte_size = ?,
-        import_source_modified_at_epoch = ?,
-        import_destination_byte_size = ?,
-        import_destination_modified_at_epoch = ?,
-        content_sha1 = ?,
-        content_hash_source_size = ?,
-        content_hash_source_mtime = ?,
-        media_choice = COALESCE(
-            (SELECT media_choice FROM media_asset
-             WHERE library_root_id = ? AND relative_path = ?),
-            media_choice
-        ),
-        edit_recipe_json = COALESCE(
-            (SELECT edit_recipe_json FROM media_asset
-             WHERE library_root_id = ? AND relative_path = ?),
-            edit_recipe_json
-        ),
-        edit_revision = COALESCE(
-            (SELECT edit_revision FROM media_asset
-             WHERE library_root_id = ? AND relative_path = ?),
-            edit_revision
-        )
-    WHERE library_root_id = ? AND relative_path = ?
-    """
 
     /// Returns what writing the copy's own row did (`ScannedFileUpsert`): a new row, or one the
     /// copy's path, or a witness of its move, already held.
@@ -260,8 +208,11 @@ extension CatalogStore {
             capabilities: capabilities,
             db: db
         )
+        // The source's choice and edit carry to the copy; a source outside the catalog binds no
+        // key and carries nothing.
+        let source = landed.sourceRootID.map { AssetKey(rootID: $0, path: operation.sourceRelativePath).arguments } ?? [nil, nil]
         try db.execute(
-            sql: Self.settleImportedAssetSQL,
+            sql: AssetRowSQL.settleImportedAssetSQL,
             arguments: [
                 operation.importBatch.unixMilliseconds,
                 operation.sourceRootPath.rawValue,
@@ -273,15 +224,8 @@ extension CatalogStore {
                 operation.contentHash?.data,
                 operation.contentHash == nil ? nil : byteSize,
                 operation.contentHash == nil ? nil : Int(contentModifiedAt.timeIntervalSince1970.rounded(.down)),
-                landed.sourceRootID,
-                operation.sourceRelativePath.rawValue,
-                landed.sourceRootID,
-                operation.sourceRelativePath.rawValue,
-                landed.sourceRootID,
-                operation.sourceRelativePath.rawValue,
-                destinationRootID,
-                relativePath.rawValue,
-            ]
+            ] + source + source + source
+                + AssetKey(rootID: destinationRootID, path: relativePath).arguments
         )
         try writeLandedProducts(landed, db: db)
         // A rendering was drawn with the source's last rendered edit; an edit saved after
@@ -292,20 +236,6 @@ extension CatalogStore {
         }
         return upsert
     }
-
-    nonisolated static let reusableEnrichmentOverlaySQL = """
-    SELECT m.enriched_kind, m.enriched_format,
-           m.metadata_source_size, m.metadata_source_mtime,
-           m.rendered_source_size, m.rendered_source_mtime, m.rendered_revision,
-           m.edit_recipe_json, m.edit_revision,
-           m.thumbnail_path, m.preview_path,
-           a.metadata_extra_json
-    FROM media_asset m
-    LEFT JOIN asset_metadata a
-      ON a.library_root_id = m.library_root_id
-     AND a.relative_path = m.relative_path
-    WHERE m.library_root_id = ? AND m.relative_path = ?
-    """
 
     /// The source row's products and their stamps, or nil when there is no row. Its
     /// metadata is nil when the row has no record, or one this build cannot read: reuse is
@@ -318,8 +248,8 @@ extension CatalogStore {
     ) throws -> ReusableEnrichmentOverlay? {
         guard let row = try Row.fetchOne(
             db,
-            sql: reusableEnrichmentOverlaySQL,
-            arguments: [sourceRootID, sourceRelativePath.rawValue]
+            sql: AssetEnrichmentSQL.reusableEnrichmentOverlaySQL,
+            arguments: AssetKey(rootID: sourceRootID, path: sourceRelativePath).arguments
         ) else {
             return nil
         }
@@ -392,5 +322,63 @@ extension CatalogStore {
             phase: phase,
             updatedAt: Date(timeIntervalSince1970: updated)
         )
+    }
+}
+
+/// Import journal SQL guide (ADR 0002)
+///
+/// The statements of the file-operation journals: `active_file_operation` (an import's or
+/// export's copies, with the staging of their companions) and `active_source_erase` (a card
+/// Erase), which let interrupted work recover at launch. The rows an import settles are
+/// `AssetRowSQL`'s. `CatalogStore` owns when each runs; this enum owns only the text.
+nonisolated enum ImportJournalSQL {
+    static let setPhaseSQL = "UPDATE active_file_operation SET phase = ?, updated_at = ? WHERE operation_key = ?"
+
+    static let writeEraseSQL = """
+    INSERT OR REPLACE INTO active_source_erase
+        (operation_key, source_kind, source_device_identity, source_root_path,
+         source_relative_path, source_byte_size, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+
+    static let deleteEraseSQL = "DELETE FROM active_source_erase WHERE operation_key = ?"
+
+    static let erasesSQL = "SELECT * FROM active_source_erase ORDER BY operation_key"
+
+    static let insertOperationSQL = """
+    INSERT INTO active_file_operation (
+        operation_key, source_kind, source_device_identity,
+        source_root_path, source_relative_path,
+        destination_root_path, destination_relative_path,
+        staging_path, content_sha1, import_batch_unix_ms,
+        source_byte_size, source_modified_at, destination_modified_at,
+        phase, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    static let updateOperationSQL = """
+    UPDATE active_file_operation SET
+        staging_path = ?,
+        content_sha1 = ?,
+        destination_modified_at = ?,
+        phase = ?,
+        updated_at = ?
+    WHERE operation_key = ?
+    """
+
+    static let deleteCompanionStagingSQL = "DELETE FROM active_file_operation_companion_staging WHERE operation_key = ?"
+
+    static let insertCompanionStagingSQL = "INSERT INTO active_file_operation_companion_staging (operation_key, staging_path) VALUES (?, ?)"
+
+    static let deleteOperationSQL = "DELETE FROM active_file_operation WHERE operation_key = ?"
+
+    static let companionStagingSQL = "SELECT operation_key, staging_path FROM active_file_operation_companion_staging ORDER BY staging_path"
+
+    static let operationsSQL = "SELECT * FROM active_file_operation ORDER BY updated_at"
+
+    /// Points `table`'s journal rows that name a source root (bound: new, then old) at its new
+    /// path. `table` is `active_file_operation` or `active_source_erase`.
+    static func moveSourceRootSQL(in table: String) -> String {
+        "UPDATE \(table) SET source_root_path = ? WHERE source_root_path = ?"
     }
 }

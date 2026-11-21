@@ -296,6 +296,12 @@ nonisolated enum RenderSignatureSQL {
     ORDER BY relative_path
     LIMIT ?
     """
+
+    static let writeGraySQL = """
+    INSERT INTO \(RenderSignatureSQL.grayTable) (library_root_id, relative_path, gray)
+    VALUES (?, ?, ?)
+    ON CONFLICT (library_root_id, relative_path) DO UPDATE SET gray = excluded.gray
+    """
 }
 
 /// A still whose thumbnail has no current render signature.
@@ -383,7 +389,7 @@ nonisolated enum SamePhotoSQL {
       ON g.library_root_id = a.library_root_id AND g.relative_path = a.relative_path
     LEFT JOIN asset_metadata m
       ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
-    WHERE a.library_root_id = ? AND a.relative_path = ?
+    WHERE \(AssetKey.exactText("a"))
     """
 
     /// The copy a group lists for one still. Binds the root and the path.
@@ -398,7 +404,7 @@ nonisolated enum SamePhotoSQL {
     FROM media_asset a
     LEFT JOIN asset_metadata m
       ON m.library_root_id = a.library_root_id AND m.relative_path = a.relative_path
-    WHERE a.library_root_id = ? AND a.relative_path = ?
+    WHERE \(AssetKey.exactText("a"))
     """
 }
 
@@ -520,7 +526,7 @@ nonisolated extension DuplicatesGateway {
     static func fetchSamePhotoEvidence(rootID: Int64, id: MediaAssetID, db: Database) throws -> SamePhotoEvidence? {
         guard let row = try Row.fetchOne(
             db.cachedStatement(sql: SamePhotoSQL.evidenceSQL),
-            arguments: [rootID, id.relativePath.rawValue]
+            arguments: AssetKey(rootID: rootID, path: id.relativePath).arguments
         ),
             let hash = row[0] as Int64?,
             let gray = row[1] as Data?,
@@ -559,7 +565,7 @@ nonisolated extension DuplicatesGateway {
         }
         guard let row = try Row.fetchOne(
             db.cachedStatement(sql: SamePhotoSQL.copySQL),
-            arguments: [rootID, id.relativePath.rawValue]
+            arguments: AssetKey(rootID: rootID, path: id.relativePath).arguments
         ) else {
             return nil
         }
@@ -600,13 +606,15 @@ nonisolated enum DuplicatesHoldSQL {
     static let comparedSQL = """
     SELECT EXISTS (
         SELECT 1 FROM media_asset INDEXED BY \(SamePhotoSQL.candidateIndexName)
-        WHERE library_root_id = ? AND relative_path = ? AND \(SamePhotoSQL.candidatePredicate)
+        WHERE \(AssetKey.exactText()) AND \(SamePhotoSQL.candidatePredicate)
     )
     """
 
     /// One probe of the compared stills' index and one of the digest index.
     static func holds(libraryRootID: Int64, relativePath: String, db: Database) throws -> Bool {
-        if try Bool.fetchOne(db.cachedStatement(sql: comparedSQL), arguments: [libraryRootID, relativePath]) == true {
+        if try Bool.fetchOne(db.cachedStatement(sql: comparedSQL),
+                             arguments: AssetKey(rootID: libraryRootID, path: MediaRelativePath(rawValue: relativePath)).arguments) == true
+        {
             return true
         }
         guard let standing = try DigestStanding.read(libraryRootID: libraryRootID, relativePath: relativePath, db: db) else {
@@ -629,4 +637,14 @@ nonisolated enum DuplicatesHoldSQL {
         }
         return try heldBefore || holds(libraryRootID: libraryRootID, relativePath: relativePath, db: db)
     }
+
+    static let insertKeptPairSQL = """
+    INSERT OR IGNORE INTO duplicate_kept_pair (first_root_id, first_path, second_root_id, second_path)
+    VALUES (?, ?, ?, ?)
+    """
+
+    static let deleteKeptPairSQL = """
+    DELETE FROM duplicate_kept_pair
+    WHERE first_root_id = ? AND first_path = ? AND second_root_id = ? AND second_path = ?
+    """
 }
