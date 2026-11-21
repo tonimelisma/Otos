@@ -8460,9 +8460,12 @@ private extension CatalogStore {
             recordDiagnostic(
                 operation: "catalog.scan",
                 phase: "start",
-                fields: ["rootPath": nextPath.rawValue, "lane": lane.diagnosticName, "reason": reason.rawValue]
+                fields: [
+                    "rootPath": nextPath.rawValue, "lane": lane.diagnosticName, "reason": reason.rawValue,
+                    "priority": "\(lane.taskPriority.rawValue)",
+                ]
             )
-            scanTasks[lane] = Task.detached(priority: .utility) { [scanner, scanCadence] in
+            scanTasks[lane] = Task.detached(priority: lane.taskPriority) { [scanner, scanCadence] in
                 do {
                     let baseline = try await self.scanBaseline(scan: scan, underSubtree: nil)
                     let tally = ScanWriteTally()
@@ -9667,7 +9670,7 @@ private extension CatalogStore {
         // `NonisolatedNonsendingByDefault` runs on the caller's actor. A detached task is the
         // same mechanism a full scan uses; every Store mutation below hops back through an
         // actor method that revalidates the scan lease first.
-        scanTasks[lane] = Task.detached(priority: .utility) { [scanner, scanCadence] in
+        scanTasks[lane] = Task.detached(priority: lane.taskPriority) { [scanner, scanCadence] in
             do {
                 var totalObserved = 0
                 var totalDeleted = 0

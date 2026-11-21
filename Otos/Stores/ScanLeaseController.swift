@@ -27,6 +27,21 @@ nonisolated struct ScanLeaseController {
             case .removableSource: "removableSource"
             }
         }
+
+        /// The priority a walk of the lane runs at, set by who waits for it. A card or camera
+        /// is walked while the user watches it: attaching one selects it and its import bar
+        /// says "Checking the card…" until the walk ends, so the walk is user-initiated work
+        /// and outranks the background loads (descriptions, faces, enrichment) that otherwise
+        /// hold every core. At `.utility` a 16-file card took 63 s on the owner's busy Mac
+        /// (2026-11-20), and under default-priority load on every core the same walk took
+        /// 2.0–8.7 s at `.utility` and 0.3–0.5 s at `.userInitiated`. A fixed library's walk
+        /// is the catalog keeping up with the disk, which nobody waits on.
+        var taskPriority: TaskPriority {
+            switch self {
+            case .fixedLibraries: .utility
+            case .removableSource: .userInitiated
+            }
+        }
     }
 
     private(set) var pendingScanPaths: [LibraryRootPath] = []
