@@ -90,6 +90,32 @@ nonisolated struct BackgroundOwnerSet: Sendable {
     }
 }
 
+extension BackgroundOwnerSet {
+    /// Every started owner whose work the Activity surface names, with the outcome it serves
+    /// (ADR 0058, DES-035). Immich accounts report their own status; the derived folder's tidy
+    /// and the projection's publications are machinery and are not named.
+    func activityOwners() async -> [ActivityBoard.Watched] {
+        var owners = await projection.activityOwners()
+        if starts.starts(.enrichment), let enrichment {
+            owners += [
+                .init(kind: .readingPhotos, owner: enrichment),
+                .init(kind: .downloadingOriginals, owner: materialization),
+            ]
+        }
+        let named: [(BackgroundOwner, ActivityKind, (any QuiescentOwner)?)] = [
+            (.renderSignatures, .findingDuplicates, renderSignatures), (.previewFaces, .findingFaces, previewFaces),
+            (.placeNames, .namingPlaces, placeNames), (.searchIndex, .preparingSearch, searchIndex),
+            (.descriptions, .describingPhotos, descriptions), (.metadataRefresh, .updatingDetails, metadata),
+        ]
+        for (owner, kind, running) in named where starts.starts(owner) {
+            if let running {
+                owners.append(.init(kind: kind, owner: running))
+            }
+        }
+        return owners
+    }
+}
+
 /// The derived folder's once-a-launch load: its counters, and a reconciliation only when a
 /// fact says leftovers can exist (`CatalogStore.reconcileDerivedFilesIfOwed`), as a heavy load
 /// behind every other admitted one (`BackgroundLoad.derivedFolder`). One pass, its one

@@ -232,10 +232,20 @@ final nonisolated class OwnerActivity {
     /// The wake the owner keeps armed while it owes nothing now.
     var wake: OwnerWake?
     /// The background room's hold its next unit waits on, while it waits (ADR 0057).
-    var heldBy: BackgroundHold?
+    var heldBy: BackgroundHold? {
+        didSet { ring?() }
+    }
+
     /// Reads that hold as of the moment a status is taken, for an owner whose unit waits in an
     /// admission that the hold can change under (a description's turn, ADR 0055).
-    var heldNow: (@Sendable () -> BackgroundHold?)?
+    var heldNow: (@Sendable () -> BackgroundHold?)? {
+        didSet { ring?() }
+    }
+
+    /// Rung in each step that can change whether the owner works or is held — a request, a
+    /// pass beginning or ending, a settle, a hold — for the Activity board, which then reads
+    /// the owner's status (`ActivityBoard`, ADR 0058). Nil while nothing watches the owner.
+    var ring: (@Sendable () -> Void)?
     var work = OwnerWork()
     private var waiters: [UUID: (wait: OwnerWait, continuation: CheckedContinuation<OwnerQuiescence?, any Error>)] = [:]
 
@@ -267,6 +277,7 @@ final nonisolated class OwnerActivity {
     @discardableResult
     func request() -> UInt64 {
         requested &+= 1
+        ring?()
         return requested
     }
 
@@ -285,6 +296,7 @@ final nonisolated class OwnerActivity {
     func beginPass() -> UInt64 {
         running += 1
         work.passes += 1
+        ring?()
         return requested
     }
 
@@ -295,6 +307,7 @@ final nonisolated class OwnerActivity {
         if let request {
             covered = max(covered, request)
         }
+        ring?()
     }
 
     /// A Store change delivered to this owner has been acted on.
@@ -354,6 +367,7 @@ final nonisolated class OwnerActivity {
     /// make one hold: a pass ends, a change is acted on, work in flight returns, a backlog
     /// walk begins.
     func settle(holdsWork: Bool, worksBacklog: Bool = false, covers: (OwnerMark) -> Bool) {
+        ring?()
         for (id, waiter) in waiters {
             guard let fact = fact(for: waiter.wait, holdsWork: holdsWork, worksBacklog: worksBacklog, covers: covers) else {
                 continue
@@ -495,6 +509,13 @@ extension QuiescentOwner {
     /// No rows held for a fact outside the owner.
     func heldRows() async -> [OwnerHeldRows] {
         []
+    }
+
+    /// Rings `ring` from now on in each step that can change whether this owner works or is
+    /// held, and once now, so a watcher reads the owner as it is (`ActivityBoard`).
+    func ringActivity(_ ring: @escaping @Sendable () -> Void) {
+        activity.ring = ring
+        ring()
     }
 
     /// Resumes the waiters whose fact now holds.

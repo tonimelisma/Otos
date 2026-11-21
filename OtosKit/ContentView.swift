@@ -314,6 +314,11 @@ struct SidebarColumn: View {
             selectSidebar: viewModel.selectSidebar,
             ejectSource: viewModel.ejectRemovableSource
         )
+        // DES-124: the one place the window says what background work runs, at the
+        // sidebar's foot.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ActivityLine(presentation: viewModel.activityPresentation)
+        }
     }
 }
 
@@ -436,6 +441,7 @@ struct DetailColumn: View {
                     duplicates: duplicates,
                     session: viewModel.duplicatesSession,
                     canUndoMove: viewModel.canUndoDuplicatesMove,
+                    stillLooking: viewModel.activity.isWorking(.findingDuplicates),
                     selection: viewModel.gridSelection.selection,
                     tileContentStore: viewModel.tileContentStore,
                     thumbnailDirectory: viewModel.thumbnailDirectory,
@@ -527,7 +533,8 @@ struct DetailColumn: View {
                     DuplicatesBarPresentation.map(
                         viewModel.duplicatesSession.tally(in: duplicates),
                         receipt: viewModel.duplicatesSession.receipt,
-                        canUndoMove: viewModel.canUndoDuplicatesMove
+                        canUndoMove: viewModel.canUndoDuplicatesMove,
+                        stillLooking: viewModel.activity.isWorking(.findingDuplicates)
                     ).waiting
                 },
                 viewModel.duplicatesActions

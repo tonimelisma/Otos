@@ -321,6 +321,13 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var immichStatusTask: Task<Void, Never>?
     /// What each account's server last answered, for the sidebar and Settings.
     var immichAccountStatuses: [LibraryRootPath: ImmichAccountStatus] = [:]
+    /// The one owner of what background work runs and since when (ADR 0058); the window
+    /// watches its owners once they are built (`startBackgroundOwners`).
+    @ObservationIgnored let activityBoard = ActivityBoard()
+    @ObservationIgnored var activityTask: Task<Void, Never>?
+    /// What the sidebar's Activity line and its popover show (DES-124), as the board last
+    /// published it.
+    var activity = ActivitySnapshot()
     /// The Add Immich Account sheet while it is open.
     var immichAccountSheet: ImmichAccountSheetState?
     @ObservationIgnored var immichAddRequested: UInt64 = 0
@@ -1069,6 +1076,7 @@ final class CatalogWindowViewModel {
         exportTask?.cancel()
         immichIntentTask?.cancel()
         immichStatusTask?.cancel()
+        activityTask?.cancel()
         trashSizingTask?.cancel()
         trashQuestionTask?.cancel()
         trashQuestionContinuation?.finish()
@@ -1138,9 +1146,11 @@ final class CatalogWindowViewModel {
         let immich = immichAccounts
         let searchIndex = photoSearchIndex
         let derivedFolder = derivedFolderLoad
+        let activityBoard = activityBoard
         // swiftlint:disable:next unowned_view_model_task
         Task {
             await withDiscardingTaskGroup { group in
+                group.addTask { await activityBoard.shutdown() }
                 group.addTask { await derivedFolder?.shutdown() }
                 group.addTask { await immich?.shutdown() }
                 group.addTask { await searchIndex?.shutdown() }
@@ -1356,16 +1366,24 @@ extension CatalogWindowViewModel {
         )
         let launchStartedAt = launchStartedAt ?? .now
         backgroundOwnerSet = owners
+        activityTask = Task { [weak self, board = activityBoard] in
+            for await snapshot in board.snapshots {
+                guard let self else { break }
+                activity = snapshot
+            }
+        }
         // The first grid follows the catalog's load, so each owner's first candidate query
         // sees persisted rows. `store.start()` is idempotent and shared: it returns the load
         // `startCatalog` ran, and a failed load starts no owner.
-        let ownersStart = Task(priority: .backgroundOwner) { [owners, store = catalogStore] () -> Bool in
+        let ownersStart = Task(priority: .backgroundOwner) { [owners, store = catalogStore, board = activityBoard, room = backgroundRoom] () -> Bool in
             do {
                 try await store.start()
             } catch {
                 OtosLog.persistence.error("Background owners skipped because catalog start failed")
                 return false
             }
+            // Watched before they start, so the board hears each owner's first request.
+            await board.watch(owners.activityOwners(), room: room)
             await owners.start()
             return true
         }

@@ -16,6 +16,8 @@ struct DuplicatesView: View {
     let duplicates: CatalogDuplicatesState
     let session: DuplicatesSession
     let canUndoMove: Bool
+    /// Otos still builds the groups (`ActivityKind.findingDuplicates`, DES-125).
+    let stillLooking: Bool
     let selection: Set<MediaAssetID>
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
@@ -54,7 +56,7 @@ struct DuplicatesView: View {
                 .fill(DesignPalette.hairline(for: colorScheme))
                 .frame(height: 1)
             DuplicatesStatusBar(
-                presentation: .map(tally, receipt: session.receipt, canUndoMove: canUndoMove),
+                presentation: .map(tally, receipt: session.receipt, canUndoMove: canUndoMove, stillLooking: stillLooking),
                 actions: actions
             )
         }

@@ -30,16 +30,22 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
     /// items have duplicates (`6 photos with duplicates`, `No duplicates`).
     let primaryLine: String
     /// How many items have duplicates (`312 photos with duplicates`) under what will move;
-    /// nil, drawn as blank space at the same height, while nothing would move (DES-053).
+    /// while nothing would move, `Still looking for duplicates` as Otos builds the groups
+    /// (DES-125), else nil, drawn as blank space at the same height (DES-053).
     let secondaryLine: String?
     let middle: Middle
     let actionTitle: String
     let actionEnabled: Bool
 
+    /// L3 while nothing would move and Otos still builds the groups (DES-125): the groups
+    /// shown are not yet all there are.
+    static let stillLooking = "Still looking for duplicates"
+
     static func map(
         _ tally: DuplicatesTally,
         receipt: DuplicatesReceipt? = nil,
-        canUndoMove: Bool = false
+        canUndoMove: Bool = false,
+        stillLooking: Bool = false
     ) -> DuplicatesBarPresentation {
         let groups = tally.itemsWithDuplicates
         let count = groups == 0
@@ -71,7 +77,7 @@ nonisolated struct DuplicatesBarPresentation: Equatable, Sendable {
         }
         return DuplicatesBarPresentation(
             primaryLine: consequence ?? count,
-            secondaryLine: consequence == nil ? nil : count,
+            secondaryLine: consequence == nil ? (stillLooking ? Self.stillLooking : nil) : count,
             middle: middle,
             // DES-036: the count is the new information the click commits to; disabled, the
             // title keeps its place and says what it would do (DES-053).

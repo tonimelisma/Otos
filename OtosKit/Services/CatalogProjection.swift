@@ -2135,6 +2135,20 @@ extension CatalogProjection: QuiescentOwner {
         return owners.compactMap(\.self)
     }
 
+    /// The owners under this projection whose work the Activity surface names (ADR 0058): the
+    /// duplicate groups and People's assignment. The gallery's tally is bookkeeping, and the
+    /// projection's own publications are machinery.
+    func activityOwners() -> [ActivityBoard.Watched] {
+        var owners: [ActivityBoard.Watched] = []
+        if let duplicatesProjection {
+            owners.append(.init(kind: .findingDuplicates, owner: duplicatesProjection))
+        }
+        if let peopleAssignment {
+            owners.append(.init(kind: .recognizingPeople, owner: peopleAssignment))
+        }
+        return owners
+    }
+
     /// Returns once the duplicates owner has built and published the groups this projection's
     /// first loaded pass asked for, at once when the owner does not run.
     func untilLaunchDuplicatesBuilt() async throws {
