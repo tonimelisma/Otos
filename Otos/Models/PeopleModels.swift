@@ -820,12 +820,13 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
         if lhs.isFavorite != rhs.isFavorite {
             return lhs.isFavorite
         }
-        if lhs.media.total != rhs.media.total {
-            return lhs.media.total > rhs.media.total
-        }
-        // A named person before an unnamed one of the same count, then by name.
+        // Every named person before every unnamed one (owner, 2026-11-20), then most photos,
+        // then by name.
         if (lhs.name == nil) != (rhs.name == nil) {
             return lhs.name != nil
+        }
+        if lhs.media.total != rhs.media.total {
+            return lhs.media.total > rhs.media.total
         }
         let order = lhs.displayName.localizedStandardCompare(rhs.displayName)
         if order != .orderedSame {

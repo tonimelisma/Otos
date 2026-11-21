@@ -82,6 +82,9 @@ struct PeopleSession: Equatable {
     /// The person the gallery scrolls to: the one a merge became, once People shows them in
     /// their new place (`PendingPeopleActs.takeReveal`).
     var reveal: PeopleGalleryReveal?
+    /// How far the gallery was scrolled when it last left the screen, so Back to People (or
+    /// coming back from another sidebar row) finds it scrolled where it was.
+    var galleryOffset: CGFloat = 0
 }
 
 /// A person the gallery brings into view. A merge moves the person merged into to where their
@@ -1535,8 +1538,17 @@ extension CatalogWindowViewModel {
             mergeRefusal: { [weak self] from, into in self?.mergeRefusal(from, into: into) },
             answerMerge: { [weak self] merge in self?.answerMerge(merge) },
             menu: { [weak self] person in self?.inGallery { $0.galleryPersonMenu(person) } ?? nil },
-            perform: { [weak self] act, person in self?.inGallery { $0.performPersonAct(act, on: person) } }
+            perform: { [weak self] act, person in self?.inGallery { $0.performPersonAct(act, on: person) } },
+            // The gallery reports this as it leaves, after the scope already changed, so it is
+            // not held to `inGallery`.
+            rememberOffset: { [weak self] offset in self?.rememberGalleryOffset(offset) }
         )
+    }
+
+    /// Where the gallery was scrolled as it left the screen.
+    func rememberGalleryOffset(_ offset: CGFloat) {
+        guard peopleSession.galleryOffset != offset else { return }
+        peopleSession.galleryOffset = offset
     }
 
     /// `act` while the gallery is the scope the user selected; nil otherwise.
@@ -1559,6 +1571,8 @@ struct PeopleActions {
     /// The person's context menu and VoiceOver actions, built as they open.
     let menu: (PersonID) -> PersonMenu?
     let perform: (PersonMenu.Act, PersonID) -> Void
+    /// How far the gallery is scrolled as it leaves the screen.
+    let rememberOffset: (CGFloat) -> Void
 }
 
 /// An arrow key in the People gallery.

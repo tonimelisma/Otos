@@ -75,8 +75,8 @@ L3 `1,820 photos not yet checked for faces` / `Every photo has been checked`, ta
 act.
 
 **The grid:** 128 pt cells, 8 pt gutters, 12 pt inset, on `content` (DES-022, DES-060).
-- **Order:** favourites, then most photos, a named person before an unnamed one of the
-  same count, then the name in the locale's order. Then, under a `Hidden` header
+- **Order:** favourites, then every named person before every unnamed one (owner,
+  2026-11-20), each by most photos, then the name in the locale's order. Then, under a `Hidden` header
   (`.headline`), the hidden people in the same order, dimmed to half.
 - **A cell:** the key photo's face tile (DES-110), else the newest face; under it the
   name (`.body`) or, for an unnamed person, a link-style `Add Name…`; a secondary
@@ -130,7 +130,9 @@ different days.`, `Otos found no faces in your photos.`, or the shared `No Avail
   kept, and checking people in it narrows to photos with them too. Choosing any other
   sidebar row leaves it.
 - **Title:** the person's name.
-- **Toolbar:** `Back to People` (`chevron.left`) at the leading edge; it keeps the filter.
+- **Toolbar:** `Back to People` (`chevron.left`) at the leading edge; it keeps the filter,
+  and the gallery comes back scrolled where it was (owner, 2026-11-20), as it does after
+  any other sidebar row.
   It exists only in this leaf, so it never stands beside Back to Map. Beside it, a menu
   titled with the person's name and
   `person.crop.circle`: `Add Name…`/`Rename…`, `Set Birthday…`, `Add to Favorites`/`Remove

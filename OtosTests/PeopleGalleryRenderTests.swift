@@ -121,6 +121,8 @@ struct GalleryRenderStep {
 @MainActor
 final class PeopleGalleryCalls {
     var menus = 0
+    /// How far the gallery reported it was scrolled each time it left the screen.
+    var offsets: [CGFloat] = []
 }
 
 /// The gallery as `ContentView` hosts it: read from the model, so it observes what the
@@ -150,7 +152,11 @@ private struct PeopleGalleryHost: View {
                         calls.menus += 1
                         return actions.menu(person)
                     },
-                    perform: actions.perform
+                    perform: actions.perform,
+                    rememberOffset: { [calls] offset in
+                        calls.offsets.append(offset)
+                        actions.rememberOffset(offset)
+                    }
                 )
             )
             .equatable()
@@ -253,6 +259,93 @@ extension AppKitWindowTests {
             #expect(updates.allSatisfy { $0.menus == 0 })
             #expect(selections.allSatisfy { $0.menus == 0 })
             #expect(unrelated.allSatisfy { $0.menus == 0 })
+        }
+
+        /// Opening a person and coming Back to People finds the gallery scrolled where it was
+        /// (owner, 2026-11-20): the gallery leaves the screen with how far it was scrolled and
+        /// comes back scrolled there.
+        @Test func theGalleryComesBackScrolledWhereItWas() async throws {
+            let state = try #require(await PeopleGalleryFixture.states(people: 738, facesPerPerson: 4, bumps: [nil]).first)
+            let directory = try makeTestDirectory()
+            let model = CatalogWindowViewModel(
+                catalogStore: makeTestStore(
+                    location: .databaseFile(directory.appending(path: "Catalog.sqlite")),
+                    stagingContainers: StagingContainers(base: directory)
+                ),
+                catalogProjection: CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10)),
+                startsStallMonitor: false,
+                startsEnrichment: false,
+                startsSourceMonitoring: false,
+                preferencesDomain: PreferencesDomain.suite(UUID().uuidString),
+                volumeCapacity: ampleVolumeCapacity,
+                trashFiles: .refusing
+            )
+            PeopleGalleryFixture.show(state, in: model)
+            let shown = GalleryShown()
+            let calls = PeopleGalleryCalls()
+            let host = NSHostingView(rootView: PeopleGalleryToggleHost(model: model, calls: calls, shown: shown))
+            let window = orderedInTestWindow(width: 1200, height: 800, contentView: host)
+            defer { window.close() }
+            func render() {
+                // Observation hands a change to the host on the run loop's next pass; no pass
+                // waits (`before: .distantPast`).
+                for _ in 0 ..< 3 {
+                    RunLoop.main.run(mode: .default, before: .distantPast)
+                }
+                host.layoutSubtreeIfNeeded()
+                host.displayIfNeeded()
+            }
+            render()
+            let scrolled = try #require(Self.scrollView(in: host))
+            scrolled.contentView.scroll(to: NSPoint(x: 0, y: 3000))
+            scrolled.reflectScrolledClipView(scrolled.contentView)
+            render()
+            let offset = scrolled.documentVisibleRect.minY
+            #expect(offset > 2000, "the test scrolled the gallery")
+
+            shown.isShown = false
+            render()
+            #expect(calls.offsets.count == 1, "the gallery left once: \(calls.offsets)")
+            #expect(
+                abs(model.peopleSession.galleryOffset - offset) < 1,
+                "left at \(model.peopleSession.galleryOffset), scrolled to \(offset)"
+            )
+
+            shown.isShown = true
+            render()
+            let back = try #require(Self.scrollView(in: host))
+            #expect(abs(back.documentVisibleRect.minY - offset) < 200, "back at \(back.documentVisibleRect.minY), left at \(offset)")
+        }
+
+        private static func scrollView(in view: NSView) -> NSScrollView? {
+            if let scroll = view as? NSScrollView {
+                return scroll
+            }
+            return view.subviews.lazy.compactMap { scrollView(in: $0) }.first
+        }
+    }
+}
+
+/// Whether the toggle host shows the gallery: off stands for another scope, as a person's
+/// photos are.
+@MainActor
+@Observable
+private final class GalleryShown {
+    var isShown = true
+}
+
+/// The gallery as `ContentView` hosts it, taken off the screen and put back as a scope change
+/// does.
+private struct PeopleGalleryToggleHost: View {
+    let model: CatalogWindowViewModel
+    let calls: PeopleGalleryCalls
+    let shown: GalleryShown
+
+    var body: some View {
+        if shown.isShown {
+            PeopleGalleryHost(model: model, calls: calls)
+        } else {
+            Color.clear
         }
     }
 }

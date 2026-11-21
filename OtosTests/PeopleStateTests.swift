@@ -55,9 +55,10 @@ struct PeopleStateTests {
         PhotoFaces(snapshot: snapshot, tiles: tiles(snapshot), files: files)
     }
 
-    /// The gallery: favourites first, then most photos, a named person before an unnamed one
-    /// of the same count; hidden people last. The cover is the key photo, else the newest.
-    @Test func theGalleryOrdersFavoritesThenPhotosAndHiddenLast() {
+    /// The gallery: favourites first, then every named person before every unnamed one, each
+    /// by most photos; hidden people last. Tyler, unnamed, has more photos than Sam and is
+    /// still after her. The cover is the key photo, else the newest.
+    @Test func theGalleryOrdersFavoritesThenNamedThenPhotosAndHiddenLast() {
         let tyler = PersonID(rawValue: 3)
         let owen = PersonID(rawValue: 4)
         let faces = [
@@ -67,7 +68,9 @@ struct PeopleStateTests {
             Fixture.face("i1.jpg", toward: [1: 1], at: 0, assignment: .seed(Self.ian)),
             Fixture.face("t1.jpg", toward: [2: 1], at: 0, assignment: .seed(tyler)),
             Fixture.face("u1.jpg", toward: [3: 1], at: 0, assignment: .seed(owen)),
-        ]
+        ] + (2 ... 4).map { index in
+            Fixture.face("t\(index).jpg", toward: [2: 1], at: -Double(index) * Self.day, assignment: .model(tyler))
+        }
         let people: [PeopleSnapshot.Person] = [
             .init(id: Self.sam, name: "Sam", birthday: nil),
             .init(id: Self.ian, name: "Ian", birthday: nil, isHidden: true),
@@ -83,6 +86,7 @@ struct PeopleStateTests {
         #expect(state.visibleNames == ["Owen", "Sam"])
         #expect(state.inGalleryOrder([Self.ian, tyler, owen, PersonID(rawValue: 99)]).map(\.id) == [owen, tyler, Self.ian])
         #expect(state.person(Self.sam)?.media == MediaCount(photos: 3))
+        #expect(state.person(tyler)?.media == MediaCount(photos: 4))
         #expect(state.person(Self.sam)?.cover?.id == faces[0].id)
         #expect(state.person(tyler)?.cover?.id == faces[4].id)
         #expect(state.person(Self.sam)?.userFaces.map(\.photo) == [faces[0].id.asset])

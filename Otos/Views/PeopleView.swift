@@ -4,7 +4,7 @@ import SwiftUI
 // The detail pane for the `.people` scope (ADR 0047, `docs/design/people.md`): a 52 pt bar
 // stating how many people there are and how many photos are not yet checked; under it,
 // everyone as their key photo, name (or `Add Name…`) and photo count, favourites first,
-// then most photos; then, under `Hidden`, the people the user hid, the one place they are
+// then the named people, then the unnamed, each by most photos; then, under `Hidden`, the people the user hid, the one place they are
 // seen. Passive: strings come from `PeoplePresentation`, and every control calls a
 // view-model intent through `PeopleActions`.
 
@@ -66,6 +66,32 @@ struct PeopleView: View, Equatable {
 
     @FocusState private var listFocused: Bool
     @State private var columns = 1
+    /// How far the gallery is scrolled, kept here as it scrolls and handed to the window only
+    /// as the gallery leaves the screen (`PeopleActions.rememberOffset`), so scrolling never
+    /// writes window state.
+    @State private var offset: CGFloat
+    /// Starts where the gallery was when it last left the screen (Back to People, or another
+    /// sidebar row and back): a new gallery's scroll view takes it as it first lays out.
+    @State private var position: ScrollPosition
+
+    init(
+        people: CatalogPeopleState,
+        session: PeopleSession,
+        librariesState: CatalogMediaEmptyState?,
+        images: FaceTileImages?,
+        derivedImageDirectory: URL?,
+        actions: PeopleActions
+    ) {
+        self.people = people
+        self.session = session
+        self.librariesState = librariesState
+        self.images = images
+        self.derivedImageDirectory = derivedImageDirectory
+        self.actions = actions
+        _offset = State(initialValue: session.galleryOffset)
+        _position = State(initialValue: ScrollPosition(y: session.galleryOffset))
+    }
+
     @Environment(\.colorScheme) private var colorScheme
 
     private static let edge: CGFloat = 128
@@ -135,6 +161,13 @@ struct PeopleView: View, Equatable {
                         }
                     }
                 }
+            }
+            .scrollPosition($position)
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, scrolled in
+                offset = scrolled
+            }
+            .onDisappear {
+                actions.rememberOffset(offset)
             }
             .focusable()
             // A collection shows the keyboard by its selection, never a ring around the whole
