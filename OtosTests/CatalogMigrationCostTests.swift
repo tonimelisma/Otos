@@ -17,20 +17,12 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: the scratch table of copy keys made again with its key, the face
-    /// triggers v81 made dropped and v79's made again, and its record removed.
-    static let newest = CatalogSchema.triggerConflictPolicyMigrationIdentifier
+    /// schema before it: the trigger v82 made dropped and its record removed.
+    static let newest = CatalogSchema.personDeletionOpensFacesMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
-        let faceTriggers = ["face_person_photo_inserted", "face_person_photo_updated"]
-        let v79Triggers = CatalogSchema.photoCopyKeyStatements.filter { statement in
-            faceTriggers.contains { statement.hasPrefix("CREATE TRIGGER \($0) ") }
-        }
-        #expect(v79Triggers.count == faceTriggers.count)
-        return [
-            "DROP TABLE copy_key_touched",
-            "CREATE TABLE copy_key_touched (key BLOB PRIMARY KEY) WITHOUT ROWID",
-        ] + faceTriggers.map { "DROP TRIGGER \($0)" } + v79Triggers + [
+        [
+            "DROP TRIGGER person_deleted_opens_faces",
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }

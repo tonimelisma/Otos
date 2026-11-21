@@ -97,11 +97,11 @@ act.
 | `Add to Favorites` / `Remove from Favorites` | Undoable. |
 | `Merge Into ▸` | With two or more selected: asks first. |
 | Drag a person onto another | Asks `Are these the same person?` (`Merge`, `Cancel`), then merges. |
-| `Hide` / `Unhide` | Undoable. A hidden person leaves every filter and menu; Unhide is the only act on one. |
+| `Hide` / `Unhide` | Undoable. A hidden person leaves every filter and menu but the gallery's; Unhide and a merge are the acts on one. |
 
 **Merging:** the person dragged (or named) is merged into the one dropped on (or holding
 the name), which keeps its name, birthday and key photo, taking the other's where it
-has none, and is a favourite if either was. A photo both are in never refuses it: merging
+has none, and is a favourite if either was and hidden if either was. A hidden person merges as anyone does — dragged or dropped on, `Merge Into ▸` among the people selected with them, or a person named with their name — and the person they become is hidden (owner decision, 2026-11-21). A photo both are in never refuses it: merging
 says they are one person, so every face of the person merged away stays the merged
 person's, and Otos never groups those faces into someone new again; in each photo both are
 in, the face most like the merged person stays theirs and the other is no one Otos names,
@@ -283,12 +283,12 @@ The first section (DES-088), `People`:
 - **Save is disabled** with the reason as its tooltip (DES-038), never pressed for nothing:
   `Enter a name`; `Enter a year, or a full date`; `4 photos of Sam are from before this
   date` (photos the user gave her); for `Someone Else…` with a new name, `2 photos are from
-  before this date`; a name a hidden person has, `Ian is a hidden person`; and a taken name
+  before this date`; faces named with a hidden person's name, `Ian is a hidden person`; and a taken name
   whose act the hard rules refuse, that act's reason (`Sam and Ian are both in 3 photos`,
   `Sam is already in this photo`).
-- **A name another visible person has** is otherwise not refused: for a person, Save keeps
-  the birthday typed, then asks `Are these the same person?` and merges on `Merge`; for
-  `Someone Else…`, the faces go to that person, and a birthday other than theirs is refused
+- **A name another person has** is otherwise not refused: for a person, Save keeps the
+  birthday typed, then asks `Are these the same person?` and merges on `Merge`, a hidden
+  person's name as anyone's; for `Someone Else…`, the faces go to that person (a visible one), and a birthday other than theirs is refused
   with `Clear the birthday to give these faces to Sam`.
 - **`Someone Else…` with a new name** makes one new person with the name and birthday typed:
   one act, one undo.

@@ -333,13 +333,21 @@ grouping had put with the right child.
   - A face from before a person's birthday is never theirs. A birthday may be only a year,
     which counts from 1 January (owner decision, 2026-11-10). One rule holds Set Birthday and
     a merge: the user's faces from before it refuse the act, and Otos's guesses and seeds
-    from before it lose the person.
+    from before it lose the person. A photo's date can move after its face was given a
+    person (a new reading, a corrected date): the user's face keeps its person, and on Otos's
+    word the birthday wins: assignment never guesses the person there and a seed there lapses
+    (`FaceAssignmentPolicy.lapsedSeeds`; owner decision, 2026-11-21: "if I manually tagged a
+    face, that wins. if it's auto tagged, birthday wins").
   - A face the user said is not someone (`This Is Not Sam`, or `Not the Same Person` in an unnamed person's own photos) is held: Otos never gives it a person
     again, and never offers that person for it. A merge carries the rejection to the merged
-    person, except onto a face that is theirs: the user gave it them, and the merge says the
-    two are one, so a rejection there would name the face's own person. A person is never
-    merged into themself (`PeopleRuleViolation.mergeIntoSelf`): deleting the person merged
-    away would delete them and leave their faces marked with a person no row holds.
+    person, and no face is left rejected for its own person: a face the user gave one of the
+    two, whom they had said it is not the other, is the merged person's, since the merge says
+    the two are one and is the later word. A person is never
+    merged into themself (`PeopleRuleViolation.mergeIntoSelf`). A hidden person merges as
+    anyone does, and the merged person is hidden if either was (owner decision, 2026-11-21).
+  - A face never names no one while its row says it is someone's: deleting a person opens
+    their faces in the deleting statement (`person_deleted_opens_faces`, v82), and the People
+    read takes any other such row as malformed.
 - **Corrections propagate:** a correction is a new anchor, and every guess is rebuilt from the
   anchors, so moving one face moves the guesses reached through it (owner decision,
   2026-11-12). From a cold start, ten moves left nothing wrong on the owner's

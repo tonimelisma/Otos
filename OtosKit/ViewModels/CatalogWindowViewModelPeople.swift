@@ -407,19 +407,6 @@ nonisolated extension CatalogPeopleState {
         return nil
     }
 
-    /// Why `person` cannot be merged into anyone, whoever it is dropped on or named as, or
-    /// nil when someone could take it: a hidden person has no act but Unhide (DES-111,
-    /// `docs/design/people.md`), so it is merged neither away nor into.
-    func mergeSourceRefusal(_ person: PersonID) -> String? {
-        self.person(person).flatMap(Self.mergeSourceRefusal(of:))
-    }
-
-    /// The same, read from the person alone: what a gallery cell asks to decide whether it
-    /// can be dragged.
-    static func mergeSourceRefusal(of person: PersonSummary) -> String? {
-        person.isHidden ? "\(person.displayName) is a hidden person" : nil
-    }
-
     /// Why `from` cannot merge into `into`, or nil when it can.
     func mergeRefusal(_ from: PersonID, into: PersonID) -> String? {
         mergeRefusal(from, into: into, sourceBirthday: person(from)?.birthday)
@@ -430,9 +417,6 @@ nonisolated extension CatalogPeopleState {
     private func mergeRefusal(_ from: PersonID, into: PersonID, sourceBirthday: PersonBirthday?) -> String? {
         guard from != into, let source = person(from), let target = person(into) else {
             return "Choose another person"
-        }
-        if let refusal = Self.mergeSourceRefusal(of: source) ?? Self.mergeSourceRefusal(of: target) {
-            return refusal
         }
         // Only a face older than the birthday can refuse, so the oldest of each decides
         // whether the faces are counted at all.
@@ -485,9 +469,6 @@ nonisolated extension CatalogPeopleState {
                     return "\(before.text) of \(name(person)) \(before.isOrAre) from before this date"
                 }
             }
-            if isHiddenName(trimmed, excluding: person) {
-                return "\(trimmed) is a hidden person"
-            }
             if let holder = self.person(named: trimmed, excluding: person) {
                 return mergeRefusal(person, into: holder, sourceBirthday: parsed)
             }
@@ -512,9 +493,12 @@ nonisolated extension CatalogPeopleState {
         return nil
     }
 
-    /// The visible person called `name`, other than `excluding`.
+    /// The person called `name`, hidden or not, other than `excluding`: no two people share a
+    /// name. A person named as a hidden person is asked to merge with them, as with anyone;
+    /// faces named so are refused first (`isHiddenName`), since no surface but the gallery
+    /// offers a hidden person.
     func person(named name: String, excluding: PersonID? = nil) -> PersonID? {
-        visiblePeople.first { $0.name == name && $0.id != excluding }?.id
+        people.first { $0.name == name && $0.id != excluding }?.id
     }
 
     /// Whether a hidden person other than `excluding` is called `name`: no two people share
@@ -940,7 +924,7 @@ extension CatalogWindowViewModel {
         guard let summary = people.person(person) else { return nil }
         let selected = peopleSession.selectedPeople
         let others = selected.contains(person)
-            ? people.inGalleryOrder(selected).filter { !$0.isHidden && $0.id != person } : []
+            ? people.inGalleryOrder(selected).filter { $0.id != person } : []
         OtosLog.ui.debugOperation("people.menu", phase: "built", fields: [
             "person": "\(person.rawValue)", "mergeTargets": "\(others.count)",
         ])
@@ -992,7 +976,7 @@ extension CatalogWindowViewModel {
     ) -> PersonMenu {
         guard !person.isHidden else {
             return PersonMenu(
-                settings: [], mergeInto: nil,
+                settings: [], mergeInto: mergeItems(person, into: mergeTargets, in: people),
                 visibility: PersonMenu.Item(title: "Unhide", act: .setHidden(false)), open: nil
             )
         }
@@ -1002,15 +986,22 @@ extension CatalogWindowViewModel {
                 PersonMenu.Item(title: "Set Birthday…", act: .edit),
                 PersonMenu.Item(title: person.isFavorite ? "Remove from Favorites" : "Add to Favorites", act: .setFavorite(!person.isFavorite)),
             ],
-            mergeInto: mergeTargets?.map { target in
-                PersonMenu.Item(
-                    title: target.displayName, act: .mergeInto(target.id),
-                    refusal: people.mergeRefusal(person.id, into: target.id)
-                )
-            },
+            mergeInto: mergeItems(person, into: mergeTargets, in: people),
             visibility: PersonMenu.Item(title: "Hide", act: .setHidden(true)),
             open: opens ? PersonMenu.Item(title: "Show Photos", act: .open) : nil
         )
+    }
+
+    /// `Merge Into ▸`'s items, each disabled with the merge's reason where the rules refuse it.
+    private func mergeItems(
+        _ person: PersonSummary, into targets: [PersonSummary]?, in people: CatalogPeopleState
+    ) -> [PersonMenu.Item]? {
+        targets?.map { target in
+            PersonMenu.Item(
+                title: target.displayName, act: .mergeInto(target.id),
+                refusal: people.mergeRefusal(person.id, into: target.id)
+            )
+        }
     }
 
     /// Every item of every `PersonMenu`, wherever it renders.

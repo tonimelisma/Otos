@@ -112,8 +112,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 19).map { "\($0)/19" })
-        #expect(run.applied == 19)
+        #expect(steps.recorded == (1 ... 20).map { "\($0)/20" })
+        #expect(run.applied == 20)
         let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
         #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
 
@@ -147,8 +147,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 19).map { "\($0)/19" })
-        #expect(run.applied == 19)
+        #expect(steps.recorded == (1 ... 20).map { "\($0)/20" })
+        #expect(run.applied == 20)
     }
 
     private final class StepLog: Sendable {
@@ -360,6 +360,7 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.photoCopyKeyMigrationIdentifier,
             CatalogSchema.mirrorPrefixesMigrationIdentifier,
             CatalogSchema.triggerConflictPolicyMigrationIdentifier,
+            CatalogSchema.personDeletionOpensFacesMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)
@@ -486,6 +487,48 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(!faceColumns.contains("is_ignored"))
         #expect(faceColumns.isSuperset(of: ["assignment", "likeness", "is_feature"]))
         #expect(personColumns.isSuperset(of: ["is_hidden", "is_favorite"]))
+    }
+
+    /// v82: a face never names no one while its row says it is someone's. A face an earlier
+    /// delete left with no person but a seed is opened; a held face stays held; and deleting a
+    /// person now opens their faces in the same statement, the key photo with them.
+    @Test func thePersonDeletionMigrationOpensFacesLeftWithNoPerson() async throws {
+        let queue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(queue, upTo: CatalogSchema.triggerConflictPolicyMigrationIdentifier)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path, kind) VALUES ('/Pictures', 'library')")
+            try db.execute(sql: """
+            INSERT INTO media_asset (library_root_id, relative_path, relative_path_key, name_sort_key)
+            VALUES (1, 'a.jpg', 'a.jpg', 'a.jpg')
+            """)
+            try db.execute(sql: "INSERT INTO person (id, name) VALUES (1, 'Sam')")
+            // Each face: its index, person, assignment and key-photo mark.
+            let faces: [[(any DatabaseValueConvertible)?]] = [[0, nil, 2, 0], [1, nil, 4, 0], [2, 1, 3, 1]]
+            for face in faces {
+                try db.execute(
+                    sql: """
+                    INSERT INTO face (
+                        library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
+                        landmarks, quality, analysis_revision, person_id, assignment, is_key_photo
+                    ) VALUES (1, 'a.jpg', ?, 0, 0, 0.1, 0.1, x'', 0.5, 1, ?, ?, ?)
+                    """,
+                    arguments: StatementArguments(face)
+                )
+            }
+        }
+        try CatalogStore.migrator.migrate(queue)
+        let migrated = try await queue.read { db in
+            try Row.fetchAll(db, sql: "SELECT person_id, assignment, is_key_photo FROM face ORDER BY face_index")
+                .map { [$0[0] as Int64?, $0[1] as Int64?, $0[2] as Int64?] }
+        }
+        #expect(migrated == [[nil, 0, 0], [nil, 4, 0], [1, 3, 1]])
+
+        try await queue.write { db in try db.execute(sql: "DELETE FROM person WHERE id = 1") }
+        let deleted = try await queue.read { db in
+            try Row.fetchAll(db, sql: "SELECT person_id, assignment, is_key_photo FROM face ORDER BY face_index")
+                .map { [$0[0] as Int64?, $0[1] as Int64?, $0[2] as Int64?] }
+        }
+        #expect(deleted == [[nil, 0, 0], [nil, 4, 0], [nil, 0, 0]])
     }
 
     /// ADR 0047: v28 names v26's feature flag the key photo. A person's chosen face stays

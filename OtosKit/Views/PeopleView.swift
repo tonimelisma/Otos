@@ -305,7 +305,7 @@ struct PeopleBar: View {
 }
 
 /// One person: their key photo, their name (or `Add Name…`) and their photo count; a
-/// heart before the name for a favourite. A hidden person is dimmed and offers only Unhide.
+/// heart before the name for a favourite. A hidden person is dimmed and offers Unhide and, among people selected with it, Merge Into.
 /// Dragging one person onto another asks whether they are the same person.
 ///
 /// Its body reads only its own values: nothing in it scales with the number of people. Its
@@ -358,7 +358,7 @@ private struct PersonCell: View, Equatable {
             focusList()
             actions.select(person.id, [])
         }
-        .modifier(PersonCellDrag(person: person.id, isDraggable: CatalogPeopleState.mergeSourceRefusal(of: person) == nil))
+        .draggable(PeopleDrag.payload(person.id))
         .dropDestination(for: String.self) { items, _ in
             guard let from = items.first.flatMap(PeopleDrag.person(from:)), from != person.id,
                   actions.mergeRefusal(from, person.id) == nil
@@ -502,20 +502,5 @@ nonisolated enum PeopleDrag {
     static func person(from payload: String) -> PersonID? {
         guard payload.hasPrefix(prefix), let value = Int64(payload.dropFirst(prefix.count)) else { return nil }
         return PersonID(rawValue: value)
-    }
-}
-
-/// A person's cell is dragged onto another to merge them, unless the person can be merged
-/// into no one (a hidden person, DES-111): then it is not draggable at all.
-private struct PersonCellDrag: ViewModifier {
-    let person: PersonID
-    let isDraggable: Bool
-
-    func body(content: Content) -> some View {
-        if isDraggable {
-            content.draggable(PeopleDrag.payload(person))
-        } else {
-            content
-        }
     }
 }

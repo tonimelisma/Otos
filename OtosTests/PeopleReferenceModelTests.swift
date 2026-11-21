@@ -278,17 +278,18 @@ struct PeopleReferenceModelTests {
             for face in state.facesOf(person: from) {
                 state.faces[face]?.person = into
             }
-            // What the user said a face is not carries to the merged person, except onto a
-            // face that is theirs: the user gave it them, and the merge says the two are one.
+            // What the user said a face is not carries to the merged person; no face is
+            // rejected for its own person, whichever of the two the user gave it.
             for rejection in state.rejections where rejection.person == from {
                 state.rejections.remove(rejection)
-                if state.faces[rejection.face]?.person != into {
-                    state.rejections.insert(Rejection(face: rejection.face, person: into))
-                }
+                state.rejections.insert(Rejection(face: rejection.face, person: into))
+            }
+            for rejection in state.rejections where rejection.person == into && state.faces[rejection.face]?.person == into {
+                state.rejections.remove(rejection)
             }
             state.people[from] = nil
             state.people[into] = Person(
-                name: target.name ?? source.name, birthday: birthday, isHidden: target.isHidden,
+                name: target.name ?? source.name, birthday: birthday, isHidden: target.isHidden || source.isHidden,
                 isFavorite: target.isFavorite || source.isFavorite
             )
         }
@@ -307,7 +308,9 @@ struct PeopleReferenceModelTests {
 
     // MARK: Rules no single act owns
 
-    static func violations(of state: State) -> [String] {
+    /// `dateMoved`: a photo's date moved since the last pass, which alone puts Otos's faces
+    /// before a birthday until that pass.
+    static func violations(of state: State, dateMoved: Bool = false) -> [String] {
         var found: [String] = []
         for (face, row) in state.faces {
             if row.assignment == nil {
@@ -325,8 +328,12 @@ struct PeopleReferenceModelTests {
             if let person = row.person, state.rejections.contains(Rejection(face: face, person: person)) {
                 found.append("\(face): given to \(person), whom the user said it is not")
             }
-            if let person = row.person, state.isBefore(face, birthday: state.people[person]?.birthdaySeconds) {
-                found.append("\(face): \(person)'s, from before their birthday")
+            // A photo whose date moved keeps the user's word; Otos's own face there loses its
+            // person at the next pass (owner decision, 2026-11-21).
+            if let person = row.person, row.column != FaceAssignmentColumn.user.rawValue, !dateMoved,
+               state.isBefore(face, birthday: state.people[person]?.birthdaySeconds)
+            {
+                found.append("\(face): Otos's \(person), from before their birthday")
             }
             if row.isKeyPhoto, row.person == nil {
                 found.append("\(face): a key photo of no one")
@@ -414,16 +421,23 @@ struct PeopleReferenceModelTests {
             FaceKey(path: id.asset.relativePath.rawValue, index: id.index)
         }
 
-        /// Four people, each a direction of the embedding; a photo holds up to three of them, on
-        /// one of twelve days across 2020–2023, so a pass finds people and birthdays matter.
-        func read(_ name: String) async throws {
+        // Four people, each a direction of the embedding; a photo holds up to three of them, on
+        // one of twelve days across 2020–2023, so a pass finds people and birthdays matter. A
+        // reading that moves the photo's date is the file's date corrected after it was named.
+        // Each photo's date: one of the twelve days, by its name, until a reading moves it.
+        var dates = Dictionary(uniqueKeysWithValues: names.enumerated().map { index, name in
+            (name, Date(timeIntervalSince1970: 1_580_000_000 + Double(index * 5 % 12) * 100 * 86400))
+        })
+        var dateMoved = false
+        func read(_ name: String, movingItsDate moves: Bool = false) async throws {
+            if moves {
+                dates[name] = Date(timeIntervalSince1970: 1_580_000_000 + Double(roll(12)) * 100 * 86400)
+            }
             let identities = Array(Set((0 ..< 1 + roll(3)).map { _ in roll(4) })).sorted()
             let faces = identities.enumerated().map { index, identity in
                 PeopleStoreTests.face(x: 0.05 + 0.3 * Double(index), toward: [identity * 8: 1, 200 + roll(200): 0.15])
             }
-            // A new reading of a photo keeps its date: one of the twelve days, by its name.
-            let day = Date(timeIntervalSince1970: 1_580_000_000 + Double((names.firstIndex(of: name) ?? 0) * 5 % 12) * 100 * 86400)
-            try await library.readFaces([library.result(for: name, faces: faces, captured: day)])
+            try await library.readFaces([library.result(for: name, faces: faces, captured: dates[name])])
         }
         for name in names {
             try await read(name)
@@ -519,7 +533,7 @@ struct PeopleReferenceModelTests {
                 } catch {
                     record(step, act.logName, ["\(error)"])
                 }
-                record(step, "after \(act.logName)", Self.violations(of: after))
+                record(step, "after \(act.logName)", Self.violations(of: after, dateMoved: dateMoved))
                 if let outcome {
                     for index in undos.indices {
                         undos[index].overtaken = true
@@ -543,7 +557,7 @@ struct PeopleReferenceModelTests {
                 if !undo.overtaken, now != undo.before {
                     record(step, "undo \(undo.act.logName)", Self.differences(expected: undo.before, actual: now, act: undo.act))
                 }
-                record(step, "after undo \(undo.act.logName)", Self.violations(of: now))
+                record(step, "after undo \(undo.act.logName)", Self.violations(of: now, dateMoved: dateMoved))
                 for index in undos.indices {
                     undos[index].overtaken = true
                 }
@@ -567,6 +581,7 @@ struct PeopleReferenceModelTests {
                 let after = try Self.read(queue)
                 tally["pass", default: 0] += 1
                 tally["peopleAfterPass", default: 0] = max(tally["peopleAfterPass"] ?? 0, after.people.count)
+                dateMoved = false
                 record(step, "pass", Self.violations(of: after) + Self.passViolations(before: before, after: after))
                 if after != before {
                     for index in undos.indices {
@@ -574,12 +589,15 @@ struct PeopleReferenceModelTests {
                     }
                 }
             } else if let name = pick(names) {
-                // A new reading of a photo: its faces are replaced, the user's word carried.
-                try await read(name)
+                // A new reading of a photo: its faces are replaced, the user's word carried;
+                // one in three moves the photo's date.
+                let moves = roll(3) == 0
+                try await read(name, movingItsDate: moves)
+                dateMoved = dateMoved || moves
                 for index in undos.indices {
                     undos[index].overtaken = true
                 }
-                try record(step, "read \(name)", Self.violations(of: Self.read(queue)))
+                try record(step, "read \(name)", Self.violations(of: Self.read(queue), dateMoved: dateMoved))
             }
         }
         await library.store.shutdown()

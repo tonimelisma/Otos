@@ -396,36 +396,38 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
-    /// A hidden person has no act but Unhide (DES-111): it is merged neither away nor into,
-    /// however the merge is asked for — a drag, Merge Into or a taken name — and its cell is
-    /// not draggable. Unhidden, it merges again.
-    @Test func aHiddenPersonIsNeitherMergedAwayNorInto() async throws {
+    /// A hidden person merges as anyone does, however the merge is asked for — a drag, Merge
+    /// Into among the selected people, or a person named with their name — and the person they
+    /// become is hidden (owner decision, 2026-11-21).
+    @Test func aHiddenPersonMergesAsAnyoneAndTheMergedPersonIsHidden() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: "Ian")).person)
         _ = try await fixture.store.perform(.setHidden(ian, true))
         try await fixture.show(fixture.people(), scope: .people)
 
         let actions = fixture.model.peopleActions
-        #expect(fixture.model.peopleState.mergeSourceRefusal(ian) == "Ian is a hidden person")
-        #expect(fixture.model.peopleState.mergeSourceRefusal(fixture.sam) == nil)
-        #expect(actions.mergeRefusal(ian, fixture.sam) == "Ian is a hidden person")
-        #expect(actions.mergeRefusal(fixture.sam, ian) == "Ian is a hidden person")
+        #expect(actions.mergeRefusal(ian, fixture.sam) == nil)
+        #expect(actions.mergeRefusal(fixture.sam, ian) == nil)
         actions.askMerge(ian, fixture.sam)
-        #expect(fixture.model.peopleSession.mergeQuestion == nil)
-        actions.askMerge(fixture.sam, ian)
-        #expect(fixture.model.peopleSession.mergeQuestion == nil)
-
-        _ = try await fixture.store.perform(.setHidden(ian, false))
-        try await fixture.show(fixture.people(), scope: .people)
-        #expect(fixture.model.peopleState.mergeSourceRefusal(ian) == nil)
-        fixture.model.peopleActions.askMerge(ian, fixture.sam)
         #expect(fixture.model.peopleSession.mergeQuestion == PeopleMergeQuestion(from: ian, into: fixture.sam))
+        fixture.model.answerMerge(false)
+        fixture.model.selectPeople(ian, modifiers: [])
+        fixture.model.selectPeople(fixture.sam, modifiers: .command)
+        #expect(fixture.model.galleryPersonMenu(ian)?.mergeInto?.map(\.act) == [.mergeInto(fixture.sam)])
+        #expect(fixture.model.personSheetRefusal(.person(fixture.sam), name: "Ian", birthday: nil) == nil)
+        fixture.model.savePersonSheet(.person(fixture.sam), name: "Ian", birthday: nil)
+        #expect(fixture.model.peopleSession.mergeQuestion == PeopleMergeQuestion(from: fixture.sam, into: ian))
+        fixture.model.answerMerge(false)
+
+        _ = try await fixture.store.perform(.merge(fixture.sam, into: ian))
+        let merged = try await fixture.store.backgroundReads.peopleSnapshot().people.first { $0.id == ian }
+        #expect(merged?.isHidden == true)
         await fixture.store.shutdown()
     }
 
     /// A taken name whose merge the hard rules refuse disables Save with the merge's reason,
-    /// rather than closing the sheet with nothing done; a hidden person's name is refused,
-    /// since no surface but the gallery offers them; a name with another birthday for
+    /// rather than closing the sheet with nothing done; faces named as a hidden person are
+    /// refused, since no surface but the gallery offers them; a name with another birthday for
     /// `Someone Else…` asks for the birthday to be cleared.
     @Test func aSheetSaveThatCannotHappenIsDisabledWithItsReason() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory(), hersTaken: Fixture.twentyTen)
@@ -441,7 +443,6 @@ struct PeopleViewModelTests {
         #expect(fixture.model.peopleSession.mergeQuestion == nil)
         #expect(fixture.model.peopleSession.sheet?.subject == .person(other))
 
-        #expect(fixture.model.personSheetRefusal(.person(other), name: "Ian", birthday: nil) == "Ian is a hidden person")
         #expect(fixture.model.personSheetRefusal(.faces([fixture.hers]), name: "Ian", birthday: nil) == "Ian is a hidden person")
         #expect(fixture.model.personSheetRefusal(.faces([fixture.hers]), name: "Sam", birthday: "1990") == "Clear the birthday to give these faces to Sam")
         #expect(fixture.model.personSheetRefusal(.faces([fixture.hers]), name: "Kai", birthday: "1990") == nil)

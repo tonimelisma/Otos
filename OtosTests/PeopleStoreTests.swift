@@ -465,28 +465,38 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
-    /// A merge carries what the user said a face is not to the merged person, except onto a
-    /// face that is theirs: a face the user said is not Sam, then gave Ian, stays Ian's and
-    /// free of any rejection of him when Sam is merged into Ian; a held face that is not
-    /// Sam becomes not Ian.
+    /// A merge carries what the user said a face is not to the merged person and leaves no face
+    /// rejected for its own person: merging Sam into Ian, a held face that is not Sam
+    /// becomes not Ian, while a face the user said is not one of them and then gave the other
+    /// is Ian's, rejected for no one.
     @Test func aMergeCarriesNoRejectionOntoTheMergedPersonsOwnFace() async throws {
-        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg"])
-        try await library.readFaces(["a.jpg", "b.jpg", "c.jpg"].enumerated().map { index, name in
+        let names = ["a.jpg", "b.jpg", "c.jpg", "d.jpg"]
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: names)
+        try await library.readFaces(names.enumerated().map { index, name in
             library.result(for: name, faces: [Self.face(x: 0.1 + 0.2 * Double(index))])
         })
-        let (a, b, c) = (FaceID(asset: library.id("a.jpg"), index: 0), FaceID(asset: library.id("b.jpg"), index: 0), FaceID(asset: library.id("c.jpg"), index: 0))
+        let (a, b, c, d) = (
+            FaceID(asset: library.id("a.jpg"), index: 0), FaceID(asset: library.id("b.jpg"), index: 0),
+            FaceID(asset: library.id("c.jpg"), index: 0), FaceID(asset: library.id("d.jpg"), index: 0)
+        )
         let sam = try #require(try await library.store.perform(.moveToNewPerson([a, b], name: "Sam")).person)
-        let ian = try #require(try await library.store.perform(.moveToNewPerson([c], name: "Ian")).person)
-        _ = try await library.store.perform(.removeName([a, b]))
+        let ian = try #require(try await library.store.perform(.moveToNewPerson([c, d], name: "Ian")).person)
+        _ = try await library.store.perform(.removeName([a, b, d]))
         _ = try await library.store.perform(.move([a], to: ian))
+        _ = try await library.store.perform(.move([d], to: sam))
 
         _ = try await library.store.perform(.merge(sam, into: ian))
 
         let faces = try await Dictionary(uniqueKeysWithValues: library.store.backgroundReads.peopleSnapshot().faces.map { ($0.id, $0) })
+        // Not Sam, then Ian's: Ian's, and no longer "not" anyone.
         #expect(faces[a]?.assignment == .user(ian))
         #expect(faces[a]?.rejected == [])
+        // Not Sam and held: not Ian.
         #expect(faces[b]?.assignment == .held)
         #expect(faces[b]?.rejected == [ian])
+        // Not Ian, then Sam's: the merged person's, and not rejected for them.
+        #expect(faces[d]?.assignment == .user(ian))
+        #expect(faces[d]?.rejected == [])
         await library.store.shutdown()
     }
 
@@ -616,7 +626,9 @@ struct PeopleStoreTests {
         #expect(FaceAssignmentColumn.sqlList { $0.isAnchor } == "(2, 3)")
         let person = PersonID(rawValue: 7)
         #expect(try FaceAssignmentColumn.assignment(column: FaceAssignmentColumn.seed.rawValue, person: 7) == .seed(person))
-        #expect(try FaceAssignmentColumn.assignment(column: FaceAssignmentColumn.user.rawValue, person: nil) == .open)
+        #expect(throws: FaceAssignmentColumn.Malformed(column: FaceAssignmentColumn.user.rawValue, person: nil)) {
+            try FaceAssignmentColumn.assignment(column: FaceAssignmentColumn.user.rawValue, person: nil)
+        }
         #expect(try FaceAssignmentColumn.assignment(column: FaceAssignmentColumn.held.rawValue, person: nil) == .held)
         #expect(throws: FaceAssignmentColumn.Malformed(column: 9, person: nil)) {
             try FaceAssignmentColumn.assignment(column: 9, person: nil)

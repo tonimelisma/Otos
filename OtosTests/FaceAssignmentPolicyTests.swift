@@ -190,6 +190,24 @@ struct FaceAssignmentPolicyTests {
         #expect(result.newPeople.isEmpty)
     }
 
+    /// A photo whose date moved before its person's birthday: on Otos's word the birthday wins,
+    /// so the seed there lapses and no guess goes to them; on the user's word the face keeps
+    /// its person (owner decision, 2026-11-21).
+    @Test func theBirthdayWinsOverOtossFacesAndTheUsersFaceKeepsItsPerson() {
+        let born = Self.epoch + Self.day * 10
+        let sam = PersonFact(id: Self.sam, birthdaySeconds: born, isBare: false)
+        let before = Self.face("before.jpg", toward: [0: 1, 3: 0.3], at: Self.day * 2, assignment: .seed(Self.sam))
+        let usersBefore = Self.face("users.jpg", toward: [0: 1, 4: 0.3], at: Self.day * 3, assignment: .user(Self.sam))
+        let after = Self.face("after.jpg", toward: [0: 1, 5: 0.3], at: Self.day * 20, assignment: .seed(Self.sam))
+        let guessBefore = Self.face("guess.jpg", toward: [0: 1, 6: 0.3], at: Self.day * 4, assignment: .model(Self.sam))
+
+        let result = FaceAssignmentPolicy.assign(faces: [before, usersBefore, after, guessBefore], people: [sam])
+
+        #expect(result.lapsedSeeds == [before.id])
+        #expect(result.guesses[before.id] == nil && result.guesses[guessBefore.id] == nil)
+        #expect(result.guesses[usersBefore.id] == nil)
+    }
+
     /// Seeds lapse only for a person the user said nothing about and gave no face, and only
     /// when they span fewer than two days.
     @Test func seedsStandWhileTheUserSaidSomethingOrTheyStillSpanTwoDays() {

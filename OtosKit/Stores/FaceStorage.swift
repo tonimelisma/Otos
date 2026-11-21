@@ -248,19 +248,24 @@ nonisolated enum FaceAssignmentColumn: Int, CaseIterable {
         }
     }
 
-    /// A stored row that no assignment can hold: a value no case has, or a person under an
-    /// open or held face, which no write produces.
+    /// A stored row that no assignment can hold: a value no case has, a person under an open
+    /// or held face, or no person under a guess, a seed or the user's word. No write produces
+    /// either: deleting a person opens their faces first (v82).
     struct Malformed: Error, Equatable {
         let column: Int
         let person: Int64?
     }
 
-    /// The assignment a stored row holds. A row with no person is open or held, whatever
-    /// else its column says: deleting a person clears `person_id` under its faces.
+    /// The assignment a stored row holds: open and held name no person, and a guess, a seed
+    /// and the user's word name one.
     static func assignment(column: Int, person: Int64?) throws -> FaceAssignment {
         guard let kind = FaceAssignmentColumn(rawValue: column) else { throw Malformed(column: column, person: person) }
         guard let person = person.map(PersonID.init(rawValue:)) else {
-            return kind == .held ? .held : .open
+            switch kind {
+            case .open: return .open
+            case .held: return .held
+            case .model, .seed, .user: throw Malformed(column: column, person: nil)
+            }
         }
         switch kind {
         case .open, .held: throw Malformed(column: column, person: person.rawValue)

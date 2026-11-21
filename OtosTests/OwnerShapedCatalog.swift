@@ -651,10 +651,13 @@ struct OwnerShapedCatalog {
         let total = start
         func faces(_ k: Int) -> String {
             let place = "(media_asset.rowid * 7919 + \(k * (total / 4))) % \(total)"
+            // An unassigned face is open (0) and names no one; an assigned one is Otos's guess (1).
+            let unassigned = "(media_asset.rowid * 31 + \(k * 389)) % 1000 < \(Owner.unassignedFacePermille)"
             return """
             SELECT library_root_id, relative_path, \(k), 0.3, 0.3, 0.2, 0.2, zeroblob(40), 0.47, \(FaceAnalyzer.revision),
-                   CASE WHEN (media_asset.rowid * 31 + \(k * 389)) % 1000 < \(Owner.unassignedFacePermille) THEN NULL
-                        ELSE (SELECT person_id FROM person_share WHERE start <= \(place) ORDER BY start DESC LIMIT 1) END, 1
+                   CASE WHEN \(unassigned) THEN NULL
+                        ELSE (SELECT person_id FROM person_share WHERE start <= \(place) ORDER BY start DESC LIMIT 1) END,
+                   CASE WHEN \(unassigned) THEN 0 ELSE 1 END
             """
         }
         shape.faces = 0

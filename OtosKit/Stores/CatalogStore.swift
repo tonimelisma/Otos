@@ -2900,7 +2900,7 @@ extension CatalogStore {
     /// the merged birthday; Otos's guesses and seeds from before it lose their person
     /// (`holdToBirthday`).
     /// The second keeps its name, birthday and key photo, taking the first's where it
-    /// has none, and is a favourite if either was.
+    /// has none, and is hidden if either was and a favourite if either was.
     private static func mergePerson(
         _ from: PersonID, into: PersonID, pathsByRowID: [Int64: LibraryRootPath], db: Database
     ) throws {
@@ -2936,12 +2936,16 @@ extension CatalogStore {
         try db.execute(sql: PeopleSQL.movePersonFacesSQL, arguments: [into.rawValue, from.rawValue])
         try db.execute(
             sql: PeopleSQL.moveRejectionsSQL,
-            arguments: [into.rawValue, from.rawValue, into.rawValue]
+            arguments: [into.rawValue, from.rawValue]
         )
+        try db.execute(sql: PeopleSQL.dropOwnFaceRejectionsSQL, arguments: [into.rawValue, into.rawValue])
         try db.execute(sql: PeopleSQL.deletePersonSQL, arguments: [from.rawValue])
         try db.execute(
             sql: PeopleSQL.setMergedPersonSQL,
-            arguments: [target.name ?? source.name, birthday?.text, target.isFavorite || source.isFavorite ? 1 : 0, into.rawValue]
+            arguments: [
+                target.name ?? source.name, birthday?.text, target.isHidden || source.isHidden ? 1 : 0,
+                target.isFavorite || source.isFavorite ? 1 : 0, into.rawValue,
+            ]
         )
     }
 

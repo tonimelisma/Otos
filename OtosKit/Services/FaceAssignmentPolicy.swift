@@ -333,15 +333,24 @@ nonisolated enum FaceAssignmentPolicy {
         return result
     }
 
-    /// The seeds of each person the user said nothing about and gave no face that no longer
-    /// stand: every unrecognisable seed, and every seed when the recognisable ones span fewer
-    /// than two days.
+    /// The seeds that no longer stand:
+    /// - any person's seed from before that person's birthday: a photo's date can move after
+    ///   it was seeded (a new reading, a corrected date), and on Otos's word the birthday wins
+    ///   (owner decision, 2026-11-21); the user's own faces keep their person;
+    /// - of each person the user said nothing about and gave no face, every unrecognisable
+    ///   seed, and every seed when the recognisable ones span fewer than two days.
     static func lapsedSeeds(_ faces: [FaceFact], people: [PersonFact]) -> Set<FaceID> {
         let bare = Set(people.filter(\.isBare).map(\.id))
+        let birthdays = PersonFact.birthdays(of: people)
+        var lapsed: Set<FaceID> = []
         // Each bare person's seeds by position, never copies of the faces.
         var seeds: [PersonID: [Int32]] = [:]
         var claimed: Set<PersonID> = []
         for (position, face) in faces.enumerated() {
+            if case let .seed(person) = face.assignment, !notBeforeBirthday(face.captureSeconds, birthdays[person]) {
+                lapsed.insert(face.id)
+                continue
+            }
             switch face.assignment {
             case let .seed(person) where bare.contains(person):
                 seeds[person, default: []].append(Int32(position))
@@ -351,7 +360,6 @@ nonisolated enum FaceAssignmentPolicy {
                 break
             }
         }
-        var lapsed: Set<FaceID> = []
         for (person, positions) in seeds where !claimed.contains(person) {
             let seedFaces = positions.lazy.map { faces[Int($0)] }
             let days = Set(seedFaces.filter(\.isRecognisable).compactMap { day($0.captureSeconds) })

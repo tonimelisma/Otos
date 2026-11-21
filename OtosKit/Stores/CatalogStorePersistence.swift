@@ -646,6 +646,11 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.personDeletionOpensFacesMigrationIdentifier) { db in
+            for statement in CatalogSchema.personDeletionOpensFacesStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

@@ -3474,6 +3474,24 @@ nonisolated enum CatalogSchema {
         """,
     ]
 
+    /// v82: a face never names no one while its row says it is someone's. Deleting a person set
+    /// `person_id` to NULL under their faces (`ON DELETE SET NULL`) and left `assignment` at
+    /// Otos's guess, a seed or the user's word, which the People read took as open while every
+    /// write tested the column, so a seed planned there never landed and assignment planned it
+    /// again on every pass. The trigger opens a person's faces before the row goes, in the
+    /// deleting statement, whatever deletes it; the update opens what earlier deletes left.
+    static let personDeletionOpensFacesMigrationIdentifier = "v82_person_deletion_opens_faces"
+
+    static let personDeletionOpensFacesStatements: [String] = [
+        """
+        CREATE TRIGGER person_deleted_opens_faces BEFORE DELETE ON person
+        BEGIN
+            UPDATE face SET person_id = NULL, assignment = 0, is_key_photo = 0 WHERE person_id = OLD.id;
+        END
+        """,
+        "UPDATE face SET assignment = 0, is_key_photo = 0 WHERE person_id IS NULL AND assignment IN (1, 2, 3)",
+    ]
+
     /// The face's person has no photo row for the face's photo yet.
     private static let v81NoPersonPhoto = """
     NOT EXISTS (

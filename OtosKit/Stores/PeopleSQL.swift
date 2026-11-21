@@ -244,19 +244,25 @@ nonisolated enum PeopleSQL {
 
     static let movePersonFacesSQL = "UPDATE face SET person_id = ? WHERE person_id = ?"
 
-    /// A merge's rejections (bound: the person merged into, the person merged away, the person
-    /// merged into): what the user said a face is not carries to the merged person, except onto
-    /// a face that is theirs, which the user gave them, and the merge says the two are one.
+    /// A merge's rejections (bound: the person merged into, the person merged away): what the
+    /// user said a face is not carries to the merged person.
     static let moveRejectionsSQL = """
     INSERT OR IGNORE INTO face_rejection (library_root_id, relative_path, face_index, person_id)
-    SELECT r.library_root_id, r.relative_path, r.face_index, ? FROM face_rejection r
-    WHERE r.person_id = ? AND NOT EXISTS (
-        SELECT 1 FROM face f WHERE f.library_root_id = r.library_root_id AND f.relative_path = r.relative_path
-          AND f.face_index = r.face_index AND f.person_id = ?
+    SELECT library_root_id, relative_path, face_index, ? FROM face_rejection WHERE person_id = ?
+    """
+
+    /// After a merge, the rejections of the merged person (bound twice) on faces that are now
+    /// theirs: the user gave the face one of the two and the merge says the two are one, so the
+    /// later word stands and no face is rejected for its own person.
+    static let dropOwnFaceRejectionsSQL = """
+    DELETE FROM face_rejection WHERE person_id = ? AND EXISTS (
+        SELECT 1 FROM face f WHERE f.library_root_id = face_rejection.library_root_id
+          AND f.relative_path = face_rejection.relative_path AND f.face_index = face_rejection.face_index
+          AND f.person_id = ?
     )
     """
 
-    static let setMergedPersonSQL = "UPDATE person SET name = ?, birthday = ?, is_favorite = ? WHERE id = ?"
+    static let setMergedPersonSQL = "UPDATE person SET name = ?, birthday = ?, is_hidden = ?, is_favorite = ? WHERE id = ?"
 
     static let facesOfPersonSQL = "SELECT library_root_id, relative_path, face_index FROM face WHERE person_id = ?"
 
