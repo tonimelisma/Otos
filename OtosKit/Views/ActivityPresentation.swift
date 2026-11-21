@@ -69,7 +69,9 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             rows.append(row)
             switch entry.state {
             case let .working(since): working.append((since, workingTitle(entry.kind)))
-            case .waiting: waiting.append(row.detail)
+            // The line names what waits, since it shows one row alone: `Photos: waiting for
+            // 2,999 originals`.
+            case .waiting: waiting.append("\(row.title): \(row.detail.prefix(1).lowercased())\(row.detail.dropFirst())")
             case .upToDate: break
             }
         }

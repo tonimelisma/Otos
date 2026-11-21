@@ -23,7 +23,7 @@ checkmark.
 | --- | --- | --- | --- |
 | Before the window's work is watched (the first grid has not painted) | none | blank | blank |
 | Something working | small spinner (DES-072) | the one that has worked longest (`Finding faces`) | `and 2 more`, or none |
-| Nothing working, something waiting | `pause.circle`, secondary | what waits (`Waiting for 2,999 originals`) | `and 1 more`, or none |
+| Nothing working, something waiting | `pause.circle`, secondary | what waits, named (`Photos: waiting for 2,999 originals`) | `and 1 more`, or none |
 | Nothing working or waiting | `checkmark`, secondary | `Up to date` | none |
 
 The line names the work that started first, so a short job that starts beside a long one

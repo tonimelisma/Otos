@@ -256,7 +256,7 @@ struct ActivityPresentationTests {
             ActivityEntry(kind: .namingPlaces, state: .waiting(.retrying)),
         ])
         let presentation = ActivityPresentation.map(snapshot)
-        #expect(presentation.line == "Waiting for 1 original")
+        #expect(presentation.line == "Photos: waiting for 1 original")
         #expect(presentation.lineDetail == "and 1 more")
         #expect(presentation.lineStatus == .waiting)
         #expect(presentation.header == "Waiting on 2 things")
