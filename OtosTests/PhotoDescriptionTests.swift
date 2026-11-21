@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import FoundationModels
 import GRDB
 @testable import OtosKit
 import Synchronization
@@ -334,6 +335,68 @@ struct PhotoDescriptionTests {
         await writer.shutdown()
 
         #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
+        await store.shutdown()
+    }
+
+    /// Four stills owed a description, each with its stored preview.
+    private static func owedStills() async throws -> (library: FaceEnrichmentTests.ScannedLibrary, directory: URL) {
+        let files = ["a.jpg", "b.jpg", "c.jpg", "d.jpg"]
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: files)
+        let directory = try makeTestDirectory().appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try await library.readFaces(files.map { library.result(for: $0, faces: []) })
+        try await readText([], in: library.store)
+        try await readLabels([], in: library.store)
+        for candidate in try await library.store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates {
+            try writeSubjectJPEG(to: directory.appending(path: candidate.previewPath), center: CGPoint(x: 0.5, y: 0.5))
+        }
+        return (library, directory)
+    }
+
+    /// A request that failed in the model's service, not over the photo — the shape the system
+    /// model returned on the owner's Mac when its asset lock could not be taken (2026-11-20): a
+    /// `LanguageModelError` of no public case, carrying a `ModelManagerError` 1026.
+    private static let serviceFailure = NSError(domain: "FoundationModels.LanguageModelError", code: -1, userInfo: [
+        NSMultipleUnderlyingErrorsKey: [NSError(domain: "ModelManagerServices.ModelManagerError", code: 1026)],
+    ])
+
+    /// ENR-032: a request that failed in the model's service holds the whole writer, so one
+    /// request is made and the other owed stills are not asked until the hold's wake; every
+    /// still stays owed.
+    @Test func aServiceFailureHoldsTheWriterAfterOneRequest() async throws {
+        let (library, directory) = try await Self.owedStills()
+        let store = library.store
+        let requests = Mutex(0)
+        let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory) { _, _ in
+            requests.withLock { $0 += 1 }
+            throw Self.serviceFailure
+        }
+
+        await writer.start()
+        let quiescence = try await writer.untilQuiescent()
+        #expect(requests.withLock { $0 } == 1)
+        #expect(quiescence.wake?.kind == .backoff)
+        await writer.shutdown()
+        #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.count == 4)
+        await store.shutdown()
+    }
+
+    /// ENR-032: a request that failed over its photo passes that still over and asks the next:
+    /// each owed still is asked once, and each stays owed.
+    @Test func aPhotoFailurePassesThatStillOverAndAsksTheNext() async throws {
+        let (library, directory) = try await Self.owedStills()
+        let store = library.store
+        let requests = Mutex(0)
+        let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory) { _, _ in
+            requests.withLock { $0 += 1 }
+            throw LanguageModelSession.GenerationError.decodingFailure(.init(debugDescription: "unparsable answer"))
+        }
+
+        await writer.start()
+        _ = try await writer.untilQuiescent()
+        #expect(requests.withLock { $0 } == 4)
+        await writer.shutdown()
+        #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.count == 4)
         await store.shutdown()
     }
 

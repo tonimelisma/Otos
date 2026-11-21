@@ -14,11 +14,13 @@ import ImageIO
 ///
 /// The write lands only while the row's facts are still the ones described, so a person
 /// renamed while the model wrote is described again. A declined photo is stored as declined.
-/// A preview that cannot be read or decoded, or a request that failed, writes nothing: the
-/// still is passed over for `retryPacing`, so it never holds back the stills after it. A model
-/// that is not available, or busy (rate-limited while Otos is in the background), stops the
-/// drain until `retryPacing` or `busyPacing` passes, since nothing reports when it would
-/// answer.
+/// A preview that cannot be read or decoded, or a request that failed over its photo, writes
+/// nothing: the still is passed over for `retryPacing`, so it never holds back the stills after
+/// it. A request that failed for any other reason is about the model, not the photo
+/// (`PhotoDescriber.Failure`): a model that is not available or failing in its service, or busy
+/// (rate-limited while Otos is in the background), stops the drain until `retryPacing` or
+/// `busyPacing` passes, since nothing reports when it would answer. So a failure of the model
+/// costs one request per pacing, never one per owed still.
 ///
 /// Each request is a load that takes its turn in `LoadAdmission` (`BackgroundLoad.description`,
 /// ADR 0055): a cold request makes the system load its 3B model and image encoder, which took
@@ -449,10 +451,10 @@ actor PhotoDescriptionWriter: QuiescentOwner {
     enum Reading: Equatable {
         case written(String)
         case declined
-        /// The preview could not be read or decoded, or the request failed.
+        /// The preview could not be read or decoded, or the request failed over this photo.
         case failed
-        /// No request can be made: Apple Intelligence is off, the Mac is not eligible, or the
-        /// model is not ready.
+        /// No request can be made: Apple Intelligence is off, the Mac is not eligible, the
+        /// model is not ready, or its service failed the request.
         case modelUnavailable
         /// The model is rate-limited or answering another request.
         case busy
@@ -476,17 +478,17 @@ actor PhotoDescriptionWriter: QuiescentOwner {
             case let .written(text): return .written(text)
             case .declined: return .declined
             }
-        } catch let error as PhotoDescriber.ModelUnavailable {
-            OtosLog.metadata.errorOperation("description", phase: "modelUnavailable", fields: [
-                "relativePath": candidate.id.relativePath.rawValue, "reason": error.reason,
-            ])
-            return .modelUnavailable
         } catch {
-            let busy = PhotoDescriber.isBusy(error)
-            OtosLog.metadata.errorOperation("description", phase: busy ? "busy" : "requestFailed", fields: [
-                "relativePath": candidate.id.relativePath.rawValue, "error": String(describing: error),
+            let (reading, phase): (Reading, String) = switch PhotoDescriber.Failure(error) {
+            case .photo: (.failed, "requestFailed")
+            case .model: (.modelUnavailable, "modelUnavailable")
+            case .busy: (.busy, "busy")
+            }
+            OtosLog.metadata.errorOperation("description", phase: phase, fields: [
+                "relativePath": candidate.id.relativePath.rawValue, "causes": PhotoDescriber.causes(of: error),
+                "error": String(describing: error),
             ])
-            return busy ? .busy : .failed
+            return reading
         }
     }
 

@@ -12,10 +12,15 @@ import FoundationModels
 /// user nothing; Private Cloud Compute is not used.
 ///
 /// What a request comes to is classified by the framework's typed errors, never by their text:
-/// the model's guardrails or a refusal are a verdict on these facts (`declined`); a model that
-/// is not available — Apple Intelligence off, the Mac not eligible, the model not downloaded —
-/// is `modelUnavailable`, so the writer stops until it may try again; anything else is a failed
-/// request that writes nothing.
+/// the model's guardrails or a refusal are a verdict on these facts (`declined`). A request that
+/// fails is classified by whom it is about (`Failure`): only an error the framework attributes
+/// to this request — its context too large, its answer undecodable, its time run out — is about
+/// the photo; a rate limit or a concurrent request is the model being busy; everything else is
+/// the model, which can answer no request now — Apple Intelligence off, the Mac not eligible,
+/// the model not downloaded, a capability it lacks, or a failure in its service that no public
+/// case names (on the owner's Mac, 2026-11-20, a `ModelManagerError` 1026 relayed from an asset
+/// lock the system could not take). A model failure holds every request, so a failure that is
+/// not about the photo is never retried photo by photo across the library.
 nonisolated enum PhotoDescriber {
     /// What the model wrote.
     enum Outcome: Equatable, Sendable {
@@ -67,19 +72,52 @@ nonisolated enum PhotoDescriber {
         }
     }
 
-    /// Whether `error` says the model is rate-limited or answering another request: the
-    /// request may succeed later, and no request should be made before then.
-    static func isBusy(_ error: any Error) -> Bool {
-        if let error = error as? LanguageModelSession.GenerationError {
-            switch error {
-            case .rateLimited, .concurrentRequests: return true
-            default: return false
+    /// Whom a failed request is about, read from the framework's typed errors.
+    enum Failure: Equatable, Sendable {
+        /// The request failed over this photo and its facts: another photo may be answered.
+        case photo
+        /// The model can answer no request now: not available, lacking a capability every
+        /// request needs, or failing in its service.
+        case model
+        /// The model is rate-limited or answering another request.
+        case busy
+
+        init(_ error: any Error) {
+            if let error = error as? LanguageModelSession.GenerationError {
+                switch error {
+                case .rateLimited, .concurrentRequests: self = .busy
+                case .exceededContextWindowSize, .decodingFailure, .guardrailViolation, .refusal: self = .photo
+                case .assetsUnavailable, .unsupportedGuide, .unsupportedLanguageOrLocale: self = .model
+                @unknown default: self = .model
+                }
+            } else if let error = error as? LanguageModelError {
+                switch error {
+                case .rateLimited: self = .busy
+                case .contextSizeExceeded, .timeout, .guardrailViolation, .refusal: self = .photo
+                case .unsupportedCapability, .unsupportedTranscriptContent, .unsupportedGenerationGuide,
+                     .unsupportedLanguageOrLocale: self = .model
+                @unknown default: self = .model
+                }
+            } else {
+                // `ModelUnavailable`, and an error no public case names: the framework does not
+                // attribute it to the request, so it is the model's.
+                self = .model
             }
         }
-        if let error = error as? LanguageModelError, case .rateLimited = error {
-            return true
+    }
+
+    /// The domain and code of `error` and of each error under it, outermost first
+    /// (`FoundationModels.LanguageModelError:-1,ModelManagerServices.ModelManagerError:1026`):
+    /// what a failure's log line names it by.
+    static func causes(of error: any Error) -> String {
+        var causes: [String] = []
+        var pending: [NSError] = [error as NSError]
+        while !pending.isEmpty {
+            let next = pending.removeFirst()
+            causes.append("\(next.domain):\(next.code)")
+            pending += next.underlyingErrors.map { $0 as NSError }
         }
-        return false
+        return causes.joined(separator: ",")
     }
 
     /// Whether the system model can take a request now, as the Info pane says it.

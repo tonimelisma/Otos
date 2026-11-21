@@ -111,10 +111,19 @@ re-read the described stills at the top on every page, 1.1 to 3.4 s a page on th
 library (`docs/research/2026-11-16-idle-disk-read-attribution.md`). A change that names no
 rows, and a wake, owe one newest-first walk (`CandidateWalk`) that a newer one restarts from
 the top, read from indexes (v65): a page of sixteen read 4.9k pages on the owner-shaped
-catalog, against 17 s for the whole-set query it replaced on the owner's. A failed preview or request is
-passed over for 15 minutes; an unavailable model (Apple Intelligence off, not eligible, not
-ready) stops the drain for 15 minutes and a busy one (rate-limited in the background) for a
-minute (`time: backoff`: nothing reports when it would answer). The model call is injected
+catalog, against 17 s for the whole-set query it replaced on the owner's. A failed preview, or a request
+that failed over its photo, is passed over for 15 minutes. Whom a failed request is about is
+read from the framework's typed errors (`PhotoDescriber.Failure`): only a case that names the
+request — its context too large, its answer undecodable, its time run out — is the photo's; a
+rate limit or a concurrent request is a busy model; everything else is the model's — Apple
+Intelligence off, not eligible, not ready, a capability every request needs, or a failure in
+its service that no public case names. An unavailable model stops the drain for 15 minutes and
+a busy one for a minute (`time: backoff`: nothing reports when it would answer). On the owner's
+Mac on 2026-11-20 every request failed with a `LanguageModelError` of no public case carrying a
+`ModelManagerError` 1026, which the system relayed from an asset lock it could not open ("Too
+many open files", `MobileAssetError.AutoAsset` 6583) while Otos held 67 descriptors; read as a
+failure of each photo, it made 13,177 requests in three hours, about three a second, one per
+owed still. A failure's log line names its error chain by domain and code (`causes=`). The model call is injected
 (`PhotoDescribing`), the live one `PhotoDescriber.live` on `SystemLanguageModel.default`.
 
 **While Otos is in front too, and at memory-pressure warning** (ADR 0057 decision 8; ADR 0055
@@ -188,6 +197,10 @@ can change with the system model.
 - **Visual descriptions with face slots, names filled in when read.** No re-description on a
   rename, but the owner set re-description as the rule, and a sentence written with the names
   in reads better than one patched afterwards.
+- **A run of failures across different stills read as the model failing.** Rejected: the
+  framework's typed errors say whom a failure is about, so counting failures would guess at a
+  fact the error states, and would hold the whole drain for a run of stills whose requests each
+  failed over their own photo.
 - **Private Cloud Compute for descriptions.** Rejected for the quota (above); it stays an
   option for a few requests, such as titles, if the on-device model's quality proves short.
 - **A third-party captioner (LFM2.5-VL-450M).** Faster on the CPU, but a download, an ADR of its
