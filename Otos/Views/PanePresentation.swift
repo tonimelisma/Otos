@@ -81,55 +81,45 @@ nonisolated enum PanePresentation {
     }
 }
 
-/// Shared enrichment-thumbnail fallback for loupe and compare panes.
+/// Shared enrichment-thumbnail fallback for loupe, compare and story panes. While the
+/// thumbnail's answer is open the pane shows DES-086's centered indicator; a thumbnail that
+/// does not decode shows DES-063's slash glyph, since no wait would end.
 struct PaneThumbnailView: View {
     let id: MediaAssetID
     var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
-    @State private var image: DisplayImage?
+    @State private var thumbnail: ThumbnailLoad = .notYet
 
     var body: some View {
         Group {
-            if let image {
+            switch thumbnail {
+            case let .decoded(image):
                 Image(decorative: image.cgImage, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .accessibilityElement()
                     .accessibilityLabel("Photo")
                     .accessibilityAddTraits(.isImage)
-            } else {
+            case .unavailable:
+                Image(systemName: thumbnail.placeholderSystemName(for: nil))
+                    .font(.title2)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityLabel("No picture")
+            case .notYet:
                 ProgressView()
             }
         }
         .task(id: id) {
-            // Store hit: the filmstrip already holds this asset's current thumbnail, so it is
-            // almost always present. Never an older one its tile still paints: an edited
-            // photo would show unedited until its full decode lands.
-            if let hit = tileContentStore?.currentImage(for: id) {
-                image = hit
-                return
-            }
-            // Miss: decode in a `Task.detached`, exactly as MediaGridBridge does.
-            // The previous shape called the synchronous `loadImage` directly inside
-            // this MainActor `.task`, decoding a full JPEG on the main thread on every
-            // loupe entry and every arrow key.
-            guard let detailReader, let thumbnailDirectory else { return }
-            let detail: MediaTileDetail?
-            do {
-                detail = try await detailReader.detail(for: id)
-            } catch {
-                // Nothing is decoded; the spinner stays until this pane asks again.
-                return
-            }
-            guard let detail else { return }
-            let directory = thumbnailDirectory
-            let decoded = await Task.detached(priority: .userInitiated) {
-                MediaAssetTilePresentation.loadImage(detail: detail, thumbnailDirectory: directory)
-            }.value
-            guard !Task.isCancelled, let decodedImage = decoded.image else { return }
-            tileContentStore?.warm(id: id, image: decodedImage, detail: detail)
-            image = decodedImage
+            // The store answers first, so the filmstrip's thumbnail paints at once — only
+            // ever the current one, so an edited photo never shows unedited.
+            let loaded = await ThumbnailLoad.load(
+                for: id,
+                tileContentStore: tileContentStore,
+                thumbnailDirectory: thumbnailDirectory,
+                detailReader: detailReader
+            )
+            thumbnail = thumbnail.updated(by: loaded)
         }
     }
 }

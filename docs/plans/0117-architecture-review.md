@@ -90,7 +90,7 @@ People and the harness first.
 
 ## Steps
 
-Each step is its own increment, in this order. Steps 1, 4, 5 and 6 change what is already
+Each step is its own increment, in this order. Steps 1, 5 and 6 change what is already
 understood. Steps 3 and 7 measure or guard before they change anything, because each can
 fail silently: a missed notification, a cross-feature write. Step 2, one owner for People's
 act overlay, was measured and stopped (below).
@@ -176,25 +176,6 @@ would be broader, not safer:
   availability and reach.
 
 The observer serves as a guard, never as the source of notifications.
-
-### 4. Every thumbnail outside the grid loads through `ThumbnailLoad`
-
-**Evidence.**
-- `DuplicatesView` carries a private decoder byte-identical to `ThumbnailDecode`.
-- `PanePresentation` hand-rolls the same read → detail → decode with `Task.detached`, and drops
-  a detail-read error without logging it.
-- Face tiles are different on purpose and stay separate: they crop from the stored preview
-  through the edit's geometry, and keep their own no-blank cache.
-
-**De-risk first.** Nothing to measure. The existing Duplicates and pane tests are the oracle
-and must pass unmodified.
-
-**Change.**
-- `ThumbnailLoad` returns image, unavailable, or not yet.
-- Duplicates and the pane call it.
-- The pane's read error is logged.
-
-**Done when.** Both copies are deleted, and one test covers the unavailable glyph.
 
 ### 5. One typed asset-key predicate and SQL grouped by table
 

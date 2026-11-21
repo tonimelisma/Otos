@@ -10,8 +10,8 @@ import OSLog
 ///
 /// A failed read throws (ADR 0032, rule 4). An empty map is a fact — none of the asked
 /// IDs has a row — so a failure never arrives as one: each caller publishes nothing for
-/// it and leaves its request to be asked again. The reader logs every failure once
-/// (`op=tileDetail.read phase=failed`), so callers do not log it again; a cancelled read
+/// it and leaves its request to be asked again. The reader logs every failure once, by its
+/// error domain and code (`op=tileDetail.read phase=failed`), so callers do not log it again; a cancelled read
 /// throws `CancellationError` and is not logged.
 ///
 /// Every answer carries the choices the window holds and the catalog has not recorded yet
@@ -35,10 +35,10 @@ struct MediaTileDetailReader {
             return choices.answer(details, asked: ids, startedAt: started)
         } catch {
             if !(error is CancellationError) {
-                OtosLog.catalog.errorOperation("tileDetail.read", phase: "failed", fields: [
-                    "requested": "\(ids.count)",
-                    "error": String(describing: error),
-                ])
+                var fields = ErrorDiagnostics.fields(for: error)
+                fields["requested"] = "\(ids.count)"
+                fields["detail"] = String(describing: error)
+                OtosLog.catalog.errorOperation("tileDetail.read", phase: "failed", fields: fields)
             }
             throw error
         }

@@ -819,8 +819,7 @@ private struct DuplicateThumbnail: View {
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
-    @State private var image: DisplayImage?
-    @State private var unavailable = false
+    @State private var thumbnail: ThumbnailLoad = .notYet
     @Environment(\.colorScheme) private var colorScheme
 
     /// The picture's drawn size, aspect-fit in the cell.
@@ -846,7 +845,7 @@ private struct DuplicateThumbnail: View {
     var body: some View {
         let cell = face.cell
         ZStack {
-            if let image {
+            if let image = thumbnail.image {
                 switch face {
                 case let .photo(_, fate, size, choice):
                     let fitted = fittedSize(of: image, in: cell)
@@ -873,17 +872,15 @@ private struct DuplicateThumbnail: View {
                         .overlay { edge }
                 }
             } else {
-                Image(systemName: MediaAssetTilePresentation.placeholderIconSystemName(
-                    for: kind, thumbnailUnavailable: unavailable
-                ))
-                .font(.title2)
-                .foregroundStyle(.tertiary)
-                .frame(width: cell.width, height: cell.height)
-                .overlay {
-                    if isSelected || isHovered {
-                        edge
+                Image(systemName: thumbnail.placeholderSystemName(for: kind))
+                    .font(.title2)
+                    .foregroundStyle(.tertiary)
+                    .frame(width: cell.width, height: cell.height)
+                    .overlay {
+                        if isSelected || isHovered {
+                            edge
+                        }
                     }
-                }
             }
         }
         .frame(width: cell.width, height: cell.height)
@@ -893,37 +890,13 @@ private struct DuplicateThumbnail: View {
     }
 
     private func load() async {
-        if let cached = tileContentStore?.currentImage(for: id) {
-            image = cached
-            return
-        }
-        guard let detailReader else { return }
-        let detail: MediaTileDetail?
-        do {
-            detail = try await detailReader.detail(for: id)
-        } catch {
-            OtosLog.ui.errorOperation("duplicates.thumbnail", phase: "detailFailed", fields: [
-                "path": id.relativePath.rawValue, "error": String(describing: error),
-            ])
-            return
-        }
-        guard let detail, detail.thumbnailPath != nil else {
-            // No thumbnail stored yet: the kind glyph stays until one is.
-            return
-        }
-        guard !Task.isCancelled,
-              let decoded = await DuplicateThumbnailDecode.decode(
-                  detail: detail, thumbnailDirectory: thumbnailDirectory
-              )
-        else {
-            if !Task.isCancelled {
-                unavailable = true
-            }
-            return
-        }
-        guard !Task.isCancelled else { return }
-        tileContentStore?.warm(id: id, image: decoded, detail: detail)
-        image = decoded
+        let loaded = await ThumbnailLoad.load(
+            for: id,
+            tileContentStore: tileContentStore,
+            thumbnailDirectory: thumbnailDirectory,
+            detailReader: detailReader
+        )
+        thumbnail = thumbnail.updated(by: loaded)
     }
 }
 
@@ -964,13 +937,6 @@ private struct DuplicateThumbnailBadges: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(DesignPalette.badge, in: RoundedRectangle(cornerRadius: 3))
-    }
-}
-
-private nonisolated enum DuplicateThumbnailDecode {
-    @concurrent
-    static func decode(detail: MediaTileDetail, thumbnailDirectory: URL?) async -> DisplayImage? {
-        MediaAssetTilePresentation.decodedThumbnailImage(detail: detail, thumbnailDirectory: thumbnailDirectory)
     }
 }
 

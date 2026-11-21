@@ -174,6 +174,8 @@ private struct OnThisDayCard: View {
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
     @State private var cover: (id: MediaAssetID, image: DisplayImage)?
+    /// The key item whose thumbnail does not decode, with the answer that said so.
+    @State private var unavailableCover: (id: MediaAssetID, answer: ThumbnailLoad)?
     @Environment(\.colorScheme) private var colorScheme
 
     private static let radius: CGFloat = 9
@@ -225,7 +227,7 @@ private struct OnThisDayCard: View {
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                 } else {
-                    Image(systemName: "photo")
+                    Image(systemName: placeholder.placeholderSystemName(for: nil))
                         .font(.title2)
                         .foregroundStyle(.tertiary)
                 }
@@ -248,22 +250,31 @@ private struct OnThisDayCard: View {
             }
     }
 
+    /// DES-063's glyph for the key item: its slash variant once its thumbnail is unavailable.
+    private var placeholder: ThumbnailLoad {
+        guard let unavailableCover, unavailableCover.id == anniversary.keyItem else {
+            return .notYet
+        }
+        return unavailableCover.answer
+    }
+
     /// Keeps the cover the store holds, and decodes one only on a miss.
     private func loadCover() async {
-        if let cached = tileContentStore?.currentImage(for: anniversary.keyItem) {
-            cover = (anniversary.keyItem, cached)
-            return
-        }
-        guard let image = await ThumbnailLoad.image(
-            for: anniversary.keyItem,
+        let keyItem = anniversary.keyItem
+        let loaded = await ThumbnailLoad.load(
+            for: keyItem,
             tileContentStore: tileContentStore,
             thumbnailDirectory: thumbnailDirectory,
-            detailReader: detailReader,
-            operation: "onThisDay.cover"
-        ), !Task.isCancelled else {
-            return
+            detailReader: detailReader
+        )
+        switch loaded {
+        case let .decoded(image):
+            cover = (keyItem, image)
+        case .unavailable:
+            unavailableCover = (keyItem, loaded)
+        case .notYet:
+            break
         }
-        cover = (anniversary.keyItem, image)
     }
 }
 

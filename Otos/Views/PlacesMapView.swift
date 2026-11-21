@@ -305,7 +305,7 @@ private struct MapClusterStackView: View {
     let tileContentStore: TileContentStore?
     let thumbnailDirectory: URL?
     let detailReader: MediaTileDetailReader?
-    @State private var image: DisplayImage?
+    @State private var thumbnail: ThumbnailLoad = .notYet
     @Environment(\.colorScheme) private var colorScheme
 
     private static let edge: CGFloat = 48
@@ -314,17 +314,18 @@ private struct MapClusterStackView: View {
         ZStack(alignment: .bottomTrailing) {
             Rectangle()
                 .fill(DesignPalette.bar(for: colorScheme))
-            if let image {
+            if let image = thumbnail.image {
                 Image(decorative: image.cgImage, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: Self.edge, height: Self.edge)
             } else {
-                // DES-063: the kind glyph at tertiary strength, no spinner.
-                Image(systemName: "photo")
+                // DES-063: the kind glyph at tertiary strength, its slash variant once the
+                // thumbnail does not decode; no spinner.
+                Image(systemName: thumbnail.placeholderSystemName(for: nil))
                     .foregroundStyle(.tertiary)
             }
-            if cluster.count > 1, image != nil {
+            if cluster.count > 1, thumbnail.image != nil {
                 Text("\(cluster.count)")
                     .font(.footnote)
                     .monospacedDigit()
@@ -350,18 +351,15 @@ private struct MapClusterStackView: View {
     }
 
     private func loadThumbnail() async {
-        // The placeholder stays when nothing decodes; the next stack with this
-        // representative reads again.
-        guard let decoded = await ThumbnailLoad.image(
+        // An open answer keeps the placeholder; the next stack with this representative
+        // reads again.
+        let loaded = await ThumbnailLoad.load(
             for: cluster.id,
             tileContentStore: tileContentStore,
             thumbnailDirectory: thumbnailDirectory,
-            detailReader: detailReader,
-            operation: "map.thumbnail"
-        ) else {
-            return
-        }
-        image = decoded
+            detailReader: detailReader
+        )
+        thumbnail = thumbnail.updated(by: loaded)
     }
 }
 
