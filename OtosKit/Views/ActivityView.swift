@@ -1,10 +1,10 @@
 import SwiftUI
 
 // The sidebar's Activity line and its popover (ADR 0058, `docs/design/activity.md`,
-// DES-124): the one place the window says what background work runs and since when. The line
-// sits at the sidebar's foot at one fixed height in every state (DES-053); a click, Space or
-// Return opens a read-only popover (DES-041) listing what works now and what finished this
-// session. Passive: every string comes from `ActivityPresentation`.
+// DES-124): the one place the window says the status of the background work — working,
+// waiting on something, or up to date. The line sits at the sidebar's foot at one fixed height
+// in every state (DES-053); a click, Space or Return opens a read-only popover (DES-041) listing
+// every piece of work with its status. Passive: every string comes from `ActivityPresentation`.
 
 struct ActivityLine: View {
     let presentation: ActivityPresentation
@@ -16,31 +16,11 @@ struct ActivityLine: View {
         Button {
             showsPopover.toggle()
         } label: {
-            HStack(alignment: .center, spacing: 8) {
-                Group {
-                    if presentation.isWorking {
-                        // DES-072: it moves while work is in flight.
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                            .opacity(presentation.line == nil ? 0 : 1)
-                    }
-                }
-                .frame(width: 16, height: 16)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(presentation.line ?? " ")
-                        .font(.body)
-                        .foregroundStyle(DesignPalette.label(for: colorScheme))
-                        .lineLimit(1)
-                    Text(presentation.lineDetail ?? " ")
-                        .font(.subheadline)
-                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
+            // A two-line template holds the line's one height in every state (DES-053); the
+            // shown text is centred in it, so `Up to date` alone sits level with its glyph.
+            ZStack(alignment: .leading) {
+                content(title: " ", detail: " ").hidden()
+                content(title: presentation.line ?? " ", detail: presentation.lineDetail)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -60,6 +40,66 @@ struct ActivityLine: View {
             ActivityPopover(presentation: presentation)
         }
     }
+
+    /// The glyph level with the L2 line's centre (`ActivityStatusGlyph.onBodyLine`), then L2
+    /// over an optional L3.
+    private func content(title: String, detail: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            ActivityStatusGlyph(status: presentation.lineStatus)
+                .onBodyLine()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(DesignPalette.label(for: colorScheme))
+                    .lineLimit(1)
+                if let detail {
+                    Text(detail)
+                        .font(.subheadline)
+                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// A status's 16 pt glyph: a small spinner while working (DES-072), a pause while waiting, a
+/// checkmark when up to date, nothing while unknown.
+struct ActivityStatusGlyph: View {
+    let status: ActivityPresentation.Status?
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Group {
+            switch status {
+            case .working:
+                ProgressView()
+                    .controlSize(.small)
+            case .waiting:
+                Image(systemName: "pause.circle")
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+            case .upToDate:
+                Image(systemName: "checkmark")
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+            case nil:
+                Color.clear
+            }
+        }
+        .frame(width: 16, height: 16)
+    }
+
+    /// Centres the glyph on an L2 (`body`) line: a hidden line of that font gives the row its
+    /// first baseline and height, and the glyph sits at that line's middle.
+    func onBodyLine() -> some View {
+        Text(" ")
+            .font(.body)
+            .hidden()
+            .frame(width: 16)
+            .overlay { self }
+    }
 }
 
 struct ActivityPopover: View {
@@ -72,50 +112,31 @@ struct ActivityPopover: View {
             Text(presentation.header)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(DesignPalette.label(for: colorScheme))
-                .monospacedDigit()
                 .accessibilityAddTraits(.isHeader)
-            if !presentation.working.isEmpty {
-                rows(presentation.working)
-            }
-            if !presentation.finished.isEmpty {
-                if !presentation.working.isEmpty {
-                    Rectangle()
-                        .fill(DesignPalette.hairline(for: colorScheme))
-                        .frame(height: 1)
-                }
-                rows(presentation.finished)
-            }
-        }
-        .padding(16)
-        .frame(width: 320, alignment: .leading)
-    }
-
-    private func rows(_ rows: [ActivityPresentation.Row]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(rows) { row in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: row.systemImage)
-                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                        .frame(width: 16)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.title)
-                            .font(.body)
-                            .foregroundStyle(DesignPalette.label(for: colorScheme))
-                        if let detail = row.detail {
-                            Text(detail)
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(presentation.rows) { row in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: row.systemImage)
+                            .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title)
+                                .font(.body)
+                                .foregroundStyle(DesignPalette.label(for: colorScheme))
+                            Text(row.detail)
                                 .font(.subheadline)
                                 .foregroundStyle(DesignPalette.l3(for: colorScheme))
                                 .monospacedDigit()
                         }
+                        Spacer(minLength: 8)
+                        ActivityStatusGlyph(status: row.status)
+                            .onBodyLine()
                     }
-                    Spacer(minLength: 8)
-                    Text(row.time)
-                        .font(.subheadline)
-                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                        .monospacedDigit()
+                    .accessibilityElement(children: .combine)
                 }
-                .accessibilityElement(children: .combine)
             }
         }
+        .padding(16)
+        .frame(width: 320, alignment: .leading)
     }
 }

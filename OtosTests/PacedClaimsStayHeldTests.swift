@@ -131,7 +131,7 @@ struct PacedClaimsStayHeldTests {
         #expect(after.written == settled.written, "and none gives a claim back")
         #expect(await videoReads.total == 1, "the video is read once")
         #expect(await downloads.total == 0, "a digest alone downloads nothing")
-        #expect(await coordinator.heldRows().first { $0.waitingFor == "digestAwaitsLocalBytes" }?.count == held.count)
+        #expect(await coordinator.heldRows().first { $0.waitingFor == .digestAwaitsLocalBytes }?.count == held.count)
         await coordinator.shutdown()
         await store.shutdown()
     }

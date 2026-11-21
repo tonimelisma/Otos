@@ -167,8 +167,16 @@ nonisolated enum LaunchSettlement: String, Sendable, Comparable {
 /// its own, so its quiescence does not count them, but its status reports them
 /// (`op=owners.held`).
 nonisolated struct OwnerHeldRows: Equatable, Sendable {
-    /// What they wait for, as the log names it: `digestAwaitsLocalBytes`.
-    let waitingFor: String
+    /// What held rows wait for; the raw value is the log's name.
+    nonisolated enum Reason: String, Sendable {
+        /// Their digest waits for the original's bytes on this Mac (ADR 0009 §12).
+        case digestAwaitsLocalBytes
+        /// Their claim waits out the pacing after a failed read.
+        case pacing
+    }
+
+    /// What they wait for.
+    let waitingFor: Reason
     /// How many; nil when the count could not be read.
     let count: Int?
 }
@@ -647,7 +655,7 @@ nonisolated enum BackgroundOwnerQuiescence {
         for status in statuses {
             for held in status.held {
                 OtosLog.performance.noticeOperation("owners.held", phase: moment, fields: [
-                    "owner": status.owner, "waitingFor": held.waitingFor,
+                    "owner": status.owner, "waitingFor": held.waitingFor.rawValue,
                     "count": held.count.map { "\($0)" } ?? "unknown",
                 ])
             }

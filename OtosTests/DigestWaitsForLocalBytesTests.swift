@@ -127,7 +127,7 @@ struct DigestWaitsForLocalBytesTests {
     }
 
     private static func heldCount(_ coordinator: EnrichmentCoordinator) async -> Int? {
-        await coordinator.heldRows().first { $0.waitingFor == "digestAwaitsLocalBytes" }?.count
+        await coordinator.heldRows().first { $0.waitingFor == .digestAwaitsLocalBytes }?.count
     }
 
     @Test func aDatalessRowOwingOnlyItsDigestIsNeverDownloaded() async throws {

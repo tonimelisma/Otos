@@ -35,6 +35,21 @@ struct ActivityBoardTests {
         }
 
         func ringIdle() {}
+
+        /// Rows held for a fact outside it, which only an owner at rest is asked for.
+        private var held: [OwnerHeldRows] = []
+
+        func holdRows(_ rows: [OwnerHeldRows]) {
+            held = rows
+        }
+
+        func heldRows() async -> [OwnerHeldRows] {
+            held
+        }
+
+        func backOff(_ wake: OwnerWake?) {
+            activity.wake = wake
+        }
     }
 
     /// The board's clock, which the test moves.
@@ -73,7 +88,7 @@ struct ActivityBoardTests {
         }
     }
 
-    @Test func aKindWorksFromItsFirstRequestAndFinishesWhenItsOwnerSettles() async {
+    @Test func aKindWorksFromItsFirstRequestAndIsUpToDateWhenItsOwnerSettles() async {
         let clock = TestClock()
         let board = ActivityBoard(now: { clock.now })
         let faces = ScriptedOwner("previewFaces")
@@ -82,21 +97,25 @@ struct ActivityBoardTests {
         await board.watch([.init(kind: .findingFaces, owner: faces), .init(kind: .namingPlaces, owner: places)], room: nil)
 
         let idle = await published.newest { $0.watching }
-        #expect(idle.entries.isEmpty, "an owner that never worked is not listed")
+        #expect(idle.entries == [
+            ActivityEntry(kind: .findingFaces, state: .upToDate), ActivityEntry(kind: .namingPlaces, state: .upToDate),
+        ], "every watched kind is listed, with its status")
 
         let started = clock.now
         let request = await faces.begin()
         let working = await published.newest { $0.isWorking(.findingFaces) }
-        #expect(working.entries == [ActivityEntry(kind: .findingFaces, state: .working(since: started, heldBy: nil))])
+        #expect(working.entries == [
+            ActivityEntry(kind: .findingFaces, state: .working(since: started)), ActivityEntry(kind: .namingPlaces, state: .upToDate),
+        ])
 
         clock.advance(90)
         await faces.end(covering: request)
-        let finished = await published.newest { !$0.isWorking(.findingFaces) }
-        #expect(finished.entries == [ActivityEntry(kind: .findingFaces, state: .finished(at: started.addingTimeInterval(90)))])
+        let settled = await published.newest { !$0.isWorking(.findingFaces) }
+        #expect(settled.entries.first == ActivityEntry(kind: .findingFaces, state: .upToDate))
         await board.shutdown()
     }
 
-    @Test func aKindServedByTwoOwnersWorksWhileEitherDoesAndIsHeldOnlyWhenBothAre() async {
+    @Test func aKindServedByTwoOwnersWorksWhileEitherDoesAndIsPausedOnlyWhenBothAre() async {
         let clock = TestClock()
         let board = ActivityBoard(now: { clock.now })
         let groups = ScriptedOwner("duplicates")
@@ -112,29 +131,25 @@ struct ActivityBoardTests {
         let groupsRequest = await groups.begin()
         let signaturesRequest = await signatures.begin()
         await groups.hold(.thermal)
-        // One of two held: the kind still works unheld.
+        // One of two held: the kind still works.
         let oneHeld = await published.newest { $0.isWorking(.findingDuplicates) }
-        #expect(oneHeld.entries.first?.state == .working(since: started, heldBy: nil))
+        #expect(oneHeld.entries.first?.state == .working(since: started))
 
         await signatures.hold(.thermal)
-        let bothHeld = await published.newest {
-            $0.entries.first?.state == .working(since: started, heldBy: .thermal)
-        }
-        #expect(bothHeld.isWorking(.findingDuplicates))
+        let bothHeld = await published.newest { $0.entries.first?.state == .waiting(.paused(.thermal)) }
+        #expect(!bothHeld.isWorking(.findingDuplicates))
 
         clock.advance(5)
         await signatures.hold(nil)
         await groups.hold(nil)
         await groups.end(covering: groupsRequest)
-        // The other still works: the stretch keeps its start.
-        let stillWorking = await published.newest {
-            $0.entries.first?.state == .working(since: started, heldBy: nil)
-        }
+        // The other still works: the stretch keeps its start through the pause.
+        let stillWorking = await published.newest { $0.entries.first?.state == .working(since: started) }
         #expect(stillWorking.isWorking(.findingDuplicates))
 
         await signatures.end(covering: signaturesRequest)
-        let finished = await published.newest { !$0.isWorking(.findingDuplicates) }
-        #expect(finished.entries == [ActivityEntry(kind: .findingDuplicates, state: .finished(at: started.addingTimeInterval(5)))])
+        let settled = await published.newest { !$0.isWorking(.findingDuplicates) }
+        #expect(settled.entries == [ActivityEntry(kind: .findingDuplicates, state: .upToDate)])
         await board.shutdown()
     }
 
@@ -150,94 +165,116 @@ struct ActivityBoardTests {
         _ = await published.newest { $0.isWorking(.describingPhotos) }
 
         room.deliver(MachineConditions(memory: .normal, thermal: .nominal, lowPower: true))
-        let held = await published.newest {
-            guard case .working(_, .lowPower) = $0.entries.first?.state else { return false }
-            return true
-        }
-        #expect(held.isWorking(.describingPhotos))
+        let held = await published.newest { $0.entries.first?.state == .waiting(.paused(.lowPower)) }
+        #expect(!held.isWorking(.describingPhotos))
+        await board.shutdown()
+    }
+
+    /// An owner at rest that holds rows for their originals, or waits to try again, waits;
+    /// once it holds none and no wake is armed, it is up to date.
+    @Test func anOwnerAtRestWaitsOnWhatItHoldsAndIsUpToDateWithoutIt() async {
+        let board = ActivityBoard()
+        let enrichment = ScriptedOwner("enrichment")
+        let places = ScriptedOwner("placeNames")
+        let published = Published(board)
+        await board.watch(
+            [.init(kind: .readingPhotos, owner: enrichment), .init(kind: .namingPlaces, owner: places)], room: nil
+        )
+        _ = await published.newest { $0.watching }
+
+        await enrichment.holdRows([
+            OwnerHeldRows(waitingFor: .digestAwaitsLocalBytes, count: 2999),
+            OwnerHeldRows(waitingFor: .pacing, count: 0),
+        ])
+        await places.backOff(OwnerWake(kind: .backoff, at: ContinuousClock.now.advanced(by: .seconds(60))))
+        board.ring()
+        let waiting = await published.newest { $0.entries.last?.state == .waiting(.retrying) }
+        #expect(waiting.entries == [
+            ActivityEntry(kind: .readingPhotos, state: .waiting(.originals(count: 2999))),
+            ActivityEntry(kind: .namingPlaces, state: .waiting(.retrying)),
+        ])
+
+        await enrichment.holdRows([OwnerHeldRows(waitingFor: .digestAwaitsLocalBytes, count: 0)])
+        await places.backOff(nil)
+        board.ring()
+        let upToDate = await published.newest { $0.entries.allSatisfy { $0.state == .upToDate } }
+        #expect(upToDate.entries.count == 2)
         await board.shutdown()
     }
 }
 
 struct ActivityPresentationTests {
-    private let calendar: Calendar = {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
-        return calendar
-    }()
-
-    private let locale = Locale(identifier: "en_GB")
-    /// 2026-11-21 12:00 UTC.
     private let now = Date(timeIntervalSince1970: 1_795_262_400)
 
-    private func map(
-        _ snapshot: ActivitySnapshot, accounts: [ActivityAccount] = [], unchecked: MediaCount? = nil
-    ) -> ActivityPresentation {
-        .map(snapshot, accounts: accounts, uncheckedFaces: unchecked, now: now, calendar: calendar, locale: locale)
-    }
-
     @Test func beforeTheOwnersAreWatchedNothingIsClaimed() {
-        let presentation = map(ActivitySnapshot())
+        let presentation = ActivityPresentation.map(ActivitySnapshot())
         #expect(presentation.line == nil)
         #expect(presentation.lineDetail == nil)
-        #expect(!presentation.isWorking)
+        #expect(presentation.lineStatus == nil)
+        #expect(presentation.rows.isEmpty)
     }
 
-    @Test func nothingWorkingReadsUpToDate() {
-        let presentation = map(ActivitySnapshot(watching: true))
+    @Test func nothingWorkingOrWaitingReadsUpToDateOnEveryRow() {
+        let presentation = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
+            ActivityEntry(kind: .readingPhotos, state: .upToDate), ActivityEntry(kind: .namingPlaces, state: .upToDate),
+        ]))
         #expect(presentation.line == "Up to date")
+        #expect(presentation.lineDetail == nil)
+        #expect(presentation.lineStatus == .upToDate)
         #expect(presentation.header == "Up to date")
-        #expect(presentation.working.isEmpty)
+        #expect(presentation.rows.map(\.title) == ["Photos", "Places"])
+        #expect(presentation.rows.map(\.detail) == ["Up to date", "Up to date"])
     }
 
-    @Test func theLineNamesTheWorkThatHasRunLongestAndCountsTheRest() {
+    /// Every row says its status, never a time: the line names the work that has run longest
+    /// and counts the rest.
+    @Test func eachRowSaysWhetherItWorksWaitsOrIsUpToDate() {
         let snapshot = ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .findingFaces, state: .working(since: now.addingTimeInterval(-600), heldBy: nil)),
-            ActivityEntry(kind: .preparingSearch, state: .working(since: now.addingTimeInterval(-3600), heldBy: nil)),
-            ActivityEntry(kind: .namingPlaces, state: .finished(at: now.addingTimeInterval(-60))),
+            ActivityEntry(kind: .readingPhotos, state: .waiting(.originals(count: 2999))),
+            ActivityEntry(kind: .findingFaces, state: .working(since: now.addingTimeInterval(-600))),
+            ActivityEntry(kind: .namingPlaces, state: .upToDate),
+            ActivityEntry(kind: .preparingSearch, state: .working(since: now.addingTimeInterval(-3600))),
+            ActivityEntry(kind: .describingPhotos, state: .waiting(.paused(.lowPower))),
         ])
-        let presentation = map(snapshot, unchecked: MediaCount(photos: 8412))
+        let presentation = ActivityPresentation.map(snapshot, uncheckedFaces: MediaCount(photos: 8412))
         #expect(presentation.line == "Preparing search")
         #expect(presentation.lineDetail == "and 1 more")
+        #expect(presentation.lineStatus == .working)
         #expect(presentation.header == "Working on 2 things")
-        #expect(presentation.working.map(\.title) == ["Finding faces", "Preparing search"])
-        #expect(presentation.working.first?.detail == "8,412 photos to check")
-        #expect(presentation.working.first?.time == "Since 11:50")
-        #expect(presentation.finished.map(\.title) == ["Places named"])
-        #expect(presentation.finished.first?.time == "11:59")
+        #expect(presentation.rows.map(\.title) == ["Photos", "Faces", "Places", "Search", "Descriptions"])
+        #expect(presentation.rows.map(\.detail) == [
+            "Waiting for 2,999 originals", "Working, 8,412 photos to check", "Up to date", "Working",
+            "Paused in Low Power Mode",
+        ])
+        #expect(presentation.rows.map(\.status) == [.waiting, .working, .upToDate, .working, .waiting])
         #expect(presentation.accessibilityLabel == "Activity, Preparing search, and 1 more")
     }
 
-    @Test func aHeldKindSaysWhyOnTheLineAndInItsRow() {
+    @Test func withNothingWorkingTheLineSaysWhatWaits() {
         let snapshot = ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .describingPhotos, state: .working(since: now, heldBy: .lowPower)),
+            ActivityEntry(kind: .readingPhotos, state: .waiting(.originals(count: 1))),
+            ActivityEntry(kind: .namingPlaces, state: .waiting(.retrying)),
         ])
-        let presentation = map(snapshot)
-        #expect(presentation.line == "Describing photos")
-        #expect(presentation.lineDetail == "Paused in Low Power Mode")
-        #expect(presentation.working.first?.detail == "Paused in Low Power Mode")
+        let presentation = ActivityPresentation.map(snapshot)
+        #expect(presentation.line == "Waiting for 1 original")
+        #expect(presentation.lineDetail == "and 1 more")
+        #expect(presentation.lineStatus == .waiting)
+        #expect(presentation.header == "Waiting on 2 things")
+        #expect(presentation.rows.last?.detail == "Waiting to try again")
     }
 
-    @Test func accountsShowTheirSyncAndTheirLastSyncButNotASignedOutOne() {
-        let yesterday = now.addingTimeInterval(-86400)
+    @Test func accountsSayWhetherTheySyncWaitOrAreUpToDate() {
         let accounts = [
-            ActivityAccount(name: "Home", status: ImmichAccountStatus(reach: .online, isSyncing: true, lastSynced: yesterday)),
-            ActivityAccount(name: "Cabin", status: ImmichAccountStatus(reach: .offline, lastSynced: yesterday)),
-            ActivityAccount(name: "Old", status: ImmichAccountStatus(reach: .signedOut, lastSynced: yesterday)),
+            ActivityAccount(name: "Home", status: ImmichAccountStatus(reach: .online, isSyncing: true)),
+            ActivityAccount(name: "Cabin", status: ImmichAccountStatus(reach: .offline)),
+            ActivityAccount(name: "Old", status: ImmichAccountStatus(reach: .signedOut)),
+            ActivityAccount(name: "Work", status: ImmichAccountStatus(reach: .online)),
         ]
-        let presentation = map(ActivitySnapshot(watching: true), accounts: accounts)
-        #expect(presentation.working.map(\.title) == ["Syncing Home"])
-        #expect(presentation.finished.map(\.title) == ["Cabin synced"])
-        #expect(presentation.finished.first?.time.contains("20 Nov") == true, "another day names the day")
-        #expect(presentation.line == "Syncing Home")
-    }
-
-    @Test func finishedWorkIsListedNewestFirst() {
-        let snapshot = ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .readingPhotos, state: .finished(at: now.addingTimeInterval(-300))),
-            ActivityEntry(kind: .findingDuplicates, state: .finished(at: now.addingTimeInterval(-60))),
+        let presentation = ActivityPresentation.map(ActivitySnapshot(watching: true), accounts: accounts)
+        #expect(presentation.rows.map(\.detail) == [
+            "Syncing", "Waiting for the server", "Waiting for you to sign in", "Up to date",
         ])
-        #expect(map(snapshot).finished.map(\.title) == ["Duplicates checked", "Photos read"])
+        #expect(presentation.line == "Syncing Home")
     }
 
     @Test func theDuplicatesBarSaysItIsStillLookingOnlyWhileNothingWouldMove() {

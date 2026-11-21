@@ -51,23 +51,35 @@ nonisolated enum ActivityKind: String, CaseIterable, Sendable {
     case findingDuplicates
 }
 
+/// What a kind waits on while nothing of it works.
+nonisolated enum ActivityWait: Equatable, Sendable {
+    /// Every owner working for it waits on the machine's conditions (ADR 0057).
+    case paused(BackgroundHold)
+    /// It failed and waits to try again: a backoff wake, or rows paced after a failed read.
+    case retrying
+    /// Rows wait for their originals to be on this Mac (`digestAwaitsLocalBytes`); nil
+    /// when the count could not be read.
+    case originals(count: Int?)
+}
+
 /// What one kind is doing, as of the board's last round.
 nonisolated struct ActivityEntry: Equatable, Sendable {
     enum State: Equatable, Sendable {
-        /// Working since `since`; `heldBy` while every owner working for it waits on the
-        /// machine's conditions (ADR 0057).
-        case working(since: Date, heldBy: BackgroundHold?)
-        /// Worked this session and finished at `at`.
-        case finished(at: Date)
+        /// Working since `since`, which orders the line: the work that has run longest.
+        case working(since: Date)
+        /// Nothing of it works, and something outside it holds work it owes.
+        case waiting(ActivityWait)
+        /// Nothing of it works or waits.
+        case upToDate
     }
 
     let kind: ActivityKind
     let state: State
 }
 
-/// What the board shows: every kind that works now or worked this session, in
-/// `ActivityKind` order. `watching` is false until the window's owners are watched: before
-/// then nothing is known, and nothing is claimed (not even "up to date").
+/// What the board shows: every watched kind, in `ActivityKind` order. `watching` is false
+/// until the window's owners are watched: before then nothing is known, and nothing is
+/// claimed (not even "up to date").
 nonisolated struct ActivitySnapshot: Equatable, Sendable {
     var watching = false
     var entries: [ActivityEntry] = []
@@ -88,15 +100,9 @@ actor ActivityBoard {
         let owner: any QuiescentOwner
     }
 
-    /// What a kind did across rounds: the start of its current stretch of work, or when its
-    /// last one finished.
-    private enum Phase: Equatable {
-        case working(since: Date)
-        case finished(at: Date)
-    }
-
     private var watched: [Watched] = []
-    private var phases: [ActivityKind: Phase] = [:]
+    /// The start of each working kind's current stretch of work.
+    private var workingSince: [ActivityKind: Date] = [:]
     private var published = ActivitySnapshot()
     private let now: @Sendable () -> Date
     private let doorbell: AsyncStream<Void>.Continuation
@@ -146,44 +152,66 @@ actor ActivityBoard {
         snapshotContinuation.finish()
     }
 
-    /// Reads every watched owner's status, then applies what they say in one step.
+    /// Reads every watched owner's status, then applies what they say in one step. An owner at
+    /// rest is also asked which rows it holds for a fact outside it, which only a quiescent
+    /// owner's status leaves unsaid; a working one is working whatever it holds.
     private func round() async {
         let owners = watched
         var statuses: [(ActivityKind, OwnerStatus)] = []
         for entry in owners {
-            await statuses.append((entry.kind, entry.owner.status))
+            var status = await entry.owner.status
+            if status.isQuiescent {
+                status.held = await entry.owner.heldRows()
+            }
+            statuses.append((entry.kind, status))
         }
         guard !Task.isCancelled else { return }
         apply(statuses, at: now())
     }
 
-    /// One round's facts applied: each kind works while any of its owners is not quiescent,
-    /// and is held while every one of those waits on a hold.
+    /// What one owner at rest waits on, if anything.
+    private static func wait(of status: OwnerStatus) -> ActivityWait? {
+        if status.wake?.kind == .backoff {
+            return .retrying
+        }
+        // An unknown count is still rows held.
+        for rows in status.held where rows.count.map({ $0 > 0 }) ?? true {
+            switch rows.waitingFor {
+            case .digestAwaitsLocalBytes: return .originals(count: rows.count)
+            case .pacing: return .retrying
+            }
+        }
+        return nil
+    }
+
+    /// One round's facts applied: a kind works while any of its owners is not quiescent, and
+    /// is paused while every one of those waits on a hold; a kind none of whose owners works
+    /// waits on what the first of them waits on, and is up to date otherwise.
     private func apply(_ statuses: [(ActivityKind, OwnerStatus)], at moment: Date) {
-        var working: [ActivityKind: [OwnerStatus]] = [:]
-        for (kind, status) in statuses where !status.isQuiescent {
-            working[kind, default: []].append(status)
+        var byKind: [ActivityKind: [OwnerStatus]] = [:]
+        for (kind, status) in statuses {
+            byKind[kind, default: []].append(status)
         }
         var entries: [ActivityEntry] = []
         for kind in ActivityKind.allCases {
-            if let busy = working[kind] {
-                let since: Date = if case let .working(since) = phases[kind] {
-                    since
-                } else {
-                    moment
-                }
-                phases[kind] = .working(since: since)
+            guard let owners = byKind[kind] else { continue }
+            let busy = owners.filter { !$0.isQuiescent }
+            // A stretch of work keeps its start through a pause; it ends when nothing works.
+            workingSince[kind] = busy.isEmpty ? nil : workingSince[kind] ?? moment
+            let state: ActivityEntry.State
+            if let since = workingSince[kind] {
                 let holds = busy.map(\.heldBy)
-                let held = holds.allSatisfy { $0 != nil } ? holds.first ?? nil : nil
-                entries.append(ActivityEntry(kind: kind, state: .working(since: since, heldBy: held)))
-            } else if let phase = phases[kind] {
-                let finished: Date = switch phase {
-                case .working: moment
-                case let .finished(at): at
+                state = if holds.allSatisfy({ $0 != nil }), let hold = holds.first ?? nil {
+                    .waiting(.paused(hold))
+                } else {
+                    .working(since: since)
                 }
-                phases[kind] = .finished(at: finished)
-                entries.append(ActivityEntry(kind: kind, state: .finished(at: finished)))
+            } else if let wait = owners.lazy.compactMap(Self.wait).first {
+                state = .waiting(wait)
+            } else {
+                state = .upToDate
             }
+            entries.append(ActivityEntry(kind: kind, state: state))
         }
         let snapshot = ActivitySnapshot(watching: true, entries: entries)
         guard snapshot != published else { return }
@@ -191,17 +219,13 @@ actor ActivityBoard {
         snapshotContinuation.yield(snapshot)
         OtosLog.ui.debugOperation("activity", phase: "changed", fields: [
             "working": entries.compactMap { entry -> String? in
-                guard case let .working(_, held) = entry.state else { return nil }
-                return held.map { "\(entry.kind.rawValue)(\($0.rawValue))" } ?? entry.kind.rawValue
+                guard case .working = entry.state else { return nil }
+                return entry.kind.rawValue
             }.joined(separator: ","),
-            "finished": entries.filter {
-                if case .finished = $0.state {
-                    true
-                } else {
-                    false
-                }
-            }
-            .map(\.kind.rawValue).joined(separator: ","),
+            "waiting": entries.compactMap { entry -> String? in
+                guard case let .waiting(wait) = entry.state else { return nil }
+                return "\(entry.kind.rawValue)(\(wait))"
+            }.joined(separator: ","),
         ])
     }
 }

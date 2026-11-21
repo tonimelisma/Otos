@@ -651,8 +651,8 @@ extension EnrichmentCoordinator {
             count = nil
         }
         return [
-            OwnerHeldRows(waitingFor: "digestAwaitsLocalBytes", count: count),
-            OwnerHeldRows(waitingFor: "pacing", count: schedule.pacedClaimIDs.count),
+            OwnerHeldRows(waitingFor: .digestAwaitsLocalBytes, count: count),
+            OwnerHeldRows(waitingFor: .pacing, count: schedule.pacedClaimIDs.count),
         ]
     }
 

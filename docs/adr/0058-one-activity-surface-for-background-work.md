@@ -39,10 +39,18 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    watched owner's `OwnerStatus` as a value and applies the round in one synchronous step
    (ADR 0032 rules 1, 3). A round that changes what the board shows publishes one
    `ActivitySnapshot`, newest wins, and logs `op=activity phase=changed`.
-2. **Working is not quiescent.** A kind works while any owner serving it is not quiescent
-   (`OwnerStatus.isQuiescent`), and is held while every one of those waits on a hold. The
-   board records when a kind's stretch of work began and when it finished, in memory, for
-   this session; an Immich account's last sync is its persisted `last_synced_at`.
+2. **Status, not history: working, waiting or up to date.** A kind works while any owner
+   serving it is not quiescent (`OwnerStatus.isQuiescent`), and is paused while every one of
+   those waits on a hold. A kind none of whose owners works waits on what an owner at rest
+   reports: an armed backoff (`OwnerWake.Kind.backoff`, `Waiting to try again`) or rows it
+   holds for a fact outside it (`OwnerHeldRows`: digests awaiting the original's bytes,
+   `Waiting for 2,999 originals`; claims paced after a failed read). Held rows are asked of
+   an owner only at rest, so a working owner's rings cost no count. Otherwise the kind is up
+   to date. Every watched kind is always listed. The board keeps when a kind's stretch of
+   work began, which only orders the line (the work that has run longest); no time is shown.
+   The owner rejected a list of finish times (2026-11-21: "it's a status window. not when
+   something was done"). An Immich account reads syncing or connecting (working), offline or
+   signed out (waiting), or online (up to date).
 3. **The user's nouns, not the owners'.** `ActivityKind` names outcomes (DES-035): reading
    photos (enrichment), downloading originals (materialization), updating photo details
    (the metadata re-read), finding faces, recognizing people, naming places, preparing
@@ -55,8 +63,8 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
 4. **Honest numbers, or none.** A count is shown only where Otos already holds an exact one:
    People's unchecked tally under `Finding faces`. No owner gains a count query for this
    surface: the owed predicates are paged walks whose totals move as other owners write, and
-   a moving denominator is what DES-031 forbids. Times are the moments the board or the
-   account saw.
+   a moving denominator is what DES-031 forbids. The rows waiting for their originals are the
+   enrichment owner's own exact count, read only while it rests.
 5. **One place to look, plus the scope's own line.** The sidebar's foot carries the Activity
    line and its read-only popover (DES-124; DES-040 names it). A scope whose result is still
    being built says so in its own bar (DES-125): People and search already did, and the
@@ -75,6 +83,9 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
   moves while other owners write. Counting rows written instead mixes units across owners.
 - **A toolbar indicator.** DES-040 keeps operation status out of the toolbar, and something
   is enriching nearly always, so it would be a permanently busy control in the chrome.
+- **Start and finish times per kind.** Shipped first and rejected by the owner: a list of
+  when things finished does not say whether anything is still owed, and the user asks
+  "is it done, working, or stuck", not "when".
 - **Holding a short job on screen for a minimum time.** Time standing in for a fact (ADR 0033);
   the line names the work that has run longest instead, so a short job beside a long one
   changes only the count.
