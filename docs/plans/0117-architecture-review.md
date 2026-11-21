@@ -82,6 +82,12 @@ People and the harness first.
   (APP-087). This was the latent defect step 2's study found.
 - **#992.** Step 5's de-risk: every runtime statement naming an asset's key has a recorded
   query plan. Also step 1's attribution: the 79 ms was a test-only wrapper.
+- **Step 1.** The Store actor's local holds over 50 ms are gone:
+  - `oweFacesAgain` logs one line per call with a count and a sample;
+  - `photoDescriptionCandidatesByKey` keys and sorts its ids inside its read;
+  - the test-only `filterOptions` wrapper is deleted;
+  - derived files and a removed source's staging folder are deleted on a dedicated queue
+    (`FileDeletion`), never on the actor.
 - **#993.** Step 3's de-risk: the change-coverage guard is in every test's Store. On
   unmodified code it found three writes that announced nothing (ARC-018), and they are fixed:
   - a listing's changed source facts;
@@ -90,46 +96,10 @@ People and the harness first.
 
 ## Steps
 
-Each step is its own increment, in this order. Steps 1, 5 and 6 change what is already
+Each step is its own increment, in this order. Steps 5 and 6 change what is already
 understood. Steps 3 and 7 measure or guard before they change anything, because each can
 fail silently: a missed notification, a cross-feature write. Step 2, one owner for People's
 act overlay, was measured and stopped (below).
-
-### 1. Synchronous O(n) work and file deletion leave the Store actor
-
-**Evidence.** Measured actor holds over 50 ms:
-
-| Entry point | Hold | Cause |
-| --- | --- | --- |
-| `oweFacesAgain` | 15.6 s on a generated catalog | one `errorOperation` per photo, in a loop on the actor |
-| `photoDescriptionCandidatesByKey` | 449 ms | sorts its keys on the actor |
-| `filterOptionTally` | p99 79 ms | the test-only wrapper `filterOptions` building `.options` on the actor (`2026-11-20-filter-option-tally-hold.md`) |
-| `deleteStagingIfNeeded` | 123 ms–1.49 s for 2,000 files | file deletion on the actor (rule 6) |
-| `DerivedRemoval.perform` | up to 160 ms | file deletion on the actor (rule 6) |
-
-- Window reads waited up to 14.8 s behind the `oweFacesAgain` hold.
-- The owner's app logged no `malformedFaceRow` in seven days. That failure is a generator
-  artifact, but the shape (cost proportional to the rows, held on the actor) is real.
-
-**De-risked.** `filterOptionTally`'s own work on the actor is under 0.5 ms of CPU. Its 79 ms
-was `CatalogStore.filterOptions`, which no product code calls, building `.options` on the actor
-inside the same hold (`docs/research/2026-11-20-filter-option-tally-hold.md`). The other four
-causes are read from the code already.
-
-**Change.**
-- Delete `CatalogStore.filterOptions` and `CatalogReads.filterOptions`; their tests read
-  `filterOptionTally(...).options`, as the projection does.
-- Log once per page with a count.
-- Sort inside the read that returns the keys.
-- Delete files through a named off-actor mechanism, applying only the result on the actor.
-
-**Done when.**
-- A deterministic test bounds the work each entry does on the actor: rows visited, log lines
-  per page.
-- The hold harness shows no entry over 50 ms at the stock shape.
-
-**Not changed.** The open and migration also exceed the bar, 18–47 ms on an owner-size
-catalog. Nothing that needs the catalog can run before it, so moving it buys nothing.
 
 ### 3. Change notifications say what changed: narrow the `.all` sites
 
@@ -303,7 +273,7 @@ target builds it. So:
 
 | Proposal | Why it is dropped |
 | --- | --- |
-| Split `CatalogStore` into several actors | Stock holds: p50 0.02 ms, p95 0.44 ms, p99 1.9 ms. Every hold over 50 ms is one of step 1's local fixes. Writes span domains in one transaction (trash carry, import settlement, library removal, face undo). ADR 0002 keeps one owner. |
+| Split `CatalogStore` into several actors | Stock holds: p50 0.02 ms, p95 0.44 ms, p99 1.9 ms. Every hold over 50 ms was a local fix, landed as step 1. Writes span domains in one transaction (trash carry, import settlement, library removal, face undo). ADR 0002 keeps one owner. |
 | Derive change notifications from the writer | Step 3's evidence: broader, not safer. Kept only as step 3's guard. |
 | Promote a wanted People or Duplicates build's background reads | Their reads waited p95 0.10–0.20 ms, at most 0.20 % of a build. Small sample: 4 People and 3 Duplicates builds at owner size. |
 | A generic `SerialLane` | Saves about 11 lines a port against a 25-line bar. Lines were the wrong criterion; what it would buy is an awaitable "settled" fact for tests. Measured that way it still does not pay: six test fixes in a month waited on a fact they did not own, and only some were lane settles. |

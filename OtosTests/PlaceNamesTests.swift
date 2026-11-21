@@ -400,9 +400,9 @@ struct PlaceNamesTests {
         ], language: Self.english)
         let available: Set<LibraryRootPath> = [library.rootPath, travelPath]
         func options(_ selection: SidebarSelection) async throws -> CatalogFilterOptions {
-            try await library.store.windowReads.filterOptions(
+            try await library.store.windowReads.filterOptionTally(
                 for: selection, availableLibraryPaths: available, placeNameLanguages: library.store.windowReads.placeNameLanguages()
-            )
+            ).options
         }
 
         let pictures = try await options(.library(library.rootPath))
@@ -427,11 +427,11 @@ struct PlaceNamesTests {
 
     /// The options the library's own row offers, places in the language the catalog holds.
     static func options(_ library: FaceEnrichmentTests.ScannedLibrary) async throws -> CatalogFilterOptions {
-        try await library.store.windowReads.filterOptions(
+        try await library.store.windowReads.filterOptionTally(
             for: .library(library.rootPath),
             availableLibraryPaths: [library.rootPath],
             placeNameLanguages: library.store.windowReads.placeNameLanguages()
-        )
+        ).options
     }
 
     /// Stores `coordinate` as the item's location, as enrichment does.

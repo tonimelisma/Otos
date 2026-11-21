@@ -78,7 +78,7 @@ descriptor (APP-013, ADR 0011); the owner-state rules the reader follows (ADR 00
   one of them in that language. Checking a country includes all of it; unchecking one town
   of a checked country narrows it to the rest. The popover offers the countries and towns
   named for the located items in the scope of the sidebar row the window shows, as it
-  offers file types (`CatalogStore.filterOptions(for:)`, owner order 2026-11-13): a library
+  offers file types (`CatalogStore.filterOptionTally(for:)`, owner order 2026-11-13): a library
   never offers a town only a card holds, so no choice matches nothing. A row's leaves (an
   area or a stack under Places, a person under People, a group under Duplicates) keep the
   row's filter (APP-013) and are offered the row's choices, so a leaf never loses a choice

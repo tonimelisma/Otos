@@ -388,6 +388,37 @@ struct CatalogStoreRemovableSourceTests {
         #expect(try await store.windowReads.catalogedAssetCount(for: .library(rootPath)) == 1)
     }
 
+    /// Plan 0117 step 1 (ADR 0032 rule 6): removing a camera deletes its staging folder off the
+    /// Store's actor, while the removal still holds the root. The test holds the delete on its
+    /// thread and asks the Store meanwhile: the answer comes, and still lists the camera. A
+    /// delete run on the actor would block it, and this test would hang at that question,
+    /// which the check reports as a hang naming it.
+    @Test func removingACameraDeletesItsStagingFolderOffTheActor() async throws {
+        let temp = try makeTestDirectory()
+        let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
+        let (reached, reach) = AsyncStream<LibraryRootPath>.makeStream()
+        let release = DispatchSemaphore(value: 0)
+        let store = makeTestStore(location: .inMemory, stagingDeletionReached: { path in
+            reach.yield(path)
+            release.wait()
+        })
+        try await store.start(scansSavedLibraries: false)
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: stagingRoot, identity: .camera(id: "serial"), displayName: "Camera"
+        )
+        try Data("staged".utf8).write(to: stagingRoot.appending(path: "IMG_0001.JPG"))
+
+        let removal = Task { try await store.removeLibrary(path: rootPath) }
+        var deletions = reached.makeAsyncIterator()
+        #expect(await deletions.next() == rootPath)
+        #expect(await store.currentLibraries().map(\.path) == [rootPath])
+        release.signal()
+
+        #expect(try await removal.value == .removed)
+        #expect(!FileManager.default.fileExists(atPath: stagingRoot.path(percentEncoded: false)))
+        #expect(await store.currentLibraries().isEmpty)
+    }
+
     @Test func staleDeviceEnumerationCannotWriteOrReconcileNewerRows() async throws {
         let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)

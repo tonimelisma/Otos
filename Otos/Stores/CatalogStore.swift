@@ -847,6 +847,10 @@ actor CatalogStore {
     /// Runs where a root's namespace mutation reaches each `NamespaceMutationPoint`: where a
     /// test parks it for a competing one to arrive (ADR 0032 rule 7). Nil in the app.
     private let namespaceMutationReached: (@Sendable (NamespaceMutationPoint) async -> Void)?
+    /// Runs on the file-deletion queue just before a removed source's staging folder is
+    /// deleted (`deleteStagingIfNeeded`): where a test holds the delete to see the Store answer
+    /// meanwhile. Nil in the app.
+    private let stagingDeletionReached: (@Sendable (LibraryRootPath) -> Void)?
     private let importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)?
     /// What a test's change-coverage guard hears of every write and change (ADR 0005). Nil in
     /// the app.
@@ -1023,6 +1027,7 @@ actor CatalogStore {
         wallClock: @escaping @Sendable () -> Date = { Date() },
         initialLoadDidRead: (@Sendable () async -> Void)? = nil,
         namespaceMutationReached: (@Sendable (NamespaceMutationPoint) async -> Void)? = nil,
+        stagingDeletionReached: (@Sendable (LibraryRootPath) -> Void)? = nil,
         importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil,
         walByteBudget: Int64 = CatalogStore.defaultWALByteBudget,
         stagingContainers: StagingContainers? = nil,
@@ -1041,6 +1046,7 @@ actor CatalogStore {
         self.wallClock = wallClock
         self.initialLoadDidRead = initialLoadDidRead
         self.namespaceMutationReached = namespaceMutationReached
+        self.stagingDeletionReached = stagingDeletionReached
         self.importJournalFailure = importJournalFailure
         self.changeAudit = changeAudit
     }
@@ -1992,28 +1998,31 @@ extension CatalogStore {
     /// People read, or a vector whose bytes hold no embedding — so it is read for its faces
     /// again and the reading replaces the row (ADR 0047). A background write, in pages
     /// (`writeInPages`). Rings the change notifications only when a stamp was cleared, so the
-    /// People read that found the rows does not start itself again.
+    /// People read that found the rows does not start itself again. What it does on the actor
+    /// does not grow with the photos beyond handing them to the pages: each photo is keyed in
+    /// its page's write, and the call logs one line with their count and a few of them.
     func oweFacesAgain(_ photos: Set<MediaAssetID>) async throws {
+        guard !photos.isEmpty else { return }
         let rowIDs = roots.rowIDSnapshot()
-        let keys = photos.compactMap { photo in
-            rowIDs[photo.libraryRootPath].map { FaceRowKey.Photo(rootID: $0, path: photo.relativePath) }
-        }
-        let (cleared, _) = try await writeInPages(keys, state: 0, announcing: [.faces, .detail], naming: .rows(photos)) { photo, _, db in
+        let (cleared, _) = try await writeInPages(Array(photos), state: 0, announcing: [.faces, .detail], naming: .rows(photos)) { photo, _, db in
+            guard let rootID = rowIDs[photo.libraryRootPath] else { return 0 }
             // One statement per photo: prepared once per connection, not once per photo (its
             // program, with every index of `media_asset` it keeps, is about 150 KB).
-            try db.cachedStatement(sql: Self.oweFacesAgainSQL).execute(arguments: [photo.rootID, photo.path.rawValue])
+            try db.cachedStatement(sql: Self.oweFacesAgainSQL).execute(arguments: [rootID, photo.relativePath.rawValue])
             return db.changesCount
         }
-        for photo in photos {
-            OtosLog.catalog.errorOperation("people.snapshot", phase: "malformedFaceRow", fields: [
-                "rootPath": photo.libraryRootPath.rawValue,
-                "relativePath": photo.relativePath.rawValue,
-                "owedAgain": "\(cleared > 0)",
-            ])
-        }
+        let sample = photos.prefix(Self.malformedFaceRowSample).map { "\($0.libraryRootPath.rawValue)/\($0.relativePath.rawValue)" }
+        OtosLog.catalog.errorOperation("people.snapshot", phase: "malformedFaceRows", fields: [
+            "photos": "\(photos.count)",
+            "owedAgain": "\(cleared)",
+            "sample": sample.joined(separator: ","),
+        ])
         // A cleared stamp makes the photo one not yet checked for faces: People's tally, rung
         // by the pages that cleared one.
     }
+
+    /// The most photos `oweFacesAgain`'s line names.
+    static let malformedFaceRowSample = 5
 
     /// The vectors numbered above `vector`, in number order, at most `limit` of them: one short
     /// read of the vector table's primary key (`FaceEmbeddingSQL`). A row whose bytes are no
@@ -3573,22 +3582,6 @@ extension CatalogStore {
         return timedCount.value
     }
 
-    /// The file types and places the filter popover offers when the window shows
-    /// `selection`: those present in the scope of its sidebar row (`SidebarSelection.sidebarRow`),
-    /// so a library offers only what it holds and a leaf offers what its row does
-    /// (`CatalogFilterOptions`). Places are offered only while the catalog holds names in one
-    /// language, `placeNameLanguages` being the languages it holds (`placeNameLanguages()`).
-    func filterOptions(
-        for selection: SidebarSelection,
-        availableLibraryPaths: Set<LibraryRootPath>,
-        placeNameLanguages: Set<PlaceNameLanguage>,
-        lane: CatalogReadLane
-    ) async throws -> CatalogFilterOptions {
-        try await filterOptionTally(
-            for: selection, availableLibraryPaths: availableLibraryPaths, placeNameLanguages: placeNameLanguages, lane: lane
-        ).options
-    }
-
     /// The options of `selection`'s sidebar row as each of its rows gives them
     /// (`CatalogFilterOptionTally`), with the names of the cells they give, by each cell's key,
     /// in the one language the catalog holds names in, when it holds them in one: the whole
@@ -4502,7 +4495,7 @@ extension CatalogStore {
             discardStagedImages(staged)
             return false
         }
-        outcome.removal.perform()
+        await outcome.removal.perform()
         if outcome.applied {
             let facts: CatalogChangedFacts = outcome.held ? [.images, .faceTiles, .detail, .duplicateFacts] : [.images, .faceTiles, .detail]
             notifyCatalogChanged(.changed(facts, rows: .rows([products.id])))
@@ -5457,7 +5450,7 @@ extension CatalogStore {
         }
         OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
         discardStagedImages(writeOutcome.discardedImages)
-        writeOutcome.removal.perform()
+        await writeOutcome.removal.perform()
 
         await recordEnrichmentBatchWrite(resultsCount: results.count, writeOutcome: writeOutcome)
         await boundWAL(reason: "enrichmentBatch")
@@ -5996,10 +5989,13 @@ extension CatalogStore {
             throw error
         }
 
+        // The files go, off the actor, while the removal still holds the root: until its lease
+        // drops and the root leaves, an attachment of the same source waits rather than take
+        // the path whose staging folder is being deleted.
+        await removal.perform()
+        await deleteStagingIfNeeded(root)
         dropNamespaceMutationLease(at: path)
         removeRoot(path: path)
-        removal.perform()
-        deleteStagingIfNeeded(root)
         OtosLog.catalog.notice(
             "op=catalog.library.remove phase=finish rootPath=\(path.rawValue, privacy: .public)"
         )
@@ -6144,21 +6140,28 @@ extension CatalogStore {
         }
     }
 
-    private func deleteStagingIfNeeded(_ root: LibraryRoot) {
+    /// Deletes the staging folder of a removed source that stages its originals, on the
+    /// file-deletion queue (`FileDeletion`): thousands of staged files take the volume seconds
+    /// to delete, and the actor is not held for them.
+    private func deleteStagingIfNeeded(_ root: LibraryRoot) async {
         guard root.kind.stagesOriginals else {
             return
         }
-        do {
-            try FileManager.default.removeItem(at: root.path.url)
-        } catch let error as CocoaError where error.code == .fileNoSuchFile {
-            return
-        } catch {
-            // The staging folder is Otos's own; a removal that fails leaves it for the
-            // launch-time staging sweep, and is logged so the leftover is explained.
-            OtosLog.fileAccess.errorOperation("source.staging", phase: "removeFailed", fields: [
-                "rootPath": root.path.rawValue,
-                "error": String(describing: error),
-            ])
+        let reached = stagingDeletionReached
+        await FileDeletion.run {
+            reached?(root.path)
+            do {
+                try FileManager.default.removeItem(at: root.path.url)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                return
+            } catch {
+                // The staging folder is Otos's own; a removal that fails leaves it for the
+                // launch-time staging sweep, and is logged so the leftover is explained.
+                OtosLog.fileAccess.errorOperation("source.staging", phase: "removeFailed", fields: [
+                    "rootPath": root.path.rawValue,
+                    "error": String(describing: error),
+                ])
+            }
         }
     }
 
@@ -7024,7 +7027,7 @@ extension CatalogStore {
             return try (rows: written.rows, removal: derivedFolder?.unname(written.purgedImages, db: db) ?? .nothing)
         }
         // The rows are gone whether or not the scan is still this Store's: their files go too.
-        timed.value.removal.perform()
+        await timed.value.removal.perform()
         guard owns(scan) else {
             throw CancellationError()
         }
@@ -7281,7 +7284,7 @@ extension CatalogStore {
             let removal = try derivedFolder?.unname(missing.flatMap(\.derivedImagePaths), db: db) ?? .nothing
             return (removal: removal, purged: missing.count, settled: settled, rows: rows)
         }
-        timed.value.removal.perform()
+        await timed.value.removal.perform()
         guard owns(scan) else {
             throw CancellationError()
         }
@@ -8804,7 +8807,7 @@ private extension CatalogStore {
             }
             return try (rows.updatedRows, derivedFolder?.unname(purgedThumbnails, db: db) ?? .nothing)
         }
-        removal.perform()
+        await removal.perform()
         // Removal and same-path replacement can run while GRDB owns the writer.
         // Never treat an old row's reconciliation as proof about the replacement root.
         guard owns(scan) else {
@@ -10054,7 +10057,7 @@ private extension CatalogStore {
             guard let deleted else {
                 return .unchanged
             }
-            deleted.perform()
+            await deleted.perform()
         } catch {
             OtosLog.catalog.errorOperation("catalog.reconcile", phase: "deleteFailed", fields: [
                 "path": relativePath.rawValue,
@@ -10188,7 +10191,6 @@ extension CatalogStore {
         guard let erased else {
             return
         }
-        erased.removal.perform()
         let derivedImagePaths = erased.paths
         OtosLog.catalog.noticeOperation("import.erase.catalog", phase: "removed", fields: [
             "rootPath": operation.sourceRootPath.rawValue,
@@ -10197,6 +10199,9 @@ extension CatalogStore {
         ])
         bumpNamespaceRevision(for: operation.sourceRootPath)
         notifyCatalogChanged(.changed(.all))
+        // The write above runs on the actor, so the row's removal is applied with it, before
+        // this first suspension; the files go after, off the actor.
+        await erased.removal.perform()
     }
 
     func beginImportOperation(_ operation: ActiveFileOperation) async throws {
@@ -11636,18 +11641,20 @@ extension CatalogStore {
 
     /// Those of `ids` owed a description now, by the walk's rule, each read by its own key
     /// (`PhotoDescriptionStorage.keyedCandidateSQL`), but those in `excluding`: the stills a
-    /// change named, which the writer describes without walking the backlog again.
+    /// change named, which the writer describes without walking the backlog again. On the actor
+    /// it reads only the roots; the asked ids are keyed and put in key order inside the read,
+    /// off the actor, since a change can name a whole library's stills.
     func photoDescriptionCandidatesByKey(
         of ids: Set<MediaAssetID>,
         excluding: some Collection<MediaAssetID> & Sendable = Set<MediaAssetID>(),
         lane: CatalogReadLane
     ) async throws -> [PhotoDescriptionCandidate] {
         let rowIDs = roots.values.filter(\.root.kind.readsFaces).reduce(into: [LibraryRootPath: Int64]()) { $0[$1.root.path] = $1.rowID }
-        let keys = ids.compactMap { id in rowIDs[id.libraryRootPath].map { (rootID: $0, path: id.relativePath.rawValue) } }
-            .sorted { ($0.rootID, $0.path) < ($1.rootID, $1.path) }
-        guard !keys.isEmpty else { return [] }
+        guard !rowIDs.isEmpty, !ids.isEmpty else { return [] }
         let pathsByRowID = roots.pathsByRowID
         return try await reader(for: lane).readFreeingConnection { db in
+            let keys = ids.compactMap { id in rowIDs[id.libraryRootPath].map { (rootID: $0, path: id.relativePath.rawValue) } }
+                .sorted { ($0.rootID, $0.path) < ($1.rootID, $1.path) }
             let statement = try db.cachedStatement(sql: PhotoDescriptionStorage.keyedCandidateSQL)
             var rows: [Row] = []
             for key in keys {

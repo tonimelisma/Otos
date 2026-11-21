@@ -303,11 +303,11 @@ struct ProjectionEnrichmentCoalescingTests {
         #expect(after.options == before.options, "before=\(before) after=\(after)")
         #expect(await window.projection.keyedFilterOptionsQueryCount == keyedBefore + UInt64(moves.count) + 1)
         let shown = try #require(await window.recorder.snapshot().last)
-        let full = try await window.store.windowReads.filterOptions(
+        let full = try await window.store.windowReads.filterOptionTally(
             for: shown.resolvedSidebarSelection,
             availableLibraryPaths: Set(shown.libraries.map(\.path)),
             placeNameLanguages: [language]
-        )
+        ).options
         #expect(shown.filterOptions == full)
         #expect(full.countries == [PlaceFilterCountry(name: "Suomi", towns: ["Helsinki", "Esbo"])])
         await window.store.shutdown()

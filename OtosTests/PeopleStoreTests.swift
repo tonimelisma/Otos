@@ -1284,6 +1284,33 @@ struct PeopleStoreTests {
         return (library, databaseURL)
     }
 
+    /// Plan 0117 step 1: owing faces again for many photos logs one line for the call, with the
+    /// photos' count, what it cleared and a few of them, however many pages it writes. A line
+    /// per photo, written on the Store's actor, held it for 15.6 s at 95,000 photos.
+    @Test func owingFacesAgainLogsOneLineForAllItsPages() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
+        try await library.readFaces([
+            library.result(for: "a.jpg", faces: [Self.face(x: 0.1)]),
+            library.result(for: "b.jpg", faces: [Self.face(x: 0.3)]),
+        ])
+        // Two stamped photos and enough unknown ones for more than one page of writes.
+        let unknown = (0 ..< CatalogStore.backgroundWritePage + 40).map { library.id("missing-\($0).jpg") }
+        let photos = Set([library.id("a.jpg"), library.id("b.jpg")] + unknown)
+        let since = Date()
+
+        try await library.store.oweFacesAgain(photos)
+
+        let lines = try LoggedLines.read(
+            .catalog, since: since, prefix: "op=people.snapshot phase=malformedFaceRows", naming: library.rootPath.rawValue
+        )
+        #expect(lines.count == 1)
+        let fields = try LoggedLines.fields(of: #require(lines.first))
+        #expect(fields["photos"] == "\(photos.count)")
+        #expect(fields["owedAgain"] == "2")
+        #expect(fields["sample"]?.split(separator: ",").count == CatalogStore.malformedFaceRowSample)
+        await library.store.shutdown()
+    }
+
     /// A face like every other `lookalike`: one direction, nudged a little per face.
     private static func lookalike(_ index: Int) -> DetectedFace {
         let base = FaceEnrichmentTests.face(seed: 3)

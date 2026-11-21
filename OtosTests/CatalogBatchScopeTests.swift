@@ -51,8 +51,8 @@ struct CatalogBatchScopeTests {
         let libraryCatalogedCount = try await store.windowReads.catalogedAssetCount(for: .library(rootPath))
         // The options are the shown row's: the batch offers its clips' type alone, the
         // library every type it holds.
-        let batchOptions = try await store.windowReads.filterOptions(for: batchScope, availableLibraryPaths: available, placeNameLanguages: [])
-        let options = try await store.windowReads.filterOptions(for: .library(rootPath), availableLibraryPaths: available, placeNameLanguages: [])
+        let batchOptions = try await store.windowReads.filterOptionTally(for: batchScope, availableLibraryPaths: available, placeNameLanguages: []).options
+        let options = try await store.windowReads.filterOptionTally(for: .library(rootPath), availableLibraryPaths: available, placeNameLanguages: []).options
         await store.shutdown()
 
         #expect(Set(batchIDs.map(\.relativePath.rawValue)) == ["clip-one.mp4", "clip-two.mp4"])

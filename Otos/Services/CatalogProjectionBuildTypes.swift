@@ -87,7 +87,7 @@ nonisolated extension CatalogChangedFacts {
 
     /// What the filter's options for the sidebar row `row` depend on: which rows the row
     /// holds, their kinds and formats, and the places named for them. Not which file is a
-    /// copy: the options are read with every copy (`CatalogStore.filterOptions`), and 227 of
+    /// copy: the options are read with every copy (`CatalogStore.filterOptionTally`), and 227 of
     /// the 277 changes of the owner's tour named copies
     /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
     static func filterOptionsInputs(of row: SidebarSelection) -> CatalogChangedFacts {

@@ -640,24 +640,53 @@ nonisolated struct DerivedRemoval: Sendable {
 
     /// Deletes the files; once, after the write that counted them out committed. A delete
     /// that fails leaves a file the counters no longer hold, so it keeps the session's marker.
-    func perform() {
+    /// The deletes run on the file-deletion queue (`FileDeletion`), never on the actor that
+    /// awaits them.
+    func perform() async {
         guard let folder else {
             return
         }
-        var failed = false
-        for entry in entries {
-            do {
-                try FileManager.default.removeItem(at: ThumbnailStore.url(for: entry.name, in: folder.directory))
-            } catch where ErrorDiagnostics.isMissingFile(error) {
-                failed = true
-            } catch {
-                failed = true
-                OtosLog.thumbnails.errorOperation("thumbnail.cleanup", phase: "removeFailed", fields: [
-                    "kind": DerivedFileReconciliation.Kind(name: entry.name).rawValue,
-                    "error": String(describing: error),
-                ])
+        let entries = entries
+        await FileDeletion.run {
+            var failed = false
+            for entry in entries {
+                do {
+                    try FileManager.default.removeItem(at: ThumbnailStore.url(for: entry.name, in: folder.directory))
+                } catch where ErrorDiagnostics.isMissingFile(error) {
+                    failed = true
+                } catch {
+                    failed = true
+                    OtosLog.thumbnails.errorOperation("thumbnail.cleanup", phase: "removeFailed", fields: [
+                        "kind": DerivedFileReconciliation.Kind(name: entry.name).rawValue,
+                        "error": String(describing: error),
+                    ])
+                }
+            }
+            folder.end(rolledBack: failed)
+        }
+    }
+}
+
+/// The queue Otos deletes its own files on: a write's superseded derived images
+/// (`DerivedRemoval`) and a removed source's staging folder. A delete holds its thread for as
+/// long as the volume takes — 160 ms for one write's derived files, 1.5 s for a staging folder
+/// of 2,000 files (`docs/research/2026-11-19-store-change-facts-actor-hold-read-turns.md`) — so
+/// it runs neither on the actor that asked for it nor on the cooperative pool, whose threads
+/// are one per core (ADR 0032 rule 6). A dispatch queue's threads are its own.
+nonisolated enum FileDeletion {
+    private static let queue = DispatchQueue(
+        label: "net.melisma.Otos.file-deletion",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
+    /// Runs `delete`, blocking file-system work, on the deletion queue, and returns once it ran.
+    static func run(_ delete: @escaping @Sendable () -> Void) async {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                delete()
+                continuation.resume()
             }
         }
-        folder.end(rolledBack: failed)
     }
 }

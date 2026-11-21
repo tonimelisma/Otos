@@ -382,8 +382,8 @@ enum StallReproduction {
                 return ids.count
             }
             try await replay("filterOptions", scope: scope, scopeRows: ids.count) {
-                try await store.windowReads.filterOptions(for: scope, availableLibraryPaths: available, placeNameLanguages: [language])
-                    .formatsByKind.count
+                try await store.windowReads.filterOptionTally(for: scope, availableLibraryPaths: available, placeNameLanguages: [language])
+                    .options.formatsByKind.count
             }
             // An imports read counts the photos of the batches it returns.
             try await replay("importBatches", scope: scope) {
@@ -503,7 +503,7 @@ enum StallReproduction {
             try await store.windowReads.orderedAssetIDs(for: CatalogQueryDescriptor(scope: scope), availableLibraryPaths: available).ids
         }
         async let options = timed("filterOptions", scope: name) {
-            try await store.windowReads.filterOptions(for: scope, availableLibraryPaths: available, placeNameLanguages: [language])
+            try await store.windowReads.filterOptionTally(for: scope, availableLibraryPaths: available, placeNameLanguages: [language]).options
         }
         async let imports = timed("importBatches", scope: name) {
             try await store.windowReads.importBatches(counting: .newest(20, and: nil))

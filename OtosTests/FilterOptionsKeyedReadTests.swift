@@ -95,9 +95,9 @@ struct FilterOptionsKeyedReadTests {
             }
             #expect(await projection.keyedFilterOptionsQueryCount == keyedBefore + owed, "step \(step)")
             let wholeStart = clock.now
-            let whole = try await store.windowReads.filterOptions(
+            let whole = try await store.windowReads.filterOptionTally(
                 for: .allMedia, availableLibraryPaths: Set(shown.libraries.map(\.path)), placeNameLanguages: [language]
-            )
+            ).options
             let wholeMs = DiagnosticsTiming.milliseconds(wholeStart.duration(to: clock.now))
             #expect(shown.filterOptions == whole, "step \(step)")
             lines.append("step=\(step) writeToPublishedMs=\(keyedMs) wholeReadMs=\(wholeMs)")

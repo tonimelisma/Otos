@@ -362,14 +362,6 @@ extension CatalogReads where Lane == WindowLane {
         try await store.visibleAssetCount(for: selection, filter: filter, availableLibraryPaths: availableLibraryPaths, lane: lane)
     }
 
-    func filterOptions(
-        for selection: SidebarSelection,
-        availableLibraryPaths: Set<LibraryRootPath>,
-        placeNameLanguages: Set<PlaceNameLanguage>
-    ) async throws -> CatalogFilterOptions {
-        try await store.filterOptions(for: selection, availableLibraryPaths: availableLibraryPaths, placeNameLanguages: placeNameLanguages, lane: lane)
-    }
-
     func placeNameLanguages() async throws -> Set<PlaceNameLanguage> {
         try await store.placeNameLanguages(lane: lane)
     }
