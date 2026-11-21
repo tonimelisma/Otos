@@ -136,6 +136,13 @@ if ! "$ROOT_DIR/script/time-guard.sh"; then
   echo "op=check.stage phase=fail stage=fast-gates reason=untaggedTime" >&2
   fast_failed=1
 fi
+# The app folder holds only the app's three entries; every other file is the framework's
+# and lives under OtosKit/ (ADR 0023). Its self-test seeds a stray and a clean folder.
+if ! "$ROOT_DIR/script/guard-app-folder.sh" check \
+  || ! "$ROOT_DIR/script/guard-app-folder.sh" self-test; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=appFolder" >&2
+  fast_failed=1
+fi
 # Every CI job's checks run here too, so a passing check is a passing CI. The text checks
 # read a commit, so they read one of the tree as it stands: written from a scratch index
 # with untracked files added, which moves nothing in the checkout.
@@ -184,7 +191,7 @@ check_tier() {
     case "$path" in
       script/check.sh | script/verify.sh | script/build.sh | script/test.sh | script/lib/*)
         echo full; return ;;
-      Otos/* | OtosTests/*)
+      Otos/* | OtosKit/* | OtosTests/*)
         echo full; return ;;
       docs/* | .github/* | .claude/* | script/* | *.md | .swiftlint.yml | .swiftformat)
         ;;

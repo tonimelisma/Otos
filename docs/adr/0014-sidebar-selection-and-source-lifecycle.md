@@ -121,10 +121,10 @@ failure a first-class, user-visible result instead of a swallowed error.
 
 ## References
 
-- Implemented in `Otos/Services/SidebarSelectionPolicy.swift`,
-  `Otos/ViewModels/CatalogWindowViewModel.swift`,
-  `Otos/ViewModels/CatalogWindowViewModelMutation.swift`,
-  `Otos/Services/CatalogWindowPolicy.swift`, `Otos/Views/SidebarView.swift`.
+- Implemented in `OtosKit/Services/SidebarSelectionPolicy.swift`,
+  `OtosKit/ViewModels/CatalogWindowViewModel.swift`,
+  `OtosKit/ViewModels/CatalogWindowViewModelMutation.swift`,
+  `OtosKit/Services/CatalogWindowPolicy.swift`, `OtosKit/Views/SidebarView.swift`.
 - Tested by `OtosTests/SidebarSelectionPolicyTests.swift`,
   `OtosTests/CatalogWindowViewModelDefaultSelectionTests.swift`,
   `OtosTests/RemovableEjectOutcomeTests.swift`.

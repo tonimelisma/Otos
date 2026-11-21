@@ -6,9 +6,9 @@ player a card starts. Cites `docs/design/design-system.md` by ID; rules are
 not restated. Decision record: `docs/adr/0049-on-this-day-and-its-story-player.md`.
 Layout survey: `docs/research/2026-11-09-on-this-day-layouts.md`.
 
-Owners: `Otos/Views/OnThisDayView.swift` (bar and cards), `Otos/Views/StoryPlayerView.swift`
-(player), `Otos/Views/OnThisDayPresentation.swift` (every string). Content:
-`CatalogOnThisDayState` (`Otos/Models/OnThisDayModels.swift`); the story:
+Owners: `OtosKit/Views/OnThisDayView.swift` (bar and cards), `OtosKit/Views/StoryPlayerView.swift`
+(player), `OtosKit/Views/OnThisDayPresentation.swift` (every string). Content:
+`CatalogOnThisDayState` (`OtosKit/Models/OnThisDayModels.swift`); the story:
 `CatalogWindowViewModelStory.swift` with `StoryPlaybackPolicy`.
 
 ## Reference

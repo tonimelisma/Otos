@@ -123,7 +123,7 @@ Plan 0106 (time is never a stand-in for a fact that can be known) is complete ac
 seven increments and was removed at closure. It opened 2026-10-05, after test waits with
 wall-clock deadlines were shown to fail on load and to hide tests that asserted nothing.
 Its rule and the six cases where time may appear live in ADR 0033 and AGENTS.md, and
-`script/time-guard.sh` checks every wait in `Otos/`, `OtosTests/` and `script/` in the
+`script/time-guard.sh` checks every wait in `Otos/`, `OtosKit/`, `OtosTests/` and `script/` in the
 fast gates and CI. Test waits wait on owner-reported facts with no deadline; the eject
 drain waits on the work it drains; Otos's own Eject resumes a card on its reported
 failure, and a refused unmount started elsewhere — which the system reports to no one

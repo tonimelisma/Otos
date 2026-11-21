@@ -175,7 +175,7 @@ grouping had put with the right child.
   construction (scaled on read from the model, checked on read from the catalog), because
   every rule below is a cosine and assignment computes cosines as plain dot products.
 - **Weights:** linear symmetric per-channel 8-bit weights, 66 MB, shipped as an `.mlpackage` in
-  `Otos/Resources` like the models of ADR 0045.
+  `OtosKit/Resources` like the models of ADR 0045.
   - **Why int8:** against fp32 it changed one decision of 2,196 (an adult's face left
     unassigned, not a wrong match), and none on a child's face.
   - **Why not fp16:** 131 MB, which exceeds GitHub's 100 MB per-file limit.
@@ -572,7 +572,7 @@ with the faces, the column costs 24 M and the 257 photos with copies 47 M (2026-
   host). Otos accepts a non-commercial research licence (owner decision, 2026-11-07).
 - **Shipping:** the converted weights ship in the private repository only.
 - **Attribution:** the MIT text and the AdaFace citation (Kim, Jain and Liu, CVPR 2022) ship in
-  `Otos/Resources/Licenses`. The conversion is stated there.
+  `OtosKit/Resources/Licenses`. The conversion is stated there.
 
 ## Rejected alternatives
 

@@ -4,8 +4,8 @@ The Places scope: a sidebar row whose detail is a map of thumbnail stacks, and a
 area of the map under it in the ordinary view modes. Cites `docs/design/design-system.md` by ID; rules are not
 restated. Decision record: `docs/adr/0040-places-scope-and-map-clustering.md`.
 
-Owner: `Otos/Views/PlacesMapView.swift`. Content: `CatalogMapState`
-(`Otos/Models/MapModels.swift`), clusters from `MapClusterPolicy` through
+Owner: `OtosKit/Views/PlacesMapView.swift`. Content: `CatalogMapState`
+(`OtosKit/Models/MapModels.swift`), clusters from `MapClusterPolicy` through
 `CatalogWindowViewModelMap.swift`.
 
 ## Reference

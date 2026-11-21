@@ -92,7 +92,7 @@ exists only for iPhone back-camera photos.
 - FocalNet: MIT.
 - GeoCalib: code Apache-2.0; weights CC-BY-4.0, © 2024 ETH Zurich. Converting the weights is a
   modification under that licence and is stated.
-- The licence texts and the attribution ship in the framework (`Otos/Resources/Licenses`).
+- The licence texts and the attribution ship in the framework (`OtosKit/Resources/Licenses`).
 
 ## Rejected alternatives
 

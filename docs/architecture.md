@@ -17,20 +17,21 @@ schemas refuse to open instead of erasing.
 
 ```
 Otos.xcodeproj
-├── OtosKit       (framework)          — everything below (Models/Services/Stores/
-│                                         Support/Views/ViewModels); links
-│                                         GRDB, MediaMetadata; OtosApp is its one
-│                                         public type
-├── Otos          (app)                — main.swift + Assets.xcassets only; links
-│                                         and embeds OtosKit
-└── OtosTests     (unhosted bundle)    — links OtosKit directly, no TEST_HOST
+├── OtosKit       (framework)          — OtosKit/: everything below (Models/Services/
+│                                         Stores/Support/Views/ViewModels/Resources);
+│                                         links GRDB, MediaMetadata; OtosApp is its
+│                                         one public type
+├── Otos          (app)                — Otos/: main.swift + Assets.xcassets +
+│                                         Otos.icon only; links and embeds OtosKit
+└── OtosTests     (unhosted bundle)    — OtosTests/: links OtosKit directly, no
+                                          TEST_HOST
 ```
 
-No source or test file lives in a directory that names its target; `Otos/` and
-`OtosTests/` are unchanged on disk (ADR 0023). Target membership is Xcode
-project-file state, not filesystem layout — "where to make a change" below
-still answers in terms of what a type does, not which of these four targets
-compiles it.
+Each target compiles exactly one folder, through its own synchronized group, so a file's
+folder is its target: a file added under `OtosKit/` is the framework's, and nothing else
+compiles it (ADR 0023). `script/guard-app-folder.sh` fails when anything but `main.swift`,
+`Assets.xcassets/` and `Otos.icon/` is under `Otos/`. "Where to make a change" below still
+answers in terms of what a type does.
 
 ## One-directional dataflow
 
@@ -396,7 +397,7 @@ everything expensive happens on an actor off the main thread.
 | what a kind of root is or may do | `LibraryRootKind`'s capabilities (one exhaustive `switch` each; never compare kinds at a call site) and `StagingContainer` for kinds that stage originals (ADR 0046 §3) |
 | an Immich account's root | `CatalogStore.addImmichAccount` (identity `immich:<server>#<user>`, staging under the build's `RemoteStaging` (`StagingContainers`, re-derived at every load in `normalizedLoadedRoot`), `remote_base_url`); rows through the kind-neutral listing API (`beginSourceListing` …), a full resync completing through `completeSourceResync`; available at launch from its stored listing (`availabilityAtLaunch`), claimed by enrichment for metadata and a video's faces only while its server answers (`RootRuntimeState.isSourceAnswering`, `RemoteRangeAccess`) (ADR 0046) |
 | import plan lifecycle / footer | `MediaOperationCoordinator` + ViewModel media-ops intents; views stay passive |
-| content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor` and reads through `FileBytes` (`Otos/Support/FileBytes.swift`, the one home for bulk file reads: one reused `read(2)` buffer, or a whole file in a mapped region); enrichment hashes only byte-local roots (`.removableVolume` is gated off, ADR 0018/0013); `CatalogStore` validates source signatures and owns atomic overlay/journal settlement, including each imported copy's product origins (`reused`/`provisional`/`owed`) |
+| content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor` and reads through `FileBytes` (`OtosKit/Support/FileBytes.swift`, the one home for bulk file reads: one reused `read(2)` buffer, or a whole file in a mapped region); enrichment hashes only byte-local roots (`.removableVolume` is gated off, ADR 0018/0013); `CatalogStore` validates source signatures and owns atomic overlay/journal settlement, including each imported copy's product origins (`reused`/`provisional`/`owed`) |
 | library reorganization | `LibraryReorganizationRunner` + ViewModel confirmation/remap; planner/executor stay off MainActor |
 | heavy byte-reading work | keep decoding/parsing in its consumer, check live `FileMaterialization` status, and submit deliberate downloads to `MaterializationCoordinator` |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |

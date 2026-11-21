@@ -53,7 +53,7 @@ while IFS= read -r file; do
     *.swift) check_file "$file" "$SWIFT_WAIT" ;;
     *.sh) check_file "$file" "$SHELL_WAIT" ;;
   esac
-done < <(git ls-files Otos OtosTests script)
+done < <(git ls-files Otos OtosKit OtosTests script)
 
 if (( violations > 0 )); then
   echo "op=time-guard phase=finish outcome=failed violations=$violations" >&2

@@ -472,7 +472,7 @@ new rendering mechanism.
 - Apple, [NSCollectionViewLayout](https://developer.apple.com/documentation/appkit/nscollectionviewlayout);
   `docs/research/2026-11-15-grid-layout-without-compositional-solve.md` (the
   compositional layout's geometry and animation measured against `MediaGridLayout`).
-- Implemented in `Otos/Views/MediaGrid*.swift` (the layout in `MediaGridLayout.swift`),
-  `Otos/Views/MediaAssetTileView.swift`, `Otos/Views/GridSelection.swift`,
-  `Otos/ViewModels/CatalogWindowViewModelSelection.swift`;
+- Implemented in `OtosKit/Views/MediaGrid*.swift` (the layout in `MediaGridLayout.swift`),
+  `OtosKit/Views/MediaAssetTileView.swift`, `OtosKit/Views/GridSelection.swift`,
+  `OtosKit/ViewModels/CatalogWindowViewModelSelection.swift`;
   requirements APP-006/010/011/015/030.

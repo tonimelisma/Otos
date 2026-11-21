@@ -123,53 +123,18 @@ People and the harness first.
   - Every recorded plan is unchanged. Two statements that named a key without being listed
     are now recorded: `AssetRowSQL.digestStandingSQL` (a runtime read that sat in
     `CatalogSchema`) and `MediaCompanionSQL.otherSpellingSQL`.
+- **Step 8.** The sources are in `OtosKit/` (ADR 0023): every source and resource the
+  framework compiles moved there with `git mv`, and `Otos/` holds only `main.swift`,
+  `Assets.xcassets` and `Otos.icon`. Each target compiles its own synchronized folder, and
+  both `membershipExceptions` lists are gone. The framework's resources are the installed
+  app's 20. `script/guard-app-folder.sh`, a fast gate, fails on any other file under `Otos/`,
+  of any type (E8's first amendment). Every script, lint rule and doc that named a moved path
+  names `OtosKit/` (the second); dated research notes keep the paths they were written with.
 
 ## Steps
 
-Each step is its own increment, in this order. Step 2, one owner for People's act overlay,
-was measured and stopped (below). Steps 3, 5 and 7 have landed (above).
-
-### 8. Move the sources into `OtosKit/`
-
-**Evidence.** A trial move (`f7360fdb`):
-- deleted the app target's 307-entry exception list and OtosKit's 2;
-- had Xcode 27 beta keep resource membership correct (20 framework resources, five compiled
-  models);
-- built and passed every test unmodified, twice.
-
-The only red gate was `requirements-authority-check`, because 1,326 doc references name `Otos/`
-paths:
-- 1,180 in `requirements.md`
-- 80 in `docs/design`
-- 43 in `docs/research`
-- 22 in ADRs, across 12 files
-- 1 in `architecture.md`
-
-**De-risked: go, with two amendments** (`docs/research/2026-11-20-edit-access-and-move-replay.md`,
-E8). The last 30 commits that touched `Otos/` were replayed onto the move with rename
-detection:
-- 28 picked cleanly, carrying all 163 file changes.
-- The 2 that added a file conflicted loudly, and git placed both files at the right `OtosKit/`
-  path.
-- The replayed tree compiles.
-
-The one silent case: a new file in a **new** folder picks cleanly and lands where the app
-target builds it. So:
-- **Guard.** It rejects every file under `Otos/` except `main.swift`, `Assets.xcassets/` and
-  `Otos.icon/`, not only `.swift`; a resource in a new folder would otherwise go into the app
-  bundle. It lands in the move's own PR. #978 already makes a guard pointed at a stale path
-  fail.
-- **Scripts.** The move rewrites every script that names an `Otos/` path, not only the gates:
-  `scene-label-hierarchy.sh` still wrote to `Otos/Resources` and nothing failed.
-- **Timing.** The move merges when no open PR changes `Otos/`. There were none on 2026-11-20.
-
-**Change.**
-- The move.
-- The script and lint path updates the trial listed.
-- A mechanical rewrite of those references.
-- ADR 0023 rewritten: no file stays in a folder the app target also sees.
-
-**Done when.** The full `script/check.sh` is green on the moved tree.
+Every step has landed or was stopped. Step 2, one owner for People's act overlay, was
+measured and stopped (below). What remains is the closing recount of the fix table (above).
 
 ## Measured and dropped
 

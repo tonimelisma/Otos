@@ -81,7 +81,7 @@ scale × window long edge). It:
    before it reads a byte, and is never held.
 6. Makes every image a layer shows — the loupe's and Compare's photos, a live edit, the
    grid's thumbnails, the face tiles, On This Day's covers, Places' and Duplicates' tiles —
-   a `DisplayImage` (`Otos/Support/DisplayImage.swift`), the one type a layer or SwiftUI's
+   a `DisplayImage` (`OtosKit/Support/DisplayImage.swift`), the one type a layer or SwiftUI's
    `Image` is handed. Its only constructor draws the pixels, off the main actor, into an
    IOSurface of its own (8-bit premultiplied BGRA), made an image by
    `VTCreateCGImageFromCVPixelBuffer`: Core Animation shows it with no copy, and the

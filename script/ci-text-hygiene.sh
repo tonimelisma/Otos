@@ -118,9 +118,9 @@ check_no_source_text_tests() {
 check_no_stray_attoseconds() {
   local head_sha="$1"
 
-  if git grep -n -F 'components.attoseconds' "$head_sha" -- Otos \
-      | grep -v ':Otos/Support/DiagnosticsTiming\.swift:'; then
-    echo "Forbidden raw Duration.components.attoseconds outside Otos/Support/DiagnosticsTiming.swift: it discards whole seconds. Use DiagnosticsTiming.milliseconds(_:) instead." >&2
+  if git grep -n -F 'components.attoseconds' "$head_sha" -- OtosKit \
+      | grep -v ':OtosKit/Support/DiagnosticsTiming\.swift:'; then
+    echo "Forbidden raw Duration.components.attoseconds outside OtosKit/Support/DiagnosticsTiming.swift: it discards whole seconds. Use DiagnosticsTiming.milliseconds(_:) instead." >&2
     exit 1
   fi
 }
@@ -159,7 +159,7 @@ pattern = re.compile(
     r"([A-Za-z_]\w*)\s*\(([^{}()]*)\)\s*\}\s*$"
 )
 
-for directory in (root / "Otos", root / "OtosTests"):
+for directory in (root / "OtosKit", root / "OtosTests"):
     for path in directory.rglob("*.swift"):
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             match = pattern.match(line)
@@ -314,8 +314,8 @@ self_test() {
     env EVENT_NAME=pull_request BASE_SHA="$advanced_base_sha" HEAD_SHA="$feature_sha" \
     bash -c "cd '$temp_dir' && '$SCRIPT_PATH' check >/dev/null 2>&1"
 
-  mkdir -p "$temp_dir/Otos"
-  printf 'private func f(_ a: A, b: B) async throws { try await f(a, b: b) }\n' > "$temp_dir/Otos/Recursion.swift"
+  mkdir -p "$temp_dir/OtosKit"
+  printf 'private func f(_ a: A, b: B) async throws { try await f(a, b: b) }\n' > "$temp_dir/OtosKit/Recursion.swift"
   run_expect_failure "single-line self-delegation" \
     env CI_TEXT_HYGIENE_ROOT="$temp_dir" EVENT_NAME=workflow_dispatch HEAD_SHA="$clean_sha" \
     bash -c "cd '$temp_dir' && '$SCRIPT_PATH' check >/dev/null 2>&1"

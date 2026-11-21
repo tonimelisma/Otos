@@ -4,14 +4,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/guard-scan.sh"
 ROOT_DIR="${GUARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # DES-001/DES-020: no font-size or color literals anywhere in the app target
-# (the old Otos/Views-only scan left ContentView.swift and OtosApp.swift,
-# which sit directly under Otos/, invisible). Otos's own
+# (the old OtosKit/Views-only scan left ContentView.swift and OtosApp.swift,
+# which sit directly under OtosKit/, invisible). Otos's own
 # values live in exactly one allowlisted file, the DES-021/022 palette. The
 # one legitimate non-view use is raw Core Graphics bitmap fill (pixel color,
 # not SwiftUI view styling), allowlisted by exact path.
 FONT_COLOR_ALLOWLIST=(
-  "Otos/Views/DesignPalette.swift"
-  "Otos/Services/ThumbnailStore.swift"
+  "OtosKit/Views/DesignPalette.swift"
+  "OtosKit/Services/ThumbnailStore.swift"
 )
 is_font_color_allowlisted() {
   local p="$1" a
@@ -26,7 +26,7 @@ check_fonts_colors() {
       echo "FAIL: DES-001/DES-020 font or color literal: $line" >&2; return 1
     fi
   done < <(grep -RInE '\.system\(size:|#[0-9A-Fa-f]{3,8}\b|Color\(red:|NSColor\(red:' \
-    "$root/Otos" --include='*.swift' || true)
+    "$root/OtosKit" --include='*.swift' || true)
 }
 
 # DES-002: exactly seven text styles. A `.font(...)` naming anything else —
@@ -46,7 +46,7 @@ check_font_styles() {
     if ! printf '%s\n' "$style" | grep -qE "$ALLOWED_FONT_STYLES"; then
       echo "FAIL: DES-002 font style outside the seven: $line" >&2; return 1
     fi
-  done < <(grep -RInE '\.font\(' "$root/Otos" --include='*.swift' || true)
+  done < <(grep -RInE '\.font\(' "$root/OtosKit" --include='*.swift' || true)
 }
 
 # DES-035/DES-039: user-facing strings never publish internal domain
@@ -57,8 +57,8 @@ check_font_styles() {
 # not user-facing strings, and doc comments legitimately reference the
 # forbidden words when explaining why they're forbidden.
 #
-# Scope is Otos/Views (recursive) plus the top-level Otos/*.swift composition
-# roots (ContentView.swift, OtosApp.swift) — not the whole Otos/ tree.
+# Scope is OtosKit/Views (recursive) plus the top-level OtosKit/*.swift composition
+# roots (ContentView.swift, OtosApp.swift) — not the whole OtosKit/ tree.
 # Services/Stores/ViewModels/Models legitimately use this exact vocabulary in
 # OSLog calls, doc comments, and internal reason/path constants that are
 # never rendered; scanning them produced two dozen false positives with zero
@@ -77,8 +77,8 @@ is_domain_noun_string_allowlisted() {
 }
 user_facing_string_roots() {
   local root="$1"
-  find "$root/Otos/Views" -name '*.swift' 2>/dev/null
-  find "$root/Otos" -maxdepth 1 -name '*.swift' 2>/dev/null
+  find "$root/OtosKit/Views" -name '*.swift' 2>/dev/null
+  find "$root/OtosKit" -maxdepth 1 -name '*.swift' 2>/dev/null
 }
 check_domain_nouns() {
   local root="$1" file line trimmed content
@@ -103,7 +103,7 @@ check_domain_nouns() {
 # a lying `?? 0` / `?? ""` substitution for an unknown value — omit it
 # instead. Scoped to `ImportBarPresentation.swift` specifically, since
 # that is the one file every drawn state's strings must pass through.
-LYING_DEFAULT_FILE="Otos/Views/ImportBarPresentation.swift"
+LYING_DEFAULT_FILE="OtosKit/Views/ImportBarPresentation.swift"
 check_lying_defaults() {
   local root="$1" file="$root/$LYING_DEFAULT_FILE" line
   while IFS= read -r line; do
@@ -114,90 +114,90 @@ check_lying_defaults() {
 
 check_root() {
   local root="$1"
-  guard_scans guard-design-system "$root/Otos" "$root/Otos/Views" "$root/$LYING_DEFAULT_FILE" || return 1
+  guard_scans guard-design-system "$root/OtosKit" "$root/OtosKit/Views" "$root/$LYING_DEFAULT_FILE" || return 1
   check_fonts_colors "$root" && check_font_styles "$root" && check_domain_nouns "$root" && check_lying_defaults "$root"
 }
 
 self_test() {
   local d; d="$(mktemp -d)"; trap 'rm -rf "$d"' RETURN
-  mkdir -p "$d/Otos/Views" "$d/Otos/Services"
-  : > "$d/Otos/Views/ImportBarPresentation.swift"
+  mkdir -p "$d/OtosKit/Views" "$d/OtosKit/Services"
+  : > "$d/OtosKit/Views/ImportBarPresentation.swift"
   if check_root "$d/missing" 2>/dev/null; then echo "guard-design-system self-test failed (a missing scan root passed)" >&2; return 1; fi
-  rm "$d/Otos/Views/ImportBarPresentation.swift"
+  rm "$d/OtosKit/Views/ImportBarPresentation.swift"
   if check_root "$d" 2>/dev/null; then echo "guard-design-system self-test failed (a missing import bar mapper passed)" >&2; return 1; fi
-  : > "$d/Otos/Views/ImportBarPresentation.swift"
+  : > "$d/OtosKit/Views/ImportBarPresentation.swift"
 
-  printf 'Text("hi").font(.system(size: 60))\n' > "$d/Otos/Views/Bad.swift"
+  printf 'Text("hi").font(.system(size: 60))\n' > "$d/OtosKit/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (font literal)" >&2; return 1; fi
 
-  printf 'Text("Copy 3 items").foregroundStyle(Color(red: 1, green: 0, blue: 0))\n' > "$d/Otos/Views/Bad.swift"
+  printf 'Text("Copy 3 items").foregroundStyle(Color(red: 1, green: 0, blue: 0))\n' > "$d/OtosKit/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (color literal)" >&2; return 1; fi
-  rm -f "$d/Otos/Views/Bad.swift"
+  rm -f "$d/OtosKit/Views/Bad.swift"
 
-  # DES-001/DES-020 widened root: a color literal outside Otos/Views must now fail too.
-  printf 'let fill = NSColor(red: 1, green: 1, blue: 1, alpha: 1)\n' > "$d/Otos/Services/Bad.swift"
+  # DES-001/DES-020 widened root: a color literal outside OtosKit/Views must now fail too.
+  printf 'let fill = NSColor(red: 1, green: 1, blue: 1, alpha: 1)\n' > "$d/OtosKit/Services/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (widened font/color root)" >&2; return 1; fi
-  rm -f "$d/Otos/Services/Bad.swift"
+  rm -f "$d/OtosKit/Services/Bad.swift"
 
   # The one allowlisted non-view exception still passes.
-  mkdir -p "$d/Otos/Services"
-  printf 'context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))\n' > "$d/Otos/Services/ThumbnailStore.swift"
+  mkdir -p "$d/OtosKit/Services"
+  printf 'context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))\n' > "$d/OtosKit/Services/ThumbnailStore.swift"
   check_root "$d" || { echo "guard-design-system self-test failed (ThumbnailStore false positive)" >&2; return 1; }
-  rm -f "$d/Otos/Services/ThumbnailStore.swift"
+  rm -f "$d/OtosKit/Services/ThumbnailStore.swift"
 
   # DES-002: a disallowed named style fails; the seven allowed ones, including
   # a chained weight modifier, pass.
-  printf 'Text("hi").font(.caption)\n' > "$d/Otos/Views/Bad.swift"
+  printf 'Text("hi").font(.caption)\n' > "$d/OtosKit/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (disallowed font style)" >&2; return 1; fi
-  printf 'Text("hi").font(.largeTitle)\n' > "$d/Otos/Views/Bad.swift"
+  printf 'Text("hi").font(.largeTitle)\n' > "$d/OtosKit/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (disallowed font style 2)" >&2; return 1; fi
-  printf 'Text("hi").font(.title3.weight(.semibold))\n' > "$d/Otos/Views/Bad.swift"
+  printf 'Text("hi").font(.title3.weight(.semibold))\n' > "$d/OtosKit/Views/Bad.swift"
   check_root "$d" || { echo "guard-design-system self-test failed (allowed font style false positive)" >&2; return 1; }
-  printf 'Text("hi").font(someVariable)\n' > "$d/Otos/Views/Bad.swift"
+  printf 'Text("hi").font(someVariable)\n' > "$d/OtosKit/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (variable font escaped)" >&2; return 1; fi
-  printf 'Text("hi").font(Font.title3)\n' > "$d/Otos/Views/Bad.swift"
+  printf 'Text("hi").font(Font.title3)\n' > "$d/OtosKit/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (Font reference escaped)" >&2; return 1; fi
-  rm -f "$d/Otos/Views/Bad.swift"
+  rm -f "$d/OtosKit/Views/Bad.swift"
 
-  printf 'Text("The plan failed")\n' > "$d/Otos/Views/Bad.swift"
+  printf 'Text("The plan failed")\n' > "$d/OtosKit/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (domain noun)" >&2; return 1; fi
-  rm -f "$d/Otos/Views/Bad.swift"
+  rm -f "$d/OtosKit/Views/Bad.swift"
 
   # DES-035/DES-039 "any position" broadening: a bare literal with no
   # enclosing Text(...) call — exactly ImportBarPresentation.swift's shape —
   # must fail too, not just Text("...") literals.
-  printf 'case .sourceRemoved:\n    "The plan failed"\n' > "$d/Otos/Views/Bad.swift"
+  printf 'case .sourceRemoved:\n    "The plan failed"\n' > "$d/OtosKit/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (bare literal, no Text wrapper)" >&2; return 1; fi
-  rm -f "$d/Otos/Views/Bad.swift"
+  rm -f "$d/OtosKit/Views/Bad.swift"
 
   # A comment mentioning a forbidden word is prose, not a user-facing string.
-  printf '// explains why "the plan" is forbidden wording\nlet x = 1\n' > "$d/Otos/Views/Bad.swift"
+  printf '// explains why "the plan" is forbidden wording\nlet x = 1\n' > "$d/OtosKit/Views/Bad.swift"
   check_root "$d" || { echo "guard-design-system self-test failed (comment false positive)" >&2; return 1; }
-  rm -f "$d/Otos/Views/Bad.swift"
+  rm -f "$d/OtosKit/Views/Bad.swift"
 
-  # Widened UI-root scan: a top-level Otos/*.swift file (ContentView.swift's
-  # shape) is now checked even though it isn't under Otos/Views.
-  printf 'Text("The plan failed")\n' > "$d/Otos/Bad.swift"
-  if check_root "$d"; then echo "guard-design-system self-test failed (top-level Otos/*.swift not scanned)" >&2; return 1; fi
-  rm -f "$d/Otos/Bad.swift"
+  # Widened UI-root scan: a top-level OtosKit/*.swift file (ContentView.swift's
+  # shape) is now checked even though it isn't under OtosKit/Views.
+  printf 'Text("The plan failed")\n' > "$d/OtosKit/Bad.swift"
+  if check_root "$d"; then echo "guard-design-system self-test failed (top-level OtosKit/*.swift not scanned)" >&2; return 1; fi
+  rm -f "$d/OtosKit/Bad.swift"
 
   # Deliberately NOT widened for domain nouns: Services/Stores/etc. carry
   # internal vocabulary in logs and doc comments that must stay unchecked.
-  printf 'OtosLog.catalog.notice("plan.rebuild phase=schedule")\n' > "$d/Otos/Services/Bad.swift"
+  printf 'OtosLog.catalog.notice("plan.rebuild phase=schedule")\n' > "$d/OtosKit/Services/Bad.swift"
   check_root "$d" || { echo "guard-design-system self-test failed (non-view directory false positive)" >&2; return 1; }
-  rm -f "$d/Otos/Services/Bad.swift"
+  rm -f "$d/OtosKit/Services/Bad.swift"
 
-  printf 'let x = presentation.name ?? ""\n' > "$d/Otos/Views/ImportBarPresentation.swift"
+  printf 'let x = presentation.name ?? ""\n' > "$d/OtosKit/Views/ImportBarPresentation.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (lying empty-string default)" >&2; return 1; fi
 
-  printf 'let x = count ?? 0\n' > "$d/Otos/Views/ImportBarPresentation.swift"
+  printf 'let x = count ?? 0\n' > "$d/OtosKit/Views/ImportBarPresentation.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (lying zero default)" >&2; return 1; fi
 
-  printf 'let x = count ?? 100\n' > "$d/Otos/Views/ImportBarPresentation.swift"
+  printf 'let x = count ?? 100\n' > "$d/OtosKit/Views/ImportBarPresentation.swift"
   check_root "$d" || { echo "guard-design-system self-test failed (false positive on ?? 100)" >&2; return 1; }
-  : > "$d/Otos/Views/ImportBarPresentation.swift"
+  : > "$d/OtosKit/Views/ImportBarPresentation.swift"
 
-  printf 'Text("Import 3 Items").font(.body)\n' > "$d/Otos/Views/Bad.swift"
+  printf 'Text("Import 3 Items").font(.body)\n' > "$d/OtosKit/Views/Bad.swift"
   check_root "$d"
   echo "guard-design-system self-test: clean oracle"
 }

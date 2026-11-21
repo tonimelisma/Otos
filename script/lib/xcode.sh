@@ -157,7 +157,7 @@ otos_share_built_models() {
   for model in "$resources"/*.mlmodelc; do
     [[ -d "$model" && ! -L "$model" ]] || continue
     name="$(basename "$model")"
-    source="$root/Otos/Resources/${name%.mlmodelc}.mlpackage"
+    source="$root/OtosKit/Resources/${name%.mlmodelc}.mlpackage"
     if [[ ! -d "$source" ]]; then
       echo "op=build.models phase=failed model=$name reason=noSourcePackage source=$source" >&2
       return 1

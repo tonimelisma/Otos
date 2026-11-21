@@ -228,121 +228,121 @@ HEADER
   # 1. malformed column count — 8 fields instead of 7
   t="$tmpBase/t1"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | Extra | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
+  echo '| ARC-999 | Req | Acc | Extra | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_fail "malformed column count" "$t"
 
   # 2. missing/invalid ID
   t="$tmpBase/t2"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| BAD-001 | Req | Acc | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
+  echo '| BAD-001 | Req | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_fail "missing/invalid ID" "$t"
 
   # 3. long requirement cell (401 chars) — no length cap, should pass
   t="$tmpBase/t3"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
   longReq=$(printf 'a%.0s' {1..401})
-  echo "| ARC-999 | $longReq | Acc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
+  echo "| ARC-999 | $longReq | Acc | \`OtosKit/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_pass "long requirement (no length cap)" "$t"
 
   # 4. long acceptance cell (401 chars) — no length cap, should pass
   t="$tmpBase/t4"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
   longAcc=$(printf 'a%.0s' {1..401})
-  echo "| ARC-999 | Req | $longAcc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
+  echo "| ARC-999 | Req | $longAcc | \`OtosKit/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_pass "long acceptance (no length cap)" "$t"
 
   # 5. forbidden implementation token
   t="$tmpBase/t5"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req with animatingDifferences | Acc | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
+  echo '| ARC-999 | Req with animatingDifferences | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_fail "forbidden implementation token" "$t"
 
   # 6. missing implementation/test path
   t="$tmpBase/t6"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `Otos/NoSuch.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
+  echo '| ARC-999 | Req | Acc | `OtosKit/NoSuch.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_fail "missing implementation path" "$t"
 
   # 7. missing Swift test symbol
   t="$tmpBase/t7"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `Otos/Foo.swift` | `OtosTests/FooTests.swift#noSuchTest` |' >> "$t/docs/requirements.md"
+  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#noSuchTest` |' >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_fail "missing Swift test symbol" "$t"
 
   # 8. manual: verification
   t="$tmpBase/t8"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `Otos/Foo.swift` | manual: do thing |' >> "$t/docs/requirements.md"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | manual: do thing |' >> "$t/docs/requirements.md"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_fail "manual: verification" "$t"
 
   # 9. invalid verification grammar (no backtick proof nor unverified)
   t="$tmpBase/t9"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `Otos/Foo.swift` | some random text |' >> "$t/docs/requirements.md"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | some random text |' >> "$t/docs/requirements.md"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_fail "invalid verification grammar" "$t"
 
   # 10. one valid named proof — should pass
   t="$tmpBase/t10"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
+  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_pass "one valid named proof" "$t"
 
   # 11. one valid bounded unverified entry — should pass
   t="$tmpBase/t11"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `Otos/Foo.swift` | unverified: ledger release not yet proven until Stage 4 |' >> "$t/docs/requirements.md"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | unverified: ledger release not yet proven until Stage 4 |' >> "$t/docs/requirements.md"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_pass "one valid bounded unverified entry" "$t"
 
   # 12. script self-test proof — should pass when symbol exists
   t="$tmpBase/t12"; mkdir -p "$t/docs" "$t/script"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `Otos/Foo.swift` | `script/foo.sh#testBar` |' >> "$t/docs/requirements.md"
+  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `script/foo.sh#testBar` |' >> "$t/docs/requirements.md"
   echo -e "#!/usr/bin/env bash\n# testBar" > "$t/script/foo.sh"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_pass "valid script self-test proof" "$t"
 
   # 13. missing script self-test symbol — should fail
   t="$tmpBase/t13"; mkdir -p "$t/docs" "$t/script"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `Otos/Foo.swift` | `script/foo.sh#noSuch` |' >> "$t/docs/requirements.md"
+  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `script/foo.sh#noSuch` |' >> "$t/docs/requirements.md"
   echo -e "#!/usr/bin/env bash\n# testBar" > "$t/script/foo.sh"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_fail "missing script self-test symbol" "$t"
 
   # 14. multibyte — 400 chars must pass (length cap removed, kept as regression)
   t="$tmpBase/t14"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
   mbReq=$(printf 'a%.0s' {1..398})"∪∪"
-  echo "| ARC-999 | $mbReq | Acc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
+  echo "| ARC-999 | $mbReq | Acc | \`OtosKit/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_pass "multibyte 400 chars passes (no length cap)" "$t"
 
   # 15. tautological Swift proof — must fail
   t="$tmpBase/t15"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  printf '%s\n' '| ARC-999 | Req | Acc | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
+  printf '%s\n' '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
   printf '%s\n' 'import Foundation' 'func testFoo() { #expect(true, "tautology") }' > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
   expect_fail "tautological Swift proof" "$t"
 
   rm -rf "$tmpBase"

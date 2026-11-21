@@ -24,7 +24,7 @@ Verified repo facts:
   availability, scan lifecycle, and notification state resident, but it no
   longer keeps a resident per-asset map or publishes raw catalog snapshots.
 - The current app is a SwiftUI macOS app with an instrumentation facade in
-  `Otos/Support/Instrumentation.swift`.
+  `OtosKit/Support/Instrumentation.swift`.
 - `docs/requirements.md` is the current implemented-requirements registry only;
   unimplemented catalog behavior belongs in ADRs and plans until it lands.
 - Relevant current requirements include ARC-003, ARC-004, ARC-006, ARC-008,

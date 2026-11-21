@@ -153,7 +153,7 @@ unreachable is never a deletion.
 
 The enum answers further questions the same way (`isUserChosenFolder`,
 `isInLibrariesSection`, `rowsComeFromSourceListing`, `readsFaces`, `readsVideoFaces`,
-`availabilityAtLaunch` and others in `Otos/Models/CatalogModels.swift`). No call site
+`availabilityAtLaunch` and others in `OtosKit/Models/CatalogModels.swift`). No call site
 compares a kind directly. A new kind is a new column in this table.
 
 ### 4. One owner of original locality
@@ -478,7 +478,7 @@ Cons:
 
 ## Retirement Proof
 
-- Every bare `kind == .library` and `kind != .library` comparison in `Otos/` is replaced
+- Every bare `kind == .library` and `kind != .library` comparison in `OtosKit/` is replaced
   by a capability. Afterwards no comparison of a root kind with `==` or `!=` is left
   outside `LibraryRootKind`.
 - `MaterializationCoordinator.makeLocal` is replaced by `ensureLocal`.

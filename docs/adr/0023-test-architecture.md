@@ -51,11 +51,21 @@ directly, and OtosTests links OtosKit instead of hosting Otos.app.**
 - `OtosTests` drops `TEST_HOST`/`BUNDLE_LOADER`, links OtosKit directly (not
   embedded), and every test file's `@testable import Otos` becomes `@testable
   import OtosKit` — the app module has nothing left to test.
-- No source or test file moved on disk. Every file above compiled in the same
-  directory before and after; only Xcode target membership changed, via the
-  Xcode 16+ synchronized-group exception-set mechanism (a per-target
-  exclusion list layered onto a shared synced folder) rather than classic
-  file references.
+- **A file's folder is its target.** Each target compiles exactly one folder
+  through its own Xcode synchronized group, and no folder is shared:
+  `OtosKit/` (every source and resource above: `ContentView.swift`,
+  `OtosApp.swift`, `Models/`, `Resources/`, `Services/`, `Stores/`,
+  `Support/`, `ViewModels/`, `Views/`) is the framework's, `Otos/`
+  (`main.swift`, `Assets.xcassets`, `Otos.icon`) is the app's, and
+  `OtosTests/` is the test bundle's. No target carries a
+  `membershipExceptions` list. A synchronized group's exception set only
+  excludes, so one folder shared by two targets needed every framework file
+  listed against the app (307 entries) and every new one added there by hand;
+  separate folders need no list at all. Xcode 27 beta keeps resource
+  membership by folder: the five `.mlpackage`s compile to `.mlmodelc` in the
+  framework's `Resources`, beside the `.bin`/`.tsv` tables and the licence
+  texts, and the app bundle holds only `Assets.car`, `Otos.icns` and the
+  embedded framework (`docs/research/2026-11-19-structure-prototypes.md`, X1).
 
 **Pure value-in/value-out types are marked `nonisolated` instead of
 inheriting `MainActor`.** `MediaAssetTilePresentation`, `BrowserViewMode`,
@@ -80,7 +90,7 @@ name-keyed, in-memory store (`InMemorySuitePreferenceStore`, backed by five
 `Synchronization.Mutex`-protected slots — one per concrete type this codebase
 stores: `Bool`, `Int`, `Double`, `String`, `[String: String]`) instead of a
 real `UserDefaults(suiteName:)`. `PreferencesDomain.makeDefaults()` lives in
-`Otos/Models/PreferenceStore.swift`, next to the store implementations it
+`OtosKit/Models/PreferenceStore.swift`, next to the store implementations it
 chooses between, rather than in the test target: `PreferencesDomainTests`
 proves that two independently-constructed actors given "the same domain" (by
 name, not by object reference) must observe each other's writes, which only a
@@ -147,13 +157,15 @@ foreground, since none of them touch `build/DerivedData` or Xcode state.
   at launch that each is "implemented in both" — the double link the app
   target carried until 2026-09-13. A package product belongs to exactly one
   of the three targets.
-- **A durable trap for future work**: any new file added under `Otos/`
-  requires refreshing the exception set of *every* target that references
-  the shared `Otos` synchronized-group root, not just the new file's own
-  target — exceptions only *exclude*, so a file created after a target's
-  exception set was last computed silently defaults into that target's
-  membership too: a new OtosKit file must be added to the app target's
-  exception set, or the app target compiles it as well.
+- **The app folder holds only the app.** A new framework file goes under
+  `OtosKit/`, in any folder, and nothing else compiles it. A file anywhere
+  else under `Otos/` would be built into the app instead of the framework,
+  and git places one silently there when a commit that adds a file in a
+  *new* folder under `Otos/` is rebased across the move
+  (`docs/research/2026-11-20-edit-access-and-move-replay.md`, E8), so
+  `script/guard-app-folder.sh`, in `script/check.sh`'s fast gates, fails on
+  every file under `Otos/` other than `main.swift`, `Assets.xcassets/` and
+  `Otos.icon/`, of any type.
 - Xcode target creation, membership, and package-dependency wiring for this
   ADR were scripted against `project.pbxproj` with the `xcodeproj` Ruby gem
   rather than done through Xcode's GUI wizard, for a reviewable diff and

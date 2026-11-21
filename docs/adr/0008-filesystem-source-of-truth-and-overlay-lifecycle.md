@@ -374,7 +374,7 @@ new identity columns, no sidecar writers, and no overlay-class split.
   and scan; it now references this ADR for the product-wide overlay contract.
 - `docs/index.md`: this ADR registered. Done in this increment.
 -  and
-  `Otos/Services/FileMaterialization.swift`: add the verified dataless detection
+  `OtosKit/Services/FileMaterialization.swift`: add the verified dataless detection
   mechanism and the media-metadata versus filesystem-facts distinction that
   decisions 6 and 7 reference.
 - No comment boundary in current source contradicts this decision; the scanner and

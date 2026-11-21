@@ -1,4 +1,4 @@
 # Core ML packages are binary: git must not diff, merge or whitespace-check their contents.
 **/*.mlpackage/** binary
 # The search model's token table and tokenizer are binary data files.
-Otos/Resources/*.bin binary
+OtosKit/Resources/*.bin binary

@@ -2,7 +2,7 @@ import Foundation
 
 /// Pure display mapper for `CatalogMediaEmptyState`, beside `MediaGridView` the
 /// same way `ImportBarPresentation.swift` sits beside `ImportPlanFooter.swift`:
-/// the model enum (`Otos/Models/CatalogWindowState.swift`) carries the fact,
+/// the model enum (`OtosKit/Models/CatalogWindowState.swift`) carries the fact,
 /// this file is the one place that decides its wording. `.catalogIncompatible`
 /// carries the typed `CatalogSchemaCompatibility` rather than a pre-rendered
 /// string specifically so this mapper — not a lower layer — owns the moment

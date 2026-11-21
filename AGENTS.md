@@ -577,7 +577,7 @@ partial, pre-merge, or ready-for-review DoD. An increment is done only when the
 work has landed on `main`, the branch/worktree/stashes are cleaned up, and the tree
 is clean on the next-start branch.
 
-An increment that changes the app (`Otos/`, `Otos.xcodeproj/`, `Config/`) also
+An increment that changes the app (`Otos/`, `OtosKit/`, `Otos.xcodeproj/`, `Config/`) also
 updates the installed app: after the merge, run `script/install.sh` from the
 primary checkout on `main` and include its `op=install` line in the DoD report.
 It quits a running installed Otos only when no import or reorganization is in

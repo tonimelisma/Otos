@@ -9,7 +9,7 @@ ROOT_DIR="${GUARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # (subscribe, `publishDestinations()`). A third yield site is a second path.
 check_root() {
   local root="$1"
-  local file="$root/Otos/Services/MediaOperationCoordinator.swift"
+  local file="$root/OtosKit/Services/MediaOperationCoordinator.swift"
   local name count
   for name in continuation subscriber; do
     count="$(grep -c "${name}\\.yield" "$file" || true)"
@@ -24,8 +24,8 @@ self_test() {
   local d
   d="$(mktemp -d)"
   trap 'rm -rf "$d"' RETURN
-  mkdir -p "$d/Otos/Services"
-  local file="$d/Otos/Services/MediaOperationCoordinator.swift"
+  mkdir -p "$d/OtosKit/Services"
+  local file="$d/OtosKit/Services/MediaOperationCoordinator.swift"
   printf '%s\n' 'continuation.yield([])' 'continuation.yield([])' 'subscriber.yield([:])' 'subscriber.yield([:])' > "$file"
   check_root "$d"
   printf '%s\n' 'continuation.yield([])' >> "$file"

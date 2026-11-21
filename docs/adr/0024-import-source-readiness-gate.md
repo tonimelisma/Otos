@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Implemented in `Otos/Services/ImportSourceReadiness.swift` and
+Accepted. Implemented in `OtosKit/Services/ImportSourceReadiness.swift` and
 `MediaOperationCoordinator` (`readyState(for:ctx:)`, `beginExecutionIfPossible`,
 `presentation(for:)`, `makePresentation(session:state:)`).
 

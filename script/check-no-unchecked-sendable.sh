@@ -21,8 +21,8 @@ is_allowlisted() {
 check_root() {
   local root="$1"
   local hits
-  guard_scans check-no-unchecked-sendable "$root/Otos" "$root/OtosTests" || return 1
-  hits="$(grep -rnE '@unchecked Sendable|nonisolated\(unsafe\)' "$root/Otos" "$root/OtosTests" --include='*.swift' || true)"
+  guard_scans check-no-unchecked-sendable "$root/OtosKit" "$root/OtosTests" || return 1
+  hits="$(grep -rnE '@unchecked Sendable|nonisolated\(unsafe\)' "$root/OtosKit" "$root/OtosTests" --include='*.swift' || true)"
   while IFS= read -r hit; do
     [[ -z "$hit" ]] && continue
     local absolute_path="${hit%%:*}"
@@ -43,12 +43,12 @@ check)
 self-test)
   temp_dir="$(mktemp -d)"
   trap 'rm -rf "$temp_dir"' EXIT
-  mkdir -p "$temp_dir/Otos" "$temp_dir/OtosTests"
+  mkdir -p "$temp_dir/OtosKit" "$temp_dir/OtosTests"
   if check_root "$temp_dir/missing" 2>/dev/null; then
     echo "check-no-unchecked-sendable self-test failed: a missing scan root passed" >&2
     exit 1
   fi
-  printf 'nonisolated(unsafe) let bad = 1\n' > "$temp_dir/Otos/Bad.swift"
+  printf 'nonisolated(unsafe) let bad = 1\n' > "$temp_dir/OtosKit/Bad.swift"
   if check_root "$temp_dir"; then
     echo "check-no-unchecked-sendable self-test failed: seeded violation passed" >&2
     exit 1

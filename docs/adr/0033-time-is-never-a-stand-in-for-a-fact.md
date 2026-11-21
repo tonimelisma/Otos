@@ -40,7 +40,7 @@ where nothing can report the fact, and the code says which case it is:
 | `poll` | Re-checking a fact that nothing reports; time decides only how often to look, never the outcome. Test waits on in-process state use it, with no deadline. |
 | `cadence <path>` | A rate limit — a cadence or a debounce — standing on the recorded measurement at `<path>`. Without one, the work is coalesced through its owner instead (ADR 0032). |
 
-Every wait on time in `Otos/`, `OtosTests/` and `script/` carries a `time:` tag with one
+Every wait on time in `Otos/`, `OtosKit/`, `OtosTests/` and `script/` carries a `time:` tag with one
 of these on its line or in the comment directly above it. `script/time-guard.sh` checks
 that, and that a cadence's measurement exists, in `script/check.sh`'s fast gates and in
 CI. There is no allowlist: a wait without a tag fails, and a tag is a claim a reviewer

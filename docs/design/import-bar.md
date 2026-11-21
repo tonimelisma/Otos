@@ -4,8 +4,8 @@ The import experience: a removable source selected in the sidebar, its media in 
 ordinary grid, and one status surface at the bottom of the content pane. Cites
 `docs/design/design-system.md` by ID; rules are not restated.
 
-Owner: `Otos/Views/ImportPlanFooter.swift`. Presentation source:
-`MediaOperationSourcePresentation` (`Otos/Models/MediaOperationModels.swift`).
+Owner: `OtosKit/Views/ImportPlanFooter.swift`. Presentation source:
+`MediaOperationSourcePresentation` (`OtosKit/Models/MediaOperationModels.swift`).
 Grid is unchanged — a card renders exactly like a library (DES-065). Per-item
 import selection is out of scope: import imports all new media.
 
@@ -489,7 +489,7 @@ hop.
 
 ## Where the user is standing
 
-Sidebar selection is `SidebarSelection` (`Otos/Models/CatalogModels.swift:578`):
+Sidebar selection is `SidebarSelection` (`OtosKit/Models/CatalogModels.swift:578`):
 
 | Case | Sidebar row | Note |
 | --- | --- | --- |
@@ -674,7 +674,7 @@ sidebar row, so "the sidebar" is not an owner; one named row is.
 
 This removes the current duplication, where an in-flight import is reported in the
 footer and the sidebar at the same time
-(`Otos/Views/SidebarView.swift:104`, `Otos/ContentView.swift:44`).
+(`OtosKit/Views/SidebarView.swift:104`, `OtosKit/ContentView.swift:44`).
 
 ## Motion
 

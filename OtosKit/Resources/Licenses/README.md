@@ -11,7 +11,7 @@ Otos ships four converted models (ADR 0045, ADR 0047, ADR 0048):
   precision with fixed NMF starting bases. Code: Apache License 2.0, `GeoCalib-LICENSE.txt`.
   Weights: © 2024 ETH Zurich, Creative Commons Attribution 4.0 International,
   https://creativecommons.org/licenses/by/4.0/legalcode. The conversion changes the weights' precision and is a
-  modification under that licence. `Otos/Services/PerspectiveFieldSolver.swift` ports
+  modification under that licence. `OtosKit/Services/PerspectiveFieldSolver.swift` ports
   GeoCalib's Levenberg–Marquardt solver.
 - `AdaFaceIR101.mlpackage` is AdaFace IR-101 trained on WebFace12M, the CVLFace weights
   (https://huggingface.co/minchul/cvlface_adaface_ir101_webface12m), from AdaFace: Quality

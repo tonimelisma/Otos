@@ -35,7 +35,7 @@ solely as Instruments annotations.**
   test process (`xctest`) carries no profile.
 - Structured `op=`/`phase=` boundary lines go exclusively through
   `Logger.noticeOperation`/`errorOperation`/`debugOperation`
-  (`Otos/Support/Instrumentation.swift`) — never a hand-rolled
+  (`OtosKit/Support/Instrumentation.swift`) — never a hand-rolled
   `.debug("op=…")`/`.info("op=…")` string. A SwiftLint custom rule
   (`structured_log_via_helper`) makes the accidental form a build error, so the
   log level of a structured line is always a deliberate choice.
@@ -76,7 +76,7 @@ what the run's tour and a diagnosis read. The benchmarks' instruction counts can
 read waiting for a connection, a cold disk read, memory pressure, owners waking each other
 or a real backlog, and these can:
 
-- **Resource checkpoints** (`ResourceCheckpoint`, `Otos/Support/ProcessResources.swift`).
+- **Resource checkpoints** (`ResourceCheckpoint`, `OtosKit/Support/ProcessResources.swift`).
   At events, never on a timer — session start, window attached, catalog open, first grid,
   search index loaded, each People build, each scope intent and its paint, each store stall, each tour
   step and the system's memory-pressure report (`DispatchSource.makeMemoryPressureSource`,

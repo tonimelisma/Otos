@@ -2,7 +2,7 @@
 # Keep source comments truthful: every cited current document must exist, and every
 # cited numbered plan must still be present while the plan is active. This gate scans
 # only app and script source so historical planning prose can remain in documentation.
-# It skips binary files (-I): Otos/ holds about 500 MB of Core ML weights and embedding
+# It skips binary files (-I): OtosKit/ holds about 500 MB of Core ML weights and embedding
 # tables, and reading them took 24 of this gate's 25 seconds for no citation.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/guard-scan.sh"
@@ -12,8 +12,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 check_root() {
   local root="$1"
   local documents plans document plan status=0
-  guard_scans check-doc-citations "$root/Otos" "$root/script" || return 1
-  documents="$(grep -rIhoE 'docs/[A-Za-z0-9._/-]+\.md' "$root/Otos" "$root/script" 2>/dev/null | sort -u || true)"
+  guard_scans check-doc-citations "$root/OtosKit" "$root/script" || return 1
+  documents="$(grep -rIhoE 'docs/[A-Za-z0-9._/-]+\.md' "$root/OtosKit" "$root/script" 2>/dev/null | sort -u || true)"
   while IFS= read -r document; do
     [[ -z "$document" ]] && continue
     if [[ ! -f "$root/$document" ]]; then
@@ -40,7 +40,7 @@ check_root() {
     done <<< "$(grep -oE '\]\([A-Za-z0-9._/-]+\)' "$root/docs/index.md" | sed -E 's/^\]\((.*)\)$/\1/' | sort -u)"
   fi
 
-  plans="$(grep -rIhoE 'plan [0-9]{4}' "$root/Otos" "$root/script" 2>/dev/null | sed -E 's/.*plan ([0-9]{4}).*/\1/' | sort -u || true)"
+  plans="$(grep -rIhoE 'plan [0-9]{4}' "$root/OtosKit" "$root/script" 2>/dev/null | sed -E 's/.*plan ([0-9]{4}).*/\1/' | sort -u || true)"
   while IFS= read -r plan; do
     [[ -z "$plan" ]] && continue
     if ! compgen -G "$root/docs/plans/${plan}-*.md" > /dev/null; then
@@ -59,18 +59,18 @@ check)
 self-test)
   temp_dir="$(mktemp -d)"
   trap 'rm -rf "$temp_dir"' EXIT
-  mkdir -p "$temp_dir/Otos" "$temp_dir/script" "$temp_dir/docs"
+  mkdir -p "$temp_dir/OtosKit" "$temp_dir/script" "$temp_dir/docs"
   if check_root "$temp_dir/missing" 2>/dev/null; then
     echo "check-doc-citations self-test failed: a missing scan root passed" >&2
     exit 1
   fi
   missing_doc="docs/plans"
-  printf '%s\n' "/// $missing_doc/9999-missing.md" > "$temp_dir/Otos/Bad.swift"
+  printf '%s\n' "/// $missing_doc/9999-missing.md" > "$temp_dir/OtosKit/Bad.swift"
   if check_root "$temp_dir"; then
     echo "check-doc-citations self-test failed: seeded missing citation passed" >&2
     exit 1
   fi
-  printf '%s\n' '/// docs/requirements.md' > "$temp_dir/Otos/Bad.swift"
+  printf '%s\n' '/// docs/requirements.md' > "$temp_dir/OtosKit/Bad.swift"
   touch "$temp_dir/docs/requirements.md"
   printf '%s\n' '- [gone](plans/9999-gone.md)' > "$temp_dir/docs/index.md"
   if check_root "$temp_dir"; then

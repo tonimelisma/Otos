@@ -4,7 +4,7 @@ Keyword search: a toolbar field that narrows whatever scope is shown to the phot
 its text describes, in any language. Cites `docs/design/design-system.md` by ID; rules are not
 restated. Decision record: `docs/adr/0048-keyword-search.md`.
 
-Owners: the field and Edit ▸ Find in `Otos/ContentView.swift` and `Otos/OtosApp.swift`; the
+Owners: the field and Edit ▸ Find in `OtosKit/ContentView.swift` and `OtosKit/OtosApp.swift`; the
 search state in `CatalogWindowViewModel.setSearchText`; results from `PhotoSearchIndex`
 through `CatalogProjection`.
 
