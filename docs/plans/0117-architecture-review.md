@@ -89,11 +89,22 @@ People and the harness first.
   - the test-only `filterOptions` wrapper is deleted;
   - derived files and a removed source's staging folder are deleted on a dedicated queue
     (`FileDeletion`), never on the actor.
-- **Step 6.** Errors the Store turned into nothing are said:
+- **#1003, step 6.** Errors the Store turned into nothing are said:
   - People undo counts and logs the faces and rejections of a library no longer cataloged
     (`op=people.restore`);
   - `rootIsAvailable` logs an unreadable root's error by domain and code;
   - a failed planning read logs its error.
+- **#996, step 4.** Every thumbnail outside the grid loads through `ThumbnailLoad`, which
+  answers decoded, unavailable (with the kind, for DES-063's slash glyph) or not yet
+  (APP-095). Duplicates' copy of the decoder and the pane's `Task.detached` path are deleted.
+  A failed detail read is logged once, by the reader.
+- **#1002.** The red `main` that #998 left: a write's derived files go after it is applied
+  and announced, and `DerivedFolder.untilSettled()` reports when its deletes settle.
+- **#1004.** A camera re-attached while its removal runs keeps its staging folder: the
+  attaching owner makes the folder only once no removal holds the root (ADR 0013).
+- **#1005.** Tests read a state they hold, never a transient frame on a newest-only stream.
+- **#1007.** v74's search-index migration runs its own literal SQL (ADR 0002), not the
+  store's live statements, which #1006 had built from `AssetKey`.
 - **#993.** Step 3's de-risk: the change-coverage guard is in every test's Store. On
   unmodified code it found three writes that announced nothing (ARC-018), and they are fixed:
   - a listing's changed source facts;
@@ -102,7 +113,7 @@ People and the harness first.
 - **#997.** Step 7: Edit is the window's first feature model: `EditSession` owns the edit's state,
   lanes and tasks, and reads the window through a narrow context (ADR 0004). The window
   declares no edit state. People stays the next candidate.
-- **Step 3.** Change notifications say what changed (ADR 0005, ARC-018). No Store operation
+- **#1001, step 3.** Change notifications say what changed (ADR 0005, ARC-018). No Store operation
   sends `.changed(.all)`: each names the kinds it wrote (`presence`, `fileFacts`, `movedRow`,
   `edit`, `settledImport`), a change that follows no write names the runtime state it reports
   (a root's reach, or its own state with no row), and one that wrote nothing sends nothing.
@@ -110,7 +121,7 @@ People and the harness first.
   `.location`. A witnessed move whose file facts were unchanged had announced nothing; it is
   announced as a moved row. Rejected, measured: deriving notifications from the writer (a GRDB
   `TransactionObserver`), which serves as the guard only.
-- **Step 5.** One typed asset key, and the Store's SQL grouped by table:
+- **#1006, step 5.** One typed asset key, and the Store's SQL grouped by table:
   - `AssetKey` writes both path equalities, `exactText` (`library_root_id`, `relative_path`)
     and `volumeAware` (`relative_path_key`, ADR 0025), and binds the key. No runtime statement
     writes either out by hand, and the hand-written argument pairs are gone. `FaceRowKey.Photo`
@@ -123,7 +134,7 @@ People and the harness first.
   - Every recorded plan is unchanged. Two statements that named a key without being listed
     are now recorded: `AssetRowSQL.digestStandingSQL` (a runtime read that sat in
     `CatalogSchema`) and `MediaCompanionSQL.otherSpellingSQL`.
-- **Step 8.** The sources are in `OtosKit/` (ADR 0023): every source and resource the
+- **#1009, step 8.** The sources are in `OtosKit/` (ADR 0023): every source and resource the
   framework compiles moved there with `git mv`, and `Otos/` holds only `main.swift`,
   `Assets.xcassets` and `Otos.icon`. Each target compiles its own synchronized folder, and
   both `membershipExceptions` lists are gone. The framework's resources are the installed
@@ -134,7 +145,8 @@ People and the harness first.
 ## Steps
 
 Every step has landed or was stopped. Step 2, one owner for People's act overlay, was
-measured and stopped (below). What remains is the closing recount of the fix table (above).
+measured and stopped (below). What remains is the closing recount of the fix table (above),
+over the same two-week span after the last step landed: 2026-11-21 to 2026-12-05.
 
 ## Measured and dropped
 
