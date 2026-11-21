@@ -447,6 +447,79 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    /// A person is never merged into themself: the store refuses it and changes nothing. Merged,
+    /// deleting the person merged away deleted them, and left their seeds with no person
+    /// but still marked seeds, which assignment then planned again on every pass.
+    @Test func aPersonIsNeverMergedIntoThemself() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
+        let a = FaceID(asset: library.id("a.jpg"), index: 0)
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([a], name: "Sam")).person)
+        let before = try await library.store.backgroundReads.peopleSnapshot()
+
+        await #expect(throws: PeopleRuleViolation.mergeIntoSelf) {
+            try await library.store.perform(.merge(sam, into: sam))
+        }
+
+        #expect(try await library.store.backgroundReads.peopleSnapshot() == before)
+        await library.store.shutdown()
+    }
+
+    /// A merge carries what the user said a face is not to the merged person, except onto a
+    /// face that is theirs: a face the user said is not Sam, then gave Ian, stays Ian's and
+    /// free of any rejection of him when Sam is merged into Ian; a held face that is not
+    /// Sam becomes not Ian.
+    @Test func aMergeCarriesNoRejectionOntoTheMergedPersonsOwnFace() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg"])
+        try await library.readFaces(["a.jpg", "b.jpg", "c.jpg"].enumerated().map { index, name in
+            library.result(for: name, faces: [Self.face(x: 0.1 + 0.2 * Double(index))])
+        })
+        let (a, b, c) = (FaceID(asset: library.id("a.jpg"), index: 0), FaceID(asset: library.id("b.jpg"), index: 0), FaceID(asset: library.id("c.jpg"), index: 0))
+        let sam = try #require(try await library.store.perform(.moveToNewPerson([a, b], name: "Sam")).person)
+        let ian = try #require(try await library.store.perform(.moveToNewPerson([c], name: "Ian")).person)
+        _ = try await library.store.perform(.removeName([a, b]))
+        _ = try await library.store.perform(.move([a], to: ian))
+
+        _ = try await library.store.perform(.merge(sam, into: ian))
+
+        let faces = try await Dictionary(uniqueKeysWithValues: library.store.backgroundReads.peopleSnapshot().faces.map { ($0.id, $0) })
+        #expect(faces[a]?.assignment == .user(ian))
+        #expect(faces[a]?.rejected == [])
+        #expect(faces[b]?.assignment == .held)
+        #expect(faces[b]?.rejected == [ian])
+        await library.store.shutdown()
+    }
+
+    /// A face People leaves out and that comes back with its vector — This Is Not a Face
+    /// undone — is compared again: its vector was held while it was set aside, so the pass
+    /// after Undo assigns it and settles. Dropped with the face, the vector was never read
+    /// again (a high-water mark reads only newer ones), and every pass found it missing,
+    /// never settled, and left the face unassigned until the next launch.
+    @Test func aFaceThatComesBackIsComparedAgain() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg"])
+        for (index, name) in ["a.jpg", "b.jpg", "c.jpg"].enumerated() {
+            try await library.readFaces([library.result(
+                for: name, faces: [Self.face(x: 0.1, toward: [0: 1, 300 + index: 0.15])],
+                captured: Date(timeIntervalSince1970: 1_600_000_000 + Double(index) * 86400)
+            )])
+        }
+        let c = FaceID(asset: library.id("c.jpg"), index: 0)
+        let owner = PeopleAssignment(store: library.store, vectorSpace: .ample)
+        try await owner.settle()
+        let person = try #require(try await library.store.backgroundReads.peopleSnapshot().faces.first { $0.id == c }?.assignment.person)
+
+        let outcome = try await library.store.perform(.notAFace([c]))
+        await owner.request()
+        try await owner.settle()
+        try await library.store.restore(outcome.restore)
+        await owner.request()
+        try await owner.settle()
+
+        #expect(try await library.store.backgroundReads.peopleSnapshot().faces.first { $0.id == c }?.assignment.person == person)
+        #expect(await owner.heldRead?.setAsideVectors.isEmpty == true)
+        await library.store.shutdown()
+    }
+
     /// Assignment writes a guess only where the face is still Otos's to decide: a face the
     /// user gave someone while the pass ran keeps their word. A person Otos found is deleted
     /// once they have no face left and the user said nothing about them.
@@ -1172,9 +1245,9 @@ struct PeopleStoreTests {
                 )
             }
             let day = Date(timeIntervalSince1970: 1_600_000_000 + Double(random.next() % 40) * 86400)
-            try await library.readFaces([library.result(
-                for: name, faces: faces, sizeOffset: Int64(random.next() % 1000), captured: day
-            )])
+            // A reading of the preview as stored: one of other bytes is rejected whole
+            // (`aReadingOfOtherBytesStoresNoFaces`).
+            #expect(try await library.readFaces([library.result(for: name, faces: faces, captured: day)]) == 1)
         }
         for name in names {
             try await read(name)
@@ -1182,6 +1255,7 @@ struct PeopleStoreTests {
         let owner = PeopleAssignment(store: library.store, vectorSpace: .ample)
         let libraries = try #require(await library.store.loadedLibraries())
         var present = names
+        var mostPeople = 0
         for step in 0 ..< 40 {
             let snapshot = try await library.store.backgroundReads.peopleSnapshot()
             let faces = snapshot.faces.map(\.id)
@@ -1225,6 +1299,7 @@ struct PeopleStoreTests {
             await owner.request()
             try await owner.settle()
             let truth = try await library.store.backgroundReads.peopleSnapshot()
+            mostPeople = max(mostPeople, truth.people.count)
             let gallery = try #require(try await library.store.windowReads.peopleGallery(availableLibraryPaths: [library.rootPath]))
             let computed = truth.computedGalleryFacts
             #expect(gallery.people.allSatisfy { $0.facts != nil }, "step \(step)")
@@ -1236,6 +1311,8 @@ struct PeopleStoreTests {
                 #expect(person.cover?.id == cover, "step \(step): \(person.id)")
             }
         }
+        // The walk compared people, not an empty gallery.
+        #expect(mostPeople > 1)
         await library.store.shutdown()
     }
 

@@ -223,6 +223,10 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// The largest vector number in the catalog when the snapshot was read: every vector at or
     /// below it that no face here names is gone; one above it is a newer reading.
     var vectorHorizon: Int64 = 0
+    /// The vectors of the faces the catalog holds that People leaves out
+    /// (`PeopleFaceColumn.isSetAside`), by photo. Such a face can come back with the same
+    /// vector, so the vectors held for People (`heldVectors`) keep these too.
+    var setAsideVectors: [MediaAssetID: [Int64]] = [:]
     /// In creation order.
     let people: [Person]
     /// Each person's key photo, where the user chose one.
@@ -253,7 +257,7 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
 
     /// This snapshot with the faces of `photos` replaced by `partial`'s, a read of only those
     /// photos (`CatalogStore.peopleSnapshot(of:)`): their faces, likenesses, copies and the
-    /// files their stacks and copies stand for; and the people, their stored gallery facts, the
+    /// files their stacks and copies stand for, and the vectors they set aside; and the people, their stored gallery facts, the
     /// key photos and the vector horizon, which `partial` read whole. The faces stay in the
     /// order a whole read gives them, so the hash of what assignment reads is the one a whole
     /// read would give (`AssignmentInputs`).
@@ -295,6 +299,8 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
             rootOrder: order
         )
         next.vectorHorizon = partial.vectorHorizon
+        next.setAsideVectors = setAsideVectors.filter { !photos.contains($0.key) }
+            .merging(partial.setAsideVectors) { _, new in new }
         return next
     }
 
@@ -357,6 +363,12 @@ nonisolated struct PeopleSnapshot: Sendable, Equatable {
     /// The vector numbers the faces name.
     var vectors: Set<Int64> {
         Set(faces.map(\.vector))
+    }
+
+    /// The vectors People holds for this snapshot: its faces' and the ones it sets aside, every
+    /// vector of a face the catalog still stores. Only a vector no stored face names is gone.
+    var heldVectors: Set<Int64> {
+        vectors.union(setAsideVectors.values.joined())
     }
 
     /// This snapshot with only the faces among `ids`.

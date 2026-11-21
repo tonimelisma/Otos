@@ -26,16 +26,21 @@ nonisolated enum PeopleSQL {
     ORDER BY face.face_index
     """
 
+    /// Every stored face, the ones People sets aside among them (`PeopleFaceColumn.isSetAside`).
     static let peopleFacesSQL = """
     SELECT \(PeopleFaceColumn.selectList)
     FROM face f
     JOIN media_asset m ON m.library_root_id = f.library_root_id AND m.relative_path = f.relative_path
     \(FaceEmbeddingSQL.join(face: "f", embedding: "e"))
-    WHERE m.trash_path IS NULL AND f.is_not_face = 0
-      AND NOT \(LivePhotoSQL.isPairedMotion("m"))
     """
 
-    static let peopleFacesOfPhotoSQL = peopleFacesSQL + "\n  AND \(AssetKey.exactText("f"))\nORDER BY f.face_index"
+    /// Whether a face of the photo (bound) is a person's gallery cover (`idx_person_summary_cover`).
+    /// A new reading replaces the photo's face rows, and deleting the cover's row clears it.
+    static let holdsCoverSQL = """
+    SELECT EXISTS (SELECT 1 FROM person_summary WHERE cover_library_root_id = ? AND cover_relative_path = ?)
+    """
+
+    static let peopleFacesOfPhotoSQL = peopleFacesSQL + "\nWHERE \(AssetKey.exactText("f"))\nORDER BY f.face_index"
 
     static let writePersonSummarySQL = """
     INSERT INTO person_summary
@@ -239,9 +244,16 @@ nonisolated enum PeopleSQL {
 
     static let movePersonFacesSQL = "UPDATE face SET person_id = ? WHERE person_id = ?"
 
+    /// A merge's rejections (bound: the person merged into, the person merged away, the person
+    /// merged into): what the user said a face is not carries to the merged person, except onto
+    /// a face that is theirs, which the user gave them, and the merge says the two are one.
     static let moveRejectionsSQL = """
     INSERT OR IGNORE INTO face_rejection (library_root_id, relative_path, face_index, person_id)
-    SELECT library_root_id, relative_path, face_index, ? FROM face_rejection WHERE person_id = ?
+    SELECT r.library_root_id, r.relative_path, r.face_index, ? FROM face_rejection r
+    WHERE r.person_id = ? AND NOT EXISTS (
+        SELECT 1 FROM face f WHERE f.library_root_id = r.library_root_id AND f.relative_path = r.relative_path
+          AND f.face_index = r.face_index AND f.person_id = ?
+    )
     """
 
     static let setMergedPersonSQL = "UPDATE person SET name = ?, birthday = ?, is_favorite = ? WHERE id = ?"

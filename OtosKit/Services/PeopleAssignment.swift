@@ -391,7 +391,7 @@ actor PeopleAssignment: QuiescentOwner {
                 break
             }
         }
-        try vectorStore.keep(read.vectors, through: read.vectorHorizon)
+        try vectorStore.keep(read.heldVectors, through: read.vectorHorizon)
         guard !malformed.isEmpty else { return }
         let bad = Set(malformed)
         try await store.oweFacesAgain(Set(MappedArrayBuilder.collect(read.faces) { bad.contains($0.vector) ? $0.id.asset : nil }))
@@ -838,7 +838,8 @@ nonisolated struct FaceVectorStore: ~Copyable, Sendable {
         vectors.malformed = malformed
     }
 
-    /// Keeps only `named`, the vectors a snapshot's faces name, among the vectors numbered up to
+    /// Keeps only `named`, the vectors of the faces a snapshot read (`PeopleSnapshot.heldVectors`,
+    /// those it sets aside among them), among the vectors numbered up to
     /// `horizon`, the largest number that snapshot could see: a vector written after it is
     /// some face's newer reading, which a later snapshot names, so it stays. A compaction the
     /// floor refuses, or whose write finds the volume full, is not run: the dropped slots stay

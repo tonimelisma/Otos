@@ -335,7 +335,11 @@ grouping had put with the right child.
     a merge: the user's faces from before it refuse the act, and Otos's guesses and seeds
     from before it lose the person.
   - A face the user said is not someone (`This Is Not Sam`, or `Not the Same Person` in an unnamed person's own photos) is held: Otos never gives it a person
-    again, and never offers that person for it.
+    again, and never offers that person for it. A merge carries the rejection to the merged
+    person, except onto a face that is theirs: the user gave it them, and the merge says the
+    two are one, so a rejection there would name the face's own person. A person is never
+    merged into themself (`PeopleRuleViolation.mergeIntoSelf`): deleting the person merged
+    away would delete them and leave their faces marked with a person no row holds.
 - **Corrections propagate:** a correction is a new anchor, and every guess is rebuilt from the
   anchors, so moving one face moves the guesses reached through it (owner decision,
   2026-11-12). From a cold start, ten moves left nothing wrong on the owner's
@@ -364,8 +368,13 @@ grouping had put with the right child.
   and unlinked at once, written with `pwrite`, read through a read-only shared mapping, so their
   pages are clean and file-backed and the footprint never counts them. The file is made again
   from `face_embedding` every launch, as the vectors were read before, so it is never stale and
-  never a second source of truth, and nothing is left on disk after a crash; dropped vectors
-  stay in it until a quarter of its slots are dropped, when the kept ones are written into a
+  never a second source of truth, and nothing is left on disk after a crash. A vector is dropped
+  only when no face the catalog stores names it: the faces People leaves out (a photo in the
+  Trash, a face marked not a face, a Live Photo's movie) keep theirs
+  (`PeopleSnapshot.setAsideVectors`), because such a face comes back with the same vector on
+  Undo or Put Back, and the vectors are read by number only above the highest held, so one
+  dropped then would never be read again and every pass would find it missing and never
+  settle. Dropped vectors stay in it until a quarter of its slots are dropped, when the kept ones are written into a
   new file. Measured on a generated catalog of the owner's shape, the first pass that assigns
   added 175 MB to the footprint with the vectors on the heap and 79 MB with them in the file
   (`docs/research/2026-11-16-people-passes-in-a-live-session.md`). Rejected: the dense table

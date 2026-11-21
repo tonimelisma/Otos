@@ -453,7 +453,7 @@ nonisolated extension CatalogPeopleState {
         switch violation {
         case let .confirmedBeforeBirthday(media):
             PeopleText.beforeTheBirthday(media)
-        case .twoFacesOfOnePhoto, .personAlreadyInPhoto, .beforeBirthday, .nameTaken, .unknownFace:
+        case .twoFacesOfOnePhoto, .personAlreadyInPhoto, .beforeBirthday, .nameTaken, .unknownFace, .mergeIntoSelf:
             "Choose another person"
         }
     }

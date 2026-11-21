@@ -672,6 +672,16 @@ actor CatalogStore {
     }
 
     /// Whether the row holds a face: one probe of the face table's key.
+    /// Whether a face of the photo is a person's gallery cover: a new reading of the photo
+    /// replaces its face rows, which clears that cover until People writes it again, so the
+    /// write changes the gallery (`.peopleGallery`).
+    static func holdsCover(libraryRootID: Int64, relativePath: MediaRelativePath, db: Database) throws -> Bool {
+        try Bool.fetchOne(
+            db.cachedStatement(sql: PeopleSQL.holdsCoverSQL),
+            arguments: AssetKey(rootID: libraryRootID, path: relativePath).arguments
+        ) ?? false
+    }
+
     private static func holdsFace(libraryRootID: Int64, relativePath: MediaRelativePath, db: Database) throws -> Bool {
         try Bool.fetchOne(
             db.cachedStatement(sql: PeopleSQL.holdsFaceSQL),
@@ -1695,6 +1705,8 @@ extension CatalogStore {
             var keyPhotos: [PersonID: FaceID] = [:]
             // The digests of the files with a face and a present copy, whose copies follow.
             var copiedKeys: Set<Data> = []
+            // The vectors of the faces People leaves out, by photo (`PeopleSnapshot.setAsideVectors`).
+            var setAside: [MediaAssetID: [Int64]] = [:]
             // A Live Photo's movie is one item with its still (ADR 0041), whose faces are its.
             // Read by position (`PeopleFaceColumn`): a name lookup scans the row's columns,
             // and at 18 columns over every face it was most of the read (bench
@@ -1706,9 +1718,6 @@ extension CatalogStore {
             func take(_ row: Row) -> PeopleSnapshot.Face? {
                 let rootID: Int64 = row[PeopleFaceColumn.rootID.rawValue]
                 let pathText: String = row[PeopleFaceColumn.path.rawValue]
-                if let digest = row[PeopleFaceColumn.copiedKey.rawValue] as Data? {
-                    copiedKeys.insert(digest)
-                }
                 let path = lastAsset.flatMap { $0.relativePath.rawValue == pathText ? $0.relativePath : nil }
                     ?? MediaRelativePath(rawValue: pathText)
                 let key = FaceRowKey(rootID: rootID, path: path, index: row[PeopleFaceColumn.faceIndex.rawValue])
@@ -1717,6 +1726,17 @@ extension CatalogStore {
                     ?? MediaAssetID(libraryRootPath: rootPath, relativePath: path)
                 lastAsset = asset
                 let vector: Int64? = row[PeopleFaceColumn.vector.rawValue]
+                // A face People leaves out is read only for its vector, which is held while
+                // the catalog holds the face; what else its row says is read when it returns.
+                if (row[PeopleFaceColumn.isSetAside.rawValue] as Int) != 0 {
+                    if let vector {
+                        setAside[asset, default: []].append(vector)
+                    }
+                    return nil
+                }
+                if let digest = row[PeopleFaceColumn.copiedKey.rawValue] as Data? {
+                    copiedKeys.insert(digest)
+                }
                 let person: Int64? = row[PeopleFaceColumn.personID.rawValue]
                 guard let vector,
                       let assignment = try? FaceAssignmentColumn.assignment(
@@ -1825,6 +1845,7 @@ extension CatalogStore {
             )
             // In the same transaction as the faces: what this snapshot could have named.
             snapshot.vectorHorizon = try Int64.fetchOne(db, sql: PeopleSQL.vectorHorizonSQL) ?? 0
+            snapshot.setAsideVectors = setAside
             return (snapshot, malformed)
         }
         if !malformed.isEmpty {
@@ -2345,8 +2366,9 @@ extension CatalogStore {
     @discardableResult
     func applyPreviewFaces(_ results: [PreviewFaceResult]) async throws -> Int {
         let rowIDs = roots.rowIDSnapshot()
-        let written = try await database().write { db -> Set<MediaAssetID> in
+        let (written, clearedCover) = try await database().write { db -> (Set<MediaAssetID>, Bool) in
             var written: Set<MediaAssetID> = []
+            var clearedCover = false
             for result in results {
                 guard let rootID = rowIDs[result.candidate.id.libraryRootPath] else { continue }
                 // The preview file's name is the asset's own, so a new rendering keeps it: the
@@ -2363,6 +2385,9 @@ extension CatalogStore {
                         ]
                 )
                 guard current != nil else { continue }
+                if try Self.holdsCover(libraryRootID: rootID, relativePath: result.candidate.id.relativePath, db: db) {
+                    clearedCover = true
+                }
                 try Self.writeFaces(
                     result.faces,
                     stamp: (result.candidate.sourceSize, result.candidate.sourceMTimeSeconds),
@@ -2371,11 +2396,12 @@ extension CatalogStore {
                 )
                 written.insert(result.candidate.id)
             }
-            return written
+            return (written, clearedCover)
         }
-        // People and the grid's faces read what was written, by key.
+        // People and the grid's faces read what was written, by key; the gallery, when a
+        // cover's face was replaced.
         if !written.isEmpty {
-            notifyCatalogChanged(.changed([.faces, .detail], rows: .rows(written)))
+            notifyCatalogChanged(.changed(clearedCover ? [.faces, .detail, .peopleGallery] : [.faces, .detail], rows: .rows(written)))
         }
         return written.count
     }
@@ -2870,13 +2896,15 @@ extension CatalogStore {
     /// refuses the merge: of the faces the user gave or Otos seeded for either in one photo,
     /// the one most like the merged person stays theirs and the others are held
     /// (`keepLikeliestFace`); the second person's guesses in a photo the first is in make way.
-    /// Refused only when the user gave either a photo from before the merged birthday; Otos's
-    /// guesses and seeds from before it lose their person (`holdToBirthday`).
+    /// Refused when the two are one person, and when the user gave either a photo from before
+    /// the merged birthday; Otos's guesses and seeds from before it lose their person
+    /// (`holdToBirthday`).
     /// The second keeps its name, birthday and key photo, taking the first's where it
     /// has none, and is a favourite if either was.
     private static func mergePerson(
         _ from: PersonID, into: PersonID, pathsByRowID: [Int64: LibraryRootPath], db: Database
     ) throws {
+        guard from != into else { throw PeopleRuleViolation.mergeIntoSelf }
         guard let target = try Row.fetchOne(db, sql: PeopleSQL.personSQL, arguments: [into.rawValue]).map(person),
               let source = try Row.fetchOne(db, sql: PeopleSQL.personSQL, arguments: [from.rawValue]).map(person)
         else {
@@ -2908,7 +2936,7 @@ extension CatalogStore {
         try db.execute(sql: PeopleSQL.movePersonFacesSQL, arguments: [into.rawValue, from.rawValue])
         try db.execute(
             sql: PeopleSQL.moveRejectionsSQL,
-            arguments: [into.rawValue, from.rawValue]
+            arguments: [into.rawValue, from.rawValue, into.rawValue]
         )
         try db.execute(sql: PeopleSQL.deletePersonSQL, arguments: [from.rawValue])
         try db.execute(
@@ -5308,6 +5336,7 @@ extension CatalogStore {
             libraryRootID: rootID, relativePath: result.id.relativePath.rawValue, db: db
         )
         let heldBefore = try DuplicatesHoldSQL.holds(libraryRootID: rootID, relativePath: result.id.relativePath.rawValue, db: db)
+        let coverBefore = try result.videoFaces != nil && Self.holdsCover(libraryRootID: rootID, relativePath: result.id.relativePath, db: db)
         try writeEnrichmentOverlay(result, libraryRootID: rootID, db: db)
         // Ask SQLite what it actually stored for the STORED generated columns rather
         // than predicting it: the COALESCE chain lives once, in the schema
@@ -5358,6 +5387,9 @@ extension CatalogStore {
         }
         if result.videoFaces != nil {
             outcome.facts.insert(.faces)
+        }
+        if coverBefore {
+            outcome.facts.insert(.peopleGallery)
         }
         if let digestBefore,
            let digestAfter = try DigestStanding.read(libraryRootID: rootID, relativePath: result.id.relativePath.rawValue, db: db)

@@ -58,12 +58,12 @@ SEARCH vector USING INDEX idx_face_embedding_face (library_root_id=? AND relativ
 
 == PeopleSQL.peopleFacesOfPhotoSQL
 SEARCH m USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH e USING COVERING INDEX idx_face_embedding_face (library_root_id=? AND relative_path=? AND face_index=?) LEFT-JOIN
 CORRELATED SCALAR SUBQUERY 1
   SEARCH member USING INDEX idx_media_asset_content_identifier (library_root_id=? AND content_identifier=? AND parent_path=?)
 CORRELATED SCALAR SUBQUERY 2
   SEARCH member USING INDEX idx_media_asset_content_identifier (library_root_id=? AND content_identifier=? AND parent_path=?)
-SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
-SEARCH e USING COVERING INDEX idx_face_embedding_face (library_root_id=? AND relative_path=? AND face_index=?) LEFT-JOIN
 
 == AssetRowSQL.askedPhotoBurstSQL
 SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)

@@ -301,6 +301,9 @@ nonisolated enum PeopleRuleViolation: Error, Equatable {
     case nameTaken
     /// The face's library is not cataloged.
     case unknownFace
+    /// A person merged into themself: there is no second person, and deleting the one merged
+    /// away would delete them.
+    case mergeIntoSelf
 }
 
 /// A still whose faces are owed from its stored preview (ADR 0047): the preview's file under
@@ -339,6 +342,11 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
     /// copies People reads (`PhotoFaceSQL.presentCopiesOfKey`), from the row this read joins
     /// anyway. NULL for a file with no copy, so the read copies no key it does not use.
     case copiedKey
+    /// The catalog holds the face but People leaves it out: its photo is in the Trash, the user
+    /// said it is not a face, or it is a Live Photo's movie, whose faces are its still's
+    /// (ADR 0041). Such a face can come back unchanged (Put Back, Undo, a pairing that ends),
+    /// so its vector stays held (`PeopleSnapshot.setAsideVectors`).
+    case isSetAside
 
     /// The expression each column is read from, over `face f` joined to `media_asset m` and
     /// to its vector's row `e` (`FaceEmbeddingSQL.join`).
@@ -355,6 +363,7 @@ nonisolated enum PeopleFaceColumn: Int, CaseIterable {
         case .captureLocal: "m.best_capture_local"
         case .isVideo: "m.best_kind = 'video'"
         case .copiedKey: "CASE WHEN m.has_copies = 1 THEN m.copy_key END"
+        case .isSetAside: "(m.trash_path IS NOT NULL OR f.is_not_face <> 0 OR \(LivePhotoSQL.isPairedMotion("m")))"
         }
     }
 
