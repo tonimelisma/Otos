@@ -68,6 +68,7 @@ struct DerivedFileLifecycleTests {
         try await render([id("a.jpg"), id("c.jpg")], store: store, directory: directory)
         try library.delete("c.jpg")
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        await store.derivedFolder?.untilSettled()
         #expect(store.derivedFolder?.closeSession() == true)
         await store.shutdown()
 
@@ -99,6 +100,7 @@ struct DerivedFileLifecycleTests {
         let namedNow = try await named(store)
         #expect(try listed(directory) == namedNow.union([unnamedOwn]))
         try await expectCountersMatchCensus(directory, store)
+        await store.derivedFolder?.untilSettled()
         #expect(store.derivedFolder?.closeSession() == true)
         await store.shutdown()
 
@@ -277,12 +279,16 @@ struct DerivedFileLifecycleTests {
         #expect(await store.applyEnrichmentBatch(results) == .applied(count: ids.count))
     }
 
+    /// After the folder's changes settle: a write's deletes follow its commit
+    /// (`DerivedFolder.untilSettled`).
     private func expectFolderMatchesRows(_ directory: URL, _ store: CatalogStore) async throws {
+        await store.derivedFolder?.untilSettled()
         let rows = try await named(store)
         #expect(try listed(directory) == rows)
     }
 
     private func expectCountersMatchCensus(_ directory: URL, _ store: CatalogStore) async throws {
+        await store.derivedFolder?.untilSettled()
         let census = try DerivedFileReconciliation.Census(DerivedFileReconciliation.list(directory)).normalized
         #expect(try await store.backgroundReads.derivedFolderCounters() == census)
     }

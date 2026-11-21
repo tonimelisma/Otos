@@ -4495,7 +4495,6 @@ extension CatalogStore {
             discardStagedImages(staged)
             return false
         }
-        await outcome.removal.perform()
         if outcome.applied {
             let facts: CatalogChangedFacts = outcome.held ? [.images, .faceTiles, .detail, .duplicateFacts] : [.images, .faceTiles, .detail]
             notifyCatalogChanged(.changed(facts, rows: .rows([products.id])))
@@ -4506,6 +4505,9 @@ extension CatalogStore {
             "relativePath": products.id.relativePath.rawValue,
             "revision": "\(products.revision)",
         ])
+        // The write is applied and announced before the first suspension; its superseded
+        // files go after, off the actor.
+        await outcome.removal.perform()
         return outcome.applied
     }
 
@@ -7026,9 +7028,10 @@ extension CatalogStore {
             )
             return try (rows: written.rows, removal: derivedFolder?.unname(written.purgedImages, db: db) ?? .nothing)
         }
-        // The rows are gone whether or not the scan is still this Store's: their files go too.
-        await timed.value.removal.perform()
+        // The rows are gone whether or not the scan is still this Store's: their files go too,
+        // off the actor, once the write is applied and announced.
         guard owns(scan) else {
+            await timed.value.removal.perform()
             throw CancellationError()
         }
         let announced = timed.value.rows.notifications
@@ -7036,6 +7039,7 @@ extension CatalogStore {
             bumpNamespaceRevision(for: scan.rootPath)
             announced.forEach(notifyCatalogChanged)
         }
+        await timed.value.removal.perform()
         OtosLog.catalog.noticeOperation("catalog.source.changes", phase: "finish", fields: [
             "rootPath": scan.rootPath.rawValue,
             "listed": "\(changes.listed.count)",
@@ -7284,8 +7288,8 @@ extension CatalogStore {
             let removal = try derivedFolder?.unname(missing.flatMap(\.derivedImagePaths), db: db) ?? .nothing
             return (removal: removal, purged: missing.count, settled: settled, rows: rows)
         }
-        await timed.value.removal.perform()
         guard owns(scan) else {
+            await timed.value.removal.perform()
             throw CancellationError()
         }
         OtosLog.catalog.noticeOperation("catalog.source.resync", phase: "complete", fields: [
@@ -7300,6 +7304,9 @@ extension CatalogStore {
         bumpNamespaceRevision(for: scan.rootPath)
         // The rows the resync purged, and the Live Photo partners they leave.
         timed.value.rows.notifications.forEach(notifyCatalogChanged)
+        // The purged rows' files go off the actor, after the purge is announced and while
+        // the scan still holds the root.
+        await timed.value.removal.perform()
         await endSourceListing(scan: scan)
     }
 
@@ -8810,16 +8817,19 @@ private extension CatalogStore {
             }
             return try (rows.updatedRows, derivedFolder?.unname(purgedThumbnails, db: db) ?? .nothing)
         }
-        await removal.perform()
         // Removal and same-path replacement can run while GRDB owns the writer.
         // Never treat an old row's reconciliation as proof about the replacement root.
+        // The deleted rows' files go either way, off the actor, after this check and the
+        // announcement: no suspension stands between the write and either.
         guard owns(scan) else {
+            await removal.perform()
             throw CancellationError()
         }
         // The deletion names its rows and the Live Photo partners they leave, so an owner
         // that keeps a memory per asset lets go of these alone and asks the partners again;
         // the scan's end announces only that the root is idle again.
         notifyCatalogChanged(.changed(.membership, rows: .rows(deleted)))
+        await removal.perform()
         return missingRows.count
     }
 

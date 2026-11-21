@@ -436,6 +436,8 @@ final nonisolated class DerivedFolder: Sendable {
         var rolledBack = false
         var noting = false
         var noted = Set<String>()
+        /// Who waits for no change to be in flight (`untilSettled`).
+        var settledWaiters: [CheckedContinuation<Void, Never>] = []
     }
 
     private let state = Mutex(State())
@@ -503,9 +505,30 @@ final nonisolated class DerivedFolder: Sendable {
     }
 
     fileprivate func end(rolledBack: Bool) {
-        state.withLock { state in
+        let settled = state.withLock { state -> [CheckedContinuation<Void, Never>] in
             state.inFlight -= 1
             state.rolledBack = state.rolledBack || rolledBack
+            guard state.inFlight == 0 else { return [] }
+            defer { state.settledWaiters = [] }
+            return state.settledWaiters
+        }
+        settled.forEach { $0.resume() }
+    }
+
+    /// Returns once no change to the folder is in flight: at once when none is, else in the
+    /// step that ends the last. A write's deletes run after it commits, off the Store's actor
+    /// (`DerivedRemoval.perform`), so its rows can be read before its files are gone; a reader
+    /// that compares the folder with them waits for this fact first.
+    func untilSettled() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let settled = state.withLock { state -> Bool in
+                guard state.inFlight > 0 else { return true }
+                state.settledWaiters.append(continuation)
+                return false
+            }
+            if settled {
+                continuation.resume()
+            }
         }
     }
 
