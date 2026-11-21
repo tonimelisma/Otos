@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 @testable import OtosKit
 import Testing
 
@@ -660,6 +661,34 @@ struct MediaTransferPlannerTests {
             #expect(try await !Self.plansAsUnreadable(id, in: card.store), "the verdict outlived its attachment")
             #expect(try await Self.plansAsUnreadable(otherID, in: card.store), "another root's verdicts must be untouched")
         }
+    }
+
+    /// Plan 0117 step 6: a planning read that fails hands the planner nothing, and its log line
+    /// carries the error by domain and code, so the failure says why.
+    @Test func aFailedPlanningReadLogsItsError() async throws {
+        let directory = try makeTestDirectory()
+        let databaseURL = directory.appending(path: "db/catalog.sqlite")
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: directory, files: ["a.jpg"], database: databaseURL)
+        let database = try makeTestDatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try await database.write { db in
+            try db.execute(sql: "ALTER TABLE media_companion RENAME TO media_companion_hidden")
+        }
+        let since = Date()
+
+        let media = await library.store.windowReads.planningMedia(for: library.rootPath)
+
+        try await database.write { db in
+            try db.execute(sql: "ALTER TABLE media_companion_hidden RENAME TO media_companion")
+        }
+        #expect(media == nil)
+        let lines = try LoggedLines.read(
+            .catalog, since: since, prefix: "op=reorganization.snapshot phase=failed", naming: library.rootPath.rawValue
+        )
+        #expect(lines.count == 1)
+        let fields = try LoggedLines.fields(of: #require(lines.first))
+        #expect(fields["error"]?.isEmpty == false)
+        #expect(fields["errorCode"].flatMap(Int.init) != nil)
+        await library.store.shutdown()
     }
 
     /// The verdict as planning reads it: the planning facts the Store hands the planner.

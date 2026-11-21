@@ -1328,8 +1328,9 @@ extension CatalogStore {
                 )
             }
         } catch {
-            OtosLog.catalog.error(
-                "op=reorganization.snapshot phase=failed rootPath=\(rootPath.rawValue, privacy: .public)"
+            OtosLog.catalog.errorOperation(
+                "reorganization.snapshot", phase: "failed",
+                fields: ErrorDiagnostics.fields(for: error).merging(["rootPath": rootPath.rawValue]) { _, path in path }
             )
             return nil
         }
@@ -2735,13 +2736,19 @@ extension CatalogStore {
     """
 
     /// Writes back what an act changed, undoing it, and returns what redoes the undo: the
-    /// state the restore replaced.
+    /// state the restore replaced. A face or rejection whose library is no longer cataloged has
+    /// no row to write back: it is skipped, counted and logged (`op=people.restore`), as
+    /// `applyAssignment` counts its skips.
     @discardableResult
     func restore(_ restore: PeopleRestore) async throws -> PeopleRestore {
         let rowIDs = roots.rowIDSnapshot()
         let pathsByRowID = roots.pathsByRowID
+        let faces = restore.faces.compactMap { row in (try? FaceRowKey(row.face, rowIDs: rowIDs)).map { (row: row, key: $0) } }
+        let rejections = restore.rejections.compactMap { rejection in
+            (try? FaceRowKey(rejection.face, rowIDs: rowIDs)).map { (rejection: rejection, key: $0) }
+        }
         let redo = try await database().write { db -> PeopleRestore in
-            let faceKeys = restore.faces.compactMap { try? FaceRowKey($0.face, rowIDs: rowIDs) }
+            let faceKeys = faces.map(\.key)
             let people = Array(restore.people.keys)
             let current = try Self.restoreRecord(faces: faceKeys, people: people, pathsByRowID: pathsByRowID, db: db)
             // People first, so the faces and rejections below can name them.
@@ -2764,8 +2771,7 @@ extension CatalogStore {
                     try db.execute(sql: "UPDATE face SET is_key_photo = 0 WHERE person_id = ?", arguments: [person.rawValue])
                 }
             }
-            for row in restore.faces {
-                guard let key = try? FaceRowKey(row.face, rowIDs: rowIDs) else { continue }
+            for (row, key) in faces {
                 try db.execute(
                     sql: Self.restoreFaceSQL,
                     arguments: [row.assignment.person?.rawValue, FaceAssignmentColumn(row.assignment).rawValue,
@@ -2773,8 +2779,7 @@ extension CatalogStore {
                 )
             }
             try Self.deleteRejections(faces: faceKeys, people: people, db: db)
-            for rejection in restore.rejections {
-                guard let key = try? FaceRowKey(rejection.face, rowIDs: rowIDs) else { continue }
+            for (rejection, key) in rejections {
                 // A face a new reading replaced is gone, and so is what was decided about it.
                 try db.execute(
                     sql: Self.restoreRejectionSQL,
@@ -2791,6 +2796,15 @@ extension CatalogStore {
             return current
         }
         notifyCatalogChanged(.changed(.faces))
+        // The libraries the skipped rows were in: few, since a restore is one act's faces.
+        let skippedRoots = Set(restore.faces.map(\.face.asset.libraryRootPath) + restore.rejections.map(\.face.asset.libraryRootPath))
+            .filter { rowIDs[$0] == nil }
+        OtosLog.catalog.noticeOperation("people.restore", phase: "applied", fields: [
+            "people": "\(restore.people.count)", "faces": "\(faces.count)", "rejections": "\(rejections.count)",
+            "skippedFaces": "\(restore.faces.count - faces.count)",
+            "skippedRejections": "\(restore.rejections.count - rejections.count)",
+            "skippedRoots": skippedRoots.isEmpty ? "none" : skippedRoots.map(\.rawValue).sorted().joined(separator: ","),
+        ])
         return redo
     }
 
@@ -9076,7 +9090,18 @@ private extension CatalogStore {
         do {
             let values = try path.url.resourceValues(forKeys: [.isDirectoryKey])
             return values.isDirectory == true
+        } catch where ErrorDiagnostics.isMissingFile(error) {
+            // Nothing is there (a volume not mounted, a folder moved away): unavailable is the
+            // fact the error states.
+            OtosLog.fileAccess.debugOperation("catalog.root.availability", phase: "missing", fields: ["rootPath": path.rawValue])
+            return false
         } catch {
+            // Something is there that Otos cannot read (no permission, an I/O error): it cannot
+            // scan or watch it, so it is unavailable, and the error says why by its domain and code.
+            OtosLog.fileAccess.errorOperation(
+                "catalog.root.availability", phase: "unreadable",
+                fields: ErrorDiagnostics.fields(for: error).merging(["rootPath": path.rawValue]) { _, path in path }
+            )
             return false
         }
     }

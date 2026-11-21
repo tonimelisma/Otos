@@ -82,12 +82,17 @@ People and the harness first.
   (APP-087). This was the latent defect step 2's study found.
 - **#992.** Step 5's de-risk: every runtime statement naming an asset's key has a recorded
   query plan. Also step 1's attribution: the 79 ms was a test-only wrapper.
-- **Step 1.** The Store actor's local holds over 50 ms are gone:
+- **#998.** Step 1: the Store actor's local holds over 50 ms are gone:
   - `oweFacesAgain` logs one line per call with a count and a sample;
   - `photoDescriptionCandidatesByKey` keys and sorts its ids inside its read;
   - the test-only `filterOptions` wrapper is deleted;
   - derived files and a removed source's staging folder are deleted on a dedicated queue
     (`FileDeletion`), never on the actor.
+- **Step 6.** Errors the Store turned into nothing are said:
+  - People undo counts and logs the faces and rejections of a library no longer cataloged
+    (`op=people.restore`);
+  - `rootIsAvailable` logs an unreadable root's error by domain and code;
+  - a failed planning read logs its error.
 - **#993.** Step 3's de-risk: the change-coverage guard is in every test's Store. On
   unmodified code it found three writes that announced nothing (ARC-018), and they are fixed:
   - a listing's changed source facts;
@@ -96,9 +101,9 @@ People and the harness first.
 
 ## Steps
 
-Each step is its own increment, in this order. Steps 5 and 6 change what is already
-understood. Steps 3 and 7 measure or guard before they change anything, because each can
-fail silently: a missed notification, a cross-feature write. Step 2, one owner for People's
+Each step is its own increment, in this order. Step 5 changes what is already understood. Steps 3
+and 7 measure or guard before they change anything, because each can fail silently: a missed
+notification, a cross-feature write. Step 2, one owner for People's
 act overlay, was measured and stopped (below).
 
 ### 3. Change notifications say what changed: narrow the `.all` sites
@@ -172,17 +177,6 @@ scans a table. The five temp B-trees, in four statements, each sort one photo's 
 **Done when.** Every converted statement's recorded plan is unchanged.
 
 **Stop if** any plan changes.
-
-### 6. Errors the Store turns into nothing
-
-- People undo's `restore` skips a face whose library is gone without counting or logging it
-  (`CatalogStore.swift`, `try? FaceRowKey`). `applyAssignment` already counts its skips.
-- `rootIsAvailable` turns any error into "unavailable" with no log.
-- `planningMedia` logs its failure without the error.
-
-**Change.** Each is counted or logged by error domain and code (lint `error_becomes_value`).
-
-**Done when.** Each has a test that sees the log or count.
 
 ### 7. Edit becomes the window's first feature model
 

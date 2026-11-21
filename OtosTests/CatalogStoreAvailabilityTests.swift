@@ -55,6 +55,46 @@ struct CatalogStoreAvailabilityTests {
         await reloadedStore.shutdown()
     }
 
+    /// Plan 0117 step 6: a saved library that is there but cannot be read (its parent denies
+    /// search) loads unavailable, and the error that made it so is logged by its domain and
+    /// code, not swallowed.
+    @Test func anUnreadableSavedLibraryLoadsUnavailableAndSaysWhy() async throws {
+        let temp = try makeTestDirectory()
+        let parent = temp.appending(path: "Locked", directoryHint: .isDirectory)
+        let root = parent.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let firstStore = makeTestStore(location: .databaseFile(databaseURL))
+        try await firstStore.start(scansSavedLibraries: false)
+        try await firstStore.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(firstStore) { !$0.isScanning }
+        await firstStore.shutdown()
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: parent.path(percentEncoded: false))
+        defer {
+            do {
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent.path(percentEncoded: false))
+            } catch {
+                Issue.record(error, "the locked folder could not be unlocked for its removal")
+            }
+        }
+        let since = Date()
+        let reloadedStore = makeTestStore(location: .databaseFile(databaseURL))
+        try await reloadedStore.start(scansSavedLibraries: false)
+        let loaded = try await catalogStoreTestState(reloadedStore)
+        await reloadedStore.shutdown()
+
+        #expect(loaded.libraries.first?.availability == .unavailable)
+        let lines = try LoggedLines.read(
+            .fileAccess, since: since, prefix: "op=catalog.root.availability phase=unreadable", naming: rootPath.rawValue
+        )
+        let fields = try LoggedLines.fields(of: #require(lines.first))
+        #expect(fields["error"]?.isEmpty == false)
+        #expect(fields["errorCode"].flatMap(Int.init) != nil)
+    }
+
     @Test func unavailableLaunchRootPreservesRowsAndMarksLibraryUnavailable() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

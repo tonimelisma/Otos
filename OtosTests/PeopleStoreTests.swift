@@ -1311,6 +1311,41 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    /// Plan 0117 step 6: an undo whose record names a face and a rejection in a library no
+    /// longer cataloged writes back the rest, and counts and logs what it skipped, with the
+    /// library, as assignment counts its skips.
+    @Test func anUndoCountsTheFacesOfAGoneLibraryItSkips() async throws {
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
+        try await library.readFaces([library.result(for: "a.jpg", faces: [Self.face(x: 0.1)])])
+        let face = FaceID(asset: library.id("a.jpg"), index: 0)
+        let before = try await library.store.backgroundReads.peopleSnapshot()
+        let outcome = try await library.store.perform(.moveToNewPerson([face], name: "Sam"))
+        let person = try #require(outcome.person)
+        let row = try #require(outcome.restore.faces.first)
+        let goneRoot = LibraryRootPath(rawValue: "/Volumes/Gone-\(UUID().uuidString)")
+        let gone = FaceID(asset: MediaAssetID(libraryRootPath: goneRoot, relativePath: MediaRelativePath(rawValue: "b.jpg")), index: 0)
+        let record = PeopleRestore(
+            people: outcome.restore.people,
+            faces: outcome.restore.faces + [PeopleRestore.FaceRow(
+                face: gone, assignment: row.assignment, isNotFace: row.isNotFace, isKeyPhoto: false
+            )],
+            rejections: outcome.restore.rejections.union([PeopleRestore.Rejection(face: gone, person: person)])
+        )
+        let since = Date()
+
+        try await library.store.restore(record)
+
+        let after = try await library.store.backgroundReads.peopleSnapshot()
+        #expect(after.faces == before.faces)
+        let lines = try LoggedLines.read(.catalog, since: since, prefix: "op=people.restore phase=applied", naming: goneRoot.rawValue)
+        #expect(lines.count == 1)
+        let fields = try LoggedLines.fields(of: #require(lines.first))
+        #expect(fields["skippedFaces"] == "1")
+        #expect(fields["skippedRejections"] == "1")
+        #expect(fields["faces"] == "\(outcome.restore.faces.count)")
+        await library.store.shutdown()
+    }
+
     /// A face like every other `lookalike`: one direction, nudged a little per face.
     private static func lookalike(_ index: Int) -> DetectedFace {
         let base = FaceEnrichmentTests.face(seed: 3)
