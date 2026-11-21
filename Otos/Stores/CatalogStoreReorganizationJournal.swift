@@ -324,6 +324,12 @@ extension CatalogStore {
         try db.execute(sql: "DELETE FROM pending_identity_remap_batch")
     }
 
+    nonisolated static let remapCompanionPathSQL = """
+    UPDATE media_companion
+    SET relative_path = ?, relative_path_key = ?
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     private static func remapCompanionPathsForSettlement(
         rootRowID: Int64,
         privatePrefix: String,
@@ -335,11 +341,7 @@ extension CatalogStore {
         for (index, member) in companions.enumerated() {
             let privatePath = MediaRelativePath(rawValue: "\(privatePrefix)/companion/\(index)")
             try db.execute(
-                sql: """
-                UPDATE media_companion
-                SET relative_path = ?, relative_path_key = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
+                sql: Self.remapCompanionPathSQL,
                 arguments: [
                     privatePath.rawValue,
                     FilesystemNamespaceSemantics.nameKey(relativePath: privatePath, capabilities: capabilities).rawValue,
@@ -351,11 +353,7 @@ extension CatalogStore {
         for (index, member) in companions.enumerated() {
             let privatePath = MediaRelativePath(rawValue: "\(privatePrefix)/companion/\(index)")
             try db.execute(
-                sql: """
-                UPDATE media_companion
-                SET relative_path = ?, relative_path_key = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
+                sql: Self.remapCompanionPathSQL,
                 arguments: [
                     member.finalRelativePath.rawValue,
                     FilesystemNamespaceSemantics.nameKey(
@@ -401,6 +399,21 @@ extension CatalogStore {
         }
     }
 
+    nonisolated static let remapAssetPathRenamingSQL = """
+    UPDATE media_asset
+    SET relative_path = ?,
+        relative_path_key = ?,
+        name_sort_key = ?,
+        name = ?
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
+    nonisolated static let remapAssetPathSQL = """
+    UPDATE media_asset
+    SET relative_path = ?, relative_path_key = ?
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     private static func remapMediaAssetPath(
         rootRowID: Int64,
         from: MediaRelativePath,
@@ -413,14 +426,7 @@ extension CatalogStore {
         if recomputeDerived {
             let name = to.rawValue.split(separator: "/").last.map(String.init) ?? to.rawValue
             try db.execute(
-                sql: """
-                UPDATE media_asset
-                SET relative_path = ?,
-                    relative_path_key = ?,
-                    name_sort_key = ?,
-                    name = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
+                sql: Self.remapAssetPathRenamingSQL,
                 arguments: [
                     to.rawValue,
                     key,
@@ -432,11 +438,7 @@ extension CatalogStore {
             )
         } else {
             try db.execute(
-                sql: """
-                UPDATE media_asset
-                SET relative_path = ?, relative_path_key = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
+                sql: Self.remapAssetPathSQL,
                 arguments: [to.rawValue, key, rootRowID, from.rawValue]
             )
         }

@@ -202,6 +202,36 @@ extension CatalogStore {
         }
     }
 
+    nonisolated static let settleImportedAssetSQL = """
+    UPDATE media_asset
+    SET import_batch_unix_ms = ?,
+        import_source_root_path = ?,
+        import_source_relative_path = ?,
+        import_source_byte_size = ?,
+        import_source_modified_at_epoch = ?,
+        import_destination_byte_size = ?,
+        import_destination_modified_at_epoch = ?,
+        content_sha1 = ?,
+        content_hash_source_size = ?,
+        content_hash_source_mtime = ?,
+        media_choice = COALESCE(
+            (SELECT media_choice FROM media_asset
+             WHERE library_root_id = ? AND relative_path = ?),
+            media_choice
+        ),
+        edit_recipe_json = COALESCE(
+            (SELECT edit_recipe_json FROM media_asset
+             WHERE library_root_id = ? AND relative_path = ?),
+            edit_recipe_json
+        ),
+        edit_revision = COALESCE(
+            (SELECT edit_revision FROM media_asset
+             WHERE library_root_id = ? AND relative_path = ?),
+            edit_revision
+        )
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     static func settleImportedAsset(_ landed: LandedImport, db: Database) throws {
         let operation = landed.operation
         let relativePath = operation.destinationRelativePath
@@ -228,35 +258,7 @@ extension CatalogStore {
             db: db
         )
         try db.execute(
-            sql: """
-            UPDATE media_asset
-            SET import_batch_unix_ms = ?,
-                import_source_root_path = ?,
-                import_source_relative_path = ?,
-                import_source_byte_size = ?,
-                import_source_modified_at_epoch = ?,
-                import_destination_byte_size = ?,
-                import_destination_modified_at_epoch = ?,
-                content_sha1 = ?,
-                content_hash_source_size = ?,
-                content_hash_source_mtime = ?,
-                media_choice = COALESCE(
-                    (SELECT media_choice FROM media_asset
-                     WHERE library_root_id = ? AND relative_path = ?),
-                    media_choice
-                ),
-                edit_recipe_json = COALESCE(
-                    (SELECT edit_recipe_json FROM media_asset
-                     WHERE library_root_id = ? AND relative_path = ?),
-                    edit_recipe_json
-                ),
-                edit_revision = COALESCE(
-                    (SELECT edit_revision FROM media_asset
-                     WHERE library_root_id = ? AND relative_path = ?),
-                    edit_revision
-                )
-            WHERE library_root_id = ? AND relative_path = ?
-            """,
+            sql: Self.settleImportedAssetSQL,
             arguments: [
                 operation.importBatch.unixMilliseconds,
                 operation.sourceRootPath.rawValue,
@@ -287,6 +289,20 @@ extension CatalogStore {
         }
     }
 
+    nonisolated static let reusableEnrichmentOverlaySQL = """
+    SELECT m.enriched_kind, m.enriched_format,
+           m.metadata_source_size, m.metadata_source_mtime,
+           m.rendered_source_size, m.rendered_source_mtime, m.rendered_revision,
+           m.edit_recipe_json, m.edit_revision,
+           m.thumbnail_path, m.preview_path,
+           a.metadata_extra_json
+    FROM media_asset m
+    LEFT JOIN asset_metadata a
+      ON a.library_root_id = m.library_root_id
+     AND a.relative_path = m.relative_path
+    WHERE m.library_root_id = ? AND m.relative_path = ?
+    """
+
     /// The source row's products and their stamps, or nil when there is no row. Its
     /// metadata is nil when the row has no record, or one this build cannot read: reuse is
     /// per product, so that only makes the metadata owed. A recipe that cannot be decoded
@@ -298,19 +314,7 @@ extension CatalogStore {
     ) throws -> ReusableEnrichmentOverlay? {
         guard let row = try Row.fetchOne(
             db,
-            sql: """
-            SELECT m.enriched_kind, m.enriched_format,
-                   m.metadata_source_size, m.metadata_source_mtime,
-                   m.rendered_source_size, m.rendered_source_mtime, m.rendered_revision,
-                   m.edit_recipe_json, m.edit_revision,
-                   m.thumbnail_path, m.preview_path,
-                   a.metadata_extra_json
-            FROM media_asset m
-            LEFT JOIN asset_metadata a
-              ON a.library_root_id = m.library_root_id
-             AND a.relative_path = m.relative_path
-            WHERE m.library_root_id = ? AND m.relative_path = ?
-            """,
+            sql: reusableEnrichmentOverlaySQL,
             arguments: [sourceRootID, sourceRelativePath.rawValue]
         ) else {
             return nil

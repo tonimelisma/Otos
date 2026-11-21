@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 @testable import OtosKit
+import SQLite3
 import Testing
 
 @Suite(.testScope)
@@ -1481,5 +1482,238 @@ extension CatalogStoreQueryPlanTests {
                 #expect(Double(walked) <= Double(measured.rows) * 1.05, "\(read.name): \(walked) visited for \(measured.rows)")
             }
         }
+    }
+}
+
+extension CatalogStoreQueryPlanTests {
+    /// Every runtime statement that finds rows by an asset's key (`library_root_id = ? AND
+    /// relative_path = ?`), by the name production reads its text from. The migrations'
+    /// statements are left out: they stay literal and the freeze test holds them (ADR 0002).
+    static var assetKeyStatements: [(name: String, sql: String)] {
+        typealias Store = CatalogStore
+        var statements: [(name: String, sql: String)] = [
+            ("CatalogQueryGateway.metadataExtraSQL", CatalogQueryGateway.metadataExtraSQL),
+            ("CatalogQueryGateway.rowIDOfKeySQL", CatalogQueryGateway.rowIDOfKeySQL),
+            ("CatalogQueryGateway.captureWallSQL", CatalogQueryGateway.captureWallSQL),
+            ("LivePhotoSQL.partnersSQL", LivePhotoSQL.partnersSQL),
+            ("CatalogStore.holdsFaceSQL", Store.holdsFaceSQL),
+            ("CatalogStore.EnrichmentOverlayBeforeWrite.columnsSQL", Store.EnrichmentOverlayBeforeWrite.columnsSQL),
+            ("CatalogStore.facesReadSQL", Store.facesReadSQL),
+            ("CatalogStore.photoInfoAssetSQL", Store.photoInfoAssetSQL),
+            ("CatalogStore.photoInfoCopiesSQL", Store.photoInfoCopiesSQL),
+            ("CatalogStore.photoInfoLabelsSQL", Store.photoInfoLabelsSQL),
+            ("CatalogStore.photoInfoLinesSQL", Store.photoInfoLinesSQL),
+            ("CatalogStore.photoFaceBoxesSQL", Store.photoFaceBoxesSQL),
+            ("CatalogStore.peopleFacesOfPhotoSQL", Store.peopleFacesOfPhotoSQL),
+            ("CatalogStore.askedPhotoBurstSQL", Store.askedPhotoBurstSQL),
+            ("CatalogStore.writePersonSummarySQL", Store.writePersonSummarySQL),
+            ("CatalogStore.oweFacesAgainSQL", Store.oweFacesAgainSQL),
+            ("CatalogStore.photoFacesOfPhotoSQL", Store.photoFacesOfPhotoSQL),
+            ("CatalogStore.photoCopyKeySQL", Store.photoCopyKeySQL),
+            ("CatalogStore.previewFacesAreCurrentSQL", Store.previewFacesAreCurrentSQL),
+            ("CatalogStore.lapseFaceSQL", Store.lapseFaceSQL),
+            ("CatalogStore.seedFaceSQL", Store.seedFaceSQL),
+            ("CatalogStore.guessFaceSQL", Store.guessFaceSQL),
+            ("CatalogStore.faceLikenessSQL", Store.faceLikenessSQL),
+            ("CatalogStore.rejectFaceNameSQL", Store.rejectFaceNameSQL),
+            ("CatalogStore.markNotAFaceSQL", Store.markNotAFaceSQL),
+            ("CatalogStore.facePersonSQL", Store.facePersonSQL),
+            ("CatalogStore.setKeyPhotoSQL", Store.setKeyPhotoSQL),
+            ("CatalogStore.restoreFaceSQL", Store.restoreFaceSQL),
+            ("CatalogStore.restoreRejectionSQL", Store.restoreRejectionSQL),
+            ("CatalogStore.otherAssignmentsInPhotoSQL", Store.otherAssignmentsInPhotoSQL),
+            ("CatalogStore.photoCaptureLocalSQL", Store.photoCaptureLocalSQL),
+            ("CatalogStore.clearOtherFacesOfPersonSQL", Store.clearOtherFacesOfPersonSQL),
+            ("CatalogStore.deleteFaceRejectionSQL", Store.deleteFaceRejectionSQL),
+            ("CatalogStore.setFaceSQL", Store.setFaceSQL),
+            ("CatalogStore.facesOfPhotoSQL", Store.facesOfPhotoSQL),
+            ("CatalogStore.faceRestoreRecordSQL", Store.faceRestoreRecordSQL),
+            ("CatalogStore.faceRejectionPeopleSQL", Store.faceRejectionPeopleSQL),
+            ("CatalogStore.deleteFaceRejectionsSQL", Store.deleteFaceRejectionsSQL),
+            ("CatalogStore.setChoiceSQL", Store.setChoiceSQL),
+            ("CatalogStore.setPendingTrashSQL", Store.setPendingTrashSQL),
+            ("CatalogStore.carriedWorkSQL", Store.carriedWorkSQL),
+            ("CatalogStore.restoredRowIsBackSQL", Store.restoredRowIsBackSQL),
+            ("CatalogStore.mediaChoiceSQL", Store.mediaChoiceSQL),
+            ("CatalogStore.changeMediaChoiceSQL", Store.changeMediaChoiceSQL),
+            ("CatalogStore.editRecipeSQL", Store.editRecipeSQL),
+            ("CatalogStore.editRecipeRowSQL", Store.editRecipeRowSQL),
+            ("CatalogStore.renderedEditRowSQL", Store.renderedEditRowSQL),
+            ("CatalogStore.writeRenderedEditProductsSQL", Store.writeRenderedEditProductsSQL),
+            ("CatalogStore.releaseUnrenderedEditSQL", Store.releaseUnrenderedEditSQL),
+            ("CatalogStore.writeEditRecipeSQL", Store.writeEditRecipeSQL),
+            ("CatalogStore.replacedEditRecipeRowSQL", Store.replacedEditRecipeRowSQL),
+            ("CatalogStore.applyContentHashSQL", Store.applyContentHashSQL),
+            ("CatalogStore.releaseContentHashClaimSQL", Store.releaseContentHashClaimSQL),
+            ("CatalogStore.requestEnrichmentDownloadSQL", Store.requestEnrichmentDownloadSQL),
+            ("CatalogStore.metadataRefreshStillOwedSQL", Store.metadataRefreshStillOwedSQL),
+            ("CatalogStore.sourceHiddenSQL", Store.sourceHiddenSQL),
+            ("CatalogStore.sourceItemFactsSQL", Store.sourceItemFactsSQL),
+            ("CatalogStore.sourceDigestSQL", Store.sourceDigestSQL),
+            ("CatalogStore.sourceProductsAbsentSQL", Store.sourceProductsAbsentSQL),
+            ("CatalogStore.sourceItemIDSQL", Store.sourceItemIDSQL),
+            ("CatalogStore.storedByteSizeSQL", Store.storedByteSizeSQL),
+            ("CatalogStore.markTrashedSQL", Store.markTrashedSQL),
+            ("CatalogStore.writeRenderSignatureSQL", Store.writeRenderSignatureSQL),
+            ("CatalogStore.deleteRenderGraySQL", Store.deleteRenderGraySQL),
+            ("CatalogStore.onThisDayLeftOutSQL", Store.onThisDayLeftOutSQL),
+            ("CatalogStore.embeddingSourceIsCurrentSQL", Store.embeddingSourceIsCurrentSQL),
+            ("CatalogStore.textSourceIsCurrentSQL", Store.textSourceIsCurrentSQL),
+            ("CatalogStore.descriptionSourceIsCurrentSQL", Store.descriptionSourceIsCurrentSQL),
+            ("CatalogStore.settleImportedAssetSQL", Store.settleImportedAssetSQL),
+            ("CatalogStore.reusableEnrichmentOverlaySQL", Store.reusableEnrichmentOverlaySQL),
+            ("CatalogStore.renameDerivedImagesSQL", Store.renameDerivedImagesSQL),
+            ("CatalogStore.deleteAssetRowSQL", Store.deleteAssetRowSQL),
+            ("CatalogStore.deletionTargetSQL", Store.deletionTargetSQL),
+            ("CatalogStore.writeContentHashSQL", Store.writeContentHashSQL),
+            ("CatalogStore.writeUndecodableSQL", Store.writeUndecodableSQL),
+            ("CatalogStore.writeFaceFramesSQL", Store.writeFaceFramesSQL),
+            ("CatalogStore.facesReadSourceSQL", Store.facesReadSourceSQL),
+            ("CatalogStore.storedFacesSQL", Store.storedFacesSQL),
+            ("CatalogStore.faceRejectionsOfPhotoSQL", Store.faceRejectionsOfPhotoSQL),
+            ("CatalogStore.deleteFacesOfPhotoSQL", Store.deleteFacesOfPhotoSQL),
+            ("CatalogStore.writeFacesStampSQL", Store.writeFacesStampSQL),
+            ("CatalogStore.writeRenderingSQL", Store.writeRenderingSQL),
+            ("CatalogStore.writeSourceProductsSQL", Store.writeSourceProductsSQL),
+            ("CatalogStore.writeProvisionalThumbnailSQL", Store.writeProvisionalThumbnailSQL),
+            ("CatalogStore.writeMetadataStampSQL", Store.writeMetadataStampSQL),
+            ("CatalogStore.metadataProjectionDatesSQL", Store.metadataProjectionDatesSQL),
+            ("CatalogStore.writeMetadataProjectionSQL", Store.writeMetadataProjectionSQL),
+            ("CatalogStore.lacksThumbnailSQL", Store.lacksThumbnailSQL),
+            ("CatalogStore.respellCompanionSQL", Store.respellCompanionSQL),
+            ("CatalogStore.deleteCompanionRowSQL", Store.deleteCompanionRowSQL),
+            ("CatalogStore.rowAtPathSQL", Store.rowAtPathSQL),
+            ("CatalogStore.spellingsOfPathSQL", Store.spellingsOfPathSQL),
+            ("CatalogStore.respellAssetSQL", Store.respellAssetSQL),
+            ("CatalogStore.moveAssetRowSQL", Store.moveAssetRowSQL),
+            ("CatalogStore.putBackFromTrashSQL", Store.putBackFromTrashSQL),
+            ("CatalogStore.remapCompanionPathSQL", Store.remapCompanionPathSQL),
+            ("CatalogStore.remapAssetPathRenamingSQL", Store.remapAssetPathRenamingSQL),
+            ("CatalogStore.remapAssetPathSQL", Store.remapAssetPathSQL),
+            ("SamePhotoSQL.evidenceSQL", SamePhotoSQL.evidenceSQL),
+            ("SamePhotoSQL.copySQL", SamePhotoSQL.copySQL),
+            ("DuplicatesHoldSQL.comparedSQL", DuplicatesHoldSQL.comparedSQL),
+            ("MirrorGateway.recordAskedSQL", MirrorGateway.recordAskedSQL),
+            ("MirrorGateway.pairSQL", MirrorGateway.pairSQL),
+            ("EnrichmentClaimGateway.releaseEnrichmentClaimSQL", EnrichmentClaimGateway.releaseEnrichmentClaimSQL),
+            ("EnrichmentClaimGateway.holdDigestForLocalBytesSQL", EnrichmentClaimGateway.holdDigestForLocalBytesSQL),
+            ("EnrichmentClaimGateway.endDigestHoldSQL", EnrichmentClaimGateway.endDigestHoldSQL),
+            ("EnrichmentClaimGateway.holdsDigestHoldSQL", EnrichmentClaimGateway.holdsDigestHoldSQL),
+            ("PreviewFaceSQL.keyedCandidateSQL", PreviewFaceSQL.keyedCandidateSQL),
+            ("PhotoDescriptionStorage.keyedCandidateSQL", PhotoDescriptionStorage.keyedCandidateSQL),
+            ("PhotoDescriptionStorage.currentRowSQL", PhotoDescriptionStorage.currentRowSQL),
+            ("PhotoDescriptionStorage.facesSQL", PhotoDescriptionStorage.facesSQL),
+            ("PhotoDescriptionStorage.readingsSQL", PhotoDescriptionStorage.readingsSQL),
+            ("SearchEmbeddingStorage.keyedCandidateSQL", SearchEmbeddingStorage.keyedCandidateSQL),
+            ("SearchEmbeddingStorage.currentEmbeddingByKeySQL", SearchEmbeddingStorage.currentEmbeddingByKeySQL),
+            ("SearchTextStorage.keyedCandidateSQL", SearchTextStorage.keyedCandidateSQL),
+            ("SearchTextStorage.deleteFoldedSQL", SearchTextStorage.deleteFoldedSQL),
+        ]
+        for kind in [PhotoStackKind.pair, .burst] {
+            statements.append(("CatalogStore.stackKeyChoiceSQL(.\(kind))", Store.stackKeyChoiceSQL(kind)))
+            statements.append(("CatalogStore.setStackKeyChoiceSQL(.\(kind))", Store.setStackKeyChoiceSQL(kind)))
+        }
+        for edit in Store.EnrichmentResultEdit.allCases {
+            statements.append(("CatalogStore.enrichmentResultMatchesSQL(.\(edit))", Store.enrichmentResultMatchesSQL(edit)))
+        }
+        for onlyWhenMissing in [false, true] {
+            statements.append((
+                "CatalogStore.updateThumbnailPathSQL(onlyWhenMissing: \(onlyWhenMissing))",
+                Store.updateThumbnailPathSQL(onlyWhenMissing: onlyWhenMissing)
+            ))
+        }
+        for claim in EnrichmentClaim.allCases {
+            statements.append((
+                "EnrichmentClaimGateway.claimEnrichmentAssetSQL(.\(claim))",
+                EnrichmentClaimGateway.claimEnrichmentAssetSQL(claim)
+            ))
+        }
+        return statements
+    }
+
+    /// Step 5 of plan 0117 turns the asset-key predicate into one typed predicate; before any
+    /// text changes, every statement that names the key has its plan recorded, on a catalog of
+    /// the owner's shape. Any later edit that changes a plan fails here, and so does a
+    /// statement added or removed without its recording. A changed plan is re-recorded only
+    /// deliberately: a failing run writes every current plan to the file its last issue names.
+    @Test func everyStatementThatNamesAnAssetsKeyKeepsItsRecordedPlan() async throws {
+        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
+        let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
+        let statements = Self.assetKeyStatements
+        #expect(Set(statements.map(\.name)).count == statements.count)
+        let plans = try await queue.read { db in
+            try statements.map { name, sql in try (name, AssetKeyPlans.plan(db, sql: sql)) }
+        }
+        try queue.close()
+        let recorded = try AssetKeyPlans.parse(String(decoding: Data(contentsOf: AssetKeyPlans.fixtureURL), as: UTF8.self))
+        let current = Dictionary(uniqueKeysWithValues: plans)
+        var differs = false
+        for (name, plan) in plans where recorded[name] != plan {
+            differs = true
+            Issue.record("\(name): recorded \(recorded[name].map { "\n\($0)" } ?? "nothing"), now\n\(plan)")
+        }
+        for name in recorded.keys.sorted() where current[name] == nil {
+            differs = true
+            Issue.record("\(name) is recorded but no longer listed")
+        }
+        if differs {
+            let actual = SourceTree.root.appending(path: "build/asset-key-query-plans.txt")
+            try AssetKeyPlans.render(plans).write(to: actual, atomically: true, encoding: .utf8)
+            Issue.record("every current plan is in \(actual.path(percentEncoded: false))")
+        }
+    }
+}
+
+/// The recorded plans of `assetKeyStatements`: one `== name` line per statement, then its
+/// `EXPLAIN QUERY PLAN` rows as SQLite's shell draws them, two spaces a level.
+private enum AssetKeyPlans {
+    static let fixtureURL = SourceTree.root.appending(path: "OtosTests/Fixtures/Catalog/asset-key-query-plans.txt")
+
+    static let header = """
+    # The query plan of every runtime statement that names an asset's key, on a generated
+    # catalog of the owner's shape (CatalogStoreQueryPlanTests.assetKeyStatements). A change
+    # here is a changed plan: record it only on purpose, from the file the failing run names.
+
+    """
+
+    /// The plan of one statement, every parameter bound to NULL: the catalog holds no
+    /// statistics, so no bound value can move it.
+    static func plan(_ db: Database, sql: String) throws -> String {
+        let statement = try db.makeStatement(sql: "EXPLAIN QUERY PLAN \(sql)")
+        let parameters = Int(sqlite3_bind_parameter_count(statement.sqliteStatement))
+        statement.setUncheckedArguments(StatementArguments(Array(repeating: DatabaseValue.null, count: parameters)))
+        let rows = try Row.fetchAll(statement)
+        var depth: [Int: Int] = [0: -1]
+        return rows.map { row in
+            let level = (depth[row["parent"]] ?? -1) + 1
+            depth[row["id"]] = level
+            return String(repeating: "  ", count: level) + (row["detail"] as String)
+        }.joined(separator: "\n")
+    }
+
+    static func render(_ plans: [(String, String)]) -> String {
+        header + plans.map { name, plan in "== \(name)\n\(plan)\n" }.joined(separator: "\n")
+    }
+
+    static func parse(_ text: String) -> [String: String] {
+        var plans: [String: String] = [:]
+        var name: String?
+        var lines: [String] = []
+        func close() {
+            if let name {
+                plans[name] = lines.joined(separator: "\n")
+            }
+        }
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            if line.hasPrefix("== ") {
+                close()
+                name = String(line.dropFirst(3))
+                lines = []
+            } else if name != nil, !line.isEmpty {
+                lines.append(line)
+            }
+        }
+        close()
+        return plans
     }
 }

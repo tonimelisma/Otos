@@ -263,6 +263,19 @@ nonisolated enum EnrichmentClaimGateway {
         )
     }
 
+    static func claimEnrichmentAssetSQL(_ claim: EnrichmentClaim) -> String {
+        """
+        UPDATE media_asset
+        SET enrichment_claimed = \(EnrichmentClaimMark.claimed)
+        WHERE library_root_id = ?
+          AND relative_path = ?
+          AND (\(stalenessSQLPredicate(claim)))
+          AND enrichment_claimed IS NULL
+          AND trash_path IS NULL
+          AND awaiting_presence = 0
+        """
+    }
+
     static func claimEnrichmentAsset(
         libraryRootID: Int64,
         relativePath: MediaRelativePath,
@@ -270,20 +283,17 @@ nonisolated enum EnrichmentClaimGateway {
         db: Database
     ) throws -> Bool {
         try db.execute(
-            sql: """
-            UPDATE media_asset
-            SET enrichment_claimed = \(EnrichmentClaimMark.claimed)
-            WHERE library_root_id = ?
-              AND relative_path = ?
-              AND (\(stalenessSQLPredicate(claim)))
-              AND enrichment_claimed IS NULL
-              AND trash_path IS NULL
-              AND awaiting_presence = 0
-            """,
+            sql: claimEnrichmentAssetSQL(claim),
             arguments: [libraryRootID, relativePath.rawValue]
         )
         return db.changesCount > 0
     }
+
+    static let releaseEnrichmentClaimSQL = """
+    UPDATE media_asset
+    SET enrichment_claimed = NULL
+    WHERE library_root_id = ? AND relative_path = ?
+    """
 
     static func releaseEnrichmentClaims(
         ids: [MediaAssetID],
@@ -295,15 +305,17 @@ nonisolated enum EnrichmentClaimGateway {
                 continue
             }
             try db.execute(
-                sql: """
-                UPDATE media_asset
-                SET enrichment_claimed = NULL
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
+                sql: Self.releaseEnrichmentClaimSQL,
                 arguments: [rootID, id.relativePath.rawValue]
             )
         }
     }
+
+    static let holdDigestForLocalBytesSQL = """
+    UPDATE media_asset SET enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
+    WHERE library_root_id = ? AND relative_path = ?
+      AND enrichment_claimed = \(EnrichmentClaimMark.claimed)
+    """
 
     /// Turns the coordinator's claim on each of `ids` into a digest hold
     /// (`EnrichmentClaimMark.digestAwaitsLocalBytes`), and returns the rows it held: a row
@@ -315,34 +327,34 @@ nonisolated enum EnrichmentClaimGateway {
     ) throws -> [MediaAssetID] {
         try ids.filter { id in
             guard let rootID = rootIDsByPath[id.libraryRootPath] else { return false }
-            try db.cachedStatement(sql: """
-            UPDATE media_asset SET enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
-            WHERE library_root_id = ? AND relative_path = ?
-              AND enrichment_claimed = \(EnrichmentClaimMark.claimed)
-            """).execute(arguments: [rootID, id.relativePath.rawValue])
+            try db.cachedStatement(sql: Self.holdDigestForLocalBytesSQL).execute(arguments: [rootID, id.relativePath.rawValue])
             return db.changesCount > 0
         }
     }
 
+    static let endDigestHoldSQL = """
+    UPDATE media_asset SET enrichment_claimed = NULL
+    WHERE library_root_id = ? AND relative_path = ?
+      AND enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
+    """
+
     /// Ends the digest hold of the row at `relativePath`, if it holds one: whether it did.
     /// Any other claim is left to its owner.
     static func endDigestHold(libraryRootID: Int64, relativePath: MediaRelativePath, db: Database) throws -> Bool {
-        try db.cachedStatement(sql: """
-        UPDATE media_asset SET enrichment_claimed = NULL
-        WHERE library_root_id = ? AND relative_path = ?
-          AND enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
-        """).execute(arguments: [libraryRootID, relativePath.rawValue])
+        try db.cachedStatement(sql: endDigestHoldSQL).execute(arguments: [libraryRootID, relativePath.rawValue])
         return db.changesCount > 0
     }
+
+    static let holdsDigestHoldSQL = """
+    SELECT enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
+    FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+    """
 
     /// Whether the row at `relativePath` holds a digest hold.
     static func holdsDigestHold(libraryRootID: Int64, relativePath: MediaRelativePath, db: Database) throws -> Bool {
         try Bool.fetchOne(
             db,
-            sql: """
-            SELECT enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
-            FROM media_asset WHERE library_root_id = ? AND relative_path = ?
-            """,
+            sql: holdsDigestHoldSQL,
             arguments: [libraryRootID, relativePath.rawValue]
         ) ?? false
     }

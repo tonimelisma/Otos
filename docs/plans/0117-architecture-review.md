@@ -92,7 +92,7 @@ act overlay, was measured and stopped (below).
 | --- | --- | --- |
 | `oweFacesAgain` | 15.6 s on a generated catalog | one `errorOperation` per photo, in a loop on the actor |
 | `photoDescriptionCandidatesByKey` | 449 ms | sorts its keys on the actor |
-| `filterOptionTally` | p99 79 ms | not yet attributed |
+| `filterOptionTally` | p99 79 ms | the test-only wrapper `filterOptions` building `.options` on the actor (`2026-11-20-filter-option-tally-hold.md`) |
 | `deleteStagingIfNeeded` | 123 ms–1.49 s for 2,000 files | file deletion on the actor (rule 6) |
 | `DerivedRemoval.perform` | up to 160 ms | file deletion on the actor (rule 6) |
 
@@ -100,11 +100,14 @@ act overlay, was measured and stopped (below).
 - The owner's app logged no `malformedFaceRow` in seven days. That failure is a generator
   artifact, but the shape (cost proportional to the rows, held on the actor) is real.
 
-**De-risk first.** Attribute `filterOptionTally`'s 79 ms with the hold harness on
-`experiment/2026-11-19-store-change-facts-actor-hold` (local, rebased on `main`), and fix
-only the cause it shows. The other four causes are read from the code already.
+**De-risked.** `filterOptionTally`'s own work on the actor is under 0.5 ms of CPU. Its 79 ms
+was `CatalogStore.filterOptions`, which no product code calls, building `.options` on the actor
+inside the same hold (`docs/research/2026-11-20-filter-option-tally-hold.md`). The other four
+causes are read from the code already.
 
 **Change.**
+- Delete `CatalogStore.filterOptions` and `CatalogReads.filterOptions`; their tests read
+  `filterOptionTally(...).options`, as the projection does.
 - Log once per page with a count.
 - Sort inside the read that returns the keys.
 - Delete files through a named off-actor mechanism, applying only the result on the actor.
@@ -196,8 +199,12 @@ and must pass unmodified.
   which one it means.
 - Migrations keep their SQL literal (ADR 0002); the freeze test holds them.
 
-**De-risk first.** Before converting, `CatalogStoreQueryPlanTests` records the plan of every
-statement that names the key. Recording, not a one-time `EXPLAIN`, keeps a later edit honest.
+**De-risked.** Every runtime statement that names the key reads its text from a name, and
+`CatalogStoreQueryPlanTests.everyStatementThatNamesAnAssetsKeyKeepsItsRecordedPlan` records the
+plan of all 129 on an owner-shaped catalog (`OtosTests/Fixtures/Catalog/asset-key-query-plans.txt`).
+126 find their row through the unique key's autoindex. Two seek `idx_face_person_photo`, which
+also names the person, and one seeks its pinned `idx_media_asset_same_photo_candidate`. None
+scans a table. The five temp B-trees, in four statements, each sort one photo's rows.
 
 **Change.**
 - An `AssetKey` predicate and binder.

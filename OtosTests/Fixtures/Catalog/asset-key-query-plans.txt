@@ -1,0 +1,611 @@
+# The query plan of every runtime statement that names an asset's key, on a generated
+# catalog of the owner's shape (CatalogStoreQueryPlanTests.assetKeyStatements). A change
+# here is a changed plan: record it only on purpose, from the file the failing run names.
+== CatalogQueryGateway.metadataExtraSQL
+SEARCH asset_metadata USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+
+== CatalogQueryGateway.rowIDOfKeySQL
+SEARCH media_asset USING COVERING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogQueryGateway.captureWallSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== LivePhotoSQL.partnersSQL
+SEARCH k USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH m USING INDEX idx_media_asset_content_identifier (library_root_id=? AND content_identifier=? AND parent_path=?)
+
+== CatalogStore.holdsFaceSQL
+SCAN CONSTANT ROW
+SCALAR SUBQUERY 1
+  SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.EnrichmentOverlayBeforeWrite.columnsSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH m USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?) LEFT-JOIN
+
+== CatalogStore.facesReadSQL
+SEARCH m USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.photoInfoAssetSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.photoInfoCopiesSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH copy USING COVERING INDEX idx_media_asset_copy_key (copy_key=?)
+SEARCH root USING INTEGER PRIMARY KEY (rowid=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH library_root USING INTEGER PRIMARY KEY (rowid=?)
+USE TEMP B-TREE FOR ORDER BY
+
+== CatalogStore.photoInfoLabelsSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH e USING INDEX idx_search_embedding_source (library_root_id=? AND relative_path=? AND source=?)
+
+== CatalogStore.photoInfoLinesSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH t USING INDEX idx_search_text_source (library_root_id=? AND relative_path=? AND source=?)
+
+== CatalogStore.photoFaceBoxesSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH vector USING INDEX idx_face_embedding_face (library_root_id=? AND relative_path=? AND face_index=?) LEFT-JOIN
+
+== CatalogStore.peopleFacesOfPhotoSQL
+SEARCH m USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH member USING INDEX idx_media_asset_content_identifier (library_root_id=? AND content_identifier=? AND parent_path=?)
+CORRELATED SCALAR SUBQUERY 2
+  SEARCH member USING INDEX idx_media_asset_content_identifier (library_root_id=? AND content_identifier=? AND parent_path=?)
+SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH e USING COVERING INDEX idx_face_embedding_face (library_root_id=? AND relative_path=? AND face_index=?) LEFT-JOIN
+
+== CatalogStore.askedPhotoBurstSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writePersonSummarySQL
+SEARCH p USING INTEGER PRIMARY KEY (rowid=?)
+SEARCH f USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?) LEFT-JOIN
+
+== CatalogStore.oweFacesAgainSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.photoFacesOfPhotoSQL
+SEARCH m USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH member USING INDEX idx_media_asset_content_identifier (library_root_id=? AND content_identifier=? AND parent_path=?)
+CORRELATED SCALAR SUBQUERY 2
+  SEARCH member USING INDEX idx_media_asset_content_identifier (library_root_id=? AND content_identifier=? AND parent_path=?)
+SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN
+
+== CatalogStore.photoCopyKeySQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.previewFacesAreCurrentSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.lapseFaceSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.seedFaceSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.guessFaceSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+SCALAR SUBQUERY 1
+  SEARCH person USING INTEGER PRIMARY KEY (rowid=?)
+
+== CatalogStore.faceLikenessSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.rejectFaceNameSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.markNotAFaceSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.facePersonSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.setKeyPhotoSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.restoreFaceSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.restoreRejectionSQL
+SEARCH face EXISTS USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+SEARCH person EXISTS USING INTEGER PRIMARY KEY (rowid=?)
+
+== CatalogStore.otherAssignmentsInPhotoSQL
+SEARCH face USING INDEX idx_face_person_photo (person_id=? AND library_root_id=? AND relative_path=?)
+
+== CatalogStore.photoCaptureLocalSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.clearOtherFacesOfPersonSQL
+SEARCH face USING COVERING INDEX idx_face_person_photo (person_id=? AND library_root_id=? AND relative_path=?)
+
+== CatalogStore.deleteFaceRejectionSQL
+SEARCH face_rejection USING INDEX sqlite_autoindex_face_rejection_1 (library_root_id=? AND relative_path=? AND face_index=? AND person_id=?)
+
+== CatalogStore.setFaceSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.facesOfPhotoSQL
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.faceRestoreRecordSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.faceRejectionPeopleSQL
+SEARCH face_rejection USING COVERING INDEX sqlite_autoindex_face_rejection_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.deleteFaceRejectionsSQL
+SEARCH face_rejection USING COVERING INDEX sqlite_autoindex_face_rejection_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.setChoiceSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.setPendingTrashSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.carriedWorkSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.restoredRowIsBackSQL
+SCAN CONSTANT ROW
+SCALAR SUBQUERY 1
+  SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.mediaChoiceSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.changeMediaChoiceSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.editRecipeSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.editRecipeRowSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.renderedEditRowSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeRenderedEditProductsSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.releaseUnrenderedEditSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeEditRecipeSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.replacedEditRecipeRowSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.applyContentHashSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.releaseContentHashClaimSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.requestEnrichmentDownloadSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH m USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.metadataRefreshStillOwedSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH m USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.sourceHiddenSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.sourceItemFactsSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.sourceDigestSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.sourceProductsAbsentSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.sourceItemIDSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.storedByteSizeSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.markTrashedSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeRenderSignatureSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.deleteRenderGraySQL
+SEARCH render_signature USING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.onThisDayLeftOutSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH search_embedding USING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.embeddingSourceIsCurrentSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.textSourceIsCurrentSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.descriptionSourceIsCurrentSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+CORRELATED SCALAR SUBQUERY 1
+  USE TEMP B-TREE FOR group_concat(ORDER BY)
+  SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+  SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN
+CORRELATED SCALAR SUBQUERY 2
+  SEARCH pm USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+  SEARCH pc USING INDEX sqlite_autoindex_place_cell_1 (cell_latitude=? AND cell_longitude=?)
+
+== CatalogStore.settleImportedAssetSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SCALAR SUBQUERY 1
+  SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SCALAR SUBQUERY 2
+  SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SCALAR SUBQUERY 3
+  SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.reusableEnrichmentOverlaySQL
+SEARCH m USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH a USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?) LEFT-JOIN
+
+== CatalogStore.renameDerivedImagesSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.deleteAssetRowSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH immich_mirror_asked USING INDEX idx_immich_mirror_asked_asset (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_asked USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH immich_mirror_pair USING COVERING INDEX sqlite_autoindex_immich_mirror_pair_2 (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH person_photo USING INDEX idx_person_photo_photo (library_root_id=? AND relative_path=?)
+SEARCH render_signature USING COVERING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH photo_description USING COVERING INDEX sqlite_autoindex_photo_description_1 (library_root_id=? AND relative_path=?)
+SEARCH search_text USING COVERING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?)
+SEARCH search_embedding USING COVERING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX idx_duplicate_kept_pair_second (second_root_id=? AND second_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX sqlite_autoindex_duplicate_kept_pair_1 (first_root_id=? AND first_path=?)
+SEARCH asset_metadata USING COVERING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.deletionTargetSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeContentHashSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeUndecodableSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeFaceFramesSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.facesReadSourceSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.storedFacesSQL
+SEARCH face USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH vector USING INDEX idx_face_embedding_face (library_root_id=? AND relative_path=? AND face_index=?) LEFT-JOIN
+
+== CatalogStore.faceRejectionsOfPhotoSQL
+SEARCH face_rejection USING COVERING INDEX sqlite_autoindex_face_rejection_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.deleteFacesOfPhotoSQL
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH person_summary USING COVERING INDEX idx_person_summary_cover (cover_library_root_id=? AND cover_relative_path=? AND cover_face_index=?)
+SEARCH face_embedding USING COVERING INDEX idx_face_embedding_face (library_root_id=? AND relative_path=? AND face_index=?)
+SEARCH face_rejection USING COVERING INDEX sqlite_autoindex_face_rejection_1 (library_root_id=? AND relative_path=? AND face_index=?)
+
+== CatalogStore.writeFacesStampSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeRenderingSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeSourceProductsSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeProvisionalThumbnailSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeMetadataStampSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.metadataProjectionDatesSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.writeMetadataProjectionSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.lacksThumbnailSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.respellCompanionSQL
+SEARCH media_companion USING INDEX sqlite_autoindex_media_companion_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.deleteCompanionRowSQL
+SEARCH media_companion USING INDEX sqlite_autoindex_media_companion_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.rowAtPathSQL
+SEARCH media_asset USING COVERING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.spellingsOfPathSQL
+COMPOUND QUERY
+  LEFT-MOST SUBQUERY
+    SEARCH media_asset USING INDEX idx_media_asset_relative_path_key (library_root_id=? AND relative_path_key=?)
+  UNION ALL
+    SEARCH media_asset USING COVERING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.respellAssetSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH immich_mirror_asked USING INDEX idx_immich_mirror_asked_asset (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_asked USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH immich_mirror_pair USING COVERING INDEX sqlite_autoindex_immich_mirror_pair_2 (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH person_photo USING INDEX idx_person_photo_photo (library_root_id=? AND relative_path=?)
+SEARCH render_signature USING COVERING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH photo_description USING COVERING INDEX sqlite_autoindex_photo_description_1 (library_root_id=? AND relative_path=?)
+SEARCH search_text USING COVERING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?)
+SEARCH search_embedding USING COVERING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX idx_duplicate_kept_pair_second (second_root_id=? AND second_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX sqlite_autoindex_duplicate_kept_pair_1 (first_root_id=? AND first_path=?)
+SEARCH asset_metadata USING COVERING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+SEARCH immich_mirror_asked USING INDEX idx_immich_mirror_asked_asset (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_asked USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH immich_mirror_pair USING COVERING INDEX sqlite_autoindex_immich_mirror_pair_2 (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH person_photo USING INDEX idx_person_photo_photo (library_root_id=? AND relative_path=?)
+SEARCH render_signature USING COVERING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH photo_description USING COVERING INDEX sqlite_autoindex_photo_description_1 (library_root_id=? AND relative_path=?)
+SEARCH search_text USING COVERING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?)
+SEARCH search_embedding USING COVERING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX idx_duplicate_kept_pair_second (second_root_id=? AND second_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX sqlite_autoindex_duplicate_kept_pair_1 (first_root_id=? AND first_path=?)
+SEARCH asset_metadata USING COVERING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.moveAssetRowSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH immich_mirror_asked USING INDEX idx_immich_mirror_asked_asset (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_asked USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH immich_mirror_pair USING COVERING INDEX sqlite_autoindex_immich_mirror_pair_2 (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH person_photo USING INDEX idx_person_photo_photo (library_root_id=? AND relative_path=?)
+SEARCH render_signature USING COVERING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH photo_description USING COVERING INDEX sqlite_autoindex_photo_description_1 (library_root_id=? AND relative_path=?)
+SEARCH search_text USING COVERING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?)
+SEARCH search_embedding USING COVERING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX idx_duplicate_kept_pair_second (second_root_id=? AND second_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX sqlite_autoindex_duplicate_kept_pair_1 (first_root_id=? AND first_path=?)
+SEARCH asset_metadata USING COVERING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+SEARCH immich_mirror_asked USING INDEX idx_immich_mirror_asked_asset (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_asked USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH immich_mirror_pair USING COVERING INDEX sqlite_autoindex_immich_mirror_pair_2 (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH person_photo USING INDEX idx_person_photo_photo (library_root_id=? AND relative_path=?)
+SEARCH render_signature USING COVERING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH photo_description USING COVERING INDEX sqlite_autoindex_photo_description_1 (library_root_id=? AND relative_path=?)
+SEARCH search_text USING COVERING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?)
+SEARCH search_embedding USING COVERING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX idx_duplicate_kept_pair_second (second_root_id=? AND second_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX sqlite_autoindex_duplicate_kept_pair_1 (first_root_id=? AND first_path=?)
+SEARCH asset_metadata USING COVERING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.putBackFromTrashSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.remapCompanionPathSQL
+SEARCH media_companion USING INDEX sqlite_autoindex_media_companion_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.remapAssetPathRenamingSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH immich_mirror_asked USING INDEX idx_immich_mirror_asked_asset (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_asked USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH immich_mirror_pair USING COVERING INDEX sqlite_autoindex_immich_mirror_pair_2 (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH person_photo USING INDEX idx_person_photo_photo (library_root_id=? AND relative_path=?)
+SEARCH render_signature USING COVERING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH photo_description USING COVERING INDEX sqlite_autoindex_photo_description_1 (library_root_id=? AND relative_path=?)
+SEARCH search_text USING COVERING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?)
+SEARCH search_embedding USING COVERING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX idx_duplicate_kept_pair_second (second_root_id=? AND second_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX sqlite_autoindex_duplicate_kept_pair_1 (first_root_id=? AND first_path=?)
+SEARCH asset_metadata USING COVERING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+SEARCH immich_mirror_asked USING INDEX idx_immich_mirror_asked_asset (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_asked USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH immich_mirror_pair USING COVERING INDEX sqlite_autoindex_immich_mirror_pair_2 (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH person_photo USING INDEX idx_person_photo_photo (library_root_id=? AND relative_path=?)
+SEARCH render_signature USING COVERING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH photo_description USING COVERING INDEX sqlite_autoindex_photo_description_1 (library_root_id=? AND relative_path=?)
+SEARCH search_text USING COVERING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?)
+SEARCH search_embedding USING COVERING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX idx_duplicate_kept_pair_second (second_root_id=? AND second_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX sqlite_autoindex_duplicate_kept_pair_1 (first_root_id=? AND first_path=?)
+SEARCH asset_metadata USING COVERING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.remapAssetPathSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH immich_mirror_asked USING INDEX idx_immich_mirror_asked_asset (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_asked USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH immich_mirror_pair USING COVERING INDEX sqlite_autoindex_immich_mirror_pair_2 (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH person_photo USING INDEX idx_person_photo_photo (library_root_id=? AND relative_path=?)
+SEARCH render_signature USING COVERING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH photo_description USING COVERING INDEX sqlite_autoindex_photo_description_1 (library_root_id=? AND relative_path=?)
+SEARCH search_text USING COVERING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?)
+SEARCH search_embedding USING COVERING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX idx_duplicate_kept_pair_second (second_root_id=? AND second_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX sqlite_autoindex_duplicate_kept_pair_1 (first_root_id=? AND first_path=?)
+SEARCH asset_metadata USING COVERING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+SEARCH immich_mirror_asked USING INDEX idx_immich_mirror_asked_asset (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_asked USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH immich_mirror_pair USING COVERING INDEX sqlite_autoindex_immich_mirror_pair_2 (account_root_id=? AND asset_path=?)
+SEARCH immich_mirror_pair USING PRIMARY KEY (library_root_id=? AND file_path=?)
+SEARCH person_photo USING INDEX idx_person_photo_photo (library_root_id=? AND relative_path=?)
+SEARCH render_signature USING COVERING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?)
+SEARCH face USING COVERING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH photo_description USING COVERING INDEX sqlite_autoindex_photo_description_1 (library_root_id=? AND relative_path=?)
+SEARCH search_text USING COVERING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?)
+SEARCH search_embedding USING COVERING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX idx_duplicate_kept_pair_second (second_root_id=? AND second_path=?)
+SEARCH duplicate_kept_pair USING COVERING INDEX sqlite_autoindex_duplicate_kept_pair_1 (first_root_id=? AND first_path=?)
+SEARCH asset_metadata USING COVERING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+
+== SamePhotoSQL.evidenceSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH g USING INDEX sqlite_autoindex_render_signature_1 (library_root_id=? AND relative_path=?) LEFT-JOIN
+SEARCH m USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?) LEFT-JOIN
+
+== SamePhotoSQL.copySQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH m USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?) LEFT-JOIN
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH c USING COVERING INDEX idx_media_companion_primary (library_root_id=? AND primary_relative_path=?)
+
+== DuplicatesHoldSQL.comparedSQL
+SCAN CONSTANT ROW
+SCALAR SUBQUERY 1
+  SEARCH media_asset USING COVERING INDEX idx_media_asset_same_photo_candidate (library_root_id=? AND relative_path=? AND kind=?)
+
+== MirrorGateway.recordAskedSQL
+SEARCH asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH file USING COVERING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== MirrorGateway.pairSQL
+SEARCH file USING COVERING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH asset USING INDEX idx_media_asset_source_path_sha1 (library_root_id=? AND source_path_sha1=?)
+
+== EnrichmentClaimGateway.releaseEnrichmentClaimSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== EnrichmentClaimGateway.holdDigestForLocalBytesSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== EnrichmentClaimGateway.endDigestHoldSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== EnrichmentClaimGateway.holdsDigestHoldSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== PreviewFaceSQL.keyedCandidateSQL
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== PhotoDescriptionStorage.keyedCandidateSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH e EXISTS USING COVERING INDEX idx_search_embedding_source (library_root_id=? AND relative_path=? AND source=?)
+SEARCH t EXISTS USING COVERING INDEX idx_search_text_source (library_root_id=? AND relative_path=? AND source=?)
+SEARCH d USING COVERING INDEX idx_photo_description_source (library_root_id=? AND relative_path=?) LEFT-JOIN
+CORRELATED SCALAR SUBQUERY 5
+  USE TEMP B-TREE FOR group_concat(ORDER BY)
+  SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+  SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN
+CORRELATED SCALAR SUBQUERY 6
+  SEARCH pm USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+  SEARCH pc USING INDEX sqlite_autoindex_place_cell_1 (cell_latitude=? AND cell_longitude=?)
+CORRELATED SCALAR SUBQUERY 1
+  USE TEMP B-TREE FOR group_concat(ORDER BY)
+  SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+  SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN
+CORRELATED SCALAR SUBQUERY 2
+  SEARCH pm USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+  SEARCH pc USING INDEX sqlite_autoindex_place_cell_1 (cell_latitude=? AND cell_longitude=?)
+
+== PhotoDescriptionStorage.currentRowSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH d USING INDEX idx_photo_description_source (library_root_id=? AND relative_path=? AND source=?)
+CORRELATED SCALAR SUBQUERY 1
+  USE TEMP B-TREE FOR group_concat(ORDER BY)
+  SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+  SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN
+CORRELATED SCALAR SUBQUERY 2
+  SEARCH pm USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)
+  SEARCH pc USING INDEX sqlite_autoindex_place_cell_1 (cell_latitude=? AND cell_longitude=?)
+
+== PhotoDescriptionStorage.facesSQL
+SEARCH f USING INDEX sqlite_autoindex_face_1 (library_root_id=? AND relative_path=?)
+SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN
+
+== PhotoDescriptionStorage.readingsSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH pm USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?) LEFT-JOIN
+SEARCH pc USING INDEX sqlite_autoindex_place_cell_1 (cell_latitude=? AND cell_longitude=?) LEFT-JOIN
+SEARCH t USING INDEX idx_search_text_source (library_root_id=? AND relative_path=? AND source=?) LEFT-JOIN
+SEARCH e USING INDEX idx_search_embedding_source (library_root_id=? AND relative_path=? AND source=?) LEFT-JOIN
+
+== SearchEmbeddingStorage.keyedCandidateSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH member USING INDEX idx_media_asset_content_identifier (library_root_id=? AND content_identifier=? AND parent_path=?)
+CORRELATED SCALAR SUBQUERY 2
+  SEARCH member USING INDEX idx_media_asset_content_identifier (library_root_id=? AND content_identifier=? AND parent_path=?)
+SEARCH e USING INDEX sqlite_autoindex_search_embedding_1 (library_root_id=? AND relative_path=?) LEFT-JOIN
+
+== SearchEmbeddingStorage.currentEmbeddingByKeySQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH e USING INDEX idx_search_embedding_source (library_root_id=? AND relative_path=? AND source=?)
+
+== SearchTextStorage.keyedCandidateSQL
+SEARCH a USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+SEARCH t USING INDEX sqlite_autoindex_search_text_1 (library_root_id=? AND relative_path=?) LEFT-JOIN
+
+== SearchTextStorage.deleteFoldedSQL
+SEARCH search_text_folded USING INDEX sqlite_autoindex_search_text_folded_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.stackKeyChoiceSQL(.pair)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.setStackKeyChoiceSQL(.pair)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.stackKeyChoiceSQL(.burst)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.setStackKeyChoiceSQL(.burst)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.enrichmentResultMatchesSQL(.sourceProducts)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.enrichmentResultMatchesSQL(.rendering)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.enrichmentResultMatchesSQL(.any)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.updateThumbnailPathSQL(onlyWhenMissing: false)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== CatalogStore.updateThumbnailPathSQL(onlyWhenMissing: true)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== EnrichmentClaimGateway.claimEnrichmentAssetSQL(.metadata)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== EnrichmentClaimGateway.claimEnrichmentAssetSQL(.products)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== EnrichmentClaimGateway.claimEnrichmentAssetSQL(.library)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
+
+== EnrichmentClaimGateway.claimEnrichmentAssetSQL(.account)
+SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)

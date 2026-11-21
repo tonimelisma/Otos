@@ -925,6 +925,12 @@ extension CatalogStore {
         }
     }
 
+    nonisolated static let renameDerivedImagesSQL = """
+    UPDATE media_asset
+    SET thumbnail_path = ?, preview_path = ?, face_frames_path = ?
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     static func updateLibraryRootPath(
         rootRowID: Int64,
         path: LibraryRootPath,
@@ -955,11 +961,7 @@ extension CatalogStore {
             ]
             let renamed = images.map { image in image.old.map { _ in image.new } }
             try db.execute(
-                sql: """
-                UPDATE media_asset
-                SET thumbnail_path = ?, preview_path = ?, face_frames_path = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
+                sql: Self.renameDerivedImagesSQL,
                 arguments: [
                     renamed[0],
                     renamed[1],
@@ -1065,6 +1067,8 @@ extension CatalogStore {
         )
     }
 
+    nonisolated static let deleteAssetRowSQL = "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?"
+
     /// Deletes one asset row, and reports the Live Photo partners it leaves
     /// (`AssetRowDeletion`), read before the row goes.
     @discardableResult
@@ -1077,7 +1081,7 @@ extension CatalogStore {
             db.cachedStatement(sql: LivePhotoSQL.partnersSQL), arguments: [rootRowID, relativePath.rawValue]
         )
         try db.execute(
-            sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            sql: Self.deleteAssetRowSQL,
             arguments: [rootRowID, relativePath.rawValue]
         )
         guard db.changesCount > 0 else { return .nothing }
@@ -1164,6 +1168,12 @@ extension CatalogStore {
         return errno != ENOENT
     }
 
+    nonisolated static let deletionTargetSQL = """
+    SELECT thumbnail_path, preview_path, face_frames_path, trash_path
+    FROM media_asset
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     static func catalogedFileDeletionTarget(
         relativePath: MediaRelativePath,
         rootRowID: Int64,
@@ -1171,11 +1181,7 @@ extension CatalogStore {
     ) throws -> CatalogedFileDeletionTarget? {
         guard let row = try Row.fetchOne(
             db,
-            sql: """
-            SELECT thumbnail_path, preview_path, face_frames_path, trash_path
-            FROM media_asset
-            WHERE library_root_id = ? AND relative_path = ?
-            """,
+            sql: deletionTargetSQL,
             arguments: [rootRowID, relativePath.rawValue]
         ) else {
             return nil
@@ -1193,38 +1199,60 @@ extension CatalogStore {
     /// is offered exactly when its products would be applied.
     static let showsSourceProductsSQL = "(edit_revision = 0 AND rendered_source_size IS NULL)"
 
+    /// What a result's row must say of the photo's edit for the result to apply. Only a
+    /// thumbnail is drawn with the edit; metadata and a digest are the file's whatever the
+    /// photo's edit.
+    nonisolated enum EnrichmentResultEdit: CaseIterable {
+        /// The source's own products: the row still shows them.
+        case sourceProducts
+        /// A rendering by Otos: of the edit revision it was drawn for.
+        case rendering
+        /// No image: any edit.
+        case any
+
+        var conditionSQL: String {
+            switch self {
+            case .sourceProducts: CatalogStore.showsSourceProductsSQL
+            case .rendering: "edit_revision = ?"
+            case .any: "1"
+            }
+        }
+    }
+
+    nonisolated static func enrichmentResultMatchesSQL(_ edit: EnrichmentResultEdit) -> String {
+        """
+        SELECT 1
+        FROM media_asset
+        WHERE library_root_id = ?
+            AND relative_path = ?
+            AND COALESCE(byte_size, -1) = ?
+            AND (
+                (content_modified_at_unix IS NULL AND ? = -1)
+                OR (content_modified_at_unix >= ? AND content_modified_at_unix < ?)
+            )
+            AND \(edit.conditionSQL)
+        """
+    }
+
     static func enrichmentResultMatchesCurrentRow(
         _ result: EnrichmentResult,
         libraryRootID: Int64,
         db: Database
     ) throws -> Bool {
         let sourceMTimeSeconds = result.sourceMTimeSeconds ?? -1
-        // Only a thumbnail is drawn with the edit; metadata and a digest are the file's
-        // whatever the photo's edit.
-        let editCondition: String
+        let edit: EnrichmentResultEdit
         var editArguments: StatementArguments = []
         if result.rendering?.origin == .source {
-            editCondition = showsSourceProductsSQL
+            edit = .sourceProducts
         } else if result.rendering != nil || result.provisionalThumbnail != nil {
-            editCondition = "edit_revision = ?"
+            edit = .rendering
             editArguments = [result.editRevision]
         } else {
-            editCondition = "1"
+            edit = .any
         }
         return try Row.fetchOne(
             db,
-            sql: """
-            SELECT 1
-            FROM media_asset
-            WHERE library_root_id = ?
-                AND relative_path = ?
-                AND COALESCE(byte_size, -1) = ?
-                AND (
-                    (content_modified_at_unix IS NULL AND ? = -1)
-                    OR (content_modified_at_unix >= ? AND content_modified_at_unix < ?)
-                )
-                AND \(editCondition)
-            """,
+            sql: Self.enrichmentResultMatchesSQL(edit),
             arguments: [
                 libraryRootID,
                 result.id.relativePath.rawValue,
@@ -1235,6 +1263,19 @@ extension CatalogStore {
             ] + editArguments
         ) != nil
     }
+
+    nonisolated static let writeContentHashSQL = """
+    UPDATE media_asset SET
+        content_sha1 = ?,
+        content_hash_source_size = ?,
+        content_hash_source_mtime = ?
+    WHERE library_root_id = ?
+        AND relative_path = ?
+    """
+
+    nonisolated static let writeUndecodableSQL = "UPDATE media_asset SET undecodable_by = ? WHERE library_root_id = ? AND relative_path = ?"
+
+    nonisolated static let writeFaceFramesSQL = "UPDATE media_asset SET face_frames_path = ? WHERE library_root_id = ? AND relative_path = ?"
 
     /// Writes each product the result carries with its own stamp (ADR 0009), and leaves
     /// the row's other products as they are: a card's metadata pass does not touch its
@@ -1264,14 +1305,7 @@ extension CatalogStore {
         }
         if let contentHash = result.contentHash {
             try db.execute(
-                sql: """
-                UPDATE media_asset SET
-                    content_sha1 = ?,
-                    content_hash_source_size = ?,
-                    content_hash_source_mtime = ?
-                WHERE library_root_id = ?
-                    AND relative_path = ?
-                """,
+                sql: Self.writeContentHashSQL,
                 arguments: [
                     contentHash.data,
                     result.sourceSize,
@@ -1286,7 +1320,7 @@ extension CatalogStore {
         }
         if let verdict = result.decodeVerdict {
             try db.execute(
-                sql: "UPDATE media_asset SET undecodable_by = ? WHERE library_root_id = ? AND relative_path = ?",
+                sql: Self.writeUndecodableSQL,
                 arguments: [verdict.undecodableBy, row.rootID, row.relativePath.rawValue]
             )
         }
@@ -1300,7 +1334,7 @@ extension CatalogStore {
                 db: db
             )
             try db.execute(
-                sql: "UPDATE media_asset SET face_frames_path = ? WHERE library_root_id = ? AND relative_path = ?",
+                sql: Self.writeFaceFramesSQL,
                 arguments: [videoFaces.frames?.finalRelativePath, row.rootID, row.relativePath.rawValue]
             )
         }
@@ -1407,6 +1441,26 @@ extension CatalogStore {
         }
     }
 
+    nonisolated static let facesReadSourceSQL =
+        "SELECT faces_read_source_size, faces_read_source_mtime FROM media_asset WHERE library_root_id = ? AND relative_path = ?"
+
+    nonisolated static let storedFacesSQL = """
+    SELECT face.face_index, box_x, box_y, box_width, box_height, landmarks, quality, analysis_revision,
+           vector.embedding, person_id, assignment, is_key_photo, is_not_face
+    FROM face \(FaceEmbeddingSQL.join(face: "face", embedding: "vector"))
+    WHERE face.library_root_id = ? AND face.relative_path = ? ORDER BY face.face_index
+    """
+
+    nonisolated static let faceRejectionsOfPhotoSQL = "SELECT face_index, person_id FROM face_rejection WHERE library_root_id = ? AND relative_path = ?"
+
+    nonisolated static let deleteFacesOfPhotoSQL = "DELETE FROM face WHERE library_root_id = ? AND relative_path = ?"
+
+    nonisolated static let writeFacesStampSQL = """
+    UPDATE media_asset SET faces_source_size = ?, faces_source_mtime = ?,
+        faces_read_source_size = ?, faces_read_source_mtime = ?
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     private static func writeFaces(
         _ faces: [ReadFace],
         analysisRevision: Int,
@@ -1418,7 +1472,7 @@ extension CatalogStore {
         let key: StatementArguments = [row.rootID, row.relativePath.rawValue]
         let readSource = try Row.fetchOne(
             db,
-            sql: "SELECT faces_read_source_size, faces_read_source_mtime FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            sql: Self.facesReadSourceSQL,
             arguments: key
         )
         let readSize: Int64? = readSource?["faces_read_source_size"]
@@ -1427,12 +1481,7 @@ extension CatalogStore {
         var previous: [StoredFace] = []
         for face in try Row.fetchAll(
             db,
-            sql: """
-            SELECT face.face_index, box_x, box_y, box_width, box_height, landmarks, quality, analysis_revision,
-                   vector.embedding, person_id, assignment, is_key_photo, is_not_face
-            FROM face \(FaceEmbeddingSQL.join(face: "face", embedding: "vector"))
-            WHERE face.library_root_id = ? AND face.relative_path = ? ORDER BY face.face_index
-            """,
+            sql: Self.storedFacesSQL,
             arguments: key
         ) {
             if let stored = StoredFace(face) {
@@ -1446,7 +1495,7 @@ extension CatalogStore {
         var rejections: [Int: [Int64]] = [:]
         for rejection in try Row.fetchAll(
             db,
-            sql: "SELECT face_index, person_id FROM face_rejection WHERE library_root_id = ? AND relative_path = ?",
+            sql: Self.faceRejectionsOfPhotoSQL,
             arguments: key
         ) {
             rejections[rejection["face_index"], default: []].append(rejection["person_id"])
@@ -1460,7 +1509,7 @@ extension CatalogStore {
             let face = previous[index]
             return face.assignment.isUserWord || face.isNotFace || rejections[face.index] != nil
         } : []
-        try db.execute(sql: "DELETE FROM face WHERE library_root_id = ? AND relative_path = ?", arguments: key)
+        try db.execute(sql: Self.deleteFacesOfPhotoSQL, arguments: key)
         for (index, read) in faces.enumerated() {
             let face = read.face
             let prior = carried[index].map { previous[$0] }
@@ -1496,11 +1545,7 @@ extension CatalogStore {
             ), row: row, db: db)
         }
         try db.execute(
-            sql: """
-            UPDATE media_asset SET faces_source_size = ?, faces_source_mtime = ?,
-                faces_read_source_size = ?, faces_read_source_mtime = ?
-            WHERE library_root_id = ? AND relative_path = ?
-            """,
+            sql: Self.writeFacesStampSQL,
             arguments: [stamp.size, stamp.mtimeSeconds, stamp.size, stamp.mtimeSeconds, row.rootID, row.relativePath.rawValue]
         )
     }
@@ -1556,6 +1601,17 @@ extension CatalogStore {
     /// The `(size, mtime-seconds)` a product was made from, which its stamp records.
     typealias ProductStamp = (size: Int64?, mtimeSeconds: Int?)
 
+    nonisolated static let writeRenderingSQL = """
+    UPDATE media_asset SET
+        thumbnail_path = ?,
+        preview_path = ?,
+        rendered_revision = ?,
+        rendered_source_size = ?,
+        rendered_source_mtime = ?
+    WHERE library_root_id = ?
+        AND relative_path = ?
+    """
+
     /// A rendering — thumbnail and preview, made together — with its stamp and the edit
     /// revision it shows (ADR 0009, ADR 0035, ADR 0036).
     private static func writeRendering(
@@ -1567,22 +1623,23 @@ extension CatalogStore {
         db: Database
     ) throws {
         try db.execute(
-            sql: """
-            UPDATE media_asset SET
-                thumbnail_path = ?,
-                preview_path = ?,
-                rendered_revision = ?,
-                rendered_source_size = ?,
-                rendered_source_mtime = ?
-            WHERE library_root_id = ?
-                AND relative_path = ?
-            """,
+            sql: writeRenderingSQL,
             arguments: [
                 thumbnailPath, previewPath, renderedRevision, stamp.size, stamp.mtimeSeconds,
                 row.rootID, row.relativePath.rawValue,
             ]
         )
     }
+
+    nonisolated static let writeSourceProductsSQL = """
+    UPDATE media_asset SET
+        thumbnail_path = ?,
+        preview_path = ?,
+        source_products_size = ?,
+        source_products_mtime = ?
+    WHERE library_root_id = ?
+        AND relative_path = ?
+    """
 
     /// A source's own thumbnail and preview (ADR 0035, ADR 0046 §7): they replace the shown
     /// images and are stamped as source products, never as the rendering, which stays
@@ -1595,15 +1652,7 @@ extension CatalogStore {
         db: Database
     ) throws {
         try db.execute(
-            sql: """
-            UPDATE media_asset SET
-                thumbnail_path = ?,
-                preview_path = ?,
-                source_products_size = ?,
-                source_products_mtime = ?
-            WHERE library_root_id = ?
-                AND relative_path = ?
-            """,
+            sql: writeSourceProductsSQL,
             arguments: [
                 thumbnailPath, previewPath, stamp.size, stamp.mtimeSeconds,
                 row.rootID, row.relativePath.rawValue,
@@ -1611,22 +1660,26 @@ extension CatalogStore {
         )
     }
 
+    nonisolated static let writeProvisionalThumbnailSQL = "UPDATE media_asset SET thumbnail_path = ? WHERE library_root_id = ? AND relative_path = ?"
+
     /// A thumbnail that is not a rendering: it replaces the shown thumbnail and stamps
     /// nothing, so the rendering stays owed.
     private static func writeProvisionalThumbnail(_ thumbnailPath: String?, row: ProductRow, db: Database) throws {
         try db.execute(
-            sql: "UPDATE media_asset SET thumbnail_path = ? WHERE library_root_id = ? AND relative_path = ?",
+            sql: writeProvisionalThumbnailSQL,
             arguments: [thumbnailPath, row.rootID, row.relativePath.rawValue]
         )
     }
 
+    nonisolated static let writeMetadataStampSQL = """
+    UPDATE media_asset SET metadata_source_size = ?, metadata_source_mtime = ?
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     /// Metadata with its stamp, and every column derived from it.
     private static func writeMetadata(_ metadata: EnrichedMetadata, stamp: ProductStamp, row: ProductRow, db: Database) throws {
         try db.execute(
-            sql: """
-            UPDATE media_asset SET metadata_source_size = ?, metadata_source_mtime = ?
-            WHERE library_root_id = ? AND relative_path = ?
-            """,
+            sql: writeMetadataStampSQL,
             arguments: [stamp.size, stamp.mtimeSeconds, row.rootID, row.relativePath.rawValue]
         )
         try writeMetadataProjection(
@@ -1639,6 +1692,27 @@ extension CatalogStore {
             db: db
         )
     }
+
+    nonisolated static let metadataProjectionDatesSQL = """
+    SELECT \(CatalogSchema.absoluteCaptureSQL) AS absolute, created_at_unix, content_modified_at_unix,
+           assumed_utc_offset_seconds
+    FROM media_asset WHERE library_root_id = ? AND relative_path = ?
+    """
+
+    nonisolated static let writeMetadataProjectionSQL = """
+    UPDATE media_asset SET
+        assumed_utc_offset_seconds = ?,
+        capture_instant_unix = ?,
+        enriched_kind = ?,
+        enriched_format = ?,
+        duration_seconds = ?,
+        capture_wall_compact = ?,
+        capture_wall_precision = ?,
+        content_identifier = ?,
+        burst_identifier = ?
+    WHERE library_root_id = ?
+        AND relative_path = ?
+    """
 
     /// Writes a metadata record and every column derived from it: the stored record, the
     /// `ts_*` instants, the kind and format, the duration, the capture wall and the content
@@ -1675,11 +1749,7 @@ extension CatalogStore {
         let captureInstant = metadata.captureInstant?.timeIntervalSince1970
         let dates = try Row.fetchOne(
             db,
-            sql: """
-            SELECT \(CatalogSchema.absoluteCaptureSQL) AS absolute, created_at_unix, content_modified_at_unix,
-                   assumed_utc_offset_seconds
-            FROM media_asset WHERE library_root_id = ? AND relative_path = ?
-            """,
+            sql: Self.metadataProjectionDatesSQL,
             arguments: [libraryRootID, relativePath.rawValue]
         )
         let fileDate: Double? = dates.flatMap { row in
@@ -1691,20 +1761,7 @@ extension CatalogStore {
             previousOffset: dates?["assumed_utc_offset_seconds"]
         )
         try db.execute(
-            sql: """
-            UPDATE media_asset SET
-                assumed_utc_offset_seconds = ?,
-                capture_instant_unix = ?,
-                enriched_kind = ?,
-                enriched_format = ?,
-                duration_seconds = ?,
-                capture_wall_compact = ?,
-                capture_wall_precision = ?,
-                content_identifier = ?,
-                burst_identifier = ?
-            WHERE library_root_id = ?
-                AND relative_path = ?
-            """,
+            sql: Self.writeMetadataProjectionSQL,
             arguments: [
                 assumedOffset,
                 captureInstant,
@@ -1750,13 +1807,26 @@ extension CatalogStore {
         }
     }
 
+    nonisolated static let lacksThumbnailSQL = "SELECT thumbnail_path IS NULL FROM media_asset WHERE library_root_id = ? AND relative_path = ?"
+
     /// Whether the row exists and names no thumbnail.
     static func lacksThumbnail(libraryRootID: Int64, relativePath: MediaRelativePath, db: Database) throws -> Bool {
         try Bool.fetchOne(
             db,
-            sql: "SELECT thumbnail_path IS NULL FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            sql: lacksThumbnailSQL,
             arguments: [libraryRootID, relativePath.rawValue]
         ) == true
+    }
+
+    nonisolated static func updateThumbnailPathSQL(onlyWhenMissing: Bool) -> String {
+        let missingPredicate = onlyWhenMissing ? "AND thumbnail_path IS NULL" : ""
+        return """
+        UPDATE media_asset
+        SET thumbnail_path = ?
+        WHERE library_root_id = ?
+          AND relative_path = ?
+          \(missingPredicate)
+        """
     }
 
     static func updateThumbnailPath(
@@ -1766,15 +1836,8 @@ extension CatalogStore {
         onlyWhenMissing: Bool,
         db: Database
     ) throws {
-        let missingPredicate = onlyWhenMissing ? "AND thumbnail_path IS NULL" : ""
         try db.execute(
-            sql: """
-            UPDATE media_asset
-            SET thumbnail_path = ?
-            WHERE library_root_id = ?
-              AND relative_path = ?
-              \(missingPredicate)
-            """,
+            sql: updateThumbnailPathSQL(onlyWhenMissing: onlyWhenMissing),
             arguments: [thumbnailPath, libraryRootID, relativePath.rawValue]
         )
     }
@@ -2035,6 +2098,11 @@ extension CatalogStore {
             }
     }
 
+    nonisolated static let respellCompanionSQL = """
+    UPDATE media_companion SET relative_path = ?, relative_path_key = ?
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     @discardableResult
     static func upsertCompanion(
         _ companion: MediaCompanion,
@@ -2055,10 +2123,7 @@ extension CatalogStore {
             arguments: [libraryRootID, pathKey, companion.relativePath.rawValue]
         ) {
             try db.execute(
-                sql: """
-                UPDATE media_companion SET relative_path = ?, relative_path_key = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
+                sql: Self.respellCompanionSQL,
                 arguments: [companion.relativePath.rawValue, pathKey, libraryRootID, existingPath]
             )
             let message = "op=catalog.scan.reconcile phase=respellCompanion "
@@ -2106,6 +2171,11 @@ extension CatalogStore {
         return db.changesCount > 0
     }
 
+    nonisolated static let deleteCompanionRowSQL = """
+    DELETE FROM media_companion
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     @discardableResult
     static func deleteCompanionRow(
         rootRowID: Int64,
@@ -2113,10 +2183,7 @@ extension CatalogStore {
         db: Database
     ) throws -> Bool {
         try db.execute(
-            sql: """
-            DELETE FROM media_companion
-            WHERE library_root_id = ? AND relative_path = ?
-            """,
+            sql: deleteCompanionRowSQL,
             arguments: [rootRowID, relativePath.rawValue]
         )
         return db.changesCount > 0
@@ -2229,6 +2296,8 @@ extension CatalogStore {
         return deleted
     }
 
+    nonisolated static let rowAtPathSQL = "SELECT 1 FROM media_asset WHERE library_root_id = ? AND relative_path = ?"
+
     /// The row a newly seen path moved from outside Otos, when the move witness says so
     /// (ADR 0008): no row exists at the new path; exactly one row on the same volume
     /// records this file's identifier, size and creation time (whole seconds); and that
@@ -2248,7 +2317,7 @@ extension CatalogStore {
         }
         let rowAtPath = try Bool.fetchOne(
             db,
-            sql: "SELECT 1 FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            sql: Self.rowAtPathSQL,
             arguments: [libraryRootID, file.relativePath.rawValue]
         ) ?? false
         guard !rowAtPath else {
@@ -2289,6 +2358,29 @@ extension CatalogStore {
         return stat(path, &info) == 0 ? info.st_dev : nil
     }
 
+    nonisolated static let spellingsOfPathSQL = """
+    SELECT relative_path, 0 AS at_path FROM media_asset
+    WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ?
+    UNION ALL
+    SELECT relative_path, 1 AS at_path FROM media_asset
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
+    nonisolated static let respellAssetSQL = """
+    UPDATE media_asset SET relative_path = ?, relative_path_key = ?, awaiting_presence = 0
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
+    nonisolated static let moveAssetRowSQL = """
+    UPDATE media_asset SET library_root_id = ?, relative_path = ?, relative_path_key = ?
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
+    nonisolated static let putBackFromTrashSQL = """
+    UPDATE media_asset SET pending_trash_batch_unix_ms = NULL, trash_path = NULL
+    WHERE library_root_id = ? AND relative_path = ? AND trash_path IS NOT NULL
+    """
+
     /// Writes one observed file's filesystem facts to its row, and says what that did to
     /// the catalog: an `.inserted` row is new and carries nothing Otos derives (no
     /// metadata, digest, rendering, faces or embedding), so only what lists rows has new
@@ -2309,22 +2401,13 @@ extension CatalogStore {
         // Two index seeks in one cached statement: preparing a statement costs more than
         // both seeks, and this one runs for every file a scan or listing writes.
         let spellings = try Row.fetchAll(
-            db.cachedStatement(sql: """
-            SELECT relative_path, 0 AS at_path FROM media_asset
-            WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ?
-            UNION ALL
-            SELECT relative_path, 1 AS at_path FROM media_asset
-            WHERE library_root_id = ? AND relative_path = ?
-            """),
+            db.cachedStatement(sql: Self.spellingsOfPathSQL),
             arguments: [libraryRootID, pathKey, file.relativePath.rawValue, libraryRootID, file.relativePath.rawValue]
         )
         var existed = spellings.contains { row in row["at_path"] as Bool }
         if let existingPath: String = spellings.first(where: { row in !(row["at_path"] as Bool) })?["relative_path"] {
             try db.execute(
-                sql: """
-                UPDATE media_asset SET relative_path = ?, relative_path_key = ?, awaiting_presence = 0
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
+                sql: Self.respellAssetSQL,
                 arguments: [file.relativePath.rawValue, pathKey, libraryRootID, existingPath]
             )
             let message = "op=catalog.scan.reconcile phase=respell "
@@ -2340,10 +2423,7 @@ extension CatalogStore {
             // the upsert below then refreshes its filesystem facts. `asset_metadata` and
             // every other child row follow through `ON UPDATE CASCADE`.
             try db.execute(
-                sql: """
-                UPDATE media_asset SET library_root_id = ?, relative_path = ?, relative_path_key = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
+                sql: Self.moveAssetRowSQL,
                 arguments: [libraryRootID, file.relativePath.rawValue, pathKey, moved.libraryRootID, moved.relativePath]
             )
             let message = "op=catalog.scan.reconcile phase=moveWitnessed "
@@ -2358,10 +2438,7 @@ extension CatalogStore {
         // This statement and the upsert below run for every file a scan or listing writes,
         // so both are cached: preparing a write on media_asset compiles the upkeep of each of
         // its indexes, and costs more than the write itself.
-        try db.cachedStatement(sql: """
-        UPDATE media_asset SET pending_trash_batch_unix_ms = NULL, trash_path = NULL
-        WHERE library_root_id = ? AND relative_path = ? AND trash_path IS NOT NULL
-        """).execute(arguments: [libraryRootID, file.relativePath.rawValue])
+        try db.cachedStatement(sql: Self.putBackFromTrashSQL).execute(arguments: [libraryRootID, file.relativePath.rawValue])
         let putBack = db.changesCount > 0
         if putBack {
             let message = "op=catalog.scan.reconcile phase=putBack "

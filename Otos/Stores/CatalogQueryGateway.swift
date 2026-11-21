@@ -16,6 +16,8 @@ import SQLite3
 /// `StoredAsset` / `StoredTileDetail` / `SQLQuery` / `CatalogScopePredicate` types,
 /// not on `CatalogStore` itself.
 nonisolated enum CatalogQueryGateway {
+    static let metadataExtraSQL = "SELECT metadata_extra_json FROM asset_metadata WHERE library_root_id = ? AND relative_path = ?"
+
     /// Reads one asset's full preserved metadata JSON on demand. The scalar
     /// columns stay queryable; this JSON preserves the long-tail extraction payload
     /// for future inspector/detail work without making the grid load it.
@@ -26,7 +28,7 @@ nonisolated enum CatalogQueryGateway {
     ) throws -> AssetMetadata? {
         let json: String? = try Row.fetchOne(
             db,
-            sql: "SELECT metadata_extra_json FROM asset_metadata WHERE library_root_id = ? AND relative_path = ?",
+            sql: Self.metadataExtraSQL,
             arguments: [libraryRootID, relativePath.rawValue]
         )?["metadata_extra_json"]
         return try json.map(CatalogStore.decodeMetadataExtraJSON)
@@ -735,6 +737,12 @@ nonisolated enum CatalogQueryGateway {
         }
     }
 
+    static let captureWallSQL = """
+    SELECT capture_wall_compact, capture_wall_precision
+    FROM media_asset
+    WHERE library_root_id = ? AND relative_path = ?
+    """
+
     static func fetchCaptureWall(
         id: MediaAssetID,
         rootRowID: Int64,
@@ -742,11 +750,7 @@ nonisolated enum CatalogQueryGateway {
     ) throws -> CaptureWallClock.Selection? {
         guard let row = try Row.fetchOne(
             db,
-            sql: """
-            SELECT capture_wall_compact, capture_wall_precision
-            FROM media_asset
-            WHERE library_root_id = ? AND relative_path = ?
-            """,
+            sql: captureWallSQL,
             arguments: [rootRowID, id.relativePath.rawValue]
         ) else {
             return nil
