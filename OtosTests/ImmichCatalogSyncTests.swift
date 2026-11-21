@@ -651,6 +651,32 @@ struct ImmichCatalogSyncTests {
     /// A preview the server answers it does not have is skipped, not an end to the pass,
     /// and is not asked for again: not by the next pass, only once a later listing of the
     /// asset says the server has made its previews. Any other refusal still ends the pass.
+    /// A row the server holds no preview of gets no thumbnail coming, which an empty search
+    /// counts: the write that records it announces the row's images.
+    @Test func aPreviewTheServerDoesNotHaveIsAnnouncedAsTheRowsImages() async throws {
+        let fixture = try await FileFixture.make()
+        let server = ScriptedServer(
+            [[Self.asset("a"), Self.exif("a", size: 1), Self.complete]],
+            previews: { _ in throw ImmichClientError.refused(status: 404) }
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await fixture.store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
+        _ = await sync.pass()
+        #expect(server.requestedPreviews == ["a"])
+        let heard = await changes.waitForValues { $0.contains { $0.facts.contains(.images) } }
+        #expect(heard.first { $0.facts.contains(.images) } == .changed([.images, .detail], rows: .rows([fixture.id("a/IMG.JPG")])))
+        await fixture.store.shutdown()
+    }
+
     @Test func aPreviewTheServerDoesNotHaveIsNotAskedForAgain() async throws {
         let fixture = try await FileFixture.make()
         let preview = try Self.jpeg(width: 300, height: 200)

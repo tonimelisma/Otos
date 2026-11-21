@@ -338,7 +338,8 @@ struct VideoFaceTests {
         await fixture.store.shutdown()
     }
 
-    /// A new reading that finds no face takes the video's faces and its frames.
+    /// A new reading that finds no face takes the video's faces and its frames, and says its
+    /// images changed: the face tiles were cut from those frames.
     @Test func aReadingWithNoFaceDeletesTheFrames() async throws {
         let fixture = try await VideoLibrary.make(in: makeTestDirectory())
         let frames = try ThumbnailStore.stageFaceFrames(
@@ -347,7 +348,18 @@ struct VideoFaceTests {
         _ = try await fixture.apply(EnrichedVideoFaces(
             faces: [.init(face: Self.face(person: 1, quality: 0.5), frameIndex: 0)], analysisRevision: FaceAnalyzer.revision, frames: frames
         ))
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await fixture.store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
         _ = try await fixture.apply(.noneFound)
+        let heard = await changes.waitForValues { !$0.isEmpty }
+        #expect(heard.first?.facts.isSuperset(of: [.faces, .images]) == true)
+        #expect(heard.first?.rows == .rows([fixture.id]))
 
         #expect(try await fixture.store.backgroundReads.peopleSnapshot().faces.isEmpty)
         let file = ThumbnailStore.url(for: frames.finalRelativePath, in: fixture.thumbnailDirectory)

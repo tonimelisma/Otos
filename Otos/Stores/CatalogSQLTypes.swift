@@ -27,7 +27,9 @@ nonisolated enum ScannedFileUpsert: Equatable, Sendable {
 /// those rows: a source's digest that makes the new row a copy of another (`.copies`,
 /// `recordInserted(_:carrying:)`). A change to an existing row's filesystem facts, presence
 /// or path can move any fact derived from it, so it is `.changed(.all)`, naming the rows
-/// when every one of them is known (`CatalogChangedRows`).
+/// when every one of them is known (`CatalogChangedRows`). A write to an existing row of facts
+/// it knows the kinds of — a source's own facts of an item it lists — is announced as those
+/// kinds, naming those rows (`recordChanged(_:of:facts:)`).
 nonisolated struct CatalogRowChanges: Equatable, Sendable {
     private(set) var inserted = 0
     /// The existing rows changed, by asset.
@@ -37,6 +39,9 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
     /// What new rows carried that an owner derives from, and those rows.
     private(set) var insertedFacts: CatalogChangedFacts = []
     private(set) var insertedFactRows: Set<MediaAssetID> = []
+    /// What existing rows' writes of known kinds changed, and those rows.
+    private(set) var changedFacts: CatalogChangedFacts = []
+    private(set) var changedFactRows: Set<MediaAssetID> = []
 
     var updated: Int {
         updatedRows.count + unnamedUpdates
@@ -79,19 +84,35 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
         unnamedUpdates += count
     }
 
+    /// `id`'s existing row changed only in `facts`, when `count`, the statement's changes,
+    /// says it did.
+    mutating func recordChanged(_ count: Int, of id: MediaAssetID, facts: CatalogChangedFacts) {
+        guard count > 0, !facts.isEmpty else { return }
+        changedFacts.formUnion(facts)
+        changedFactRows.insert(id)
+    }
+
     var isEmpty: Bool {
-        inserted == 0 && updated == 0
+        inserted == 0 && updated == 0 && changedFacts.isEmpty
     }
 
     /// The changes to announce, in order; none when the write changed nothing.
     var notifications: [CatalogStoreChange] {
-        if isEmpty {
-            []
-        } else if updated == 0 {
-            insertedFacts.isEmpty ? [.assetsAdded] : [.assetsAdded, .changed(insertedFacts, rows: .rows(insertedFactRows))]
-        } else {
-            [.changed(.all, rows: unnamedUpdates == 0 ? .rows(updatedRows.union(insertedFactRows)) : .unnamed)]
+        if updated > 0 {
+            let rows = updatedRows.union(insertedFactRows).union(changedFactRows)
+            return [.changed(.all, rows: unnamedUpdates == 0 ? .rows(rows) : .unnamed)]
         }
+        var changes: [CatalogStoreChange] = []
+        if inserted > 0 {
+            changes.append(.assetsAdded)
+            if !insertedFacts.isEmpty {
+                changes.append(.changed(insertedFacts, rows: .rows(insertedFactRows)))
+            }
+        }
+        if !changedFacts.isEmpty {
+            changes.append(.changed(changedFacts, rows: .rows(changedFactRows)))
+        }
+        return changes
     }
 }
 

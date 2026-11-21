@@ -139,17 +139,13 @@ catalog. Nothing that needs the catalog can run before it, so moving it buys not
 
 Each `.all` wakes every background owner and the window.
 
-**De-risk first.** Narrowing a notification can only fail one way: an owner stops hearing a
-write it reads, and work stays owed with nothing logged. So before any site narrows, the
-experiment's differential becomes a permanent guard:
-- In every test's Store (`TestScope`), a writer-side observer checks that each committed write
-  is covered by a notification that names every fact kind the write's tables and columns map
-  to.
-- Value-diff narrowing is allowed only where it is written down: the enrichment overlay's
-  `best_*` comparison, the copy-key triggers and the claim owner's own state.
-- A write with no covering notification fails the test that made it.
-- On today's code it must pass; the experiment found no missed notification. It also has a
-  self-test that drops one notification and sees the failure.
+**De-risk first: landed.** Every test's Store carries the change-coverage guard
+(`CatalogChangeCoverage`, ADR 0005): a commit no later change names all the kinds of fails the
+test that made it, with the Store's value comparisons and owners' own state as the only
+narrowings, each written down with its reason. Turning it on found three writes no change
+named, fixed with it: a listing's change to a held row's source facts, a source's answer
+that it holds no images of rows, and a video reading that takes its stored frames. A
+narrowed site is now checked by every test that reaches it.
 
 **Change.**
 - Each `.all` site names the kinds it wrote.

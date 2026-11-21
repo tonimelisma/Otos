@@ -2953,9 +2953,13 @@ final nonisolated class ConnectionLockWait: Sendable {
 /// (`reader`), which cannot write, so no write can reach the file unnamed.
 nonisolated struct CatalogWriter: Sendable {
     private let pool: any DatabaseWriter
+    /// The test seam that hears every write (`CatalogWriteAudit`); nil in the app.
+    private let audit: CatalogWriteAudit?
 
-    init(_ pool: any DatabaseWriter) {
+    init(_ pool: any DatabaseWriter, audit: CatalogWriteAudit? = nil) {
         self.pool = pool
+        self.audit = audit
+        audit?.writerOpened(pool)
     }
 
     /// The pool, for the lanes' reads (`CatalogLaneReader`) and the open's own.
@@ -2967,7 +2971,11 @@ nonisolated struct CatalogWriter: Sendable {
         operation: String = #function,
         _ body: @escaping @Sendable (Database) throws -> T
     ) async throws -> T {
-        try await pool.write { db in
+        let audit = audit
+        let call = audit?.writeCalled()
+        defer { call.map { audit?.writeReturned($0) } }
+        return try await pool.write { db in
+            audit?.writeBegins(operation, call)
             CatalogConnectionActivity.Connection.attached(to: db)?.named(operation: operation)
             return try body(db)
         }
@@ -2979,15 +2987,20 @@ nonisolated struct CatalogWriter: Sendable {
         operation: String = #function,
         _ body: @escaping @Sendable (Database) throws -> T
     ) async throws -> T {
-        try await pool.writeWithoutTransaction { db in
-            try Self.scoped(db, operation: operation) { try body(db) }
+        let audit = audit
+        let call = audit?.writeCalled()
+        defer { call.map { audit?.writeReturned($0) } }
+        return try await pool.writeWithoutTransaction { db in
+            audit?.writeBegins(operation, call)
+            return try Self.scoped(db, operation: operation) { try body(db) }
         }
     }
 
     /// The synchronous form, for the Store's few writes that must land before it returns.
     func writeWithoutTransaction<T>(operation: String = #function, _ body: (Database) throws -> T) throws -> T {
         try pool.writeWithoutTransaction { db in
-            try Self.scoped(db, operation: operation) { try body(db) }
+            audit?.writeBegins(operation, nil)
+            return try Self.scoped(db, operation: operation) { try body(db) }
         }
     }
 
@@ -2997,6 +3010,33 @@ nonisolated struct CatalogWriter: Sendable {
         }
         return try connection.scoped(operation: operation, body)
     }
+}
+
+/// What a test hears of a Store's writes and change notifications: the seam of the
+/// change-coverage guard every test's Store carries (`CatalogChangeCoverage` in the tests,
+/// ADR 0005), which checks that each committed write is announced by a change naming every
+/// kind of fact it wrote. Nil in the app, where the Store makes none of these calls.
+nonisolated struct CatalogWriteAudit: Sendable {
+    /// The Store's writer, once, as `CatalogWriter` is made: after the open's migrations and
+    /// compaction, which no change announces, and before any write the Store asks for.
+    let writerOpened: @Sendable (any DatabaseWriter) -> Void
+    /// The operation the transactions that follow are for, and the awaited write call they are
+    /// made in (nil for the synchronous form), called on the writer's queue as a named write's
+    /// body starts (`CatalogWriter.write`'s `operation`).
+    let writeBegins: @Sendable (_ operation: String, _ call: UInt64?) -> Void
+    /// An awaited write was asked for, naming the call, and returned to the Store, called on
+    /// the Store's actor: what the Store sends for a write follows its return, often after more
+    /// writes of one operation (`writeInPages`), and a write still in flight when the Store
+    /// shuts down is one the shutdown overtook.
+    let writeCalled: @Sendable () -> UInt64
+    let writeReturned: @Sendable (_ call: UInt64) -> Void
+    /// A change the Store sends, called before any subscriber has it.
+    let changeSent: @Sendable (CatalogStoreChange) -> Void
+    /// `shutdown()` began, with the Store's own tasks it is cancelling: a filesystem pass, a
+    /// scan or the reconcile loop the shutdown overtook between a write and its change sends
+    /// that change before it ends. The shutdown's own change follows no write and is not
+    /// reported as one.
+    let shutDown: @Sendable (_ cancelling: [Task<Void, Never>]) -> Void
 }
 
 // MARK: - What every connection is doing, for a read that waited

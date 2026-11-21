@@ -848,6 +848,9 @@ actor CatalogStore {
     /// test parks it for a competing one to arrive (ADR 0032 rule 7). Nil in the app.
     private let namespaceMutationReached: (@Sendable (NamespaceMutationPoint) async -> Void)?
     private let importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)?
+    /// What a test's change-coverage guard hears of every write and change (ADR 0005). Nil in
+    /// the app.
+    private let changeAudit: CatalogWriteAudit?
     private var dbWriter: CatalogWriter?
     /// What the open is doing, for the window while it waits (DES-121): one consumer, the
     /// main window's view model, which reads the newest value. `nonisolated` so it can be
@@ -1023,7 +1026,8 @@ actor CatalogStore {
         importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil,
         walByteBudget: Int64 = CatalogStore.defaultWALByteBudget,
         stagingContainers: StagingContainers? = nil,
-        stallThreshold: Duration = CatalogConnectionActivity.defaultStallThreshold
+        stallThreshold: Duration = CatalogConnectionActivity.defaultStallThreshold,
+        changeAudit: CatalogWriteAudit? = nil
     ) {
         self.walByteBudget = walByteBudget
         connectionActivity = CatalogConnectionActivity(stallThreshold: stallThreshold)
@@ -1038,6 +1042,7 @@ actor CatalogStore {
         self.initialLoadDidRead = initialLoadDidRead
         self.namespaceMutationReached = namespaceMutationReached
         self.importJournalFailure = importJournalFailure
+        self.changeAudit = changeAudit
     }
 
     /// A store released without `shutdown()` ends what it started. Its reconcile loop,
@@ -5603,7 +5608,11 @@ extension CatalogStore {
             rowFacts.insert(.mediaRecord)
             outcome.facts.insert(.mediaRecord)
         }
-        if result.rendering != nil || result.provisionalThumbnail != nil || result.videoFaces?.frames != nil {
+        // A video's reading writes its frames whatever it found: a reading with no face takes
+        // the frames an earlier one stored, which the face tiles were cut from.
+        if result.rendering != nil || result.provisionalThumbnail != nil || result.videoFaces?.frames != nil
+            || oldRow?.faceFramesPath != newRow?.faceFramesPath
+        {
             rowFacts.insert(.images)
             outcome.facts.insert(.images)
         }
@@ -7083,11 +7092,13 @@ extension CatalogStore {
             if upsert != .inserted {
                 rows.recordUpdated(db.changesCount, of: id)
             }
-            // The source's own facts of the row, none of them shown, so none a change the
-            // window hears: its name for the item; where it holds the item on its server, what
-            // a mirrored library file finds it by (ADR 0054); and whether it has its own images
-            // of it, what the product pass asks for. One statement, one seek of the row: each
-            // statement a listed item runs is one more seek for every item of every batch.
+            // The source's own facts of the row, none of them shown: its name for the item;
+            // where it holds the item on its server, what a mirrored library file finds it by
+            // (ADR 0054); and whether it has its own images of it, what the product pass asks
+            // for and an empty search counts (`assetsWithNoThumbnailComing`). An existing row's
+            // are announced as the kinds they are; a new row's are part of the new row. One
+            // statement, one seek of the row: each statement a listed item runs is one more
+            // seek for every item of every batch.
             try db.cachedStatement(sql: Self.sourceItemFactsSQL).execute(
                 arguments: [
                     item.sourceItemID, item.sourcePathChecksum?.data, !item.sourceHasProducts,
@@ -7095,6 +7106,9 @@ extension CatalogStore {
                     item.sourceItemID, item.sourcePathChecksum?.data, !item.sourceHasProducts,
                 ]
             )
+            if upsert != .inserted {
+                rows.recordChanged(db.changesCount, of: id, facts: [.membership, .copies, .images, .detail])
+            }
             // The source's digest of the item's bytes is the row's (ADR 0054), stamped with
             // the facts this listing wrote: the source lists the item again when its bytes
             // change. Which copy shows can move with it, so an existing row's is a change, and
@@ -7288,22 +7302,32 @@ extension CatalogStore {
 
     nonisolated static let sourceProductsAbsentSQL = """
     UPDATE media_asset SET source_products_absent = 1
-    WHERE library_root_id = ? AND relative_path = ?
+    WHERE library_root_id = ? AND relative_path = ? AND source_products_absent IS NOT 1
     """
 
     /// Records that the source answered it holds no images of these rows (ADR 0046 §7), so
-    /// no product pass asks for them again until a later listing says it has them.
+    /// no product pass asks for them again until a later listing says it has them. A row
+    /// that holds no thumbnail then gets none coming, which an empty search counts
+    /// (`assetsWithNoThumbnailComing`), so the rows it marks are announced as their images.
     func recordSourceProductsAbsent(_ paths: [MediaRelativePath], rootPath: LibraryRootPath) async throws {
         guard !paths.isEmpty, let rootID = roots.rowIDSnapshot()[rootPath] else {
             return
         }
-        try await database().write { db in
+        let marked = try await database().write { db -> Set<MediaAssetID> in
+            var marked: Set<MediaAssetID> = []
             for path in paths {
                 try db.execute(
                     sql: Self.sourceProductsAbsentSQL,
                     arguments: [rootID, path.rawValue]
                 )
+                if db.changesCount > 0 {
+                    marked.insert(MediaAssetID(libraryRootPath: rootPath, relativePath: path))
+                }
             }
+            return marked
+        }
+        if !marked.isEmpty {
+            notifyCatalogChanged(.changed([.images, .detail], rows: .rows(marked)))
         }
     }
 
@@ -7520,6 +7544,12 @@ extension CatalogStore {
     }
 
     func shutdown() {
+        // The coverage guard waits for the Store's own work this cancels: what it wrote before
+        // the shutdown overtook it is announced as that work ends.
+        changeAudit?.shutDown(
+            [reconcileLoop, filesystemEventConsumer, integrityScanTask].compactMap(\.self)
+                + Array(scanTasks.values) + Array(filesystemEventPasses.values)
+        )
         reconcileDoorbell?.finish()
         reconcileDoorbell = nil
         reconcileLoop?.cancel()
@@ -7560,7 +7590,10 @@ extension CatalogStore {
         filesystemEventConsumer = nil
         filesystemWatchingStarted = false
         filesystemWatchingArmed.removeAll()
-        notifyCatalogChanged(.changed(.all))
+        // This change follows no write: every subscriber re-reads a Store whose runtime state
+        // is gone. The coverage guard heard the shutdown, and does not hear this as a change
+        // announcing a write (`CatalogWriteAudit.shutDown`).
+        deliver(.changed(.all))
     }
 }
 
@@ -8021,7 +8054,7 @@ private extension CatalogStore {
         timer.lap("compactionMs")
         performThumbnailStoreStartupMaintenance()
         timer.lap("thumbnailsMs")
-        let writer = CatalogWriter(dbWriter)
+        let writer = CatalogWriter(dbWriter, audit: changeAudit)
         self.dbWriter = writer
         databaseFileURL = openResult.openedFileURL
         var fields = timer.fields
@@ -8964,6 +8997,12 @@ private extension CatalogStore {
     }
 
     private func notifyCatalogChanged(_ change: CatalogStoreChange) {
+        changeAudit?.changeSent(change)
+        deliver(change)
+    }
+
+    /// Yields `change` to every subscriber and counts it.
+    private func deliver(_ change: CatalogStoreChange) {
         let state = OtosSignpost.catalog.beginInterval("CatalogChangeNotify")
         defer {
             OtosSignpost.catalog.endInterval("CatalogChangeNotify", state)

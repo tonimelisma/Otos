@@ -21,6 +21,10 @@ import Testing
 ///   integrity scheduler end with the test rather than idling in the test host for the rest
 ///   of the run. A test may still shut a store down itself, mid-test, when that is what it
 ///   tests; shutting down again is a no-op.
+/// - **Change coverage.** Each store carries a change-coverage guard
+///   (`CatalogChangeCoverage`, ADR 0005). Once the scope has shut the test's stores down, every
+///   write a store committed that no change announced is recorded as an issue of the test,
+///   naming the operation that wrote it and the kinds of fact no change named.
 ///
 /// The process owns the roots too (`TestTemporaryFolders`). Each root's name carries the
 /// process id (`OtosTests-<pid>-<uuid>`), so whose it is can be read from the name. A root
@@ -102,23 +106,32 @@ enum TestScope {
 final class TestScopeStores: Sendable {
     private struct Owned {
         weak var store: CatalogStore?
+        /// Held strongly: a store released mid-test is still judged at the end.
+        let coverage: CatalogChangeCoverage
     }
 
     private let stores = Mutex<[Owned]>([])
 
-    func own(_ store: CatalogStore) {
-        stores.withLock { $0.append(Owned(store: store)) }
+    func own(_ store: CatalogStore, coverage: CatalogChangeCoverage) {
+        stores.withLock { $0.append(Owned(store: store, coverage: coverage)) }
     }
 
     /// Shuts every store still alive down, newest first, so a store made over another's
-    /// files ends before the one it was made from.
+    /// files ends before the one it was made from. Then, once the work each shutdown overtook
+    /// has ended, records every write a store committed that no change announced
+    /// (`CatalogChangeCoverage`).
     func shutDownAll() async {
-        let alive = stores.withLock { stores in
+        let owned = stores.withLock { stores in
             defer { stores.removeAll() }
-            return stores.compactMap(\.store)
+            return stores
         }
-        for store in alive.reversed() {
+        for store in owned.compactMap(\.store).reversed() {
             await store.shutdown()
+        }
+        for each in owned {
+            for uncovered in await each.coverage.uncoveredOnceWorkEnds(of: each.store) {
+                Issue.record(Comment(rawValue: uncovered.description))
+            }
         }
     }
 }
@@ -145,7 +158,8 @@ enum TestCatalogStart {
 }
 
 /// A `CatalogStore` the running test case owns: the `.testScope` trait shuts it down when
-/// the test ends. Its other parameters are `CatalogStore.init`'s. A `.databaseFile` location
+/// the test ends and records every write it committed that no change announced
+/// (`changeCoverage`). Its other parameters are `CatalogStore.init`'s. A `.databaseFile` location
 /// with no file yet starts as `start` says; an existing file is opened as it is, and an
 /// in-memory location starts at the current schema in the Store itself.
 func makeTestStore(
@@ -161,6 +175,7 @@ func makeTestStore(
     walByteBudget: Int64 = CatalogStore.defaultWALByteBudget,
     stagingContainers: StagingContainers? = nil,
     stallThreshold: Duration = CatalogConnectionActivity.defaultStallThreshold,
+    changeCoverage: CatalogChangeCoverage = CatalogChangeCoverage(),
     sourceLocation: SourceLocation = #_sourceLocation
 ) -> CatalogStore {
     if case let .databaseFile(url) = location, start == .currentSchema,
@@ -184,10 +199,11 @@ func makeTestStore(
         importJournalFailure: importJournalFailure,
         walByteBudget: walByteBudget,
         stagingContainers: stagingContainers,
-        stallThreshold: stallThreshold
+        stallThreshold: stallThreshold,
+        changeAudit: changeCoverage.audit
     )
     if let stores = TestScope.stores {
-        stores.own(store)
+        stores.own(store, coverage: changeCoverage)
     } else {
         Issue.record(TestScope.OutsideScope(made: "makeTestStore(...)"), sourceLocation: sourceLocation)
     }

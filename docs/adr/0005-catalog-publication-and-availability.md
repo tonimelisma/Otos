@@ -85,6 +85,40 @@ says a source is being read, not that a write left derived facts alone; a resync
 batch can hide or purge rows that carry faces and digests, and enrichment of other
 roots keeps changing derived facts during an hour-long sync.
 
+**Every write is announced, and the tests prove it.** A narrowed change can fail in only one
+way: an owner stops hearing a write it reads, and its work stays owed with nothing logged.
+So every test's Store carries a change-coverage guard (`CatalogChangeCoverage`, reached
+through the Store's test seam `CatalogWriteAudit`, nil in the app).
+
+- **What a commit owes.** A GRDB `TransactionObserver` on the Store's writer maps each
+  committed transaction's inserts, deletes and updated columns through
+  `CatalogChangedFacts.writes` to the kinds it owes. Three writes owe nothing of their own: a
+  column written into a row the same transaction inserted (part of the insert), a row
+  inserted and deleted again in it, and a row an `ON DELETE CASCADE` deletes with its parent
+  (part of the parent's delete).
+- **The pairing rule.** A change the Store sends pays, on every commit before it, the kinds
+  it names (`.all` and `.libraryRemoved` every kind, `.assetsAdded` membership). A change sent
+  after a commit is what a keyed re-read needs, so one sent at the end of the same operation
+  pays, and so does one a later operation sends (`endSourceListing` after a listing's
+  batches). A change sent before the commit pays nothing for it.
+- **The deadline.** The end of the test: its Stores are shut down, the work each shutdown
+  overtook is awaited — the Store's own tasks it cancelled (scans, filesystem passes, the
+  reconcile loop), and every write still in flight with what its operation sends after it —
+  and every commit still owed fails the test, naming the operation that wrote it, the columns
+  and tables, and the kinds no change named. Shutdown's own change pays nothing. A commit
+  after shutdown began, or in a write in flight when it began, is one the shutdown overtook
+  and is never reported: its operation may abandon it, as a scan batch that finds its lease
+  gone does. A change sent after shutdown, by work still finishing, pays.
+- **The narrowings it allows** are the Store's own value comparisons and one owner's own
+  state, each listed in `CatalogChangeCoverage.Narrowing` with its reason: the enrichment
+  overlay's before-and-after comparison; `DigestStanding` and the copy-key triggers; the
+  render-signature trigger; On This Day's left-out comparison in a search write; and
+  `enrichment_claimed` and `last_synced_at`, each read only by the owner that writes it.
+
+Changes that report runtime state and follow no write (scans, listings, availability) are
+not a coverage concern. The observer is a guard, never the source of changes: it cannot see
+the value comparisons, and runtime state has no write.
+
 ### Projection-Owned Publication
 
 `CatalogProjection` owns one publication loop and two counters. Every Store change
@@ -587,6 +621,8 @@ selection `didSet` orchestration must not remain in current docs or comments.
 - Projection tests cover mixed availability filtering and checking empty states.
 - ViewModel tests cover rapid selection intents, resolved-selection application
   without feedback, weak state-consumer lifetime, and owned-task cancellation.
+- Every test's Store carries the change-coverage guard (`CatalogChangeCoverage`); its
+  self-test (`CatalogChangeCoverageTests`) drops one change and sees the write reported.
 - Source hygiene rejects retired selection guards and implicit `didSet`
   forwarding.
 - `script/verify.sh` supplies the full local gate.
