@@ -25,6 +25,10 @@ struct ActivityLine: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
+            // The spinner inside would otherwise stand in for the button: VoiceOver and
+            // Full Keyboard Access read the line as a button with its label, never a busy
+            // indicator (DES-080).
+            .accessibilityElement(children: .ignore)
         }
         .buttonStyle(.plain)
         .disabled(presentation.line == nil)
