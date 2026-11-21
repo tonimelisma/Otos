@@ -2630,8 +2630,8 @@ nonisolated enum CatalogSchema {
 
     /// Writes the index rows of every stored reading that holds text, current or not (a stale
     /// one is matched by none, since a match reads only current readings, and is replaced when
-    /// it is read again), with the code that writes them for a new reading
-    /// (`SearchTextStorage.index`).
+    /// it is read again), with the statements frozen with it and the live folding
+    /// (`indexStoredSearchTexts`).
     /// v75: where each library root's change journal stands (ADR 0002, "Change Journal"):
     /// the last FSEvents event ID whose changes the catalog fully reflects, the identity of
     /// the volume's event database it belongs to, and the root folder's inode when it was
@@ -3488,6 +3488,13 @@ nonisolated enum CatalogSchema {
         let text: String
     }
 
+    /// v74's statements, as literals (ADR 0002: an applied migration's SQL never follows later
+    /// code). The folding and the words stay the live ones on purpose: the index must fold a
+    /// reading as search folds a query, so a change to folding re-indexes in its own migration.
+    private static let v74DeleteFoldedSQL = "DELETE FROM search_text_folded WHERE library_root_id = ? AND relative_path = ?"
+    private static let v74InsertFoldedSQL = "INSERT INTO search_text_folded (library_root_id, relative_path, folded) VALUES (?, ?, ?)"
+    private static let v74InsertWordsSQL = "INSERT INTO search_text_word (rowid, words) VALUES (?, ?)"
+
     static func indexStoredSearchTexts(_ db: Database) throws {
         let start = ContinuousClock.now
         let rows = try Row.fetchCursor(db, sql: """
@@ -3497,9 +3504,15 @@ nonisolated enum CatalogSchema {
         while let row = try rows.next() {
             let lines = try JSONDecoder().decode([V74TextLine].self, from: Data((row["lines"] as String).utf8))
             let searchable = lines.map(\.text).joined(separator: "\n")
-            if try SearchTextStorage.index(searchable: searchable, rootID: row["library_root_id"], path: row["relative_path"], db: db) {
-                indexed += 1
-            }
+            let rootID: Int64 = row["library_root_id"]
+            let path: String = row["relative_path"]
+            try db.cachedStatement(sql: v74DeleteFoldedSQL).execute(arguments: [rootID, path])
+            let folded = SearchTextReading.folded(searchable)
+            let words = SearchTextWords.of(folded: folded)
+            guard !words.isEmpty else { continue }
+            try db.cachedStatement(sql: v74InsertFoldedSQL).execute(arguments: [rootID, path, folded])
+            try db.cachedStatement(sql: v74InsertWordsSQL).execute(arguments: [db.lastInsertedRowID, words])
+            indexed += 1
         }
         OtosLog.persistence.noticeOperation("catalog.migration.searchTextWords", phase: "finish", fields: [
             "indexed": "\(indexed)", "ms": "\(DiagnosticsTiming.milliseconds(since: start))",
