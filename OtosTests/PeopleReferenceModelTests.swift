@@ -10,7 +10,10 @@ import Testing
 /// (which face of a photo both people are in stays theirs), which it checks is a legal one.
 /// After every step the catalog must also hold the rules that no single act owns: a person in
 /// a photo once, a held or rejected face never given back, one key photo per person, no face
-/// before a birthday, and `person_photo` exactly what the faces say.
+/// before a birthday, and `person_photo` exactly what the faces say. Three of its photos are
+/// each two identical files (ADR 0054), so every pass is also checked against what copies mean:
+/// a photo counted once, a likeness only to other photos, no person Otos found in one photo
+/// only, and a face named like its copy's twin where nothing forbids it.
 @Suite(.testScope)
 struct PeopleReferenceModelTests {
     // MARK: The stored state, as the model reads it
@@ -388,6 +391,60 @@ struct PeopleReferenceModelTests {
         return found
     }
 
+    /// Each person's photo count as People stored it for the gallery (`person_summary`).
+    static func galleryPhotos(_ queue: DatabaseQueue) throws -> [Int64: Int] {
+        try queue.read { db in
+            try Dictionary(uniqueKeysWithValues: Row.fetchAll(db, sql: "SELECT person_id, photos FROM person_summary").map {
+                ($0[0] as Int64, $0[1] as Int)
+            })
+        }
+    }
+
+    /// What a pass must make of a photo that is several identical files (ADR 0054), whose
+    /// files read alike: `photoOf` names the file each file's photo is counted as, `copyOf`
+    /// each file's copy, `photos` the gallery's stored counts.
+    /// - A person's photos count each photo once.
+    /// - A likeness compares a face only with the person's faces in other photos, so a person
+    ///   in one photo only has none.
+    /// - A person Otos found, whom the user said nothing about, stands only in two photos or
+    ///   more: a photo's copies are one photo read twice.
+    /// - A face Otos may name is its copy's twin: where the copy's face is anchored to a person
+    ///   it may have, it has them.
+    static func copyViolations(
+        of state: State,
+        photoOf: (String) -> String,
+        copyOf: [String: String],
+        photos: [Int64: Int]
+    ) -> [String] {
+        var found: [String] = []
+        for (id, person) in state.people {
+            let faces = state.facesOf(person: id)
+            let counted = Set(faces.map { photoOf($0.path) })
+            if photos[id] ?? 0 != counted.count {
+                found.append("person \(id): \(photos[id] ?? 0) photos stored, in \(counted.count)")
+            }
+            for face in faces where state.faces[face]?.likeness != nil && counted.subtracting([photoOf(face.path)]).isEmpty {
+                found.append("\(face): a likeness to \(id), who is in no other photo")
+            }
+            let bare = person.name == nil && person.birthday == nil && !person.isHidden && !person.isFavorite
+                && !faces.contains { state.faces[$0]?.isKeyPhoto == true || state.faces[$0]?.column == FaceAssignmentColumn.user.rawValue }
+            if bare, counted.count == 1 {
+                found.append("person \(id): found by Otos in one photo only, \(faces)")
+            }
+        }
+        for (face, row) in state.faces where row.assignment?.isGuessable == true && !row.isNotFace {
+            guard let copy = copyOf[face.path], let twin = state.faces[FaceKey(path: copy, index: face.index)],
+                  twin.isAnchor, !twin.isNotFace, let person = twin.person, row.person != person else { continue }
+            let elsewhere = state.facesOf(photo: face.path).contains { $0 != face && state.faces[$0]?.person == person }
+            if !elsewhere, !state.rejections.contains(Rejection(face: face, person: person)),
+               !state.isBefore(face, birthday: state.people[person]?.birthdaySeconds)
+            {
+                found.append("\(face): \(row.person.map(String.init) ?? "no one"), its copy's twin \(person)'s")
+            }
+        }
+        return found.sorted()
+    }
+
     // MARK: The random walk
 
     struct Undo {
@@ -424,23 +481,48 @@ struct PeopleReferenceModelTests {
         // Four people, each a direction of the embedding; a photo holds up to three of them, on
         // one of twelve days across 2020–2023, so a pass finds people and birthdays matter. A
         // reading that moves the photo's date is the file's date corrected after it was named.
+        // Three photos are each two identical files (ADR 0054): p0/p1, p2/p3 and p4/p5 share a
+        // digest, a date and, read alike, their faces; each file keeps its own face rows.
+        let copyOf = Dictionary(uniqueKeysWithValues: (0 ..< 6).map { ("p\($0).jpg", "p\($0 ^ 1).jpg") })
+        let photoOf = { (name: String) in min(name, copyOf[name] ?? name) }
+        let photos = Array(Set(names.map(photoOf))).sorted()
         // Each photo's date: one of the twelve days, by its name, until a reading moves it.
         var dates = Dictionary(uniqueKeysWithValues: names.enumerated().map { index, name in
             (name, Date(timeIntervalSince1970: 1_580_000_000 + Double(index * 5 % 12) * 100 * 86400))
         })
+        var lastFaces: [String: [DetectedFace]] = [:]
         var dateMoved = false
-        func read(_ name: String, movingItsDate moves: Bool = false) async throws {
+        /// A reading of `name`'s photo: new faces for the photo, written to the file and its
+        /// copy; `alone` reads only the file, with the faces the photo last showed (the same
+        /// bytes read again), and never moves its date.
+        func read(_ name: String, movingItsDate moves: Bool = false, alone: Bool = false) async throws {
+            let photo = photoOf(name)
             if moves {
-                dates[name] = Date(timeIntervalSince1970: 1_580_000_000 + Double(roll(12)) * 100 * 86400)
+                dates[photo] = Date(timeIntervalSince1970: 1_580_000_000 + Double(roll(12)) * 100 * 86400)
             }
-            let identities = Array(Set((0 ..< 1 + roll(3)).map { _ in roll(4) })).sorted()
-            let faces = identities.enumerated().map { index, identity in
-                PeopleStoreTests.face(x: 0.05 + 0.3 * Double(index), toward: [identity * 8: 1, 200 + roll(200): 0.15])
+            var faces = alone ? lastFaces[photo] : nil
+            if faces == nil {
+                let identities = Array(Set((0 ..< 1 + roll(3)).map { _ in roll(4) })).sorted()
+                faces = identities.enumerated().map { index, identity in
+                    PeopleStoreTests.face(x: 0.05 + 0.3 * Double(index), toward: [identity * 8: 1, 200 + roll(200): 0.15])
+                }
             }
-            try await library.readFaces([library.result(for: name, faces: faces, captured: dates[name])])
+            lastFaces[photo] = faces
+            let files = alone ? [name] : [name] + (copyOf[name].map { [$0] } ?? [])
+            try await library.readFaces(files.map { library.result(for: $0, faces: faces ?? [], captured: dates[photo]) })
+            // The copies' digest, as enrichment reads it for identical bytes.
+            if let index = photos.firstIndex(of: photo), copyOf[name] != nil {
+                let digest = try #require(ContentDigest(bytes: Array(repeating: UInt8(index + 1), count: ContentDigest.byteCount)))
+                for (id, asset) in try await library.store.windowReads.mediaAssets(for: files.map(library.id)) {
+                    _ = await library.store.applyContentHash(ContentHashResult(
+                        id: id, contentHash: digest, sourceSize: asset.byteSize,
+                        sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt)
+                    ))
+                }
+            }
         }
-        for name in names {
-            try await read(name)
+        for photo in photos {
+            try await read(photo)
         }
         let stored = try Self.read(queue)
         let snapshotFaces = try await library.store.backgroundReads.peopleSnapshot().faces.count
@@ -581,8 +663,22 @@ struct PeopleReferenceModelTests {
                 let after = try Self.read(queue)
                 tally["pass", default: 0] += 1
                 tally["peopleAfterPass", default: 0] = max(tally["peopleAfterPass"] ?? 0, after.people.count)
+                // The rules for copies decided something: the catalog read the copies as one
+                // photo, and a person stood on both files of one.
+                try await tally["copiesRead", default: 0] = max(
+                    tally["copiesRead"] ?? 0, library.store.backgroundReads.peopleSnapshot().photoOf.count
+                )
+                for (face, row) in after.faces {
+                    guard let person = row.person, let copy = copyOf[face.path],
+                          let twin = after.faces[FaceKey(path: copy, index: face.index)], twin.person == person else { continue }
+                    tally["personOnBothCopies", default: 0] += 1
+                }
                 dateMoved = false
-                record(step, "pass", Self.violations(of: after) + Self.passViolations(before: before, after: after))
+                try record(
+                    step, "pass",
+                    Self.violations(of: after) + Self.passViolations(before: before, after: after)
+                        + Self.copyViolations(of: after, photoOf: photoOf, copyOf: copyOf, photos: Self.galleryPhotos(queue))
+                )
                 if after != before {
                     for index in undos.indices {
                         undos[index].overtaken = true
@@ -590,9 +686,9 @@ struct PeopleReferenceModelTests {
                 }
             } else if let name = pick(names) {
                 // A new reading of a photo: its faces are replaced, the user's word carried;
-                // one in three moves the photo's date.
+                // one in three moves the photo's date, and a copy is now and then read alone.
                 let moves = roll(3) == 0
-                try await read(name, movingItsDate: moves)
+                try await read(name, movingItsDate: moves, alone: !moves && copyOf[name] != nil && roll(2) == 0)
                 dateMoved = dateMoved || moves
                 for index in undos.indices {
                     undos[index].overtaken = true
@@ -601,8 +697,12 @@ struct PeopleReferenceModelTests {
             }
         }
         await library.store.shutdown()
-        let performed = tally.filter { !["refused", "undo", "lateUndo", "pass", "peopleAfterPass"].contains($0.key) }.values.reduce(0, +)
-        return Walk(performed: performed, mostPeople: tally["peopleAfterPass"] ?? 0, failures: failures)
+        let notActs: Set = ["refused", "undo", "lateUndo", "pass", "peopleAfterPass", "copiesRead", "personOnBothCopies"]
+        let performed = tally.filter { !notActs.contains($0.key) }.values.reduce(0, +)
+        return Walk(
+            performed: performed, mostPeople: tally["peopleAfterPass"] ?? 0, copiesRead: tally["copiesRead"] ?? 0,
+            personOnBothCopies: tally["personOnBothCopies"] ?? 0, failures: failures
+        )
     }
 
     /// What one walk did and found.
@@ -611,6 +711,10 @@ struct PeopleReferenceModelTests {
         let performed: Int
         /// The most people any pass left.
         let mostPeople: Int
+        /// The most files the catalog counted as another file's photo after a pass.
+        var copiesRead = 0
+        /// Faces after passes whose copy's twin face had the same person.
+        var personOnBothCopies = 0
         /// Every divergence from the model and every broken rule, by seed and step.
         let failures: [String]
     }
@@ -640,6 +744,8 @@ struct PeopleReferenceModelTests {
         // The walk compared acts on people, not an empty catalog.
         #expect(walk.performed >= 15, "seed \(seed): only \(walk.performed) acts performed")
         #expect(walk.mostPeople > 0, "seed \(seed): no pass found anyone")
+        #expect(walk.copiesRead == 3, "seed \(seed): the catalog read \(walk.copiesRead) files as copies, not 3")
+        #expect(walk.personOnBothCopies > 0, "seed \(seed): no person stood on both files of a photo")
         #expect(walk.failures.isEmpty, "\(walk.failures.count) failures:\n\(walk.failures.prefix(40).joined(separator: "\n"))")
     }
 }
