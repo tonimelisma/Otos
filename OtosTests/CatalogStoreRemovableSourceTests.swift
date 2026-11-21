@@ -419,6 +419,50 @@ struct CatalogStoreRemovableSourceTests {
         #expect(await store.currentLibraries().isEmpty)
     }
 
+    /// ADR 0013: the camera comes back while its removal deletes its staging folder. The
+    /// re-attach waits for the removal's lease, and the folder it attaches at is made only once
+    /// it holds the root: the removal's delete never takes the folder of the camera attached
+    /// after it, so the Store's root and the disk agree.
+    @Test func aCameraReattachedWhileItsRemovalDeletesItsStagingKeepsItsStagingFolder() async throws {
+        let temp = try makeTestDirectory()
+        let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
+        let (deletions, reachDeletion) = AsyncStream<LibraryRootPath>.makeStream()
+        let (points, reachPoint) = AsyncStream<NamespaceMutationPoint>.makeStream()
+        let release = DispatchSemaphore(value: 0)
+        let store = makeTestStore(
+            location: .inMemory,
+            namespaceMutationReached: { point in reachPoint.yield(point) },
+            stagingDeletionReached: { path in
+                reachDeletion.yield(path)
+                release.wait()
+            }
+        )
+        try await store.start(scansSavedLibraries: false)
+        let identity = DeviceIdentity.camera(id: "serial")
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: stagingRoot, identity: identity, displayName: "Camera"
+        )
+
+        let removal = Task { try await store.removeLibrary(path: rootPath) }
+        var deletionIterator = deletions.makeAsyncIterator()
+        #expect(await deletionIterator.next() == rootPath)
+
+        let reattach = Task {
+            try await store.attachDeviceMTP(stagingRootURL: stagingRoot, identity: identity, displayName: "Camera")
+        }
+        var pointIterator = points.makeAsyncIterator()
+        while let point = await pointIterator.next(), point != .attachmentWaits(rootPath) {}
+        release.signal()
+
+        #expect(try await removal.value == .removed)
+        #expect(try await reattach.value == rootPath)
+        #expect(await store.currentLibraries().map(\.path) == [rootPath], "the re-attached camera is a root")
+        #expect(
+            FileManager.default.fileExists(atPath: stagingRoot.path(percentEncoded: false)),
+            "the re-attached camera's staging folder exists"
+        )
+    }
+
     @Test func staleDeviceEnumerationCannotWriteOrReconcileNewerRows() async throws {
         let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)

@@ -105,7 +105,10 @@ Adjacent decisions requiring separate ADRs or specs:
    (`sourceAttachment`) through its writes; one that finds a removal or another attachment
    holding the root waits for it and decides again, so a card mounted where a forgotten
    card's root is being removed becomes a new source, never a row the removal deletes or a
-   root with no row. A source still attached
+   root with no row. A removal deletes a camera's staging folder while its lease still holds
+   the root, so the attachment makes the staging folder only after that decision: a camera
+   re-attached while its removal runs waits, then makes the folder it attaches at, which the
+   removal it waited for can no longer delete. A source still attached
    when Otos quits keeps its arrival stamp, so retention can count from up to one
    session early. The period is a product rule, not a stand-in for a fact (ADR 0033):
    no report can say an absent device will never return. Transient camera identities are removed on detach because they have no

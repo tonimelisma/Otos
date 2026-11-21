@@ -6007,7 +6007,7 @@ extension CatalogStore {
 
         // The files go, off the actor, while the removal still holds the root: until its lease
         // drops and the root leaves, an attachment of the same source waits rather than take
-        // the path whose staging folder is being deleted.
+        // the path whose staging folder is being deleted, and makes its own folder only after.
         await removal.perform()
         await deleteStagingIfNeeded(root)
         dropNamespaceMutationLease(at: path)
@@ -6189,8 +6189,10 @@ extension CatalogStore {
     /// decides again: after a removal, the source is a new root. When another owner (an
     /// import, a Trash move, an erase) holds the root, it attaches without the lease, and each
     /// write re-checks that the root is still the row it read; a root removed meanwhile is
-    /// decided again. Releasing the lease and making the source available are one step, so
-    /// retention, which leaves a root under a lease, never meets it half attached.
+    /// decided again. A camera's or phone's staging folder is made only after that decision,
+    /// so a removal of the same source that it waited for never deletes the folder it attaches
+    /// at. Releasing the lease and making the source available are one step, so retention,
+    /// which leaves a root under a lease, never meets it half attached.
     private func attachRemovableRoot(_ attachment: RemovableRootAttachment) async throws {
         let lastSeenAt = wallClock()
         let dbQueue = try database()
@@ -6204,6 +6206,7 @@ extension CatalogStore {
         while true {
             let identified = rootForDeviceIdentity(attachment.identity).flatMap { roots[$0.path] }
             guard let existing = identified ?? roots[attachment.path] else {
+                try makeStagingFolderIfNeeded(for: attachment)
                 try await insertRemovableRoot(attachment, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
                 break
             }
@@ -6220,6 +6223,7 @@ extension CatalogStore {
             if namespaceMutationLeases[existing.path] == nil {
                 lease = installNamespaceMutationLease(for: existing.path, owner: .sourceAttachment)
             }
+            try makeStagingFolderIfNeeded(for: attachment)
             let tookOver = if identified != nil {
                 try await updateExistingRemovableRoot(attachment, existing: existing, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
             } else {
@@ -6240,6 +6244,18 @@ extension CatalogStore {
             releaseNamespaceMutationLease(held)
         }
         await finishRemovableRootAttachment(attachment)
+    }
+
+    /// Makes the staging folder of a source that stages its originals, the folder its root is.
+    /// The attachment makes it once it has decided which root the source is and no removal
+    /// holds that root, never before: a removal deletes the staging folder while its lease
+    /// still holds the root, so a folder made before the attachment waited out that lease
+    /// would be the one the removal deletes.
+    private func makeStagingFolderIfNeeded(for attachment: RemovableRootAttachment) throws {
+        guard attachment.kind.stagesOriginals else {
+            return
+        }
+        try FileManager.default.createDirectory(at: attachment.path.url, withIntermediateDirectories: true)
     }
 
     /// Whether `rowID` is still the root at `path`: what an attachment re-reads after each of
@@ -6542,7 +6558,6 @@ extension CatalogStore {
         displayName: String
     ) async throws -> LibraryRootPath {
         let path = try CatalogPath.normalizedDirectoryPath(for: stagingRootURL)
-        try FileManager.default.createDirectory(at: path.url, withIntermediateDirectories: true)
         try await ensureStartedForMutation()
         try await attachRemovableRoot(RemovableRootAttachment(
             kind: .deviceMTP,
