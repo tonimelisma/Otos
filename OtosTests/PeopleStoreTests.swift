@@ -270,7 +270,8 @@ struct PeopleStoreTests {
 
     /// Merging says two people are one (owner, 2026-11-19), so a photo the user gave both a
     /// face of never refuses it: the face there most like the merged person's other faces
-    /// stays theirs, and the other is released for assignment, whichever person it was.
+    /// stays theirs, and the other is held, whichever person it was: it was vouched for as the
+    /// merged person, whom the photo holds once.
     @Test func aMergeKeepsTheFaceMostLikeTheMergedPerson() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg", "c.jpg"])
         try await library.readFaces([
@@ -291,7 +292,7 @@ struct PeopleStoreTests {
 
         let faces = try await library.store.backgroundReads.peopleSnapshot().faces
         #expect(faces.first { $0.id == like }?.assignment == .user(ian), "the face like the merged person stays, though it was Sam's")
-        #expect(faces.first { $0.id == unlike }?.assignment == .open)
+        #expect(faces.first { $0.id == unlike }?.assignment == .held)
         #expect(faces.filter { $0.assignment == .user(ian) }.count == 3)
         await library.store.shutdown()
     }
@@ -315,7 +316,53 @@ struct PeopleStoreTests {
 
         let faces = try await library.store.backgroundReads.peopleSnapshot().faces
         #expect(faces.first { $0.id == second }?.assignment == .user(ian))
-        #expect(faces.first { $0.id == first }?.assignment == .open)
+        #expect(faces.first { $0.id == first }?.assignment == .held)
+        await library.store.shutdown()
+    }
+
+    /// A merge stays merged (owner's catalog, 2026-11-20): an unnamed person whose only seeds
+    /// are in photos the person merged into is already in keeps its faces with them through
+    /// the next assignment. Its guesses become the merged person's seeds, so assignment never
+    /// groups them into a new person again, and its seeds there are held, never regrouped.
+    @Test func aMergedPersonStaysMergedThroughAssignment() async throws {
+        let shared = ["p1.jpg", "p2.jpg"]
+        let guessed = ["g1.jpg", "g2.jpg", "g3.jpg"]
+        let own = ["t1.jpg", "t2.jpg"]
+        let files = shared + guessed + own
+        let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: files)
+        /// Each photo on a day of its own, so a group of them spans the days a new person needs.
+        func day(_ name: String) -> Date {
+            Date(timeIntervalSince1970: 1_577_836_800 + Double(files.firstIndex(of: name)!) * 86400)
+        }
+        func lookalike(_ x: Double, _ nudge: Int) -> DetectedFace {
+            Self.face(x: x, toward: [1: 1, 10 + nudge: 0.1])
+        }
+        try await library.readFaces(
+            shared.enumerated().map { index, name in
+                library.result(for: name, faces: [Self.face(x: 0.1, toward: [0: 1]), lookalike(0.6, index)], captured: day(name))
+            }
+                + guessed.enumerated().map { index, name in
+                    library.result(for: name, faces: [lookalike(0.3, 2 + index)], captured: day(name))
+                }
+                + own.map { library.result(for: $0, faces: [Self.face(x: 0.3, toward: [0: 1])], captured: day($0)) }
+        )
+        let taylorFaces = shared.map { FaceID(asset: library.id($0), index: 0) } + own.map { FaceID(asset: library.id($0), index: 0) }
+        let seeds = shared.map { FaceID(asset: library.id($0), index: 1) }
+        let guesses = guessed.map { FaceID(asset: library.id($0), index: 0) }
+        let taylor = try #require(try await library.store.perform(.moveToNewPerson(taylorFaces, name: "Taylor")).person)
+        try await library.store.applyAssignment(FaceAssignmentPlan(newPeople: [seeds]))
+        let found = try #require(try await library.store.backgroundReads.peopleSnapshot().people.first { $0.id != taylor }?.id)
+        try await library.store.applyAssignment(FaceAssignmentPlan(guesses: guesses.map { .init(face: $0, person: .existing(found)) }))
+
+        _ = try await library.store.perform(.merge(found, into: taylor))
+        try await PeopleAssignment(store: library.store, vectorSpace: .ample).settle()
+
+        let snapshot = try await library.store.backgroundReads.peopleSnapshot()
+        let byID = Dictionary(uniqueKeysWithValues: snapshot.faces.map { ($0.id, $0.assignment) })
+        #expect(snapshot.people.map(\.id) == [taylor], "no new person is found among the merged faces")
+        #expect(guesses.map { byID[$0] } == guesses.map { _ in .seed(taylor) })
+        #expect(seeds.map { byID[$0] } == [.held, .held])
+        #expect(taylorFaces.map { byID[$0] } == taylorFaces.map { _ in .user(taylor) })
         await library.store.shutdown()
     }
 

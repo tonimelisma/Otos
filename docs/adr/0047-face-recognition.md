@@ -313,15 +313,23 @@ grouping had put with the right child.
   - Two faces in one photo are never the same person. A merge is the user's word that two
     people are one (owner decision, 2026-11-19: "If I merge, I know they're the same"), so a
     photo both are in never refuses it: in each such photo the face most like the merged
-    person stays theirs and the others are released for assignment. "Most like" is
+    person stays theirs and the others are held: each was vouched for as the merged person,
+    whom the photo holds once, so it is no one Otos may name. "Most like" is
     assignment's likeness, each face's best similarity to both people's other defining faces
     (the user's and the seeds) within reach of the merged birthday
     (`FaceAssignmentPolicy.likeness(of:toPersonWith:birthday:)`, `CatalogStore.mergePerson`);
-    a face with none ranks last, and on a tie the person merged into keeps theirs. Otos's
-    guesses of either in the other's photo are dropped for assignment to redo. The release is
-    one act with the merge, so Undo Merge restores it. Rejected: refusing the merge (the user
-    could not merge two people a misread photo joined, and could not see why), and keeping
-    the face with the stronger word (a seed Otos found can be the wrong face of the photo).
+    a face with none ranks last, and on a tie the person merged into keeps theirs. Every
+    guess of the person merged away becomes a seed of the merged person, so all its faces are
+    anchors before that ranking; the merged-into person's guesses in a photo the other is in
+    make way for assignment to redo. All of it is one act with the merge, so Undo Merge
+    restores it. Rejected: refusing the merge (the user could not merge two people a misread
+    photo joined, and could not see why); keeping the face with the stronger word (a seed
+    Otos found can be the wrong face of the photo); leaving the merged-away guesses as
+    guesses, which hang on that person's anchors alone: on the owner's catalog (2026-11-20)
+    an unnamed person's only two seeds were both in photos Taylor was already in, made way,
+    and the next pass grouped its 166–429 guesses into a new unnamed person, three merges
+    running; and releasing the faces a shared photo leaves out for assignment, which groups
+    them into a new person of their own.
   - A face from before a person's birthday is never theirs. A birthday may be only a year,
     which counts from 1 January (owner decision, 2026-11-10). One rule holds Set Birthday and
     a merge: the user's faces from before it refuse the act, and Otos's guesses and seeds

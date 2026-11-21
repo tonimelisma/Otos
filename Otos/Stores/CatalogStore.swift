@@ -2775,8 +2775,10 @@ extension CatalogStore {
     }
 
     /// In each photo where `from` and `into` both have a face the user gave or Otos seeded,
-    /// keeps the face most like the person they become and releases the others to `.open`;
-    /// returns how many it released. "Most like" is assignment's likeness
+    /// keeps the face most like the person they become and holds the others (`.held`), and
+    /// returns how many it held. Each was vouched for as that person and the photo holds them
+    /// once, so it is no one Otos may name; left open, assignment would group such faces into
+    /// a new person. "Most like" is assignment's likeness
     /// (`FaceAssignmentPolicy.likeness(of:toPersonWith:birthday:)`): the best similarity to
     /// both people's other defining faces within reach of the merged birthday. A face with no
     /// likeness ranks below one with any; on a tie, `into`'s face stays.
@@ -2835,7 +2837,7 @@ extension CatalogStore {
             toPersonWith: defining.compactMap(\.fact),
             birthday: birthday?.seconds
         )
-        var released = 0
+        var held = 0
         for (_, faces) in Dictionary(exactlyGrouping: candidates, by: \.key.photo) where faces.count > 1 {
             let ranked = faces.sorted { lhs, rhs in
                 let left = lhs.fact.flatMap { likeness[$0.id] } ?? -.infinity
@@ -2849,11 +2851,11 @@ extension CatalogStore {
                 return lhs.key.index < rhs.key.index
             }
             for face in ranked.dropFirst() {
-                try setFace(face.key, person: nil, assignment: .open, db: db)
-                released += 1
+                try setFace(face.key, person: nil, assignment: .held, db: db)
+                held += 1
             }
         }
-        return released
+        return held
     }
 
     private static func holdToBirthday(_ birthday: PersonBirthday?, faces people: [PersonID], db: Database) throws {
@@ -2945,12 +2947,16 @@ extension CatalogStore {
     }
 
     /// The first person's faces become the second's. Merging says the two are one person
-    /// (owner, 2026-11-19), so a photo both are in never refuses it: of the faces the user
-    /// gave or Otos seeded for either in one photo, the one most like the merged person stays
-    /// theirs and the others are released for assignment (`keepLikeliestFace`); Otos's guesses
-    /// of either in a photo the other is in are dropped for assignment to redo. Refused only
-    /// when the user gave either a photo from before the merged birthday; Otos's guesses and
-    /// seeds from before it lose their person (`holdToBirthday`).
+    /// (owner, 2026-11-19: "If I merge, I know they're the same"), so every face of the
+    /// person merged away stays the merged person's as an anchor: its guesses become seeds.
+    /// Left as guesses, they would hang on the first person's anchors alone, and when those
+    /// make way in a shared photo, the next assignment would group them into a new person
+    /// again (owner's catalog, 2026-11-20). A photo both are in never
+    /// refuses the merge: of the faces the user gave or Otos seeded for either in one photo,
+    /// the one most like the merged person stays theirs and the others are held
+    /// (`keepLikeliestFace`); the second person's guesses in a photo the first is in make way.
+    /// Refused only when the user gave either a photo from before the merged birthday; Otos's
+    /// guesses and seeds from before it lose their person (`holdToBirthday`).
     /// The second keeps its name, birthday and key photo, taking the first's where it
     /// has none, and is a favourite if either was.
     private static func mergePerson(
@@ -2963,7 +2969,14 @@ extension CatalogStore {
         }
         let birthday = target.birthday ?? source.birthday
         try holdToBirthday(birthday, faces: [from, into], db: db)
-        // Guesses of either in a photo the other is in.
+        try db.execute(
+            sql: """
+            UPDATE face SET assignment = \(FaceAssignmentColumn.seed.rawValue)
+            WHERE person_id = ? AND assignment = \(FaceAssignmentColumn.model.rawValue)
+            """,
+            arguments: [from.rawValue]
+        )
+        // The second person's guesses in a photo the first is in: the first has only anchors.
         try db.execute(
             sql: """
             UPDATE face SET person_id = NULL, assignment = \(FaceAssignmentColumn.open.rawValue), is_key_photo = 0
@@ -2975,11 +2988,11 @@ extension CatalogStore {
             """,
             arguments: [from.rawValue, into.rawValue, from.rawValue, into.rawValue]
         )
-        let released = try keepLikeliestFace(from, into: into, birthday: birthday, pathsByRowID: pathsByRowID, db: db)
+        let held = try keepLikeliestFace(from, into: into, birthday: birthday, pathsByRowID: pathsByRowID, db: db)
         OtosLog.catalog.noticeOperation("people.merge", phase: "applied", fields: [
             "from": "\(from.rawValue)",
             "into": "\(into.rawValue)",
-            "released": "\(released)",
+            "held": "\(held)",
         ])
         let targetHasKeyPhoto = try Int.fetchOne(
             db, sql: "SELECT COUNT(*) FROM face WHERE person_id = ? AND is_key_photo = 1", arguments: [into.rawValue]
