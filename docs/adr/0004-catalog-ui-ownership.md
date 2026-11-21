@@ -76,12 +76,52 @@ Use a single-window catalog UI ownership model:
   uses a newest-value stream, while add/remove commands use a separate lossless
   serial stream. It does not own SQLite, filesystem traversal, scanning, sorting,
   filtering, availability policy, or projection cadence.
+- A feature whose state no other feature writes is its own `@MainActor @Observable`
+  model that the window holds for its life (`EditSession`, below). The window owns
+  every state more than one feature reads or writes: the targets, view mode and focus,
+  the panes, the loupe's player, the inspector, the undo manager.
 - `ContentView`, `SidebarView`, `MediaGridView`, and `SettingsView` are passive
   SwiftUI surfaces. They render inputs, hold local control state when
   appropriate, bind controls, and call model intents.
 - Settings receives `[CatalogLibraryState]` plus add/remove closures; it renders
   library name/path/availability and does not receive catalog snapshots, scan
   activity UI, media rows, sidebar state, or the full window ViewModel.
+
+### Feature Models: Edit
+
+Editing is the window's first feature model, `EditSession` (ADR 0036): the edit panel's,
+crop tool's and edit commands' values, the video trim request, and the three edit lanes
+with their streams, tasks and counters. The window declares none of that state. It holds
+the session in one property, made lazily because the session's context refers back to the
+window, and the session's own teardown cancels its lanes before finishing their streams.
+
+- **What the session reads and calls is a narrow context, `EditSession.Window`**: closures
+  over the window's own answers (current targets, view mode, whether a story plays, focus
+  and its kind, the loupe's player, `showsSelectedScope`, whether the Edit pane shows, a
+  slot's pane preview and expected asset) and its own intents (`setInspectorPane`,
+  `setViewMode`, `updateLoupeVideoState`, `requestPanePreview`,
+  `forgetFullResolutionRequest`, `publishUndoState`, `revealUndoneChange`). Each is read
+  when the session needs it, so the window stays the one owner, and a view's read through
+  the session is observed like a read of the window. The closures hold the window unowned:
+  the window owns the session, so the session never outlives it. The services it needs
+  (the tile-detail reader, materialization, the window's undo manager) are handed over at
+  construction, the store when the window starts.
+- **The window calls the session's intents and reads its state**, never writes it: the
+  Inspector's `endEditing` and `refreshEditTarget`, every target writer's
+  `refreshEditTarget`, Escape's disarm of the picker and the crop tool, the panes'
+  `displayedPanePreview`, and `textHoldsKeyboard`, which combines an edit field's focus with
+  the window's export sheet. Menus, keys and panel buttons call the same session intent.
+- **Why Edit first.** Measured before the change (`docs/research/2026-11-20-edit-access-and-move-replay.md`,
+  E7): with every edit property private to the session, the compiler's 31 outside accesses
+  were reads and the lanes' own wiring; no other feature wrote edit state. Two writes went
+  the other way: trim's request moved into the session, and the loupe's full-resolution
+  bookkeeping became a window intent.
+
+Rejected: a protocol the window conforms to (no second implementation exists or is
+needed, and a protocol is for a real substitution boundary); a weak back-reference to the
+whole window (the session could then read and write any of it, which is the coupling the
+model removes); state left on the window with the methods moved (two owners of one
+question).
 
 ### Applying A Publication
 

@@ -19,18 +19,18 @@ import OSLog
 ///
 /// The aspect choice is the tool's state, not the photo's: it constrains how the crop
 /// resizes and is fitted to the photo when chosen, but it is not saved with the edit.
-extension CatalogWindowViewModel {
+extension EditSession {
     /// Photo ▸ Crop (C), and the panel's Crop / Done button.
     func toggleCropTool() {
         if isCropping {
             endCropping()
             return
         }
-        setInspectorPane(.edit)
-        if viewMode != .loupe {
-            setViewMode(.loupe)
+        window.setInspectorPane(.edit)
+        if window.viewMode() != .loupe {
+            window.setViewMode(.loupe)
         }
-        guard viewMode == .loupe, targetIDs(.current).count == 1 else { return }
+        guard window.viewMode() == .loupe, window.currentTargets().count == 1 else { return }
         isPickingNeutral = false
         isCropping = true
         // Custom: a crop is free to take whatever shape suits the photo, and a suggested
@@ -58,7 +58,7 @@ extension CatalogWindowViewModel {
 
     var canCrop: Bool {
         // The story's pane draws no crop tool (ADR 0049).
-        canEdit && viewMode == .loupe && story == nil
+        canEdit && window.viewMode() == .loupe && !window.isPlayingStory()
     }
 
     /// The crop moved: `dragging` while the pointer is down, false when it is let go, which

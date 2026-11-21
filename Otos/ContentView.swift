@@ -455,7 +455,7 @@ struct DetailColumn: View {
                     orderedIDs: viewModel.parts.mediaGrid.orderedAssetIDs,
                     today: viewModel.today,
                     kind: viewModel.focusedAssetKind,
-                    panePreview: viewModel.displayedPanePreview(.loupe),
+                    panePreview: viewModel.editSession.displayedPanePreview(.loupe),
                     videoState: viewModel.loupeVideoState,
                     isDownloading: viewModel.downloadingSlots.contains(.loupe),
                     tileContentStore: viewModel.tileContentStore,
@@ -571,7 +571,7 @@ struct DetailColumn: View {
                 tileContentStore: viewModel.tileContentStore,
                 focusedAssetID: viewModel.focusedAssetID,
                 focusedAssetKind: viewModel.focusedAssetKind,
-                panePreview: viewModel.displayedPanePreview(.loupe),
+                panePreview: viewModel.editSession.displayedPanePreview(.loupe),
                 loupeVideo: viewModel.loupeVideo,
                 isDownloading: viewModel.downloadingSlots.contains(.loupe),
                 stripTileEdge: viewModel.stripTileEdge,
@@ -603,25 +603,25 @@ struct DetailColumn: View {
                 loupeZoomCommand: viewModel.loupeZoomCommand,
                 onZoomReport: viewModel.reportLoupeZoom,
                 onZoomDoubleClick: { viewModel.toggleLoupeZoom(at: $0) },
-                isPickingNeutral: viewModel.isPickingNeutral,
-                onPickNeutral: viewModel.pickNeutral(at:),
+                isPickingNeutral: viewModel.editSession.isPickingNeutral,
+                onPickNeutral: viewModel.editSession.pickNeutral(at:),
                 faceOutlineBoxes: viewModel.outlinedFaceBoxes,
                 tileChoiceChange: viewModel.tileChoiceChange,
-                cropEditor: viewModel.isCropping
-                    ? viewModel.editCropBase.map { base in
+                cropEditor: viewModel.editSession.isCropping
+                    ? viewModel.editSession.editCropBase.map { base in
                         CropEditorInput(
                             image: base.image,
-                            crop: viewModel.editDraft.crop ?? .whole,
-                            fractionRatio: viewModel.cropFractionRatio,
-                            setCrop: viewModel.setCrop,
-                            isDrawingLine: viewModel.isDrawingStraightenLine,
-                            straighten: viewModel.straighten(along:to:)
+                            crop: viewModel.editSession.editDraft.crop ?? .whole,
+                            fractionRatio: viewModel.editSession.cropFractionRatio,
+                            setCrop: viewModel.editSession.setCrop,
+                            isDrawingLine: viewModel.editSession.isDrawingStraightenLine,
+                            straighten: viewModel.editSession.straighten(along:to:)
                         )
                     }
                     : nil,
-                videoTrimCommand: viewModel.videoTrimCommand,
-                onVideoTrimmed: viewModel.finishTrim(id:),
-                showsOriginal: viewModel.loupeShowsOriginal,
+                videoTrimCommand: viewModel.editSession.videoTrimCommand,
+                onVideoTrimmed: viewModel.editSession.finishTrim(id:),
+                showsOriginal: viewModel.editSession.loupeShowsOriginal,
                 canPlayLivePhoto: viewModel.canPlayLivePhoto,
                 onPlayLivePhoto: { viewModel.playLivePhoto() }
             )
@@ -631,8 +631,8 @@ struct DetailColumn: View {
                 tileContentStore: viewModel.tileContentStore,
                 leftID: viewModel.comparePair.left,
                 rightID: viewModel.comparePair.right,
-                leftPreview: viewModel.displayedPanePreview(.compareLeft),
-                rightPreview: viewModel.displayedPanePreview(.compareRight),
+                leftPreview: viewModel.editSession.displayedPanePreview(.compareLeft),
+                rightPreview: viewModel.editSession.displayedPanePreview(.compareRight),
                 leftIsDownloading: viewModel.downloadingSlots.contains(.compareLeft),
                 rightIsDownloading: viewModel.downloadingSlots.contains(.compareRight),
                 focusTargetID: viewModel.compareStripFocusTargetID,
@@ -699,56 +699,56 @@ struct InspectorColumn: View {
             .equatable()
         case .edit:
             EditPanelView(
-                photoName: viewModel.editTarget?.id.fileURL.lastPathComponent,
-                facts: viewModel.editPhotoFacts,
-                recipe: viewModel.editDraft,
-                histogram: viewModel.editHistogram,
+                photoName: viewModel.editSession.editTarget?.id.fileURL.lastPathComponent,
+                facts: viewModel.editSession.editPhotoFacts,
+                recipe: viewModel.editSession.editDraft,
+                histogram: viewModel.editSession.editHistogram,
                 original: EditPanelOriginalState(
-                    isShowingOriginal: viewModel.isShowingOriginal,
-                    canShowOriginal: viewModel.canShowOriginal,
-                    canRevert: viewModel.canRevertToOriginal
+                    isShowingOriginal: viewModel.editSession.isShowingOriginal,
+                    canShowOriginal: viewModel.editSession.canShowOriginal,
+                    canRevert: viewModel.editSession.canRevertToOriginal
                 ),
-                selectedControl: viewModel.selectedEditControl,
-                isPickingNeutral: viewModel.isPickingNeutral,
-                canPickNeutral: viewModel.canPickNeutral,
+                selectedControl: viewModel.editSession.selectedEditControl,
+                isPickingNeutral: viewModel.editSession.isPickingNeutral,
+                canPickNeutral: viewModel.editSession.canPickNeutral,
                 crop: EditPanelCropState(
-                    isCropping: viewModel.isCropping,
-                    canCrop: viewModel.canCrop,
-                    aspect: viewModel.cropAspect,
-                    isLandscape: viewModel.cropAspectIsLandscape,
-                    isDrawingLine: viewModel.isDrawingStraightenLine,
-                    autoStraighten: viewModel.autoStraightenState,
-                    autoCrop: viewModel.autoCropState
+                    isCropping: viewModel.editSession.isCropping,
+                    canCrop: viewModel.editSession.canCrop,
+                    aspect: viewModel.editSession.cropAspect,
+                    isLandscape: viewModel.editSession.cropAspectIsLandscape,
+                    isDrawingLine: viewModel.editSession.isDrawingStraightenLine,
+                    autoStraighten: viewModel.editSession.autoStraightenState,
+                    autoCrop: viewModel.editSession.autoCropState
                 ),
-                setValue: viewModel.setEditValue,
-                setDragging: viewModel.setEditDragging,
-                resetSection: viewModel.resetEditSection,
-                toggleNeutralPicker: viewModel.toggleNeutralPicker,
+                setValue: viewModel.editSession.setEditValue,
+                setDragging: viewModel.editSession.setEditDragging,
+                resetSection: viewModel.editSession.resetEditSection,
+                toggleNeutralPicker: viewModel.editSession.toggleNeutralPicker,
                 cropActions: EditPanelCropActions(
-                    toggleTool: viewModel.toggleCropTool,
-                    setAspect: viewModel.setCropAspect,
-                    rotateAspect: viewModel.rotateCropAspect,
-                    turn: viewModel.turnPhoto(clockwise:),
-                    flip: viewModel.flipPhoto(horizontally:),
-                    autoStraighten: viewModel.autoStraighten,
-                    toggleLine: viewModel.toggleStraightenLine,
-                    autoCrop: viewModel.autoCrop
+                    toggleTool: viewModel.editSession.toggleCropTool,
+                    setAspect: viewModel.editSession.setCropAspect,
+                    rotateAspect: viewModel.editSession.rotateCropAspect,
+                    turn: viewModel.editSession.turnPhoto(clockwise:),
+                    flip: viewModel.editSession.flipPhoto(horizontally:),
+                    autoStraighten: viewModel.editSession.autoStraighten,
+                    toggleLine: viewModel.editSession.toggleStraightenLine,
+                    autoCrop: viewModel.editSession.autoCrop
                 ),
-                setEntering: viewModel.setEnteringEditValue,
-                setLensCorrection: viewModel.setLensCorrection,
-                resetControl: viewModel.resetEditControl,
+                setEntering: viewModel.editSession.setEnteringEditValue,
+                setLensCorrection: viewModel.editSession.setLensCorrection,
+                resetControl: viewModel.editSession.resetEditControl,
                 originalActions: EditPanelOriginalActions(
-                    toggleShowOriginal: viewModel.toggleShowOriginal,
-                    revert: viewModel.revertToOriginal
+                    toggleShowOriginal: viewModel.editSession.toggleShowOriginal,
+                    revert: viewModel.editSession.revertToOriginal
                 ),
                 pair: viewModel.shownPair.flatMap { pair in
-                    viewModel.editTarget.map { (stack: pair, shown: $0.id) }
+                    viewModel.editSession.editTarget.map { (stack: pair, shown: $0.id) }
                 },
                 showPairMember: { viewModel.showPairMember($0) },
                 folded: viewModel.foldedEditSections,
                 toggleFold: viewModel.toggleEditSectionFold,
-                sectionsOff: viewModel.sectionsTurnedOff,
-                toggleSection: viewModel.toggleEditSection
+                sectionsOff: viewModel.editSession.sectionsTurnedOff,
+                toggleSection: viewModel.editSession.toggleEditSection
             )
         }
     }

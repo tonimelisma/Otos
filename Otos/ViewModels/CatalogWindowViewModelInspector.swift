@@ -44,12 +44,45 @@ extension CatalogWindowViewModel {
             "previous": previous.map(\.rawValue) ?? "hidden",
         ])
         if previous == .edit {
-            endEditing()
+            editSession.endEditing()
         }
         if pane == .edit {
-            refreshEditTarget()
+            editSession.refreshEditTarget()
         }
         refreshPhotoInfo()
+    }
+
+    // MARK: - Edit session
+
+    /// Text owns the keyboard: an edit value is being typed, or a sheet with fields is up.
+    /// Edit ▸ Cut, Copy, Paste and Select All then act on text through the responder
+    /// chain, never on photos behind the sheet.
+    var textHoldsKeyboard: Bool {
+        editSession.isEnteringEditValue || exportSheet != nil
+    }
+
+    /// What `editSession` reads of this window and the intents it calls on it, each this
+    /// window's own. Unowned: the window owns the session, so the session never outlives it.
+    func makeEditSessionWindow() -> EditSession.Window {
+        EditSession.Window(
+            currentTargets: { [unowned self] in targetIDs(.current) },
+            viewMode: { [unowned self] in viewMode },
+            isPlayingStory: { [unowned self] in story != nil },
+            focusedAssetID: { [unowned self] in focusedAssetID },
+            focusedAssetKind: { [unowned self] in focusedAssetKind },
+            loupeVideoState: { [unowned self] in loupeVideoState },
+            showsSelectedScope: { [unowned self] in showsSelectedScope },
+            isEditPanelPresented: { [unowned self] in isEditPanelPresented },
+            panePreview: { [unowned self] slot in panePreviews[slot] },
+            expectedAsset: { [unowned self] slot in expectedAsset(for: slot) },
+            setInspectorPane: { [unowned self] pane in setInspectorPane(pane) },
+            setViewMode: { [unowned self] mode in setViewMode(mode) },
+            updateLoupeVideoState: { [unowned self] change in updateLoupeVideoState(change) },
+            requestPanePreview: { [unowned self] id, slot in requestPanePreview(id, slot: slot) },
+            forgetFullResolutionRequest: { [unowned self] id in forgetFullResolutionRequest(for: id) },
+            publishUndoState: { [unowned self] in publishUndoState() },
+            revealUndoneChange: { [unowned self] ids in revealUndoneChange(ids) }
+        )
     }
 
     /// Rebuilds the Info pane's facts for the current target. With no single item the pane

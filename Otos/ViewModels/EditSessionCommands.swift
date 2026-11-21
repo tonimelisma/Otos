@@ -15,7 +15,7 @@ import OSLog
 ///   control in panel order and Increase and Decrease Adjustment (= and −) move it by its
 ///   keyboard step, each press one undo step, as Lightroom Classic's keys do.
 ///   Double-clicking a control's name resets it.
-extension CatalogWindowViewModel {
+extension EditSession {
     // MARK: - Show Original
 
     /// View ▸ Show Original / Show Edited (\).
@@ -34,13 +34,13 @@ extension CatalogWindowViewModel {
 
     /// The loupe holds the photo being edited, and it has an edit to compare against.
     var canShowOriginal: Bool {
-        canEdit && viewMode == .loupe && !isCropping && !editDraft.isNeutral
+        canEdit && window.viewMode() == .loupe && !isCropping && !editDraft.isNeutral
     }
 
     /// The loupe is showing the original's render, which it marks (DES-098). Until that
     /// render arrives it still shows the edit, unmarked.
     var loupeShowsOriginal: Bool {
-        isShowingOriginal && editOriginalPreview.map { $0.id == expectedAsset(for: .loupe) } == true
+        isShowingOriginal && editOriginalPreview.map { $0.id == window.expectedAsset(.loupe) } == true
     }
 
     func endShowingOriginal() {
@@ -73,7 +73,7 @@ extension CatalogWindowViewModel {
 
     /// A trimmed video in the loupe, which Revert to Original untrims.
     private var revertibleVideo: LoupeVideoState? {
-        guard viewMode == .loupe, let video = loupeVideoState, video.id == focusedAssetID,
+        guard window.viewMode() == .loupe, let video = window.loupeVideoState(), video.id == window.focusedAssetID(),
               !video.recipe.isNeutral
         else { return nil }
         return video

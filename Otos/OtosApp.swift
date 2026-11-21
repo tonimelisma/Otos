@@ -309,68 +309,68 @@ public struct OtosApp: App {
                 .disabled(!catalogViewModel.canMakeKeyPhoto)
                 Divider()
                 // Lightroom desktop's keys: C for the crop tool, ⌘[ and ⌘] for quarter turns.
-                Button(catalogViewModel.isCropping ? "Done Cropping" : "Crop") {
-                    catalogViewModel.toggleCropTool()
+                Button(catalogViewModel.editSession.isCropping ? "Done Cropping" : "Crop") {
+                    catalogViewModel.editSession.toggleCropTool()
                 }
                 .keyboardShortcut("c", modifiers: [])
-                .disabled(!catalogViewModel.isCropping && catalogViewModel.targetIDs(.current).count != 1)
+                .disabled(!catalogViewModel.editSession.isCropping && catalogViewModel.targetIDs(.current).count != 1)
                 Button("Rotate Left") {
-                    catalogViewModel.turnPhoto(clockwise: false)
+                    catalogViewModel.editSession.turnPhoto(clockwise: false)
                 }
                 .keyboardShortcut("[", modifiers: .command)
-                .disabled(!catalogViewModel.canEdit)
+                .disabled(!catalogViewModel.editSession.canEdit)
                 Button("Rotate Right") {
-                    catalogViewModel.turnPhoto(clockwise: true)
+                    catalogViewModel.editSession.turnPhoto(clockwise: true)
                 }
                 .keyboardShortcut("]", modifiers: .command)
-                .disabled(!catalogViewModel.canEdit)
+                .disabled(!catalogViewModel.editSession.canEdit)
                 Button("Flip Horizontal") {
-                    catalogViewModel.flipPhoto(horizontally: true)
+                    catalogViewModel.editSession.flipPhoto(horizontally: true)
                 }
-                .disabled(!catalogViewModel.canEdit)
+                .disabled(!catalogViewModel.editSession.canEdit)
                 Button("Flip Vertical") {
-                    catalogViewModel.flipPhoto(horizontally: false)
+                    catalogViewModel.editSession.flipPhoto(horizontally: false)
                 }
-                .disabled(!catalogViewModel.canEdit)
+                .disabled(!catalogViewModel.editSession.canEdit)
                 // QuickTime's key; Otos styles no text, so ⌘T's Show Fonts has no use here.
                 Button("Trim Video…") {
-                    catalogViewModel.trimVideo()
+                    catalogViewModel.editSession.trimVideo()
                 }
                 .keyboardShortcut("t", modifiers: .command)
-                .disabled(!catalogViewModel.canTrimVideo)
+                .disabled(!catalogViewModel.editSession.canTrimVideo)
                 Button("Revert to Original") {
-                    catalogViewModel.revertToOriginal()
+                    catalogViewModel.editSession.revertToOriginal()
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
-                .disabled(!catalogViewModel.canRevertToOriginal)
+                .disabled(!catalogViewModel.editSession.canRevertToOriginal)
                 Divider()
                 // Lightroom Classic's Develop keys: W for the white balance selector, , and
                 // . to step through the adjustments, = and - to move the chosen one.
                 Button("Pick White Balance") {
-                    catalogViewModel.toggleNeutralPicker()
+                    catalogViewModel.editSession.toggleNeutralPicker()
                 }
                 .keyboardShortcut("w", modifiers: [])
-                .disabled(!catalogViewModel.canPickNeutral && !catalogViewModel.isPickingNeutral)
+                .disabled(!catalogViewModel.editSession.canPickNeutral && !catalogViewModel.editSession.isPickingNeutral)
                 Button("Select Previous Adjustment") {
-                    catalogViewModel.selectAdjacentEditControl(forward: false)
+                    catalogViewModel.editSession.selectAdjacentEditControl(forward: false)
                 }
                 .keyboardShortcut(",", modifiers: [])
-                .disabled(!catalogViewModel.canEdit)
+                .disabled(!catalogViewModel.editSession.canEdit)
                 Button("Select Next Adjustment") {
-                    catalogViewModel.selectAdjacentEditControl(forward: true)
+                    catalogViewModel.editSession.selectAdjacentEditControl(forward: true)
                 }
                 .keyboardShortcut(".", modifiers: [])
-                .disabled(!catalogViewModel.canEdit)
+                .disabled(!catalogViewModel.editSession.canEdit)
                 Button("Increase Adjustment") {
-                    catalogViewModel.nudgeSelectedEditControl(up: true)
+                    catalogViewModel.editSession.nudgeSelectedEditControl(up: true)
                 }
                 .keyboardShortcut("=", modifiers: [])
-                .disabled(!catalogViewModel.canNudgeEditControl)
+                .disabled(!catalogViewModel.editSession.canNudgeEditControl)
                 Button("Decrease Adjustment") {
-                    catalogViewModel.nudgeSelectedEditControl(up: false)
+                    catalogViewModel.editSession.nudgeSelectedEditControl(up: false)
                 }
                 .keyboardShortcut("-", modifiers: [])
-                .disabled(!catalogViewModel.canNudgeEditControl)
+                .disabled(!catalogViewModel.editSession.canNudgeEditControl)
                 Divider()
                 Button("Move to Trash", role: .destructive) {
                     catalogViewModel.moveTargetedMediaToTrash()
@@ -496,11 +496,11 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut("e", modifiers: [])
                 // Lightroom's before/after key.
-                Button(catalogViewModel.isShowingOriginal ? "Show Edited" : "Show Original") {
-                    catalogViewModel.toggleShowOriginal()
+                Button(catalogViewModel.editSession.isShowingOriginal ? "Show Edited" : "Show Original") {
+                    catalogViewModel.editSession.toggleShowOriginal()
                 }
                 .keyboardShortcut("\\", modifiers: [])
-                .disabled(!catalogViewModel.canShowOriginal && !catalogViewModel.isShowingOriginal)
+                .disabled(!catalogViewModel.editSession.canShowOriginal && !catalogViewModel.editSession.isShowingOriginal)
                 Button("Play Live Photo") {
                     catalogViewModel.playLivePhoto()
                 }

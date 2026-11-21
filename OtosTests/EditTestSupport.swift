@@ -57,14 +57,14 @@ final class EditModels {
             mediaEmptyState: .noMedia,
             deviceConnectionBanner: nil
         ))
-        model.startEditing(store: store, analyzer: Self.analyzer)
+        model.editSession.startEditing(store: store, analyzer: Self.analyzer)
         started.append(model)
         return model
     }
 
     func finish() async {
         for model in started {
-            for lane in [model.editRenderTask, model.editCommandTask, model.editAnalysisTask] {
+            for lane in [model.editSession.editRenderTask, model.editSession.editCommandTask, model.editSession.editAnalysisTask] {
                 lane?.cancel()
                 await lane?.value
             }

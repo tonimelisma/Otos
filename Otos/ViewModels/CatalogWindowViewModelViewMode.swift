@@ -410,7 +410,7 @@ extension CatalogWindowViewModel {
         // (DES-086): a request that refines the photo the pane already shows — its
         // full-resolution decode, or an edit's new preview — leaves it off, as that photo
         // stays on screen meanwhile. Completion clears it either way.
-        if displayedPanePreview(slot)?.id != id {
+        if editSession.displayedPanePreview(slot)?.id != id {
             downloadingSlots.insert(slot)
         }
         let visit = focusVisit

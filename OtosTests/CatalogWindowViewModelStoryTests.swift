@@ -376,8 +376,8 @@ struct CatalogWindowViewModelStoryTests {
             model.focusedAssetKind = .video
             model.loupeVideo = .ready(LoupeVideoState(id: id, player: AVPlayer(), isPlaying: false))
 
-            #expect(!model.canTrimVideo)
-            #expect(!model.canCrop)
+            #expect(!model.editSession.canTrimVideo)
+            #expect(!model.editSession.canCrop)
             #expect(!model.canPlayLivePhoto)
         }
     }

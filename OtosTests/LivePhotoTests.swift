@@ -126,7 +126,7 @@ struct LivePhotoTests {
             model.openLoupe(id: still)
             try await waitUntil { model.focusedLivePhotoMotion == library.id("IMG_9.MOV") }
             #expect(model.canPlayLivePhoto)
-            #expect(!model.canTrimVideo)
+            #expect(!model.editSession.canTrimVideo)
 
             model.setFocus(other)
             #expect(model.focusedLivePhotoMotion == nil)

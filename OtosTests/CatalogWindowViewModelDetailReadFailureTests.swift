@@ -99,18 +99,18 @@ struct CatalogWindowViewModelDetailReadFailureTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.openLoupe(id: library.ids[0])
-            try await waitUntil { model.editTarget?.id == library.ids[0] }
+            try await waitUntil { model.editSession.editTarget?.id == library.ids[0] }
             let hidden = try await HiddenCatalogTable("asset_metadata", in: library.databaseURL)
 
             // The panel lets go of the photo it showed rather than edit it while the
             // loupe shows the next one.
             model.focusNext()
-            await model.editTargetTask?.value
-            #expect(model.editTarget == nil)
+            await model.editSession.editTargetTask?.value
+            #expect(model.editSession.editTarget == nil)
 
             try await hidden.restore()
-            model.refreshEditTarget()
-            try await waitUntil { model.editTarget?.id == library.ids[1] }
+            model.editSession.refreshEditTarget()
+            try await waitUntil { model.editSession.editTarget?.id == library.ids[1] }
         }
     }
 

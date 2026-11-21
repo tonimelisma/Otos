@@ -20,7 +20,8 @@ The evidence:
 - `docs/research/2026-11-19-account-videos-unread-faces.md`: account videos re-read every
   15 minutes.
 - A dependency matrix of the window view model: which feature writes which other feature's
-  stored state (method under step 7).
+  stored state. It found Edit the cleanest seam: Edit, Crop and EditCommands wrote only to
+  each other (landed as step 7, below).
 - The fix history of the two weeks before the plan (below).
 
 ## Where the fixes go
@@ -98,13 +99,15 @@ People and the harness first.
   - a listing's changed source facts;
   - a server-absent preview;
   - cleared video face frames.
+- **#997.** Step 7: Edit is the window's first feature model: `EditSession` owns the edit's state,
+  lanes and tasks, and reads the window through a narrow context (ADR 0004). The window
+  declares no edit state. People stays the next candidate.
 
 ## Steps
 
-Each step is its own increment, in this order. Step 5 changes what is already understood. Steps 3
-and 7 measure or guard before they change anything, because each can fail silently: a missed
-notification, a cross-feature write. Step 2, one owner for People's
-act overlay, was measured and stopped (below).
+Each step is its own increment, in this order. Step 5 changes what is already understood. Step 3
+guards before it changes anything, because it can fail silently: a missed notification. Step 2,
+one owner for People's act overlay, was measured and stopped (below). Step 7 has landed (above).
 
 ### 3. Change notifications say what changed: narrow the `.all` sites
 
@@ -178,48 +181,6 @@ scans a table. The five temp B-trees, in four statements, each sort one photo's 
 
 **Stop if** any plan changes.
 
-### 7. Edit becomes the window's first feature model
-
-**Evidence.**
-- The window view model holds 310 stored properties. Across its 26 files, cross-feature writes
-  come to only 26 pairs of one to three writes each.
-- Nearly all of them go to state every feature shares:
-  - `gridSelection`
-  - `viewMode` / `comparePair`
-  - `windowUndoManager`
-- Edit, Crop and EditCommands write only to each other.
-- The one real feature-to-feature coupling is Trash/Curation writing Duplicates' session and
-  undo state. ADR 0004 requires that step to stay one synchronous step on one ordered intent
-  channel.
-- Method: each stored property was assigned to the extension file that names it most. Then
-  every assignment, compound assignment or mutating call from another file was counted. This
-  is a heuristic: generic names such as `state` add noise.
-
-**Why Edit, and why seventh.** Edit had 10 fixes, People 41. Edit goes first because the
-matrix shows it is the cleanest seam, not because it hurts most. Step 2 left People's overlay
-in the view model (measured and dropped, below), so People stays the next candidate after
-Edit.
-
-**De-risked: go** (`docs/research/2026-11-20-edit-access-and-move-replay.md`, E7). With the 40
-edit properties private to an `EditSession`, the compiler reported 307 errors:
-- 276 are inside Edit, Crop and EditCommands.
-- 31 are outside, none a write from another feature:
-  - reads from `ContentView`, the Image menu and Escape;
-  - the lanes' own wiring in the window's init and teardown.
-
-The stop rule does not fire. Two writes go the other way and change the step:
-- Trim's `videoTrimCommand`/`videoTrimGeneration` move into `EditSession`.
-- Clearing the loupe's full-resolution requests (`refreshEditedPanes`) becomes a window
-  intent.
-
-**Change.**
-- An `EditSession` (`@Observable`, MainActor) owns the edit's state, lanes and tasks.
-- It reads a narrow context the window gives it: target, view mode, undo manager.
-- Trash, Duplicates and Curation stay on the window model.
-
-**Done when.**
-- The window model no longer declares edit state.
-- The edit tests pass with only the access path changed.
 
 ### 8. Move the sources into `OtosKit/`
 

@@ -118,15 +118,21 @@ extension CatalogWindowViewModel {
     /// Escape in loupe: disarm the white balance picker or end the crop tool first, then
     /// back to fit, then out to the grid.
     func loupeEscape() {
-        if isPickingNeutral {
-            toggleNeutralPicker()
-        } else if isCropping {
-            endCropping()
+        if editSession.isPickingNeutral {
+            editSession.toggleNeutralPicker()
+        } else if editSession.isCropping {
+            editSession.endCropping()
         } else if let report = loupeZoomReport, !report.isFit {
             issueLoupeZoom(.fit, anchor: nil)
         } else {
             exitToGrid()
         }
+    }
+
+    /// The loupe's photo changed under its full-resolution decode (an edit was saved): the
+    /// next zoom report that needs one asks for it again.
+    func forgetFullResolutionRequest(for id: MediaAssetID) {
+        fullResolutionRequestedIDs.remove(id)
     }
 
     /// A focus change starts the next image at fit with nothing carried over.

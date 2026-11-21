@@ -293,7 +293,7 @@ struct WindowStateApplyTests {
         model.selectSidebar(.people)
         #expect(!model.showsSelectedScope)
         #expect(model.dragWriter(for: ids[0]) == nil)
-        #expect(!model.canEdit)
+        #expect(!model.editSession.canEdit)
         model.openLoupe(id: ids[1])
         #expect(model.viewMode == .grid)
         model.enterCompare()

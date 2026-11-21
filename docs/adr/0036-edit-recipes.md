@@ -135,7 +135,7 @@ open takes 20–180 ms per change. Opening it again for every change takes about
   queue. It keeps the photo being edited open between renders, along with a
   `CIContext` that caches intermediates. While a control is dragged it renders the
   draft at preview size. When a drag ends, a keyboard step is taken or Reset is
-  pressed, the view model saves the recipe, and the same renderer renders the saved
+  pressed, the window's edit session (`EditSession`) saves the recipe, and the same renderer renders the saved
   recipe's preview and thumbnail.
 - **Products are promoted only for the current save.** `applyRenderedEditProducts`
   promotes the staged files only while the row's `edit_revision` is still the one they
@@ -164,7 +164,7 @@ open takes 20–180 ms per change. Opening it again for every change takes about
   intent each behind a menu item, a key and a panel control.
 - **The keyboard's selected adjustment.** Lightroom Classic's `,` `.` `=` `-` choose and
   step one control; each step is the same `setEditValue` a slider's keyboard step calls,
-  so it saves at once as one step. The selection is panel state on the view model, not
+  so it saves at once as one step. The selection is panel state on the edit session, not
   part of the recipe.
 - **The histogram.** It describes the edit as the live lane last rendered it for the
   target: the saved edit's render when the photo opens, then each live render of the

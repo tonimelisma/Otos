@@ -2,7 +2,14 @@ import CoreGraphics
 import Foundation
 import OSLog
 
-/// Edit panel intents guide
+/// Edit session guide
+///
+/// `EditSession` is the window's edit feature (ADR 0036, ADR 0004): it owns every value the
+/// edit panel, the crop tool and the edit commands hold, the three edit lanes and their
+/// tasks. The window owns one for its life and is the only thing that holds it strongly. The
+/// session reads the window, and asks it to act, only through `EditSession.Window`: the
+/// window stays the one owner of its own state (targets, view mode, panes, the loupe's
+/// player, the undo menu), and no edit state lives on the window.
 ///
 /// The edit panel edits one still photo — the current target when it is exactly one
 /// image or RAW (ADR 0036). Its values are `editDraft`; moving a control changes the draft
@@ -22,7 +29,7 @@ import OSLog
 ///   open makes, also counts the histogram the panel shows (`editHistogram`, DES-100), under its own
 ///   sequence so an open's count never replaces a newer render's.
 /// - **Commands** (`editCommandStream`, ordered, lossless): a save stores the recipe,
-///   registers the inverse on `windowUndoManager`, then renders the saved recipe's
+///   registers the inverse on `undoManager`, then renders the saved recipe's
 ///   thumbnail and preview and hands them to the store, which promotes them only while
 ///   that revision is still current. A render that fails hands the photo to enrichment
 ///   instead, which renders with the saved recipe too, so the grid never keeps an edit's
@@ -39,7 +46,7 @@ import OSLog
 ///
 /// Undo and redo enqueue the same command through the same lane, so they order after any
 /// save still in flight, and file their own inverse synchronously at fire time
-/// (APP-039's pattern).
+/// (APP-039's pattern), on the window's one undo manager.
 ///
 /// The pane keeps showing the live render until its own preview carries the save
 /// (`PanePreview.renderedRevision`), so the image never steps back to the unedited photo
@@ -165,7 +172,177 @@ nonisolated struct EditAnalysis: Sendable {
     let level: AutoLevelReading.Level?
 }
 
-extension CatalogWindowViewModel {
+@MainActor
+@Observable
+final class EditSession {
+    /// What the session reads from the window it edits in, and the window intents it calls.
+    /// Each is the window's own answer or its own intent, read or called at the moment the
+    /// session needs it, so the window stays the one owner of that state. A value read here
+    /// during a view's body is observed like any read of the window.
+    struct Window {
+        /// The current targets (`targetIDs(.current)`).
+        let currentTargets: @MainActor () -> [MediaAssetID]
+        let viewMode: @MainActor () -> BrowserViewMode
+        /// A story plays over On This Day: its pane draws no edit tools (ADR 0049).
+        let isPlayingStory: @MainActor () -> Bool
+        let focusedAssetID: @MainActor () -> MediaAssetID?
+        let focusedAssetKind: @MainActor () -> MediaKind?
+        /// The loupe's player, when its video is ready.
+        let loupeVideoState: @MainActor () -> LoupeVideoState?
+        /// The selected scope's state has been applied (`showsSelectedScope`).
+        let showsSelectedScope: @MainActor () -> Bool
+        /// The inspector shows the Edit pane.
+        let isEditPanelPresented: @MainActor () -> Bool
+        /// The pane's own decode for a slot, and the asset the slot is meant to show.
+        let panePreview: @MainActor (PaneSlot) -> PanePreview?
+        let expectedAsset: @MainActor (PaneSlot) -> MediaAssetID?
+        /// The crop tool shows the Edit pane and the loupe.
+        let setInspectorPane: @MainActor (InspectorPane?) -> Void
+        let setViewMode: @MainActor (BrowserViewMode) -> Void
+        /// Applies a saved trim to the loupe's ready player.
+        let updateLoupeVideoState: @MainActor ((inout LoupeVideoState) -> Void) -> Void
+        /// Reloads a pane's preview once the store holds an edit's new one.
+        let requestPanePreview: @MainActor (MediaAssetID, PaneSlot) -> Void
+        /// The loupe asks again for its full-resolution decode, so a zoomed photo is redone
+        /// with the edit.
+        let forgetFullResolutionRequest: @MainActor (MediaAssetID) -> Void
+        let publishUndoState: @MainActor () -> Void
+        let revealUndoneChange: @MainActor ([MediaAssetID]) -> Void
+    }
+
+    /// The one still photo the panel edits; nil disables its controls.
+    var editTarget: EditTarget?
+    /// The panel's values for `editTarget`: the saved recipe plus any change still being
+    /// dragged. Any change to it turns every section the person turned off back on.
+    var editDraft = EditRecipe.neutral {
+        didSet {
+            if editDraft != oldValue {
+                editSectionsOff = nil
+            }
+        }
+    }
+
+    /// The edited sections the person turned off with their heading's checkmark, for the photo
+    /// they were turned off on: the loupe shows the photo without those sections' changes,
+    /// and nothing is saved (Photos' adjustment checkmarks). Back on with any change to the
+    /// edit, and moot on another photo.
+    var editSectionsOff: EditSectionsOff?
+    /// The newest live render of the draft, shown in place of the pane's stored preview
+    /// until that preview carries the saved edit.
+    var editLivePreview: EditLivePreview?
+    /// The open target's facts; nil until it has been opened (the controls wait for them).
+    var editPhotoFacts: EditPhotoFacts?
+    /// The open target's upright full-resolution size, from the decode its edits render
+    /// from; nil until it has been opened. Crop geometry and the edited photo's size come
+    /// from this, never from the catalog row.
+    var editOriginalPixelSize: CGSize?
+    /// The latest request for the loupe's player to show its trim UI.
+    var videoTrimCommand: VideoTrimCommand?
+    @ObservationIgnored var videoTrimGeneration: UInt64 = 0
+    /// An edit value field holds the keyboard: the Edit menu's text commands act on it.
+    var isEnteringEditValue = false
+    /// The white balance picker is armed: the next loupe click picks a neutral point.
+    var isPickingNeutral = false
+    /// View ▸ Show Original (\\): the loupe shows the photo without its edit until it is
+    /// turned off, the photo changes, or an edit is made.
+    var isShowingOriginal = false
+    /// The open photo rendered without its edit, for Show Original.
+    var editOriginalPreview: EditLivePreview?
+    /// The adjustment the keyboard acts on: chosen with , and . (Select Previous and Next
+    /// Adjustment) and moved with = and − (Increase and Decrease Adjustment).
+    var selectedEditControl: EditControl?
+    /// The histogram of the photo the panel edits, as last rendered (DES-100).
+    var editHistogram: EditHistogram?
+    /// The crop tool is on: the loupe shows the whole frame with the crop over it.
+    var isCropping = false
+    /// The crop tool's straighten line is armed: the next drag on the canvas draws it.
+    var isDrawingStraightenLine = false
+    /// The photo edited with everything but its crop, which the crop tool draws over.
+    var editCropBase: EditLivePreview?
+    /// The crop tool's aspect choice and which way it stands; tool state, not saved.
+    var cropAspect = CropAspect.free
+    /// Which way the constrained aspect stands, once Rotate Aspect has said so; nil follows
+    /// the crop's own shape (`cropAspectIsLandscape`), decided only once the frame is known.
+    var cropAspectLandscapeChoice: Bool?
+    /// What Auto straighten would do for the photo the panel edits; nil until it is known.
+    var editAutoLevel: AutoLevelReading?
+    /// The suggested crop of the frame last read; nil until one is known.
+    var editAutoCrop: AutoCropReading?
+    @ObservationIgnored var isDraggingCrop = false
+    /// The saved edit. Every change to it can move the frame the suggested crop was read
+    /// from, so it asks for a new reading (`requestEditAnalysis`).
+    @ObservationIgnored var editSavedRecipe = EditRecipe.neutral {
+        didSet { requestEditAnalysis() }
+    }
+
+    @ObservationIgnored var editDraggingControl: EditControl?
+    @ObservationIgnored var editTargetTask: Task<Void, Never>?
+    /// The photo `editTargetTask` is reading, while it runs.
+    @ObservationIgnored var editTargetRequestedID: MediaAssetID?
+    @ObservationIgnored let liveEditRenderer = LiveEditRenderer()
+    // A live render is newest-wins; a save is a command that must survive in order.
+    @ObservationIgnored let editRenderStream: AsyncStream<EditRenderRequest>
+    @ObservationIgnored let editRenderContinuation: AsyncStream<EditRenderRequest>.Continuation
+    @ObservationIgnored var editRenderTask: Task<Void, Never>?
+    @ObservationIgnored var editRenderRequested: UInt64 = 0
+    @ObservationIgnored var editRenderPublished: UInt64 = 0
+    @ObservationIgnored var editHistogramPublished: UInt64 = 0
+    @ObservationIgnored let editCommandStream: AsyncStream<EditLaneCommand>
+    @ObservationIgnored let editCommandContinuation: AsyncStream<EditLaneCommand>.Continuation
+    @ObservationIgnored var editCommandTask: Task<Void, Never>?
+    /// Readings of the photo for Auto straighten and Auto crop: newest-wins, since only the
+    /// current frame's matters.
+    @ObservationIgnored let editAnalysisStream: AsyncStream<EditAnalysisRequest>
+    @ObservationIgnored let editAnalysisContinuation: AsyncStream<EditAnalysisRequest>.Continuation
+    @ObservationIgnored var editAnalysisTask: Task<Void, Never>?
+    /// The reading last asked for, so an unchanged frame is not read again.
+    @ObservationIgnored var editAnalysisRequested: EditAnalysisRequest?
+    /// Submitted and fully handled edit commands — saved, rendered and applied, or
+    /// refused — so a caller can wait for an edit to settle without guessing a duration.
+    @ObservationIgnored var submittedEditCommandCount = 0
+    @ObservationIgnored var handledEditCommandCount = 0
+
+    @ObservationIgnored let window: Window
+    /// Reads a target's saved recipe and kind, as the panes do.
+    @ObservationIgnored private let tileDetailReader: MediaTileDetailReader
+    /// The one way to an original's bytes; editing a cloud-only photo downloads it.
+    @ObservationIgnored private let materialization: any MaterializationRequesting
+    /// The window's one undo stack (ADR 0036): edits are undone among likes and trash.
+    @ObservationIgnored private let undoManager: UndoManager
+
+    init(
+        window: Window,
+        tileDetailReader: MediaTileDetailReader,
+        materialization: any MaterializationRequesting,
+        undoManager: UndoManager
+    ) {
+        self.window = window
+        self.tileDetailReader = tileDetailReader
+        self.materialization = materialization
+        self.undoManager = undoManager
+        let render = AsyncStream<EditRenderRequest>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        editRenderStream = render.stream
+        editRenderContinuation = render.continuation
+        let command = AsyncStream<EditLaneCommand>.makeStream(bufferingPolicy: .unbounded)
+        editCommandStream = command.stream
+        editCommandContinuation = command.continuation
+        let analysis = AsyncStream<EditAnalysisRequest>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        editAnalysisStream = analysis.stream
+        editAnalysisContinuation = analysis.continuation
+    }
+
+    isolated deinit {
+        // Consumers before producers: finishing a stream drains what it buffered, and a
+        // cancelled lane starts none of it.
+        editTargetTask?.cancel()
+        editRenderTask?.cancel()
+        editCommandTask?.cancel()
+        editAnalysisTask?.cancel()
+        editRenderContinuation.finish()
+        editCommandContinuation.finish()
+        editAnalysisContinuation.finish()
+    }
+
     // MARK: - Panel
 
     /// The Edit pane left the inspector: its tools end, a pending change is saved, and the
@@ -180,7 +357,7 @@ extension CatalogWindowViewModel {
 
     /// Photo ▸ Trim Video… (⌘T): asks the loupe's player to show `AVPlayerView`'s trim UI.
     func trimVideo() {
-        guard canTrimVideo, let id = loupeVideoState?.id else { return }
+        guard canTrimVideo, let id = window.loupeVideoState()?.id else { return }
         videoTrimGeneration &+= 1
         videoTrimCommand = VideoTrimCommand(id: id, generation: videoTrimGeneration)
         OtosLog.ui.noticeOperation("edit.trim", phase: "requested", fields: ["id": id.relativePath.rawValue])
@@ -189,14 +366,16 @@ extension CatalogWindowViewModel {
     /// A video the loupe shows — not a Live Photo's motion, which plays under its still, and
     /// not one a story plays, whose pane draws no player controls to trim with (ADR 0049).
     var canTrimVideo: Bool {
-        viewMode == .loupe && story == nil && focusedAssetKind == .video && loupeVideoState != nil
-            && loupeVideoState?.id == focusedAssetID
+        guard window.viewMode() == .loupe, !window.isPlayingStory(), window.focusedAssetKind() == .video,
+              let video = window.loupeVideoState()
+        else { return false }
+        return video.id == window.focusedAssetID()
     }
 
     /// The trim UI closed with Trim: the range it left on the player is saved as one step.
     /// Cancel restores nothing to save, so it never reaches here.
     func finishTrim(id: MediaAssetID) {
-        guard let state = loupeVideoState, state.id == id else { return }
+        guard let state = window.loupeVideoState(), state.id == id else { return }
         let trim = state.currentTrim
         var recipe = state.recipe
         recipe.trimStart = trim.start
@@ -225,13 +404,6 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Text owns the keyboard: an edit value is being typed, or a sheet with fields is up.
-    /// Edit ▸ Cut, Copy, Paste and Select All then act on text through the responder
-    /// chain, never on photos behind the sheet.
-    var textHoldsKeyboard: Bool {
-        isEnteringEditValue || exportSheet != nil
-    }
-
     /// The Color section's white balance picker: armed, the next click on the loupe image
     /// sets white balance from that point. Loupe only; Escape or any other move disarms it.
     func toggleNeutralPicker() {
@@ -241,7 +413,7 @@ extension CatalogWindowViewModel {
     }
 
     var canPickNeutral: Bool {
-        editPhotoFacts != nil && viewMode == .loupe && story == nil && !isCropping
+        editPhotoFacts != nil && window.viewMode() == .loupe && !window.isPlayingStory() && !isCropping
     }
 
     /// The loupe was clicked while the picker was armed.
@@ -265,13 +437,13 @@ extension CatalogWindowViewModel {
     /// Resolves the photo the panel edits whenever the current target changes (the same
     /// writers that refresh Open With). Reads the target's saved recipe once.
     func refreshEditTarget() {
-        guard isEditPanelPresented else { return }
-        if viewMode != .loupe {
+        guard window.isEditPanelPresented() else { return }
+        if window.viewMode() != .loupe {
             isPickingNeutral = false
             endCropping()
             endShowingOriginal()
         }
-        let ids = targetIDs(.current)
+        let ids = window.currentTargets()
         guard ids.count == 1, let id = ids.first else {
             commitPendingEdit()
             editTargetTask?.cancel()
@@ -296,7 +468,7 @@ extension CatalogWindowViewModel {
             do {
                 detail = try await reader.detail(for: id)
             } catch {
-                guard !Task.isCancelled, let self, targetIDs(.current) == [id] else { return }
+                guard !Task.isCancelled, let self, window.currentTargets() == [id] else { return }
                 // Without the saved recipe the panel cannot edit this photo, and the photo
                 // it showed is no longer the target, so the panel closes its target rather
                 // than edit either. `editTarget` is not `id`, so the next refresh reads again.
@@ -304,7 +476,7 @@ extension CatalogWindowViewModel {
                 clearEditTarget()
                 return
             }
-            guard !Task.isCancelled, let self, targetIDs(.current) == [id] else { return }
+            guard !Task.isCancelled, let self, window.currentTargets() == [id] else { return }
             editTargetTask = nil
             guard let detail, detail.bestKind == .image || detail.bestKind == .raw else {
                 clearEditTarget()
@@ -395,7 +567,7 @@ extension CatalogWindowViewModel {
     /// the user has selected. Until a newly selected scope publishes, the panel keeps showing
     /// the photo of the scope left (APP-080), but nothing acts on it.
     var canEdit: Bool {
-        editTarget != nil && editPhotoFacts != nil && showsSelectedScope
+        editTarget != nil && editPhotoFacts != nil && window.showsSelectedScope()
     }
 
     /// True once every submitted edit command has been saved and rendered, or refused.
@@ -406,8 +578,8 @@ extension CatalogWindowViewModel {
     /// The pane image for `slot`: the live render while the pane's own preview does not
     /// yet carry the edit being made, otherwise the pane preview.
     func displayedPanePreview(_ slot: PaneSlot) -> PanePreview? {
-        let pane = panePreviews[slot]
-        if slot == .loupe, isShowingOriginal, let original = editOriginalPreview, expectedAsset(for: slot) == original.id {
+        let pane = window.panePreview(slot)
+        if slot == .loupe, isShowingOriginal, let original = editOriginalPreview, window.expectedAsset(slot) == original.id {
             return PanePreview(
                 id: original.id,
                 image: original.image,
@@ -416,7 +588,7 @@ extension CatalogWindowViewModel {
                 renderedRevision: 0
             )
         }
-        guard let live = editLivePreview, expectedAsset(for: slot) == live.id else {
+        guard let live = editLivePreview, window.expectedAsset(slot) == live.id else {
             return pane
         }
         let matching = pane?.id == live.id ? pane : nil
@@ -512,13 +684,14 @@ extension CatalogWindowViewModel {
 
     // MARK: - Lanes
 
-    /// Starts the edit lanes over `store`. The window owns its `analyzer`; a test making many
-    /// windows in one process shares one, so the models load once there as they do in the app.
+    /// Starts the edit lanes over `store`, as the window starts. The session owns its
+    /// `analyzer`; a test making many windows in one process shares one, so the models load
+    /// once there as they do in the app.
     func startEditing(store: CatalogStore, analyzer: EditAnalyzer = EditAnalyzer()) {
         let pipeline = EditPipeline(
             store: store,
             renderer: liveEditRenderer,
-            materialization: materializationCoordinator,
+            materialization: materialization,
             directory: store.thumbnailDirectory,
             analyzer: analyzer
         )
@@ -723,8 +896,8 @@ extension CatalogWindowViewModel {
                 editDraft = saved.recipe
             }
         }
-        if loupeVideoState?.id == command.id {
-            updateLoupeVideoState { $0.applyTrim(saved.recipe) }
+        if window.loupeVideoState()?.id == command.id {
+            window.updateLoupeVideoState { $0.applyTrim(saved.recipe) }
         }
         if var live = editLivePreview, live.id == command.id, live.recipe == saved.recipe {
             live.revision = saved.revision
@@ -744,35 +917,35 @@ extension CatalogWindowViewModel {
     /// photo, without clearing what they show meanwhile, and redo a zoomed loupe's
     /// full-resolution decode with the edit.
     private func refreshEditedPanes(_ id: MediaAssetID) {
-        for slot in PaneSlot.allCases where expectedAsset(for: slot) == id {
+        for slot in PaneSlot.allCases where window.expectedAsset(slot) == id {
             if slot == .loupe {
-                fullResolutionRequestedIDs.remove(id)
+                window.forgetFullResolutionRequest(id)
             }
-            requestPanePreview(id, slot: slot)
+            window.requestPanePreview(id, slot)
         }
     }
 
     // MARK: - Undo
 
     private func registerEditUndo(id: MediaAssetID, restoring: EditRecipe, inverse: EditRecipe, actionName: String) {
-        windowUndoManager.beginUndoGrouping()
-        windowUndoManager.registerUndo(withTarget: self) { model in
-            model.restoreEdit(id: id, recipe: restoring, inverse: inverse, actionName: actionName)
+        undoManager.beginUndoGrouping()
+        undoManager.registerUndo(withTarget: self) { session in
+            session.restoreEdit(id: id, recipe: restoring, inverse: inverse, actionName: actionName)
         }
-        windowUndoManager.setActionName(actionName)
-        windowUndoManager.endUndoGrouping()
-        publishUndoState()
+        undoManager.setActionName(actionName)
+        undoManager.endUndoGrouping()
+        window.publishUndoState()
     }
 
     /// Runs inside `UndoManager.undo()` / `redo()`: files the opposite entry first, so it
     /// lands on the other stack, then enqueues the restore through the save lane.
     private func restoreEdit(id: MediaAssetID, recipe: EditRecipe, inverse: EditRecipe, actionName: String) {
-        let origin: EditCommandOrigin = windowUndoManager.isUndoing ? .undo : .redo
-        windowUndoManager.registerUndo(withTarget: self) { model in
-            model.restoreEdit(id: id, recipe: inverse, inverse: recipe, actionName: actionName)
+        let origin: EditCommandOrigin = undoManager.isUndoing ? .undo : .redo
+        undoManager.registerUndo(withTarget: self) { session in
+            session.restoreEdit(id: id, recipe: inverse, inverse: recipe, actionName: actionName)
         }
-        windowUndoManager.setActionName(actionName)
-        revealUndoneChange([id])
+        undoManager.setActionName(actionName)
+        window.revealUndoneChange([id])
         if editTarget?.id == id {
             editSavedRecipe = recipe
             editDraft = recipe
@@ -787,7 +960,7 @@ extension CatalogWindowViewModel {
 
 /// The off-MainActor steps of the edit lanes: saving a recipe, making the original local,
 /// rendering live, and rendering a save's products. Every step leaves the caller's actor
-/// (`@concurrent`), and none touches view-model state; the lanes apply what they return.
+/// (`@concurrent`), and none touches session state; the lanes apply what they return.
 nonisolated struct EditPipeline: Sendable {
     let store: CatalogStore
     let renderer: LiveEditRenderer
@@ -1087,7 +1260,7 @@ actor EditAnalyzer {
     }
 }
 
-/// The sections turned off on one photo (`CatalogWindowViewModel.editSectionsOff`).
+/// The sections turned off on one photo (`EditSession.editSectionsOff`).
 nonisolated struct EditSectionsOff: Equatable, Sendable {
     let id: MediaAssetID
     let sections: Set<EditSection>

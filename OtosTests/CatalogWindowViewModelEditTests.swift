@@ -19,17 +19,17 @@ struct CatalogWindowViewModelEditTests {
             model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
-            try await waitUntil { model.editTarget?.id == id && model.canEdit }
+            try await waitUntil { model.editSession.editTarget?.id == id && model.editSession.canEdit }
 
-            model.setEditDragging(true, control: .exposure)
-            model.setEditValue(1, for: .exposure)
-            try await waitUntil { model.editLivePreview?.recipe == EditRecipe(exposure: 1) }
-            #expect(model.submittedEditCommandCount == 0)
-            #expect(model.displayedPanePreview(.loupe)?.image === model.editLivePreview?.image)
+            model.editSession.setEditDragging(true, control: .exposure)
+            model.editSession.setEditValue(1, for: .exposure)
+            try await waitUntil { model.editSession.editLivePreview?.recipe == EditRecipe(exposure: 1) }
+            #expect(model.editSession.submittedEditCommandCount == 0)
+            #expect(model.editSession.displayedPanePreview(.loupe)?.image === model.editSession.editLivePreview?.image)
 
-            model.setEditDragging(false, control: .exposure)
-            #expect(model.submittedEditCommandCount == 1)
-            try await waitUntil { model.hasSettledEdits }
+            model.editSession.setEditDragging(false, control: .exposure)
+            #expect(model.editSession.submittedEditCommandCount == 1)
+            try await waitUntil { model.editSession.hasSettledEdits }
 
             #expect(
                 try await library.store.windowReads.editRecipe(for: id)
@@ -38,7 +38,7 @@ struct CatalogWindowViewModelEditTests {
             #expect(try await library.store.windowReads.mediaTileDetails(for: [id])[id]?.renderedRevision == 1)
             #expect(model.undoMenuState.undoTitle == "Undo Exposure")
             try await waitUntil { model.panePreviews[.loupe]?.renderedRevision == 1 }
-            #expect(model.displayedPanePreview(.loupe)?.image === model.panePreviews[.loupe]?.image)
+            #expect(model.editSession.displayedPanePreview(.loupe)?.image === model.panePreviews[.loupe]?.image)
         }
     }
 
@@ -51,30 +51,30 @@ struct CatalogWindowViewModelEditTests {
             model.toggleInspector(.edit)
             model.setViewMode(.loupe)
             model.selectAssets([edited])
-            try await waitUntil { model.editTarget?.id == edited && model.canEdit }
-            model.setEditValue(1, for: .exposure)
-            try await waitUntil { model.hasSettledEdits }
+            try await waitUntil { model.editSession.editTarget?.id == edited && model.editSession.canEdit }
+            model.editSession.setEditValue(1, for: .exposure)
+            try await waitUntil { model.editSession.hasSettledEdits }
 
-            model.toggleEditSection(.color)
-            #expect(model.sectionsTurnedOff.isEmpty, "a section without changes has no checkmark to turn off")
-            model.toggleEditSection(.light)
-            #expect(model.sectionsTurnedOff == [.light])
-            #expect(model.shownRecipe == .neutral)
-            try await waitUntil { model.editLivePreview?.recipe == .neutral }
+            model.editSession.toggleEditSection(.color)
+            #expect(model.editSession.sectionsTurnedOff.isEmpty, "a section without changes has no checkmark to turn off")
+            model.editSession.toggleEditSection(.light)
+            #expect(model.editSession.sectionsTurnedOff == [.light])
+            #expect(model.editSession.shownRecipe == .neutral)
+            try await waitUntil { model.editSession.editLivePreview?.recipe == .neutral }
             #expect(try await library.store.windowReads.editRecipe(for: edited)?.recipe == EditRecipe(exposure: 1))
 
-            model.toggleEditSection(.light)
-            #expect(model.sectionsTurnedOff.isEmpty)
-            try await waitUntil { model.editLivePreview?.recipe == EditRecipe(exposure: 1) }
+            model.editSession.toggleEditSection(.light)
+            #expect(model.editSession.sectionsTurnedOff.isEmpty)
+            try await waitUntil { model.editSession.editLivePreview?.recipe == EditRecipe(exposure: 1) }
 
-            model.toggleEditSection(.light)
-            model.setEditValue(0.5, for: .exposure)
-            #expect(model.sectionsTurnedOff.isEmpty, "a change to the edit turns every section back on")
+            model.editSession.toggleEditSection(.light)
+            model.editSession.setEditValue(0.5, for: .exposure)
+            #expect(model.editSession.sectionsTurnedOff.isEmpty, "a change to the edit turns every section back on")
 
-            model.toggleEditSection(.light)
+            model.editSession.toggleEditSection(.light)
             model.selectAssets([library.ids[1]])
-            try await waitUntil { model.editTarget?.id == library.ids[1] }
-            #expect(model.sectionsTurnedOff.isEmpty)
+            try await waitUntil { model.editSession.editTarget?.id == library.ids[1] }
+            #expect(model.editSession.sectionsTurnedOff.isEmpty)
         }
     }
 
@@ -89,17 +89,17 @@ struct CatalogWindowViewModelEditTests {
             model.toggleInspector(.edit)
             model.setViewMode(.loupe)
             model.selectAssets([edited])
-            try await waitUntil { model.editTarget?.id == edited && model.canEdit }
-            model.setEditValue(1, for: .exposure)
-            try await waitUntil { model.hasSettledEdits && model.panePreviews[.loupe]?.renderedRevision == 1 }
+            try await waitUntil { model.editSession.editTarget?.id == edited && model.editSession.canEdit }
+            model.editSession.setEditValue(1, for: .exposure)
+            try await waitUntil { model.editSession.hasSettledEdits && model.panePreviews[.loupe]?.renderedRevision == 1 }
             if !panelOpen {
                 model.toggleInspector(.edit)
             }
 
             model.selectAssets([other])
-            try await waitUntil { model.displayedPanePreview(.loupe)?.id == other }
+            try await waitUntil { model.editSession.displayedPanePreview(.loupe)?.id == other }
             let shown = Observations { @MainActor in
-                model.displayedPanePreview(.loupe).map { ($0.id, $0.renderedRevision, $0.editRecipe) }
+                model.editSession.displayedPanePreview(.loupe).map { ($0.id, $0.renderedRevision, $0.editRecipe) }
             }
             model.selectAssets([edited])
             var seen: [(MediaAssetID, Int64, EditRecipe?)] = []
@@ -130,7 +130,7 @@ struct CatalogWindowViewModelEditTests {
             model.requestPanePreview(id, slot: .loupe)
 
             #expect(!model.downloadingSlots.contains(.loupe))
-            #expect(model.displayedPanePreview(.loupe)?.id == id)
+            #expect(model.editSession.displayedPanePreview(.loupe)?.id == id)
         }
     }
 
@@ -141,16 +141,16 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAssets([library.ids[0]])
-            try await waitUntil { model.editTarget?.id == library.ids[0] && model.canEdit }
-            model.setEditValue(0.5, for: .exposure)
-            try await waitUntil { model.hasSettledEdits }
+            try await waitUntil { model.editSession.editTarget?.id == library.ids[0] && model.editSession.canEdit }
+            model.editSession.setEditValue(0.5, for: .exposure)
+            try await waitUntil { model.editSession.hasSettledEdits }
 
             model.selectAssets([library.ids[1]])
-            try await waitUntil { model.editTarget?.id == library.ids[1] }
+            try await waitUntil { model.editSession.editTarget?.id == library.ids[1] }
             model.undoLastChange()
 
             #expect(model.targetIDs(.current) == [library.ids[0]])
-            try await waitUntil { model.hasSettledEdits && model.editTarget?.id == library.ids[0] }
+            try await waitUntil { model.editSession.hasSettledEdits && model.editSession.editTarget?.id == library.ids[0] }
             #expect(try await library.store.windowReads.editRecipe(for: library.ids[0])?.recipe == .neutral)
         }
     }
@@ -161,23 +161,23 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
-            try await waitUntil { model.editTarget?.id == id && model.canEdit }
+            try await waitUntil { model.editSession.editTarget?.id == id && model.editSession.canEdit }
 
-            model.setEditDragging(true, control: .contrast)
-            model.setEditValue(40, for: .contrast)
-            model.setEditDragging(false, control: .contrast)
-            try await waitUntil { model.hasSettledEdits }
+            model.editSession.setEditDragging(true, control: .contrast)
+            model.editSession.setEditValue(40, for: .contrast)
+            model.editSession.setEditDragging(false, control: .contrast)
+            try await waitUntil { model.editSession.hasSettledEdits }
 
             model.undoLastChange()
-            #expect(model.editDraft == .neutral)
-            try await waitUntil { model.hasSettledEdits }
+            #expect(model.editSession.editDraft == .neutral)
+            try await waitUntil { model.editSession.hasSettledEdits }
             #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe == .neutral)
             #expect(model.undoMenuState.redoTitle == "Redo Contrast")
             #expect(!model.undoMenuState.canUndo)
 
             model.redoLastChange()
-            #expect(model.editDraft == EditRecipe(contrast: 40))
-            try await waitUntil { model.hasSettledEdits }
+            #expect(model.editSession.editDraft == EditRecipe(contrast: 40))
+            try await waitUntil { model.editSession.hasSettledEdits }
             let redone = try await library.store.windowReads.editRecipe(for: id)
             #expect(redone?.recipe == EditRecipe(contrast: 40))
             #expect(try await library.store.windowReads.mediaTileDetails(for: [id])[id]?.renderedRevision == redone?.revision)
@@ -190,18 +190,18 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
-            try await waitUntil { model.editTarget?.id == id && model.canEdit }
-            model.setEditValue(0.5, for: .exposure)
-            model.setEditValue(25, for: .shadows)
-            try await waitUntil { model.hasSettledEdits }
+            try await waitUntil { model.editSession.editTarget?.id == id && model.editSession.canEdit }
+            model.editSession.setEditValue(0.5, for: .exposure)
+            model.editSession.setEditValue(25, for: .shadows)
+            try await waitUntil { model.editSession.hasSettledEdits }
 
-            model.resetEditSection(.light)
-            try await waitUntil { model.hasSettledEdits }
+            model.editSession.resetEditSection(.light)
+            try await waitUntil { model.editSession.hasSettledEdits }
             #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe == .neutral)
             #expect(model.undoMenuState.undoTitle == "Undo Reset Light")
 
             model.undoLastChange()
-            try await waitUntil { model.hasSettledEdits }
+            try await waitUntil { model.editSession.hasSettledEdits }
             #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe == EditRecipe(exposure: 0.5, shadows: 25))
         }
     }
@@ -214,20 +214,20 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
-            #expect(!model.canPickNeutral)
+            #expect(!model.editSession.canPickNeutral)
             model.setViewMode(.loupe)
-            try await waitUntil { model.editTarget?.id == id && model.canEdit }
-            #expect(model.canPickNeutral)
+            try await waitUntil { model.editSession.editTarget?.id == id && model.editSession.canEdit }
+            #expect(model.editSession.canPickNeutral)
 
-            model.toggleNeutralPicker()
-            #expect(model.isPickingNeutral)
-            model.pickNeutral(at: CGPoint(x: 0.5, y: 0.5))
-            #expect(!model.isPickingNeutral)
-            try await waitUntil { model.hasSettledEdits && model.submittedEditCommandCount == 2 }
+            model.editSession.toggleNeutralPicker()
+            #expect(model.editSession.isPickingNeutral)
+            model.editSession.pickNeutral(at: CGPoint(x: 0.5, y: 0.5))
+            #expect(!model.editSession.isPickingNeutral)
+            try await waitUntil { model.editSession.hasSettledEdits && model.editSession.submittedEditCommandCount == 2 }
 
             let saved = try await library.store.windowReads.editRecipe(for: id)?.recipe
             #expect((saved?.temperature ?? 0) < 0)
-            #expect(model.editDraft == saved)
+            #expect(model.editSession.editDraft == saved)
             #expect(model.undoMenuState.undoTitle == "Undo White Balance")
         }
     }
@@ -238,12 +238,12 @@ struct CatalogWindowViewModelEditTests {
             model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
-            try await waitUntil { model.canEdit }
-            model.toggleNeutralPicker()
+            try await waitUntil { model.editSession.canEdit }
+            model.editSession.toggleNeutralPicker()
 
             model.loupeEscape()
 
-            #expect(!model.isPickingNeutral)
+            #expect(!model.editSession.isPickingNeutral)
             #expect(model.viewMode == .loupe)
         }
     }
@@ -256,23 +256,23 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.selectAll()
 
-            model.toggleCropTool()
+            model.editSession.toggleCropTool()
             #expect(model.isEditPanelPresented)
             #expect(model.viewMode == .loupe)
-            #expect(model.isCropping)
-            try await waitUntil { model.canEdit && model.editCropBase?.id == id }
+            #expect(model.editSession.isCropping)
+            try await waitUntil { model.editSession.canEdit && model.editSession.editCropBase?.id == id }
 
             let crop = EditCrop(left: 0.1, top: 0.1, width: 0.5, height: 0.5)
-            model.setCrop(crop, dragging: true)
-            #expect(model.submittedEditCommandCount == 0)
-            model.setCrop(crop, dragging: false)
-            try await waitUntil { model.hasSettledEdits }
+            model.editSession.setCrop(crop, dragging: true)
+            #expect(model.editSession.submittedEditCommandCount == 0)
+            model.editSession.setCrop(crop, dragging: false)
+            try await waitUntil { model.editSession.hasSettledEdits }
             #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe.crop == crop)
             #expect(model.undoMenuState.undoTitle == "Undo Crop")
 
             model.loupeEscape()
-            #expect(!model.isCropping)
-            #expect(model.editCropBase == nil)
+            #expect(!model.editSession.isCropping)
+            #expect(model.editSession.editCropBase == nil)
             #expect(model.viewMode == .loupe)
         }
     }
@@ -284,14 +284,14 @@ struct CatalogWindowViewModelEditTests {
             let id = library.ids[0]
             let model = library.makeEditModel()
             model.selectAll()
-            model.toggleCropTool()
-            try await waitUntil { model.canEdit && model.editCropBase?.id == id }
+            model.editSession.toggleCropTool()
+            try await waitUntil { model.editSession.canEdit && model.editSession.editCropBase?.id == id }
 
-            model.toggleStraightenLine()
-            #expect(model.isDrawingStraightenLine)
-            model.straighten(along: .zero, to: CGPoint(x: 100, y: -100 * tan(4 * Double.pi / 180)))
-            #expect(!model.isDrawingStraightenLine)
-            try await waitUntil { model.hasSettledEdits }
+            model.editSession.toggleStraightenLine()
+            #expect(model.editSession.isDrawingStraightenLine)
+            model.editSession.straighten(along: .zero, to: CGPoint(x: 100, y: -100 * tan(4 * Double.pi / 180)))
+            #expect(!model.editSession.isDrawingStraightenLine)
+            try await waitUntil { model.editSession.hasSettledEdits }
             let straighten = try #require(try await library.store.windowReads.editRecipe(for: id)?.recipe.straighten)
             #expect(abs(straighten - 4) < 0.051)
             #expect(model.undoMenuState.undoTitle == "Undo Straighten")
@@ -307,12 +307,12 @@ struct CatalogWindowViewModelEditTests {
             model.toggleInspector(.edit)
             model.selectAll()
             model.setViewMode(.loupe)
-            try await waitUntil { model.editTarget?.id == library.ids[0] && model.canEdit }
+            try await waitUntil { model.editSession.editTarget?.id == library.ids[0] && model.editSession.canEdit }
 
-            #expect(model.editOriginalPixelSize == CGSize(width: 64, height: 96))
-            #expect(model.cropFrameSize == CGSize(width: 64, height: 96))
-            model.turnPhoto(clockwise: true)
-            #expect(model.cropFrameSize == CGSize(width: 96, height: 64))
+            #expect(model.editSession.editOriginalPixelSize == CGSize(width: 64, height: 96))
+            #expect(model.editSession.cropFrameSize == CGSize(width: 64, height: 96))
+            model.editSession.turnPhoto(clockwise: true)
+            #expect(model.editSession.cropFrameSize == CGSize(width: 96, height: 64))
         }
     }
 
@@ -324,17 +324,17 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.selectAll()
 
-            model.toggleCropTool()
-            #expect(model.isCropping)
-            #expect(model.cropAspect == .free)
-            try await waitUntil { model.canEdit }
-            model.setCropAspect(.original)
+            model.editSession.toggleCropTool()
+            #expect(model.editSession.isCropping)
+            #expect(model.editSession.cropAspect == .free)
+            try await waitUntil { model.editSession.canEdit }
+            model.editSession.setCropAspect(.original)
 
-            let ratio = try #require(model.cropPixelRatio)
+            let ratio = try #require(model.editSession.cropPixelRatio)
             #expect(abs(ratio - 64.0 / 96.0) < 0.001)
-            #expect(!model.cropAspectIsLandscape)
-            model.rotateCropAspect()
-            #expect(model.cropAspectIsLandscape)
+            #expect(!model.editSession.cropAspectIsLandscape)
+            model.editSession.rotateCropAspect()
+            #expect(model.editSession.cropAspectIsLandscape)
         }
     }
 
@@ -354,20 +354,20 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
-            try await waitUntil { model.canEdit }
-            #expect(model.autoStraightenState == .available(.gravity))
+            try await waitUntil { model.editSession.canEdit }
+            #expect(model.editSession.autoStraightenState == .available(.gravity))
 
-            model.autoStraighten()
-            try await waitUntil { model.hasSettledEdits }
+            model.editSession.autoStraighten()
+            try await waitUntil { model.editSession.hasSettledEdits }
             let plain = try #require(try await library.store.windowReads.editRecipe(for: id)?.recipe.straighten)
             #expect(abs(plain + 3) < 0.05)
             #expect(model.undoMenuState.undoTitle == "Undo Auto Straighten")
 
             model.undoLastChange()
-            try await waitUntil { model.hasSettledEdits }
-            model.flipPhoto(horizontally: true)
-            model.autoStraighten()
-            try await waitUntil { model.hasSettledEdits }
+            try await waitUntil { model.editSession.hasSettledEdits }
+            model.editSession.flipPhoto(horizontally: true)
+            model.editSession.autoStraighten()
+            try await waitUntil { model.editSession.hasSettledEdits }
             let flipped = try #require(try await library.store.windowReads.editRecipe(for: id)?.recipe)
             #expect(flipped.flipHorizontal)
             #expect(abs(flipped.straighten - 3) < 0.05)
@@ -388,9 +388,9 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
-            try await waitUntil { model.canEdit && model.autoStraightenState != .reading }
+            try await waitUntil { model.editSession.canEdit && model.editSession.autoStraightenState != .reading }
 
-            #expect(model.autoStraightenState != .available(.gravity))
+            #expect(model.editSession.autoStraightenState != .available(.gravity))
         }
     }
 
@@ -402,22 +402,22 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
-            try await waitUntil { model.canEdit && model.autoCropState != .reading }
+            try await waitUntil { model.editSession.canEdit && model.editSession.autoCropState != .reading }
 
             // Whatever FocalNet read for this frame, the button applies the reading it holds.
             let suggested = EditCrop(left: 0.1, top: 0.05, width: 0.7, height: 0.8)
-            model.editAutoCrop = AutoCropReading(id: id, frame: model.editDraft.uncropped, crop: suggested)
-            #expect(model.autoCropState == .available(nil))
-            model.autoCrop()
-            try await waitUntil { model.hasSettledEdits }
+            model.editSession.editAutoCrop = AutoCropReading(id: id, frame: model.editSession.editDraft.uncropped, crop: suggested)
+            #expect(model.editSession.autoCropState == .available(nil))
+            model.editSession.autoCrop()
+            try await waitUntil { model.editSession.hasSettledEdits }
             #expect(try await library.store.windowReads.editRecipe(for: id)?.recipe.crop == suggested)
             #expect(model.undoMenuState.undoTitle == "Undo Auto Crop")
 
-            model.editAutoCrop = AutoCropReading(id: id, frame: model.editDraft.uncropped, crop: suggested)
-            model.turnPhoto(clockwise: true)
-            #expect(model.autoCropState == .reading)
-            try await waitUntil { model.autoCropState != .reading }
-            #expect(model.editAutoCrop?.frame.quarterTurns == 1)
+            model.editSession.editAutoCrop = AutoCropReading(id: id, frame: model.editSession.editDraft.uncropped, crop: suggested)
+            model.editSession.turnPhoto(clockwise: true)
+            #expect(model.editSession.autoCropState == .reading)
+            try await waitUntil { model.editSession.autoCropState != .reading }
+            #expect(model.editSession.editAutoCrop?.frame.quarterTurns == 1)
         }
     }
 
@@ -427,12 +427,12 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
-            try await waitUntil { model.canEdit }
+            try await waitUntil { model.editSession.canEdit }
 
-            model.toggleStraightenLine()
+            model.editSession.toggleStraightenLine()
 
-            #expect(model.isCropping)
-            #expect(model.isDrawingStraightenLine)
+            #expect(model.editSession.isCropping)
+            #expect(model.editSession.isDrawingStraightenLine)
         }
     }
 
@@ -440,13 +440,13 @@ struct CatalogWindowViewModelEditTests {
         try await withEditableLibrary(fileCount: 1) { library in
             let model = library.makeEditModel()
             model.selectAll()
-            model.toggleCropTool()
-            try await waitUntil { model.canEdit }
-            #expect(model.isCropping)
+            model.editSession.toggleCropTool()
+            try await waitUntil { model.editSession.canEdit }
+            #expect(model.editSession.isCropping)
 
             model.setViewMode(.grid)
 
-            #expect(!model.isCropping)
+            #expect(!model.editSession.isCropping)
         }
     }
 
@@ -456,13 +456,13 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             _ = model.applyGridClick(hit: library.ids[0], modifiers: [], orderedIDs: library.ids)
-            try await waitUntil { model.editTarget?.id == library.ids[0] }
+            try await waitUntil { model.editSession.editTarget?.id == library.ids[0] }
 
             model.selectAll()
 
-            #expect(model.editTarget == nil)
-            model.setEditValue(1, for: .exposure)
-            #expect(model.submittedEditCommandCount == 0)
+            #expect(model.editSession.editTarget == nil)
+            model.editSession.setEditValue(1, for: .exposure)
+            #expect(model.editSession.submittedEditCommandCount == 0)
         }
     }
 
@@ -471,13 +471,13 @@ struct CatalogWindowViewModelEditTests {
             let model = library.makeEditModel()
             model.toggleInspector(.edit)
             model.selectAll()
-            try await waitUntil { model.editTarget != nil }
+            try await waitUntil { model.editSession.editTarget != nil }
 
             model.toggleInspector(.edit)
 
             #expect(!model.isEditPanelPresented)
-            #expect(model.editTarget == nil)
-            #expect(model.editLivePreview == nil)
+            #expect(model.editSession.editTarget == nil)
+            #expect(model.editSession.editLivePreview == nil)
         }
     }
 }

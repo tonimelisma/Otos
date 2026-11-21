@@ -274,34 +274,20 @@ final class CatalogWindowViewModel {
     /// the per-report re-evaluation records it once per focus.
     @ObservationIgnored var fullResolutionSkipLoggedID: MediaAssetID?
     /// The trailing inspector's pane, nil while it is hidden (Info, APP-041; Edit, ADR 0036).
-    /// Edit state below is resolved only while the Edit pane is shown.
+    /// The edit session resolves its photo only while the Edit pane is shown.
     var inspectorPane: InspectorPane?
-    /// The one still photo the panel edits; nil disables its controls.
-    var editTarget: EditTarget?
-    /// The panel's values for `editTarget`: the saved recipe plus any change still being
-    /// dragged. Any change to it turns every section the person turned off back on.
-    var editDraft = EditRecipe.neutral {
-        didSet {
-            if editDraft != oldValue {
-                editSectionsOff = nil
-            }
-        }
-    }
-
-    /// The edited sections the person turned off with their heading's checkmark, for the photo
-    /// they were turned off on: the loupe shows the photo without those sections' changes,
-    /// and nothing is saved (Photos' adjustment checkmarks). Back on with any change to the
-    /// edit, and moot on another photo.
-    var editSectionsOff: EditSectionsOff?
-    /// The newest live render of the draft, shown in place of the pane's stored preview
-    /// until that preview carries the saved edit.
-    var editLivePreview: EditLivePreview?
-    /// The open target's facts; nil until it has been opened (the controls wait for them).
-    var editPhotoFacts: EditPhotoFacts?
-    /// The open target's upright full-resolution size, from the decode its edits render
-    /// from; nil until it has been opened. Crop geometry and the edited photo's size come
-    /// from this, never from the catalog row.
-    var editOriginalPixelSize: CGSize?
+    /// The window's edit feature (ADR 0036): the panel, the crop tool, the edit commands and
+    /// their lanes. The window holds it for its life and is its only strong owner; the session
+    /// reads the window and calls its intents through the narrow context made here
+    /// (`makeEditSessionWindow`). Lazy because that context refers to this window, which can
+    /// be referred to only once `init` has initialized it; made on its first read, which a
+    /// window that starts makes in `start()`.
+    @ObservationIgnored private(set) lazy var editSession = EditSession(
+        window: makeEditSessionWindow(),
+        tileDetailReader: mediaTileDetailReader,
+        materialization: materializationCoordinator,
+        undoManager: windowUndoManager
+    )
     /// The hand-off being prepared, for the status bar; nil when none is.
     var handOffProgress: HandOffProgress?
     var handOffAlertMessage: String?
@@ -342,70 +328,6 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var exportCancelledThrough: UInt64 = 0
     @ObservationIgnored var submittedExportCount = 0
     @ObservationIgnored var handledExportCount = 0
-    /// The latest request for the loupe's player to show its trim UI.
-    var videoTrimCommand: VideoTrimCommand?
-    @ObservationIgnored var videoTrimGeneration: UInt64 = 0
-    /// An edit value field holds the keyboard: the Edit menu's text commands act on it.
-    var isEnteringEditValue = false
-    /// The white balance picker is armed: the next loupe click picks a neutral point.
-    var isPickingNeutral = false
-    /// View ▸ Show Original (\\): the loupe shows the photo without its edit until it is
-    /// turned off, the photo changes, or an edit is made.
-    var isShowingOriginal = false
-    /// The open photo rendered without its edit, for Show Original.
-    var editOriginalPreview: EditLivePreview?
-    /// The adjustment the keyboard acts on: chosen with , and . (Select Previous and Next
-    /// Adjustment) and moved with = and − (Increase and Decrease Adjustment).
-    var selectedEditControl: EditControl?
-    /// The histogram of the photo the panel edits, as last rendered (DES-100).
-    var editHistogram: EditHistogram?
-    /// The crop tool is on: the loupe shows the whole frame with the crop over it.
-    var isCropping = false
-    /// The crop tool's straighten line is armed: the next drag on the canvas draws it.
-    var isDrawingStraightenLine = false
-    /// The photo edited with everything but its crop, which the crop tool draws over.
-    var editCropBase: EditLivePreview?
-    /// The crop tool's aspect choice and which way it stands; tool state, not saved.
-    var cropAspect = CropAspect.free
-    /// Which way the constrained aspect stands, once Rotate Aspect has said so; nil follows
-    /// the crop's own shape (`cropAspectIsLandscape`), decided only once the frame is known.
-    var cropAspectLandscapeChoice: Bool?
-    /// What Auto straighten would do for the photo the panel edits; nil until it is known.
-    var editAutoLevel: AutoLevelReading?
-    /// The suggested crop of the frame last read; nil until one is known.
-    var editAutoCrop: AutoCropReading?
-    @ObservationIgnored var isDraggingCrop = false
-    /// The saved edit. Every change to it can move the frame the suggested crop was read
-    /// from, so it asks for a new reading (`requestEditAnalysis`).
-    @ObservationIgnored var editSavedRecipe = EditRecipe.neutral {
-        didSet { requestEditAnalysis() }
-    }
-
-    @ObservationIgnored var editDraggingControl: EditControl?
-    @ObservationIgnored var editTargetTask: Task<Void, Never>?
-    /// The photo `editTargetTask` is reading, while it runs.
-    @ObservationIgnored var editTargetRequestedID: MediaAssetID?
-    @ObservationIgnored let liveEditRenderer = LiveEditRenderer()
-    @ObservationIgnored let editRenderStream: AsyncStream<EditRenderRequest>
-    @ObservationIgnored let editRenderContinuation: AsyncStream<EditRenderRequest>.Continuation
-    @ObservationIgnored var editRenderTask: Task<Void, Never>?
-    @ObservationIgnored var editRenderRequested: UInt64 = 0
-    @ObservationIgnored var editRenderPublished: UInt64 = 0
-    @ObservationIgnored var editHistogramPublished: UInt64 = 0
-    @ObservationIgnored let editCommandStream: AsyncStream<EditLaneCommand>
-    @ObservationIgnored let editCommandContinuation: AsyncStream<EditLaneCommand>.Continuation
-    @ObservationIgnored var editCommandTask: Task<Void, Never>?
-    /// Readings of the photo for Auto straighten and Auto crop: newest-wins, since only the
-    /// current frame's matters.
-    @ObservationIgnored let editAnalysisStream: AsyncStream<EditAnalysisRequest>
-    @ObservationIgnored let editAnalysisContinuation: AsyncStream<EditAnalysisRequest>.Continuation
-    @ObservationIgnored var editAnalysisTask: Task<Void, Never>?
-    /// The reading last asked for, so an unchanged frame is not read again.
-    @ObservationIgnored var editAnalysisRequested: EditAnalysisRequest?
-    /// Submitted and fully handled edit commands — saved, rendered and applied, or
-    /// refused — so a caller can wait for an edit to settle without guessing a duration.
-    @ObservationIgnored var submittedEditCommandCount = 0
-    @ObservationIgnored var handledEditCommandCount = 0
     var photoInfo: PhotoInfo?
     @ObservationIgnored var photoInfoTask: Task<Void, Never>?
     @ObservationIgnored var faceCandidatesTask: Task<Void, Never>?
@@ -897,16 +819,6 @@ final class CatalogWindowViewModel {
         let (viewportStream, viewportContinuation) = AsyncStream<[MediaAssetID]>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
-        // A live render is newest-wins; a save is a command that must survive in order.
-        let (editRenderStream, editRenderContinuation) = AsyncStream<EditRenderRequest>.makeStream(
-            bufferingPolicy: .bufferingNewest(1)
-        )
-        let (editCommandStream, editCommandContinuation) = AsyncStream<EditLaneCommand>.makeStream(
-            bufferingPolicy: .unbounded
-        )
-        let (editAnalysisStream, editAnalysisContinuation) = AsyncStream<EditAnalysisRequest>.makeStream(
-            bufferingPolicy: .bufferingNewest(1)
-        )
         // Every hand-off is handed over, in order.
         let (handOffStream, handOffContinuation) = AsyncStream<HandOffRequest>.makeStream(bufferingPolicy: .unbounded)
         let (exportStream, exportContinuation) = AsyncStream<ExportRequest>.makeStream(bufferingPolicy: .unbounded)
@@ -1096,12 +1008,6 @@ final class CatalogWindowViewModel {
         stackKeyContinuation = stackKeyChannel.continuation
         self.viewportStream = viewportStream
         self.viewportContinuation = viewportContinuation
-        self.editRenderStream = editRenderStream
-        self.editRenderContinuation = editRenderContinuation
-        self.editCommandStream = editCommandStream
-        self.editCommandContinuation = editCommandContinuation
-        self.editAnalysisStream = editAnalysisStream
-        self.editAnalysisContinuation = editAnalysisContinuation
         self.handOffStream = handOffStream
         self.handOffContinuation = handOffContinuation
         self.exportStream = exportStream
@@ -1159,10 +1065,6 @@ final class CatalogWindowViewModel {
         mutationForwardingTask?.cancel()
         mediaChoiceForwardingTask?.cancel()
         stackKeyForwardingTask?.cancel()
-        editTargetTask?.cancel()
-        editRenderTask?.cancel()
-        editCommandTask?.cancel()
-        editAnalysisTask?.cancel()
         handOffTask?.cancel()
         exportTask?.cancel()
         immichIntentTask?.cancel()
@@ -1217,9 +1119,6 @@ final class CatalogWindowViewModel {
         peopleIntentContinuation.finish()
         mediaChoiceContinuation.finish()
         stackKeyContinuation.finish()
-        editRenderContinuation.finish()
-        editCommandContinuation.finish()
-        editAnalysisContinuation.finish()
         handOffContinuation.finish()
         exportContinuation.finish()
         immichIntentContinuation.finish()
@@ -1309,7 +1208,7 @@ extension CatalogWindowViewModel {
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startMediaChoiceForwarding(writer: .store(store))
         startStackKeyForwarding(store: store)
-        startEditing(store: store)
+        editSession.startEditing(store: store)
         startHandOff(store: store)
         startExport()
         searchLanguageChoicesTask = Task { [weak self] in
