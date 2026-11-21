@@ -90,15 +90,17 @@ recovery sequencing, notification, or actor coordination.
 renders (`MediaOperationSourcePresentation`, `docs/design/import-bar.md`), not only
 of execution itself: the typed failure reason (`MediaOperationFailureReason`,
 replacing a raw `String` the view used to print verbatim), the destination display
-name, the executing batch's ID (for the batch row's sidebar indicator), and the
+name, the batch of the attachment's latest run once it holds an item (`runBatchID`: the
+batch row draws the card's bar, and its sidebar indicator reads it while the run
+executes), and the
 settled attachment's copied count / clean flag / incomplete-item identities.
 `ImportBarPresentation.map` is a pure function of that presentation; it owns no facts
 of its own.
 
 A presentation lives exactly as long as its `SourceSession` (held by `ImportSessionMachine`), which does not outlive
-its source. The bar is drawn only on the card's own sidebar row (`import-bar.md`
-"Where the user is standing"), so once the card is gone there is no surface for its
-outcome: the coordinator logs it (`op=import.outcome phase=settled`) and discards it.
+its source. The bar is drawn on the card's own sidebar row and on its latest run's
+batch row, and only while the card is attached (`import-bar.md` "Where the user is
+standing"), so once the card is gone there is no surface for its outcome: the coordinator logs it (`op=import.outcome phase=settled`) and discards it.
 If execution was still active, its actual task moves through `drainingExecutions`;
 the eventual result settles the old batch in the journal and the log without mutating
 a replacement session at the same path.

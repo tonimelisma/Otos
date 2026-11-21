@@ -175,7 +175,7 @@ struct SidebarSelectionPolicyTests {
             destinationDisplayName: "Pictures",
             state: state,
             attachToReadyMs: nil,
-            batchID: batchID,
+            runBatchID: batchID,
             copiedJustNow: nil,
             isFullyClean: nil,
             stopReason: nil,
@@ -185,7 +185,7 @@ struct SidebarSelectionPolicyTests {
         )
     }
 
-    @Test func barOwnsStatusIgnoresBatchSelection() {
+    @Test func barOwnsStatusOnTheCardRowAndItsRunsBatchRow() {
         let pres = Self.presentation(
             state: .executing(progress: MediaOperationProgress(
                 completedCount: 1,
@@ -196,10 +196,15 @@ struct SidebarSelectionPolicyTests {
             )),
             batchID: Self.batchID
         )
-        // The bar is drawn only on the card's row: selecting the run's own
-        // batch row leaves it off screen.
-        #expect(!SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .importBatch(Self.batchID), presentation: pres))
+        // The bar is drawn on the card's row and on its run's batch row; any other
+        // batch row, and any other row, leaves it off screen.
+        #expect(SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .importBatch(Self.batchID), presentation: pres))
         #expect(SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .library(Self.cardPath), presentation: pres))
+        #expect(!SidebarSelectionPolicy.barOwnsStatus(
+            sidebarSelection: .importBatch(ImportBatchID(unixMilliseconds: 1)),
+            presentation: pres
+        ))
+        #expect(!SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .allMedia, presentation: pres))
     }
 
     @Test func removableIndicatorShowsIndeterminateBeforeBatchExists() {
@@ -238,7 +243,7 @@ struct SidebarSelectionPolicyTests {
         #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia) == .none)
     }
 
-    @Test func batchIndicatorHidesOnlyWhenTheCardRowIsSelected() {
+    @Test func batchIndicatorHidesWhereverTheBarIsDrawn() {
         let pres = Self.presentation(
             state: .executing(progress: MediaOperationProgress(
                 completedCount: 4,
@@ -249,14 +254,20 @@ struct SidebarSelectionPolicyTests {
             )),
             batchID: Self.batchID
         )
-        // Standing on the batch row itself, the bar is off screen, so the row
-        // carries its own progress.
+        // Elsewhere the bar is off screen, so the batch row carries the progress;
+        // on the batch row itself and on the card's row the bar does.
         let indicator = SidebarSelectionPolicy.batchIndicator(
+            batchID: Self.batchID,
+            presentations: [pres],
+            sidebarSelection: .allMedia
+        )
+        #expect(indicator == .determinate(completed: 4, total: 9))
+        let indicatorFromItsOwnRow = SidebarSelectionPolicy.batchIndicator(
             batchID: Self.batchID,
             presentations: [pres],
             sidebarSelection: .importBatch(Self.batchID)
         )
-        #expect(indicator == .determinate(completed: 4, total: 9))
+        #expect(indicatorFromItsOwnRow == .none)
         let indicatorFromLibraryRow = SidebarSelectionPolicy.batchIndicator(
             batchID: Self.batchID,
             presentations: [pres],

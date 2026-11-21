@@ -22,6 +22,7 @@ struct ImportPlanFooter: View {
     let cancelImport: () -> Void
     let ejectCard: () -> Void
     let retryPlanning: (() -> Void)?
+    /// Selects card items in the grid; `nil` where the grid is not the card's.
     let revealAttentionItems: (([MediaAssetID]) -> Void)?
     let sessionPreferences: ImportPreferences?
     let setSessionPreferences: ((ImportPreferences) -> Void)?
@@ -190,11 +191,15 @@ struct ImportPlanFooter: View {
                     .foregroundStyle(DesignPalette.l3(for: colorScheme))
                     .monospacedDigit()
                     .lineLimit(1)
-                Button(revealLabel) {
-                    revealAttentionItems?(itemIDs)
+                // Absent where the items are not in the grid to select: the bar on
+                // the batch row states the clause, and the card's row reveals them.
+                if let revealAttentionItems {
+                    Button(revealLabel) {
+                        revealAttentionItems(itemIDs)
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.subheadline)
                 }
-                .buttonStyle(.borderless)
-                .font(.subheadline)
             }
         }
     }

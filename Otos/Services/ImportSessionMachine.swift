@@ -102,9 +102,6 @@ nonisolated struct ImportSessionMachine {
         /// The run's latest progress. It starts as the true starting value (the plan's
         /// totals, nothing completed yet) and only a newer sample replaces it.
         var progress: MediaOperationProgress
-        /// Whether the batch has at least one durably published asset. The sidebar's batch
-        /// row exists only then, so the presentation exposes the batch only then.
-        var batchHasPublishedAsset: Bool
     }
 
     /// An execution whose source disappeared while the executor was still running. The
@@ -248,6 +245,13 @@ nonisolated struct ImportSessionMachine {
         /// The last run's failure, if the most recent attempt failed. Cleared when the
         /// next attempt starts and when the user asks to plan again — never by a rebuild.
         var lastFailure: AttachmentFailure?
+        /// The batch this attachment's latest run copies or copied into, once that batch
+        /// holds a durably published asset — the moment its sidebar row exists. Set by the
+        /// run's first landed item, kept after the run settles, cleared when the next run
+        /// starts: the import bar is drawn on this batch's row as on the card's
+        /// (`import-bar.md` "Where the user is standing"), and a run that has landed
+        /// nothing yet has no row to draw it on.
+        var latestRunBatch: ImportBatchID?
         /// The pending retry for a build deferred on an unreadable destination folder;
         /// `nil` when no such build is outstanding.
         var unreadableRetry: UnreadableRetry?
@@ -616,6 +620,7 @@ nonisolated struct ImportSessionMachine {
             attachToReadyMs: nil,
             lastCompletion: nil,
             lastFailure: nil,
+            latestRunBatch: nil,
             unreadableRetry: nil
         )
         session.requestPlan()
@@ -915,13 +920,13 @@ nonisolated struct ImportSessionMachine {
             }
             OtosLog.catalog.notice("op=import.coordinator phase=catalogChangeWake waitingCount=\(waitingSources.count, privacy: .public)")
         }
-        // Confirms, for every still-executing session that hasn't proven itself yet,
-        // whether its batch now has at least one durably-published asset — the fact
-        // `executingBatchID` gates the presentation's `batchID` exposure on. It rides the
-        // catalog-change event this machine already consumes: an import's own
-        // publish/settle writes are themselves catalog changes.
+        // Confirms, for every still-executing session whose batch hasn't proven itself
+        // yet, whether it now has at least one durably-published asset — the fact
+        // `latestRunBatch` waits on. It rides the catalog-change event this machine
+        // already consumes: an import's own publish/settle writes are themselves catalog
+        // changes.
         for session in sessions.values {
-            if case let .executing(ctx) = session.phase, !ctx.batchHasPublishedAsset {
+            if case let .executing(ctx) = session.phase, session.latestRunBatch != ctx.batch {
                 effects.append(.readBatchAssetCount(ctx.batch))
             }
         }
@@ -934,13 +939,11 @@ nonisolated struct ImportSessionMachine {
     ) {
         guard let count, count > 0,
               let source = source(executing: batch),
-              case var .executing(context)? = sessions[source]?.phase,
-              !context.batchHasPublishedAsset
+              sessions[source]?.latestRunBatch != batch
         else {
             return
         }
-        context.batchHasPublishedAsset = true
-        sessions[source]?.phase = .executing(context)
+        sessions[source]?.latestRunBatch = batch
         effects.append(.publish)
     }
 
@@ -1462,13 +1465,14 @@ nonisolated struct ImportSessionMachine {
                 completedBytes: 0,
                 totalBytes: plan.totals.copyBytes,
                 elapsedMs: 0
-            ),
-            batchHasPublishedAsset: false
+            )
         ))
         session.importRequested = false
         // A new attempt supersedes the last one's failure; its own outcome will be
-        // recorded when it settles.
+        // recorded when it settles. Its batch has no row until an item lands, and the
+        // last run's batch is no longer this attachment's latest run.
         session.lastFailure = nil
+        session.latestRunBatch = nil
         sessions[source] = session
         effects.append(.publish)
         effects.append(.startExecution(ExecutionRequest(

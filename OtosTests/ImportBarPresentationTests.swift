@@ -34,7 +34,7 @@ struct ImportBarPresentationTests {
             state: state,
             importRequested: importRequested,
             attachToReadyMs: nil,
-            batchID: batchID,
+            runBatchID: batchID,
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
             stopReason: stopReason,

@@ -20,19 +20,33 @@ nonisolated enum ImportIntent: Sendable {
 /// The coordinator actor owns plan lifecycle; this MainActor bridge only assigns
 /// SwiftUI-visible presentation, destination intents, and queued Import starts.
 extension CatalogWindowViewModel {
-    /// The bar is drawn only while a removable source's own row is selected
-    /// (`import-bar.md` "Where the user is standing"). An import batch row
-    /// shows that batch and nothing else, whatever state its run is in: the
-    /// grid is the report there. The card's row keeps the bar — `Eject Card`,
-    /// Erase, a Stopped run's remainder — for as long as the card is attached,
-    /// derived from the plan on every frame.
+    /// The bar is drawn on a removable source's own row and on the batch row of
+    /// that source's latest run (`import-bar.md` "Where the user is standing"):
+    /// once an import begins and the selection follows it to its batch, the bar
+    /// goes with it — progress, Cancel, then Done's `Eject Card` — for as long as
+    /// the card is attached and no newer run has started. Every other row draws
+    /// none. Derived from the coordinator's presentation on every frame.
     var selectedImportPresentation: MediaOperationSourcePresentation? {
-        guard case let .library(path) = sidebarSelection,
-              parts.removableSources.contains(where: { $0.path == path })
-        else {
+        switch sidebarSelection {
+        case let .library(path):
+            guard parts.removableSources.contains(where: { $0.path == path }) else {
+                return nil
+            }
+            return importPresentations.first { $0.sourcePath == path }
+        case let .importBatch(batchID):
+            return importPresentations.first { $0.runBatchID == batchID }
+        default:
             return nil
         }
-        return importPresentations.first { $0.sourcePath == path }
+    }
+
+    /// Whether the bar stands on its card's own row, where the card's items are the
+    /// grid. Its `Show them` reveal selects card items in place, so it is offered only
+    /// there: on the batch row those items — blocked, or never landed — are not in the
+    /// grid to select.
+    var importBarRevealsCardItems: Bool {
+        guard let presentation = selectedImportPresentation else { return false }
+        return sidebarSelection == .library(presentation.sourcePath)
     }
 
     // ImportPlanDetailReader and the Details sheet are deleted (ADR 0021): the
@@ -191,7 +205,7 @@ extension CatalogWindowViewModel {
             heldImportClicks.remove(source)
         }
         for presentation in presentations {
-            if let batchID = presentation.batchID,
+            if let batchID = presentation.runBatchID,
                case .executing = presentation.state,
                !followedImportBatches.contains(batchID)
             {
@@ -219,7 +233,7 @@ extension CatalogWindowViewModel {
     ///
     /// A wait ends on one of two facts, never on time: the row appears, or the user is no
     /// longer on the card's row, which declines the move for good. A run names its batch
-    /// only once an item is in the catalog (`batchHasPublishedAsset`), so a cancelled or
+    /// only once an item is in the catalog (`latestRunBatch`), so a cancelled or
     /// failed run's batch still appears; one whose items leave the catalog first never does,
     /// and only the user (Move to Trash, removing the library) takes them out from elsewhere.
     func followRunsIntoTheirBatches() {

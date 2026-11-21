@@ -329,15 +329,14 @@ Done is **not terminal**, and it is **not two states**. `MediaOperationCoordinat
 requests a plan after settlement and rebuilds it, so a card left in the
 reader returns to a zero-copy plan. The bar reflects that plan.
 
-There is one post-import state, and it is drawn in one place: the card's own row
-(*Where the user is standing*). An import batch row never draws the bar, in any state —
-it shows that batch, and its grid is the report of what landed. So F always talks
-about a card that is still attached.
+There is one post-import state, and it is drawn where the run is: the card's own row,
+and the batch row of the card's latest run (*Where the user is standing*). Any other
+batch row never draws the bar. So F always talks about a card that is still attached.
 
 **F · card still attached.** L1 ✓ `Everything on this card is imported` · L3
 `42 copied just now · 181 items in Summer Photos`. Choices present. Primary
 **`Eject Card`** — the one remaining useful act — and nothing beside it. Drawn on
-`.library(card)`, and re-derived from the plan every time the user comes back to it:
+`.library(card)` and on the run's batch row, and re-derived from the plan every time the user comes back to it:
 click away and back, and it offers `Eject Card` again. Never dismisses while the card
 is attached: the card is still there and still has actions attached to it.
 
@@ -382,8 +381,8 @@ its own Failed) outranks it. It is not a failure: nothing went wrong that
 
 ### There is no `Show These Items` button
 
-A jump to the batch row is never offered. The bar lives on the card's row, and the
-items F-incomplete is talking about — the ones that did not land — are not in the batch
+A jump to the batch row is never offered. The bar is already on the batch row when the
+run moved the user there, and the items F-incomplete is talking about — the ones that did not land — are not in the batch
 at all; they are on the card, in the grid the user is already looking at. A button
 taking the user to the batch would take them away from those items to a grid that
 cannot show them. It is absent from the bar in every state — as a primary action and
@@ -391,7 +390,9 @@ as a secondary text button. The batch is one click away in the sidebar.
 
 The **`Show them` reveal on L3** is the act that remains: it selects and scrolls
 *specific* card items — the ones that couldn't be copied — inside the card's grid. That is a real change of what is on
-screen, and it is the only "show" the bar offers.
+screen, and it is the only "show" the bar offers. It is offered on the card's row only:
+on the batch row those items are not in the grid, so the bar states the clause there
+without the reveal, and the card's row — one click away — reveals them.
 
 F-incomplete's act zone is empty: the reveal is the one useful act, and eject and
 erase wait for the card's next plan. That is DES-053's stated exception ("a control
@@ -502,9 +503,14 @@ Consequences that shape the journeys:
 - **A card and a library are the same kind of selection.** So the import bar is not a
   mode; it is what the content pane shows when the selected root happens to be
   removable. Nothing about the grid changes (DES-065).
-- **The bar is drawn only on a removable row.** Selecting an import batch shows that
-  batch and nothing else — no bar, whatever state its run is in, including a run
-  that is still copying or was just cancelled. The batch row's grid is its report.
+- **The bar is drawn on a removable row and on its latest run's batch row.** Once an
+  import begins and the selection follows it to its batch (below), the bar goes with
+  it: progress and Cancel while it copies, then F or G, for as long as the card is
+  attached. The batch is the card's latest run's from its first landed item until the
+  card's next run starts; a run that has landed nothing yet names no batch, so an
+  older batch of the same card, like any other batch, draws no bar
+  (`MediaOperationSourcePresentation.runBatchID`). The bar says the same thing on
+  both rows, except that `Show them` is offered only on the card's.
 - **The batch row cannot pre-exist the import.** The coordinator mints the real
   `ImportBatchID()` when execution starts and carries it through the executor
   (`MediaOperationCoordinator.swift`); the row appears in the sidebar only once
@@ -515,9 +521,7 @@ Consequences that shape the journeys:
 user on the card's row, where the bar shows the run's progress and its Cancel, until
 the batch row exists. The coordinator exposes the batch only once its first item has
 landed, and at that moment the selection moves from the card's row to the batch, so the
-user watches items arrive. The batch row then carries its own progress indicator
-(*Ownership of status*), and the bar waits on the card's row, with Cancel, for as long
-as the card is attached. The move happens once per run and only from the card's own
+user watches items arrive, with the bar and its Cancel still on screen. The move happens once per run and only from the card's own
 row: a user who is anywhere else when the batch appears stays there, and a user who
 returns to the card is not pulled back.
 
@@ -541,8 +545,8 @@ coordinator's plan, never by a remembered UI flag.
 | 3 | `.library(card)` | **A** + `112 of 181 items`, determinate | Total is now real |
 | 4 | `.library(card)` | **C** `42 new items · 68 MB` / `139 already in Summer Photos` | `Copy into: Summer Photos`, eject checked from preference. Primary `Import` |
 | 5 | `.library(card)` | **E** | Import pressed; `ImportBatchID()` minted. The selection stays on the card until the batch row exists |
-| 6 | `.library(card)` → `.importBatch(new)` | **E** `Importing 12 of 42` / `19 MB of 68 MB · about 40 seconds left`, then the bar leaves with the card's row | The batch row appears under **Imports** once its first item lands and the selection moves to it. The batch row carries the progress indicator; the bar waits on the card's row |
-| 7 | `.importBatch(new)` | — | Verified, then ejected. The card's row is gone; the user is already on the batch row, which holds what was imported. A user who went back to the card resolves through the ordinary default |
+| 6 | `.library(card)` → `.importBatch(new)` | **E** `Importing 12 of 42` / `19 MB of 68 MB · about 40 seconds left`, on both rows | The batch row appears under **Imports** once its first item lands and the selection moves to it. The bar comes with it, and owns the status there: the batch row shows no indicator of its own |
+| 7 | `.importBatch(new)` | — | Verified, then ejected: the bar leaves with the card. The user is already on the batch row, which holds what was imported. A user who went back to the card resolves through the ordinary default |
 
 ### J2 · The same import, eject unchecked
 
@@ -551,7 +555,7 @@ Steps 1–6 as J1, then:
 | # | Where | Bar | What happens |
 | --- | --- | --- | --- |
 | 7 | `.library(card)` | **F, card attached** ✓ `Everything on this card is imported` / `42 copied just now · 181 items in Summer Photos` | Copy settles and verifies. Re-derived from the plan: every item is now a skip. Choices present. Primary **`Eject Card`** and nothing else. Never dismisses while the card is attached, however many times the user clicks away and back |
-| 8 | `.importBatch(new)` when the user clicks the batch | — | The batch's items, and no bar |
+| 8 | `.importBatch(new)` | **F, card attached**, as on the card's row | Where the run left the user, or the user clicks the batch: the batch's items under the card's bar |
 | 9 | `.library(card)` | bar leaves with the card | `Eject Card` pressed |
 
 **F is a property of the plan.** The bar shows the attached wording whenever the card
@@ -603,11 +607,11 @@ the controls' subject does not exist (DES-053 exception).
 
 ### J8 · Cancelling
 
-Where: `.library(card)` — the bar, and its Cancel, live on the card's row.
+Where: `.library(card)`, or the run's batch row — the bar and its Cancel are on both.
 
 1. `Cancel` (or Escape). No confirmation: copies are additive, originals read-only.
 2. **E, cancelling** — `Stopping…` / `Finishing the current item`. Indicator stays determinate and moving; button disabled.
-3. **F, Stopped** — `Stopped — 12 of 42 items copied` / `They’re in Summer Photos`. Never auto-dismisses. The partial batch remains a real batch in the sidebar; selecting it shows the 12 and no bar.
+3. **F, Stopped** — `Stopped — 12 of 42 items copied` / `They’re in Summer Photos`. Never auto-dismisses. The partial batch remains a real batch in the sidebar; selecting it shows the 12 under the same bar.
 4. The bar offers `Import` for what is left, once the re-plan has counted it. Pressing it creates a *second* batch. Nothing is duplicated.
 
 ### J9 · A failure mid-import
@@ -619,9 +623,9 @@ Where: `.library(card)` — the bar, and its Cancel, live on the card's row.
 
 ### J10 · Looking away mid-import
 
-1. From `.library(card)` in **E**, the user clicks a library — `.library(other)` — or, without clicking, the selection follows the run to the new batch when its first item lands.
-2. The bar leaves with the card's row. The **batch row** now shows a 32 pt determinate bar, and that is the *only* place status appears (DES-040).
-3. Returning to `.library(card)` brings the full bar back at its current state.
+1. From `.library(card)` or the run's batch row in **E**, the user clicks a library — `.library(other)`.
+2. The bar leaves. The **batch row** now shows a 32 pt determinate bar, and that is the *only* place status appears (DES-040).
+3. Returning to `.library(card)` or to the batch row brings the full bar back at its current state.
 
 ### J11 · No libraries at all
 
@@ -660,10 +664,9 @@ than hidden.
 One fact, one owner (DES-040). An import's status can surface in the bar or on a
 sidebar row, so "the sidebar" is not an owner; one named row is.
 
-1. **While the card's row is selected, the bar owns the status** and *neither*
-   sidebar row shows an indicator.
-2. **When the selection is anywhere else — the batch row included — exactly one row
-   shows an indicator**, and it is the row the operation currently lives on: the
+1. **While the card's row or its run's batch row is selected, the bar owns the
+   status** and *neither* sidebar row shows an indicator.
+2. **When the selection is anywhere else, exactly one row shows an indicator**, and it is the row the operation currently lives on: the
    **removable row** while the card is being checked (states A–B), the **batch row**
    with a 32 pt determinate bar while the run copies (state E, once the batch row
    exists). The other row shows its ordinary accessory — for the removable row, its

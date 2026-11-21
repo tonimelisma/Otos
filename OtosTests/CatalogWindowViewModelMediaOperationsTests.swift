@@ -31,7 +31,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
     )
 
     private static func presentation(
-        batchID: ImportBatchID?,
+        runBatchID: ImportBatchID?,
         state: MediaOperationSourceState = executing,
         copiedJustNow: Int? = nil,
         isFullyClean: Bool? = nil,
@@ -46,7 +46,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
             destinationDisplayName: "Pictures",
             state: state,
             attachToReadyMs: nil,
-            batchID: batchID,
+            runBatchID: runBatchID,
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
             stopReason: stopReason,
@@ -57,9 +57,10 @@ struct CatalogWindowViewModelMediaOperationsTests {
     }
 
     /// The just-cancelled run of the 2026-10-01 report: stopped at 3 of 8,
-    /// with the re-plan's remainder on the card.
+    /// with the re-plan's remainder on the card. Its batch is still the
+    /// attachment's latest run's.
     private static let cancelled = presentation(
-        batchID: nil,
+        runBatchID: batchID,
         state: .ready(summary: stoppedTotals, generation: 1, skippedPackageCount: 0),
         copiedJustNow: 3,
         isFullyClean: false,
@@ -95,40 +96,44 @@ struct CatalogWindowViewModelMediaOperationsTests {
         model.selectSidebar(.library(Self.cardPath))
 
         // Preparing and the first frames of the run have no batch yet.
-        model.applyImportPresentations([Self.presentation(batchID: nil)])
+        model.applyImportPresentations([Self.presentation(runBatchID: nil)])
         #expect(model.sidebarSelection == .library(Self.cardPath))
 
         // The run names its batch before the sidebar draws the batch's row.
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
         #expect(model.sidebarSelection == .library(Self.cardPath))
-        #expect(model.selectedImportPresentation?.batchID == Self.batchID)
+        #expect(model.selectedImportPresentation?.runBatchID == Self.batchID)
 
         model.applyState(Self.attachedState(model, importBatches: [
             ImportBatchSummary(batchID: Self.batchID, photoCount: 1),
         ]))
         #expect(model.sidebarSelection == .importBatch(Self.batchID))
-        #expect(model.selectedImportPresentation == nil)
+        // The bar follows the run onto its batch row: progress and Cancel stay on screen.
+        #expect(model.selectedImportPresentation?.state == Self.executing)
+        #expect(model.selectedImportPresentation?.sourcePath == Self.cardPath)
     }
 
-    /// A short run can finish, and stop naming its batch, before the batch's row is drawn;
-    /// the row's first appearance still moves the user.
+    /// A short run can finish before the batch's row is drawn; the row's first appearance
+    /// still moves the user, and the bar's Done comes with them.
     @Test func aRunThatFinishesBeforeItsRowAppearsStillMovesTheUser() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))
         model.selectSidebar(.library(Self.cardPath))
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
-        model.applyImportPresentations([Self.presentation(batchID: nil, state: .completed(
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
+        let completed = MediaOperationSourceState.completed(
             summary: Self.stoppedTotals,
             skippedForeignCount: 0,
             failedCount: 0,
             incompleteItems: []
-        ))])
+        )
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID, state: completed)])
         #expect(model.sidebarSelection == .library(Self.cardPath))
 
         model.applyState(Self.attachedState(model, importBatches: [
             ImportBatchSummary(batchID: Self.batchID, photoCount: 5),
         ]))
         #expect(model.sidebarSelection == .importBatch(Self.batchID))
+        #expect(model.selectedImportPresentation?.state == completed)
     }
 
     @Test func aUserWhoReturnsToTheCardIsNotPulledBackToTheBatch() {
@@ -136,22 +141,22 @@ struct CatalogWindowViewModelMediaOperationsTests {
         let withRow = [ImportBatchSummary(batchID: Self.batchID, photoCount: 1)]
         model.applyState(Self.attachedState(model, importBatches: withRow))
         model.selectSidebar(.library(Self.cardPath))
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
         #expect(model.sidebarSelection == .importBatch(Self.batchID))
         model.selectSidebar(.library(Self.cardPath))
 
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
         model.applyState(Self.attachedState(model, importBatches: withRow))
 
         #expect(model.sidebarSelection == .library(Self.cardPath))
-        #expect(model.selectedImportPresentation?.batchID == Self.batchID)
+        #expect(model.selectedImportPresentation?.runBatchID == Self.batchID)
     }
 
     @Test func aUserElsewhereWhenTheRowAppearsStaysThereAndIsNeverPulledLater() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))
         model.selectSidebar(.library(Self.libraryPath))
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
         model.applyState(Self.state(
             resolvedSidebarSelection: .library(Self.libraryPath),
             importBatches: [ImportBatchSummary(batchID: Self.batchID, photoCount: 1)],
@@ -162,7 +167,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.sidebarSelection == .library(Self.libraryPath))
 
         model.selectSidebar(.library(Self.cardPath))
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
         #expect(model.sidebarSelection == .library(Self.cardPath))
     }
 
@@ -173,7 +178,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))
         model.selectSidebar(.library(Self.cardPath))
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
         #expect(model.importBatchesAwaitingTheirRow[Self.batchID] == Self.cardPath)
 
         model.selectSidebar(.library(Self.libraryPath))
@@ -187,7 +192,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.importBatchesAwaitingTheirRow.isEmpty)
 
         model.selectSidebar(.library(Self.cardPath))
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
         model.applyState(Self.attachedState(model, importBatches: [
             ImportBatchSummary(batchID: Self.batchID, photoCount: 1),
         ]))
@@ -200,7 +205,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         model.applyState(Self.attachedState(model, importBatches: []))
         model.selectSidebar(.library(Self.cardPath))
 
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID, state: .completed(
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID, state: .completed(
             summary: Self.stoppedTotals,
             skippedForeignCount: 0,
             failedCount: 0,
@@ -213,31 +218,32 @@ struct CatalogWindowViewModelMediaOperationsTests {
     @Test func anExecutingImportDoesNotMoveTheUserFromAllImports() {
         let model = makeModel()
         model.selectSidebar(.allImports)
-        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
         #expect(model.sidebarSelection == .allImports)
     }
 
-    // MARK: - The bar is drawn only on the card's row
+    // MARK: - The bar is drawn on the card's row and on its latest run's batch row
 
-    /// The 2026-10-01 report: selecting the batch a just-cancelled run produced
-    /// shows that batch and no bar, while the card is still attached and its
-    /// own row still offers the remainder.
-    @Test func aJustCancelledBatchRowShowsNoBar() {
+    /// The 2026-10-01 report's run, seen from its batch: the batch a just-cancelled run
+    /// produced draws that card's bar — the Stopped report and the remainder's Import —
+    /// for as long as the card is attached, the same bar the card's own row draws.
+    @Test func aJustCancelledRunsBatchRowShowsTheCardsBar() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: [
             ImportBatchSummary(batchID: Self.batchID, photoCount: 3),
         ]))
         model.applyImportPresentations([Self.cancelled])
         model.selectSidebar(.importBatch(Self.batchID))
-        #expect(model.selectedImportPresentation == nil)
+        #expect(model.selectedImportPresentation == Self.cancelled)
 
         model.selectSidebar(.library(Self.cardPath))
         #expect(model.selectedImportPresentation == Self.cancelled)
     }
 
-    /// Every run state — in flight, failed, settled incomplete — leaves a batch
-    /// row without the bar.
-    @Test func aBatchRowNeverShowsTheBarInAnyRunState() {
+    /// Every run state — in flight, failed, settled incomplete — draws the bar on the
+    /// run's batch row, where `Show them` is not offered: the items it names are on the
+    /// card, not in the batch's grid. The card's row offers it.
+    @Test func aRunsBatchRowShowsItsBarInEveryRunState() {
         let states: [MediaOperationSourceState] = [
             Self.executing,
             .failed(reason: .destinationUnavailable, publishedCount: 2),
@@ -248,10 +254,38 @@ struct CatalogWindowViewModelMediaOperationsTests {
             model.applyState(Self.attachedState(model, importBatches: [
                 ImportBatchSummary(batchID: Self.batchID, photoCount: 2),
             ]))
-            model.applyImportPresentations([Self.presentation(batchID: Self.batchID, state: state, isFullyClean: false)])
+            let presentation = Self.presentation(runBatchID: Self.batchID, state: state, isFullyClean: false)
+            model.applyImportPresentations([presentation])
             model.selectSidebar(.importBatch(Self.batchID))
-            #expect(model.selectedImportPresentation == nil, "state=\(state)")
+            #expect(model.selectedImportPresentation == presentation, "state=\(state)")
+            #expect(!model.importBarRevealsCardItems, "state=\(state)")
+
+            model.selectSidebar(.library(Self.cardPath))
+            #expect(model.importBarRevealsCardItems, "state=\(state)")
         }
+    }
+
+    /// A batch row draws only its own run's bar: an older batch from the same card, once a
+    /// newer run has started, and a batch whose card is gone draw none.
+    @Test func aBatchRowThatIsNotTheCardsLatestRunShowsNoBar() {
+        let older = ImportBatchID(unixMilliseconds: 1_600_000_000_000)
+        let model = makeModel()
+        model.applyState(Self.attachedState(model, importBatches: [
+            ImportBatchSummary(batchID: Self.batchID, photoCount: 2),
+            ImportBatchSummary(batchID: older, photoCount: 4),
+        ]))
+        model.applyImportPresentations([Self.presentation(runBatchID: Self.batchID)])
+        model.selectSidebar(.importBatch(older))
+        #expect(model.selectedImportPresentation == nil)
+
+        // A new run that has landed nothing yet names no batch: its predecessor's row
+        // is no longer the run in progress.
+        model.applyImportPresentations([Self.presentation(runBatchID: nil)])
+        model.selectSidebar(.importBatch(Self.batchID))
+        #expect(model.selectedImportPresentation == nil)
+
+        model.applyImportPresentations([])
+        #expect(model.selectedImportPresentation == nil)
     }
 
     /// Ejecting the card the user is standing on resolves through the ordinary
@@ -287,23 +321,23 @@ struct CatalogWindowViewModelMediaOperationsTests {
     /// value is reflected immediately once it does land.
     @Test func sessionPreferencesToggleSurvivesAnInterleavedFrame() {
         let model = makeModel()
-        model.applyImportPresentations([Self.presentation(batchID: nil)])
+        model.applyImportPresentations([Self.presentation(runBatchID: nil)])
         #expect(model.sessionPreferences(for: Self.cardPath) == .default)
 
         // An interleaved frame with nothing to do with the toggle (e.g. a
         // progress tick) still carries the coordinator's last-published,
         // pre-toggle value.
-        model.applyImportPresentations([Self.presentation(batchID: nil)])
+        model.applyImportPresentations([Self.presentation(runBatchID: nil)])
         #expect(model.sessionPreferences(for: Self.cardPath) == .default)
 
         // The coordinator's confirmation frame lands, carrying the toggled value.
         var toggled = ImportPreferences.default
         toggled.deleteSourceAfterImport = true
-        model.applyImportPresentations([Self.presentation(batchID: nil, sessionPreferences: toggled)])
+        model.applyImportPresentations([Self.presentation(runBatchID: nil, sessionPreferences: toggled)])
         #expect(model.sessionPreferences(for: Self.cardPath) == toggled)
 
         // A further interleaved frame after the toggle must not revert it.
-        model.applyImportPresentations([Self.presentation(batchID: nil, sessionPreferences: toggled)])
+        model.applyImportPresentations([Self.presentation(runBatchID: nil, sessionPreferences: toggled)])
         #expect(model.sessionPreferences(for: Self.cardPath) == toggled)
     }
 
@@ -315,7 +349,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         model.selectSidebar(.library(Self.cardPath))
         for _ in 0 ..< 2 {
             model.applyImportPresentations([Self.presentation(
-                batchID: nil,
+                runBatchID: nil,
                 state: .failed(reason: .destinationUnavailable, publishedCount: 0)
             )])
         }

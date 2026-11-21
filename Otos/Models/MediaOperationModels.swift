@@ -848,12 +848,15 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// is refused.
     let importRequested: Bool
     let attachToReadyMs: Int?
-    /// The batch this attachment's run is copying into, present only while it
-    /// executes and once the batch holds at least one durably-published asset
-    /// — the moment its sidebar row exists. The batch row's progress indicator
-    /// reads it (`import-bar.md` "Ownership of status"); the bar itself is drawn
-    /// only on the card's row and never needs it.
-    let batchID: ImportBatchID?
+    /// The batch this attachment's latest run copies or copied into, present once
+    /// the batch holds at least one durably-published asset — the moment its
+    /// sidebar row exists — and kept after the run settles, until the next run
+    /// starts. The bar is drawn on this batch's row as well as the card's
+    /// (`import-bar.md` "Where the user is standing"), and the batch row's
+    /// progress indicator reads it while the run executes ("Ownership of
+    /// status"). A run that has not landed an item yet names no batch: the
+    /// previous run's batch is no longer this attachment's latest run.
+    let runBatchID: ImportBatchID?
     /// Count copied by the most recent *settled* (completed or cancelled)
     /// execution in this attachment, and whether that run was fully clean (no
     /// skips, failures, or blocked entries) — the auto-dismiss gate. Both
@@ -919,7 +922,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         state: MediaOperationSourceState,
         importRequested: Bool = false,
         attachToReadyMs: Int?,
-        batchID: ImportBatchID?,
+        runBatchID: ImportBatchID?,
         copiedJustNow: Int?,
         isFullyClean: Bool?,
         stopReason: ImportStopReason?,
@@ -937,7 +940,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         self.state = state
         self.importRequested = importRequested
         self.attachToReadyMs = attachToReadyMs
-        self.batchID = batchID
+        self.runBatchID = runBatchID
         self.copiedJustNow = copiedJustNow
         self.isFullyClean = isFullyClean
         self.stopReason = stopReason

@@ -804,18 +804,6 @@ actor MediaOperationCoordinator {
         )
     }
 
-    /// The batch this attachment's run is copying into, exposed only while
-    /// it executes and only once it has proven itself non-empty (see
-    /// `batchHasPublishedAsset`): the sidebar's batch row exists only once it
-    /// has an asset, and that row's progress indicator is the one consumer
-    /// (`import-bar.md` "Ownership of status").
-    private func executingBatchID(for session: SourceSession) -> ImportBatchID? {
-        guard case let .executing(ctx) = session.phase, ctx.batchHasPublishedAsset else {
-            return nil
-        }
-        return ctx.batch
-    }
-
     private func makePresentation(
         session: SourceSession,
         state: MediaOperationSourceState
@@ -844,7 +832,7 @@ actor MediaOperationCoordinator {
             state: state,
             importRequested: session.importRequested,
             attachToReadyMs: session.attachToReadyMs,
-            batchID: executingBatchID(for: session),
+            runBatchID: session.latestRunBatch,
             copiedJustNow: completion?.publishedCount,
             isFullyClean: completion?.isFullyClean,
             stopReason: completion?.stopReason,
@@ -884,7 +872,7 @@ actor MediaOperationCoordinator {
             } else {
                 nil
             }
-            let batchID = presentation.batchID.map { String(describing: $0) } ?? "none"
+            let batchID = presentation.runBatchID.map { String(describing: $0) } ?? "none"
             let runID = machine.sessions[presentation.sourcePath]?.runID ?? "none"
             OtosLog.catalog.notice(
                 "op=import.presentation phase=publish run=\(runID, privacy: .public) sourcePath=\(presentation.sourcePath.rawValue, privacy: .public) attachment=\(presentation.attachmentGeneration.rawValue, privacy: .public) state=\(String(describing: presentation.state), privacy: .public) completedCount=\(progress?.completedCount ?? 0, privacy: .public) totalCount=\(progress?.totalCount ?? 0, privacy: .public) completedBytes=\(progress?.completedBytes ?? 0, privacy: .public) batchID=\(batchID, privacy: .public)"

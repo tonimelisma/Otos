@@ -612,10 +612,10 @@ struct ImportSessionMachineTests {
 
         #expect(machine.handle(.batchAssetCountRead(run.batch, count: nil)).isEmpty)
         #expect(machine.handle(.batchAssetCountRead(run.batch, count: 0)).isEmpty)
-        #expect(Self.execution(in: machine)?.batchHasPublishedAsset == false)
+        #expect(machine.sessions[Self.card]?.latestRunBatch == nil)
 
         let confirmed = machine.handle(.batchAssetCountRead(run.batch, count: 2))
-        #expect(Self.execution(in: machine)?.batchHasPublishedAsset == true)
+        #expect(machine.sessions[Self.card]?.latestRunBatch == run.batch)
         #expect(confirmed.contains {
             if case .publish = $0 {
                 true
@@ -623,6 +623,30 @@ struct ImportSessionMachineTests {
                 false
             }
         })
+    }
+
+    /// `import-bar.md` "Where the user is standing": the bar follows a run onto its batch
+    /// row, so the run's batch outlives the run — through its settlement, the re-plan after
+    /// it and a `Try Again` — and gives way only to the next run, which names no batch
+    /// until its own first item lands.
+    @Test func theLatestRunsBatchOutlivesTheRunUntilTheNextRunStarts() throws {
+        var (machine, run) = try Self.executing()
+        _ = machine.handle(.batchAssetCountRead(run.batch, count: 1))
+
+        let settled = machine.handle(.executionFinished(
+            run.batch,
+            .failed(.destinationUnavailable, publishedCount: 1)
+        ))
+        #expect(machine.sessions[Self.card]?.latestRunBatch == run.batch)
+        let retried = machine.handle(.retryRequested(source: Self.card))
+        #expect(machine.sessions[Self.card]?.latestRunBatch == run.batch)
+
+        let rebuild = try #require((Self.builds(in: settled) + Self.builds(in: retried)).last)
+        _ = machine.handle(.importQueued(source: Self.card))
+        let next = machine.handle(.buildFinished(rebuild.id, Self.builtPlan(for: rebuild)))
+        let nextRun = try #require(Self.executions(in: next).first)
+        #expect(nextRun.batch != run.batch)
+        #expect(machine.sessions[Self.card]?.latestRunBatch == nil)
     }
 
     // MARK: Refreshes

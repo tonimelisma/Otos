@@ -97,13 +97,20 @@ nonisolated enum SidebarSelectionPolicy {
 
     /// Whether the import bar is currently on screen for the operation that
     /// produced `presentation` — true exactly when the current selection is
-    /// that operation's removable row, the only row the bar is drawn on
-    /// (DES-040: one fact, one owner).
+    /// that operation's removable row or its latest run's batch row, the two
+    /// rows the bar is drawn on (DES-040: one fact, one owner).
     static func barOwnsStatus(
         sidebarSelection: SidebarSelection,
         presentation: MediaOperationSourcePresentation
     ) -> Bool {
-        sidebarSelection == .library(presentation.sourcePath)
+        switch sidebarSelection {
+        case let .library(path):
+            path == presentation.sourcePath
+        case let .importBatch(batchID):
+            batchID == presentation.runBatchID
+        default:
+            false
+        }
     }
 
     /// The removable row's own indicator while its card is being prepared
@@ -138,7 +145,7 @@ nonisolated enum SidebarSelectionPolicy {
         presentations: [MediaOperationSourcePresentation],
         sidebarSelection: SidebarSelection
     ) -> SidebarStatusIndicator {
-        guard let presentation = presentations.first(where: { $0.batchID == batchID }),
+        guard let presentation = presentations.first(where: { $0.runBatchID == batchID }),
               case let .executing(progress) = presentation.state
         else {
             return .none

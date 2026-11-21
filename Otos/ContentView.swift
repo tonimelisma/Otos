@@ -368,9 +368,9 @@ struct DetailColumn: View {
                     retryPlanning: {
                         viewModel.retryImportPlanning(for: presentation.sourcePath)
                     },
-                    revealAttentionItems: { ids in
-                        viewModel.selectAssets(ids)
-                    },
+                    revealAttentionItems: viewModel.importBarRevealsCardItems
+                        ? { ids in viewModel.selectAssets(ids) }
+                        : nil,
                     sessionPreferences: viewModel.sessionPreferences(for: presentation.sourcePath),
                     setSessionPreferences: { prefs in
                         viewModel.setSessionPreferences(prefs, for: presentation.sourcePath)

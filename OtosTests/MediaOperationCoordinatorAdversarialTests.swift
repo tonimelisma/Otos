@@ -885,7 +885,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let queueTask = Task { await coordinator.queueImport(for: cardPath) }
         try await waitForPendingExecution(execControl, source: cardPath)
 
-        // `.executing`'s batchID is gated on a real published asset — this
+        // The run's batch is named only once a real asset has published — this
         // controlled executor never journals one, so it stays nil here.
         let executing = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         guard case .executing = executing.state else {
@@ -893,7 +893,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             await coordinator.shutdown()
             return
         }
-        #expect(executing.batchID == nil, "batchID must stay hidden until a real asset has published")
+        #expect(executing.runBatchID == nil, "the batch stays unnamed until a real asset has published")
 
         // Resume straight to completion. Whatever progress frames the
         // executor's onProgress would have emitted are never observed by this
@@ -912,7 +912,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // having observed the transition that set it — state, not an event.
         let again = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         #expect(again.copiedJustNow == 1)
-        #expect(again.batchID == nil, "a settled run exposes no batch")
+        #expect(again.runBatchID == nil, "a settled run that landed nothing in the catalog names no batch")
         await coordinator.shutdown()
     }
 
@@ -1211,7 +1211,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             }
             return false
         }
-        #expect(ready.batchID == nil, "no run is being presented once the failure is cleared")
+        #expect(ready.runBatchID == nil, "a failed run that landed nothing names no batch")
         await coordinator.shutdown()
     }
 
@@ -1290,7 +1290,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             }
             return false
         }
-        #expect(settled.batchID == nil)
+        #expect(settled.runBatchID == nil)
         await coordinator.shutdown()
     }
 
