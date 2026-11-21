@@ -328,11 +328,16 @@ struct CatalogProjectionTests {
         let heard = await projection.changesHeard
         try await store.addLibrary(url: root)
         try await waitUntil { await projection.changesHeard > heard }
+        // The pass that takes up the change is held, so the state the first build publishes
+        // stays the stream's newest until the recorder has taken it: the stream keeps only
+        // the newest state, and the next pass's would otherwise replace it unseen.
+        await probe.holdCall(2)
         await probe.releaseBuilds()
 
         let states = await recorder.waitForCount(1) { states in
             states.contains { $0.title == "Call 1" }
         }
+        await probe.releaseCall(2)
         #expect(states.contains { $0.title == "Call 1" })
         #expect(await probe.cancelledBuildCount() == 0)
         #expect(await projection.supersededCount == 0)
@@ -984,8 +989,21 @@ private actor ProjectionProbe {
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
     private var isReleased = false
     private var failingCall: Int?
+    private var heldCalls: Set<Int> = []
+    private var heldCallWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
 
     struct InjectedFailure: Error {}
+
+    /// The build for call `number` (1-based, after the first) waits until
+    /// `releaseCall(number)`, so the state the call before it published stays the newest.
+    func holdCall(_ number: Int) {
+        heldCalls.insert(number)
+    }
+
+    func releaseCall(_ number: Int) {
+        heldCalls.remove(number)
+        heldCallWaiters.removeValue(forKey: number)?.resume()
+    }
 
     /// The build for call `number` (1-based) throws, as a failed Store read does.
     func failCall(_ number: Int) {
@@ -1004,9 +1022,14 @@ private actor ProjectionProbe {
         currentInFlight += 1
         maximumInFlightValue = max(maximumInFlightValue, currentInFlight)
         resumeInFlightWaiters()
-        if calls == 1, !isReleased {
+        let call = calls
+        if call == 1, !isReleased {
             await withCheckedContinuation { continuation in
                 releaseWaiters.append(continuation)
+            }
+        } else if heldCalls.contains(call) {
+            await withCheckedContinuation { continuation in
+                heldCallWaiters[call] = continuation
             }
         }
         currentInFlight -= 1

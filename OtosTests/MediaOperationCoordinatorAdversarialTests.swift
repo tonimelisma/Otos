@@ -956,9 +956,11 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         let execControl = ControlledExecutionControl()
         await execControl.suspendNextExecution(for: cardPath)
+        let builder = ControlledImportPlanBuilder()
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            planBuilder: builder,
             volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
@@ -986,34 +988,30 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(progress == liveProgress)
 
         // The other half of D6: `.completed` must also carry the real settled
-        // outcome, not a zero-summary literal. `.completed` is transient by
-        // design — `applyExecutionResult` schedules the post-settlement
-        // rebuild synchronously right after publishing it, so a poll of
-        // `currentPresentations()` reliably observes the *next* state instead
-        // (the same reason other tests in this file assert on `copiedJustNow`,
-        // not `.state`, for a settled run). An actively-consumed stream
-        // subscription catches the frame instead of racing a fresh derivation
-        // against it. Non-zero `skippedForeignCount`/`failedCount` rule out a
-        // coincidental-zero pass.
-        let stream = await coordinator.presentationsStream()
+        // outcome, not a zero-summary literal. The coordinator presents a settled
+        // run as `.completed` until the re-plan that follows it lands, so the test
+        // holds that re-plan: while it is held, `.completed` is the session's own
+        // state, read from the coordinator rather than caught as a frame on a
+        // stream that keeps only the newest one, where the landed re-plan replaces
+        // it before a slow reader takes it. Non-zero `skippedForeignCount` and
+        // `failedCount` rule out a coincidental-zero pass.
+        await builder.suspendNextBuild(for: cardPath)
         await execControl.resumePending(
             for: cardPath,
             with: .completed(.tally(published: 1, entryFailures: true, skippedForeign: 1, failed: 1), incompleteItems: [], erase: nil)
         )
-        var completed: (summary: MediaOperationPlanTotals, skippedForeignCount: Int, failedCount: Int)?
-        for await values in stream {
-            if let pres = values.first(where: { $0.sourcePath == cardPath }),
-               case let .completed(summary, skippedForeignCount, failedCount, _) = pres.state
-            {
-                completed = (summary, skippedForeignCount, failedCount)
-                break
-            }
-        }
-        let outcome = try #require(completed, "presentation stream ended before a completed frame")
         await queueTask.value
-        #expect(outcome.summary.copyCount == 1)
-        #expect(outcome.skippedForeignCount == 1)
-        #expect(outcome.failedCount == 1)
+        try await waitForPendingBuilder(builder, source: cardPath)
+        let settled = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
+        await builder.resumePendingBuild(for: cardPath)
+        guard case let .completed(summary, skippedForeignCount, failedCount, _) = settled.state else {
+            Issue.record("Expected .completed while the re-plan is held, got \(settled.state)")
+            await coordinator.shutdown()
+            return
+        }
+        #expect(summary.copyCount == 1)
+        #expect(skippedForeignCount == 1)
+        #expect(failedCount == 1)
         await coordinator.shutdown()
     }
 

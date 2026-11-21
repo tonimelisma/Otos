@@ -519,6 +519,9 @@ struct CatalogStoreEnrichmentTests {
         await present.set(false)
         emit(FilesystemEvent(path: root.appending(path: "a.jpg").path(percentEncoded: false), flags: 0))
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.isEmpty }
+        // The scan announces the purge before it deletes the row's files, so the file is
+        // compared once the folder reports its deletes settled (`DerivedFolder.untilSettled`).
+        await store.derivedFolder?.untilSettled()
         #expect(!FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
     }
 

@@ -43,66 +43,68 @@ struct MediaOperationCoordinatorProgressTests {
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let execControl = ControlledExecutionControl()
         await execControl.suspendNextExecution(for: cardPath)
+        let builder = ControlledImportPlanBuilder()
         let coordinator = MediaOperationCoordinator(
             store: store,
             preferencesDomain: defaults,
+            planBuilder: builder,
             volumeCapacity: ampleVolumeCapacity,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
-        let recorder = AsyncValueRecorder<MediaOperationSourceState>()
-        let stream = await coordinator.presentationsStream()
-        let recording = Task {
-            for await presentations in stream {
-                if let state = presentations.first(where: { $0.sourcePath == cardPath })?.state {
-                    await recorder.append(state)
-                }
-            }
-        }
-        _ = await recorder.waitForValues { states in
-            states.contains {
-                if case .ready = $0 {
-                    true
-                } else {
-                    false
-                }
-            }
-        }
+        try await waitUntil { await coordinator.readyPlan(for: cardPath) != nil }
 
+        // Each state is read from the coordinator while the test holds the step that would
+        // replace it: the run while its progress is read, the re-plan while its settlement
+        // is. The presentation stream keeps only the newest frame, so a frame a reader had
+        // not yet taken when the next one was published is never seen at all.
         let queueTask = Task { await coordinator.queueImport(for: cardPath) }
         try await waitUntil { await execControl.pendingSources().contains(cardPath) }
         let last = Self.progress(2, bytes: 2048)
         await execControl.sendProgress(Self.progress(1, bytes: 1024), for: cardPath)
         await execControl.sendProgress(last, for: cardPath)
+        // The run's samples are delivered in order, so the newest is what it settles on.
+        try await waitUntil { await presented(coordinator, cardPath) == .executing(progress: last) }
+
+        await builder.suspendNextBuild(for: cardPath)
         await execControl.resumePending(
             for: cardPath,
             with: .completed(.tally(published: 1), incompleteItems: [], erase: nil)
         )
         await queueTask.value
+        try await waitForPendingBuilder(builder, source: cardPath)
+        // The run's samples were drained before it settled, so the settlement is what shows.
+        let settled = await presented(coordinator, cardPath)
+        await builder.resumePendingBuild(for: cardPath)
         try await waitForCoordinatorQuiescence(coordinator)
-        // The recorder takes each presentation from its stream on a task of its own, so the
-        // states are read once it holds what the quiescent coordinator presents now.
-        let presented = await coordinator.currentPresentations().first { $0.sourcePath == cardPath }?.state
-        let states = await recorder.waitForValues { $0.last == presented }
-        recording.cancel()
-        let firstSettled = try #require(states.firstIndex { state in
-            if case .completed = state {
-                true
-            } else {
-                false
-            }
-        })
-        // Every sample the run sent was delivered before it settled, and the newest wins.
-        #expect(states[..<firstSettled].contains(.executing(progress: last)))
+        let replanned = await presented(coordinator, cardPath)
+        #expect(settled.map(Self.isCompleted) == true, "settled as \(String(describing: settled))")
         // None can follow the settlement.
-        #expect(!states[firstSettled...].contains {
-            if case .executing = $0 {
-                true
-            } else {
-                false
-            }
-        })
+        #expect(replanned.map(Self.isExecuting) == false, "re-planned as \(String(describing: replanned))")
         await coordinator.shutdown()
+    }
+
+    private func presented(
+        _ coordinator: MediaOperationCoordinator,
+        _ source: LibraryRootPath
+    ) async -> MediaOperationSourceState? {
+        await coordinator.currentPresentations().first { $0.sourcePath == source }?.state
+    }
+
+    private static func isCompleted(_ state: MediaOperationSourceState) -> Bool {
+        if case .completed = state {
+            true
+        } else {
+            false
+        }
+    }
+
+    private static func isExecuting(_ state: MediaOperationSourceState) -> Bool {
+        if case .executing = state {
+            true
+        } else {
+            false
+        }
     }
 }
