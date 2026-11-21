@@ -201,13 +201,19 @@ struct CatalogOwnerInputsTests {
         try await store.applyPlaceNames([PlaceCell(latitude: 1, longitude: 1): PlaceNames(country: "FI", town: nil)], language: .english)
         await store.setDuplicatesReach(.acrossLibraries)
         try await store.addLibrary(url: library)
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        // A row hidden and shown again: a change of which rows are shown, naming the row. A
+        // library added with no rows, or rows only added, carry nothing an owner derives from.
+        let id = try #require(scanned.testAssets.first?.id)
+        _ = try await store.markPendingTrash([id], batch: MediaTrashBatchID())
+        _ = try await store.clearPendingTrash([id])
         await store.setDuplicatesReach(.withinEachLibrary)
     }
 
     private static func store() async throws -> (CatalogStore, URL) {
         let library = try makeTestDirectory().appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(library.appending(path: "a.jpg"), contents: "jpeg")
         let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
         return (store, library)

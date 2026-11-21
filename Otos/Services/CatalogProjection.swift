@@ -238,6 +238,9 @@ actor CatalogProjection {
     /// published anything, without depending on when a subscriber receives it.
     private(set) var publicationCount: UInt64 = 0
     var detailRefreshGeneration: UInt64 = 0
+    /// Store changes taken up, whatever they name (`storeDidChange`): what a test waits on for
+    /// a change to have reached the projection. A root's own state moves no detail generation.
+    private(set) var changesHeard: UInt64 = 0
 
     /// Whether the projection owes and runs nothing: its owner fact (`quiescence`) — every
     /// request covered by a successful pass, no pass or options read running, and every Store
@@ -1218,6 +1221,7 @@ private extension CatalogProjection {
     }
 
     func storeDidChange(_ change: CatalogStoreChange) {
+        changesHeard &+= 1
         // A root's own order or activity (`CatalogChangedRows.none`: a scan or listing starting
         // or ending) moves no row and no root's reach. The next pass shows it, since the roots
         // are read every pass; no held read, tile detail or derived owner depends on it, so none

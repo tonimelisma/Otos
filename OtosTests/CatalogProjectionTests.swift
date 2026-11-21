@@ -239,9 +239,9 @@ struct CatalogProjectionTests {
         // A store change made while the build is parked does not supersede it; the loop runs
         // one pass at a time and builds again for the change once the parked build publishes.
         await probe.waitUntilInFlight()
-        let heard = await projection.detailRefreshGeneration
+        let heard = await projection.changesHeard
         try await store.addLibrary(url: makeTestDirectory())
-        try await waitUntil { await projection.detailRefreshGeneration > heard }
+        try await waitUntil { await projection.changesHeard > heard }
         await probe.releaseBuilds()
 
         try await waitUntil { await probe.callCount() >= 2 }
@@ -325,9 +325,9 @@ struct CatalogProjectionTests {
         }
 
         await probe.waitUntilInFlight()
-        let heard = await projection.detailRefreshGeneration
+        let heard = await projection.changesHeard
         try await store.addLibrary(url: root)
-        try await waitUntil { await projection.detailRefreshGeneration > heard }
+        try await waitUntil { await projection.changesHeard > heard }
         await probe.releaseBuilds()
 
         let states = await recorder.waitForCount(1) { states in
@@ -396,11 +396,11 @@ struct CatalogProjectionTests {
         }
 
         await probe.waitUntilInFlight()
-        let changesBefore = await projection.detailRefreshGeneration
+        let changesBefore = await projection.changesHeard
         try await store.addLibrary(url: root)
         // Release only once the projection has recorded the change, so it arrived
         // during the build rather than after it.
-        try await waitUntil { await projection.detailRefreshGeneration > changesBefore }
+        try await waitUntil { await projection.changesHeard > changesBefore }
         await probe.releaseBuilds()
 
         let states = await recorder.waitForCount(1) { states in

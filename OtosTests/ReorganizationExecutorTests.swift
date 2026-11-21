@@ -217,9 +217,19 @@ struct ReorganizationSettlementTests {
             directories: []
         )
         try await store.prepareReorganizationComponent(component)
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let stream = await store.changeNotifications()
+        let recording = Task {
+            for await change in stream {
+                await changes.append(change)
+            }
+        }
+        defer { recording.cancel() }
 
         try await store.backgroundReads.settleReorganizationComponent(key: key)
         let bID = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "b.jpg"))
+        // The rows moved carry every fact keyed by their paths, and are named at both.
+        #expect(await changes.waitForValues { !$0.isEmpty }.first == .changed(.movedRow, rows: .rows([aID, bID])))
         let ordered = try await store.windowReads.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: .allMedia),
             availableLibraryPaths: [rootPath]

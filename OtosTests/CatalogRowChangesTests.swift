@@ -22,7 +22,7 @@ struct CatalogRowChangesTests {
     }
 
     /// Beside new rows they follow the insert; beside another change to an existing row the
-    /// whole change names them too.
+    /// change names both writes' kinds and both rows.
     @Test func knownFactsJoinTheWritesOtherChanges() {
         var inserted = CatalogRowChanges()
         inserted.record(.inserted, of: id("b/IMG.JPG"))
@@ -32,6 +32,34 @@ struct CatalogRowChangesTests {
         var updated = CatalogRowChanges()
         updated.record(.updated, of: id("b/IMG.JPG"))
         updated.recordChanged(1, of: id("a/IMG.JPG"), facts: [.images])
-        #expect(updated.notifications == [.changed(.all, rows: .rows([id("a/IMG.JPG"), id("b/IMG.JPG")]))])
+        #expect(updated.notifications == [.changed(CatalogChangedFacts.fileFacts.union(.images), rows: .rows([id("a/IMG.JPG"), id("b/IMG.JPG")]))])
+    }
+
+    /// A write names the kinds of what it did to each existing row, never every kind: a file's
+    /// facts, a row's presence (a deletion names the Live Photo partner it leaves), a size by
+    /// source item with no row named. A row that took another path names every kind keyed by a
+    /// row and no row, since the path it left is not named.
+    @Test func eachWriteToAnExistingRowNamesItsKinds() {
+        var deleted = CatalogRowChanges()
+        deleted.recordDeleted(
+            AssetRowDeletion(deleted: true, partners: [MediaRelativePath(rawValue: "a/IMG.MOV")]),
+            of: MediaRelativePath(rawValue: "a/IMG.HEIC"),
+            in: root
+        )
+        deleted.recordDeleted(.nothing, of: MediaRelativePath(rawValue: "b/IMG.HEIC"), in: root)
+        #expect(deleted.notifications == [.changed(.presence, rows: .rows([id("a/IMG.HEIC"), id("a/IMG.MOV")]))])
+
+        var sized = CatalogRowChanges()
+        sized.recordUnnamedUpdates(0, facts: .presence)
+        #expect(sized.notifications.isEmpty)
+        sized.recordUnnamedUpdates(2, facts: [.membership, .detail])
+        sized.recordChanged(1, of: id("a/IMG.JPG"), facts: .presence)
+        #expect(sized.notifications == [.changed(.presence, rows: .unnamed)])
+
+        var moved = CatalogRowChanges()
+        moved.record(.moved, of: id("a/IMG.JPG"))
+        #expect(moved.notifications == [.changed(.movedRow, rows: .unnamed)])
+        #expect(!CatalogChangedFacts.movedRow.contains(.placeNames))
+        #expect(CatalogChangedFacts.fileFacts.isDisjoint(with: [.faces, .location, .placeNames, .mediaRecord, .searchContent, .images]))
     }
 }

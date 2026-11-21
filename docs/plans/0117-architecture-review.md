@@ -102,58 +102,20 @@ People and the harness first.
 - **#997.** Step 7: Edit is the window's first feature model: `EditSession` owns the edit's state,
   lanes and tasks, and reads the window through a narrow context (ADR 0004). The window
   declares no edit state. People stays the next candidate.
+- **Step 3.** Change notifications say what changed (ADR 0005, ARC-018). No Store operation
+  sends `.changed(.all)`: each names the kinds it wrote (`presence`, `fileFacts`, `movedRow`,
+  `edit`, `settledImport`), a change that follows no write names the runtime state it reports
+  (a root's reach, or its own state with no row), and one that wrote nothing sends nothing.
+  Only `.libraryRemoved` stands for every kind. An `asset_metadata` insert or delete now names
+  `.location`. A witnessed move whose file facts were unchanged had announced nothing; it is
+  announced as a moved row. Rejected, measured: deriving notifications from the writer (a GRDB
+  `TransactionObserver`), which serves as the guard only.
 
 ## Steps
 
-Each step is its own increment, in this order. Step 5 changes what is already understood. Step 3
-guards before it changes anything, because it can fail silently: a missed notification. Step 2,
-one owner for People's act overlay, was measured and stopped (below). Step 7 has landed (above).
-
-### 3. Change notifications say what changed: narrow the `.all` sites
-
-**Evidence.** Across the full suite, 3,079 notifications were `.all` or `.libraryRemoved`.
-
-- 1,120 of them followed writes that touched only membership, copies, choices or detail. The
-  largest senders:
-  - `insertLibraryRootAndStartScan`: 658
-  - `addImmichAccount`: 95
-  - `settleImportedAsset`: 84
-  - `setPendingTrash`: 53
-- 1,959 more followed no write at all:
-  - `shutdown`: 1,002
-  - `performInitialLoad`: 824
-  - `finishRemovableRootAttachment`: 131
-- The `writes` table maps an `asset_metadata` insert only to the media-record fact. An inserted
-  location therefore wakes no owner that reads location.
-
-Each `.all` wakes every background owner and the window.
-
-**De-risk first: landed.** Every test's Store carries the change-coverage guard
-(`CatalogChangeCoverage`, ADR 0005): a commit no later change names all the kinds of fails the
-test that made it, with the Store's value comparisons and owners' own state as the only
-narrowings, each written down with its reason. Turning it on found three writes no change
-named, fixed with it: a listing's change to a held row's source facts, a source's answer
-that it holds no images of rows, and a video reading that takes its stored frames. A
-narrowed site is now checked by every test that reaches it.
-
-**Change.**
-- Each `.all` site names the kinds it wrote.
-- A site that wrote nothing sends nothing.
-- Add `.location` to the `asset_metadata` insert's facts.
-
-**Done when.**
-- The guard passes across the full suite with no `.all` that follows a write of named kinds.
-- A test pins each corrected site.
-
-**Rejected, measured.** Deriving notifications from the writer (a GRDB `TransactionObserver`)
-would be broader, not safer:
-- 64 % of enrichment batches write columns without changing any value a reader depends on.
-  Only the store's before-and-after comparison of the generated `best_*` columns sees that.
-- Copy-key triggers rewrite columns whatever their values.
-- 3,104 notifications report runtime state that no write carries: scan, listing,
-  availability and reach.
-
-The observer serves as a guard, never as the source of notifications.
+Each step is its own increment, in this order. Step 5 changes what is already understood.
+Step 2, one owner for People's act overlay, was measured and stopped (below). Steps 3 and 7
+have landed (above).
 
 ### 5. One typed asset-key predicate and SQL grouped by table
 

@@ -493,9 +493,9 @@ struct CatalogProjectionEmptyStateTests {
         }
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
-        let heard = await projection.detailRefreshGeneration
+        let heard = await projection.changesHeard
         try await store.addLibrary(url: makeTestDirectory())
-        try await waitUntil { await projection.detailRefreshGeneration > heard }
+        try await waitUntil { await projection.changesHeard > heard }
 
         #expect(await !projection.isQuiescent)
         #expect(await recorder.snapshot().allSatisfy { $0.libraries.count < 2 })

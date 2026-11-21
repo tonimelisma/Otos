@@ -2384,7 +2384,8 @@ extension CatalogStore {
     /// Writes one observed file's filesystem facts to its row, and says what that did to
     /// the catalog: an `.inserted` row is new and carries nothing Otos derives (no
     /// metadata, digest, rendering, faces or embedding), so only what lists rows has new
-    /// input; an `.updated` row existed and may carry any of it.
+    /// input; an `.updated` row existed and its file's facts or presence changed; a `.moved`
+    /// row took this path, with everything Otos derives keyed by it.
     static func upsertScannedFile(
         _ file: ScannedMediaFile,
         libraryRootPath: LibraryRootPath,
@@ -2415,10 +2416,12 @@ extension CatalogStore {
                 + "from=\(existingPath) "
                 + "to=\(file.relativePath.rawValue)"
             OtosLog.catalog.notice("\(message, privacy: .public)")
-            return .updated
+            return .moved
         }
+        var movedWitnessed = false
         if let moved = try movedRowWitnessed(for: file, libraryRootPath: libraryRootPath, libraryRootID: libraryRootID, db: db) {
             existed = true
+            movedWitnessed = true
             // The row keeps everything Otos holds for the file and takes the new path;
             // the upsert below then refreshes its filesystem facts. `asset_metadata` and
             // every other child row follow through `ON UPDATE CASCADE`.
@@ -2520,6 +2523,9 @@ extension CatalogStore {
                 pathKey: pathKey
             )
         )
+        if movedWitnessed {
+            return .moved
+        }
         guard db.changesCount > 0 || putBack else {
             return .unchanged
         }

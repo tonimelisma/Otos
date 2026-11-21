@@ -63,7 +63,8 @@ nonisolated enum CatalogStoreChange: Equatable, Sendable {
 /// Which rows are in reach is never a named change: a root that becomes available or
 /// unavailable, or whose source stops or starts answering, changes what every read bound to
 /// the roots read returns, so it is `unnamed`. A change that names no rows is `none`, which
-/// only a root's own state takes (its order, a scan or listing starting or ending), and
+/// only a root's own state takes (its order, a scan or listing starting or ending, a root
+/// added with no rows yet, the Store's runtime work ending at its shutdown), and
 /// `named` always names at least one (`CatalogNamedRows`), so "named, empty" cannot be said.
 nonisolated enum CatalogChangedRows: Equatable, Sendable {
     /// The write does not name its rows (a root that went or came back, a migration, a bulk
@@ -125,8 +126,11 @@ nonisolated struct CatalogOwnerInputs: Sendable {
 /// What a catalog write touched, by the kind of fact (ADR 0005). The Store names it where
 /// it writes, which is the one place that knows what changed; a reader repeats a read only
 /// when a kind of fact the read depends on was touched (`CatalogProjectionReads`). A write
-/// that changes facts of many kinds at once — a scan, a root added or removed, a Trash
-/// move — names `.all`.
+/// names the kinds it wrote, never more: a row's presence (`presence`), its file's facts
+/// (`fileFacts`), its path (`movedRow`). A change that follows no write names the runtime
+/// state it reports: a root's reach or its own state is `membership` (`CatalogChangedRows`),
+/// and a Store that wrote and changed nothing sends nothing. Only a removed library's change
+/// stands for every kind (`CatalogStoreChange.libraryRemoved`).
 nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     let rawValue: UInt32
 
@@ -201,6 +205,49 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
     /// How many kinds there are: the bits `all` sets.
     static let bitCount = 18
 
+    /// What a write of which existing rows are shown changes: a row deleted, marked for or
+    /// moved to the Trash, put back, hidden or shown by its source, awaiting or seen by an
+    /// attachment, or a new root's rows read. Which rows exist (`membership`); which files are
+    /// copies, and the choices a copy takes, which the copy-key triggers rewrite whenever a
+    /// row's presence is written (`CatalogSchema`'s v79 inputs) and this write does not
+    /// compare (`DigestStanding`); and a tile's detail. A deleted row's metadata, faces and
+    /// search rows go with it (`ON DELETE CASCADE`) and are part of its membership.
+    static let presence: CatalogChangedFacts = [.membership, .copies, .choices, .detail]
+
+    /// What a write of an existing row's filesystem facts changes (`ScannedFileUpsert.updated`,
+    /// a source's size): its presence, and what the file's facts stand for until its bytes are
+    /// read — its capture date (`best_capture_local` falls back to the file's dates), its kind
+    /// and format (the file's type) — with what is named beside a date or kind: the stacks, a
+    /// face's tile, and Duplicates' facts of a row it holds. Its stored images, faces, record,
+    /// place and search readings stay: a changed file owes them again, which enrichment reads
+    /// from the file's facts (`membership`).
+    static let fileFacts: CatalogChangedFacts = presence.union([
+        .captureDate, .kindAndFormat, .stacks, .faceTiles, .duplicateFacts,
+    ])
+
+    /// What a write that moves a row to another path changes (a respelling, a witnessed move, a
+    /// reorganization): the path is the row's identity (ADR 0008), and every fact keyed by it
+    /// moves with it (`ON UPDATE CASCADE`: its metadata, faces and the people they cover, search
+    /// readings, render signature and images), with its name and folder (`grouping`). Only the
+    /// names of the map's cells, keyed by place, stay.
+    static let movedRow: CatalogChangedFacts = all.subtracting(.placeNames)
+
+    /// What a write of a photo's edit changes (ADR 0036): the edit its images are rendered with,
+    /// a face's tile cut from them, and a tile's detail. Duplicates' facts are named beside it
+    /// for a photo Duplicates holds (`DuplicatesHoldSQL`).
+    static let edit: CatalogChangedFacts = [.images, .faceTiles, .detail]
+
+    /// What settling an imported copy changes beyond writing its own row (ADR 0009): the
+    /// import batch it is in and its companions (`membership`), the digest, choice and edit it
+    /// carries from its source, with the copies and choices the copy-key triggers rewrite, and
+    /// the products it takes from the source — its metadata's date, kind, grouping, place and
+    /// record, and its rendering — with what is named beside a date, kind or image: the stacks,
+    /// a face's tile and Duplicates' facts. Its faces and search readings are owed, not carried.
+    static let settledImport: CatalogChangedFacts = [
+        .membership, .captureDate, .kindAndFormat, .grouping, .location, .mediaRecord, .images, .copies, .choices,
+        .detail, .stacks, .faceTiles, .duplicateFacts,
+    ]
+
     static let names: [(CatalogChangedFacts, String)] = [
         (.membership, "membership"), (.captureDate, "captureDate"), (.kindAndFormat, "kindAndFormat"),
         (.grouping, "grouping"), (.location, "location"), (.placeNames, "placeNames"), (.faces, "faces"),
@@ -247,9 +294,13 @@ nonisolated struct CatalogChangedFacts: OptionSet, Hashable, Sendable {
             "kind", "format", "enriched_kind", "enriched_format", "best_kind", "best_format",
         ])]),
         (.grouping, [.update(tableName: "media_asset", columnNames: ["content_identifier", "burst_identifier", "parent_path"])]),
-        (.location, [.update(tableName: "asset_metadata", columnNames: [
-            "primary_latitude", "primary_longitude", "primary_altitude_meters", "place_cell_latitude", "place_cell_longitude",
-        ])]),
+        // A record inserted or deleted carries its location with it.
+        (.location, [
+            .insert(tableName: "asset_metadata"), .delete(tableName: "asset_metadata"),
+            .update(tableName: "asset_metadata", columnNames: [
+                "primary_latitude", "primary_longitude", "primary_altitude_meters", "place_cell_latitude", "place_cell_longitude",
+            ]),
+        ]),
         (.placeNames, [
             .insert(tableName: "place_cell"), .delete(tableName: "place_cell"),
             .update(tableName: "place_cell", columnNames: ["cell_latitude", "cell_longitude", "country", "town", "language"]),
@@ -3975,7 +4026,7 @@ extension CatalogStore {
         }
         let rootIDs = roots.rowIDSnapshot()
         let reverted = try await database().write { db in
-            var reverted = 0
+            var reverted = CarriedWorkWrite()
             for record in reverting {
                 guard let rootID = rootIDs[record.to.libraryRootPath] else {
                     continue
@@ -3986,27 +4037,31 @@ extension CatalogStore {
                         sql: Self.setChoiceSQL,
                         arguments: [previous.rawValue, rootID, record.to.relativePath.rawValue]
                     )
-                    reverted += db.changesCount
+                    if db.changesCount > 0 {
+                        reverted.record(record)
+                    }
                 case let .edit(previousJSON):
-                    reverted += try Self.replaceEditRecipe(
+                    if try Self.replaceEditRecipe(
                         json: previousJSON,
                         rootID: rootID,
                         relativePath: record.to.relativePath.rawValue,
                         db: db
-                    ) ? 1 : 0
+                    ) {
+                        reverted.record(record)
+                    }
                 }
             }
             return reverted
         }
         // Forgotten only once written: a failed write leaves the record for a retry.
         carriedWorkByBatch[batch] = nil
-        if reverted > 0 {
-            notifyCatalogChanged(.changed(.all))
+        if !reverted.rows.isEmpty {
+            notifyCatalogChanged(.changed(reverted.facts, rows: .rows(reverted.rows)))
         }
         OtosLog.catalog.noticeOperation("catalog.duplicateCarry", phase: "reverted", fields: [
             "batch": "\(batch.unixMilliseconds)",
             "records": "\(records.count)",
-            "reverted": "\(reverted)",
+            "reverted": "\(reverted.rows.count)",
         ])
     }
 
@@ -4066,7 +4121,15 @@ extension CatalogStore {
             carriedWorkByBatch[batch] = carried
         }
         if !changed.isEmpty {
-            notifyCatalogChanged(.changed(.all))
+            // The rows it hid or showed, and the kept copies it carried work onto.
+            var wrote = CarriedWorkWrite()
+            for record in carried {
+                wrote.record(record)
+            }
+            notifyCatalogChanged(.changed(
+                CatalogChangedFacts.presence.union(wrote.facts),
+                rows: .rows(Set(changed).union(wrote.rows))
+            ))
         }
         OtosLog.catalog.noticeOperation(
             "catalog.pendingTrash",
@@ -4147,17 +4210,19 @@ extension CatalogStore {
             return false
         }
         let root = trashed.item.root.path
-        var changed = false
+        var changed: CatalogChangedFacts = []
         for restored in trashed.members {
             let path = restored.member.relativePath
             recordIndependentNamespaceMutation(root: root, scope: .file(path), fileAction: .upsert)
-            changed = await reconcileFile(
+            if case let .changed(facts) = await reconcileFile(
                 path,
                 action: .upsert,
                 root: root,
                 rootRowID: rootRowID,
                 witness: nil
-            ) == .changed || changed
+            ) {
+                changed.formUnion(facts)
+            }
         }
         let primaryPath = trashed.item.id.relativePath.rawValue
         let isBack: Bool
@@ -4176,8 +4241,9 @@ extension CatalogStore {
             ])
             isBack = false
         }
-        if changed || isBack {
-            notifyCatalogChanged(.changed(.all))
+        // A row back by an earlier write was announced by that write.
+        if !changed.isEmpty {
+            notifyCatalogChanged(.changed(changed))
         }
         OtosLog.catalog.noticeOperation("mediaTrash.undo", phase: "restored", fields: [
             "path": primaryPath,
@@ -5228,8 +5294,12 @@ extension CatalogStore {
         phases.lap("claimsMs")
         // An edit saved but not yet rendered into its thumbnail and preview when the last
         // process ended is enrichment's to render (ADR 0036).
-        try await dbQueue.write { db in
-            _ = try Self.releaseUnrenderedEdits(db: db)
+        // The load is a change to which roots the Store holds and reaches: every row's
+        // reach (`membership`, no row named). What its own writes changed joins it.
+        var loaded: CatalogChangedFacts = .membership
+        if try await dbQueue.write({ db in try Self.releaseUnrenderedEdits(db: db) }) {
+            // A render's stamp, which the render-signature trigger follows.
+            loaded.formUnion([.images, .detail, .duplicateFacts])
         }
         phases.lap("editsMs")
         // A still or video no decoder could read was read by this build's decoder or an
@@ -5241,6 +5311,12 @@ extension CatalogStore {
             try Self.releaseUndecodedByAnotherDecoder(still: stillDecoder, video: videoDecoder, db: db)
         }
         phases.lap("undecodableMs")
+        if releasedUndecodable.stills > 0 {
+            loaded.formUnion([.images, .detail, .duplicateFacts])
+        }
+        if releasedUndecodable.videos > 0 {
+            loaded.formUnion([.faces, .detail])
+        }
         OtosLog.catalog.noticeOperation("catalog.start", phase: "undecodableReleased", fields: [
             "stills": "\(releasedUndecodable.stills)", "stillDecoder": stillDecoder,
             "videos": "\(releasedUndecodable.videos)", "videoDecoder": videoDecoder,
@@ -5253,6 +5329,7 @@ extension CatalogStore {
         }
         phases.lap("awaitingMs")
         if clearedAwaiting > 0 {
+            loaded.formUnion(.presence)
             OtosLog.catalog.noticeOperation("catalog.start", phase: "clearedAwaitingPresence", fields: [
                 "count": "\(clearedAwaiting)",
             ])
@@ -5270,6 +5347,10 @@ extension CatalogStore {
         await initialLoadDidRead?()
         let normalizedRoots = await normalizeLoadedRoots(loadedRoots, dbWriter: dbQueue)
         phases.lap("normalizeMs")
+        // A root that moved renamed its rows' derived images (`updateLibraryRootPath`).
+        if normalizedRoots.map(\.path) != loadedRoots.map(\.path) {
+            loaded.insert(.images)
+        }
         let journaledRoots = try await reader(for: windowReads.lane).readFreeingConnection { db in
             try Set(Self.fetchAllActiveReorganizationComponents(db: db).map(\.libraryRootPath))
         }
@@ -5291,7 +5372,7 @@ extension CatalogStore {
         fields["migrationsMs"] = migrationRun.map { "\($0.milliseconds)" } ?? "unknown"
         OtosLog.catalog.noticeOperation("catalog.start", phase: "finish", fields: fields)
         ResourceCheckpoint.record("catalogOpen", storeUse: { self.use() })
-        notifyCatalogChanged(.changed(.all))
+        notifyCatalogChanged(.changed(loaded))
     }
 
     /// Times the catalog load's steps, each from the end of the one before.
@@ -6074,7 +6155,8 @@ extension CatalogStore {
         filesystemWatchingArmed.insert(path)
         watchRoot(path)
         enqueueScans([path], reason: .requested)
-        notifyCatalogChanged(.changed(.all))
+        // The root's own state moved (its removal ended); no row did.
+        notifyCatalogChanged(.changed(.membership, rows: .none))
     }
 
     /// Reorders library-kind roots, moving the one at `sourceIndex` (within the
@@ -6197,6 +6279,9 @@ extension CatalogStore {
         let lastSeenAt = wallClock()
         let dbQueue = try database()
         var lease: RootNamespaceMutationLease?
+        // What the attachment's writes changed beyond the root itself, which it announces as it
+        // finishes: a root that moved renamed its rows' derived images.
+        var wrote: CatalogChangedFacts = []
         defer {
             // Reached only on a throw: the attachment releases its lease before it finishes.
             if let lease {
@@ -6229,6 +6314,10 @@ extension CatalogStore {
             } else {
                 try await reuseRemovableRoot(existing, for: attachment, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
             }
+            if existing.path != attachment.path {
+                // Written whether or not the root was still the row once the move was written.
+                wrote.insert(.images)
+            }
             if tookOver {
                 break
             }
@@ -6238,12 +6327,14 @@ extension CatalogStore {
                 lease = nil
             }
         }
-        await markRetainedRowsAwaitingPresence(attachment, dbWriter: dbQueue)
+        if await markRetainedRowsAwaitingPresence(attachment, dbWriter: dbQueue) > 0 {
+            wrote.formUnion(.presence)
+        }
         if let held = lease {
             lease = nil
             releaseNamespaceMutationLease(held)
         }
-        await finishRemovableRootAttachment(attachment)
+        await finishRemovableRootAttachment(attachment, wrote: wrote)
     }
 
     /// Makes the staging folder of a source that stages its originals, the folder its root is.
@@ -6310,12 +6401,13 @@ extension CatalogStore {
     /// enumeration sees each file, so the grid fills as the source is read and never
     /// shows what it held last time. The completed read deletes what it never saw. A
     /// failed write is logged and the attachment goes on: the rows then show as last held.
+    /// Returns how many rows it marked.
     private func markRetainedRowsAwaitingPresence(
         _ attachment: RemovableRootAttachment,
         dbWriter: CatalogWriter
-    ) async {
+    ) async -> Int {
         guard let rootRowID = roots[attachment.path]?.rowID else {
-            return
+            return 0
         }
         let marked: Int
         do {
@@ -6327,13 +6419,14 @@ extension CatalogStore {
                 "rootPath": attachment.path.rawValue,
                 "error": String(describing: error),
             ])
-            return
+            return 0
         }
         OtosLog.catalog.noticeOperation("catalog.removable.attach", phase: "awaitingPresence", fields: [
             "rootPath": attachment.path.rawValue,
             "kind": attachment.kind.rawValue,
             "count": "\(marked)",
         ])
+        return marked
     }
 
     /// A source Otos knows by its identity, at its root's path or a new one. False when the
@@ -6409,7 +6502,8 @@ extension CatalogStore {
         ))
     }
 
-    private func finishRemovableRootAttachment(_ attachment: RemovableRootAttachment) async {
+    /// Makes the attached source available, announcing what `wrote` names with it.
+    private func finishRemovableRootAttachment(_ attachment: RemovableRootAttachment, wrote: CatalogChangedFacts) async {
         guard var state = roots[attachment.path] else {
             return
         }
@@ -6434,7 +6528,9 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.removable.attach phase=finish kind=\(attachment.kind.rawValue, privacy: .public) identity=\(attachment.identity, privacy: .public) rootPath=\(attachment.path.rawValue, privacy: .public) displayName=\(attachment.displayName, privacy: .public) capabilities=\(String(describing: attachment.capabilities), privacy: .public) deviceModel=\(attachment.deviceModel ?? "unknown", privacy: .public) volumeFormat=\(attachment.volumeFormat ?? "unknown", privacy: .public)"
         )
-        notifyCatalogChanged(.changed(.all))
+        // The root's row and its reach: every row it holds is in reach again (`membership`,
+        // no row named), with what the attachment's writes changed.
+        notifyCatalogChanged(.changed(CatalogChangedFacts.membership.union(wrote)))
         if attachment.enqueuesScan {
             enqueueScans([attachment.path], priority: .front, reason: .removable)
         }
@@ -6521,7 +6617,8 @@ extension CatalogStore {
             + "rootPath=\(root.path.rawValue) "
             + "capabilities=\(storedRoot.capabilities)"
         OtosLog.catalog.notice("\(message, privacy: .public)")
-        notifyCatalogChanged(.changed(.all))
+        // A root added with no rows yet: no row changed, nor which rows are in reach.
+        notifyCatalogChanged(.changed(.membership, rows: .none))
         watchRoot(root.path)
         enqueueScans([root.path], reason: .firstWalk)
     }
@@ -6622,7 +6719,8 @@ extension CatalogStore {
             "rootPath": path.rawValue,
             "server": serverURL.absoluteString,
         ])
-        notifyCatalogChanged(.changed(.all))
+        // A root added with no rows yet: no row changed, nor which rows are in reach.
+        notifyCatalogChanged(.changed(.membership, rows: .none))
         return path
     }
 
@@ -6769,7 +6867,10 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.removable.detach phase=finish identity=\(identity, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public) kind=\(root.kind.rawValue, privacy: .public) reason=\(reason.rawValue, privacy: .public)"
         )
-        notifyCatalogChanged(.changed(.all))
+        // The root's own state moved: its activity, ejectability and last-seen stamp. Its
+        // reach and the rows it released announced themselves (`setAvailability`,
+        // `releaseAwaitingPresence`).
+        notifyCatalogChanged(.changed(.membership, rows: .none))
         startNextScanIfNeeded()
     }
 
@@ -7126,7 +7227,7 @@ extension CatalogStore {
             )
             // A new row's hide is part of the new row; an existing one's is a change to it.
             if upsert != .inserted {
-                rows.recordUpdated(db.changesCount, of: id)
+                rows.recordChanged(db.changesCount, of: id, facts: .presence)
             }
             // The source's own facts of the row, none of them shown: its name for the item;
             // where it holds the item on its server, what a mirrored library file finds it by
@@ -7155,7 +7256,12 @@ extension CatalogStore {
                     arguments: [digest.data, rootRowID, file.relativePath.rawValue, digest.data]
                 )
                 if upsert != .inserted {
-                    rows.recordUpdated(db.changesCount, of: id)
+                    // Its digest, and which files are copies and the choice a copy takes,
+                    // which the copy-key triggers rewrite with it.
+                    rows.recordChanged(
+                        db.changesCount, of: id,
+                        facts: .digests(copiesChanged: true, digestsChanged: true, choicesJoined: true)
+                    )
                 } else if db.changesCount > 0,
                           let after = try DigestStanding.read(libraryRootID: rootRowID, relativePath: file.relativePath.rawValue, db: db)
                 {
@@ -7171,7 +7277,8 @@ extension CatalogStore {
             """).execute(
                 arguments: [size, rootRowID, item, size]
             )
-            rows.recordUnnamedUpdates(db.changesCount)
+            // A size is which rows exist as they are, and a copy-key input.
+            rows.recordUnnamedUpdates(db.changesCount, facts: [.membership, .copies, .choices, .detail])
             // A digest the source stated before it reported the size was stamped with no
             // size (-1); the size it reports now is of the same bytes.
             try db.cachedStatement(sql: """
@@ -7181,6 +7288,7 @@ extension CatalogStore {
             """).execute(
                 arguments: [rootRowID, item]
             )
+            rows.recordUnnamedUpdates(db.changesCount, facts: .digests(copiesChanged: true, digestsChanged: true, choicesJoined: true))
         }
         var purged: [ExistingAssetRow] = []
         let listedPaths = Set(changes.listed.map(\.file.relativePath))
@@ -7629,10 +7737,10 @@ extension CatalogStore {
         filesystemEventConsumer = nil
         filesystemWatchingStarted = false
         filesystemWatchingArmed.removeAll()
-        // This change follows no write: every subscriber re-reads a Store whose runtime state
-        // is gone. The coverage guard heard the shutdown, and does not hear this as a change
-        // announcing a write (`CatalogWriteAudit.shutDown`).
-        deliver(.changed(.all))
+        // This change follows no write: the roots' own state moved, every scan and watch
+        // ended, and no row changed. The coverage guard heard the shutdown, and does not hear
+        // this as a change announcing a write (`CatalogWriteAudit.shutDown`).
+        deliver(.changed(.membership, rows: .none))
     }
 }
 
@@ -8670,8 +8778,12 @@ private extension CatalogStore {
             } else {
                 bumpPlanRevision(for: scan.rootPath)
             }
-            if companionChanged || observation.skippedPackageCount > 0 {
-                notifyCatalogChanged(.changed(.all))
+            // Companions are which files a row lists with it; the packages a walk skipped
+            // are the root's own state.
+            if companionChanged {
+                notifyCatalogChanged(.changed(.membership))
+            } else if observation.skippedPackageCount > 0 {
+                notifyCatalogChanged(.changed(.membership, rows: .none))
             }
             OtosLog.catalog.info(
                 """
@@ -8857,7 +8969,7 @@ private extension CatalogStore {
         // The deletion names its rows and the Live Photo partners they leave, so an owner
         // that keeps a memory per asset lets go of these alone and asks the partners again;
         // the scan's end announces only that the root is idle again.
-        notifyCatalogChanged(.changed(.membership, rows: .rows(deleted)))
+        notifyCatalogChanged(.changed(.presence, rows: .rows(deleted)))
         await removal.perform()
         return missingRows.count
     }
@@ -9652,6 +9764,7 @@ private extension CatalogStore {
         let witness = ReconcileWitness(root: root, epoch: rootState.namespaceMutationEpoch)
         let started = ContinuousClock.now
         var changedCount = 0
+        var changed: CatalogChangedFacts = []
         var deferredCount = 0
         let ordered = files.keys.sorted(by: { $0.rawValue < $1.rawValue })
         for (index, path) in ordered.enumerated() {
@@ -9662,8 +9775,9 @@ private extension CatalogStore {
                 rootRowID: rootRowID,
                 witness: witness
             )
-            if case .changed = result {
+            if case let .changed(facts) = result {
                 changedCount += 1
+                changed.formUnion(facts)
             }
             if case .deferred = result {
                 var dirty = filesystemDirty[root] ?? FilesystemDirtyAccumulator()
@@ -9677,7 +9791,7 @@ private extension CatalogStore {
         }
         if changedCount > 0 {
             bumpNamespaceRevision(for: root)
-            notifyCatalogChanged(.changed(.all))
+            notifyCatalogChanged(.changed(changed))
         }
         let totalMs = DiagnosticsTiming.milliseconds(since: started)
         OtosLog.catalog.notice(
@@ -9902,9 +10016,10 @@ private extension CatalogStore {
 
     /// What one file reconcile did. `deferred`: the root changed (or a namespace owner
     /// took it) after this reconcile observed the file, so the observation may be stale
-    /// and nothing was written; the path stays dirty for the next pass.
+    /// and nothing was written; the path stays dirty for the next pass. `changed` names the
+    /// kinds of fact the write changed.
     private enum FileReconcileResult {
-        case changed
+        case changed(CatalogChangedFacts)
         case unchanged
         case deferred
     }
@@ -9988,12 +10103,12 @@ private extension CatalogStore {
             guard isCurrent(witness) else {
                 return .deferred
             }
-            let (changed, holdEnded) = try await dbQueue.write { db -> (Bool, Bool) in
+            let (changed, holdEnded) = try await dbQueue.write { db -> (CatalogChangedFacts, Bool) in
                 switch observed {
                 case let .media(scannedFile):
                     // A path that was a companion and became media must leave the
                     // companion table so identity stays exclusive.
-                    _ = try Self.deleteCompanionRow(
+                    let companionDeleted = try Self.deleteCompanionRow(
                         rootRowID: rootRowID,
                         relativePath: scannedFile.relativePath,
                         db: db
@@ -10018,7 +10133,9 @@ private extension CatalogStore {
                     let holdEnded = try EnrichmentClaimGateway.endDigestHold(
                         libraryRootID: rootRowID, relativePath: scannedFile.relativePath, db: db
                     )
-                    return (mediaChanged != .unchanged || pairingChanged, holdEnded)
+                    // Companions are which files a row lists with it (`membership`).
+                    let companionFacts: CatalogChangedFacts = companionDeleted || pairingChanged ? .membership : []
+                    return (mediaChanged.facts.union(companionFacts), holdEnded)
                 case let .companion(companion):
                     // A path that was media and became a companion must leave media.
                     let mediaDeleted = try Self.deleteAssetRow(
@@ -10046,13 +10163,17 @@ private extension CatalogStore {
                             db: db
                         ) || companionChanged
                     }
-                    return (mediaDeleted || companionChanged, false)
+                    var facts: CatalogChangedFacts = mediaDeleted ? .presence : []
+                    if companionChanged {
+                        facts.insert(.membership)
+                    }
+                    return (facts, false)
                 }
             }
             if holdEnded {
                 digestHoldEnded(MediaAssetID(libraryRootPath: root, relativePath: relativePath), reason: "fileEvent")
             }
-            return changed ? .changed : .unchanged
+            return changed.isEmpty ? .unchanged : .changed(changed)
         } catch {
             OtosLog.catalog.errorOperation("catalog.reconcile", phase: "upsertFailed", fields: [
                 "rootPath": root.rawValue,
@@ -10118,7 +10239,7 @@ private extension CatalogStore {
             ])
             return .unchanged
         }
-        return .changed
+        return .changed(.presence)
     }
 
     private func recordFilesystemEventDrop(root: LibraryRootPath, reason: String) async {
@@ -10251,7 +10372,9 @@ extension CatalogStore {
             "derivedImages": "\(derivedImagePaths.count)",
         ])
         bumpNamespaceRevision(for: operation.sourceRootPath)
-        notifyCatalogChanged(.changed(.all))
+        // The erased file's row and its companion went (`purgeGonePath`); the Live Photo
+        // partner it leaves is not named.
+        notifyCatalogChanged(.changed(.presence))
         // The write above runs on the actor, so the row's removal is applied with it, before
         // this first suspension; the files go after, off the actor.
         await erased.removal.perform()
@@ -10365,7 +10488,7 @@ extension CatalogStore {
         }
 
         let derivedFolder = derivedFolder
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        let upsert = try Self.writeWithJournalDurability(dbWriter) { db in
             var landedRendering: LandedRendering?
             if let rendering {
                 let staged = [rendering.thumbnail, rendering.preview].compactMap(\.self)
@@ -10399,7 +10522,7 @@ extension CatalogStore {
                     renderingOrigin = .owed
                 }
             }
-            try Self.settleImportedAsset(LandedImport(
+            let upsert = try Self.settleImportedAsset(LandedImport(
                 operation: operation,
                 destinationRootID: rootRowID,
                 sourceRootID: sourceRootID,
@@ -10410,12 +10533,17 @@ extension CatalogStore {
                 rendering: landedRendering
             ), db: db)
             try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
+            return upsert
         }
         if metadataOrigin != .reused || renderingOrigin != .reused {
             localBytesAwaitingProducts.append(destinationID)
         }
         _ = bumpNamespaceRevision(for: operation.destinationRootPath)
-        notifyCatalogChanged(.changed(.all))
+        // A row that moved to the copy's path left one this write does not name.
+        notifyCatalogChanged(.changed(
+            CatalogChangedFacts.settledImport.union(upsert.facts),
+            rows: upsert == .moved ? .unnamed : .rows([destinationID])
+        ))
         requestReconcile()
         OtosLog.catalog.noticeOperation("mediaOperation.settle", phase: "finish", fields: [
             "destination": operation.destinationRelativePath.rawValue,
@@ -10604,7 +10732,7 @@ extension CatalogStore {
             ])
             return
         }
-        var changed = false
+        var changed: CatalogChangedFacts = []
         for path in paths where path.succeeded {
             guard let rootRowID = roots[path.rootPath]?.rowID else {
                 continue
@@ -10629,7 +10757,7 @@ extension CatalogStore {
                         return db.changesCount > 0
                     }
                     if marked {
-                        changed = true
+                        changed.formUnion(.presence)
                         continue
                     }
                 } catch {
@@ -10642,14 +10770,16 @@ extension CatalogStore {
                     continue
                 }
             }
-            changed = await deleteCatalogedPath(
+            if case let .changed(facts) = await deleteCatalogedPath(
                 relativePath: path.relativePath,
                 rootRowID: rootRowID,
                 witness: nil
-            ) == .changed || changed
+            ) {
+                changed.formUnion(facts)
+            }
         }
-        if changed {
-            notifyCatalogChanged(.changed(.all))
+        if !changed.isEmpty {
+            notifyCatalogChanged(.changed(changed))
         }
     }
 
@@ -10869,7 +10999,9 @@ extension CatalogStore {
         // against this root replans. Reorg's own `rootRevision` stays the general
         // planRevision, which the occupancy bump also advances.
         bumpNamespaceRevision(for: settled.libraryRootPath)
-        notifyCatalogChanged(.changed(.all))
+        // Each row it moved, at the path it left and the path it took.
+        let moved = Set(settled.remaps.flatMap { [$0.oldID, $0.newID] })
+        notifyCatalogChanged(.changed(.movedRow, rows: moved.isEmpty ? .unnamed : .rows(moved)))
         OtosLog.catalog.notice(
             "op=reorganization.settle phase=finish rootPath=\(settled.libraryRootPath.rawValue, privacy: .public) remapCount=\(settled.remaps.count, privacy: .public) batch=\(settled.id, privacy: .public)"
         )

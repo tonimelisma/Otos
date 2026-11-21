@@ -232,7 +232,10 @@ extension CatalogStore {
     WHERE library_root_id = ? AND relative_path = ?
     """
 
-    static func settleImportedAsset(_ landed: LandedImport, db: Database) throws {
+    /// Returns what writing the copy's own row did (`ScannedFileUpsert`): a new row, or one the
+    /// copy's path, or a witness of its move, already held.
+    @discardableResult
+    static func settleImportedAsset(_ landed: LandedImport, db: Database) throws -> ScannedFileUpsert {
         let operation = landed.operation
         let relativePath = operation.destinationRelativePath
         let destinationRootID = landed.destinationRootID
@@ -250,7 +253,7 @@ extension CatalogStore {
         // equality (ARC-056): on a case-sensitive root `IMG_1.jpg` beside `img_1.jpg` is
         // another file, never a respelling of it.
         let capabilities = try storedCapabilities(rootRowID: destinationRootID, db: db)
-        _ = try upsertScannedFile(
+        let upsert = try upsertScannedFile(
             file,
             libraryRootPath: operation.destinationRootPath,
             libraryRootID: destinationRootID,
@@ -287,6 +290,7 @@ extension CatalogStore {
         for companion in landed.companions {
             try upsertCompanion(companion, libraryRootID: destinationRootID, capabilities: capabilities, db: db)
         }
+        return upsert
     }
 
     nonisolated static let reusableEnrichmentOverlaySQL = """

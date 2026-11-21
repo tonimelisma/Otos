@@ -16,8 +16,21 @@ nonisolated enum ScannedFileUpsert: Equatable, Sendable {
     /// A row that did not exist: it carries nothing Otos derives yet — no metadata (so
     /// no Live Photo pairing key), digest, rendering, faces, place or embedding.
     case inserted
-    /// A row that existed, whose filesystem facts, presence or path changed.
+    /// A row that existed, whose filesystem facts or presence changed in place.
     case updated
+    /// A row that existed took this file's path: a respelling, or a move a witness proved.
+    /// Every fact keyed by its path moved with it.
+    case moved
+
+    /// The kinds of fact the write changed.
+    var facts: CatalogChangedFacts {
+        switch self {
+        case .unchanged: []
+        case .inserted: .membership
+        case .updated: .fileFacts
+        case .moved: .movedRow
+        }
+    }
 }
 
 /// The rows one write changed, split by whether they existed before it. A new row carries
@@ -25,11 +38,10 @@ nonisolated enum ScannedFileUpsert: Equatable, Sendable {
 /// `.assetsAdded` and only what lists rows (the window, enrichment) takes it up — unless it
 /// came with a fact an owner derives from, which is announced as what it changed, naming
 /// those rows: a source's digest that makes the new row a copy of another (`.copies`,
-/// `recordInserted(_:carrying:)`). A change to an existing row's filesystem facts, presence
-/// or path can move any fact derived from it, so it is `.changed(.all)`, naming the rows
-/// when every one of them is known (`CatalogChangedRows`). A write to an existing row of facts
-/// it knows the kinds of — a source's own facts of an item it lists — is announced as those
-/// kinds, naming those rows (`recordChanged(_:of:facts:)`).
+/// `recordInserted(_:carrying:)`). A write to an existing row is announced as the kinds it
+/// changed — its file's facts, its presence, its path (`ScannedFileUpsert.facts`), or the kinds
+/// of the columns it wrote (`recordChanged(_:of:facts:)`) — naming the rows when every one of
+/// them is known (`CatalogChangedRows`).
 nonisolated struct CatalogRowChanges: Equatable, Sendable {
     private(set) var inserted = 0
     /// The existing rows changed, by asset.
@@ -39,9 +51,8 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
     /// What new rows carried that an owner derives from, and those rows.
     private(set) var insertedFacts: CatalogChangedFacts = []
     private(set) var insertedFactRows: Set<MediaAssetID> = []
-    /// What existing rows' writes of known kinds changed, and those rows.
+    /// What the writes to existing rows changed.
     private(set) var changedFacts: CatalogChangedFacts = []
-    private(set) var changedFactRows: Set<MediaAssetID> = []
 
     var updated: Int {
         updatedRows.count + unnamedUpdates
@@ -55,20 +66,28 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
             inserted += 1
         case .updated:
             updatedRows.insert(id)
+            changedFacts.formUnion(upsert.facts)
+        case .moved:
+            // The row it moved from is not named here.
+            unnamedUpdates += 1
+            changedFacts.formUnion(upsert.facts)
         }
     }
 
-    /// `id`'s existing row changed in a way `ScannedFileUpsert` does not describe (a source's
-    /// hide or digest, a purge), when `count`, the statement's changes, says it did.
-    mutating func recordUpdated(_ count: Int, of id: MediaAssetID) {
-        if count > 0 {
-            updatedRows.insert(id)
-        }
+    /// `id`'s existing row changed only in `facts`, when `count`, the statement's changes,
+    /// says it did: a source's hide (`presence`), its digest, its own facts of the item.
+    mutating func recordChanged(_ count: Int, of id: MediaAssetID, facts: CatalogChangedFacts) {
+        guard count > 0, !facts.isEmpty else { return }
+        updatedRows.insert(id)
+        changedFacts.formUnion(facts)
     }
 
     /// A deleted row and the Live Photo partners it leaves (`AssetRowDeletion`).
     mutating func recordDeleted(_ deletion: AssetRowDeletion, of relativePath: MediaRelativePath, in root: LibraryRootPath) {
-        updatedRows.formUnion(deletion.ids(of: relativePath, in: root))
+        let ids = deletion.ids(of: relativePath, in: root)
+        guard !ids.isEmpty else { return }
+        updatedRows.formUnion(ids)
+        changedFacts.formUnion(.presence)
     }
 
     /// `id`'s new row was written with `facts` an owner derives from (a digest that made it a
@@ -79,29 +98,19 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
         insertedFactRows.insert(id)
     }
 
-    /// Existing rows changed that the write does not name.
-    mutating func recordUnnamedUpdates(_ count: Int) {
-        unnamedUpdates += count
-    }
-
-    /// `id`'s existing row changed only in `facts`, when `count`, the statement's changes,
-    /// says it did.
-    mutating func recordChanged(_ count: Int, of id: MediaAssetID, facts: CatalogChangedFacts) {
+    /// `count` existing rows the write does not name changed in `facts`.
+    mutating func recordUnnamedUpdates(_ count: Int, facts: CatalogChangedFacts) {
         guard count > 0, !facts.isEmpty else { return }
+        unnamedUpdates += count
         changedFacts.formUnion(facts)
-        changedFactRows.insert(id)
     }
 
     var isEmpty: Bool {
-        inserted == 0 && updated == 0 && changedFacts.isEmpty
+        inserted == 0 && updated == 0
     }
 
     /// The changes to announce, in order; none when the write changed nothing.
     var notifications: [CatalogStoreChange] {
-        if updated > 0 {
-            let rows = updatedRows.union(insertedFactRows).union(changedFactRows)
-            return [.changed(.all, rows: unnamedUpdates == 0 ? .rows(rows) : .unnamed)]
-        }
         var changes: [CatalogStoreChange] = []
         if inserted > 0 {
             changes.append(.assetsAdded)
@@ -110,9 +119,25 @@ nonisolated struct CatalogRowChanges: Equatable, Sendable {
             }
         }
         if !changedFacts.isEmpty {
-            changes.append(.changed(changedFacts, rows: .rows(changedFactRows)))
+            changes.append(.changed(changedFacts, rows: unnamedUpdates == 0 ? .rows(updatedRows) : .unnamed))
         }
         return changes
+    }
+}
+
+/// What the duplicates act's carried work wrote onto kept copies, or its undo wrote back
+/// (ADR 0042): a choice is the user's choices; an edit is an edit (`CatalogChangedFacts.edit`)
+/// of a photo Duplicates holds, which names its facts beside it.
+nonisolated struct CarriedWorkWrite: Equatable, Sendable {
+    private(set) var facts: CatalogChangedFacts = []
+    private(set) var rows: Set<MediaAssetID> = []
+
+    mutating func record(_ carried: DuplicateCarryRecord) {
+        switch carried.previous {
+        case .choice: facts.insert(.choices)
+        case .edit: facts.formUnion(CatalogChangedFacts.edit.union(.duplicateFacts))
+        }
+        rows.insert(carried.to)
     }
 }
 

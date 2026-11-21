@@ -874,22 +874,25 @@ struct ImmichCatalogSyncTests {
         let scan = try await store.beginSourceListing(rootPath: fixture.rootPath)
         // The lease announces itself; each batch after it is one change of its own.
         #expect(await changes.waitForValues { $0.count == 1 } == [.changed(.membership, rows: .none)])
-        func apply(_ batch: SourceListingChanges) async throws -> CatalogStoreChange? {
+        /// The changes one batch sends, `count` of them, sent in one step.
+        func apply(_ batch: SourceListingChanges, sending count: Int = 1) async throws -> [CatalogStoreChange] {
             let before = await changes.count()
             try await store.applySourceListingChanges(batch, scan: scan)
-            return await changes.waitForValues { $0.count > before }.last
+            return await Array(changes.waitForValues { $0.count >= before + count }.dropFirst(before))
         }
 
-        #expect(try await apply(SourceListingChanges(listed: [item("a"), item("b", hidden: true)])) == .assetsAdded)
-        /// A change names the held rows it changed, and only a size reported by source item
-        /// cannot (`CatalogChangedRows`).
+        #expect(try await apply(SourceListingChanges(listed: [item("a"), item("b", hidden: true)])) == [.assetsAdded])
+        /// A change names the kinds it wrote and the held rows it changed, and only a size
+        /// reported by source item cannot name its rows (`CatalogChangedRows`).
         func row(_ id: String) -> MediaAssetID {
             MediaAssetID(libraryRootPath: fixture.rootPath, relativePath: MediaRelativePath(rawValue: "\(id)/IMG.JPG"))
         }
-        #expect(try await apply(SourceListingChanges(listed: [item("a", size: 20), item("c")])) == .changed(.all, rows: .rows([row("a")])))
-        #expect(try await apply(SourceListingChanges(listed: [item("c", hidden: true)])) == .changed(.all, rows: .rows([row("c")])))
-        #expect(try await apply(SourceListingChanges(sizesBySourceItem: ["b": 30])) == .changed(.all))
-        #expect(try await apply(SourceListingChanges(deletedSourceItems: ["a"])) == .changed(.all, rows: .rows([row("a")])))
+        #expect(try await apply(SourceListingChanges(listed: [item("a", size: 20), item("c")]), sending: 2) == [
+            .assetsAdded, .changed(.fileFacts, rows: .rows([row("a")])),
+        ])
+        #expect(try await apply(SourceListingChanges(listed: [item("c", hidden: true)])) == [.changed(.presence, rows: .rows([row("c")]))])
+        #expect(try await apply(SourceListingChanges(sizesBySourceItem: ["b": 30])) == [.changed([.membership, .copies, .choices, .detail])])
+        #expect(try await apply(SourceListingChanges(deletedSourceItems: ["a"])) == [.changed(.presence, rows: .rows([row("a")]))])
         await store.endSourceListing(scan: scan)
         await store.shutdown()
     }
@@ -987,7 +990,7 @@ struct ImmichCatalogSyncTests {
         }
         defer { recording.cancel() }
         try await store.applySourceListingChanges(SourceListingChanges(deletedSourceItems: ["still"]), scan: scan)
-        #expect(await changes.waitForValues { !$0.isEmpty }.first == .changed(.all, rows: .rows([still, movie])))
+        #expect(await changes.waitForValues { !$0.isEmpty }.first == .changed(.presence, rows: .rows([still, movie])))
         await store.endSourceListing(scan: scan)
         await store.shutdown()
     }

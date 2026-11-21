@@ -24,7 +24,8 @@ struct CatalogStoreTests {
 
         try await store.start(scansSavedLibraries: false)
         await recorder.waitForCount(1)
-        #expect(await recorder.snapshot().first == .changed(.all))
+        // The load names which roots the Store reaches, no row; an empty catalog writes nothing.
+        #expect(await recorder.snapshot().first == .changed(.membership))
 
         let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.isEmpty)

@@ -67,9 +67,19 @@ formats, grouping identifiers (Live Photo and burst), the user's choices and sta
 locations, place names, faces and who they are, copies (digests, render signatures, copies
 kept together), the search labels On This Day reads, and `detail`: what only a tile, a pane
 or enrichment reads. The Store names them at the write, the one place that knows what it
-changed; an enrichment batch compares what SQLite stored before and after each row, and a
-write that changes facts of many kinds at once (a scan, a root added or removed, a Trash
-move, an import) names `.all`. `.assetsAdded` is a scan, device-listing or source-listing
+changed; an enrichment batch compares what SQLite stored before and after each row. A write
+names the kinds it wrote and never more, through one named set per shape of write:
+`presence` for which existing rows are shown (a Trash mark or move, a put-back, a source's
+hide, a deletion, an attachment's awaiting rows), `fileFacts` for an existing row's file facts
+(its presence plus the date and kind they stand for until its bytes are read, the stacks, a
+face's tile and Duplicates' facts named beside them), `movedRow` for a row that took another
+path (every kind keyed by a row; only place names stay), `edit`, and `settledImport` for an
+imported copy. A change that follows no write names the runtime state it reports: a root's
+reach is `membership` with no row named (the catalog's load, an attachment), a root's own
+state is `membership` with `rows: .none` (a root added with no rows yet, a scan, listing or
+removal ending, a detach, the Store's shutdown), and an operation that wrote nothing sends
+nothing. Only `.libraryRemoved` stands for every kind: a removed library may have held any
+fact. `.assetsAdded` is a scan, device-listing or source-listing
 batch that only inserted rows: the type that says so is `ScannedFileUpsert.inserted`,
 tallied per write in `CatalogRowChanges`. A new row carries nothing Otos derives — no
 metadata, so no Live Photo pairing key, and no digest, rendering, faces, place or
@@ -97,7 +107,7 @@ through the Store's test seam `CatalogWriteAudit`, nil in the app).
   inserted and deleted again in it, and a row an `ON DELETE CASCADE` deletes with its parent
   (part of the parent's delete).
 - **The pairing rule.** A change the Store sends pays, on every commit before it, the kinds
-  it names (`.all` and `.libraryRemoved` every kind, `.assetsAdded` membership). A change sent
+  it names (`.libraryRemoved` every kind, `.assetsAdded` membership). A change sent
   after a commit is what a keyed re-read needs, so one sent at the end of the same operation
   pays, and so does one a later operation sends (`endSourceListing` after a listing's
   batches). A change sent before the commit pays nothing for it.
