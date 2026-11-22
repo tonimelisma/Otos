@@ -1,62 +1,73 @@
 # The first RAW9 development after an install
 
-2026-11-22. macOS 27.0 (26A434), Xcode 27.2, MacBookPro18,3. Installed Otos at 4eb13c44,
-read-only, on the owner's library. Command-line probes read one local ARW. Evidence tags:
-[M] measured here, [V] verified in logs or files.
+2026-11-22. macOS 27.0 (26A434), Xcode 27.2 (MacOSX27.2 SDK), MacBookPro18,3. Installed Otos
+at 4eb13c44, read-only, on the owner's library. Command-line probes read one local ARW.
+System logs were read with `log show` for `aned`, `ANECompilerService` and the processes
+named below. Evidence tags: [M] measured here, [V] verified in logs, files or headers.
 
 ## Question
 
 In the first session after `script/install.sh`, the first RAW9 development on the
 background lane logged `op=render.still decoder=raw9 developMs=62208`. The developments
 after it took 0.8–1.0 s. `op=render.rawResources phase=ready elapsedMs=0` came right
-before it, so fetching Apple's camera support was not the cost. Why did it take 62 s?
+before it, so fetching Apple's resources was not the cost. Why did it take 62 s, and can
+Otos remove it?
 
 ## Findings
 
-1. **It happens on the first launch after an install, not on every launch.**
-   - First session after the install (pid 28654): the RAW's support was ready at 10:34:48,
-     and its development finished at 10:35:47.922 [V].
-   - Next session, same build (pid 30461): the first RAW9 development took 1,081 ms, and
-     `search.encoder` loaded in 30 ms [V].
-2. **It ended with the search encoder's Core ML compile.**
-   - `op=search.encoder phase=loaded ms=43394` logged at 10:35:47.596, 0.33 s before the
-     RAW's finish [V].
-   - Between 10:35:46 and 10:35:51 the installed app's
-     `~/Library/Caches/net.melisma.Otos/com.apple.e5rt.e5bundlecache/26A434/` gained three
-     BNNS programs (343, 370 and 261 MB) and two ANE bundles [V].
-   - One ANE bundle is RAW9's own Core ML program: a probe that only develops a RAW9 wrote
-     the same bundle (`4CAECC91…5AEFE.bundle`) into its own cache [M]. Core Image compiles
-     RAW9's network into the cache of the process that develops it, as Otos's own models are.
-3. **An install makes every model compile again.**
-   - The compiled copy is keyed by the model file's identity (research
-     `2026-11-12-core-ml-compile-cache-in-test-runs.md`). Today's probe confirmed it again:
-     the same bytes deleted and copied back to the same path made a new entry, while a
-     touch or a relinked binary did not [M].
-   - `script/install.sh` replaces the bundle, so the first launch recompiles everything.
-   - The cache keeps one install's programs: 226 entries, one set per install since
-     2026-11-12, all empty but today's 928 MB [V].
-4. **The compile is fast with memory free and was slow at 10:35, under memory pressure.**
-   - In a fresh probe, a cold compile of `SigLIP2Text` took 0.5–0.6 s, and a RAW9
-     development beside it took 0.66–0.78 s [M].
-   - In the app at 10:34–10:35: `freeMB` was 95–137, the compressor held 4.3–5.1 GB and swap
-     4.6 GB, page-ins rose from 7,229 to 98,431 (about 1.4 GB), and Otos used 6.8 s of CPU
-     in 45 s [V]. The process was mostly waiting, not computing.
-
-## Unknown
-
-Whether RAW9's ANE compile waited on the search model's compile (one compile at a time in
-the process), or both were only starved by the memory pressure. The probes ran with memory
-free and showed no wait. Recreating the pressure would mean filling the owner's memory, so
-it was not tried.
+1. **RAW9 runs a network on the Neural Engine, and a process needs it compiled.**
+   - Core Image compiles RAW9's network into the developing process's Core ML cache
+     (`~/Library/Caches/<process>/com.apple.e5rt.e5bundlecache/…/main_ane`). A probe that
+     only develops a RAW9 wrote the same bundle (`4CAECC91…5AEFE.bundle`) that Otos wrote [M].
+   - In a fresh process the first image costs about 0.85 s (`outputImage`), and 0.09 s once
+     compiled [M].
+   - Otos's entry for it dates from 2026-11-14. Its compiled files were rewritten at
+     10:35:46 in the first session after the install, and not in the next session [V].
+2. **macOS compiles one Neural Engine network at a time, for every app.**
+   - At 10:34:48.35 Otos (pid 28654) asked `aned` for the RAW9 compile, and
+     `ANECompilerService` took the request at QoS 17 [V].
+   - The service was already compiling another network. That compile started at
+     10:33:09.8 for `mediaanalysisd` (pid 68649, the system's photo-analysis daemon). It
+     had mapped a 69 MB model at 10:32:53 and ran its text-processing tasks at QoS 17. The
+     compile ended at 10:35:45.873, when `mediaanalysisd` dropped its connection [V].
+   - Otos's compile started 236 ms later and took 0.83 s (10:35:46.109–10:35:46.941) [V].
+     So the render waited 57 s in the queue and spent under a second compiling.
+   - A probe reproduced the queue at 10:50: its request at QoS 25 waited 39 s behind a
+     QoS 17 compile already running (10:50:23–10:51:04) [V].
+3. **Inside Otos, Core ML started no other model while that compile waited.**
+   - The search encoder's load was admitted at 10:35:04. Otos's Core ML logged nothing
+     until 10:35:46.963, 22 ms after the RAW9 compile ended. Then it mapped the text model:
+     126 KB, then 86 MB at 10:35:47.133 [V]. `op=search.encoder phase=loaded ms=43394`
+     followed at 10:35:47.596.
+   - The face model loaded after it (`op=face.model phase=loaded` at 10:35:49) [V].
+   - With the system's compiler free, a probe compiled three cold models beside a RAW9
+     development with no visible wait [M]: whatever holds Otos's other loads behind the
+     RAW9 compile lasts only as long as that compile, under a second when the queue is free.
+4. **Otos's own models also compile again after every install.** Their cached copies are
+   keyed by the model file's identity, which `script/install.sh` replaces (research
+   `2026-11-12-core-ml-compile-cache-in-test-runs.md`). They compile on the CPU (BNNS),
+   not on the Neural Engine, in about 0.5 s each with memory free [M].
+5. **The SDK offers no way around the queue.** `CIRAWFilter` has no compute-unit or
+   priority option. The 27.2 SDK adds only
+   `downloadAllResources(timeout:completionHandler:)`, which fetches "every on-demand
+   demosaic/denoise model" [V]. `CIContextOption.priorityRequestLow` concerns GPU rendering
+   [V].
 
 ## Conclusion
 
-A first RAW9 development pays its Core ML compile once per install, beside every model
-Otos loads. On a Mac with memory free that costs under a second; under memory pressure, on
-2026-11-22, it cost a minute. An installed user pays it once per update; the owner pays it
-on the first launch after each `script/install.sh`. Nothing in Otos holds the cache's key:
-the compiled programs are Core ML's own, in the process's Caches (2026-11-16 research
-`first-search-while-the-encoder-loads`). So there is no Otos change to make, and the
-background lane's minute is not a user-facing wait. A RAW the user opens goes through the
-interactive lane. If one waits like this, that is a new finding, measured with
-`op=render.still lane=interactive`.
+The minute is macOS's: RAW9's Neural Engine network needs compiling once per process
+cache, and macOS's single Neural Engine compiler was busy for 2.5 minutes with the
+photo-analysis daemon. Otos's own compile took 0.83 s. While it waited, Core ML in Otos
+held the search and face models too.
+
+Otos has no lever that removes this:
+- it cannot reorder or preempt another app's compile;
+- it cannot move RAW9 off the Neural Engine;
+- a warm-up RAW9 development at launch would join the same queue.
+
+Holding the first RAW9 development until Otos's own models load was rejected. It would
+delay every first RAW to save a model load that is already fast whenever the system's
+compiler is free, and it guesses at the queue's state rather than reading it. No Otos change.
+
+The render was on the background lane; the photo kept its thumbnail. A RAW the user
+opens in such a minute would wait on the same queue (`op=render.still lane=interactive`).

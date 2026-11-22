@@ -16,7 +16,10 @@ fetch cost when it is already there, and how should a failed fetch be handled?
   current decoderVersion, if they aren't already present". It reports once, with nil on
   success "whether or not a download was actually needed", or an error when the download
   failed or the timeout elapsed, on a queue of Core Image's choosing [V,
-  `CoreImage.framework/Headers/CIRAWFilter.h`].
+  `CoreImage.framework/Headers/CIRAWFilter.h`]. The MacOSX27.2 SDK adds
+  `downloadAllResources(timeout:completionHandler:)`, which "downloads every on-demand
+  demosaic/denoise model that may be used", not scoped to one file [V]: what a filter
+  fetches is RAW9's demosaic and denoise model for its camera.
 - **The resources are per camera and not part of the OS.** They are MobileAsset assets
   of type `com_apple_MobileAsset_RawCamera_Camera` under `/System/Library/AssetsV2/`. On the
   owner's Mac two are installed, both for the Sony ILCE-6700 (`arw.sony.394`,
