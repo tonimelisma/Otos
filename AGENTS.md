@@ -515,22 +515,19 @@ unchanged, the production-data rule included.
 
   declaring `writes: ["~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex",
   "~/Library/Developer/Otos/SharedModels"]`, the shared compilation cache and Core ML
-  models (`script/lib/xcode.sh`). `uses: ["open"]` is for the app icon: exporting the
+  models (`script/lib/xcode.sh`). `uses: ["open"]` is for the tests (below) and the app
+  icon: exporting the
   Icon Composer document `Otos/Otos.icon` needs LaunchServices, and without it
   `CompileAssetCatalogVariant` fails with "Failed to create a catalog from the Icon
   Studio document". Latchkey's shell writes only to its scratch folder, the folder it
   runs in, Downloads, package caches and declared `writes`, and builds work there also
-  while the Mac is locked. Latchkey (0.8.207+) turns off xcodebuild's own sandboxes,
-  which macOS cannot start inside its fence, through the `xcodebuild` wrapper it puts on
-  `PATH` (so scripts call `xcodebuild` by name, never `/usr/bin/xcodebuild`), and gives
-  each job its own `ibtoold`, stopped with the job. `latchkey-check.sh` seeds the
-  resolved packages and filters SwiftLint's warnings; its header says why. With
-  Latchkey 0.8.207 the build passes there, but the suite does not yet:
-  `DiskEjectorLiveDiskImageTests` (it attaches a disk image) and
-  `ImmichClientTests/aSessionTokenRoundTripsThroughTheKeychain` fail inside the fence,
-  and `BackgroundOwnersIdleTests` never settles there, so `check.sh`'s stall detector
-  ends the run. Until those run inside the fence, a cloud session's test result is a
-  Taylor-only step: a local session runs `script/check.sh` on the branch. A clone's
+  while the Mac is locked. Latchkey (0.8.211+) owns what its fence needs from Xcode:
+  the `xcodebuild` wrapper it puts on `PATH` turns off xcodebuild's own sandboxes, which
+  macOS cannot start inside the fence (so scripts call `xcodebuild` by name, never
+  `/usr/bin/xcodebuild`); each job gets its own `ibtoold`, stopped with the job; and an
+  `xcodebuild test` or `test-without-building` runs its tests outside the fence through
+  Latchkey's launcher, which is why the job declares `uses: ["open"]`. `latchkey-check.sh` seeds the
+  resolved packages and filters SwiftLint's warnings; its header says why. A clone's
   `op=perf.status` always reads `reason=neverRun`, because the weekly record lives in a
   checkout's git folder; the line that counts is `script/perf.sh status` run with
   `folder: "~/Development/Otos"`.

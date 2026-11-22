@@ -11,8 +11,9 @@
 # a script as it runs, so a script must not delete itself.
 #
 # Latchkey owns what its fence needs from Xcode: its xcodebuild wrapper and Xcode settings
-# turn off xcodebuild's own sandboxes, and each job gets its own ibtoold, stopped with the
-# job. This adds only what is Otos's:
+# turn off xcodebuild's own sandboxes, each job gets its own ibtoold, stopped with the job,
+# and the tests of `xcodebuild test-without-building` run outside the fence through
+# Latchkey's launcher. This adds only what is Otos's:
 # - the primary checkout's resolved packages, as an APFS clone: a plain clone is no
 #   worktree, so script/lib/xcode.sh does not seed them, and resolving GRDB's submodule
 #   over HTTPS has hung.
