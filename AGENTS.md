@@ -503,29 +503,34 @@ unchanged, the production-data rule included.
   authority, the `guard-*` scripts and SwiftLint. A static-tier tree is verified in
   full; a full-tier tree ends `check: INCOMPLETE` (`phase=gatesOnly reason=noXcode`),
   and its verification is the run on the Mac.
-- **On the Mac.** `shell_run` on the MacBook with `keep_minutes` long enough to read the
-  result, then `shell_check` the job until it finishes (a job runs on past the 30 s
-  wait). The command clones the pushed branch into Latchkey's scratch folder, borrowing
-  the primary checkout's git objects, runs `script/latchkey-check.sh` (which runs
-  `script/check.sh` and passes it its arguments, `--only <Suite>` included), and removes
-  the clone, since the scratch folder goes to the Trash and a Trash still fills the disk:
+- **On the Mac.** `shell_run` on the MacBook with `uses: ["open"]` and `keep_minutes`
+  long enough to read the result, then `shell_check` the job until it finishes (a job
+  runs on past the 30 s wait). The command clones the pushed branch into Latchkey's
+  scratch folder, borrowing the primary checkout's git objects, runs
+  `script/latchkey-check.sh` (which runs `script/check.sh` and passes it its arguments,
+  `--only <Suite>` included), and removes the clone, since the scratch folder goes to the
+  Trash and a Trash still fills the disk:
 
       cd "$LATCHKEY_SCRATCH" && git clone -q --reference ~/Development/Otos --branch <branch> https://github.com/tonimelisma/Otos.git o && o/script/latchkey-check.sh; rc=$?; rm -rf o; exit $rc
 
   declaring `writes: ["~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex",
   "~/Library/Developer/Otos/SharedModels"]`, the shared compilation cache and Core ML
-  models (`script/lib/xcode.sh`). Latchkey's shell writes only to its scratch folder, the
-  folder it runs in, Downloads, package caches and declared `writes`, and builds work
-  there also while the Mac is locked. macOS cannot start a tool's own sandbox inside
-  Latchkey's: Latchkey's `xcodebuild` wrapper turns off SwiftPM's (so scripts call
-  `xcodebuild` by name, never `/usr/bin/xcodebuild`), and `latchkey-check.sh` turns off
-  Xcode's task sandbox, seeds the resolved packages, stops the `ibtoold` its run started
-  (one left behind keeps the job's fence and breaks every later build on the Mac), and
-  filters SwiftLint's warnings; its header says why each is there. With Latchkey
-  0.8.202 the build still stops at `CompileAssetCatalogVariant`: Xcode's `ibtoold`,
-  started from inside the fence, cannot write its output. Until Latchkey fixes that, a
-  cloud session's build and tests are a Taylor-only step (a local session runs
-  `script/check.sh` on the branch). A clone's
+  models (`script/lib/xcode.sh`). `uses: ["open"]` is for the app icon: exporting the
+  Icon Composer document `Otos/Otos.icon` needs LaunchServices, and without it
+  `CompileAssetCatalogVariant` fails with "Failed to create a catalog from the Icon
+  Studio document". Latchkey's shell writes only to its scratch folder, the folder it
+  runs in, Downloads, package caches and declared `writes`, and builds work there also
+  while the Mac is locked. Latchkey (0.8.207+) turns off xcodebuild's own sandboxes,
+  which macOS cannot start inside its fence, through the `xcodebuild` wrapper it puts on
+  `PATH` (so scripts call `xcodebuild` by name, never `/usr/bin/xcodebuild`), and gives
+  each job its own `ibtoold`, stopped with the job. `latchkey-check.sh` seeds the
+  resolved packages and filters SwiftLint's warnings; its header says why. With
+  Latchkey 0.8.207 the build passes there, but the suite does not yet:
+  `DiskEjectorLiveDiskImageTests` (it attaches a disk image) and
+  `ImmichClientTests/aSessionTokenRoundTripsThroughTheKeychain` fail inside the fence,
+  and `BackgroundOwnersIdleTests` never settles there, so `check.sh`'s stall detector
+  ends the run. Until those run inside the fence, a cloud session's test result is a
+  Taylor-only step: a local session runs `script/check.sh` on the branch. A clone's
   `op=perf.status` always reads `reason=neverRun`, because the weekly record lives in a
   checkout's git folder; the line that counts is `script/perf.sh status` run with
   `folder: "~/Development/Otos"`.
@@ -537,11 +542,9 @@ unchanged, the production-data rule included.
   app's too), confirm it is gone, and remove the clone.
 - **Merging and the DoD** are unchanged. After the merge, `script/install.sh` runs
   through `shell_run` with `folder: "~/Development/Otos"` after `git pull --ff-only`,
-  declaring `writes: ["/Applications"]` and `uses: ["open"]`; it needs the task-sandbox
-  wrapper and the `ibtoold` teardown `latchkey-check.sh` gives a check, so until
-  Latchkey's wrapper turns off the task sandbox and stops what a job leaves running, it
-  is a Taylor-only step the DoD report names (Latchkey's shell also cannot run the
-  AppleScript that quits a running Otos).
+  declaring `writes: ["/Applications"]` and `uses: ["open"]`. Latchkey's shell cannot
+  run the AppleScript that quits a running Otos, so while the installed Otos runs, the
+  install is a Taylor-only step the DoD report names.
 
 ## Documentation
 
