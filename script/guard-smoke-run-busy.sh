@@ -16,7 +16,9 @@ self_test() {
   has_active_operational_work "$db" || { echo "active reorganization fixture reported idle" >&2; return 1; }
   corrupt="$d/corrupt.sqlite"; printf 'not sqlite' > "$corrupt"
   has_active_operational_work "$corrupt" || { echo "corrupt fixture reported idle" >&2; return 1; }
-  fake_path="$d/no-sqlite"; mkdir "$fake_path"; PATH="$fake_path" has_active_operational_work "$db" || { echo "missing sqlite3 reported idle" >&2; return 1; }
+  # A PATH assignment in a subshell, not a `PATH=… function` prefix: only an assignment clears
+  # bash's command hash, so the prefix form still found sqlite3 and tested the failed read.
+  fake_path="$d/no-sqlite"; mkdir "$fake_path"; (PATH="$fake_path"; has_active_operational_work "$db") || { echo "missing sqlite3 reported idle" >&2; return 1; }
   is_import_active "$db"; echo "guard-smoke-run-busy self-test: clean oracle"
 }
 case "${1:-self-test}" in
