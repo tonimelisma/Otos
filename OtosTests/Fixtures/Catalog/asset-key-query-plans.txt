@@ -506,15 +506,6 @@ SEARCH asset USING INDEX idx_media_asset_source_path_sha1 (library_root_id=? AND
 == EnrichmentClaimGateway.releaseEnrichmentClaimSQL
 SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
 
-== EnrichmentClaimGateway.holdDigestForLocalBytesSQL
-SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
-
-== EnrichmentClaimGateway.endDigestHoldSQL
-SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
-
-== EnrichmentClaimGateway.holdsDigestHoldSQL
-SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
-
 == PreviewFaceSQL.keyedCandidateSQL
 SEARCH media_asset USING INDEX sqlite_autoindex_media_asset_1 (library_root_id=? AND relative_path=?)
 

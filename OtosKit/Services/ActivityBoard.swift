@@ -57,9 +57,6 @@ nonisolated enum ActivityWait: Equatable, Sendable {
     case paused(BackgroundHold)
     /// It failed and waits to try again: a backoff wake, or rows paced after a failed read.
     case retrying
-    /// Rows wait for their originals to be on this Mac (`digestAwaitsLocalBytes`); nil
-    /// when the count could not be read.
-    case originals(count: Int?)
 }
 
 /// What one kind is doing, as of the board's last round.
@@ -177,7 +174,6 @@ actor ActivityBoard {
         // An unknown count is still rows held.
         for rows in status.held where rows.count.map({ $0 > 0 }) ?? true {
             switch rows.waitingFor {
-            case .digestAwaitsLocalBytes: return .originals(count: rows.count)
             case .pacing: return .retrying
             }
         }

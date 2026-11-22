@@ -1066,7 +1066,7 @@ def owners_at_end(events):
     }
 
 
-HELD_LABELS = {"digestAwaitsLocalBytes": "digest waits for local bytes", "pacing": "paced, claim held until the pacing passes"}
+HELD_LABELS = {"pacing": "paced, claim held until the pacing passes"}
 
 
 def describe_pending(owner):

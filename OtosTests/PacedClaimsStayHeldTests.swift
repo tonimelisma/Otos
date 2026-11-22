@@ -65,31 +65,20 @@ struct PacedClaimsStayHeldTests {
         await store.shutdown()
     }
 
-    /// The session's shape (2026-11-18): cloud-only library rows that owe only their digest,
-    /// held by the Store, and a video whose enrichment writes its products but cannot read its
-    /// faces — written, still owing, and paced. Every pass after it, woken by each completion,
-    /// finds the video held: it is read once, claimed once more to be held, and nothing is
-    /// downloaded.
+    /// The session's shape (2026-11-18): a video whose enrichment writes its products but cannot
+    /// read its faces — written, still owing, and paced. Every pass after it, woken by each
+    /// completion, finds the video held: it is read once, claimed once more to be held, and
+    /// nothing is downloaded.
     @Test func aVideoWhoseFacesWentUnreadIsNotClaimedByEveryLaterPass() async throws {
         let root = try makeTestDirectory().appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let files: [(relativeName: String, byteSize: Int64, contentTypeIdentifier: String)] =
-            (0 ..< 3).map { ("held-\($0).jpg", 100, "public.jpeg") } + [("clip.mov", 100, "com.apple.quicktime-movie")]
+            [("clip.mov", 100, "com.apple.quicktime-movie")]
         let store = makeTestStore(location: .inMemory, scanner: fixedScanner(files))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 4 }
-        let held = scanned.testAssets.filter { $0.relativePath.rawValue.hasPrefix("held-") }
-        let video = try #require(scanned.testAssets.first { $0.relativePath.rawValue == "clip.mov" }?.id)
-        // The held rows owe only their digest, from bytes once local and now evicted.
-        #expect(await store.applyEnrichmentBatch(held.map { asset in
-            EnrichmentResult(
-                id: asset.id,
-                metadata: EnrichedMetadata(metadata: AssetMetadata(), kind: nil, format: nil),
-                rendering: EnrichedRendering(thumbnailPath: "t.jpg"),
-                sourceSize: 100, sourceMTimeSeconds: 1000, contentHash: nil
-            )
-        }) == .applied(count: held.count))
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let video = try #require(scanned.testAssets.first?.id)
 
         let downloads = PacedCounter()
         let videoReads = PacedCounter()
@@ -109,7 +98,7 @@ struct PacedClaimsStayHeldTests {
                 await downloads.count()
                 return .testMaterialized
             },
-            originalStatus: { url in url.lastPathComponent.hasPrefix("held-") ? .dataless : .materialized }
+            originalStatus: { _ in .materialized }
         )
         await coordinator.start()
         try await waitUntil {
@@ -130,8 +119,7 @@ struct PacedClaimsStayHeldTests {
         #expect(after.rows == settled.rows, "no later pass claims the paced video, or any row")
         #expect(after.written == settled.written, "and none gives a claim back")
         #expect(await videoReads.total == 1, "the video is read once")
-        #expect(await downloads.total == 0, "a digest alone downloads nothing")
-        #expect(await coordinator.heldRows().first { $0.waitingFor == .digestAwaitsLocalBytes }?.count == held.count)
+        #expect(await downloads.total == 0, "nothing is downloaded")
         await coordinator.shutdown()
         await store.shutdown()
     }

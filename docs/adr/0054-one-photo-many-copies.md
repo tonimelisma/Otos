@@ -121,7 +121,7 @@ is the question every copy answers, and the copies' rule is "identical copies ar
 - Both rows have a current digest: they agree when the digests are equal.
 - Otherwise the asset must be listed with the file's current size and whole-second
   modification time: rsync's quick check, on the exact path. A file whose digest is not read
-  yet — a cloud-only one, whose digest waits for its bytes to be local (ADR 0009 §12) — agrees
+  yet — a cloud-only one, whose download for its digest has not come yet (ADR 0009 §12) — agrees
   this way with no byte read.
 - A pair whose versions differ — the file edited and not yet read again by the server, or a
   digest that disagrees — is two photos, each shown where it is, until a listing or a read

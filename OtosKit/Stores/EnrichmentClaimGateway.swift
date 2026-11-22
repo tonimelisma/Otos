@@ -13,16 +13,11 @@ import GRDB
 /// catalog, which is the one point where the previous owner is known to be gone. No
 /// expiry stands in for "the claimant is still alive".
 ///
-/// `enrichment_claimed` holds one of two marks (`EnrichmentClaimMark`): a row claimed by
-/// the coordinator, or a row whose only owed product is its digest and whose original is
-/// not local, held by the Store until its bytes are (ADR 0009 §12). Both keep the row out of
-/// every claim, and both are process facts the load clears.
+/// `enrichment_claimed` holds one mark (`EnrichmentClaimMark`): a row claimed by the
+/// coordinator, out of every other claim until it releases it; a process fact the load clears.
 nonisolated enum EnrichmentClaimMark {
     /// Claimed by the enrichment coordinator, which releases it.
     static let claimed = 1
-    /// Its digest waits for the original's bytes to be local; the Store releases it on the
-    /// fact that ends the wait (`CatalogStore.endDigestHolds`).
-    static let digestAwaitsLocalBytes = 2
 }
 
 nonisolated enum EnrichmentClaimGateway {
@@ -309,65 +304,6 @@ nonisolated enum EnrichmentClaimGateway {
             )
         }
     }
-
-    static let holdDigestForLocalBytesSQL = """
-    UPDATE media_asset SET enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
-    WHERE \(AssetKey.exactText())
-      AND enrichment_claimed = \(EnrichmentClaimMark.claimed)
-    """
-
-    /// Turns the coordinator's claim on each of `ids` into a digest hold
-    /// (`EnrichmentClaimMark.digestAwaitsLocalBytes`), and returns the rows it held: a row
-    /// whose claim went meanwhile (a Trash move, a root's release) is not held.
-    static func holdDigestsForLocalBytes(
-        ids: [MediaAssetID],
-        rootIDsByPath: [LibraryRootPath: Int64],
-        db: Database
-    ) throws -> [MediaAssetID] {
-        try ids.filter { id in
-            guard let rootID = rootIDsByPath[id.libraryRootPath] else { return false }
-            try db.cachedStatement(sql: Self.holdDigestForLocalBytesSQL).execute(
-                arguments: AssetKey(rootID: rootID, path: id.relativePath).arguments
-            )
-            return db.changesCount > 0
-        }
-    }
-
-    static let endDigestHoldSQL = """
-    UPDATE media_asset SET enrichment_claimed = NULL
-    WHERE \(AssetKey.exactText())
-      AND enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
-    """
-
-    /// Ends the digest hold of the row at `relativePath`, if it holds one: whether it did.
-    /// Any other claim is left to its owner.
-    static func endDigestHold(libraryRootID: Int64, relativePath: MediaRelativePath, db: Database) throws -> Bool {
-        try db.cachedStatement(sql: endDigestHoldSQL).execute(
-            arguments: AssetKey(rootID: libraryRootID, path: relativePath).arguments
-        )
-        return db.changesCount > 0
-    }
-
-    static let holdsDigestHoldSQL = """
-    SELECT enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
-    FROM media_asset WHERE \(AssetKey.exactText())
-    """
-
-    /// Whether the row at `relativePath` holds a digest hold.
-    static func holdsDigestHold(libraryRootID: Int64, relativePath: MediaRelativePath, db: Database) throws -> Bool {
-        try Bool.fetchOne(
-            db,
-            sql: holdsDigestHoldSQL,
-            arguments: AssetKey(rootID: libraryRootID, path: relativePath).arguments
-        ) ?? false
-    }
-
-    /// How many rows hold a digest hold, through `idx_media_asset_enrichment_claimed` (the
-    /// rows claimed or held, never every row).
-    static let digestHoldCountSQL = """
-    SELECT COUNT(*) FROM media_asset INDEXED BY idx_media_asset_enrichment_claimed
-    WHERE enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes)
-    """
 
     /// One row `demandSources` found, with its current byte size.
     struct DemandSource: Sendable {

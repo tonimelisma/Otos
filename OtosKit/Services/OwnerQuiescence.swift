@@ -169,8 +169,6 @@ nonisolated enum LaunchSettlement: String, Sendable, Comparable {
 nonisolated struct OwnerHeldRows: Equatable, Sendable {
     /// What held rows wait for; the raw value is the log's name.
     nonisolated enum Reason: String, Sendable {
-        /// Their digest waits for the original's bytes on this Mac (ADR 0009 §12).
-        case digestAwaitsLocalBytes
         /// Their claim waits out the pacing after a failed read.
         case pacing
     }

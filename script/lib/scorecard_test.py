@@ -856,20 +856,20 @@ class SessionKindTests(unittest.TestCase):
     def test_rows_held_for_a_fact_outside_their_owner_are_counted_at_the_sessions_end(self):
         lines = self.LAUNCH[:-1] + [
             line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=none quiescent=14"),
-            line(46.0, "op=owners.held phase=sessionEnd count=3219 owner=enrichment waitingFor=digestAwaitsLocalBytes"),
+            line(46.0, "op=owners.held phase=sessionEnd count=3219 owner=enrichment waitingFor=pacing"),
             line(46.6, "op=tour phase=finish outcome=finished"),
         ]
         report, _, text = run(lines)
         self.assertEqual(report["ownersAtEnd"]["held"],
-                         [{"owner": "enrichment", "waitingFor": "digestAwaitsLocalBytes", "count": 3219}])
-        self.assertIn("held at sessionEnd: digest waits for local bytes: 3219 (enrichment, op=owners.held)", text)
+                         [{"owner": "enrichment", "waitingFor": "pacing", "count": 3219}])
+        self.assertIn("held at sessionEnd: paced, claim held until the pacing passes: 3219 (enrichment, op=owners.held)", text)
         # A count the build could not read is unknown, never zero.
         unknown = self.LAUNCH[:-1] + [
             line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=none quiescent=14"),
-            line(46.0, "op=owners.held phase=sessionEnd count=unknown owner=enrichment waitingFor=digestAwaitsLocalBytes"),
+            line(46.0, "op=owners.held phase=sessionEnd count=unknown owner=enrichment waitingFor=pacing"),
             line(46.6, "op=tour phase=finish outcome=finished"),
         ]
-        self.assertIn("digest waits for local bytes: - (enrichment", run(unknown)[2])
+        self.assertIn("paced, claim held until the pacing passes: - (enrichment", run(unknown)[2])
         # An older build logs no held line, and says so.
         older = self.LAUNCH[:-1] + [
             line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=none quiescent=14"),

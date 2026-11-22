@@ -170,7 +170,7 @@ struct ActivityBoardTests {
         await board.shutdown()
     }
 
-    /// An owner at rest that holds rows for their originals, or waits to try again, waits;
+    /// An owner at rest that holds rows paced after a failed read, or waits out a backoff, waits;
     /// once it holds none and no wake is armed, it is up to date.
     @Test func anOwnerAtRestWaitsOnWhatItHoldsAndIsUpToDateWithoutIt() async {
         let board = ActivityBoard()
@@ -182,19 +182,16 @@ struct ActivityBoardTests {
         )
         _ = await published.newest { $0.watching }
 
-        await enrichment.holdRows([
-            OwnerHeldRows(waitingFor: .digestAwaitsLocalBytes, count: 2999),
-            OwnerHeldRows(waitingFor: .pacing, count: 0),
-        ])
+        await enrichment.holdRows([OwnerHeldRows(waitingFor: .pacing, count: 3)])
         await places.backOff(OwnerWake(kind: .backoff, at: ContinuousClock.now.advanced(by: .seconds(60))))
         board.ring()
-        let waiting = await published.newest { $0.entries.last?.state == .waiting(.retrying) }
+        let waiting = await published.newest { $0.entries.allSatisfy { $0.state == .waiting(.retrying) } }
         #expect(waiting.entries == [
-            ActivityEntry(kind: .readingPhotos, state: .waiting(.originals(count: 2999))),
+            ActivityEntry(kind: .readingPhotos, state: .waiting(.retrying)),
             ActivityEntry(kind: .namingPlaces, state: .waiting(.retrying)),
         ])
 
-        await enrichment.holdRows([OwnerHeldRows(waitingFor: .digestAwaitsLocalBytes, count: 0)])
+        await enrichment.holdRows([OwnerHeldRows(waitingFor: .pacing, count: 0)])
         await places.backOff(nil)
         board.ring()
         let upToDate = await published.newest { $0.entries.allSatisfy { $0.state == .upToDate } }
@@ -230,7 +227,7 @@ struct ActivityPresentationTests {
     /// and counts the rest.
     @Test func eachRowSaysWhetherItWorksWaitsOrIsUpToDate() {
         let snapshot = ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .readingPhotos, state: .waiting(.originals(count: 2999))),
+            ActivityEntry(kind: .readingPhotos, state: .waiting(.retrying)),
             ActivityEntry(kind: .findingFaces, state: .working(since: now.addingTimeInterval(-600))),
             ActivityEntry(kind: .namingPlaces, state: .upToDate),
             ActivityEntry(kind: .preparingSearch, state: .working(since: now.addingTimeInterval(-3600))),
@@ -243,7 +240,7 @@ struct ActivityPresentationTests {
         #expect(presentation.header == "Working on 2 things")
         #expect(presentation.rows.map(\.title) == ["Photos", "Faces", "Places", "Search", "Descriptions"])
         #expect(presentation.rows.map(\.detail) == [
-            "Waiting for 2,999 originals", "Working, 8,412 photos to check", "Up to date", "Working",
+            "Waiting to try again", "Working, 8,412 photos to check", "Up to date", "Working",
             "Paused in Low Power Mode",
         ])
         #expect(presentation.rows.map(\.status) == [.waiting, .working, .upToDate, .working, .waiting])
@@ -252,11 +249,11 @@ struct ActivityPresentationTests {
 
     @Test func withNothingWorkingTheLineSaysWhatWaits() {
         let snapshot = ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .readingPhotos, state: .waiting(.originals(count: 1))),
+            ActivityEntry(kind: .readingPhotos, state: .waiting(.paused(.thermal))),
             ActivityEntry(kind: .namingPlaces, state: .waiting(.retrying)),
         ])
         let presentation = ActivityPresentation.map(snapshot)
-        #expect(presentation.line == "Photos: waiting for 1 original")
+        #expect(presentation.line == "Photos: paused while the Mac cools down")
         #expect(presentation.lineDetail == "and 1 more")
         #expect(presentation.lineStatus == .waiting)
         #expect(presentation.header == "Waiting on 2 things")

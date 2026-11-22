@@ -43,8 +43,8 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    serving it is not quiescent (`OwnerStatus.isQuiescent`), and is paused while every one of
    those waits on a hold. A kind none of whose owners works waits on what an owner at rest
    reports: an armed backoff (`OwnerWake.Kind.backoff`, `Waiting to try again`) or rows it
-   holds for a fact outside it (`OwnerHeldRows`: digests awaiting the original's bytes,
-   `Waiting for 2,999 originals`; claims paced after a failed read). Held rows are asked of
+   holds for a fact outside it (`OwnerHeldRows`: claims paced after a failed read,
+   `Waiting to try again`). Held rows are asked of
    an owner only at rest, so a working owner's rings cost no count. Otherwise the kind is up
    to date. Every watched kind is always listed. The board keeps when a kind's stretch of
    work began, which only orders the line (the work that has run longest); no time is shown.
@@ -63,8 +63,7 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
 4. **Honest numbers, or none.** A count is shown only where Otos already holds an exact one:
    People's unchecked tally under `Finding faces`. No owner gains a count query for this
    surface: the owed predicates are paged walks whose totals move as other owners write, and
-   a moving denominator is what DES-031 forbids. The rows waiting for their originals are the
-   enrichment owner's own exact count, read only while it rests.
+   a moving denominator is what DES-031 forbids.
 5. **One place to look, plus the scope's own line.** The sidebar's foot carries the Activity
    line and its read-only popover (DES-124; DES-040 names it). A scope whose result is still
    being built says so in its own bar (DES-125): People and search already did, and the

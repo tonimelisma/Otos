@@ -23,7 +23,7 @@ checkmark.
 | --- | --- | --- | --- |
 | Before the window's work is watched (the first grid has not painted) | none | blank | blank |
 | Something working | small spinner (DES-072) | the one that has worked longest (`Finding faces`) | `and 2 more`, or none |
-| Nothing working, something waiting | `pause.circle`, secondary | what waits, named (`Photos: waiting for 2,999 originals`) | `and 1 more`, or none |
+| Nothing working, something waiting | `pause.circle`, secondary | what waits, named (`Descriptions: waiting to try again`) | `and 1 more`, or none |
 | Nothing working or waiting | `checkmark`, secondary | `Up to date` | none |
 
 The line names the work that started first, so a short job that starts beside a long one
@@ -41,12 +41,12 @@ trailing edge, level with the name:
 | Status | L3 | Trailing glyph |
 | --- | --- | --- |
 | Working | `Working`, with the one exact count Otos holds (`Working, 8,412 photos to check`) | small spinner |
-| Waiting | what it waits on: `Paused while memory is low`, `Paused while the Mac cools down`, `Paused in Low Power Mode`, `Waiting for 2,999 originals`, `Waiting to try again` | `pause.circle` |
+| Waiting | what it waits on: `Paused while memory is low`, `Paused while the Mac cools down`, `Paused in Low Power Mode`, `Waiting to try again` | `pause.circle` |
 | Up to date | `Up to date` | `checkmark` |
 
 No row shows a time: the surface answers "is it done, working, or waiting", not "when"
 (owner, 2026-11-21). A count appears only where Otos holds an exact one (DES-031): People's
-unchecked tally, and the rows enrichment holds for their originals. Nothing claims a
+unchecked tally. Nothing claims a
 percentage, a remaining time or a total.
 
 ## Names

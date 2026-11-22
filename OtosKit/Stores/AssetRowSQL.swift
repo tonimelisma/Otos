@@ -315,11 +315,7 @@ nonisolated enum AssetRowSQL {
         content_modified_at_unix = excluded.content_modified_at_unix,
         file_identifier = excluded.file_identifier,
         relative_path_key = excluded.relative_path_key,
-        awaiting_presence = 0,
-        enrichment_claimed = CASE
-            WHEN media_asset.enrichment_claimed = \(EnrichmentClaimMark.digestAwaitsLocalBytes) THEN NULL
-            ELSE media_asset.enrichment_claimed
-        END
+        awaiting_presence = 0
     WHERE media_asset.awaiting_presence <> 0
        OR media_asset.relative_path_key IS NOT excluded.relative_path_key
        OR media_asset.file_identifier IS NOT excluded.file_identifier

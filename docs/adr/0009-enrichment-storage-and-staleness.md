@@ -436,69 +436,37 @@ Adjacent decisions requiring separate ADRs or specs:
     index text a shipped catalog actually has is provably implied by the predicate
     the query builds today.
 
-12. **A digest alone never downloads an original; it waits for local bytes.** Decided
-    2026-11-17 by the coordinator under the owner's standing rule to decide and build; the
-    owner may reverse it. A row of a folder library whose only owed product is its digest
-    (`ClaimedEnrichmentCandidate.owesOnlyDigest`: its scope is the digest alone and no
-    video's faces wait) and whose original is not local is not a download candidate. The
-    coordinator hands its claim to the Store's digest hold
-    (`CatalogStore.holdDigestsForLocalBytes`: `enrichment_claimed` takes
-    `EnrichmentClaimMark.digestAwaitsLocalBytes`), so the row is out of every claim, as a
-    claimed row is, and is no work of the coordinator's: the coordinator goes quiescent with
-    rows held. The digest is taken when the bytes are local anyway: a file that is local
-    is hashed in the background as before, and a file downloaded for work that needs its
-    bytes regardless (a rendering, metadata, a video's faces, the full-size view, an
-    export, an import) gives its digest from that same copy, in the same read.
+12. **A row owing only its digest is downloaded for it, like any other owed product.**
+    Owner decision, 2026-11-21 ("yes, download them"), reversing the hold the coordinator
+    decided on 2026-11-17: every photo is to be checked for duplicates, not only the ones
+    some other work happened to download. A dataless row of a folder library that owes only
+    its digest is routed as every dataless row is: a background materialization demand
+    through `MaterializationCoordinator`, under the free-space floor (`FreeSpaceFloor`,
+    ADR 0027) and the background room's holds on memory pressure, heat and Low Power Mode
+    (ADR 0057), and its digest is read from the downloaded copy. Otos frees nothing it
+    downloads; macOS evicts uploaded, idle provider files under disk pressure (§7).
 
-    The Store ends a hold on the fact that ends the wait (ADR 0032 rule 8), never on time:
-    - an event on the file (`upsertObservedFile`): the provider's download changes no fact
-      the scan compares, but FSEvents reports the file within about 0.2 s of its
-      `SF_DATALESS` clearing (the materialization-events capture of 2026-07-11);
-    - a download Otos made for other work landing (`endKnownMaterialization(success:)`),
-      read before it writes, since almost no download ends a hold;
-    - a scan's write finding the file's facts moved (the scan upsert ends the hold in the
-      same statement), since such a row may owe more than its digest now;
-    - the next launch, which clears every claim, so each held row's locality is read once a
-      launch. That also covers an event the provider did not deliver: the walks read no
-      `SF_DATALESS`, and no poll stands in for the missing event.
-
-    An ended hold is offered first while its bytes are here (`localBytesAwaitingProducts`)
-    and named in a `.detail` change. An event that came between the coordinator's locality
-    read and its hold found no hold to end, so the coordinator reads the locality of each row
-    once more after holding it, and ends the holds of the rows now local. A priority claim
-    reports a held row on screen as nothing to claim (`PriorityAnswers`), so the screen does
-    not re-read it each pass. `op=owners.held waitingFor=digestAwaitsLocalBytes count=` at a
-    status moment, and the scorecard's DISK READ BY OWNER, report how many rows are held.
-
-    Evidence (the owner's catalog read-only and the installed app's log, 2026-11-17): the
-    digest is used only for identical-copy detection — Duplicates within a library, the
-    one-copy rule in combined views, pairing with an account's uploaded assets (ADR 0042,
-    ADR 0054). Mirror pairing is by path (ADR 0054), move witnessing by file identifier
-    (ADR 0034), and no rendering reads it. 3,219 library files without a digest (153 GB:
-    417 videos 105 GB, 1,142 RAW 41 GB, 1,660 images 7 GB) all had their rendering, faces
-    and metadata: each was being downloaded a second time only to be hashed, 13–21 GB in
-    each ten-minute session, with the provider's process at 80–90 % CPU and the machine at
-    the memory-pressure warning (`docs/research/2026-11-16-idle-disk-read-attribution.md`,
-    `docs/research/2026-11-17-background-load-attribution.md`).
-
-    Cost: an exact copy among cloud-only files is not found until both copies are local.
-    Duplicates and the one-copy rule treat a row with no digest as in no identical group,
-    as they did while it waited for its download. A mirrored library file and its account
-    copy are one photo by their pair, which the server's path checksum confirms with no byte
-    read (ADR 0054, schema v79), so the mirror's one-copy rule does not wait for the digest.
+    Cost, measured when the hold was built (the owner's catalog and the installed app's
+    log, 2026-11-17, `docs/research/2026-11-16-idle-disk-read-attribution.md`,
+    `docs/research/2026-11-17-background-load-attribution.md`): 3,219 library files whose
+    rendering, faces and metadata were current owed only their digest (153 GB: 417 videos
+    105 GB, 1,142 RAW 41 GB, 1,660 images 7 GB), each downloaded a second time to be hashed,
+    13–21 GB in each ten-minute session, with the provider's process at 80–90 % CPU and the
+    machine at the memory-pressure warning. On 2026-11-21, 2,999 rows (149 GB) were held. The
+    machine's conditions now pause that work (ADR 0057), which they did not then; the owner
+    chose the downloads over the load.
 
     Rejected:
-    - *Keep downloading for the digest* (§7's eager coverage): hours of open app and
-      hundreds of GB of provider traffic for copy detection alone, the largest load Otos
-      put on the machine.
-    - *A setting to choose*: a performance knob over a product fact the owner has not
-      asked to tune; the one behavior is the decided one, reversible here.
+    - *The hold for local bytes* (2026-11-17 to 2026-11-21): an exact copy among cloud-only
+      files was found only once both copies were local for another reason, so Duplicates and
+      the one-copy rule missed copies indefinitely, and the Activity surface showed thousands
+      of rows waiting on nothing Otos would do.
+    - *A setting to choose*: a performance knob over a product fact the owner has decided.
     - *A hash the provider exposes without a download*: a placeholder lists only
       `com.apple.FinderInfo` as an extended attribute (one of the owner's dataless files,
       names only, 2026-11-17), and File Provider items expose an opaque content version,
-      not a digest. No same-algorithm (SHA-1) hash is readable locally, so nothing was
-      built on one; a provider's web API is a network source Otos does not use for
-      libraries.
+      not a digest. No same-algorithm (SHA-1) hash is readable locally; a provider's web API
+      is a network source Otos does not use for libraries.
 
 ## Alternatives Considered
 

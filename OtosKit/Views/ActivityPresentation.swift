@@ -8,7 +8,7 @@ import Foundation
 // without a window. The surface says each piece of work's status — working, waiting on
 // something, or up to date — never when it ran. Each name is an outcome the user owns, never
 // the owner that makes it (DES-035); a count appears only where Otos holds an exact one
-// (People's unchecked tally, the rows waiting for their originals), never an estimate
+// (People's unchecked tally), never an estimate
 // (DES-031).
 
 /// One Immich account as the Activity surface reads it.
@@ -69,8 +69,8 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             rows.append(row)
             switch entry.state {
             case let .working(since): working.append((since, workingTitle(entry.kind)))
-            // The line names what waits, since it shows one row alone: `Photos: waiting for
-            // 2,999 originals`.
+            // The line names what waits, since it shows one row alone: `Descriptions: waiting
+            // to try again`.
             case .waiting: waiting.append("\(row.title): \(row.detail.prefix(1).lowercased())\(row.detail.dropFirst())")
             case .upToDate: break
             }
@@ -177,8 +177,6 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
         switch wait {
         case let .paused(hold): holdText(hold)
         case .retrying: "Waiting to try again"
-        case let .originals(count?): "Waiting for \(count.formatted()) \(count == 1 ? "original" : "originals")"
-        case .originals(nil): "Waiting for originals"
         }
     }
 

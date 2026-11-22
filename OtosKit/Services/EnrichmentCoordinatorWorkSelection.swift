@@ -175,7 +175,7 @@ extension EnrichmentCoordinator {
             await recordDispatchedWork(items)
             if !routing.readinessCounts.isEmpty {
                 OtosLog.metadata.notice(
-                    "op=catalog.enrichment.readiness phase=route probes=\(routing.examined, privacy: .public) ready=\(routing.readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(routing.readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(routing.readinessCounts["rangedReady", default: 0], privacy: .public) remoteReady=\(routing.readinessCounts["remoteReady", default: 0], privacy: .public) userWorkOnly=\(routing.readinessCounts["userWorkOnly", default: 0], privacy: .public) notDue=\(routing.readinessCounts["notDue", default: 0], privacy: .public) retryReadiness=\(routing.readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(routing.readinessCounts["materializationBound", default: 0], privacy: .public) digestAwaitsLocalBytes=\(routing.readinessCounts["digestAwaitsLocalBytes", default: 0], privacy: .public)"
+                    "op=catalog.enrichment.readiness phase=route probes=\(routing.examined, privacy: .public) ready=\(routing.readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(routing.readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(routing.readinessCounts["rangedReady", default: 0], privacy: .public) remoteReady=\(routing.readinessCounts["remoteReady", default: 0], privacy: .public) userWorkOnly=\(routing.readinessCounts["userWorkOnly", default: 0], privacy: .public) notDue=\(routing.readinessCounts["notDue", default: 0], privacy: .public) retryReadiness=\(routing.readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(routing.readinessCounts["materializationBound", default: 0], privacy: .public)"
                 )
             }
             logClaimBatch(
@@ -201,16 +201,14 @@ extension EnrichmentCoordinator {
     /// Routes claimed rows by where their bytes are: ready rows join the queue, dataless
     /// rows become materialization demand — held, with their claim, when the hand-off has no
     /// slot for them now — and rows whose readiness is unknown, or whose source sends the
-    /// original only for the user's work, are released back to the Store. A dataless row that
-    /// owes only its digest is never downloaded for it: the Store holds it until its bytes
-    /// are local (ADR 0009 §12).
+    /// original only for the user's work, are released back to the Store. A dataless row is
+    /// downloaded whatever it owes, its digest alone included (ADR 0009 §12).
     private func route(
         _ candidates: [ClaimedEnrichmentCandidate],
         now: ContinuousClock.Instant,
         into routing: inout ClaimRouting
     ) async {
         var releasedIDs: [MediaAssetID] = []
-        var digestHolds: [MediaAssetID] = []
         for candidate in candidates {
             let asset = candidate.asset
             guard schedule.readinessProbeIsDue(asset.id, now: now) else {
@@ -250,9 +248,6 @@ extension EnrichmentCoordinator {
             case .local:
                 enqueueReadyCandidate(candidate)
                 routing.readinessCounts["ready", default: 0] += 1
-            case .fetchable where candidate.owesOnlyDigest && !deviceRootPaths.contains(asset.id.libraryRootPath):
-                digestHolds.append(asset.id)
-                routing.readinessCounts["digestAwaitsLocalBytes", default: 0] += 1
             case .fetchable:
                 let work = DownloadWork(
                     id: asset.id,
@@ -284,40 +279,6 @@ extension EnrichmentCoordinator {
         }
         if !releasedIDs.isEmpty {
             await releaseClaims(releasedIDs)
-        }
-        await holdDigestsForLocalBytes(digestHolds)
-    }
-
-    /// Hands the claims of rows that owe only their digest, and whose originals are not local,
-    /// to the Store's digest hold: no download is made for a digest alone, and a held row is
-    /// no work of this coordinator's (ADR 0009 §12, ADR 0032 rule 8). The Store ends a hold on
-    /// the fact that ends its wait, and an event on a file comes after its bytes landed, so a
-    /// file made local between the locality read and the hold is caught by reading its
-    /// locality once more after it. A failed hold gives the claims back.
-    func holdDigestsForLocalBytes(_ ids: [MediaAssetID]) async {
-        guard !ids.isEmpty else { return }
-        let held: [MediaAssetID]
-        do {
-            held = try await store.holdDigestsForLocalBytes(ids)
-        } catch {
-            OtosLog.metadata.errorOperation("enrichment.digestHold", phase: "holdFailed", fields: [
-                "count": "\(ids.count)", "error": String(describing: error),
-            ])
-            await releaseClaims(ids)
-            return
-        }
-        activity.wrote(held.count)
-        // A held row takes no place in the window, so the walk has more to claim: another
-        // pass is asked for, and the walk ends when a claim finds nothing (`exhaustedClaims`).
-        if !held.isEmpty {
-            signal()
-        }
-        var local: [MediaAssetID] = []
-        for id in held where await materializationRequester.locality(of: id) == .local {
-            local.append(id)
-        }
-        if !local.isEmpty {
-            await store.endDigestHolds(local, reason: "localAtHold")
         }
     }
 
@@ -690,8 +651,7 @@ extension EnrichmentCoordinator {
             isVideo: asset.bestKind == .video,
             captureLocalTime: asset.captureLocalTime,
             isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath),
-            scope: candidate.scope,
-            owesOnlyDigest: candidate.owesOnlyDigest
+            scope: candidate.scope
         )
     }
 

@@ -105,9 +105,6 @@ actor EnrichmentCoordinator: QuiescentOwner {
         let isDeviceStaging: Bool
         /// What this enrichment reads and produces, as the Store's claim decided it.
         let scope: EnrichmentScope
-        /// The digest is the row's only owed product (`ClaimedEnrichmentCandidate.owesOnlyDigest`):
-        /// a read that finds the file not local holds the row instead of downloading it.
-        var owesOnlyDigest = false
     }
 
     nonisolated struct DownloadWork: Equatable, Sendable {
@@ -637,23 +634,9 @@ extension EnrichmentCoordinator {
         signal()
     }
 
-    /// The rows whose digest waits for local bytes (ADR 0009 §12): the Store holds them, so
-    /// the Store counts them. A failed count is reported as unknown, never as none. Then the
-    /// paced rows whose claim the ledger holds (`EnrichmentSchedule.holdPacedClaims`).
+    /// The paced rows whose claim the ledger holds (`EnrichmentSchedule.holdPacedClaims`).
     func heldRows() async -> [OwnerHeldRows] {
-        let count: Int?
-        do {
-            count = try await store.digestHoldCount()
-        } catch {
-            OtosLog.metadata.errorOperation("enrichment.digestHold", phase: "countFailed", fields: [
-                "error": String(describing: error),
-            ])
-            count = nil
-        }
-        return [
-            OwnerHeldRows(waitingFor: .digestAwaitsLocalBytes, count: count),
-            OwnerHeldRows(waitingFor: .pacing, count: schedule.pacedClaimIDs.count),
-        ]
+        [OwnerHeldRows(waitingFor: .pacing, count: schedule.pacedClaimIDs.count)]
     }
 
     /// Asks the Store which of the rows to check it still offers, and ends the demands of rows
