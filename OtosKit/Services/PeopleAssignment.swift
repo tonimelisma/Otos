@@ -198,6 +198,11 @@ actor PeopleAssignment: QuiescentOwner {
         !activity.hasCovered(userAwaited)
     }
 
+    /// What stops assignment now: no room on the disk for the face vectors.
+    func troubles() async -> [OwnerTrouble] {
+        spaceHold == nil ? [] : [OwnerTrouble(.diskFull)]
+    }
+
     /// Asks for a pass with no rows named and no read owed again: the held read stands.
     func ringIdle() {
         request(rows: .none)

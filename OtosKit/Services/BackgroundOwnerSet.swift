@@ -103,9 +103,9 @@ extension BackgroundOwnerSet {
             ]
         }
         let named: [(BackgroundOwner, ActivityKind, (any QuiescentOwner)?)] = [
-            (.renderSignatures, .findingDuplicates, renderSignatures), (.previewFaces, .findingFaces, previewFaces),
+            (.renderSignatures, .findingDuplicates, renderSignatures), (.previewFaces, .findingPeople, previewFaces),
             (.placeNames, .namingPlaces, placeNames), (.searchIndex, .preparingSearch, searchIndex),
-            (.descriptions, .describingPhotos, descriptions), (.metadataRefresh, .updatingDetails, metadata),
+            (.descriptions, .describingPhotos, descriptions), (.metadataRefresh, .readingPhotos, metadata),
         ]
         for (owner, kind, running) in named where starts.starts(owner) {
             if let running {

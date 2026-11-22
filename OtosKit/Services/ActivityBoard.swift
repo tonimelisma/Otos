@@ -13,9 +13,11 @@ import OSLog
 // moment it is read, `OwnerActivity.heldNow`). One loop, woken by that doorbell
 // (`.bufferingNewest(1)`), reads every watched owner's status as a value — the fact as of that
 // read, never a pushed partial state that a later step could leave stale — and applies the
-// round synchronously: a kind turning to work records when it started, a kind turning idle
-// records when it finished (ADR 0032 rules 1 and 3). A round that changes what the board
-// shows publishes one snapshot (`.bufferingNewest(1)`, newest wins) and logs it.
+// round synchronously: a kind turning to work records when it started (ADR 0032 rules 1 and
+// 3). Each round also reads what stops each owner's work (`QuiescentOwner.troubles`): the
+// cause the surface says, which a backoff wake alone never names. Every wake that ends such a
+// wait makes its owner work, which rings the board. A round that changes what the board shows
+// publishes one snapshot (`.bufferingNewest(1)`, newest wins) and logs it.
 //
 // A kind is one outcome the user owns (`ActivityKind`); several owners can serve one kind (the
 // duplicate groups and the render signatures they compare), and the kind works while any of
@@ -30,16 +32,14 @@ import OSLog
 /// One background outcome the Activity surface names (DES-035: the user's nouns). Declared
 /// in the order the popover lists them.
 nonisolated enum ActivityKind: String, CaseIterable, Sendable {
-    /// Thumbnails, previews and each item's details (`EnrichmentCoordinator`).
+    /// Thumbnails, previews and each item's details, read when it arrives and read again after
+    /// Otos learned to read more (`EnrichmentCoordinator`, `MetadataRefresher`).
     case readingPhotos
     /// Originals fetched from a cloud provider (`MaterializationCoordinator`).
     case downloadingOriginals
-    /// Details re-read after Otos learned to read more (`MetadataRefresher`).
-    case updatingDetails
-    /// Faces found in stills and video frames (`PreviewFaceReader`).
-    case findingFaces
-    /// Faces put together into people (`PeopleAssignment`).
-    case recognizingPeople
+    /// Faces found in stills and video frames, and put together into people
+    /// (`PreviewFaceReader`, `PeopleAssignment`).
+    case findingPeople
     /// Countries and towns named for located items (`PlaceNameReader`).
     case namingPlaces
     /// What search reads in each photo (`PhotoSearchIndex`).
@@ -51,27 +51,24 @@ nonisolated enum ActivityKind: String, CaseIterable, Sendable {
     case findingDuplicates
 }
 
-/// What a kind waits on while nothing of it works.
-nonisolated enum ActivityWait: Equatable, Sendable {
-    /// Every owner working for it waits on the machine's conditions (ADR 0057).
-    case paused(BackgroundHold)
-    /// It failed and waits to try again: a backoff wake, or rows paced after a failed read.
-    case retrying
-}
-
 /// What one kind is doing, as of the board's last round.
 nonisolated struct ActivityEntry: Equatable, Sendable {
     enum State: Equatable, Sendable {
         /// Working since `since`, which orders the line: the work that has run longest.
         case working(since: Date)
-        /// Nothing of it works, and something outside it holds work it owes.
-        case waiting(ActivityWait)
-        /// Nothing of it works or waits.
+        /// Every owner working for it waits on the machine's conditions (ADR 0057).
+        case paused(BackgroundHold)
+        /// Nothing of it works, and something stops work it owes (`troubles`).
+        case stuck
+        /// Nothing of it works or is stopped.
         case upToDate
     }
 
     let kind: ActivityKind
     let state: State
+    /// What stops work it owes, in its owners' order, whatever its state: a kind can work on
+    /// some items while others wait out a failure.
+    var troubles: [OwnerTrouble] = []
 }
 
 /// What the board shows: every watched kind, in `ActivityKind` order. `watching` is false
@@ -149,40 +146,24 @@ actor ActivityBoard {
         snapshotContinuation.finish()
     }
 
-    /// Reads every watched owner's status, then applies what they say in one step. An owner at
-    /// rest is also asked which rows it holds for a fact outside it, which only a quiescent
-    /// owner's status leaves unsaid; a working one is working whatever it holds.
+    /// Reads every watched owner's status and what stops its work, then applies what they say
+    /// in one step.
     private func round() async {
         let owners = watched
         var statuses: [(ActivityKind, OwnerStatus)] = []
         for entry in owners {
             var status = await entry.owner.status
-            if status.isQuiescent {
-                status.held = await entry.owner.heldRows()
-            }
+            status.troubles = await OwnerTrouble.stopping(entry.owner.troubles())
             statuses.append((entry.kind, status))
         }
         guard !Task.isCancelled else { return }
         apply(statuses, at: now())
     }
 
-    /// What one owner at rest waits on, if anything.
-    private static func wait(of status: OwnerStatus) -> ActivityWait? {
-        if status.wake?.kind == .backoff {
-            return .retrying
-        }
-        // An unknown count is still rows held.
-        for rows in status.held where rows.count.map({ $0 > 0 }) ?? true {
-            switch rows.waitingFor {
-            case .pacing: return .retrying
-            }
-        }
-        return nil
-    }
-
     /// One round's facts applied: a kind works while any of its owners is not quiescent, and
-    /// is paused while every one of those waits on a hold; a kind none of whose owners works
-    /// waits on what the first of them waits on, and is up to date otherwise.
+    /// is paused while every one of those waits on a hold; a kind none of whose owners works is
+    /// stuck while something stops work it owes, and up to date otherwise. A backoff wake alone
+    /// is no trouble: an owner that waits out a failure says which (`QuiescentOwner.troubles`).
     private func apply(_ statuses: [(ActivityKind, OwnerStatus)], at moment: Date) {
         var byKind: [ActivityKind: [OwnerStatus]] = [:]
         for (kind, status) in statuses {
@@ -194,20 +175,19 @@ actor ActivityBoard {
             let busy = owners.filter { !$0.isQuiescent }
             // A stretch of work keeps its start through a pause; it ends when nothing works.
             workingSince[kind] = busy.isEmpty ? nil : workingSince[kind] ?? moment
+            let troubles = owners.flatMap(\.troubles)
             let state: ActivityEntry.State
             if let since = workingSince[kind] {
                 let holds = busy.map(\.heldBy)
                 state = if holds.allSatisfy({ $0 != nil }), let hold = holds.first ?? nil {
-                    .waiting(.paused(hold))
+                    .paused(hold)
                 } else {
                     .working(since: since)
                 }
-            } else if let wait = owners.lazy.compactMap(Self.wait).first {
-                state = .waiting(wait)
             } else {
-                state = .upToDate
+                state = troubles.isEmpty ? .upToDate : .stuck
             }
-            entries.append(ActivityEntry(kind: kind, state: state))
+            entries.append(ActivityEntry(kind: kind, state: state, troubles: troubles))
         }
         let snapshot = ActivitySnapshot(watching: true, entries: entries)
         guard snapshot != published else { return }
@@ -218,9 +198,12 @@ actor ActivityBoard {
                 guard case .working = entry.state else { return nil }
                 return entry.kind.rawValue
             }.joined(separator: ","),
-            "waiting": entries.compactMap { entry -> String? in
-                guard case let .waiting(wait) = entry.state else { return nil }
-                return "\(entry.kind.rawValue)(\(wait))"
+            "paused": entries.compactMap { entry -> String? in
+                guard case let .paused(hold) = entry.state else { return nil }
+                return "\(entry.kind.rawValue)(\(hold.rawValue))"
+            }.joined(separator: ","),
+            "troubles": entries.flatMap { entry in
+                entry.troubles.map { "\(entry.kind.rawValue)(\($0.cause.rawValue)=\($0.count.map { "\($0)" } ?? "all"))" }
             }.joined(separator: ","),
         ])
     }

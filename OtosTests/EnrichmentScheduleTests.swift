@@ -43,7 +43,7 @@ struct EnrichmentScheduleTests {
         let finished = schedule.finish(pending, outcome: .insufficientLocalSpace, now: start)
         let settlement = try #require(finished)
         let recheck = start.advanced(by: EnrichmentRetrySchedule.production.spaceRecheck)
-        let entry = EnrichmentCoordinator.RetryLedgerEntry(notBefore: recheck, attemptCount: 0, sourceSize: 100)
+        let entry = EnrichmentCoordinator.RetryLedgerEntry(notBefore: recheck, attemptCount: 0, sourceSize: 100, cause: .diskFull)
         #expect(settlement == EnrichmentSchedule.Settlement(disposition: .paced(entry), releasesStoreClaim: false))
         #expect(schedule.parked[row]?.hold == .freeSpace, "parked: no pass reads it until its recheck")
         #expect(schedule.materializations[row] == nil)
@@ -107,7 +107,7 @@ struct EnrichmentScheduleTests {
         let settlement = try #require(finished)
         #expect(settlement == EnrichmentSchedule.Settlement(
             disposition: .paced(EnrichmentCoordinator.RetryLedgerEntry(
-                notBefore: now.advanced(by: .seconds(900)), attemptCount: 4, sourceSize: 100
+                notBefore: now.advanced(by: .seconds(900)), attemptCount: 4, sourceSize: 100, cause: .downloadsFailed
             )),
             releasesStoreClaim: false
         ))
@@ -128,7 +128,7 @@ struct EnrichmentScheduleTests {
     @Test func ledgerDefersAMatchingSignatureUntilDueAndResetsOnChange() {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("a.jpg")
-        schedule.pace(row, sourceSize: 100, now: start)
+        schedule.pace(row, sourceSize: 100, cause: .serverDidNotAnswer, now: start)
 
         let beforeDue = schedule.ledgerAdmits(row, sourceSize: 100, now: start.advanced(by: .seconds(899)))
         let atDue = schedule.ledgerAdmits(row, sourceSize: 100, now: start.advanced(by: .seconds(900)))
@@ -143,11 +143,36 @@ struct EnrichmentScheduleTests {
         #expect(afterReset)
     }
 
+    /// What stops rows, by cause (ADR 0058): rows the ledger paces count under the cause they
+    /// were paced for, a transfer the floor turned away under a full disk and one that failed
+    /// under failed downloads; each stops counting once its wait has passed, and a transfer
+    /// queued only for a slot is not stopped.
+    @Test func troublesCountTheRowsEachCauseStopsUntilTheirWaitPasses() throws {
+        var schedule = EnrichmentSchedule(retrySchedule: .production)
+        schedule.pace(id("a.jpg"), sourceSize: 100, cause: .serverDidNotAnswer, now: start)
+        schedule.pace(id("b.jpg"), sourceSize: 100, cause: .serverDidNotAnswer, now: start)
+        schedule.pace(id("c.mov"), sourceSize: 100, cause: .facesUnread, now: start)
+        let full = id("d.jpg")
+        schedule.demand(work(full), ownsStoreClaim: true, outstandingLimit: 16)
+        _ = submitAll(&schedule, at: start)
+        _ = try schedule.finish(#require(schedule.materializations[full]?.work), outcome: .insufficientLocalSpace, now: start)
+        let failed = id("e.jpg")
+        schedule.demand(work(failed), ownsStoreClaim: true, outstandingLimit: 16)
+        _ = submitAll(&schedule, at: start)
+        _ = try schedule.finish(#require(schedule.materializations[failed]?.work), outcome: .requestFailed, now: start)
+
+        #expect(schedule.troubles(at: start) == [
+            OwnerTrouble(.downloadsFailed, count: 1), OwnerTrouble(.diskFull, count: 1),
+            OwnerTrouble(.serverDidNotAnswer, count: 2), OwnerTrouble(.facesUnread, count: 1),
+        ])
+        #expect(schedule.troubles(at: start.advanced(by: .seconds(3600))).isEmpty, "every wait has passed")
+    }
+
     /// ENR-009: success clears the row's ledger entry.
     @Test func materializationSuccessClearsTheLedgerEntry() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("a.jpg")
-        schedule.pace(row, sourceSize: 100, now: start)
+        schedule.pace(row, sourceSize: 100, cause: .serverDidNotAnswer, now: start)
         #expect(schedule.retryLedger[row]?.attemptCount == 1)
 
         schedule.demand(work(row), ownsStoreClaim: true, outstandingLimit: 16)

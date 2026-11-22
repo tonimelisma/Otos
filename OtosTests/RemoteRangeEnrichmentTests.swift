@@ -153,7 +153,7 @@ struct RemoteRangeEnrichmentTests {
             relativePath: MediaRelativePath(rawValue: "asset-1/IMG_1.JPG")
         )
         let now = ContinuousClock.now
-        schedule.pace(id, sourceSize: 42, now: now)
+        schedule.pace(id, sourceSize: 42, cause: .serverDidNotAnswer, now: now)
         let admittedAtOnce = schedule.ledgerAdmits(id, sourceSize: 42, now: now)
         let admittedLater = schedule.ledgerAdmits(id, sourceSize: 42, now: now.advanced(by: .seconds(901)))
         #expect(!admittedAtOnce)

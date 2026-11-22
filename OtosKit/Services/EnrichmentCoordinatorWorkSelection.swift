@@ -269,7 +269,7 @@ extension EnrichmentCoordinator {
                 // ranges are not served now: nothing is asked of it. The row waits out the
                 // pacing ledger, like a ranged read its server did not answer; an outage
                 // stops claims through the root's answering fact.
-                schedule.pace(asset.id, sourceSize: asset.byteSize, now: now, holdingClaim: true)
+                schedule.pace(asset.id, sourceSize: asset.byteSize, cause: .sentOnlyWhenOpened, now: now, holdingClaim: true)
                 routing.readinessCounts["userWorkOnly", default: 0] += 1
             case .unreachable:
                 schedule.deferReadinessProbe(asset.id, now: now)

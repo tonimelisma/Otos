@@ -66,12 +66,13 @@ actor PhotoDescriptionWriter: QuiescentOwner {
     private let admission: LoadAdmission
     /// Stills whose last request failed, and when they may be offered again.
     private var failedUntil: [MediaAssetID: ContinuousClock.Instant] = [:]
-    /// When requests may be made again after the model was unavailable or busy.
-    private var modelNotBefore: ContinuousClock.Instant?
+    /// Why the model can take no request, and when it may be asked again: it was unavailable
+    /// or busy.
+    private var modelStop: (notBefore: ContinuousClock.Instant, cause: OwnerTrouble.Cause)?
     /// Walks owed, and the one the last walk that reached the end answered (ADR 0032 rule 2):
     /// owed by the first subscription, by a Store change of a kind a walk reads and by a
     /// pacing that ended, the facts that can make a still describable. Every still a finished
-    /// walk passed over is held paced with its deadline (`failedUntil`, `modelNotBefore`), so a
+    /// walk passed over is held paced with its deadline (`failedUntil`, `modelStop`), so a
     /// ring that owes no walk reads nothing.
     private var walksOwed: UInt64 = 0
     private var walksCovered: UInt64 = 0
@@ -262,12 +263,12 @@ actor PhotoDescriptionWriter: QuiescentOwner {
             return activity.requested
         }
         let now = ContinuousClock.now
-        if let notBefore = modelNotBefore, notBefore > now {
+        if let notBefore = modelStop?.notBefore, notBefore > now {
             // The wake asks again when the model may answer.
             armWake(after: now)
             return activity.requested
         }
-        modelNotBefore = nil
+        modelStop = nil
         failedUntil = failedUntil.filter { $0.value > now }
         var tally = DrainTally()
         // The request and the owed walk the walk answers; a newer owed walk restarts it from the
@@ -398,15 +399,30 @@ actor PhotoDescriptionWriter: QuiescentOwner {
             case .failed:
                 failedUntil[candidate.id] = ContinuousClock.now.advanced(by: retryPacing)
                 tally.failed += 1
-            case .modelUnavailable:
-                modelNotBefore = ContinuousClock.now.advanced(by: retryPacing)
+            case let .modelUnavailable(cause):
+                modelStop = (ContinuousClock.now.advanced(by: retryPacing), cause)
                 tally.stopped = true
             case .busy:
-                modelNotBefore = ContinuousClock.now.advanced(by: busyPacing)
+                modelStop = (ContinuousClock.now.advanced(by: busyPacing), .appleIntelligenceBusy)
                 tally.stopped = true
             }
         }
         return results
+    }
+
+    /// What stops descriptions now: the model, until it may be asked again, and the stills
+    /// whose requests failed, until their pacing passes.
+    func troubles() async -> [OwnerTrouble] {
+        let now = ContinuousClock.now
+        var troubles: [OwnerTrouble] = []
+        if let stop = modelStop, stop.notBefore > now {
+            troubles.append(OwnerTrouble(stop.cause))
+        }
+        let failed = failedUntil.values.count { $0 > now }
+        if failed > 0 {
+            troubles.append(OwnerTrouble(.descriptionsFailed, count: failed))
+        }
+        return troubles
     }
 
     private func announce() {
@@ -417,7 +433,7 @@ actor PhotoDescriptionWriter: QuiescentOwner {
 
     /// Rings the doorbell when the model may be asked again or a failed still's pacing ends.
     private func armWake(after now: ContinuousClock.Instant) {
-        guard let due = ([modelNotBefore].compactMap(\.self) + failedUntil.values).filter({ $0 > now }).min() else {
+        guard let due = ([modelStop?.notBefore].compactMap(\.self) + failedUntil.values).filter({ $0 > now }).min() else {
             wake?.task.cancel()
             wake = nil
             activity.wake = nil
@@ -453,9 +469,9 @@ actor PhotoDescriptionWriter: QuiescentOwner {
         case declined
         /// The preview could not be read or decoded, or the request failed over this photo.
         case failed
-        /// No request can be made: Apple Intelligence is off, the Mac is not eligible, the
-        /// model is not ready, or its service failed the request.
-        case modelUnavailable
+        /// No request can be made, for `cause`: Apple Intelligence is off, the Mac is not
+        /// eligible, the model is not ready, or its service failed the request.
+        case modelUnavailable(OwnerTrouble.Cause)
         /// The model is rate-limited or answering another request.
         case busy
     }
@@ -481,7 +497,7 @@ actor PhotoDescriptionWriter: QuiescentOwner {
         } catch {
             let (reading, phase): (Reading, String) = switch PhotoDescriber.Failure(error) {
             case .photo: (.failed, "requestFailed")
-            case .model: (.modelUnavailable, "modelUnavailable")
+            case .model: (.modelUnavailable(PhotoDescriber.unavailability(of: error)), "modelUnavailable")
             case .busy: (.busy, "busy")
             }
             OtosLog.metadata.errorOperation("description", phase: phase, fields: [

@@ -163,20 +163,62 @@ nonisolated enum LaunchSettlement: String, Sendable, Comparable {
     }
 }
 
-/// Rows an owner holds until a fact outside it ends their wait (ADR 0032 rule 8): no work of
-/// its own, so its quiescence does not count them, but its status reports them
-/// (`op=owners.held`).
-nonisolated struct OwnerHeldRows: Equatable, Sendable {
-    /// What held rows wait for; the raw value is the log's name.
-    nonisolated enum Reason: String, Sendable {
-        /// Their claim waits out the pacing after a failed read.
-        case pacing
+/// Work an owner owes but cannot do now, and why (ADR 0058): a failure it waits out before it
+/// tries again, or a fact outside it — a full disk, a server that did not answer, Apple
+/// Intelligence turned off — that ends the wait. No work of its own, so its quiescence does not
+/// count it, but its status reports it (`op=owners.trouble`) and the Activity surface says it
+/// in the user's words. An owner that waits out a failure says which one here: a backoff wake
+/// alone says when, never why.
+nonisolated struct OwnerTrouble: Equatable, Sendable {
+    /// What stops the work; the raw value is the log's name.
+    nonisolated enum Cause: String, CaseIterable, Sendable {
+        /// Downloads of originals failed; they are tried again (enrichment's in-window retries
+        /// and its pacing after them).
+        case downloadsFailed
+        /// The free-space floor turned work away (ADR 0027).
+        case diskFull
+        /// A server that serves its items in ranges did not answer for them.
+        case serverDidNotAnswer
+        /// Their source sends the whole original only for the user's work, and their ranges
+        /// are not served now (ADR 0046 §4).
+        case sentOnlyWhenOpened
+        /// Faces in these items could not be read; they are read again.
+        case facesUnread
+        /// The face model could not be loaded.
+        case faceModelUnavailable
+        /// Apple Intelligence is turned off in System Settings.
+        case appleIntelligenceOff
+        /// This Mac cannot run Apple Intelligence.
+        case appleIntelligenceUnsupported
+        /// Apple Intelligence's model is still downloading, or the system is not ready.
+        case appleIntelligenceNotReady
+        /// Apple Intelligence reports itself available but failed the request in its service.
+        case appleIntelligenceNotResponding
+        /// Apple Intelligence is rate-limited or answering another request.
+        case appleIntelligenceBusy
+        /// These items' requests failed; they are described again.
+        case descriptionsFailed
+        /// A cloud provider's downloads failed until its breaker opened (`MaterializationCoordinator`).
+        case providerNotAnswering
+        /// Naming a place failed.
+        case placeNamesFailed
+        /// A pass over the search index failed.
+        case searchFailed
     }
 
-    /// What they wait for.
-    let waitingFor: Reason
-    /// How many; nil when the count could not be read.
+    let cause: Cause
+    /// How many items it stops; nil when it stops the owner's work as a whole.
     let count: Int?
+
+    init(_ cause: Cause, count: Int? = nil) {
+        self.cause = cause
+        self.count = count
+    }
+
+    /// The troubles that stop something: a counted one that stops no item is none.
+    static func stopping(_ troubles: [OwnerTrouble]) -> [OwnerTrouble] {
+        troubles.filter { $0.count.map { $0 > 0 } ?? true }
+    }
 }
 
 /// What an owner holds at one instant, quiescent or not: what a session that ends before its
@@ -200,8 +242,8 @@ nonisolated struct OwnerStatus: Equatable, Sendable {
     /// What the background room holds this owner's next unit for, when it waits on it
     /// (ADR 0057).
     var heldBy: BackgroundHold?
-    /// The rows it holds until a fact outside it ends their wait (`QuiescentOwner.heldRows`).
-    var held: [OwnerHeldRows] = []
+    /// The work it owes but cannot do now, and why (`QuiescentOwner.troubles`).
+    var troubles: [OwnerTrouble] = []
 
     var isQuiescent: Bool {
         owedRequests == 0 && runningPasses == 0 && unactedChanges == 0 && !holdsWork
@@ -457,9 +499,10 @@ nonisolated protocol QuiescentOwner: Actor {
     /// and calls `settleQuiescence()` in the step that makes it true. False for an owner with
     /// no backlog: all its work is what it was asked.
     var worksBacklog: Bool { get }
-    /// The rows it holds until a fact outside it ends their wait, read when a status is
-    /// reported: none for most owners.
-    func heldRows() async -> [OwnerHeldRows]
+    /// The work it owes but cannot do now, and why, read when a status is reported: none
+    /// while nothing stops it. Every owner that arms a backoff wake reports the failure it
+    /// waits out here.
+    func troubles() async -> [OwnerTrouble]
     /// Rings the owner's wake path once, as an input it reads would, with no input changed:
     /// what a caller runs to see that a wake with nothing new costs nothing. An owner with no
     /// wake path (one pass a launch) does nothing.
@@ -512,8 +555,8 @@ extension QuiescentOwner {
         activity.status(holdsWork: holdsWork, worksBacklog: worksBacklog)
     }
 
-    /// No rows held for a fact outside the owner.
-    func heldRows() async -> [OwnerHeldRows] {
+    /// Nothing stops the owner.
+    func troubles() async -> [OwnerTrouble] {
         []
     }
 
@@ -629,7 +672,7 @@ nonisolated enum BackgroundOwnerQuiescence {
         var statuses: [OwnerStatus] = []
         for owner in owners {
             var status = await owner.status
-            status.held = await owner.heldRows()
+            status.troubles = await owner.troubles()
             statuses.append(status)
         }
         return statuses
@@ -638,8 +681,8 @@ nonisolated enum BackgroundOwnerQuiescence {
     /// `op=owners.status`: at `moment` (a session's end), how many owners were quiescent, and
     /// one `op=owners.pending` line for each that was not, with what it owed, ran and held. A
     /// session that never reported `op=owners.quiescent` is explained by these lines. Then one
-    /// `op=owners.held` line for each kind of row an owner holds for a fact outside it, quiescent
-    /// or not (`OwnerHeldRows`).
+    /// `op=owners.trouble` line for each thing that stops an owner's work, quiescent or not
+    /// (`OwnerTrouble`).
     static func logStatus(_ statuses: [OwnerStatus], moment: String) {
         let pending = statuses.filter { !$0.isQuiescent }
         OtosLog.performance.noticeOperation("owners.status", phase: moment, fields: [
@@ -649,12 +692,12 @@ nonisolated enum BackgroundOwnerQuiescence {
         for status in pending {
             OtosLog.performance.noticeOperation("owners.pending", phase: moment, fields: status.fields)
         }
-        // Held rows are reported quiescent or not: they are no owner's work.
+        // Troubles are reported quiescent or not: they are no owner's work.
         for status in statuses {
-            for held in status.held {
-                OtosLog.performance.noticeOperation("owners.held", phase: moment, fields: [
-                    "owner": status.owner, "waitingFor": held.waitingFor.rawValue,
-                    "count": held.count.map { "\($0)" } ?? "unknown",
+            for trouble in status.troubles {
+                OtosLog.performance.noticeOperation("owners.trouble", phase: moment, fields: [
+                    "owner": status.owner, "cause": trouble.cause.rawValue,
+                    "count": trouble.count.map { "\($0)" } ?? "none",
                 ])
             }
         }

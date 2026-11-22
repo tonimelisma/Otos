@@ -853,29 +853,27 @@ class SessionKindTests(unittest.TestCase):
         # A session with no status line says so, never a bare dash.
         self.assertIn("owners never quiescent; which and why not measured (no op=owners.status line)", run(self.LAUNCH)[2])
 
-    def test_rows_held_for_a_fact_outside_their_owner_are_counted_at_the_sessions_end(self):
+    def test_what_stops_each_owners_work_is_reported_at_the_sessions_end(self):
         lines = self.LAUNCH[:-1] + [
             line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=none quiescent=14"),
-            line(46.0, "op=owners.held phase=sessionEnd count=3219 owner=enrichment waitingFor=pacing"),
+            line(46.0, "op=owners.trouble phase=sessionEnd cause=serverDidNotAnswer count=3219 owner=enrichment"),
+            line(46.0, "op=owners.trouble phase=sessionEnd cause=appleIntelligenceNotResponding count=none owner=descriptions"),
             line(46.6, "op=tour phase=finish outcome=finished"),
         ]
         report, _, text = run(lines)
-        self.assertEqual(report["ownersAtEnd"]["held"],
-                         [{"owner": "enrichment", "waitingFor": "pacing", "count": 3219}])
-        self.assertIn("held at sessionEnd: paced, claim held until the pacing passes: 3219 (enrichment, op=owners.held)", text)
-        # A count the build could not read is unknown, never zero.
-        unknown = self.LAUNCH[:-1] + [
-            line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=none quiescent=14"),
-            line(46.0, "op=owners.held phase=sessionEnd count=unknown owner=enrichment waitingFor=pacing"),
-            line(46.6, "op=tour phase=finish outcome=finished"),
-        ]
-        self.assertIn("paced, claim held until the pacing passes: - (enrichment", run(unknown)[2])
-        # An older build logs no held line, and says so.
-        older = self.LAUNCH[:-1] + [
+        self.assertEqual(report["ownersAtEnd"]["troubles"], [
+            {"owner": "enrichment", "cause": "serverDidNotAnswer", "count": 3219},
+            {"owner": "descriptions", "cause": "appleIntelligenceNotResponding", "count": None},
+        ])
+        self.assertIn("stopped at sessionEnd: serverDidNotAnswer: 3219 items (enrichment, op=owners.trouble)", text)
+        # A trouble that stops an owner's work as a whole has no count, and says so.
+        self.assertIn("appleIntelligenceNotResponding: all its work (descriptions", text)
+        # No trouble line: nothing stopped.
+        quiet = self.LAUNCH[:-1] + [
             line(46.0, "op=owners.status phase=sessionEnd owners=14 pending=none quiescent=14"),
             line(46.6, "op=tour phase=finish outcome=finished"),
         ]
-        self.assertIn("no op=owners.held line", run(older)[2])
+        self.assertIn("stopped work at sessionEnd: none", run(quiet)[2])
 
     def test_a_settled_tour_waits_out_its_settle_deadline_before_it_is_stuck(self):
         self.assertEqual(scorecard.tour_silence_limit(60, 120, 900), 900 + scorecard.TOUR_SILENCE_MARGIN_SECONDS)

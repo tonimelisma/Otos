@@ -153,6 +153,8 @@ actor EnrichmentCoordinator: QuiescentOwner {
         let notBefore: ContinuousClock.Instant
         let attemptCount: Int
         let sourceSize: Int64?
+        /// Why the row paces: what the Activity surface says stops it (`OwnerTrouble`).
+        let cause: OwnerTrouble.Cause
         /// The ledger holds the row's Store claim while it paces (`EnrichmentSchedule.holdPacedClaims`):
         /// the row is out of every claim until its pacing passes or its source may have moved,
         /// so no pass claims it only to give it back.
@@ -634,9 +636,10 @@ extension EnrichmentCoordinator {
         signal()
     }
 
-    /// The paced rows whose claim the ledger holds (`EnrichmentSchedule.holdPacedClaims`).
-    func heldRows() async -> [OwnerHeldRows] {
-        [OwnerHeldRows(waitingFor: .pacing, count: schedule.pacedClaimIDs.count)]
+    /// The rows that wait out a failure or a fact outside enrichment, by cause
+    /// (`EnrichmentSchedule.troubles`).
+    func troubles() async -> [OwnerTrouble] {
+        schedule.troubles(at: ContinuousClock.now)
     }
 
     /// Asks the Store which of the rows to check it still offers, and ends the demands of rows

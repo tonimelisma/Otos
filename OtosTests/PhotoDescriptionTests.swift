@@ -327,11 +327,12 @@ struct PhotoDescriptionTests {
         try await Self.readText([], in: store)
         try await Self.readLabels([], in: store)
         let writer = PhotoDescriptionWriter(store: store, thumbnailDirectory: directory) { _, _ in
-            throw PhotoDescriber.ModelUnavailable(reason: "appleIntelligenceNotEnabled")
+            throw PhotoDescriber.ModelUnavailable(availability: .appleIntelligenceOff)
         }
 
         await writer.start()
         try await waitUntil { await writer.drains >= 1 }
+        #expect(await writer.troubles() == [OwnerTrouble(.appleIntelligenceOff)], "it says what stops it")
         await writer.shutdown()
 
         #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.map(\.id) == [library.id("a.jpg")])
@@ -376,6 +377,7 @@ struct PhotoDescriptionTests {
         let quiescence = try await writer.untilQuiescent()
         #expect(requests.withLock { $0 } == 1)
         #expect(quiescence.wake?.kind == .backoff)
+        #expect(await writer.troubles() == [OwnerTrouble(.appleIntelligenceNotResponding)])
         await writer.shutdown()
         #expect(try await store.backgroundReads.photoDescriptionCandidates(limit: 10).candidates.count == 4)
         await store.shutdown()

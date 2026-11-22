@@ -1053,20 +1053,19 @@ def owners_at_end(events):
         return None
     pending = [{k: v for k, v in e.fields.items() if k not in ("op", "phase")}
                for e in of(events, "owners.pending", status.phase) if e.time >= status.time]
-    # Rows an owner holds for a fact outside it, quiescent or not (`op=owners.held`): a count,
-    # or None where the build logged `unknown`.
-    held = [{"owner": e.fields.get("owner"), "waitingFor": e.fields.get("waitingFor"), "count": e.num("count")}
-            for e in of(events, "owners.held", status.phase) if e.time >= status.time]
+    # What stops an owner's work, quiescent or not (`op=owners.trouble`): a count of items, or
+    # None where the trouble stops the owner's work as a whole (`count=none`).
+    troubles = [{"owner": e.fields.get("owner"), "cause": e.fields.get("cause"), "count": e.num("count")}
+                for e in of(events, "owners.trouble", status.phase) if e.time >= status.time]
     return {
         "moment": status.phase,
         "owners": status.num("owners"),
         "quiescent": status.num("quiescent"),
         "pending": pending,
-        "held": held,
+        "troubles": troubles,
     }
 
 
-HELD_LABELS = {"pacing": "paced, claim held until the pacing passes"}
 
 
 def describe_pending(owner):
@@ -1475,14 +1474,14 @@ def print_machine(m, w):
 
 def print_disk_by_owner(windows, w, at_end=None):
     w("\nDISK READ BY OWNER (MiB; each owner's figure is what it asked of the disk)\n")
-    held = (at_end or {}).get("held")
-    if at_end is None or held is None:
-        w("  held rows: - (no op=owners.status line)\n")
-    elif not held:
-        w(f"  held rows at {at_end['moment']}: - (no op=owners.held line: a build older than it)\n")
-    for row in held or []:
-        label = HELD_LABELS.get(row["waitingFor"], row["waitingFor"])
-        w(f"  held at {at_end['moment']}: {label}: {fmt(row['count'])} ({row['owner']}, op=owners.held)\n")
+    troubles = (at_end or {}).get("troubles")
+    if at_end is None or troubles is None:
+        w("  stopped work: - (no op=owners.status line)\n")
+    elif not troubles:
+        w(f"  stopped work at {at_end['moment']}: none (no op=owners.trouble line)\n")
+    for row in troubles or []:
+        count = "all its work" if row["count"] is None else f"{fmt(row['count'])} items"
+        w(f"  stopped at {at_end['moment']}: {row['cause']}: {count} ({row['owner']}, op=owners.trouble)\n")
     for name in ("session", "idle"):
         window = windows.get(name)
         if not window:

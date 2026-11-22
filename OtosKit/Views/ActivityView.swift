@@ -4,7 +4,8 @@ import SwiftUI
 // DES-124): the one place the window says the status of the background work — working,
 // waiting on something, or up to date. The line sits at the sidebar's foot at one fixed height
 // in every state (DES-053); a click, Space or Return opens a read-only popover (DES-041) listing
-// every piece of work with its status. Passive: every string comes from `ActivityPresentation`.
+// the work that runs or waits, each with what stops it, and one line for everything else.
+// Passive: every string comes from `ActivityPresentation`.
 
 struct ActivityLine: View {
     let presentation: ActivityPresentation
@@ -127,10 +128,13 @@ struct ActivityPopover: View {
                             Text(row.title)
                                 .font(.body)
                                 .foregroundStyle(DesignPalette.label(for: colorScheme))
-                            Text(row.detail)
-                                .font(.subheadline)
-                                .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                                .monospacedDigit()
+                            ForEach(row.details, id: \.self) { detail in
+                                Text(detail)
+                                    .font(.subheadline)
+                                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                                    .monospacedDigit()
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         Spacer(minLength: 8)
                         ActivityStatusGlyph(status: row.status)
@@ -138,6 +142,11 @@ struct ActivityPopover: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
+            }
+            if let footer = presentation.footer {
+                Text(footer)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
             }
         }
         .padding(16)

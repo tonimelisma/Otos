@@ -364,7 +364,9 @@ Adjacent decisions requiring separate ADRs or specs:
    `.membership` change names the row or names none (its source may differ, which the
    ledger compares at the next claim), or when its root is no longer offered; shutdown gives
    it back and the next launch clears it. A held paced row takes no place in the claim
-   window and is reported as `op=owners.held waitingFor=pacing`. The ledger holds no work
+   window. Each entry records why it paces (`RetryLedgerEntry.cause`: the server did not answer,
+   the source sends the original only when opened, or the video's faces were unread), and
+   the rows it paces are reported by that cause (`op=owners.trouble`, ADR 0058). The ledger holds no work
    payload and resets on success, source-signature change, or process restart (it is
    in-memory only). Device staging retries remain capped at
    3 in-window attempts (unbounded for the `insufficientLocalSpace` waiting condition)

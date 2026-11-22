@@ -477,6 +477,12 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
             && inFlightByID.values.allSatisfy { $0.effectivePriority == .background }
     }
 
+    /// What stops downloads now: a provider whose failures opened its breaker, until it closes.
+    func troubles() async -> [OwnerTrouble] {
+        let now = clock.now
+        return breakerOpenUntilByRoot.values.contains { $0 > now } ? [OwnerTrouble(.providerNotAnswering)] : []
+    }
+
     /// Nothing outside a request rings admission: a wake with nothing pending admits nothing.
     func ringIdle() {
         wake()

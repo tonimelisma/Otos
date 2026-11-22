@@ -125,7 +125,7 @@ struct DigestDownloadsTests {
         #expect(await requests.total == 1, "one download, for the digest")
         #expect(await reads.scopes == [.hash], "the digest alone, from the downloaded copy")
         #expect(try await library.asset()?.contentHash == Self.digest)
-        #expect(await coordinator.heldRows() == [OwnerHeldRows(waitingFor: .pacing, count: 0)], "nothing is held")
+        #expect(await coordinator.troubles().isEmpty, "nothing stops a row")
         await coordinator.shutdown()
         await library.store.shutdown()
     }

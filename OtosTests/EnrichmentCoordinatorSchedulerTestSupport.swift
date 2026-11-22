@@ -18,7 +18,7 @@ func pacedSchedule(
 ) -> EnrichmentSchedule {
     var schedule = EnrichmentSchedule(retrySchedule: .production)
     for row in rows {
-        schedule.pace(row.id, sourceSize: row.sourceSize, now: now)
+        schedule.pace(row.id, sourceSize: row.sourceSize, cause: .serverDidNotAnswer, now: now)
     }
     return schedule
 }

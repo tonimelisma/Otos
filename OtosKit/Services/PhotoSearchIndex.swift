@@ -452,6 +452,11 @@ actor PhotoSearchIndex: QuiescentOwner {
         ring?.yield()
     }
 
+    /// What stops the index now: a pass that failed, while its retry waits.
+    func troubles() async -> [OwnerTrouble] {
+        retry == nil ? [] : [OwnerTrouble(.searchFailed)]
+    }
+
     func ringIdle() {
         request()
     }

@@ -107,6 +107,11 @@ actor PreviewFaceReader: QuiescentOwner {
     }
 
     /// A ring that brings nothing new: the drain it asks for reads only what is already owed.
+    /// What stops faces now (`PreviewFaceRetries.troubles`).
+    func troubles() async -> [OwnerTrouble] {
+        retries.troubles(at: ContinuousClock.now)
+    }
+
     func ringIdle() {
         request()
     }
@@ -459,6 +464,20 @@ nonisolated struct PreviewFaceRetries: Sendable {
 
     mutating func modelFailed(at now: ContinuousClock.Instant) {
         modelNotBefore = now.advanced(by: pacing)
+    }
+
+    /// What stops faces at `now`: the model, while it waits out its pacing, and the stills
+    /// whose reads failed, until theirs passes.
+    func troubles(at now: ContinuousClock.Instant) -> [OwnerTrouble] {
+        var troubles: [OwnerTrouble] = []
+        if let modelNotBefore, modelNotBefore > now {
+            troubles.append(OwnerTrouble(.faceModelUnavailable))
+        }
+        let failed = stills.values.count { $0.notBefore > now }
+        if failed > 0 {
+            troubles.append(OwnerTrouble(.facesUnread, count: failed))
+        }
+        return troubles
     }
 
     /// Keeps only the stills still owed faces.

@@ -29,16 +29,16 @@ nonisolated enum PhotoDescriber {
         case declined
     }
 
-    /// No request can be made: the model is not available on this Mac now.
+    /// No request can be made: the model is not available on this Mac now, for `availability`.
     struct ModelUnavailable: Error, Sendable {
-        let reason: String
+        let availability: PhotoDescriptionAvailability
     }
 
     /// Describes `image` with `prompt` through the system model.
     static func live(_ image: CGImage, _ prompt: PhotoDescriptionPrompt) async throws -> Outcome {
         let model = SystemLanguageModel.default
         if case let .unavailable(reason) = model.availability {
-            throw ModelUnavailable(reason: String(describing: reason))
+            throw ModelUnavailable(availability: availability(reason))
         }
         let session = LanguageModelSession(model: model, instructions: prompt.instructions)
         do {
@@ -58,7 +58,7 @@ nonisolated enum PhotoDescriber {
             case .guardrailViolation, .refusal:
                 return .declined
             case .assetsUnavailable:
-                throw ModelUnavailable(reason: "assetsUnavailable")
+                throw ModelUnavailable(availability: .notReady)
             default:
                 throw error
             }
@@ -124,12 +124,28 @@ nonisolated enum PhotoDescriber {
     static var liveAvailability: PhotoDescriptionAvailability {
         switch SystemLanguageModel.default.availability {
         case .available: .available
-        case let .unavailable(reason):
-            switch reason {
-            case .appleIntelligenceNotEnabled: .appleIntelligenceOff
-            case .deviceNotEligible: .notEligible
-            default: .notReady
-            }
+        case let .unavailable(reason): availability(reason)
+        }
+    }
+
+    /// What an unavailable reason means for a request, as the Info pane and the Activity surface say it.
+    static func availability(_ reason: SystemLanguageModel.Availability.UnavailableReason) -> PhotoDescriptionAvailability {
+        switch reason {
+        case .appleIntelligenceNotEnabled: .appleIntelligenceOff
+        case .deviceNotEligible: .notEligible
+        default: .notReady
+        }
+    }
+
+    /// What stops every request after a failure that is the model's (`Failure.model`): the
+    /// availability the framework reported, or, for a model that says it is available, a
+    /// service that failed the request.
+    static func unavailability(of error: any Error) -> OwnerTrouble.Cause {
+        switch (error as? ModelUnavailable)?.availability {
+        case .appleIntelligenceOff: .appleIntelligenceOff
+        case .notEligible: .appleIntelligenceUnsupported
+        case .notReady: .appleIntelligenceNotReady
+        case .available, nil: .appleIntelligenceNotResponding
         }
     }
 }

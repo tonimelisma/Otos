@@ -21,7 +21,7 @@ struct PacedClaimsStayHeldTests {
         let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
         let asset = try #require(scanned.testAssets.first)
         var schedule = EnrichmentSchedule(retrySchedule: .production)
-        schedule.pace(asset.id, sourceSize: asset.byteSize, now: start)
+        schedule.pace(asset.id, sourceSize: asset.byteSize, cause: .serverDidNotAnswer, now: start)
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _, _, _ in .transient },

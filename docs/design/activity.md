@@ -1,7 +1,7 @@
 # Activity
 
-The surface that says the status of Otos's background work — working, waiting on something,
-or up to date — and never when it ran (ADR 0058,
+The surface that says what Otos's background work is doing — working, or stuck and why —
+and never when it ran (ADR 0058,
 DES-124). Most of Otos's work runs unasked, over hours on a large cloud library: reading each
 photo, downloading originals, finding faces, naming places, preparing search, describing
 photos, looking for duplicates, syncing an Immich account. None of it belongs to a sidebar
@@ -22,47 +22,76 @@ checkmark.
 | State | Glyph | L2 (`body`) | L3 (`subheadline`) |
 | --- | --- | --- | --- |
 | Before the window's work is watched (the first grid has not painted) | none | blank | blank |
-| Something working | small spinner (DES-072) | the one that has worked longest (`Finding faces`) | `and 2 more`, or none |
-| Nothing working, something waiting | `pause.circle`, secondary | what waits, named (`Descriptions: waiting to try again`) | `and 1 more`, or none |
+| Something working | small spinner (DES-072) | the one that has worked longest (`Finding people`) | `and 2 more` (the popover's other rows), or none |
+| Nothing working, something paused or stuck | `pause.circle`, secondary | what waits (`Describing photos`) | `and 1 more`; for one row alone, the first sentence of what stops it (`Apple Intelligence isn’t responding`) |
 | Nothing working or waiting | `checkmark`, secondary | `Up to date` | none |
 
 The line names the work that started first, so a short job that starts beside a long one
 changes only the count. Clicking it, or Space / Return on it with Full Keyboard Access, opens
-the popover; it is disabled while nothing is known. VoiceOver reads `Activity, Finding faces,
+the popover; it is disabled while nothing is known. VoiceOver reads `Activity, Finding people,
 and 2 more`.
 
 ## The popover
 
 Read-only inspection (DES-041), 320 pt wide, anchored to the line's trailing edge: the L1
-header, then one row for every piece of work, in a fixed order, each Immich account after.
-A row is the work's glyph, its L2 name, its L3 status under it, and the status's glyph at the
-trailing edge, level with the name:
+header, then one row for each piece of work that works, is paused or is stuck, in a fixed
+order, each Immich account after, then `Everything else is up to date` in L3 when anything
+watched is not listed. With nothing working or waiting, the header alone. A row is the work's
+glyph, what it does (L2), each thing that stops it as its own L3 line under it, and the
+status's glyph at the trailing edge, level with the name:
 
 | Status | L3 | Trailing glyph |
 | --- | --- | --- |
-| Working | `Working`, with the one exact count Otos holds (`Working, 8,412 photos to check`) | small spinner |
-| Waiting | what it waits on: `Paused while memory is low`, `Paused while the Mac cools down`, `Paused in Low Power Mode`, `Waiting to try again` | `pause.circle` |
-| Up to date | `Up to date` | `checkmark` |
+| Working | what stops some of its items, if anything; else the one exact count Otos holds (`8,412 photos to check`); else nothing | small spinner |
+| Paused | the machine condition (`Paused while memory is low.`, `Paused while the Mac cools down.`, `Paused in Low Power Mode.`), then what stops it | `pause.circle` |
+| Stuck | what stops it | `pause.circle` |
 
-No row shows a time: the surface answers "is it done, working, or waiting", not "when"
+What stops work is said in sentences: what is wrong, then what happens next or what to do
+(HIG, Progress indicators: a stalled process says what the problem is and what people can do
+about it). Its owner names the cause (`OwnerTrouble`, ADR 0058); nothing says only
+"waiting".
+
+| Cause | L3 |
+| --- | --- |
+| Downloads failed | `11 items didn’t download. Otos will try again.` |
+| Disk full | `The disk is almost full. Otos will go on when there’s room.` |
+| A server did not answer | `The server didn’t answer for 2,999 items. Otos will try again.` |
+| A source sends originals only when opened | `The server sends 12 items only when you open them. Otos will try again.` |
+| Faces unread | `Faces in 3 items couldn’t be read. Otos will try again.` |
+| Face model missing | `The face finder couldn’t start. Otos will try again.` |
+| Apple Intelligence off | `Turn on Apple Intelligence in System Settings to describe photos.` |
+| Mac not eligible | `This Mac can’t run Apple Intelligence.` |
+| Model not ready | `Apple Intelligence isn’t ready yet. Otos will try again.` |
+| Model service failing | `Apple Intelligence isn’t responding. Otos will try again.` |
+| Model busy | `Apple Intelligence is busy. Otos will try again.` |
+| Descriptions failed | `4 items couldn’t be described. Otos will try again.` |
+| Cloud provider failing | `The cloud provider isn’t answering. Otos will try again.` |
+| Place names failed | `Place names couldn’t be looked up. Otos will try again.` |
+| Search failed | `Search couldn’t be updated. Otos will try again.` |
+| Account offline | `The server isn’t answering. Otos will try again.` |
+| Account signed out | `You’re signed out of this account.` |
+
+No row shows a time: the surface answers "is it done, working, or stuck", not "when"
 (owner, 2026-11-21). A count appears only where Otos holds an exact one (DES-031): People's
-unchecked tally. Nothing claims a
-percentage, a remaining time or a total.
+unchecked tally, and the items a trouble stops. Nothing claims a percentage, a remaining time
+or a total.
 
 ## Names
 
-| Work | Row name | Line while working |
-| --- | --- | --- |
-| Thumbnails, previews, each item's details and its digest | `Photos` | `Reading photos` |
-| Originals from a cloud provider | `Originals` | `Downloading originals` |
-| Details re-read after Otos learned to read more | `Photo details` | `Updating photo details` |
-| Faces in stills and video frames | `Faces` | `Finding faces` |
-| Faces put together into people | `People` | `Recognizing people` |
-| Countries and towns | `Places` | `Naming places` |
-| What search reads in each photo | `Search` | `Preparing search` |
-| Descriptions | `Descriptions` | `Describing photos` |
-| Duplicate groups | `Duplicates` | `Looking for duplicates` |
-| An Immich account | its name: `Syncing`, `Connecting` (working), `Waiting for the server` (offline), `Waiting for you to sign in` (signed out), `Up to date` | `Syncing Home` |
+Each row says what the work does, in words a user knows (DES-035); a user cannot tell
+reading a photo from re-reading its details, or finding a face from recognizing its person,
+so each pair is one row.
+
+| Work | Row and line |
+| --- | --- |
+| Thumbnails, previews, each item's details and its digest, read again after Otos learned to read more | `Reading photos` |
+| Originals from a cloud provider | `Downloading photos` |
+| Faces in stills and video frames, put together into people | `Finding people` |
+| Countries and towns | `Naming places` |
+| What search reads in each photo | `Preparing search` |
+| Descriptions | `Describing photos` |
+| Duplicate groups | `Looking for duplicates` |
+| An Immich account | `Syncing Home`; L3 `Connecting to the server` while it connects |
 
 Not listed, because each has its own surface (one fact, one owner): an import (the import
 bar), Move to Trash (the trash status bar), export and reorganization (their sheets and
@@ -86,6 +115,6 @@ A scope whose result is still being built says so in its own bar (DES-125), so t
 | String | Level |
 | --- | --- |
 | `Working on N things` / `Waiting on N things` / `Up to date` | popover L1 |
-| a work's name; the line's working name or what waits | L2 |
-| a row's status, `and N more` | L3 |
+| what a piece of work does | L2 |
+| what stops it, a count, `and N more`, `Everything else is up to date` | L3 |
 | `Still looking for duplicates` | duplicates bar L3 |

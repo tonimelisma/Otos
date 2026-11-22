@@ -143,6 +143,11 @@ actor PlaceNameReader: QuiescentOwner {
         doorbell?.yield()
     }
 
+    /// What stops naming now: a naming that failed, while its backoff runs.
+    func troubles() async -> [OwnerTrouble] {
+        backoff == nil ? [] : [OwnerTrouble(.placeNamesFailed)]
+    }
+
     func ringIdle() {
         request()
     }

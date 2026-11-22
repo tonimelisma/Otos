@@ -28,7 +28,7 @@ extension EnrichmentCoordinator {
             // the ledger's pacing passes, or for every video until the model's backoff does.
             // Not `.transient`: the bytes were read, and the row is no unreadable source.
             let now = ContinuousClock.now
-            schedule.pace(id, sourceSize: work.sourceSize, now: now)
+            schedule.pace(id, sourceSize: work.sourceSize, cause: .facesUnread, now: now)
             if unread == .model {
                 schedule.holdVideoFaces(now: now)
             }
@@ -55,7 +55,10 @@ extension EnrichmentCoordinator {
                 // for the user's work: nothing is asked of it (ADR 0046 §4). The row waits
                 // out the pacing ledger, holding its claim, as a ranged read its server did not
                 // answer does.
-                schedule.pace(id, sourceSize: work.sourceSize, now: ContinuousClock.now, holdingClaim: record.ownsStoreClaim)
+                schedule.pace(
+                    id, sourceSize: work.sourceSize, cause: .sentOnlyWhenOpened, now: ContinuousClock.now,
+                    holdingClaim: record.ownsStoreClaim
+                )
                 await recordVisibleThumbnailLifecycle(phase: "userWorkOnly", id: id)
                 return
             }
@@ -85,7 +88,10 @@ extension EnrichmentCoordinator {
             // once; an outage stops claims through the root's answering fact
             // (`CatalogStore.setSourceAnswering`).
             readyClaims[id] = nil
-            schedule.pace(id, sourceSize: work.sourceSize, now: ContinuousClock.now, holdingClaim: record.ownsStoreClaim)
+            schedule.pace(
+                id, sourceSize: work.sourceSize, cause: .serverDidNotAnswer, now: ContinuousClock.now,
+                holdingClaim: record.ownsStoreClaim
+            )
             await recordVisibleThumbnailLifecycle(phase: "unanswered", id: id)
         case .transient:
             // `.transient` means the byte source could not be opened. The metadata

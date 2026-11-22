@@ -205,7 +205,7 @@ nonisolated enum AnniversaryTitler {
     static func live(_ prompt: AnniversaryTitlePrompt) async throws -> String? {
         let model = SystemLanguageModel.default
         if case let .unavailable(reason) = model.availability {
-            throw PhotoDescriber.ModelUnavailable(reason: String(describing: reason))
+            throw PhotoDescriber.ModelUnavailable(availability: PhotoDescriber.availability(reason))
         }
         let session = LanguageModelSession(model: model, instructions: AnniversaryTitlePrompt.instructions)
         do {

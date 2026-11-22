@@ -405,7 +405,8 @@ nonisolated struct EnrichmentSchedule: Sendable {
             let entry = RetryLedgerEntry(
                 notBefore: now.advanced(by: retrySchedule.spaceRecheck),
                 attemptCount: work.attemptCount,
-                sourceSize: work.sourceSize
+                sourceSize: work.sourceSize,
+                cause: .diskFull
             )
             holdUntil(entry.notBefore, work, attemptCount: work.attemptCount, hold: .freeSpace, record: record)
             return Settlement(disposition: .paced(entry), releasesStoreClaim: false)
@@ -433,7 +434,8 @@ nonisolated struct EnrichmentSchedule: Sendable {
         let entry = RetryLedgerEntry(
             notBefore: now.advanced(by: retrySchedule.ledgerPacing),
             attemptCount: work.attemptCount,
-            sourceSize: work.sourceSize
+            sourceSize: work.sourceSize,
+            cause: .downloadsFailed
         )
         holdUntil(entry.notBefore, work, attemptCount: 0, hold: .pacing, record: record)
         return Settlement(disposition: .paced(entry), releasesStoreClaim: false)
@@ -532,12 +534,13 @@ nonisolated struct EnrichmentSchedule: Sendable {
 
     // MARK: - Pacing ledger
 
-    /// Holds a row whose bytes a server did not answer for, for `ledgerPacing`, so it is not
-    /// claimed again until then (`ledgerAdmits`). `holdingClaim` when the row's Store claim
-    /// passes to the ledger rather than back to the Store (`holdPacedClaims`).
+    /// Holds a row that `cause` stopped, for `ledgerPacing`, so it is not claimed again until
+    /// then (`ledgerAdmits`). `holdingClaim` when the row's Store claim passes to the ledger
+    /// rather than back to the Store (`holdPacedClaims`).
     mutating func pace(
         _ id: MediaAssetID,
         sourceSize: Int64?,
+        cause: OwnerTrouble.Cause,
         now: ContinuousClock.Instant,
         holdingClaim: Bool = false
     ) {
@@ -545,8 +548,39 @@ nonisolated struct EnrichmentSchedule: Sendable {
             notBefore: now.advanced(by: retrySchedule.ledgerPacing),
             attemptCount: (retryLedger[id]?.attemptCount ?? 0) + 1,
             sourceSize: sourceSize,
+            cause: cause,
             holdsStoreClaim: holdingClaim
         )
+    }
+
+    /// What stops rows at `now`, by cause, in `OwnerTrouble.Cause` order: rows the ledger
+    /// paces, transfers parked after failing or turned away by the free-space floor, transfers
+    /// waiting for an in-window retry, and every video's faces while the face model is missing.
+    /// A transfer waiting only for a slot is not stopped: it is queued.
+    func troubles(at now: ContinuousClock.Instant) -> [OwnerTrouble] {
+        var counts: [OwnerTrouble.Cause: Int] = [:]
+        for entry in retryLedger.values where entry.notBefore > now {
+            counts[entry.cause, default: 0] += 1
+        }
+        for record in parked.values where record.work.retryNotBefore.map({ $0 > now }) ?? true {
+            switch record.hold {
+            case .pacing: counts[.downloadsFailed, default: 0] += 1
+            case .freeSpace: counts[.diskFull, default: 0] += 1
+            case .transferSlot, nil: break
+            }
+        }
+        for record in materializations.values where !record.isInFlight {
+            if let retry = record.work.retryNotBefore, retry > now {
+                counts[.downloadsFailed, default: 0] += 1
+            }
+        }
+        var troubles = OwnerTrouble.Cause.allCases.compactMap { cause in
+            counts[cause].map { OwnerTrouble(cause, count: $0) }
+        }
+        if let held = videoFacesHeldUntil, held > now {
+            troubles.append(OwnerTrouble(.faceModelUnavailable))
+        }
+        return troubles
     }
 
     /// Keeps the Store claims of paced rows a claim just found (`ledgerAdmits` said no): the
@@ -593,8 +627,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         retryLedger[id]?.holdsStoreClaim == true
     }
 
-    /// The rows whose Store claim the ledger holds: what `op=owners.held` reports and what
-    /// shutdown gives back.
+    /// The rows whose Store claim the ledger holds: what shutdown gives back.
     var pacedClaimIDs: [MediaAssetID] {
         retryLedger.compactMap { $0.value.holdsStoreClaim ? $0.key : nil }
     }
