@@ -123,6 +123,44 @@ struct PacedClaimsStayHeldTests {
         await coordinator.shutdown()
         await store.shutdown()
     }
+
+    /// A RAW whose camera's support Apple could not deliver is not developed, and that is no
+    /// fact about the file: it is paced for that cause, its claim held, and read once across
+    /// later passes — never marked unreadable, which only `.transient` does.
+    @Test func aRAWWhoseCameraSupportCouldNotBeFetchedIsPacedForThatCause() async throws {
+        let root = try makeTestDirectory().appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let files: [(relativeName: String, byteSize: Int64, contentTypeIdentifier: String)] =
+            [("frame.arw", 100, "com.sony.arw-raw-image")]
+        let store = makeTestStore(location: .inMemory, scanner: fixedScanner(files))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let raw = try #require(scanned.testAssets.first?.id)
+
+        let reads = PacedCounter()
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _, _, _ in
+                await reads.count()
+                return .rawResourcesUnavailable
+            },
+            originalStatus: { _ in .materialized }
+        )
+        await coordinator.start()
+        try await waitUntil { await reads.total == 1 }
+        _ = try await coordinator.untilQuiescent()
+        #expect(await coordinator.schedule.pacedClaimIDs == [raw])
+        #expect(await coordinator.troubles() == [OwnerTrouble(.rawSupportUnavailable, count: 1)])
+
+        for _ in 0 ..< 3 {
+            await coordinator.ringIdle()
+            _ = try await coordinator.untilQuiescent()
+        }
+        #expect(await reads.total == 1, "the paced RAW is not developed again before its pacing passes")
+        await coordinator.shutdown()
+        await store.shutdown()
+    }
 }
 
 private actor PacedCounter {

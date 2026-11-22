@@ -492,10 +492,16 @@ nonisolated struct MediaEnricher {
         var provisionalThumbnail: StagedDerivedImage?
         var verdict: DecodeVerdict?
         if scope.contains(.rendering) {
-            guard let still = await Self.renderStill(
-                id: id, url: url, recipe: recipe?.recipe ?? .neutral, directory: thumbnailDirectory
-            ) else {
-                return .transient
+            let still: StillRendering
+            do {
+                still = try await Self.renderStill(
+                    id: id, url: url, recipe: recipe?.recipe ?? .neutral, directory: thumbnailDirectory
+                )
+            } catch {
+                switch error {
+                case .unreadable: return .transient
+                case .rawResourcesUnavailable: return .rawResourcesUnavailable
+                }
             }
             verdict = still.verdict
             if case .undecodable = still.verdict {
@@ -627,6 +633,13 @@ nonisolated struct MediaEnricher {
         }
     }
 
+    /// Why a still was not rendered, when nothing is known about it: its bytes could not be
+    /// read, or Apple's support for a RAW's camera could not be fetched.
+    enum StillNotRendered: Error {
+        case unreadable
+        case rawResourcesUnavailable
+    }
+
     /// What one rendering of a still made: its staged rendering, when the renderer could make
     /// one, and whether the renderer could decode it at all.
     struct StillRendering {
@@ -637,15 +650,16 @@ nonisolated struct MediaEnricher {
 
     /// Renders a still once (ADR 0009) as its loupe preview and the grid thumbnail drawn from
     /// it, both staged (ADR 0035). A video is not rendered here. When the renderer cannot
-    /// decode the file, the caller takes the thumbnail from QuickLook. Nil when the file's
-    /// bytes could not be read: nothing is known about the still, so nothing is stamped and
-    /// the row is retried, rather than stamped with no preview and so no faces (ADR 0047).
+    /// decode the file, the caller takes the thumbnail from QuickLook. It throws when nothing
+    /// is known about the still, so nothing is stamped and the row is tried again, rather than
+    /// stamped with no preview and so no faces (ADR 0047): the file's bytes could not be read,
+    /// or Apple's support for a RAW's camera could not be fetched.
     private static func renderStill(
         id: MediaAssetID,
         url: URL,
         recipe: EditRecipe,
         directory: URL
-    ) async -> StillRendering? {
+    ) async throws(StillNotRendered) -> StillRendering {
         guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true else {
             return StillRendering(rendering: nil, verdict: nil)
         }
@@ -661,13 +675,16 @@ nonisolated struct MediaEnricher {
             // The decoder's verdict, not the photo's: it is stored with the decoder that
             // gave it, and a later decoder tries again (ENR-029).
             return StillRendering(rendering: nil, verdict: .undecodable(decoder: ImageRenderer.decoderIdentity))
+        } catch is ImageRenderer.RAWResourcesUnavailable {
+            // Logged where the fetch failed (`render.rawResources`).
+            throw .rawResourcesUnavailable
         } catch {
             OtosLog.rendering.errorOperation("render.still", phase: "unreadable", fields: [
                 "rootPath": id.libraryRootPath.rawValue,
                 "relativePath": id.relativePath.rawValue,
                 "error": String(describing: error),
             ])
-            return nil
+            throw .unreadable
         }
         return StillRendering(rendering: staged, verdict: .decoded)
     }
@@ -827,8 +844,8 @@ nonisolated struct MediaEnricher {
 
 /// The result of enriching one asset. The coordinator collects `.complete` results into
 /// a batch for `CatalogStore.applyEnrichmentBatch` and hands `.hashed` digests to
-/// `CatalogStore.applyContentHash`; `.transient`/`.notMaterialized` are re-queued (the
-/// asset stays `needsEnrichment`).
+/// `CatalogStore.applyContentHash`; `.transient`/`.notMaterialized` are re-queued and
+/// `.unanswered`/`.rawResourcesUnavailable` paced (the asset stays `needsEnrichment`).
 nonisolated enum EnrichmentOutcome {
     case complete(EnrichmentResult)
     /// A digest-only claim's digest (`EnrichmentScope.hash`).
@@ -838,6 +855,10 @@ nonisolated enum EnrichmentOutcome {
     /// A server that serves the bytes in ranges did not answer this read. The row is
     /// paced rather than claimed again at once, so an outage is never a storm of claims.
     case unanswered
+    /// Apple's support for a RAW's camera could not be fetched, so the still was not
+    /// developed (`ImageRenderer.RAWResourcesUnavailable`). Nothing is stamped and the source
+    /// is not unreadable: the row is paced and developed again.
+    case rawResourcesUnavailable
     /// Every product the scope covered but a video's faces, which could not be read: the
     /// products are written, and the faces stay owed, paced (ADR 0047).
     case facesUnread(EnrichmentResult, VideoFacesUnread)

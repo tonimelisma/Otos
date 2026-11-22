@@ -227,6 +227,8 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             return "The disk is almost full. Otos will go on when there’s room."
         case .serverDidNotAnswer:
             return "The server didn’t answer for \(items ?? "some items"). Otos will try again."
+        case .rawSupportUnavailable:
+            return "Camera support for \(items ?? "some items") couldn’t be downloaded. Otos will try again."
         case .sentOnlyWhenOpened:
             return "The server sends \(items ?? "some items") only when you open them. Otos will try again."
         case .facesUnread:

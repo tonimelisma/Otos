@@ -57,6 +57,20 @@ final nonisolated class ImageRenderer: Sendable {
         case renderFailed
     }
 
+    /// Apple's support for a RAW's camera at the decoder chosen for it could not be fetched
+    /// (`CIRAWFilter.downloadResources`): the download failed or did not finish by its
+    /// deadline. It is no verdict on the file — the same file develops once the support is
+    /// on the Mac — so it is not a `RenderError`, and enrichment paces the row rather than
+    /// stamping it undecodable or its source unreadable.
+    struct RAWResourcesUnavailable: Error, Equatable, CustomStringConvertible {
+        let domain: String
+        let code: Int
+
+        var description: String {
+            "rawResourcesUnavailable(\(domain) \(code))"
+        }
+    }
+
     /// Otos's own part of the decoder: 2 since a still's bytes are decoded as the type its
     /// extension names (`docs/research/2026-11-11-arw-bytes-read-as-tiff.md`). A change to
     /// how Otos hands a still to its decoders that can make an unreadable still readable is
@@ -421,7 +435,11 @@ final nonisolated class ImageRenderer: Sendable {
     }
 
     /// Opens a RAW for development with the newest decoder the file supports, scaled for
-    /// an edited long edge of at most `outputLongEdge`.
+    /// an edited long edge of at most `outputLongEdge`, once Apple's support for its camera
+    /// at that decoder is on the Mac (`fetchResources`).
+    ///
+    /// Blocks its thread while the support downloads: it runs on a render lane's queue or
+    /// the live edit renderer's own, never on a shared executor (ADR 0032 rule 6).
     static func openRAW(
         _ source: StillSource,
         outputLongEdge: Int?,
@@ -442,8 +460,57 @@ final nonisolated class ImageRenderer: Sendable {
         } else {
             decoder = .rawOther
         }
+        let fetchStart = ContinuousClock.now
+        do {
+            // time: deadline — Apple's asset server may never answer; at the deadline Core
+            // Image reports a timeout error, and the render waits for that report.
+            try fetchResources { reported in
+                _ = filter.downloadResources(timeout: rawResourcesDeadline, completionHandler: reported)
+            }
+        } catch {
+            OtosLog.rendering.errorOperation("render.rawResources", phase: "failed", fields: [
+                "decoder": decoder.rawValue,
+                "error": String(describing: error),
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: fetchStart))",
+                "path": source.url.path(percentEncoded: false),
+            ])
+            throw error
+        }
+        OtosLog.rendering.debugOperation("render.rawResources", phase: "ready", fields: [
+            "decoder": decoder.rawValue,
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: fetchStart))",
+            "path": source.url.path(percentEncoded: false),
+        ])
         filter.scaleFactor = rawScaleFactor(nativeSize: nativeSize, outputLongEdge: outputLongEdge, recipe: recipe)
         return OpenedRAW(filter: filter, decoder: decoder, nativeSize: nativeSize)
+    }
+
+    /// How long a RAW's development waits for Apple's support for its camera to download. A
+    /// camera's support is one asset of about 1.6 MB (`com_apple_MobileAsset_RawCamera_Camera`,
+    /// research 2026-11-22), so a minute is a download that is not coming; the row is paced
+    /// and its development tried again.
+    static let rawResourcesDeadline: TimeInterval = 60
+
+    /// Waits for Apple's report that what a RAW's decoder needs for its camera is on the Mac.
+    /// macOS does not install a camera's RAW support with the OS: it is an on-demand asset,
+    /// one per camera, fetched by `CIRAWFilter.downloadResources` for the filter's decoder
+    /// version, which reports success at once when it is already present (under 0.5 ms
+    /// measured; research 2026-11-22). `download` starts that fetch with the reporter it is
+    /// handed; Core Image calls the reporter once, on a queue of its own, so this thread's
+    /// wait cannot hold up the report. An error throws `RAWResourcesUnavailable`, classified
+    /// by its domain and code.
+    static func fetchResources(_ download: (@escaping @Sendable ((any Error)?) -> Void) -> Void) throws {
+        let outcome = Mutex<(any Error)??>(nil)
+        let reported = DispatchSemaphore(value: 0)
+        download { error in
+            outcome.withLock { $0 = .some(error) }
+            reported.signal()
+        }
+        reported.wait()
+        if case let error?? = outcome.withLock({ $0 }) {
+            let failure = error as NSError
+            throw RAWResourcesUnavailable(domain: failure.domain, code: failure.code)
+        }
     }
 
     /// The developed image for `recipe`. Exposure is set on the filter, where it acts on

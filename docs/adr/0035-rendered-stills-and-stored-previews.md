@@ -43,6 +43,15 @@ and is never shown at full size except when zoomed to 100%.
   size is read once, when its filter is made (`OpenedRAW`), and every scale factor and
   reported size comes from that value: under RAW9 the filter's `nativeSize` changes once
   a scale factor is set (research 2026-10-26-live-edit-latency).
+- **A RAW develops once its camera's support is on the Mac.** macOS fetches a camera's
+  RAW support on demand, one asset per camera, and does not install it with the OS.
+  Opening a RAW asks `CIRAWFilter.downloadResources` for the chosen decoder and waits for
+  its report, which comes at once when the support is present (under 0.5 ms) and at a
+  one-minute deadline at worst. A failed fetch is no verdict on the file: enrichment
+  paces the row and develops it again (`rawSupportUnavailable`), and never stamps it
+  undecodable or its source unreadable. Falling back to RAW8 instead was rejected,
+  because a library would then show two decoders' looks until the next OS update
+  (`docs/research/2026-11-22-raw-camera-support-resources.md`).
 - **Two stored products per still,** made from one rendering while the original's bytes
   are local, and stamped together as the row's rendering (ADR 0009):
   - a 2560 px preview, 8-bit Display P3 HEIC, in `media_asset.preview_path`;

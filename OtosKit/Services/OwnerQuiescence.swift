@@ -179,6 +179,9 @@ nonisolated struct OwnerTrouble: Equatable, Sendable {
         case diskFull
         /// A server that serves its items in ranges did not answer for them.
         case serverDidNotAnswer
+        /// Apple's support for these RAWs' cameras could not be downloaded, so they could not
+        /// be developed; they are developed again (`ImageRenderer.RAWResourcesUnavailable`).
+        case rawSupportUnavailable
         /// Their source sends the whole original only for the user's work, and their ranges
         /// are not served now (ADR 0046 §4).
         case sentOnlyWhenOpened

@@ -93,6 +93,16 @@ extension EnrichmentCoordinator {
                 holdingClaim: record.ownsStoreClaim
             )
             await recordVisibleThumbnailLifecycle(phase: "unanswered", id: id)
+        case .rawResourcesUnavailable:
+            // Apple's support for the RAW's camera could not be fetched: no fact about the
+            // file, which is neither undecodable nor unreadable. The row waits out the pacing
+            // ledger, holding its claim, and is developed again after it.
+            readyClaims[id] = nil
+            schedule.pace(
+                id, sourceSize: work.sourceSize, cause: .rawSupportUnavailable, now: ContinuousClock.now,
+                holdingClaim: record.ownsStoreClaim
+            )
+            await recordVisibleThumbnailLifecycle(phase: "rawResourcesUnavailable", id: id)
         case .transient:
             // `.transient` means the byte source could not be opened. The metadata
             // package's `shouldRetry` is a generic contract, honest for a network byte
