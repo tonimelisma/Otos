@@ -135,7 +135,7 @@ build_optimized_dev_app() {
   otos_require_full_xcode
   otos_hold_build_folder "$OPTIMIZED_DERIVED_DATA" scorecard.build
   echo "op=scorecard.build phase=start folder=$OPTIMIZED_DERIVED_DATA optimization=-O" >&2
-  /usr/bin/xcodebuild \
+  xcodebuild \
     -project "$ROOT_DIR/Otos.xcodeproj" \
     -scheme Otos \
     -configuration Debug \

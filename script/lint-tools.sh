@@ -21,25 +21,50 @@ set -euo pipefail
 # either no tool directory or a complete one, and losing the race just discards a
 # duplicate download.
 
+# Each tool has one version and one archive per platform: the macOS build for the Mac,
+# the Linux builds for a Claude Code cloud session's x86_64 VM (AGENTS.md, "Cloud
+# Sessions") and for an arm64 Linux container on the Mac, which runs them natively.
+# `member` is the binary's name inside the archive.
 SWIFTFORMAT_VERSION="0.62.1"
-SWIFTFORMAT_URL="https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat.zip"
-SWIFTFORMAT_SHA256="7cb1cb1fae04932047c7015441c543848e8e60e1572d808d080e0a1f1661114a"
-
 SWIFTLINT_VERSION="0.65.0"
-SWIFTLINT_URL="https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip"
-SWIFTLINT_SHA256="d6cb0aa7a2f5f1ef306fc9e37bcb54dc9a26facc8f7784ac0c3dd3eccf5c6ba6"
-
-CACHE_ROOT="${OTOS_LINT_TOOLS_CACHE:-$HOME/Library/Caches/net.melisma.Otos.lint-tools}"
+platform="$(uname -s)-$(uname -m)"
 
 tool="${1:-}"
-case "$tool" in
-  swiftformat) version="$SWIFTFORMAT_VERSION" url="$SWIFTFORMAT_URL" sha256="$SWIFTFORMAT_SHA256" ;;
-  swiftlint) version="$SWIFTLINT_VERSION" url="$SWIFTLINT_URL" sha256="$SWIFTLINT_SHA256" ;;
+case "$tool:$platform" in
+  swiftformat:Darwin-*)
+    version="$SWIFTFORMAT_VERSION" member=swiftformat
+    url="https://github.com/nicklockwood/SwiftFormat/releases/download/${version}/swiftformat.zip"
+    sha256="7cb1cb1fae04932047c7015441c543848e8e60e1572d808d080e0a1f1661114a" ;;
+  swiftformat:Linux-x86_64)
+    version="$SWIFTFORMAT_VERSION" member=swiftformat_linux
+    url="https://github.com/nicklockwood/SwiftFormat/releases/download/${version}/swiftformat_linux.zip"
+    sha256="61ff55f3581e2144a4ad114831167102c38be853df75c1477d20b40a8e8120aa" ;;
+  swiftformat:Linux-aarch64)
+    version="$SWIFTFORMAT_VERSION" member=swiftformat_linux_aarch64
+    url="https://github.com/nicklockwood/SwiftFormat/releases/download/${version}/swiftformat_linux_aarch64.zip"
+    sha256="374b1975082970ac17c9b307639dbc0a148656434cd612cff06957e279020f34" ;;
+  swiftlint:Darwin-*)
+    version="$SWIFTLINT_VERSION" member=swiftlint
+    url="https://github.com/realm/SwiftLint/releases/download/${version}/portable_swiftlint.zip"
+    sha256="d6cb0aa7a2f5f1ef306fc9e37bcb54dc9a26facc8f7784ac0c3dd3eccf5c6ba6" ;;
+  swiftlint:Linux-x86_64)
+    # The static build: the other binary in a Linux archive needs a Swift runtime the VM lacks.
+    version="$SWIFTLINT_VERSION" member=swiftlint-static
+    url="https://github.com/realm/SwiftLint/releases/download/${version}/swiftlint_linux_amd64.zip"
+    sha256="79306a34e5c7cc55a220cd108cbb861dcad5f10138dcdf261e2624ae8b0a486b" ;;
+  swiftlint:Linux-aarch64)
+    version="$SWIFTLINT_VERSION" member=swiftlint-static
+    url="https://github.com/realm/SwiftLint/releases/download/${version}/swiftlint_linux_arm64.zip"
+    sha256="12d3b84bc5b69ae13a99a5a5c79904f9ce25867f099f6368d0037854f9ee6c26" ;;
+  swiftformat:* | swiftlint:*)
+    echo "op=lint.tools phase=unsupportedPlatform tool=$tool platform=$platform" >&2
+    exit 1 ;;
   *)
     echo "usage: script/lint-tools.sh swiftformat|swiftlint" >&2
-    exit 2
-    ;;
+    exit 2 ;;
 esac
+
+CACHE_ROOT="${OTOS_LINT_TOOLS_CACHE:-$HOME/Library/Caches/net.melisma.Otos.lint-tools}"
 
 tool_dir="$CACHE_ROOT/$tool-$version"
 binary="$tool_dir/$tool"
@@ -57,8 +82,9 @@ if [[ "$actual" != "$sha256" ]]; then
   echo "op=lint.tools phase=checksumMismatch tool=$tool version=$version expected=$sha256 actual=$actual url=$url" >&2
   exit 1
 fi
-unzip -oq "$staging/archive.zip" "$tool" -d "$staging"
+unzip -oq "$staging/archive.zip" "$member" -d "$staging"
 rm "$staging/archive.zip"
+[[ "$member" == "$tool" ]] || mv "$staging/$member" "$staging/$tool"
 chmod +x "$staging/$tool"
 # rename(2), not `mv`: `mv` onto an existing directory moves the source inside it,
 # whereas rename fails with ENOTEMPTY when another run got there first.

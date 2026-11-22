@@ -155,7 +155,7 @@ run_tests_with_footprint_guard() {
     echo "OTOS_TEXT_READING_LIVE set: including the live text readings."
     args+=("OTOS_TEXT_READING_LIVE=$OTOS_TEXT_READING_LIVE")
   fi
-  /usr/bin/xcodebuild "${args[@]}" > "$LOG_FILE" 2>&1 &
+  xcodebuild "${args[@]}" > "$LOG_FILE" 2>&1 &
   local xcodebuild_pid="$!"
   monitor_test_host_footprint "$xcodebuild_pid" "$monitor_file" "$pids_file" &
   local monitor_pid="$!"

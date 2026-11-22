@@ -45,7 +45,7 @@ fi
 # Compiled with -O: still the Debug configuration, so get-task-allow and `#if DEBUG`
 # stay, and every phase of All Media's order read ran about ten times faster than
 # unoptimized on a generated owner-shaped catalog (ADR 0030).
-/usr/bin/xcodebuild \
+xcodebuild \
   -project "$ROOT_DIR/Otos.xcodeproj" \
   -scheme Otos \
   -configuration Debug \

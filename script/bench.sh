@@ -91,7 +91,7 @@ run() {
     # resolves it only from a trailing build-setting argument, not an inherited variable.
     # A TEST_RUNNER_ variable reaches the test process without its prefix: one hash seed
     # for every process, so a Set's or Dictionary's layout is not drawn per process.
-    TEST_RUNNER_SWIFT_DETERMINISTIC_HASHING=1 /usr/bin/xcodebuild \
+    TEST_RUNNER_SWIFT_DETERMINISTIC_HASHING=1 xcodebuild \
       -project "$tree/Otos.xcodeproj" \
       -scheme Otos \
       -configuration Debug \
@@ -130,7 +130,7 @@ PY
   note="$(/usr/bin/python3 -I - "$measured" "$commit" "$HARNESS" \
     "$(/usr/sbin/sysctl -n hw.model)" \
     "$(/usr/bin/sw_vers -productVersion)" \
-    "$(/usr/bin/xcodebuild -version | head -n 1)" \
+    "$(xcodebuild -version | head -n 1)" \
     "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" <<'PY'
 import json, sys
 path, commit, harness, machine, macos, xcode, measured = sys.argv[1:8]

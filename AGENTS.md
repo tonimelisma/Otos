@@ -16,6 +16,22 @@ architecture. `docs/design/design-system.md` is the authoritative registry of
 design rules for user-facing surfaces; per-screen specs live beside it in
 `docs/design/`. Read those for detail; this file is how to work here.
 
+## Taylor's Standing Rules (apply everywhere)
+
+These are Taylor's own rules for every project. They are copied here because a cloud
+session never reads his `~/.claude/CLAUDE.md`.
+
+- When it is already clear what Taylor wants, do it. Never ask whether to do it, how to
+  do it, or which piece to do first, and never end a turn with a go-ahead question or a
+  "Yes, do it" button. Ask only for what only Taylor can do (his accounts, devices,
+  approvals) or a real product choice he has not made yet.
+- Never end a turn while any item Taylor asked for can still move forward without him.
+  When one item is blocked (the Mac locked, something only he can do), go on to the
+  next unblocked one; stop only when every item is done or truly blocked, and list just
+  the Taylor-only steps at the end.
+- Live tests may write to Taylor's real apps; every test removes what it made in its own
+  teardown, even when it fails, and confirms the removal. Never leave test data behind.
+
 ## Non-Negotiable Principles
 
 - Treat this repository as a blank-slate architecture. Do not add compatibility
@@ -471,6 +487,61 @@ in seconds. Anything else takes the **full** tier, and so does any path the clas
 does not know, and a tree with no diff. The build-path scripts (`check.sh`,
 `verify.sh`, `build.sh`, `test.sh`, `script/lib/`) take the full tier, because only a
 build proves them.
+
+## Cloud Sessions
+
+A Claude Code cloud session (claude.ai/code or the phone) runs in an Ubuntu x86_64 VM
+with `CLAUDE_CODE_REMOTE=true`: no Swift, no Xcode, no macOS. Otos cannot build or run
+there. The session edits, commits and pushes a branch, then builds, tests and tries the
+app on Taylor's Mac through the Latchkey connector. Every other rule in this file holds
+unchanged, the production-data rule included.
+
+- **In the VM.** The SessionStart hook `script/cloud-setup.sh` installs what the gates
+  call and the pinned Linux SwiftFormat and SwiftLint (`script/lint-tools.sh`); off the
+  VM it does nothing. `script/check.sh` runs every gate there: SwiftFormat, time guard,
+  app folder, text hygiene, repo shape, scorecard parser, perf rules, requirements
+  authority, the `guard-*` scripts and SwiftLint. A static-tier tree is verified in
+  full; a full-tier tree ends `check: INCOMPLETE` (`phase=gatesOnly reason=noXcode`),
+  and its verification is the run on the Mac.
+- **On the Mac.** `shell_run` on the MacBook with `keep_minutes` long enough to read the
+  result, then `shell_check` the job until it finishes (a job runs on past the 30 s
+  wait). The command clones the pushed branch into Latchkey's scratch folder, borrowing
+  the primary checkout's git objects, runs `script/latchkey-check.sh` (which runs
+  `script/check.sh` and passes it its arguments, `--only <Suite>` included), and removes
+  the clone, since the scratch folder goes to the Trash and a Trash still fills the disk:
+
+      cd "$LATCHKEY_SCRATCH" && git clone -q --reference ~/Development/Otos --branch <branch> https://github.com/tonimelisma/Otos.git o && o/script/latchkey-check.sh; rc=$?; rm -rf o; exit $rc
+
+  declaring `writes: ["~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex",
+  "~/Library/Developer/Otos/SharedModels"]`, the shared compilation cache and Core ML
+  models (`script/lib/xcode.sh`). Latchkey's shell writes only to its scratch folder, the
+  folder it runs in, Downloads, package caches and declared `writes`, and builds work
+  there also while the Mac is locked. macOS cannot start a tool's own sandbox inside
+  Latchkey's: Latchkey's `xcodebuild` wrapper turns off SwiftPM's (so scripts call
+  `xcodebuild` by name, never `/usr/bin/xcodebuild`), and `latchkey-check.sh` turns off
+  Xcode's task sandbox, seeds the resolved packages, stops the `ibtoold` its run started
+  (one left behind keeps the job's fence and breaks every later build on the Mac), and
+  filters SwiftLint's warnings; its header says why each is there. With Latchkey
+  0.8.202 the build still stops at `CompileAssetCatalogVariant`: Xcode's `ibtoold`,
+  started from inside the fence, cannot write its output. Until Latchkey fixes that, a
+  cloud session's build and tests are a Taylor-only step (a local session runs
+  `script/check.sh` on the branch). A clone's
+  `op=perf.status` always reads `reason=neverRun`, because the weekly record lives in a
+  checkout's git folder; the line that counts is `script/perf.sh status` run with
+  `folder: "~/Development/Otos"`.
+- **Trying the app.** Build, open the built `Otos.app` from the clone with
+  `uses: ["open"]`, and look with `computer_look app: "Otos"` (screenshot and
+  `show: ui`). It works only while the Mac is unlocked, which every Latchkey answer
+  reports; a locked Mac makes the look an after-DoD note. Then quit that build by its
+  path (`pkill -f "$LATCHKEY_SCRATCH/o/build/"`, never by name, which is the installed
+  app's too), confirm it is gone, and remove the clone.
+- **Merging and the DoD** are unchanged. After the merge, `script/install.sh` runs
+  through `shell_run` with `folder: "~/Development/Otos"` after `git pull --ff-only`,
+  declaring `writes: ["/Applications"]` and `uses: ["open"]`; it needs the task-sandbox
+  wrapper and the `ibtoold` teardown `latchkey-check.sh` gives a check, so until
+  Latchkey's wrapper turns off the task sandbox and stops what a job leaves running, it
+  is a Taylor-only step the DoD report names (Latchkey's shell also cannot run the
+  AppleScript that quits a running Otos).
 
 ## Documentation
 

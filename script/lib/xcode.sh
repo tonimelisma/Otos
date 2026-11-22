@@ -25,7 +25,7 @@ EOF
     exit 66
   fi
 
-  if ! /usr/bin/xcodebuild -version >/dev/null 2>&1; then
+  if ! xcodebuild -version >/dev/null 2>&1; then
     cat >&2 <<EOF
 xcodebuild is not usable from the selected developer directory:
   $selected
@@ -70,7 +70,10 @@ otos_build_checkout() {
   esac
   otos_unshare_built_models "$root/build/DerivedData"
   # ${settings[@]+...}: bash 3.2 under `set -u` calls an empty array unbound.
-  /usr/bin/xcodebuild \
+  # Every script calls xcodebuild by name, never as /usr/bin/xcodebuild: under Latchkey
+  # (AGENTS.md, "Cloud Sessions") the name is a wrapper that turns off xcodebuild's own
+  # sandboxes, which macOS cannot start inside Latchkey's, and a full path skips it.
+  xcodebuild \
     -project "$root/Otos.xcodeproj" \
     -scheme Otos \
     -configuration Debug \
@@ -152,7 +155,7 @@ otos_share_built_models() {
   local root="$1"
   local resources="$root/build/DerivedData/Build/Products/Debug/OtosKit.framework/Versions/A/Resources"
   local xcode model name source hash shared staging
-  xcode="$(/usr/bin/xcodebuild -version | tr '\n' ' ')"
+  xcode="$(xcodebuild -version | tr '\n' ' ')"
   mkdir -p "$OTOS_SHARED_MODELS"
   for model in "$resources"/*.mlmodelc; do
     [[ -d "$model" && ! -L "$model" ]] || continue

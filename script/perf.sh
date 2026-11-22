@@ -46,12 +46,10 @@ field() {
 }
 
 days_between() {
-  local from="$1" to="$2"
-  # Each day at a fixed noon: `date -j -f` takes every field its format leaves out from the
-  # clock, so two calls a second apart measured a week as 604,799 s, six days (2026-11-19).
-  # Noon keeps a daylight-saving change from moving the count either.
-  echo $(( ($(/bin/date -j -f '%Y-%m-%d %H:%M:%S' "$to 12:00:00" +%s) \
-    - $(/bin/date -j -f '%Y-%m-%d %H:%M:%S' "$from 12:00:00" +%s)) / 86400 ))
+  # Calendar dates, not clock instants: a difference of seconds read a week as six days when
+  # the two reads were a second apart (2026-11-19), and a daylight-saving change moves it.
+  # Python's date arithmetic is the same on macOS and Linux, unlike `date`'s flags.
+  /usr/bin/python3 -I -c 'import sys, datetime as d; print((d.date.fromisoformat(sys.argv[2]) - d.date.fromisoformat(sys.argv[1])).days)' "$1" "$2"
 }
 
 # The status line for a stored verdict, today's date, origin/main's head and the lock's

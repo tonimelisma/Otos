@@ -138,6 +138,16 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     - **Rejected: retrying a failed read in the test.** It waits out a compile storm the
       harness causes.
 
+12. **A machine with no Xcode runs the gates and builds nothing.** A Claude Code cloud
+    session is an Ubuntu VM (AGENTS.md, "Cloud Sessions"). Every gate is a shell, Python or
+    Ruby script or a pinned lint binary, and `script/lint-tools.sh` pins a Linux build of
+    each binary beside the macOS one, so the VM runs all of them. A static-tier tree is
+    verified there in full. A full-tier tree runs the gates as the static tier does and
+    ends `check: INCOMPLETE` with a failing status (`phase=gatesOnly reason=noXcode`): its
+    build and tests are the run on the Mac, so a VM's result never reads as a pass.
+    - **Rejected: a second entry point for the VM.** It would hold a second list of
+      gates, which drifts from `check.sh`'s.
+
 ## Alternatives Considered
 
 ### Clone a warm DerivedData into each new worktree

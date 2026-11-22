@@ -210,7 +210,16 @@ else
   CHECK_TIER="$(check_tier)"
 fi
 echo "op=check.tier tier=$CHECK_TIER"
-export OTOS_CHECK_TIER="$CHECK_TIER"
+# A machine with no Xcode — a Claude Code cloud session's Linux VM — runs every gate but
+# can build and test nothing (AGENTS.md, "Cloud Sessions"). A full-tier tree there runs the
+# gates the way the static tier does, then fails as incomplete: its build and tests run on
+# the Mac. A static-tier tree needs neither, so it is verified there in full.
+VERIFY_TIER="$CHECK_TIER"
+if [[ "$CHECK_TIER" == full ]] && ! command -v xcodebuild > /dev/null 2>&1; then
+  VERIFY_TIER=static
+  echo "op=check.tier tier=full phase=gatesOnly reason=noXcode host=$(uname -s)-$(uname -m)"
+fi
+export OTOS_CHECK_TIER="$VERIFY_TIER"
 
 # Performance is measured once a week, by the run the session this line tells starts
 # (ADR 0043): it says whether a run is due, running, passed or failed.
@@ -220,7 +229,7 @@ export OTOS_CHECK_TIER="$CHECK_TIER"
 # One run per build folder: a bench or a second check in this checkout waits here, before
 # the deadlock detector starts, and says whom it waits for. The static tier builds nothing,
 # so it never touches the folder and never waits for one.
-if [[ "$CHECK_TIER" != "static" ]]; then
+if [[ "$VERIFY_TIER" != "static" ]]; then
   otos_hold_build_folder "$ROOT_DIR/build/DerivedData" check || exit 1
 fi
 echo "op=check.stage phase=start stage=verify"
@@ -524,6 +533,9 @@ if [[ "$verify_status" == "0" && "$final_tree" != "$MEASURED_TREE" ]]; then
   verify_status=1
 elif [[ "$verify_status" == "0" && -n "$OTOS_ONLY_TESTING" ]]; then
   echo "check: PASSED (scoped to $OTOS_ONLY_TESTING) — iteration feedback, NOT verification evidence"
+elif [[ "$verify_status" == "0" && "$VERIFY_TIER" != "$CHECK_TIER" ]]; then
+  echo "check: INCOMPLETE — every gate passed, but this machine has no Xcode, so nothing was built or tested; build and test the pushed branch on the Mac (AGENTS.md, \"Cloud Sessions\")" >&2
+  verify_status=1
 elif [[ "$verify_status" == "0" && "$CHECK_TIER" == "static" ]]; then
   echo "check: PASSED (tier=static: every gate, no build or tests, because the diff reaches nothing they read) — evidence is valid only for the tree as it stands right now"
 elif [[ "$verify_status" == "0" ]]; then
