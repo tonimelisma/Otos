@@ -555,18 +555,9 @@ holds trivially, since nothing in the VM reaches the owner's Mac, library or Imm
 
 ### Owner setup
 
-What only the owner can do for cloud contribution, in one place:
-
-1. Make `tonimelisma/Otos` public. GitHub-hosted runners are free for a public repository;
-   until then every job is refused for the account's failed payment or spending limit
-   (Settings ▸ Billing and plans fixes that instead).
-2. Make `tonimelisma/MediaMetadata` public with it, or CI cannot resolve the package. A
-   cloud session cannot see that repository's visibility.
-3. Before making it public, review the history for anything that must not be published:
-   the whole history goes public, not just the tree.
-4. In the repository's branch protection for `main`, require the `Required CI Gate` check,
-   so nothing merges past a red build-and-test run. A cloud session cannot change
-   repository settings.
+Done on 2026-11-25: Otos and MediaMetadata are public (Otos's history was rewritten to
+drop private media and the team ID before it went public), and `main` requires the
+`Required CI Gate` check. Nothing is pending.
 
 ## Documentation
 
