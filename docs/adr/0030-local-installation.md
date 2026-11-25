@@ -87,7 +87,7 @@ catalog would also give one database two `CatalogStore` owners.
   workflows on the owner's Mac.
 - **Installing by hand after each merge.** A cloud session cannot, so every merge from one
   became an owner step.
-- **An updater with its own clone (as Latchkey's has).** Otos's install already builds from
+- **An updater with its own clone.** Otos's install already builds from
   the primary checkout, whose build folders hold the debug map of the installed binary; a
   second clone would be a second `build/InstallDerivedData` and a second tree to keep
   current. The checkout's own guards (on `main`, clean, not ahead) keep sessions' work
