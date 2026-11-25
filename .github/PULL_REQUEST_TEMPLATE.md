@@ -16,7 +16,7 @@
 
 ## Verification
 
-- Local `script/verify.sh`:
+- `script/check.sh` (local run, or CI's Build And Test job for a cloud session):
 - Xcode version:
 - Focused tests:
 
@@ -36,8 +36,7 @@
 ## CI
 
 - GitHub Actions:
-- If CI did not run, paste the GitHub exhausted Actions quota evidence here. CI may only be waived for confirmed quota depletion.
-- Note: remote CI does not run Xcode 27 build/test until a real Xcode 27 runner exists; local `script/verify.sh` evidence is required.
+- If a job did not run, paste GitHub's reason (its annotation, or githubstatus.com) here. A job that ran and failed is never waived.
 
 ## Docs And Privacy
 

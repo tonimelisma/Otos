@@ -62,16 +62,43 @@ jobs:
 
   lint:
     name: SwiftFormat And SwiftLint
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
       # `script/lint.sh` fetches the pinned, checksummed SwiftFormat and SwiftLint
-      # itself (`script/lint-tools.sh`) and never uses whatever the image ships.
+      # itself (`script/lint-tools.sh`) and never uses whatever the image ships. The Linux
+      # SwiftLint cannot load SourceKit, so the rules that need it (`op=lint.partial` names
+      # them) are checked by build-and-test, whose check.sh lints again on macOS.
       - name: Run lint
         run: script/lint.sh
+
+  # The build and the tests: the one run of script/check.sh that verifies a change made
+  # where there is no Xcode, such as a Claude Code cloud session (AGENTS.md, "Cloud
+  # Sessions"). It runs the same gates first, then the full tier's build and suite, and
+  # prints one `op=test.failure` line per failed test.
+  build-and-test:
+    name: Build And Test (Xcode 27)
+    runs-on: xcode-27
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # check.sh picks its tier from the diff against origin/main's merge base.
+          fetch-depth: 0
+
+      - name: Select the newest Xcode 27
+        run: |
+          set -euo pipefail
+          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      - name: Build and test
+        run: script/check.sh
 
   required-ci-gate:
     name: Required CI Gate
@@ -82,6 +109,7 @@ jobs:
       - repo-shape
       - text-hygiene
       - lint
+      - build-and-test
     if: always()
     steps:
       - name: Check required job results
@@ -90,11 +118,12 @@ jobs:
           YAML_RESULT: ${{ needs.repo-shape.result }}
           TEXT_RESULT: ${{ needs.text-hygiene.result }}
           LINT_RESULT: ${{ needs.lint.result }}
+          BUILD_RESULT: ${{ needs.build-and-test.result }}
         run: |
           set -euo pipefail
-          for result in "$CHECKOUT_RESULT" "$YAML_RESULT" "$TEXT_RESULT" "$LINT_RESULT"; do
+          for result in "$CHECKOUT_RESULT" "$YAML_RESULT" "$TEXT_RESULT" "$LINT_RESULT" "$BUILD_RESULT"; do
             if [[ "$result" != "success" ]]; then
-              echo "Required fast verification failed or was cancelled: $result" >&2
+              echo "Required verification failed or was cancelled: $result" >&2
               exit 1
             fi
           done

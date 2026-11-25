@@ -141,10 +141,17 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
 12. **A machine with no Xcode runs the gates and builds nothing.** A Claude Code cloud
     session is an Ubuntu VM (AGENTS.md, "Cloud Sessions"). Every gate is a shell, Python or
     Ruby script or a pinned lint binary, and `script/lint-tools.sh` pins a Linux build of
-    each binary beside the macOS one, so the VM runs all of them. A static-tier tree is
+    each binary beside the macOS one, so the VM runs all of them. The Linux SwiftLint
+    cannot load SourceKit and skips the rules that need it, `custom_rules` among them;
+    `script/lint.sh` names them (`op=lint.partial`). A static-tier tree is otherwise
     verified there in full. A full-tier tree runs the gates as the static tier does and
-    ends `check: INCOMPLETE` with a failing status (`phase=gatesOnly reason=noXcode`): its
-    build and tests are the run on the Mac, so a VM's result never reads as a pass.
+    ends `check: INCOMPLETE` with a failing status (`phase=gatesOnly reason=noXcode`), so a
+    VM's result never reads as a pass: its build, tests and SourceKit rules are CI's run of
+    the same `check.sh` on GitHub's Xcode 27 runner (`Build And Test (Xcode 27)`), which
+    builds from an empty compilation cache, since the cache is per machine.
+    - **Rejected: building on the owner's Mac through a remote shell.** It made every cloud
+      contribution depend on one machine being awake and reachable, and on a shell that
+      fences Xcode's own sandboxes.
     - **Rejected: a second entry point for the VM.** It would hold a second list of
       gates, which drifts from `check.sh`'s.
 

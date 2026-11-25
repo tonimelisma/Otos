@@ -35,10 +35,10 @@ checksummed, by `script/lint-tools.sh` on first use):
 brew bundle
 ```
 
-Verify the checkout:
+Verify the checkout (gates, build and tests; `--only <Suite>` while iterating):
 
 ```sh
-script/verify.sh
+script/check.sh
 ```
 
 Run the app:
@@ -71,9 +71,9 @@ Generate a local Definition of Done report:
 script/dod-report.sh
 ```
 
-Remote GitHub CI is a fast hygiene and lint gate. Xcode 27 build/test evidence
-is supplied locally with `script/verify.sh` until a GitHub runner with Xcode 27
-exists.
+GitHub CI runs the hygiene and lint gates on Ubuntu and `script/check.sh` on
+GitHub's Xcode 27 runner. A Claude Code cloud session, which has no Xcode, runs
+the gates itself and is verified by that CI run (AGENTS.md, "Cloud Sessions").
 
 ## Fixtures
 

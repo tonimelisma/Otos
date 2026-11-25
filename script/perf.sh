@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # The weekly performance run (ADR 0043): one entry point, one verdict.
 #
-#   script/perf.sh status     One line: due, running, pass, fail or error. script/check.sh
-#                             prints it.
+#   script/perf.sh status     One line: due, running, pass, fail or error, or `elsewhere` on a
+#                             machine with no installed app (a cloud session's VM, a CI runner),
+#                             where the run cannot happen and its verdict is not kept.
+#                             script/check.sh prints it.
 #   script/perf.sh run        At most once a week, one run at a time, from the primary
 #                             checkout: tours the installed app on the owner's library,
 #                             read-only, and judges the felt numbers against
@@ -52,11 +54,17 @@ days_between() {
   /usr/bin/python3 -I -c 'import sys, datetime as d; print((d.date.fromisoformat(sys.argv[2]) - d.date.fromisoformat(sys.argv[1])).days)' "$1" "$2"
 }
 
-# The status line for a stored verdict, today's date, origin/main's head and the lock's
-# state. Pure, so self-test can hold every case.
+# The status line for a stored verdict, today's date, origin/main's head, the lock's state
+# and whether this machine has the installed app. Pure, so self-test can hold every case.
 status_line() {
-  local verdict="$1" today="$2" main="$3" lock_state="$4"
+  local verdict="$1" today="$2" main="$3" lock_state="$4" installed_app="${5:-present}"
   local kind day head
+  # The run tours the installed app on the owner's library, and its verdict is kept in that
+  # checkout's git folder: a machine without the app neither runs it nor holds its verdict.
+  if [[ "$installed_app" == absent ]]; then
+    echo "op=perf.status verdict=elsewhere reason=noInstalledApp action=\"none: the weekly run and its verdict are on the owner's Mac (script/perf.sh status in its primary checkout)\""
+    return
+  fi
   kind="${verdict%% *}"
   day="$(field "$verdict" day)"
   head="$(field "$verdict" head)"
@@ -90,7 +98,9 @@ status() {
     echo "op=perf.status verdict=unknown reason=lockQueryFailed lock=$LOCK_FILE" >&2
     return 1
   fi
-  status_line "$verdict" "$(/bin/date +%Y-%m-%d)" "$(git -C "$ROOT_DIR" rev-parse origin/main)" "$lock_state"
+  local installed_app=absent
+  [[ -d "$OTOS_INSTALLED_APP" ]] && installed_app=present
+  status_line "$verdict" "$(/bin/date +%Y-%m-%d)" "$(git -C "$ROOT_DIR" rev-parse origin/main)" "$lock_state" "$installed_app"
 }
 
 # The felt targets a saved scorecard missed, comma-separated, or `none`. Exits 1 when the
@@ -251,6 +261,7 @@ self_test() {
   }
   expect neverRun "$(status_line "" 2026-11-18 aaa free)" "verdict=due reason=neverRun lastRun=never"
   expect running "$(status_line "" 2026-11-18 aaa "held pid=1")" "verdict=running pid=1"
+  expect elsewhere "$(status_line "" 2026-11-18 aaa free absent)" "verdict=elsewhere reason=noInstalledApp"
   expect sameWeek "$(status_line "pass day=2026-11-12 head=aaa felt=none cpu=none" 2026-11-18 bbb free)" "verdict=pass day=2026-11-12"
   expect weekPassed "$(status_line "pass day=2026-11-11 head=aaa felt=none cpu=none" 2026-11-18 bbb free)" "verdict=due reason=weekPassed lastRun=2026-11-11"
   expect mainUnmoved "$(status_line "pass day=2026-11-01 head=aaa felt=none cpu=x" 2026-11-18 aaa free)" "verdict=pass"

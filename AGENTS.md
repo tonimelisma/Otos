@@ -391,6 +391,9 @@ one `op=perf.status` line:
   (`script/scorecard.sh --tour`). One that does not reproduce is recorded with
   `script/perf.sh not-reproduced <that tour's scorecard>` and left to the next weekly run; a
   `fail` that carries `notReproduced=` asks for nothing. A target changes only with the owner's decision.
+- `verdict=elsewhere`: this machine has no installed app (a cloud session's VM, a CI
+  runner), so the weekly run cannot happen here and its verdict is not kept here. Nothing
+  to do.
 - Instruction rises (`cpu=`) decide nothing; the owner says whether one is work.
 
 Nothing else measures. No tour, `script/bench.sh compare` or `OTOS_BENCHMARK` run is part
@@ -490,58 +493,74 @@ build proves them.
 
 ## Cloud Sessions
 
-A Claude Code cloud session (claude.ai/code or the phone) runs in an Ubuntu x86_64 VM
-with `CLAUDE_CODE_REMOTE=true`: no Swift, no Xcode, no macOS. Otos cannot build or run
-there. The session edits, commits and pushes a branch, then builds, tests and tries the
-app on Taylor's Mac through the Latchkey connector. Every other rule in this file holds
-unchanged, the production-data rule included.
+A Claude Code cloud session (claude.ai/code or the phone) runs in a fresh Ubuntu 24.04
+x86_64 VM with `CLAUDE_CODE_REMOTE=true`: no Xcode, no macOS, no display. Otos cannot build,
+test or run there. The session does everything else — reads, edits, runs every gate,
+commits, pushes, opens and merges the PR — and GitHub Actions builds and tests the pushed
+branch on a Mac. Every other rule in this file holds unchanged; the production-data rule
+holds trivially, since nothing in the VM reaches the owner's Mac, library or Immich server.
 
-- **In the VM.** The SessionStart hook `script/cloud-setup.sh` installs what the gates
-  call and the pinned Linux SwiftFormat and SwiftLint (`script/lint-tools.sh`); off the
-  VM it does nothing. `script/check.sh` runs every gate there: SwiftFormat, time guard,
-  app folder, text hygiene, repo shape, scorecard parser, perf rules, requirements
-  authority, the `guard-*` scripts and SwiftLint. A static-tier tree is verified in
-  full; a full-tier tree ends `check: INCOMPLETE` (`phase=gatesOnly reason=noXcode`),
-  and its verification is the run on the Mac.
-- **On the Mac.** `shell_run` on the MacBook with `uses: ["open"]` and `keep_minutes`
-  long enough to read the result, then `shell_check` the job until it finishes (a job
-  runs on past the 30 s wait). The command clones the pushed branch into Latchkey's
-  scratch folder, borrowing the primary checkout's git objects, runs
-  `script/latchkey-check.sh` (which runs `script/check.sh` and passes it its arguments,
-  `--only <Suite>` included), and removes the clone, since the scratch folder goes to the
-  Trash and a Trash still fills the disk:
+- **Setup.** The SessionStart hook `script/cloud-setup.sh` installs what the gates call and
+  the pinned Linux SwiftFormat and SwiftLint (`script/lint-tools.sh`); off the VM it does
+  nothing. Claude Code loads a repository's hooks only in a session with that one
+  repository; in a session with several, run `script/cloud-setup.sh` once by hand.
+- **In the VM.** `script/check.sh` runs every gate: SwiftFormat, time guard, app folder,
+  text hygiene, repo shape, scorecard parser, perf rules, requirements authority, the
+  `guard-*` scripts and SwiftLint. A static-tier tree is verified in full there. A
+  full-tier tree ends `check: INCOMPLETE` (`phase=gatesOnly reason=noXcode`), and its
+  verification is CI's run. Two lines read differently there, by design: the Linux
+  SwiftLint cannot load SourceKit, so `op=lint.partial skippedRules=…` names the rules it
+  did not check (`custom_rules`, `statement_position`), and `op=perf.status
+  verdict=elsewhere` says the weekly run is the owner's Mac's.
+- **Build and test: GitHub Actions.** Every push runs `CI`, whose `Build And Test (Xcode
+  27)` job runs `script/check.sh` on GitHub's `xcode-27` runner with its newest Xcode 27.
+  That run, on the PR's final commit, is the PR's verification, as a local run would be.
+  The VM reaches GitHub through a proxy that refuses GraphQL (so every `gh pr …` command
+  fails), tag pushes, remote branch deletion, and REST ref and release writes. Read CI
+  through REST:
 
-      cd "$LATCHKEY_SCRATCH" && git clone -q --reference ~/Development/Otos --branch <branch> https://github.com/tonimelisma/Otos.git o && o/script/latchkey-check.sh; rc=$?; rm -rf o; exit $rc
+      gh api repos/tonimelisma/Otos/commits/<sha>/check-runs --jq '.check_runs[] | "\(.id) \(.name) \(.status) \(.conclusion)"'
+      gh api repos/tonimelisma/Otos/check-runs/<id>/annotations --jq '.[].message'
+      gh api repos/tonimelisma/Otos/actions/jobs/<id>/logs | grep -E 'op=test.failure|op=check.(stage|hang|tier)|op=lint|check: '
 
-  declaring `writes: ["~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex",
-  "~/Library/Developer/Otos/SharedModels"]`, the shared compilation cache and Core ML
-  models (`script/lib/xcode.sh`). `uses: ["open"]` is for the tests (below) and the app
-  icon: exporting the
-  Icon Composer document `Otos/Otos.icon` needs LaunchServices, and without it
-  `CompileAssetCatalogVariant` fails with "Failed to create a catalog from the Icon
-  Studio document". Latchkey's shell writes only to its scratch folder, the folder it
-  runs in, Downloads, package caches and declared `writes`, and builds work there also
-  while the Mac is locked. Latchkey (0.8.211+) owns what its fence needs from Xcode:
-  the `xcodebuild` wrapper it puts on `PATH` turns off xcodebuild's own sandboxes, which
-  macOS cannot start inside the fence (so scripts call `xcodebuild` by name, never
-  `/usr/bin/xcodebuild`); each job gets its own `ibtoold`, stopped with the job; and an
-  `xcodebuild test` or `test-without-building` runs its tests outside the fence through
-  Latchkey's launcher, which is why the job declares `uses: ["open"]`. `latchkey-check.sh` seeds the
-  resolved packages and filters SwiftLint's warnings; its header says why. A clone's
-  `op=perf.status` always reads `reason=neverRun`, because the weekly record lives in a
-  checkout's git folder; the line that counts is `script/perf.sh status` run with
-  `folder: "~/Development/Otos"`.
-- **Trying the app.** Build, open the built `Otos.app` from the clone with
-  `uses: ["open"]`, and look with `computer_look app: "Otos"` (screenshot and
-  `show: ui`). It works only while the Mac is unlocked, which every Latchkey answer
-  reports; a locked Mac makes the look an after-DoD note. Then quit that build by its
-  path (`pkill -f "$LATCHKEY_SCRATCH/o/build/"`, never by name, which is the installed
-  app's too), confirm it is gone, and remove the clone.
-- **Merging and the DoD** are unchanged. After the merge, `script/install.sh` runs
-  through `shell_run` with `folder: "~/Development/Otos"` after `git pull --ff-only`,
-  declaring `writes: ["/Applications"]` and `uses: ["open"]`. Latchkey's shell cannot
-  run the AppleScript that quits a running Otos, so while the installed Otos runs, the
-  install is a Taylor-only step the DoD report names.
+  Watch it with a `Monitor` that reads the check runs every 60 s and exits on every terminal
+  fact: all completed, any failure, or a job GitHub did not start (its annotation says why,
+  such as a billing limit). A failed build-and-test job prints the same `op=test.failure`
+  lines a local run does; read them before pushing a fix. Each push is a full run: there is
+  no `--only <Suite>` in CI, so reproduce by reading the failure, fixing, and pushing once.
+- **Opening and merging.** Open the PR and merge it with the GitHub MCP tools
+  (`create_pull_request`, `merge_pull_request`), which use REST. The repository deletes a
+  merged branch itself. A full-tier change merges only on a green build-and-test run: a
+  cloud session has no other run to merge on, so while GitHub cannot run the job (the
+  stuck-GitHub rule below), it waits, and says so. A static-tier change merges on the
+  cloud `check.sh`.
+- **What only the owner's Mac does.** Some steps need the owner's Mac, installed app or library,
+  and a cloud session cannot reach them: `script/install.sh` after a merge,
+  the look at the installed app (Definition Of Done), the weekly performance run and tours
+  (`script/perf.sh`, `script/scorecard.sh`), profiling and unified logs
+  (`script/profile.sh`, `script/logs.sh`), read-only tests on the owner's library or Immich
+  account, and the macOS-only owner tooling: converting and validating Core ML models (the
+  `.mlpackage` files in `OtosKit/Resources/` come from the owner's research repositories, which hold
+  private family data and are out of scope here), Apple Translation's language resources,
+  and the evaluations on the owner's own data (`script/face-accuracy.sh`,
+  `script/description-eval.sh`, `script/scene-label-hierarchy.sh`). A cloud session's DoD
+  report lists the ones its increment needs as owner steps, the non-blocking after-DoD notes
+  the Definition Of Done allows, and completes the increment.
+
+### Owner setup
+
+What only the owner can do for cloud contribution, in one place:
+
+1. Make `tonimelisma/Otos` public. GitHub-hosted runners are free for a public repository;
+   until then every job is refused for the account's failed payment or spending limit
+   (Settings ▸ Billing and plans fixes that instead).
+2. Make `tonimelisma/MediaMetadata` public with it, or CI cannot resolve the package. A
+   cloud session cannot see that repository's visibility.
+3. Before making it public, review the history for anything that must not be published:
+   the whole history goes public, not just the tree.
+4. In the repository's branch protection for `main`, require the `Required CI Gate` check,
+   so nothing merges past a red build-and-test run. A cloud session cannot change
+   repository settings.
 
 ## Documentation
 
@@ -585,7 +604,9 @@ for confirmation before relying on them.
 
 ## Git, CI, And Pull Requests
 
-- **Git reaches GitHub over SSH the moment HTTPS fails.** On the first HTTPS fetch,
+- **On the owner's Mac, git reaches GitHub over SSH the moment HTTPS fails.** (A cloud
+  session's VM refuses every connection but HTTPS, so there HTTPS is the only path.) On
+  the first HTTPS fetch,
   pull, push or clone that fails or stalls (a TLS handshake timeout, `early EOF`, a
   fetch killed by a signal, or a transfer with no progress), switch at once, with no
   HTTPS retry, to the deploy key's host alias: `git fetch
@@ -613,9 +634,10 @@ for confirmation before relying on them.
   unresolved review comments. Claim each on the thread, land in-scope fixes through
   the normal path, and reply with how/where it was fixed (or why it is not
   applicable). Do not bypass with a parallel patch or hide a thread.
-- Remote CI is a fast gate (checkout sanity, workflow YAML, text hygiene, script
-  inventory, macOS lint); it does not run Xcode 27 build/test until a runner exists.
-  Xcode 27 build/test proof is local `script/check.sh` evidence. A CI job that
+- Remote CI runs the fast gates (checkout sanity, workflow YAML, text hygiene, script
+  inventory, lint) on Ubuntu, and `script/check.sh` on GitHub's Xcode 27 runner (`Build
+  And Test (Xcode 27)`). A change made on the Mac is verified by a local `script/check.sh`
+  run; one made in a cloud session, by that CI job (Cloud Sessions). A CI job that
   ran and failed always blocks: never waive failures, syntax errors, missing
   tools, or flakiness. Every CI job's checks also run in `script/check.sh`'s fast
   gates, so a green check is a green CI.
@@ -623,11 +645,12 @@ for confirmation before relying on them.
   failure. Such a job is either queued with no runner while githubstatus.com
   reports Actions not `operational`, or blocked by a billing/quota limit. The
   green `script/check.sh` run on the final tree already ran its checks: merge on
-  it, and never replay the jobs by hand. When Actions recovers, the push run on
+  it, and never replay the jobs by hand. A cloud session has no such run for a
+  full-tier change, so it does not merge one while GitHub is stuck. When Actions recovers, the push run on
   `main` verifies the merge; a red result there is fixed first (red-`main` rule
   above).
 - **Opening a PR is not a stopping point.** The agent reads CI status itself
-  (`gh pr checks`) and continues straight through merge, cleanup, install, and
+  (`gh pr checks` on the Mac; REST in a cloud session, Cloud Sessions) and continues straight through merge, cleanup, install, and
   the DoD report in the same turn. A CI watcher exits on every terminal fact:
   all checks done, a check failed, or GitHub degraded (the rule above). A
   watcher that can only exit on success waits forever on an outage. Never end
@@ -653,20 +676,21 @@ updates the installed app: after the merge, run `script/install.sh` from the
 primary checkout on `main` and include its `op=install` line in the DoD report.
 It quits a running installed Otos only when no import or reorganization is in
 flight, and relaunches it; a `phase=pending` result is reported, not retried
-around (ADR 0030).
+around (ADR 0030). A cloud session cannot install; its DoD report lists the install as an
+owner step (Cloud Sessions).
 The DoD report carries the `op=perf.status` line from the final `script/check.sh` run.
 
 **The agent looks at what it shipped** (owner, 2026-11-19: "do you do visual inspection of
-implemented features at all? can you add that to the process? you can use latchkey for it").
+implemented features at all? can you add that to the process?").
 Tests prove the code, but only a look proves what the owner sees: on 2026-11-19 every check was
-green while half of All Media's tiles were blank. After the install, look at the installed app
-on the owner's library through Latchkey, read-only, with
-`computer_look app: "Otos"`. It looks at Otos's own window in the background, without
-bringing it forward or moving the owner's pointer.
+green while half of All Media's tiles were blank. After the install, a session on the owner's
+Mac looks at the installed app on the owner's library, read-only, with the screen tools it has
+(computer use), looking at Otos's own window without moving the owner's pointer where the tool
+allows. A cloud session cannot look; its DoD report lists the look as an owner step.
 - Take a screenshot of each surface the increment changed, and of All Media's grid after any
-  increment that changes the app. Read the same window with `show: ui`: its accessibility
-  labels name every tile, so a blank tile, a file shown twice, or a wrong badge or count is
-  read rather than guessed.
+  increment that changes the app. Read the same window's accessibility tree where the tool
+  offers it: its labels name every tile, so a blank tile, a file shown twice, or a wrong
+  badge or count is read rather than guessed.
 - Name what the screenshot should show before taking it. Anything else is a finding: a blank
   or placeholder tile, a duplicate, a wrong label, text clipped or overlapping, a state that
   never settles, a status that contradicts the logs. A finding is fixed in this increment
@@ -676,7 +700,8 @@ bringing it forward or moving the owner's pointer.
   photo, switching view mode. Never a Like, Trash, rename, import, edit or setting
   (production-data rule above). Put the window back where the owner left it.
 - The DoD report says which surfaces were looked at and what each showed. When the Mac is
-  locked or Latchkey is offline, the look is a non-blocking after-DoD note, as below.
+  locked or the session has no screen tools, the look is a non-blocking after-DoD note, as
+  below.
 
 Verification is **agent-owned**: never require the user to launch the app, operate
 the UI, or inspect visuals as a condition of DoD. Run every check available to the
