@@ -9,12 +9,15 @@ import Testing
 struct RAWResourcesTests {
     /// Core Image reports on a queue of its own, after the fetch has returned: the wait ends
     /// with that report, not before it.
-    @Test func theWaitEndsWithTheReportFromAnotherQueue() throws {
+    @Test func theWaitEndsWithTheReportFromAnotherQueue() async throws {
         let reported = ReportFlag()
-        try ImageRenderer.fetchResources { report in
-            DispatchQueue.global().async {
-                reported.set()
-                report(nil)
+        // Off the pool, as a render lane's queue runs it (`offThePool`).
+        try await offThePool {
+            try ImageRenderer.fetchResources { report in
+                DispatchQueue.global().async {
+                    reported.set()
+                    report(nil)
+                }
             }
         }
         #expect(reported.isSet, "the fetch returned only after Core Image reported")

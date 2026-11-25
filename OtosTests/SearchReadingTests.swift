@@ -303,9 +303,10 @@ struct SearchReadingTests {
 
     /// Vision's classification keeps the gate's loose labels and the confident ones apart:
     /// every confident label is one the gate holds, most confident first.
-    @Test func sceneLabelsHoldTheConfidentOnesMostConfidentFirst() throws {
+    @Test func sceneLabelsHoldTheConfidentOnesMostConfidentFirst() async throws {
         let image = try #require(Self.picture(saying: "INVOICE 2026"))
-        let reading = try SearchSceneLabels.classify(image)
+        // Off the pool, as `SearchImageEmbedder`'s queue runs it (`offThePool`).
+        let reading = try await offThePool { try SearchSceneLabels.classify(image) }
         for label in reading.confident {
             #expect(reading.labels[label] != nil)
         }

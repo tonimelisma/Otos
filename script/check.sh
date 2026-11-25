@@ -113,6 +113,9 @@ banner
 source "$ROOT_DIR/script/lib/build-folder.sh"
 MEASURED_TREE="$(otos_tree_identity "$ROOT_DIR")" || { echo "check: FAILED — could not read the tree identity" >&2; exit 1; }
 echo "op=check.tree phase=start tree=$MEASURED_TREE"
+# The cores the suite runs on: Swift's cooperative pool is that many threads wide, so a
+# test that blocks one costs a larger share of a small runner than of the owner's Mac.
+echo "op=check.host cpus=$(sysctl -n hw.activecpu 2> /dev/null || nproc 2> /dev/null || echo unknown) os=$(uname -s)-$(uname -m)"
 if [[ -n "$OTOS_ONLY_TESTING" ]]; then
   echo "op=check.scope tests=\"$OTOS_ONLY_TESTING\" evidence=no — a scoped run; the final tree needs script/check.sh with no arguments"
 fi

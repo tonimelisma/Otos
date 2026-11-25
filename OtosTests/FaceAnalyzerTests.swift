@@ -88,14 +88,23 @@ struct FaceAnalyzerTests {
     /// Vision's classifier sees a person around a real face and none around a pattern: a
     /// portrait's face box reads at or above `FaceAnalyzer.minimumPersonConfidence`, the same
     /// box over a patterned image below it.
-    @Test func theClassifierSeesAPersonAroundAFaceAndNoneAroundAnObject() throws {
+    @Test func theClassifierSeesAPersonAroundAFaceAndNoneAroundAnObject() async throws {
         let portrait = try Self.portrait("williams-2018")
-        let request = VNDetectFaceRectanglesRequest()
-        try VNImageRequestHandler(cgImage: portrait).perform([request])
-        let box = try #require(request.results?.first).boundingBox
+        let pattern = try Self.patternImage(seed: 3, size: 640)
+        // Vision off the pool, as `FaceAnalyzer`'s queue runs it (`offThePool`).
+        let found = try await offThePool {
+            let request = VNDetectFaceRectanglesRequest()
+            try VNImageRequestHandler(cgImage: portrait).perform([request])
+            return request.results?.first?.boundingBox
+        }
+        let box = try #require(found)
 
-        let face = try FaceAnalyzer.personConfidence(around: box, in: portrait)
-        let object = try FaceAnalyzer.personConfidence(around: box, in: Self.patternImage(seed: 3, size: 640))
+        let (face, object) = try await offThePool {
+            try (
+                FaceAnalyzer.personConfidence(around: box, in: portrait),
+                FaceAnalyzer.personConfidence(around: box, in: pattern)
+            )
+        }
 
         #expect(face >= FaceAnalyzer.minimumPersonConfidence, "face \(face)")
         #expect(object < FaceAnalyzer.minimumPersonConfidence, "object \(object)")
@@ -104,23 +113,26 @@ struct FaceAnalyzerTests {
     /// The model cannot tell anyone by a face blurred to nothing: a portrait's aligned crop,
     /// shrunk to 8 px and enlarged back, reads along `FaceRecognisability.direction`, while
     /// the crop itself does not.
-    @Test func aFaceBlurredToNothingIsUnrecognisable() throws {
+    @Test func aFaceBlurredToNothingIsUnrecognisable() async throws {
         let model = try FaceEmbeddingModel(bundle: Bundle(for: CatalogWindowViewModel.self))
-        let crop = try Self.alignedPortraitCrop("williams-2018")
+        let crop = try await Self.alignedPortraitCrop("williams-2018")
 
         #expect(try FaceRecognisability.isRecognisable(model.embedding(of: crop)))
         #expect(try !FaceRecognisability.isRecognisable(model.embedding(of: Self.resampled(crop, through: 8))))
     }
 
     /// The aligned 112 px crop the analyzer hands the model for a fixture portrait's one face.
-    static func alignedPortraitCrop(_ name: String) throws -> CGImage {
+    static func alignedPortraitCrop(_ name: String) async throws -> CGImage {
         let image = try portrait(name)
-        let request = VNDetectFaceLandmarksRequest()
-        request.revision = VNDetectFaceLandmarksRequestRevision3
-        try VNImageRequestHandler(cgImage: image).perform([request])
-        let observation = try #require(request.results?.first)
+        // Vision off the pool, as `FaceAnalyzer`'s queue runs it (`offThePool`).
         let size = CGSize(width: image.width, height: image.height)
-        let points = try #require(FaceAnalyzer.alignmentPoints(observation, imageSize: size))
+        let found = try await offThePool {
+            let request = VNDetectFaceLandmarksRequest()
+            request.revision = VNDetectFaceLandmarksRequestRevision3
+            try VNImageRequestHandler(cgImage: image).perform([request])
+            return request.results?.first.flatMap { FaceAnalyzer.alignmentPoints($0, imageSize: size) }
+        }
+        let points = try #require(found)
         let transform = try #require(FaceAlignment.similarity(from: points, to: FaceAlignment.template))
         return try #require(FaceAnalyzer.alignedCrop(of: CIImage(cgImage: image), transform: transform, context: CIContext()))
     }

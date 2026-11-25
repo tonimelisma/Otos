@@ -20,6 +20,28 @@ enum AsyncTestTimeoutError: Error, CustomStringConvertible {
     }
 }
 
+/// Runs `work`, a call that blocks its thread while other work it waits for runs elsewhere,
+/// on a serial queue of its own, and suspends until it returns. The work is Vision's
+/// requests and Core Image's RAW support wait, which production runs only on its owners'
+/// queues (`FaceAnalyzer`, `SearchImageEmbedder`, a render lane; ADR 0032 rule 6).
+///
+/// A test calling it from its own body would hold a cooperative-pool thread for the whole
+/// wait, and the pool has about one thread per core at a priority. On GitHub's 3-core runner
+/// four such tests held every default-priority thread, so the work they waited for (Vision's
+/// own queue, a `DispatchQueue.global()` block) never got a thread and no test ran at all
+/// (`docs/research/2026-11-25-ci-runner-cooperative-pool-deadlock.md`). A serial queue of its
+/// own gets a thread of its own, as each owner's queue does.
+///
+/// Swift Testing ties `#expect` and `#require` to the test's task, so `work` only makes the
+/// call and returns what it reported; the test checks it after.
+func offThePool<Value: Sendable>(_ work: @escaping @Sendable () throws -> Value) async throws -> Value {
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue(label: "net.melisma.Otos.tests.blocking").async {
+            continuation.resume(with: Result { try work() })
+        }
+    }
+}
+
 /// Waits until `condition` holds, re-checking it every `interval`.
 ///
 /// There is deliberately no deadline. A wall-clock limit on a wait for progress

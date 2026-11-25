@@ -98,7 +98,23 @@ jobs:
           xcodebuild -version
 
       - name: Build and test
+        # Below the job's limit, so a run that never ends still reaches the upload below;
+        # check.sh reports its own hang long before this (op=check.hang).
+        timeout-minutes: 100
         run: script/check.sh
+
+      # A failed run's diagnostics: the test log, and on a hang the `sample` and
+      # `swift-inspect dump-concurrency` that check.sh writes (op=check.hang names them).
+      # They are written on GitHub's runner from the generated fixtures and hold no
+      # personal data, which is why this public repository can publish them.
+      - name: Upload check logs
+        if: ${{ !success() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: check-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: logs/
+          if-no-files-found: warn
+          retention-days: 14
 
   required-ci-gate:
     name: Required CI Gate
