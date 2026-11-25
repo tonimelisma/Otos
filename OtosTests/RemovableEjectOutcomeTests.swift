@@ -63,7 +63,7 @@ struct RemovableEjectOutcomeTests {
             coordinator: nil,
             previewLoader: nil,
             retryDelays: [.milliseconds(10), .milliseconds(10), .milliseconds(10)],
-            eject: { _ in await attempts.next() < 3 ? .busy : .ejected }
+            ejectAttempts: { _ in { await attempts.next() < 3 ? .busy : .ejected } }
         )
         #expect(outcome == .ejected)
         #expect(await attempts.count == 3)
@@ -80,10 +80,10 @@ struct RemovableEjectOutcomeTests {
             coordinator: nil,
             previewLoader: nil,
             retryDelays: [.milliseconds(10), .milliseconds(10)],
-            eject: { _ in
+            ejectAttempts: { _ in {
                 _ = await attempts.next()
                 return .busy
-            }
+            } }
         )
         #expect(outcome == .busy(displayName: root.displayName))
         #expect(await attempts.count == 3, "the first attempt and one per delay")
@@ -99,10 +99,10 @@ struct RemovableEjectOutcomeTests {
             coordinator: nil,
             previewLoader: nil,
             retryDelays: [.milliseconds(10)],
-            eject: { _ in
+            ejectAttempts: { _ in {
                 _ = await attempts.next()
                 return .refused(status: DiskEjector.unixError(EPERM))
-            }
+            } }
         )
         guard case .failed = outcome else {
             Issue.record("Expected a failed outcome, got \(outcome)")
@@ -123,10 +123,10 @@ struct RemovableEjectOutcomeTests {
             previewLoader: nil,
             importInProgress: true,
             retryDelays: [.milliseconds(10)],
-            eject: { _ in
+            ejectAttempts: { _ in {
                 _ = await attempts.next()
                 return .ejected
-            }
+            } }
         )
         #expect(outcome == .busy(displayName: root.displayName))
         #expect(await attempts.isUntouched)
@@ -144,10 +144,10 @@ struct RemovableEjectOutcomeTests {
                 coordinator: nil,
                 previewLoader: readers,
                 retryDelays: [],
-                eject: { _ in
+                ejectAttempts: { _ in {
                     await readers.record("eject")
                     return result
-                }
+                } }
             )
             #expect(await readers.events == ["quiesce:\(root.path.rawValue)", "eject", "resume:\(root.path.rawValue)"])
         }
@@ -217,9 +217,12 @@ struct RemovableEjectOutcomeTests {
 /// `DiskEjector` reports as `.busy` like an open file. Under a full suite beside other
 /// checks, one such client dissented about ten seconds after the released volume's unmount
 /// was asked for (`docs/research/2026-11-15-a-released-card-refused-by-another-client.md`).
-/// So the released volume is ejected as Otos ejects a card (`performEjectRemovableSource`):
-/// a busy refusal is asked again after its backoff, which nothing can replace — no client
-/// reports when it stops dissenting.
+/// A client can dissent from the eject that follows a successful unmount as well: on GitHub's
+/// 3-core runner a retry that looked for the volume again found none
+/// (`docs/research/2026-11-25-eject-retry-after-a-refused-eject.md`). So the released volume is
+/// ejected as Otos ejects a card (`performEjectRemovableSource`): one Eject
+/// (`DiskEjector.attempts(ofVolumeAt:)`), whose busy refusal is asked again after its backoff,
+/// which nothing can replace — no client reports when it stops dissenting.
 struct DiskEjectorLiveDiskImageTests {
     @Test func aHeldVolumeIsBusyAndAReleasedOneEjects() async throws {
         let image = try MountedTestDiskImage.attach(filesystem: "ExFAT")
@@ -228,15 +231,17 @@ struct DiskEjectorLiveDiskImageTests {
         try Data("held".utf8).write(to: held)
         let handle = try FileHandle(forReadingFrom: held)
 
-        #expect(await DiskEjector.eject(volumeAt: image.mountURL) == .busy)
+        // One Eject, as Otos ejects a card: the held file refuses its first attempt.
+        let eject = DiskEjector.attempts(ofVolumeAt: image.mountURL)
+        #expect(await eject() == .busy)
         #expect(FileManager.default.fileExists(atPath: image.mountURL.path(percentEncoded: false)))
 
         try handle.close()
-        var outcome = await DiskEjector.eject(volumeAt: image.mountURL)
+        var outcome = await eject()
         for delay in CatalogWindowViewModel.ejectBusyRetryDelays where outcome == .busy {
             // time: backoff — a DiskArbitration client outside Otos dissented; none reports when it stops
             try await Task.sleep(for: delay)
-            outcome = await DiskEjector.eject(volumeAt: image.mountURL)
+            outcome = await eject()
         }
         #expect(outcome == .ejected)
         #expect(!FileManager.default.fileExists(atPath: held.path(percentEncoded: false)))

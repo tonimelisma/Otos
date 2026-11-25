@@ -129,7 +129,7 @@ if ! SWIFTFORMAT="$("$ROOT_DIR/script/lint-tools.sh" swiftformat)"; then
   exit 1
 fi
 # One pass over the tree: its exit status is the verdict, its tail the evidence.
-if ! "$SWIFTFORMAT" --lint "$ROOT_DIR" 2>&1 | tail -3; then
+if ! "$ROOT_DIR/script/lint-tools.sh" swiftformat-lint "$ROOT_DIR" 2>&1 | tail -3; then
   echo "op=check.stage phase=fail stage=fast-gates reason=formatting" >&2
   echo "Run: \"\$(script/lint-tools.sh swiftformat)\" . — then re-run script/check.sh" >&2
   fast_failed=1

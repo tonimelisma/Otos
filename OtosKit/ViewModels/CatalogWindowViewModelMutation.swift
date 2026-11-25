@@ -166,7 +166,7 @@ extension CatalogWindowViewModel {
         previewLoader: (any PreviewLoading)?,
         importInProgress: Bool = false,
         retryDelays: [Duration] = ejectBusyRetryDelays,
-        eject: @Sendable (URL) async -> DiskEjector.Outcome = DiskEjector.eject(volumeAt:)
+        ejectAttempts: @Sendable (URL) -> @Sendable () async -> DiskEjector.Outcome = DiskEjector.attempts(ofVolumeAt:)
     ) async -> RemovableEjectOutcome {
         guard let identity = root.deviceIdentity else {
             return .failed(description: "The disk could not be ejected.")
@@ -195,9 +195,11 @@ extension CatalogWindowViewModel {
             await coordinator.drainWork(under: root.path)
         }
         await previewLoader?.quiesce(under: root.path)
+        // One Eject, asked again after a busy refusal from the step it reached.
+        let eject = ejectAttempts(root.path.url)
         var attempt = 0
         while true {
-            let outcome = await eject(root.path.url)
+            let outcome = await eject()
             switch outcome {
             case .ejected:
                 OtosLog.catalog.notice(

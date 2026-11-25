@@ -94,7 +94,11 @@ single `setQueryDescriptor` writer, so automatic and manual selection share one 
   enrichment under the root (the work already running, however long it takes, since
   nothing new starts there), lets the preview loader finish its decodes there while
   refusing new ones, and releases a loupe player showing a card file — then unmounts
-  the whole disk and ejects it through DiskArbitration (`DiskEjector`). An eject while
+  the whole disk and ejects it through DiskArbitration (`DiskEjector`). One Eject resolves
+  its disk once and is asked again after a busy refusal from the step it reached: a refused
+  eject after a successful unmount retries only the eject, since the unmount took the
+  volume's path away
+  (`docs/research/2026-11-25-eject-retry-after-a-refused-eject.md`). An eject while
   an import is copying from the card is refused at once with the in-use alert. Success unmounts the volume, and the row
   disappears because the real unmount report (DiskArbitration removing the volume path) → detach removes it — UI and
   reality never diverge. Failure returns a typed `RemovableEjectOutcome`

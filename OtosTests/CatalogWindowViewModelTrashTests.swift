@@ -275,7 +275,13 @@ struct CatalogWindowViewModelTrashInterleavingTests {
     @Test func anUndoBeforeTheMarkLandsPutsBackExactlyWhatItHid() async throws {
         try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
             let gate = ArrivalGate()
-            let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory()) { await gate.arrive() }
+            let undoGate = ArrivalGate()
+            let model = try makeTrashModel(
+                store: fixture.store,
+                trash: makeTestDirectory(),
+                markHook: { await gate.arrive() },
+                undoHook: { await undoGate.arrive() }
+            )
             let order = try await startShowing(model, fixture)
             model.selectAssets([order[0]])
 
@@ -283,10 +289,20 @@ struct CatalogWindowViewModelTrashInterleavingTests {
             await gate.waitForArrivals(1)
             model.undoLastChange()
             #expect(model.undoMenuState.redoTitle == "Redo Move to Trash")
-
-            await gate.open()
+            // The window shows the undo's result at once (DES-119), before the queue's work.
             _ = try await waitForWindowState(model) { $0.mediaGrid.orderedAssetIDs == order }
-            try await waitUntil { try await fixture.store.windowReads.pendingTrashItems().isEmpty }
+
+            // The mark lands, and the queue may move the file to the Trash before the undo
+            // reaches it: the undo then moves it back. Its hook runs once the mark has landed.
+            await gate.open()
+            await undoGate.waitForArrivals(1)
+            await undoGate.open()
+            let path = fixture.path(order[0])
+            // Undone either way, the item is pending no more and its file is at its path.
+            try await waitUntil {
+                try await fixture.store.windowReads.pendingTrashItems().isEmpty
+                    && FileManager.default.fileExists(atPath: path)
+            }
             try await waitForProjectionQuiescence(model.catalogProjection)
             #expect(model.state.mediaGrid.orderedAssetIDs == order)
             #expect(FileManager.default.fileExists(atPath: fixture.path(order[0])))

@@ -24,31 +24,96 @@ nonisolated enum DiskEjector {
         case diskUnavailable
     }
 
-    @concurrent
-    static func eject(volumeAt url: URL) async -> Outcome {
-        guard let session = DASessionCreate(kCFAllocatorDefault) else {
-            return unavailable(step: "session", url: url)
+    /// The attempts of one Eject of the volume at `url`, for a caller that asks again after a
+    /// busy refusal (`Ejection`).
+    static func attempts(ofVolumeAt url: URL) -> @Sendable () async -> Outcome {
+        let ejection = Ejection(volumeAt: url)
+        return { await ejection.attempt() }
+    }
+
+    /// One Eject of the whole disk under a volume, which can take several attempts: a file
+    /// held open refuses the unmount, and another DiskArbitration client asked to approve
+    /// the unmount or the eject can dissent (`kDAReturnBusy`). The caller asks again after
+    /// its backoff.
+    ///
+    /// The disk is resolved from the volume's path once, by the first attempt, and an
+    /// attempt after an unmount that succeeded asks only for the eject. An unmount takes the
+    /// volume's path away, so resolving the path again after a refused eject finds no disk:
+    /// on GitHub's 3-core runner a retry did, and a card left unmounted but not ejected read
+    /// as `.diskUnavailable` (`docs/research/2026-11-25-eject-retry-after-a-refused-eject.md`).
+    ///
+    /// Attempts are made one after another; the actor keeps what the last one reached.
+    actor Ejection {
+        private let url: URL
+        private var target: Target?
+        private var unmounted = false
+
+        /// The whole disk and the session it was made in, scheduled on a queue of its own: a
+        /// DADisk's requests report through the session that made it, so they live together.
+        private struct Target {
+            let session: DASession
+            let whole: DADisk
         }
-        let queue = DispatchQueue(label: "net.melisma.Otos.disk-eject")
-        DASessionSetDispatchQueue(session, queue)
-        defer { DASessionSetDispatchQueue(session, nil) }
-        guard let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url as CFURL) else {
-            return unavailable(step: "volumeDisk", url: url)
+
+        init(volumeAt url: URL) {
+            self.url = url
         }
-        guard let whole = DADiskCopyWholeDisk(disk) else {
-            return unavailable(step: "wholeDisk", url: url)
+
+        /// On the actor: the target is its state, and the session stops reporting with it.
+        isolated deinit {
+            if let target {
+                DASessionSetDispatchQueue(target.session, nil)
+            }
         }
-        if let status = await request({ context in
-            DADiskUnmount(whole, DADiskUnmountOptions(kDADiskUnmountOptionWhole), requestFinished, context)
-        }) {
-            return refused(status, step: "unmount", url: url)
+
+        func attempt() async -> Outcome {
+            let target: Target
+            if let resolved = self.target {
+                target = resolved
+            } else {
+                switch Self.resolve(url) {
+                case let .success(resolved):
+                    self.target = resolved
+                    target = resolved
+                case let .failure(missing):
+                    return DiskEjector.unavailable(step: missing.step, url: url)
+                }
+            }
+            if !unmounted {
+                if let status = await DiskEjector.request({ context in
+                    DADiskUnmount(target.whole, DADiskUnmountOptions(kDADiskUnmountOptionWhole), requestFinished, context)
+                }) {
+                    return DiskEjector.refused(status, step: "unmount", url: url)
+                }
+                unmounted = true
+            }
+            if let status = await DiskEjector.request({ context in
+                DADiskEject(target.whole, DADiskEjectOptions(kDADiskEjectOptionDefault), requestFinished, context)
+            }) {
+                return DiskEjector.refused(status, step: "eject", url: url)
+            }
+            return .ejected
         }
-        if let status = await request({ context in
-            DADiskEject(whole, DADiskEjectOptions(kDADiskEjectOptionDefault), requestFinished, context)
-        }) {
-            return refused(status, step: "eject", url: url)
+
+        private struct Missing: Error {
+            let step: String
         }
-        return .ejected
+
+        private static func resolve(_ url: URL) -> Result<Target, Missing> {
+            guard let session = DASessionCreate(kCFAllocatorDefault) else {
+                return .failure(Missing(step: "session"))
+            }
+            DASessionSetDispatchQueue(session, DispatchQueue(label: "net.melisma.Otos.disk-eject"))
+            guard let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url as CFURL) else {
+                DASessionSetDispatchQueue(session, nil)
+                return .failure(Missing(step: "volumeDisk"))
+            }
+            guard let whole = DADiskCopyWholeDisk(disk) else {
+                DASessionSetDispatchQueue(session, nil)
+                return .failure(Missing(step: "wholeDisk"))
+            }
+            return .success(Target(session: session, whole: whole))
+        }
     }
 
     /// A refusal's outcome, logged with the step that was refused and DiskArbitration's

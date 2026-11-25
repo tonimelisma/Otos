@@ -275,7 +275,7 @@ struct CatalogStoreRemovableSourceTests {
             coordinator: nil,
             previewLoader: nil,
             retryDelays: [],
-            eject: { _ in .busy }
+            ejectAttempts: { _ in { .busy } }
         )
 
         #expect(outcome == .busy(displayName: root.displayName))

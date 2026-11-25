@@ -29,6 +29,21 @@ SWIFTFORMAT_VERSION="0.62.1"
 SWIFTLINT_VERSION="0.65.0"
 platform="$(uname -s)-$(uname -m)"
 
+# `script/lint-tools.sh swiftformat-lint <path>`: the pinned SwiftFormat's lint of <path>,
+# one file at a time, the one way `script/lint.sh` and `script/check.sh` run it.
+# SwiftFormat abandons a rule that runs past 1 s + tokens/1000 of wall-clock time, and its
+# CLI formats every file at once: on a 4-core CI runner the files starved each other, and a
+# file whose rules take 5 s in all failed with `docComments rule timed out`. `--verbose` is
+# the CLI's only serial mode; one file at a time, a rule's time is its own. Its per-file
+# lines are dropped; findings and the summary pass through
+# (docs/research/2026-11-25-swiftformat-rule-timeouts.md).
+if [[ "${1:-}" == swiftformat-lint ]]; then
+  binary="$("$0" swiftformat)"
+  "$binary" --lint --verbose "${2:?swiftformat-lint needs a path}" 2>&1 \
+    | { grep -vE '^(Linting|Skipping|Reading config file at) |^-- (ignored|no changes( \(cached\))?)$|^Running SwiftFormat\.\.\.$|^\(lint mode' || true; }
+  exit "${PIPESTATUS[0]}"
+fi
+
 tool="${1:-}"
 case "$tool:$platform" in
   swiftformat:Darwin-*)
