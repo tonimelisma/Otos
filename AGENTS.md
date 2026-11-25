@@ -411,7 +411,8 @@ are for diagnosis.
 
 Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
 Application Support data; `/Applications/Otos.app` is the installed
-`net.melisma.Otos`, built by `script/install.sh` (ADR 0030). The installed app is
+`net.melisma.Otos`, built by `script/install.sh`, which the Mac's updater runs for each
+green `main` commit (ADR 0030). The installed app is
 a Debug build compiled with `-O`: attach with `lldb -p` or `xcrun xctrace record --attach <pid>`, and
 read its logs with `script/logs.sh` — `.info`/`.debug` persist for it.
 
@@ -541,8 +542,7 @@ holds trivially, since nothing in the VM reaches the owner's Mac, library or Imm
   stuck-GitHub rule below), it waits, and says so. A static-tier change merges on the
   cloud `check.sh`.
 - **What only the owner's Mac does.** Some steps need the owner's Mac, installed app or library,
-  and a cloud session cannot reach them: `script/install.sh` after a merge,
-  the look at the installed app (Definition Of Done), the weekly performance run and tours
+  and a cloud session cannot reach them: the look at the installed app (Definition Of Done), the weekly performance run and tours
   (`script/perf.sh`, `script/scorecard.sh`), profiling and unified logs
   (`script/profile.sh`, `script/logs.sh`), read-only tests on the owner's library or Immich
   account, and the macOS-only owner tooling: converting and validating Core ML models (the
@@ -551,13 +551,16 @@ holds trivially, since nothing in the VM reaches the owner's Mac, library or Imm
   and the evaluations on the owner's own data (`script/face-accuracy.sh`,
   `script/description-eval.sh`, `script/scene-label-hierarchy.sh`). A cloud session's DoD
   report lists the ones its increment needs as owner steps, the non-blocking after-DoD notes
-  the Definition Of Done allows, and completes the increment.
+  the Definition Of Done allows, and completes the increment. The install is not among
+  them: the Mac's updater installs every merge once its `Required CI Gate` is green
+  (Definition Of Done).
 
 ### Owner setup
 
 Done on 2026-11-25: Otos and MediaMetadata are public (Otos's history was rewritten to
 drop private media and the team ID before it went public), and `main` requires the
-`Required CI Gate` check. Nothing is pending.
+`Required CI Gate` check. Pending: the Mac's updater (ADR 0030), started once with
+`script/updater-setup.sh` in the primary checkout.
 
 ## Documentation
 
@@ -647,7 +650,7 @@ for confirmation before relying on them.
   `main` verifies the merge; a red result there is fixed first (red-`main` rule
   above).
 - **Opening a PR is not a stopping point.** The agent reads CI status itself
-  (`gh pr checks` on the Mac; REST in a cloud session, Cloud Sessions) and continues straight through merge, cleanup, install, and
+  (`gh pr checks` on the Mac; REST in a cloud session, Cloud Sessions) and continues straight through merge, cleanup, and
   the DoD report in the same turn. A CI watcher exits on every terminal fact:
   all checks done, a check failed, or GitHub degraded (the rule above). A
   watcher that can only exit on success waits forever on an outage. Never end
@@ -668,13 +671,18 @@ partial, pre-merge, or ready-for-review DoD. An increment is done only when the
 work has landed on `main`, the branch/worktree/stashes are cleaned up, and the tree
 is clean on the next-start branch.
 
-An increment that changes the app (`Otos/`, `OtosKit/`, `Otos.xcodeproj/`, `Config/`) also
-updates the installed app: after the merge, run `script/install.sh` from the
-primary checkout on `main` and include its `op=install` line in the DoD report.
-It quits a running installed Otos only when no import or reorganization is in
-flight, and relaunches it; a `phase=pending` result is reported, not retried
-around (ADR 0030). A cloud session cannot install; its DoD report lists the install as an
-owner step (Cloud Sessions).
+An increment that changes the app (`Otos/`, `OtosKit/`, `Otos.xcodeproj/`, `Config/`) reaches
+the installed app through the Mac's updater (ADR 0030): a per-user launchd agent
+(`script/auto-update.sh`, set up once with `script/updater-setup.sh`) that every 15 minutes
+fast-forwards the primary checkout's `main` to a new commit whose `Required CI Gate` is
+green and runs `script/install.sh`. The install quits a running installed Otos only when no
+import or reorganization is in flight, and relaunches it; `phase=pending` is tried again
+on the updater's next start, never retried around. Nobody installs by hand after a merge.
+A session on the Mac that needs the install before its look asks the updater for it at
+once (`touch ~/Library/Application\ Support/net.melisma.Otos.updater/requests/now`),
+reads the updater's `op=updater` lines in `~/Library/Logs/Otos Updater.log`
+(`script/auto-update.sh status`), and puts its `op=install` line in the DoD report. A cloud
+session's DoD report says the merge is installed by the updater.
 The DoD report carries the `op=perf.status` line from the final `script/check.sh` run.
 
 **The agent looks at what it shipped** (owner, 2026-11-19: "do you do visual inspection of

@@ -57,8 +57,20 @@ catalog would also give one database two `CatalogStore` owners.
   id can start a stale build against the installed app's catalog: on 2026-10-01 a
   Sep 22 Xcode build did, and its import failed with `database is locked` beside
   the running installed app.
-- **Every app-changing increment installs.** The Definition of Done runs
-  `script/install.sh` from `main` after merge.
+- **The Mac installs `main` itself, once CI has proven it.** A per-user launchd agent,
+  `net.melisma.Otos.updater` (`script/auto-update.sh`, set up and removed with
+  `script/updater-setup.sh`), starts every 15 minutes, at login, and when a file appears in
+  its requests folder. It fast-forwards the primary checkout's `main` to `origin/main` when
+  that commit's `Required CI Gate` check run (read from GitHub's REST API, unauthenticated:
+  the repository is public) completed green, and runs `script/install.sh` there. It never
+  touches a checkout that is off `main`, dirty, or ahead of `origin/main`: that is a
+  session's work. It waits while a run in the checkout holds a build folder or the weekly
+  performance run holds its lock, since a pull fails a check mid-run and an install quits
+  the app a tour reads. A `phase=pending` install is tried on the next start; a failed one
+  after 6 hours or on a request. It runs as the user in the GUI session, so the install's
+  normal Quit (`osascript`) and the Keychain's signing identity work from it. It logs
+  `op=updater` lines to `~/Library/Logs/Otos Updater.log`. So no session installs by hand
+  after a merge, and a merge made from a cloud session reaches the installed app too.
 
 ## Rejected alternatives
 
@@ -70,6 +82,18 @@ catalog would also give one database two `CatalogStore` owners.
 - **One shared identity.** Schema lock-out and two catalog owners, above.
 - **Developer ID signing and notarization.** Needed only for other Macs; a locally
   built app carries no quarantine flag.
+- **A self-hosted Actions runner on the Mac that installs after CI.** The repository is
+  public and takes pull requests from anyone; a self-hosted runner would run their
+  workflows on the owner's Mac.
+- **Installing by hand after each merge.** A cloud session cannot, so every merge from one
+  became an owner step.
+- **An updater with its own clone (as Latchkey's has).** Otos's install already builds from
+  the primary checkout, whose build folders hold the debug map of the installed binary; a
+  second clone would be a second `build/InstallDerivedData` and a second tree to keep
+  current. The checkout's own guards (on `main`, clean, not ahead) keep sessions' work
+  safe instead.
+- **Release tags as the trigger.** The cloud sessions' proxy refuses tag pushes, and every
+  green `main` commit is already the unit the owner wants installed.
 
 ## Consequences
 
@@ -78,6 +102,8 @@ catalog would also give one database two `CatalogStore` owners.
 - Dev scripts still refuse to launch while any process named `Otos` runs,
   including the installed app, because their log predicates match by process name.
 - A pending install leaves the previous build installed until the next run.
+- A primary checkout left off `main` or dirty stops installs until it is back on a clean
+  `main`; the updater logs that once, as `reason=notOnMain` or `reason=dirtyTree`.
 
 ## Defers
 

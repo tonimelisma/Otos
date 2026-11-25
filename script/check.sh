@@ -175,6 +175,11 @@ if ! "$ROOT_DIR/script/perf.sh" self-test; then
   echo "op=check.stage phase=fail stage=fast-gates reason=perfRules" >&2
   fast_failed=1
 fi
+# The Mac updater's rules, against a generated repository and fakes (ADR 0030).
+if ! "$ROOT_DIR/script/updater-test.sh"; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=updaterRules" >&2
+  fast_failed=1
+fi
 if [[ "$fast_failed" != "0" ]]; then
   echo "check: FAILED at fast-gates (cost you seconds, not a build)" >&2
   exit 1
