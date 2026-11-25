@@ -756,6 +756,11 @@ final class CatalogWindowViewModel {
     /// The current still's hold. Cancelled when the item changes or the story pauses or
     /// closes; a hold that wakes for another visit does nothing.
     @ObservationIgnored var storyHoldTask: Task<Void, Never>?
+    /// How a still's hold waits out its remaining time: the clock in the app. A test hands
+    /// in a wait that never ends on its own and delivers the hold's end itself
+    /// (`storyHoldElapsed`), at the suspension it chooses, so no real timer moves a story it
+    /// is reading.
+    @ObservationIgnored let storyHoldWait: @Sendable (Duration) async throws -> Void
     /// Waits for the current video's end or failure report.
     @ObservationIgnored var storyVideoWatchTask: Task<Void, Never>?
     @ObservationIgnored var storySignpost: OSSignpostIntervalState?
@@ -779,6 +784,8 @@ final class CatalogWindowViewModel {
         videoLoader: VideoPreviewLoader? = nil,
         workspace: any WorkspaceOpening = LaunchServicesWorkspace(),
         calendarDayReader: @escaping @Sendable () -> CalendarDay = { CalendarDay.today() },
+        // time: schedule — a still holds for a duration the product defines (ADR 0049).
+        storyHoldWait: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         calendarNotificationCenter: NotificationCenter = .default,
         tileContentStore: TileContentStore = TileContentStore(),
         volumeCapacity: @escaping VolumeCapacityReader,
@@ -793,6 +800,7 @@ final class CatalogWindowViewModel {
         self.workspace = workspace
         self.tileContentStore = tileContentStore
         self.calendarDayReader = calendarDayReader
+        self.storyHoldWait = storyHoldWait
         self.calendarNotificationCenter = calendarNotificationCenter
         today = calendarDayReader()
         // Curation undo entries are registered from store completions, outside any

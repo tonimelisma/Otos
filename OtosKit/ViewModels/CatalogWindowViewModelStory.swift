@@ -549,10 +549,11 @@ extension CatalogWindowViewModel {
 
     private func scheduleStoryHold(_ remaining: Duration, visit: UInt64) {
         storyHoldTask?.cancel()
+        let wait = storyHoldWait
         storyHoldTask = Task { [weak self] in
             do {
-                // time: schedule — a still holds for a duration the product defines (ADR 0049).
-                try await Task.sleep(for: remaining)
+                // The hold's time (`storyHoldWait`): `Task.sleep` in the app.
+                try await wait(remaining)
             } catch {
                 // Cancelled: the item changed, or the story paused or closed.
                 return

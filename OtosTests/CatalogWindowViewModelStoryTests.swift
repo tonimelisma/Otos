@@ -48,6 +48,10 @@ struct CatalogWindowViewModelStoryTests {
             preferencesDomain: .suite(UUID().uuidString),
             previewLoader: loader,
             calendarDayReader: { day.get() },
+            // A hold never runs out by itself: each test delivers its end (`storyHoldElapsed`)
+            // where it chooses. A real 5 s hold ran out on a loaded runner before the test
+            // looked, and moved the story to an item whose picture the test never released.
+            storyHoldWait: { _ in throw CancellationError() },
             calendarNotificationCenter: center,
             tileContentStore: tiles,
             volumeCapacity: ampleVolumeCapacity,
