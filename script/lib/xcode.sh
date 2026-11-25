@@ -4,6 +4,16 @@ set -euo pipefail
 OTOS_EXPECTED_XCODE="/Applications/Xcode-beta.app/Contents/Developer"
 OTOS_PROJECT_NAME="Otos"
 
+# The Apple team that signs Otos stays out of this public repository: the project file
+# reads $(OTOS_DEVELOPMENT_TEAM), which every build script gets from the environment or,
+# on the Mac, from ~/.config/otos/development-team (one line, the team ID). Without it a
+# build is signed to run locally only, which is enough for tests but not for an install
+# that keeps its macOS permissions.
+if [[ -z "${OTOS_DEVELOPMENT_TEAM:-}" && -r "${XDG_CONFIG_HOME:-$HOME/.config}/otos/development-team" ]]; then
+  OTOS_DEVELOPMENT_TEAM="$(tr -d '[:space:]' < "${XDG_CONFIG_HOME:-$HOME/.config}/otos/development-team")"
+fi
+export OTOS_DEVELOPMENT_TEAM="${OTOS_DEVELOPMENT_TEAM:-}"
+
 otos_project_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
 }

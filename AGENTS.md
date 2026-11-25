@@ -356,6 +356,12 @@ like, the requirement row says it is implemented and points at the test.
 
 ## Toolchain
 
+This repository is public. The Apple team that signs Otos is not in it: the project
+reads `$(OTOS_DEVELOPMENT_TEAM)`, which `script/lib/xcode.sh` takes from the environment
+or, on the Mac, from `~/.config/otos/development-team` (one line, the team ID). A build
+without it is signed to run locally, which tests and CI need; an install needs the team.
+Never commit the team ID, personal media or private paths.
+
 Use full Xcode (not Command Line Tools). Install tools with `brew bundle`;
 SwiftFormat and SwiftLint are not among them: `script/lint-tools.sh` pins them,
 checks their checksums, and fetches them on first use. Run `"$(script/lint-tools.sh
