@@ -70,9 +70,6 @@ otos_build_checkout() {
   esac
   otos_unshare_built_models "$root/build/DerivedData"
   # ${settings[@]+...}: bash 3.2 under `set -u` calls an empty array unbound.
-  # Every script calls xcodebuild by name, never as /usr/bin/xcodebuild: under Latchkey
-  # (AGENTS.md, "Cloud Sessions") the name is a wrapper that turns off xcodebuild's own
-  # sandboxes, which macOS cannot start inside Latchkey's, and a full path skips it.
   xcodebuild \
     -project "$root/Otos.xcodeproj" \
     -scheme Otos \

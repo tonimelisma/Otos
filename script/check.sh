@@ -212,8 +212,8 @@ fi
 echo "op=check.tier tier=$CHECK_TIER"
 # A machine with no Xcode — a Claude Code cloud session's Linux VM — runs every gate but
 # can build and test nothing (AGENTS.md, "Cloud Sessions"). A full-tier tree there runs the
-# gates the way the static tier does, then fails as incomplete: its build and tests run on
-# the Mac. A static-tier tree needs neither, so it is verified there in full.
+# gates the way the static tier does, then fails as incomplete: its build and tests are CI's
+# run of this script on GitHub's Xcode 27 runner. A static-tier tree needs neither, so it is verified there in full.
 VERIFY_TIER="$CHECK_TIER"
 if [[ "$CHECK_TIER" == full ]] && ! command -v xcodebuild > /dev/null 2>&1; then
   VERIFY_TIER=static
@@ -534,7 +534,7 @@ if [[ "$verify_status" == "0" && "$final_tree" != "$MEASURED_TREE" ]]; then
 elif [[ "$verify_status" == "0" && -n "$OTOS_ONLY_TESTING" ]]; then
   echo "check: PASSED (scoped to $OTOS_ONLY_TESTING) — iteration feedback, NOT verification evidence"
 elif [[ "$verify_status" == "0" && "$VERIFY_TIER" != "$CHECK_TIER" ]]; then
-  echo "check: INCOMPLETE — every gate passed, but this machine has no Xcode, so nothing was built or tested; build and test the pushed branch on the Mac (AGENTS.md, \"Cloud Sessions\")" >&2
+  echo "check: INCOMPLETE — every gate passed, but this machine has no Xcode, so nothing was built or tested; the pushed branch's Build And Test (Xcode 27) CI job builds and tests it (AGENTS.md, \"Cloud Sessions\")" >&2
   verify_status=1
 elif [[ "$verify_status" == "0" && "$CHECK_TIER" == "static" ]]; then
   echo "check: PASSED (tier=static: every gate, no build or tests, because the diff reaches nothing they read) — evidence is valid only for the tree as it stands right now"
