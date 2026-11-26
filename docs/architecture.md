@@ -336,7 +336,12 @@ everything expensive happens on an actor off the main thread.
   an import or reorganization is in flight. CI's `Release` workflow publishes each green
   `main` commit with its disk image (`script/release.sh`, `script/appcast.sh`), refused while
   the pinned Sparkle has known advisories (`script/sparkle-advisories.sh`), built by the recipe
-  `script/install.sh` shares (`script/lib/installed-build.sh`).
+  `script/install.sh` shares (`script/lib/installed-build.sh`). Before publishing, the
+  release launches the archive it ships on generated media (`script/app-capture.sh`).
+- **Diagnostics** (ADR 0060): `MetricKitRecorder` keeps each MetricKit diagnostic report as
+  JSON in Application Support; Help ▸ Export Diagnostics… (`DiagnosticsExportController`, one
+  ordered stream) has `DiagnosticsExport` write the log lines, crash reports, kept reports
+  and storage sizes into a new folder the owner chooses, published by `ExclusivePublication`.
 - **Library reorganization**: `ReorganizationPlanner` builds physical-member
   recipes; `ReorganizationExecutor` owns directory/move mechanics;
   `LibraryReorganizationRunner` owns execution and recovery sequencing; the view model

@@ -43,16 +43,8 @@ Each step is one increment with its own PR, in this order.
      is removed and deterministic twin tests stay the only performance gate.
    - Counters that read: `script/perf.sh run` keeps only the owner-library tour, for a
      session on the Mac, and ADR 0043 is rewritten for the split.
-5. **Diagnostics the owner can hand over.** Help ▸ Export Diagnostics… writes one folder
-   (ADR, requirement row, design spec). It holds:
-   - the app's own log lines read through `OSLogStore`;
-   - the MetricKit crash and hang payloads the app has kept in Application Support;
-   - Otos's crash reports;
-   - the installed version;
-   - catalog counts.
-
-   A cloud session symbolicates it against the release's dSYMs with `llvm-symbolizer`. It
-   never goes to CI or anywhere public.
+5. **Diagnostics the owner can hand over.** Landed: Help ▸ Export Diagnostics… (ADR 0060,
+   APP-098).
 6. **The instruction files rebuilt.** Landed first (below).
 
 ## The five-minute budget

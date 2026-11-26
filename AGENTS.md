@@ -211,7 +211,8 @@ by hand in a session with several repositories) installs what the gates call.
 - Steps that need the owner's Mac (the look at his library, the weekly run, profiling, his
   installed app's logs, the evaluations and Core ML conversions on his private data) never
   block an increment; the final report lists the ones it would benefit from as
-  non-blocking owner notes.
+  non-blocking owner notes. What the installed app ran into reaches a session when the owner
+  hands over a Help ▸ Export Diagnostics… folder (ADR 0060).
 
 ### Sessions On The Mac
 

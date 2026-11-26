@@ -65,6 +65,43 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     /// app, so App ▸ Check for Updates… and the hourly check share one updater.
     private(set) lazy var updater = AppUpdater(store: catalogViewModel.catalogStore)
 
+    /// Otos's own folder in Application Support, where the catalog, the thumbnails and the
+    /// kept MetricKit payloads live.
+    private static var applicationSupportFolder: URL {
+        URL.applicationSupportDirectory.appending(
+            path: Bundle.main.bundleIdentifier ?? "net.melisma.Otos",
+            directoryHint: .isDirectory
+        )
+    }
+
+    /// Help ▸ Export Diagnostics… (ADR 0060), reading the places this app and the system
+    /// keep: Otos's Application Support folder, the system's diagnostic reports, the unified
+    /// log.
+    private(set) lazy var diagnostics = DiagnosticsExportController(sources: DiagnosticsExport.Sources(
+        applicationSupport: Self.applicationSupportFolder,
+        diagnosticReports: URL.libraryDirectory.appending(path: "Logs/DiagnosticReports", directoryHint: .isDirectory),
+        processName: "Otos",
+        bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos",
+        version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+        build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+        macOS: ProcessInfo.processInfo.operatingSystemVersionString,
+        model: Self.hardwareModel(),
+        readLog: DiagnosticsExport.systemLog(subsystem: OtosLog.subsystem)
+    ))
+
+    /// Keeps the MetricKit payloads macOS delivers for the session (ADR 0060).
+    private var metricKit: MetricKitRecorder?
+
+    /// `hw.model`, the Mac's model identifier (`Mac14,7`), or `unknown` when the kernel
+    /// does not answer.
+    private static func hardwareModel() -> String {
+        var size = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else { return "unknown" }
+        var bytes = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("hw.model", &bytes, &size, nil, 0) == 0 else { return "unknown" }
+        return String(decoding: bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
     /// The platform's reports about room for background work (memory pressure, thermal state,
     /// Low Power Mode), delivered to the window's background room and
     /// checkpointed for the session.
@@ -72,6 +109,12 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_: Notification) {
         backgroundReading = BackgroundReading.begin()
+        metricKit = MetricKitRecorder.start(
+            folder: Self.applicationSupportFolder.appending(
+                path: DiagnosticsExport.metricKitFolder,
+                directoryHint: .isDirectory
+            )
+        )
         catalogViewModel.start()
         OtosLog.app.notice(
             "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"
@@ -532,7 +575,13 @@ public struct OtosApp: App {
                     }
                 }
             }
-            CommandGroup(replacing: .help) {}
+            // Help ▸ Export Diagnostics… (ADR 0060): what this Mac's Otos ran into, written
+            // into a folder the owner chooses and hands to a session.
+            CommandGroup(replacing: .help) {
+                Button("Export Diagnostics…") {
+                    lifecycle.diagnostics.chooseFolderAndExport()
+                }
+            }
         }
 
         Settings {

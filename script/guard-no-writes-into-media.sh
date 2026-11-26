@@ -8,6 +8,11 @@ ALLOWLIST=(
   # User-commanded export: new files into the folder the person chose, written in the
   # system scratch folder and published without overwriting (ADR 0038).
   "OtosKit/Services/MediaExporter.swift"
+  # User-commanded Help ▸ Export Diagnostics…: one new folder into the folder the person
+  # chose, staged in the system scratch folder and published without replacing (ADR 0060).
+  "OtosKit/Services/DiagnosticsExport.swift"
+  # Keeps MetricKit's reports in Application Support's Diagnostics folder (ADR 0060).
+  "OtosKit/Services/MetricKitRecorder.swift"
   # Hand-off files live in Application Support's HandOff folder (ADR 0037).
   "OtosKit/Services/HandOffPreparer.swift"
   # Writes only the staging URL its two callers pass: the hand-off's Application Support
