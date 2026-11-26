@@ -99,14 +99,19 @@ the row answers each, in that order.
 
 HIG review (Progress indicators):
 
-- **Determinate wherever the amount is known.** Every count is an exact COUNT over the
-  predicate the work's own walk reads (ADR 0058), so every row has a bar. No row shows a
+- **Determinate wherever the amount is known.** Every count is exact (ADR 0058): what is left
+  is a COUNT over the predicate the work's own walk reads, and what is done is the items its
+  owner wrote, counted as it writes them. So every working row has a bar. No row shows a
   percentage, a remaining time or a rate.
-- **The numbers are the stretch's.** `done` is every fall of the count since the work began,
-  `total` is `done` plus what is left now. The bar moves only forward while work is done; when
-  new photos arrive the total steps up, which is the truth, and done stays.
-- **A stall is shown, not hidden.** A paused or stuck row keeps its count and its bar where it
-  stopped, in the secondary tint, with what stops it under the count.
+- **The numbers are the stretch's.** `done` is what the work's owner finished since the work
+  began, `total` is `done` plus what is left now. The bar moves only as the owner finishes
+  items; when new photos arrive the total steps up, which is the truth, and done stays. An item
+  that stops being owed for another reason — its facts changed again, its file gone — lowers
+  the total and is never counted done: a row whose owner wrote nothing reads `0 of …`.
+- **A bar only while the work moves.** A paused or stuck row keeps its count, with what stops
+  it under the count, and draws no bar: a bar says work is progressing, and it is not (owner,
+  2026-11-26: "Whatever the problem the status needs to be right! It cant give a progress bar
+  if theres none"). Its pause glyph says it waits.
 - **Say why when it is not obvious.** Downloads are a means, not an outcome: the row says
   what they are for. A file still downloading cannot be measured from its provider, so the
   bar moves as each one finishes.

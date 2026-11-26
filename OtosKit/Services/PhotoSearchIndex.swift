@@ -460,7 +460,7 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// The items owed a search embedding: the count behind `Preparing search` (ADR 0058).
     func progress() async -> WorkProgress? {
         do {
-            return try await WorkProgress.left(store.backgroundReads.searchEmbeddingsLeft())
+            return try await activity.progress(left: store.backgroundReads.searchEmbeddingsLeft())
         } catch {
             WorkProgress.logFailure(owner: "searchIndex", error)
             return nil
@@ -1084,6 +1084,7 @@ actor PhotoSearchIndex: QuiescentOwner {
         }
         let written = try await store.applySearchEmbeddings(results)
         activity.wrote(results.count)
+        activity.finished(written.count)
         unread.formUnion(Set(owed.map(\.id)).subtracting(written.map(\.id)))
         if !written.isEmpty {
             try await commit(written.map(StoredSearchEmbeddingRow.init(result:)), to: file)

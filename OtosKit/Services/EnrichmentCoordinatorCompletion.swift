@@ -288,6 +288,9 @@ extension EnrichmentCoordinator {
         claimInputsRevision &+= 1
         let outcome = await store.applyEnrichmentBatch(batch)
         activity.wrote(batch.count)
+        if case let .applied(count) = outcome {
+            activity.finished(count)
+        }
         OtosLog.metadata.notice(
             "op=catalog.enrichment.coordinator phase=flush count=\(batch.count, privacy: .public) outcome=\(String(describing: outcome), privacy: .public)"
         )

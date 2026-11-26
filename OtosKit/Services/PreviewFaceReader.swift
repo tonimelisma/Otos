@@ -116,7 +116,7 @@ actor PreviewFaceReader: QuiescentOwner {
     /// (ADR 0058).
     func progress() async -> WorkProgress? {
         do {
-            return try await WorkProgress.left(store.backgroundReads.facesLeft())
+            return try await activity.progress(left: store.backgroundReads.facesLeft())
         } catch {
             WorkProgress.logFailure(owner: "previewFaces", error)
             return nil
@@ -291,8 +291,10 @@ actor PreviewFaceReader: QuiescentOwner {
         }
         guard !results.isEmpty else { return true }
         do {
-            tally.stored += try await store.applyPreviewFaces(results)
+            let stored = try await store.applyPreviewFaces(results)
+            tally.stored += stored
             activity.wrote(results.count)
+            activity.finished(stored)
         } catch {
             OtosLog.metadata.errorOperation("face.preview", phase: "writeFailed", fields: [
                 "count": "\(results.count)", "error": String(describing: error),

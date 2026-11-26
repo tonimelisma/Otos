@@ -6,8 +6,9 @@ import Foundation
 // unchecked tally to the words the sidebar's Activity line and its popover draw. Every string
 // on those surfaces is composed here, so the views are passive and the words are tested
 // without a window. The popover lists only work that runs or waits, each row named by what
-// it does for the user (DES-035), how far its current stretch is — `done of total` with a
-// determinate bar, from the exact count its owner keeps (`ActivityProgress`, DES-124) — and,
+// it does for the user (DES-035), how far its current stretch is — `done of total`, from the
+// exact count its owner keeps (`ActivityProgress`, DES-124), with a determinate bar only while
+// the work moves — and,
 // when something stops it, what, in a sentence: the cause its owner reported
 // (`OwnerTrouble`), never a bare "waiting". A download says what it is for. Everything else
 // is one line: up to date. It never says when work ran or how long is left, and never a
@@ -152,11 +153,13 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
         }
         return Row(
             id: entry.kind.rawValue, systemImage: systemImage(entry.kind), title: title(entry.kind),
-            details: details, status: status, bar: bar(entry.progress)
+            details: details, status: status, bar: status == .working ? bar(entry.progress) : nil
         )
     }
 
-    /// The bar for a stretch with something to count.
+    /// The bar for a working stretch with something to count. A row that waits has none: its
+    /// work does not move, so a bar would claim progress there is none of; its count says how
+    /// far it got.
     private static func bar(_ progress: ActivityProgress?) -> Bar? {
         guard let progress, progress.total > 0 else { return nil }
         return Bar(done: min(progress.done, progress.total), total: progress.total)

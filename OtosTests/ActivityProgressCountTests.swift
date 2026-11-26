@@ -55,4 +55,28 @@ struct ActivityProgressCountTests {
         ]) == 1)
         #expect(try await store.backgroundReads.renderSignaturesLeft() == signatures.count - 1, "a written signature is done")
     }
+
+    /// What an owner reports done is what the catalog accepted from it, counted as it writes,
+    /// beside what its walk still owes: after signing three stills, 3 finished and none left.
+    @Test func anOwnersProgressCountsTheItemsItWrote() async throws {
+        let (store, ids, assets) = try await catalogOfThreeStills()
+        _ = await store.applyEnrichmentBatch(assets.map { asset in
+            EnrichmentResult(
+                id: asset.id,
+                metadata: AssetMetadata(),
+                enrichedKind: .image,
+                thumbnailPath: "\(asset.id.relativePath.rawValue)-thumb.jpg",
+                sourceSize: asset.byteSize ?? 0,
+                sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                contentHash: nil
+            )
+        })
+        let refresher = RenderSignatureRefresher(store: store, thumbnailDirectory: nil)
+        #expect(await refresher.progress() == .counted(completed: 0, left: ids.count), "nothing written yet")
+        await refresher.start()
+        _ = try await refresher.untilQuiescent()
+        #expect(await refresher.progress() == .counted(completed: ids.count, left: 0))
+        await refresher.shutdown()
+        await store.shutdown()
+    }
 }

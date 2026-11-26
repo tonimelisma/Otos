@@ -647,7 +647,7 @@ extension EnrichmentCoordinator {
     func progress() async -> WorkProgress? {
         let videoFaces = schedule.videoFaces(at: ContinuousClock.now)
         do {
-            return try await WorkProgress.left(store.backgroundReads.enrichmentLeft(videoFaces: videoFaces))
+            return try await activity.progress(left: store.backgroundReads.enrichmentLeft(videoFaces: videoFaces))
         } catch {
             WorkProgress.logFailure(owner: "enrichment", error)
             return nil

@@ -153,7 +153,7 @@ actor PlaceNameReader: QuiescentOwner {
     func progress() async -> WorkProgress? {
         let language = PlaceNameLanguage(locale())
         do {
-            return try await WorkProgress.left(store.backgroundReads.unnamedPlaceCellCount(language: language))
+            return try await activity.progress(left: store.backgroundReads.unnamedPlaceCellCount(language: language))
         } catch {
             WorkProgress.logFailure(owner: "placeNames", error)
             return nil
@@ -415,6 +415,7 @@ actor PlaceNameReader: QuiescentOwner {
         do {
             try await store.applyPlaceNames(names, language: language)
             activity.wrote(names.count)
+            activity.finished(names.count)
             return true
         } catch {
             OtosLog.metadata.errorOperation("place.names", phase: "writeFailed", fields: [

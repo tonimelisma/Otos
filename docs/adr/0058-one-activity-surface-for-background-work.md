@@ -72,15 +72,20 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    — is not listed (one fact, one owner).
 5. **Every row says how far it is, exactly** (owner, 2026-11-26: "each should give the actual
    progress", "shouldn't each of these have a progress bar?"). Each kind has one owner that
-   counts its work (`QuiescentOwner.progress`): an exact COUNT over the very predicate its
-   walk reads, through the same partial index — enrichment's claims per root, People's
+   counts its work (`QuiescentOwner.progress`, `WorkProgress.counted`): the items it has
+   finished, counted at each write the catalog accepted (`OwnerActivity.finished`), and what is
+   left, an exact COUNT over the very predicate its walk reads, through the same partial index — enrichment's claims per root, People's
    unchecked tally, unnamed place cells, owed search embeddings, owed descriptions, owed render
    signatures — or, for downloads, the current run counted as it goes, with the bytes the
    catalog sizes and what asked for them. The board asks again only when that owner's work has
    moved (`OwnerWork`), so a round woken by anything else reads no count. A stretch of work
-   keeps its own tally: each fall of the count is items done, each rise items added, so the
-   row reads `done of total` for the stretch with a determinate bar that moves forward while
-   work is done and steps its total up when new items arrive — both true. A failed count
+   keeps its start: `done` is what the owner finished since then and `total` is that plus what
+   is left, so the row reads `done of total` for the stretch and steps its total up when new
+   items arrive — both true. A fall of the count is not work done: an item stops being owed
+   when its facts change again or its row goes, and a writer whose every attempt failed had
+   read as thousands done (owner, 2026-11-26: "Whatever the problem the status needs to be
+   right!"). A row draws its determinate bar only while it works; a paused or stuck row keeps
+   its count and draws none ("It cant give a progress bar if theres none"). A failed count
    publishes nothing new (ADR 0032 rule 4). No row shows a percentage, a remaining time or a
    rate: every number is a count Otos holds.
 6. **Only what runs or waits is listed.** The popover lists the kinds and accounts that work,

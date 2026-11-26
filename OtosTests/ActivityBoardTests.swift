@@ -54,14 +54,16 @@ struct ActivityBoardTests {
         /// What its work has left, which the board reads once its work moves.
         private var left: Int?
 
-        /// Sets what is left as a pass that wrote a result would leave it.
-        func count(_ left: Int) {
+        /// Sets what is left as a pass that wrote `finished` items' results would leave it,
+        /// alongside whatever else moved the owed set.
+        func count(_ left: Int, finished: Int = 0) {
             self.left = left
-            activity.wrote(1)
+            activity.wrote(max(finished, 1))
+            activity.finished(finished)
         }
 
         func progress() async -> WorkProgress? {
-            left.map(WorkProgress.left)
+            left.map { activity.progress(left: $0) }
         }
     }
 
@@ -222,29 +224,36 @@ struct ActivityBoardTests {
 }
 
 extension ActivityBoardTests {
-    /// A stretch's tally: every fall of the owner's exact count is items done, a rise is items
-    /// added, so the bar only moves forward while work is done; the tally ends with the stretch.
-    @Test func aStretchCountsEachFallAsDoneAndEachRiseAsAdded() async {
+    /// A stretch's tally: `done` is what the owner finished since the stretch began and
+    /// `total` is that and what is left, so the bar moves only as the owner finishes items; an
+    /// item that leaves the owed set by no work of the owner's is never counted as done; the
+    /// tally ends with the stretch.
+    @Test func aStretchCountsOnlyWhatItsOwnerFinished() async {
         let board = ActivityBoard()
         let enrichment = ScriptedOwner("enrichment")
         let published = Published(board)
         await board.watch([.init(kind: .readingPhotos, owner: enrichment)], room: nil)
         _ = await published.newest { $0.watching }
 
-        await enrichment.count(100)
+        await enrichment.count(100, finished: 7)
         let request = await enrichment.begin()
         let first = await published.newest { $0.entries.first?.progress != nil }
-        #expect(first.entries.first?.progress == ActivityProgress(done: 0, total: 100))
+        #expect(first.entries.first?.progress == ActivityProgress(done: 0, total: 100), "what was finished before the stretch is not its")
 
-        await enrichment.count(60)
+        await enrichment.count(60, finished: 40)
         board.ring()
-        let fell = await published.newest { $0.entries.first?.progress?.done == 40 }
-        #expect(fell.entries.first?.progress == ActivityProgress(done: 40, total: 100))
+        let finished = await published.newest { $0.entries.first?.progress?.done == 40 }
+        #expect(finished.entries.first?.progress == ActivityProgress(done: 40, total: 100))
 
-        await enrichment.count(70)
+        await enrichment.count(30)
         board.ring()
-        let rose = await published.newest { $0.entries.first?.progress?.total == 110 }
-        #expect(rose.entries.first?.progress == ActivityProgress(done: 40, total: 110), "added items raise the total, done stays")
+        let fell = await published.newest { $0.entries.first?.progress?.total == 70 }
+        #expect(fell.entries.first?.progress == ActivityProgress(done: 40, total: 70), "a fall no work made lowers the total, never done")
+
+        await enrichment.count(45)
+        board.ring()
+        let rose = await published.newest { $0.entries.first?.progress?.total == 85 }
+        #expect(rose.entries.first?.progress == ActivityProgress(done: 40, total: 85), "added items raise the total, done stays")
 
         await enrichment.end(covering: request)
         let settled = await published.newest { $0.entries.first?.state == .upToDate }
@@ -397,9 +406,10 @@ struct ActivityPresentationTests {
         #expect(offline.map(\.bar) == [nil])
     }
 
-    /// Each row says how far its stretch is in its own words, with an exact bar; a waiting row
-    /// keeps its count above what stops it; downloads say their bytes and what they are for.
-    @Test func eachRowSaysHowFarItIsWithAnExactBar() {
+    /// Each row says how far its stretch is in its own words, with an exact bar while it works;
+    /// a waiting row keeps its count above what stops it and draws no bar, since its work does
+    /// not move; downloads say their bytes and what they are for.
+    @Test func eachRowSaysHowFarItIsWithABarOnlyWhileItWorks() {
         let snapshot = ActivitySnapshot(watching: true, entries: [
             ActivityEntry(kind: .readingPhotos, state: .working(since: now), progress: ActivityProgress(done: 12408, total: 52310)),
             ActivityEntry(kind: .downloadingOriginals, state: .working(since: now), progress: ActivityProgress(
@@ -428,8 +438,13 @@ struct ActivityPresentationTests {
         typealias Bar = ActivityPresentation.Bar
         #expect(presentation.rows.map(\.bar) == [
             Bar(done: 12408, total: 52310), Bar(done: 214, total: 1020), Bar(done: 40112, total: 52310), Bar(done: 310, total: 1204),
-            Bar(done: 0, total: 1), Bar(done: 8900, total: 47000), Bar(done: 21000, total: 52310),
+            Bar(done: 0, total: 1), nil, Bar(done: 21000, total: 52310),
         ])
+        let paused = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
+            ActivityEntry(kind: .findingPeople, state: .paused(.thermal), progress: ActivityProgress(done: 310, total: 1204)),
+        ]))
+        #expect(paused.rows.map(\.details).first?.first == "310 of 1,204 checked")
+        #expect(paused.rows.map(\.bar) == [nil], "a paused row draws no bar")
         #expect(presentation.rows.allSatisfy { !$0.details.joined().contains("%") }, "no percentage, only counts")
     }
 

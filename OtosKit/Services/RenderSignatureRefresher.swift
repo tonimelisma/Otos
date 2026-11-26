@@ -99,7 +99,7 @@ actor RenderSignatureRefresher: QuiescentOwner {
     /// measurable part.
     func progress() async -> WorkProgress? {
         do {
-            return try await WorkProgress.left(store.backgroundReads.renderSignaturesLeft())
+            return try await activity.progress(left: store.backgroundReads.renderSignaturesLeft())
         } catch {
             WorkProgress.logFailure(owner: "renderSignatures", error)
             return nil
@@ -143,8 +143,10 @@ actor RenderSignatureRefresher: QuiescentOwner {
             activity.read(rows: page.candidates.count)
             let results = await Self.sign(page.candidates, thumbnailDirectory: thumbnailDirectory)
             do {
-                signed += results.isEmpty ? 0 : try await store.applyRenderSignatures(results)
+                let written = results.isEmpty ? 0 : try await store.applyRenderSignatures(results)
+                signed += written
                 activity.wrote(results.count)
+                activity.finished(written)
             } catch {
                 OtosLog.thumbnails.errorOperation("renderSignature", phase: "writeFailed", fields: [
                     "count": "\(results.count)", "error": String(describing: error),

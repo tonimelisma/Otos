@@ -298,6 +298,9 @@ final nonisolated class OwnerActivity {
     /// the owner's status (`ActivityBoard`, ADR 0058). Nil while nothing watches the owner.
     var ring: (@Sendable () -> Void)?
     var work = OwnerWork()
+    /// Items the owner's work finished since it started, each counted at the write the
+    /// catalog accepted for it (`finished(_:)`): the `completed` of its `WorkProgress`.
+    private(set) var finishedItems = 0
     private var waiters: [UUID: (wait: OwnerWait, continuation: CheckedContinuation<OwnerQuiescence?, any Error>)] = [:]
 
     /// The first request an owner takes: what an owner whose launch asks it once names as the
@@ -373,6 +376,16 @@ final nonisolated class OwnerActivity {
 
     func wrote(_ count: Int) {
         work.written += count
+    }
+
+    /// The catalog accepted the owner's write of `count` items' results: they are done.
+    func finished(_ count: Int) {
+        finishedItems += count
+    }
+
+    /// What the owner reports to Activity once it has counted `left` (`WorkProgress.counted`).
+    func progress(left: Int) -> WorkProgress {
+        .counted(completed: finishedItems, left: left)
     }
 
     /// The fact, when the owner holds no other work (`holdsWork`) and this bookkeeping owes
@@ -494,8 +507,12 @@ nonisolated struct OwnerMark: Equatable, Sendable {
 /// `docs/design/activity.md`): never an estimate, and nil — not 0 — when the count could not be
 /// read (ADR 0032 rule 4).
 nonisolated enum WorkProgress: Equatable, Sendable {
-    /// The items its work still owes: a COUNT over the predicate its walk reads.
-    case left(Int)
+    /// The items its work has finished since the owner started (`completed`, counted at each
+    /// write the catalog accepted, never inferred), and the items it still owes (`left`, a
+    /// COUNT over the predicate its walk reads). An item can leave `left` for a reason that is
+    /// no work of the owner's — its facts unsettled again, its row gone — so only `completed`
+    /// says what was done.
+    case counted(completed: Int, left: Int)
     /// A run of transfers counted as it goes.
     case transfers(TransferRun)
 

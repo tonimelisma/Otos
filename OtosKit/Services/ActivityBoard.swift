@@ -27,13 +27,15 @@ import OSLog
 // sync), which the presentation reads beside this board's snapshot.
 //
 // Each kind that works or is stopped also carries its progress (`ActivityProgress`): the one
-// owner of the kind that counts its work (`QuiescentOwner.progress`) is asked how much is
-// left — an exact COUNT over the predicate its walk reads, or a run of downloads counted as
-// it goes. It is asked again only when its work has moved (`OwnerWork`), so a round woken
-// by anything else reads no count. A stretch of work keeps its own tally: every fall of the
-// count is items done, a rise is items added, so `done of total` is the stretch's and its
-// bar moves only forward while work is done. A failed count publishes nothing new; the
-// stretch's tally ends when the kind is up to date.
+// owner of the kind that counts its work (`QuiescentOwner.progress`) is asked how much it has
+// finished and how much is left — the items it wrote, counted as it writes them, and an exact
+// COUNT over the predicate its walk reads — or a run of downloads counted as it goes. It is
+// asked again only when its work has moved (`OwnerWork`), so a round woken by anything else
+// reads no count. A stretch of work keeps its start: `done` is what the owner finished since
+// the stretch began and `total` is that plus what is left, so the bar moves only as the owner
+// finishes items. An item that leaves the owed set for another reason (its facts unsettled
+// again, its row gone) lowers the total and is never counted as done. A failed count
+// publishes nothing new; the stretch's start ends when the kind is up to date.
 //
 // The loop holds the board weakly across its waits and ends with it; `shutdown()` ends it at
 // teardown.
@@ -119,9 +121,8 @@ actor ActivityBoard {
     private var watched: [Watched] = []
     /// The start of each working kind's current stretch of work.
     private var workingSince: [ActivityKind: Date] = [:]
-    /// Each kind's current stretch tally: items done (each fall of its count) and the count
-    /// last read.
-    private var tallies: [ActivityKind: (done: Int, left: Int)] = [:]
+    /// What each kind's counting owner had finished when its current stretch began.
+    private var stretchStarts: [ActivityKind: Int] = [:]
     /// Each kind's progress as last published, kept while a count is not read again.
     private var progressByKind: [ActivityKind: ActivityProgress] = [:]
     /// Each watched owner's work as of its last successful count, by its index in `watched`:
@@ -206,26 +207,23 @@ actor ActivityBoard {
 
     /// The stretch is over: the next one counts from its own start.
     private func endStretch(of kind: ActivityKind) {
-        tallies[kind] = nil
+        stretchStarts[kind] = nil
         progressByKind[kind] = nil
         for (index, entry) in watched.enumerated() where entry.kind == kind {
             countedAt[index] = nil
         }
     }
 
-    /// A count applied to its kind's stretch: a fall is items done, a rise items added; a run
-    /// of downloads is its own tally.
+    /// A count applied to its kind's stretch: what the owner finished since the stretch began,
+    /// of that and what is left; a run of downloads is its own tally.
     private func record(_ counted: Counted) {
         countedAt[counted.index] = counted.work
         switch counted.progress {
-        case let .left(left):
-            var tally = tallies[counted.kind] ?? (done: 0, left: left)
-            if left < tally.left {
-                tally.done += tally.left - left
-            }
-            tally.left = left
-            tallies[counted.kind] = tally
-            progressByKind[counted.kind] = ActivityProgress(done: tally.done, total: tally.done + tally.left)
+        case let .counted(completed, left):
+            let start = stretchStarts[counted.kind] ?? completed
+            stretchStarts[counted.kind] = start
+            let done = max(completed - start, 0)
+            progressByKind[counted.kind] = ActivityProgress(done: done, total: done + left)
         case let .transfers(run):
             progressByKind[counted.kind] = ActivityProgress(
                 done: run.done, total: run.total, bytesDone: run.bytesDone, bytesTotal: run.bytesTotal, purpose: run.purpose

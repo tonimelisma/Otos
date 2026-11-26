@@ -313,10 +313,12 @@ actor PhotoDescriptionWriter: QuiescentOwner {
             let results = await describe(candidates, tally: &tally)
             let stopped = tally.stopped
             do {
-                if !results.isEmpty, try await !store.applyPhotoDescriptions(results).isEmpty {
+                let written = results.isEmpty ? [] : try await store.applyPhotoDescriptions(results)
+                if !written.isEmpty {
                     announce()
                 }
                 activity.wrote(results.count)
+                activity.finished(written.count)
             } catch {
                 OtosLog.metadata.errorOperation("description", phase: "writeFailed", fields: [
                     "count": "\(results.count)", "error": String(describing: error),
@@ -429,7 +431,7 @@ actor PhotoDescriptionWriter: QuiescentOwner {
     /// `Describing photos` (ADR 0058).
     func progress() async -> WorkProgress? {
         do {
-            return try await WorkProgress.left(store.backgroundReads.photoDescriptionsLeft())
+            return try await activity.progress(left: store.backgroundReads.photoDescriptionsLeft())
         } catch {
             WorkProgress.logFailure(owner: "descriptions", error)
             return nil
