@@ -207,8 +207,11 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
     private static func row(_ account: ActivityAccount) -> Row? {
         let status: Status
         let details: [String]
+        var bar: Bar?
         if account.status.isSyncing {
-            (status, details) = (.working, [])
+            let progress = account.status.progress.flatMap(syncProgressLine)
+            (status, details) = (.working, progress.map { [$0.text] } ?? [])
+            bar = progress?.bar
         } else {
             switch account.status.reach {
             case .connecting: (status, details) = (.working, ["Connecting to the server"])
@@ -219,8 +222,29 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
         }
         return Row(
             id: "immich.\(account.name)", systemImage: "server.rack", title: "Syncing Immich: \(account.name)",
-            details: details, status: status
+            details: details, status: status, bar: bar
         )
+    }
+
+    /// How far an account's pass is: its listing so far, with no bar, since the stream names
+    /// no total ahead of its end; then its images, with a bar when the rows owed them were
+    /// counted. Nil before anything is listed or tried, which says nothing worth a line.
+    static func syncProgressLine(_ progress: ImmichAccountStatus.SyncProgress) -> (text: String, bar: Bar?)? {
+        switch progress {
+        case let .listing(listed):
+            guard listed > 0 else { return nil }
+            return ("\(listed.formatted()) \(listed == 1 ? "photo or video" : "photos and videos") so far", nil)
+        case let .images(done, total):
+            guard let total, total > 0 else {
+                guard done > 0 else { return nil }
+                return ("\(done.formatted()) \(done == 1 ? "thumbnail" : "thumbnails") so far", nil)
+            }
+            let shown = min(done, total)
+            return (
+                "\(shown.formatted()) of \(total.formatted()) \(total == 1 ? "thumbnail" : "thumbnails")",
+                Bar(done: shown, total: total)
+            )
+        }
     }
 
     private static func more(_ count: Int) -> String? {

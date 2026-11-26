@@ -43,9 +43,11 @@ nonisolated struct ImmichSessionSyncSource: ImmichSyncSource {
 /// What a pass reports to its account's owner as it goes, in this order: its server
 /// answered (once, as soon as its first batch is applied and acknowledged), its listing was
 /// applied to the stream's end (before the server's images are fetched, which on a first
-/// sync takes far longer), and its outcome.
+/// sync takes far longer), and its outcome. Between them, how far it is: after each listing
+/// batch it applied, and after each page of images it fetched.
 nonisolated enum ImmichSyncReport: Equatable, Sendable {
     case answered
+    case progress(ImmichAccountStatus.SyncProgress)
     case listed
     case ended(ImmichSyncPassOutcome)
 }
@@ -250,7 +252,7 @@ actor ImmichCatalogSync: QuiescentOwner {
     /// every row still owed them (ADR 0046 §7). The pass's outcome is the stream's; a
     /// product that could not be fetched stays owed and is asked for again next pass, and
     /// one the server says it does not have is not.
-    /// `onReport` hears `answered` and `listed`; the caller reports the outcome.
+    /// `onReport` hears `answered`, `progress` and `listed`; the caller reports the outcome.
     func pass(onReport: @escaping @Sendable (ImmichSyncReport) async -> Void = { _ in }) async -> ImmichSyncPassOutcome {
         await answeringPass(onReport: onReport).outcome
     }
@@ -262,14 +264,14 @@ actor ImmichCatalogSync: QuiescentOwner {
     private func answeringPass(
         onReport: @escaping @Sendable (ImmichSyncReport) async -> Void
     ) async -> (outcome: ImmichSyncPassOutcome, answers: Bool) {
-        var answered = Answered(report: { await onReport(.answered) })
-        let outcome = await syncListing(answered: &answered)
+        var reports = PassReports(report: onReport)
+        let outcome = await syncListing(reports: &reports)
         guard case .synced = outcome else {
             return (outcome, false)
         }
         await onReport(.listed)
         let mirrorsAnswered = await pairMirrors()
-        let products = await fetchProducts()
+        let products = await fetchProducts(onReport: onReport)
         return (outcome, mirrorsAnswered && products.answers)
     }
 
@@ -453,7 +455,7 @@ actor ImmichCatalogSync: QuiescentOwner {
 
     /// The stream applied to its end: from zero while a resync is owed, else from the
     /// cursor, which a reset the server sends turns into one resync from zero.
-    private func syncListing(answered: inout Answered) async -> ImmichSyncPassOutcome {
+    private func syncListing(reports: inout PassReports) async -> ImmichSyncPassOutcome {
         let owed: SourceResyncDebt?
         do {
             owed = try await store.backgroundReads.sourceResyncOwed(rootPath: rootPath)
@@ -463,7 +465,7 @@ actor ImmichCatalogSync: QuiescentOwner {
             ])
             return .catalogFailed
         }
-        switch await stream(resyncing: owed, answered: &answered) {
+        switch await stream(resyncing: owed, reports: &reports) {
         case let .done(outcome):
             return outcome
         case let .resetRequested(debt):
@@ -472,7 +474,7 @@ actor ImmichCatalogSync: QuiescentOwner {
             guard owed == nil else {
                 return resetLoop()
             }
-            switch await stream(resyncing: debt, answered: &answered) {
+            switch await stream(resyncing: debt, reports: &reports) {
             case let .done(outcome):
                 return outcome
             case .resetRequested:
@@ -497,7 +499,7 @@ actor ImmichCatalogSync: QuiescentOwner {
 
     /// One stream under one listing lease. `resyncing` reads it from zero, and its end
     /// purges every row it did not list and settles that debt.
-    private func stream(resyncing debt: SourceResyncDebt?, answered: inout Answered) async -> StreamResult {
+    private func stream(resyncing debt: SourceResyncDebt?, reports: inout PassReports) async -> StreamResult {
         let scan: CatalogStore.ActiveScan
         do {
             scan = try await store.beginSourceListing(rootPath: rootPath)
@@ -510,7 +512,7 @@ actor ImmichCatalogSync: QuiescentOwner {
         }
         var tally = Tally()
         do {
-            if let reset = try await read(fromZero: debt != nil, scan: scan, into: &tally, answered: &answered) {
+            if let reset = try await read(fromZero: debt != nil, scan: scan, into: &tally, reports: &reports) {
                 await store.endSourceListing(scan: scan)
                 OtosLog.catalog.noticeOperation("catalog.immich.sync", phase: "reset", fields: [
                     "rootPath": rootPath.rawValue, "revision": "\(reset.revision)",
@@ -561,12 +563,12 @@ actor ImmichCatalogSync: QuiescentOwner {
         fromZero: Bool,
         scan: CatalogStore.ActiveScan,
         into tally: inout Tally,
-        answered: inout Answered
+        reports: inout PassReports
     ) async throws -> SourceResyncDebt? {
         var batch = Batch()
         var pass = PassMemory()
         for try await event in try await source.events(fromZero: fromZero) {
-            await answered.reportOnce()
+            await reports.answeredOnce()
             switch event {
             case let .reset(ack):
                 guard let debt = try await store.requestSourceResync(rootPath: rootPath) else {
@@ -583,29 +585,32 @@ actor ImmichCatalogSync: QuiescentOwner {
             }
             if batch.lineCount >= Self.batchSize {
                 try await apply(&batch, pass: &pass, scan: scan, into: &tally)
+                await reports.report(.progress(.listing(listed: tally.observed.count)))
             }
         }
         try await apply(&batch, pass: &pass, scan: scan, into: &tally)
+        await reports.report(.progress(.listing(listed: tally.observed.count)))
         return nil
     }
 
-    /// A pass's one report that its server answered: a line of its stream was read. Whether
+    /// What a pass reports while it lists: its one report that its server answered — a line
+    /// of its stream was read — and how far its listing is after each applied batch. Whether
     /// Otos could apply what the server said is the pass's outcome, not the server's reach,
     /// so a batch the Store refuses never shows the server as unreachable.
-    private struct Answered {
-        let report: @Sendable () async -> Void
-        private var reported = false
+    private struct PassReports {
+        let report: @Sendable (ImmichSyncReport) async -> Void
+        private var answered = false
 
-        init(report: @escaping @Sendable () async -> Void) {
+        init(report: @escaping @Sendable (ImmichSyncReport) async -> Void) {
             self.report = report
         }
 
-        mutating func reportOnce() async {
-            guard !reported else {
+        mutating func answeredOnce() async {
+            guard !answered else {
                 return
             }
-            reported = true
-            await report()
+            answered = true
+            await report(.answered)
         }
     }
 
@@ -849,13 +854,29 @@ actor ImmichCatalogSync: QuiescentOwner {
     /// Fetches Immich's preview for every row owed the server's own images and writes
     /// Otos's two products from it, unstamped as a rendering (ADR 0035): the preview at
     /// the server's size, for a still, and the grid thumbnail drawn from it. One request
-    /// per asset; Immich's separate thumbnail is never needed.
-    func fetchProducts() async -> ProductPassOutcome {
+    /// per asset; Immich's separate thumbnail is never needed. `onReport` hears how far it is
+    /// after each page: the rows tried of those owed when it began, an exact count over the
+    /// walk's own index; a count that failed is logged and reported as no total, never 0.
+    func fetchProducts(
+        onReport: @escaping @Sendable (ImmichSyncReport) async -> Void = { _ in }
+    ) async -> ProductPassOutcome {
         guard let directory = store.thumbnailDirectory else {
             return .finished(made: 0, unreadable: 0)
         }
         var tally = ProductTally()
         defer { activity.wrote(tally.made) }
+        let owed: Int?
+        do {
+            owed = try await store.backgroundReads.sourceProductsOwedCount(rootPath: rootPath)
+        } catch {
+            OtosLog.thumbnails.errorOperation("immich.products", phase: "countFailed", fields: [
+                "rootPath": rootPath.rawValue, "error": String(describing: error),
+            ])
+            owed = nil
+        }
+        if owed != 0 {
+            await onReport(.progress(.images(done: 0, total: owed)))
+        }
         var cursor: MediaRelativePath?
         while true {
             let page: [SourceProductCandidate]
@@ -874,7 +895,9 @@ actor ImmichCatalogSync: QuiescentOwner {
                 break
             }
             cursor = last.id.relativePath
-            if let stop = await fetch(page, into: directory, tally: &tally) {
+            let stop = await fetch(page, into: directory, tally: &tally)
+            await onReport(.progress(.images(done: tally.tried, total: owed)))
+            if let stop {
                 return stop
             }
         }
@@ -924,6 +947,11 @@ actor ImmichCatalogSync: QuiescentOwner {
         var unreadable = 0
         /// Assets whose preview the server answered it does not have.
         var refused = 0
+
+        /// Rows this walk is done with: made, unreadable, or answered absent.
+        var tried: Int {
+            made + unreadable + refused
+        }
     }
 
     /// What one page fetched, kept until it is applied.

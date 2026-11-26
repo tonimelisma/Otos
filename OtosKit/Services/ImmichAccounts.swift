@@ -28,6 +28,20 @@ nonisolated struct ImmichAccountStatus: Equatable, Sendable {
     /// has, or when the catalog could not say (logged), which the status shows alike: it
     /// then names no time.
     var lastSynced: Date?
+    /// How far the running pass is, as its sync reports it (`ImmichSyncReport.progress`); nil
+    /// while no pass runs, and before the running one has reported.
+    var progress: SyncProgress?
+
+    /// How far a pass is, in exact counts: what its listing has applied so far — the stream
+    /// names no total ahead of its end — then the server's images it has fetched of the rows
+    /// owed them when the fetch began.
+    enum SyncProgress: Equatable, Sendable {
+        /// The assets the pass's stream has listed so far.
+        case listing(listed: Int)
+        /// Rows tried of those owed images when the fetch began; `total` is nil when the
+        /// Store could not count them (logged): no total is shown, never 0.
+        case images(done: Int, total: Int?)
+    }
 }
 
 /// What adding an account did, in the terms the sheet shows.
@@ -462,6 +476,8 @@ actor ImmichAccounts {
         switch report {
         case .answered:
             serverAnswered(for: path)
+        case let .progress(progress):
+            progressed(progress, for: path)
         case .listed:
             listed(at: Date(), for: path)
         case let .ended(outcome):
@@ -477,6 +493,15 @@ actor ImmichAccounts {
         }
         current.reach = .online
         current.isSyncing = true
+        update(current, for: path)
+    }
+
+    /// How far the running pass is, while it runs.
+    private func progressed(_ progress: ImmichAccountStatus.SyncProgress, for path: LibraryRootPath) {
+        guard accounts[path] != nil, var current = status[path], current.isSyncing else {
+            return
+        }
+        current.progress = progress
         update(current, for: path)
     }
 
@@ -575,6 +600,7 @@ actor ImmichAccounts {
         }
         current.reach = reach
         current.isSyncing = false
+        current.progress = nil
         update(current, for: path)
     }
 
@@ -619,6 +645,7 @@ actor ImmichAccounts {
             "rootPath": path.rawValue,
             "status": String(describing: current.reach),
             "syncing": "\(current.isSyncing)",
+            "progress": current.progress.map { String(describing: $0) } ?? "none",
             "lastSynced": current.lastSynced.map { "\($0.timeIntervalSince1970)" } ?? "none",
         ])
     }

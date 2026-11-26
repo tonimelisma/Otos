@@ -7039,6 +7039,17 @@ extension CatalogStore {
         }
     }
 
+    /// How many rows of `rootPath` `sourceProductCandidates(rootPath:after:limit:lane:)` walks:
+    /// an exact COUNT over the same owed index, 0 for a root the Store does not hold.
+    func sourceProductsOwedCount(rootPath: LibraryRootPath, lane: CatalogReadLane) async throws -> Int {
+        guard let rootID = roots.rowIDSnapshot()[rootPath] else {
+            return 0
+        }
+        return try await reader(for: lane).readFreeingConnection { db in
+            try Int.fetchOne(db, sql: SourceProductsSQL.owedCountSQL, arguments: [rootID]) ?? 0
+        }
+    }
+
     /// Of `ids`, the rows of `rootPath` owed their source's own images, by key: what the rows
     /// on screen ask for ahead of the walk. Empty for a root the Store does not hold.
     func sourceProductCandidates(

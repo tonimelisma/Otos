@@ -404,6 +404,15 @@ nonisolated enum SourceProductsSQL {
     LIMIT ?
     """
 
+    /// How many rows of one root `candidatesSQL` walks, through the same owed index: what a
+    /// pass's image fetch counts its thumbnails against (`ImmichCatalogSync.fetchProducts`).
+    /// Binds the root.
+    static let owedCountSQL = """
+    SELECT COUNT(*) FROM media_asset INDEXED BY \(owedIndexName)
+    WHERE library_root_id = ?
+      AND \(owedPredicate)
+    """
+
     /// The owed rows among `count` paths of one root, by key; binds the root, then the paths.
     /// The rows on screen are asked for ahead of the walk (`ImmichCatalogSync.fetchVisibleProducts`).
     /// Pinned to the key: left to itself SQLite ranged the root's source-item index, every

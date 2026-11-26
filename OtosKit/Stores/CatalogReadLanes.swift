@@ -502,6 +502,10 @@ extension CatalogReads where Lane == BackgroundLane {
         try await store.sourceProductCandidates(rootPath: rootPath, after: cursor, limit: limit, lane: lane)
     }
 
+    func sourceProductsOwedCount(rootPath: LibraryRootPath) async throws -> Int {
+        try await store.sourceProductsOwedCount(rootPath: rootPath, lane: lane)
+    }
+
     func reconcileDerivedFilesIfOwed() async throws -> CatalogStore.DerivedFolderOutcome? {
         try await store.reconcileDerivedFilesIfOwed(lane: lane)
     }

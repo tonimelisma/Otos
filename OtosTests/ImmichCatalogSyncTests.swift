@@ -476,6 +476,71 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    /// A pass says how far its listing is after each batch it applied, then how far its images
+    /// are of the rows owed them when the fetch began: what the Activity row shows
+    /// (`ImmichAccountStatus.SyncProgress`).
+    @Test func aPassReportsHowFarItsListingAndImagesAre() async throws {
+        let fixture = try await FileFixture.make()
+        let preview = try Self.jpeg(width: 300, height: 200)
+        let unsized = (0 ..< ImmichCatalogSync.batchSize * 2 - 3).map { Self.asset("x\($0)") }
+        let sized = [Self.asset("a"), Self.asset("b"), Self.exif("a", size: 1), Self.exif("b", size: 2)]
+        let server = ScriptedServer([unsized + sized + [Self.complete]], previews: { _ in preview })
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        let progress = Mutex<[ImmichAccountStatus.SyncProgress]>([])
+        let record: @Sendable (ImmichSyncReport) async -> Void = { report in
+            if case let .progress(step) = report {
+                progress.withLock { $0.append(step) }
+            }
+        }
+
+        let listed = ImmichCatalogSync.batchSize * 2 - 1
+        #expect(await sync.pass(onReport: record) == .synced(listed: listed, deleted: 0, full: false))
+        let steps = progress.withLock { $0 }
+        let listing = steps.compactMap { step -> Int? in
+            guard case let .listing(count) = step else { return nil }
+            return count
+        }
+        // After each applied batch: the first batch's assets, rising, to all it listed.
+        #expect(listing.first == ImmichCatalogSync.batchSize)
+        #expect(listing == listing.sorted())
+        #expect(listing.last == listed)
+        #expect(Array(steps.drop {
+            if case .listing = $0 {
+                true
+            } else {
+                false
+            }
+        }) == [
+            .images(done: 0, total: 2),
+            .images(done: 2, total: 2),
+        ])
+        await fixture.store.shutdown()
+    }
+
+    /// The count the image fetch reports against is the rows its walk reads: exact, through
+    /// the walk's own index.
+    @Test func theOwedImagesCountIsTheRowsTheWalkReads() async throws {
+        let fixture = try await FileFixture.make()
+        let server = ScriptedServer([[
+            Self.asset("a"), Self.asset("b"), Self.asset("c"),
+            Self.exif("a", size: 1), Self.exif("b", size: 2), Self.complete,
+        ]])
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.rootPath, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+        // The server gives no previews, so the rows stay owed after the pass.
+        _ = await sync.pass()
+        let walked = try await fixture.store.backgroundReads.sourceProductCandidates(
+            rootPath: fixture.rootPath, after: nil, limit: 100
+        )
+        let counted = try await fixture.store.backgroundReads.sourceProductsOwedCount(rootPath: fixture.rootPath)
+        #expect(walked.count == 2)
+        #expect(counted == walked.count)
+        await fixture.store.shutdown()
+    }
+
     /// Every acknowledgement follows the Store's apply of its lines: a batch the
     /// connection dropped inside is never acknowledged, and the next pass replays it.
     @Test func aDroppedConnectionAcknowledgesOnlyAppliedBatches() async throws {

@@ -369,6 +369,34 @@ struct ActivityPresentationTests {
         #expect(presentation.footer == "Everything else is up to date")
     }
 
+    /// An account's pass says how far it is: its listing so far with no bar, since the stream
+    /// names no total ahead; then its images of those owed, with a bar when they were counted;
+    /// and a pass that ended shows only what stops it.
+    @Test func anAccountsPassSaysHowFarItsListingAndImagesAre() {
+        let syncing = { (progress: ImmichAccountStatus.SyncProgress?) in
+            ActivityAccount(name: "Home", status: ImmichAccountStatus(reach: .online, isSyncing: true, progress: progress))
+        }
+        let rows = { (account: ActivityAccount) in
+            ActivityPresentation.map(ActivitySnapshot(watching: true), accounts: [account]).rows
+        }
+        #expect(rows(syncing(.listing(listed: 18400))).map(\.details) == [["18,400 photos and videos so far"]])
+        #expect(rows(syncing(.listing(listed: 1))).map(\.details) == [["1 photo or video so far"]])
+        #expect(rows(syncing(.listing(listed: 18400))).map(\.bar) == [nil])
+        #expect(rows(syncing(.listing(listed: 0))).map(\.details) == [[]])
+
+        let images = rows(syncing(.images(done: 2100, total: 6000)))
+        #expect(images.map(\.details) == [["2,100 of 6,000 thumbnails"]])
+        #expect(images.map(\.bar) == [ActivityPresentation.Bar(done: 2100, total: 6000)])
+        #expect(images.map(\.status) == [.working])
+        // A count that failed: what was tried, with no bar and never "of 0".
+        #expect(rows(syncing(.images(done: 64, total: nil))).map(\.details) == [["64 thumbnails so far"]])
+        #expect(rows(syncing(.images(done: 64, total: nil))).map(\.bar) == [nil])
+
+        let offline = rows(ActivityAccount(name: "Home", status: ImmichAccountStatus(reach: .offline)))
+        #expect(offline.map(\.details) == [["The server isn’t answering. Otos will try again."]])
+        #expect(offline.map(\.bar) == [nil])
+    }
+
     /// Each row says how far its stretch is in its own words, with an exact bar; a waiting row
     /// keeps its count above what stops it; downloads say their bytes and what they are for.
     @Test func eachRowSaysHowFarItIsWithAnExactBar() {

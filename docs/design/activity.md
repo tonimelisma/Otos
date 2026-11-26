@@ -94,6 +94,8 @@ the row answers each, in that order.
 | Preparing search | `30,002 of 52,310 photos and videos` | the items owed a search embedding |
 | Describing photos | `8,900 of 47,000 photos` | the stills owed a description |
 | Looking for duplicates | `21,000 of 52,310 photos compared` | the stills owed a render signature, which the groups are built from |
+| Syncing Immich: Home, listing | `18,400 photos and videos so far`, no bar | the assets the pass's stream has listed: the stream names no total ahead of its end, and the server's own statistics need not count what it lists |
+| Syncing Immich: Home, images | `2,100 of 6,000 thumbnails` | the rows tried of those owed the server's images when the fetch began, counted over the walk's own index; with no count, `2,100 thumbnails so far` and no bar |
 
 HIG review (Progress indicators):
 
@@ -129,7 +131,7 @@ so each pair is one row.
 | What search reads in each photo | `Preparing search` |
 | Descriptions | `Describing photos` |
 | Duplicate groups | `Looking for duplicates` |
-| An Immich account | `Syncing Immich: Home`; L3 `Connecting to the server` while it connects |
+| An Immich account | `Syncing Immich: Home`; L3 `Connecting to the server` while it connects, then how far its pass is (Progress); a pass that ended shows only what stops the account |
 
 Not listed, because each has its own surface (one fact, one owner): an import (the import
 bar), Move to Trash (the trash status bar), export and reorganization (their sheets and

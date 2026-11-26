@@ -287,6 +287,12 @@ sync that did not happen.
   account's status says when it last synced, not whether it is connected: the last pass
   that applied the stream to its end is kept in the catalog (`library_root.last_synced_at`),
   so it is known at a launch whose server does not answer.
+- While a pass runs, its status also says how far it is, in exact counts the pass reports as
+  it goes: the assets its stream has listed, after each applied batch (the stream names no
+  total ahead of its end, and the server's statistics are not asked: they need not count what
+  the stream lists), then the rows it has tried of those owed the server's images when the
+  fetch began, counted over the walk's own index (`ImmichAccountStatus.SyncProgress`). A pass
+  that ends clears it.
 - Stored thumbnails and previews, Immich's or Otos's (§7), serve the grid, loupe,
   compare, curation, and every filter.
 - Work that needs original bytes reports that the server is offline instead of waiting
