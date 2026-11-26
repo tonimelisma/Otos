@@ -30,7 +30,8 @@ work per commit to get there. The measurements and sources are in
 Owns: the build settings of the verification build (`script/build.sh`) and the
 benchmark build (`script/bench.sh`); how tests find the checkout; how fast the static
 gates run; the scoped `check.sh --only` mode and what counts as verification evidence;
-one run at a time per build folder, the tree identity a run reports, and the path tests
+the five-minute budget for a commit's check and CI's caches between runs; where a check's
+log lives; one run at a time per build folder, the tree identity a run reports, and the path tests
 load each model from.
 
 References but does not own: the check's supervision (heartbeat, deadlock detection,
@@ -148,14 +149,53 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     ends `check: INCOMPLETE` with a failing status (`phase=gatesOnly reason=noXcode`), so a
     VM's result never reads as a pass: its build, tests and SourceKit rules are CI's run of
     the same `check.sh` on GitHub's Xcode 27 runner (`Build And Test (Xcode 27)`), which
-    builds from an empty compilation cache, since the cache is per machine.
+    builds from the compilation cache main's newest run saved (item 14).
     - **Rejected: building on the owner's Mac through a remote shell.** It made every cloud
       contribution depend on one machine being awake and reachable, and on a shell that
       fences Xcode's own sandboxes.
     - **Rejected: a second entry point for the VM.** It would hold a second list of
       gates, which drifts from `check.sh`'s.
+13. **A commit is checked within five minutes, here and on CI together.** The owner
+    (2026-11-26): "just try to ensure each commit wraps up in 5 minutes of testing from
+    the moment dev works. local and CI together, everything." Every `check.sh` run prints
+    its stages' durations (`op=check.stage … seconds=`, `op=check.duration`), and the
+    budget counts from the moment a commit is ready to push until CI's `Required CI Gate`
+    reports. Measured on 2026-11-26, before this item: `Build And Test (Xcode 27)` took
+    7 min 45 s, of which SwiftFormat 64 s, the build 3.5 min (SwiftCompile 420 CPU-s on the
+    runner's three cores, every job a miss) and the suite 2 min 20 s; a cloud VM's first
+    `check.sh` took 256 s, 245 of them SwiftFormat with no cache.
+14. **CI keeps its caches between runs, saved only by `main`.** `Build And Test` restores
+    the compilation cache and the lint caches with `actions/cache/restore`, keyed by the
+    Xcode build, and the lint job restores its lint caches the same way. Only a push to
+    `main` that passed saves (`actions/cache/save`), so every pull request reads the store
+    of the newest `main` it can see and no branch's entries reach another. A compile job's
+    key is its inputs with the checkout path mapped away (item 2), so a restored store is
+    exact: a hit replays a job whose inputs are unchanged, never a stale one.
+15. **SwiftFormat lints what changed, once per check.** `check.sh`'s fast gates lint the
+    Swift files the change touched against its merge base with `main`, and the whole tree
+    when `.swiftformat` or the SwiftFormat version pinned in `script/lint-tools.sh`
+    changed. `main`'s CI lints every file on every push (`script/lint.sh`), so an unchanged
+    file is already proven formatted under the same options and version. `verify.sh` runs
+    SwiftLint alone (`script/lint.sh swiftlint`): the fast gates ran SwiftFormat. Both
+    tools keep their per-file caches beside the pinned binaries
+    (`script/lint-tools.sh cache-dir`), which is the folder CI restores.
+16. **A check keeps its own log.** `check.sh` writes everything it prints into
+    `logs/check/<UTC time>-<pid>.log` and names it first (`op=check.log`), so where a caller
+    sends the output never decides what evidence survives. The guard hook therefore asks
+    nothing about a log's path, and lets a run in the foreground on a machine with no
+    Xcode, where `check.sh` builds nothing and ends in seconds.
 
 ## Alternatives Considered
+
+### Skip the fast gates on CI's Mac, since the Ubuntu jobs run them
+
+Rejected: the Mac's check would then differ from every other check, and its gates cost
+seconds once their caches are restored and SwiftFormat lints only what changed.
+
+### Larger runners
+
+`xcode-27-xlarge` has more cores but is never free for a public repository; the cache
+removes the compile work instead of buying faster compile work.
 
 ### Clone a warm DerivedData into each new worktree
 

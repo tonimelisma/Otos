@@ -66,107 +66,29 @@ Each step is one increment with its own PR, in this order.
 
    A cloud session symbolicates it against the release's dSYMs with `llvm-symbolizer`. It
    never goes to CI or anywhere public.
-6. **The instruction files rebuilt** (next section). These can land first, since they change
-   no build.
+6. **The instruction files rebuilt.** Landed first (below).
 
-## Rebuilding AGENTS.md
+## The five-minute budget
 
-`AGENTS.md` is 728 lines and 48,834 characters; the guidance is under 200 lines per file,
-with procedures in skills and path-specific rules in `.claude/rules/` (research note above).
-The rebuild keeps every rule's substance and moves it to where it loads when it applies.
+The owner (2026-11-26): "just try to ensure each commit wraps up in 5 minutes of testing
+from the moment dev works. local and CI together, everything. if not possible, have a good
+reason why not, and report back to me." Every step above fits inside it or says, with
+measurements, why it cannot (ADR 0044, items 13–16). The tour of step 1 and the release's
+launch of step 2 run beside the build and tests, never after them.
 
-### AGENTS.md (about 200 lines, every session, every environment)
+## The instruction files (step 6, landed)
 
-- What Otos is, and where each kind of truth lives (`docs/architecture.md`, requirements,
-  ADRs, design system, research, plans).
-- How a session works:
-  - The cloud session is the default.
-  - `script/check.sh` is the one command.
-  - Verification is CI's `Build And Test` on the final commit, wherever the session runs.
-  - The three REST reads of CI.
-  - Merging.
-  - The Definition Of Done in short.
-- The invariants, one to three lines each with their reason and ADR:
-  - source of truth and no hostage media;
-  - overlay lifecycle;
-  - originals read-only and materialization;
-  - production data is read, never changed;
-  - no fabricated facts;
-  - time is not a stand-in (checked by `script/time-guard.sh`);
-  - one action, one path;
-  - no audio;
-  - unsandboxed;
-  - one window;
-  - a painted thumbnail is never blanked;
-  - MediaMetadata owns byte facts;
-  - dependencies need an ADR.
-- Design principles:
-  - blank slate, no shims;
-  - the simplest correct design;
-  - measure before optimizing;
-  - the machine's resources are for the work.
-- Documentation homes and their boundaries.
-- Working with the owner (below).
+`AGENTS.md` became a core file, `.claude/rules/` (Swift, media bytes and MediaMetadata,
+persistence, UI, scripts) and `.claude/skills/` (`ci`, `long-checks`, `otos-review`, `dod`,
+`mac-session`, `release`), with `script/cloud-setup.sh` printing where a session runs. The
+owner's decisions on 2026-11-26:
 
-### Path-scoped rules (`.claude/rules/`, loaded when a matching file is touched)
-
-- `swift.md` (`OtosKit/**`, `Otos/**`, `OtosTests/**`):
-  - Swift 6 and ADR 0032's six rules;
-  - view passivity;
-  - the architecture standards;
-  - instrumentation;
-  - code smells.
-- `persistence.md` (the catalog store and migration files): ADR 0002's migration cost rules.
-- `ui.md` (`OtosKit/Views/**`, `docs/design/**`): review lens C and the DES workflow.
-- `scripts.md` (`script/**`): the tiers, `time:` tags, and the self-test convention.
-
-### Skills (`.claude/skills/`, loaded when used)
-
-- `ci`: reading, watching and reproducing CI from a cloud session; downloading captures.
-- `long-checks`: supervising `check.sh`, heartbeats, hang diagnosis.
-- `review`: lenses A and B with their questions.
-- `dod`: the report's shape and `script/dod-report.sh`.
-- `mac-session`: what a session on the Mac adds:
-  - worktrees;
-  - the SSH fallback;
-  - `script/logs.sh` and `script/profile.sh`;
-  - the production-data read-only procedures;
-  - the owner-library tour and look;
-  - the owner-data evaluations.
-- `release`: what a merge publishes, how a bad release is undone (a higher version with the
-  revert; never revert a migration), and the yearly certificate renewal.
-
-### The SessionStart hook
-
-`script/cloud-setup.sh` prints a few lines of context about where the session runs. In the
-VM it names the `ci` skill and says that the Mac-only steps don't exist there. On the Mac it
-names `mac-session`. The prose "Cloud Sessions" section goes away.
-
-### Cut
-
-- The "Owner setup" history ("Done on …"). The one pending owner step moves to the README.
-- Dated owner quotes. Each one's reason moves into the ADR its rule names.
-- The catalog ownership split (`docs/architecture.md`, ADR 0004). The weekly verdict table
-  (ADR 0043). Sparkle's mechanics (ADR 0059).
-- "Engineering effort is free. Never take a shortcut" stays as an idea. Its wording becomes
-  plain, with scope and reason, because over-emphatic absolutes cause over-application.
-
-### Open owner decisions
-
-These change the files' wording, and only the owner can make them.
-
-1. **"Taylor's Standing Rules".** Keep them in the public repository, or move them into a
-   personal environment's setup script that writes `~/.claude/CLAUDE.md` (it reaches cloud
-   sessions; a Mac session reads his own file).
-2. **"Live tests may write to Taylor's real apps".** In Otos this contradicts "the owner's
-   production data is read, never changed". Proposed: drop it from Otos.
-3. **"Never ask whether to do it" against "restate non-trivial captured requirements for
-   confirmation before relying on them".** Proposed: ask only for a product choice not yet
-   made, and restate a captured requirement in the final report instead of before acting.
-4. **"A session never builds, installs or develops on the owner's Mac" (2026-11-26).**
-   Proposed: a session started on the Mac develops in a worktree with dev builds, and never
-   installs.
-5. **The DoD report "posted on the PR and sent to the user in full".** Proposed: posted in
-   full on the PR, with a short summary and the link in chat.
-6. **"Engineering effort is free. Never take a shortcut"**, rewritten as above. It is the
-   owner's own rule, so its new wording is his to approve.
+1. His standing rules stay in `AGENTS.md`: a cloud session reads no personal file, and
+   the owner chose not to add an environment setup script to supply one.
+2. "Live tests may write to Taylor's real apps" is not an Otos rule.
+3. Owner guidance is captured in its home and restated in the final report, not asked
+   about first.
+4. A session on the Mac develops in a worktree with dev builds and never installs.
+5. The final report is posted in full on the PR, with a short summary and its link in chat.
+6. "Engineering effort is free. Never take a shortcut" stays as written, with one
+   exception: time is not free, and a commit's check fits five minutes.

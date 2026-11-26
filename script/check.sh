@@ -13,7 +13,7 @@
 #
 # It does not kill anything. A wall-clock limit would destroy a legitimately slow run
 # and hide the defect; a suite that hangs has a defect, and the heartbeat is what
-# surfaces it (AGENTS.md, "Supervising long checks").
+# surfaces it (the long-checks skill, .claude/skills/long-checks/SKILL.md).
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -65,12 +65,33 @@ own_pids_matching() {
 
 cleanup_children() {
   local pids
-  pids="$(descendants $$)"
+  # The log's writer is left to drain: it ends when this script's output closes.
+  pids="$(descendants $$ | grep -vx "${CHECK_LOG_WRITER:-none}")"
   # shellcheck disable=SC2086
   [[ -n "$pids" ]] && kill -TERM $pids 2>/dev/null
   return 0
 }
 trap 'cleanup_children; exit 130' INT TERM
+
+# The run keeps its own whole log, so where its evidence lives never depends on where a
+# caller sent the output. Everything this script prints, both streams, goes through one
+# `tee` into logs/check/<UTC time>-<pid>.log, whose path is the first line printed. The
+# writer is started through a named pipe so its pid is known (macOS bash 3.2 gives no pid
+# for a process substitution). The EXIT trap first ends every other process this run
+# started — the build folder's lock holder (script/lib/build-folder.sh) inherits this output
+# and lives until this script exits, so waiting with it alive would wait forever — then
+# closes this script's output and waits for the writer, so the log and the caller's copy
+# are complete when the script has exited.
+CHECK_LOG="$ROOT_DIR/logs/check/$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+mkdir -p "$(dirname "$CHECK_LOG")"
+check_log_pipe="$(mktemp -u)"
+mkfifo "$check_log_pipe" || { echo "check: FAILED — could not make the log pipe" >&2; exit 1; }
+tee -a "$CHECK_LOG" < "$check_log_pipe" &
+CHECK_LOG_WRITER=$!
+exec > "$check_log_pipe" 2>&1
+rm -f "$check_log_pipe"
+trap 'cleanup_children; exec >&- 2>&-; wait "$CHECK_LOG_WRITER" 2>/dev/null' EXIT
+echo "op=check.log path=$CHECK_LOG"
 
 banner() {
   cat <<'MSG'
@@ -121,6 +142,10 @@ if [[ -n "$OTOS_ONLY_TESTING" ]]; then
 fi
 
 # ── Stage 1: the seconds-long gates, first, so a nit never costs a build ──────
+# Every run says how long each stage took: a commit's whole check, here and on CI, has a
+# five-minute budget (AGENTS.md, ADR 0044), and only a measured stage can be held to it.
+# time: measurement — the durations this run reports
+check_started_at="$(date +%s)"
 echo "op=check.stage phase=start stage=fast-gates"
 fast_failed=0
 # The pinned SwiftFormat by path, never from PATH (script/lint-tools.sh owns the pin).
@@ -128,8 +153,39 @@ if ! SWIFTFORMAT="$("$ROOT_DIR/script/lint-tools.sh" swiftformat)"; then
   echo "check: FAILED at fast-gates — the pinned SwiftFormat could not be fetched" >&2
   exit 1
 fi
-# One pass over the tree: its exit status is the verdict, its tail the evidence.
-if ! "$ROOT_DIR/script/lint-tools.sh" swiftformat-lint "$ROOT_DIR" 2>&1 | tail -3; then
+# The Swift files this change touched, against its merge base with main: main's own CI
+# lints every file on every push, so a file unchanged from the merge base is already
+# proven formatted under the same options and SwiftFormat. A change to either of those
+# (`.swiftformat`, the version pinned in script/lint-tools.sh) lints the whole tree. A cold
+# SwiftFormat lints the whole tree in about four minutes (242 s on a cloud VM, 64 s on CI's
+# Mac), which a check of one file never needs to pay (ADR 0044).
+swiftformat_targets() {
+  local base
+  base="$(git -C "$ROOT_DIR" merge-base origin/main HEAD 2>/dev/null)" || { echo "$ROOT_DIR"; return; }
+  if [[ -n "$( { git -C "$ROOT_DIR" diff --name-only "$base" -- .swiftformat
+    git -C "$ROOT_DIR" diff --name-only -G '^SWIFTFORMAT_VERSION=' "$base" -- script/lint-tools.sh
+    git -C "$ROOT_DIR" ls-files --others --exclude-standard -- .swiftformat; } )" ]]; then
+    echo "$ROOT_DIR"
+    return
+  fi
+  { git -C "$ROOT_DIR" diff --name-only --diff-filter=d "$base" -- '*.swift'
+    git -C "$ROOT_DIR" ls-files --others --exclude-standard -- '*.swift'; } \
+    | grep -vE '^(build|DerivedData|script)/' | sort -u | sed "s|^|$ROOT_DIR/|"
+}
+swiftformat_paths=()
+while IFS= read -r path; do
+  [[ -n "$path" ]] && swiftformat_paths+=("$path")
+done < <(swiftformat_targets)
+if [[ "${#swiftformat_paths[@]}" == 0 ]]; then
+  echo "op=check.swiftformat files=0 reason=noSwiftChanged"
+elif [[ "${swiftformat_paths[0]}" == "$ROOT_DIR" ]]; then
+  echo "op=check.swiftformat files=all"
+else
+  echo "op=check.swiftformat files=${#swiftformat_paths[@]}"
+fi
+# One pass over those files: its exit status is the verdict, its tail the evidence.
+if [[ "${#swiftformat_paths[@]}" != 0 ]] \
+  && ! "$ROOT_DIR/script/lint-tools.sh" swiftformat-lint "${swiftformat_paths[@]}" 2>&1 | tail -3; then
   echo "op=check.stage phase=fail stage=fast-gates reason=formatting" >&2
   echo "Run: \"\$(script/lint-tools.sh swiftformat)\" . — then re-run script/check.sh" >&2
   fast_failed=1
@@ -184,7 +240,7 @@ if [[ "$fast_failed" != "0" ]]; then
   echo "check: FAILED at fast-gates (cost you seconds, not a build)" >&2
   exit 1
 fi
-echo "op=check.stage phase=pass stage=fast-gates"
+echo "op=check.stage phase=pass stage=fast-gates seconds=$(( $(date +%s) - check_started_at ))"
 # What the change can reach decides what proves it (ADR 0044). A tree whose diff from its
 # merge base touches only paths the app build and the test suite never read takes the
 # static tier: every gate, no build, no tests. Any other path, including one this list
@@ -241,6 +297,7 @@ if [[ "$VERIFY_TIER" != "static" ]]; then
   otos_hold_build_folder "$ROOT_DIR/build/DerivedData" check || exit 1
 fi
 echo "op=check.stage phase=start stage=verify"
+verify_started_at="$(date +%s)"
 VERIFY_LOG="$(mktemp)"
 # verify.sh reports its own end: the subshell that runs it writes one line to a pipe this
 # script reads the moment verify exits, and exits with verify's status. The heartbeat loop
@@ -534,6 +591,7 @@ verify_status=$?
 cat "$VERIFY_LOG"
 rm -f "$VERIFY_LOG" "$CPU_LEDGER"
 
+echo "op=check.duration stage=verify seconds=$(( $(date +%s) - verify_started_at )) total=$(( $(date +%s) - check_started_at ))"
 final_tree="$(otos_tree_identity "$ROOT_DIR")" || final_tree="unreadable"
 if [[ "$verify_status" == "0" && "$final_tree" != "$MEASURED_TREE" ]]; then
   echo "op=check.tree phase=changed start=$MEASURED_TREE end=$final_tree" >&2

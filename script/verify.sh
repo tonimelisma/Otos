@@ -70,7 +70,7 @@ run_static_gates() {
     run_guard_self_test "$ROOT_DIR/script/$guard_script" || status=1
   done
   run_guard_self_test "$ROOT_DIR/script/guard-design-system.sh" || status=1
-  "$ROOT_DIR/script/lint.sh" || status=1
+  "$ROOT_DIR/script/lint.sh" swiftlint || status=1
   return "$status"
 }
 

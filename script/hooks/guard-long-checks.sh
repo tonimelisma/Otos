@@ -6,9 +6,8 @@
 # Prose in AGENTS.md did not stop an agent running verify.sh in the foreground and
 # then waiting 9 h 40 m on a completion event a hung process never sends; did not
 # stop it running script/test.sh (which skips the gates, so nothing it produces is
-# verification evidence); and did not stop it redirecting a run into /tmp where
-# script/test.sh's own tee meant the redirect captured a single header line and any
-# pass count read from it was meaningless. A hook runs in the harness, outside the
+# verification evidence). check.sh keeps its own whole log in logs/check/, so where a
+# caller sends its output no longer decides what evidence survives. A hook runs in the harness, outside the
 # agent's judgement, so those stop being available moves.
 #
 # What counts as "running" one is decided by *command position*, not by substring.
@@ -92,10 +91,11 @@ for segment in segments(invocation):
 if invoked & {"verify.sh", "test.sh", "build.sh"}:
     print("wrong-entry-point")
 elif "check.sh" in invoked:
-    if not background:
+    # Where there is no Xcode (the VM of a cloud session) check.sh builds and tests nothing:
+    # it runs the gates for seconds and ends, so a foreground run cannot hang on a build.
+    import shutil
+    if not background and shutil.which("xcodebuild") is not None:
         print("foreground")
-    elif __import__("re").search(r">\s*/tmp/", invocation):
-        print("tmp-log")
     else:
         print("allow")
 else:
@@ -130,15 +130,6 @@ It runs for minutes, longer than a foreground command should wait — and a fore
 run that is auto-backgrounded leaves you waiting on a completion event that a hung
 process never sends. Re-issue with run_in_background: true, then read the tail of
 its log every 60 seconds.
-MSG
-    exit 2
-    ;;
-  tmp-log)
-    cat >&2 <<'MSG'
-Denied: write the log to the session scratchpad, not /tmp.
-
-Your environment names a scratchpad directory; use it so the log is still there
-when you read the result.
 MSG
     exit 2
     ;;

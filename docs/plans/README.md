@@ -229,7 +229,7 @@ ENR-011 (every offered device seed is staged, none discarded), and ENR-012 (a vi
 with no embedded date derives its wall from mtime less duration, which names the
 file but never stamps it).
 
-Its supervision findings live in `AGENTS.md` ("Supervising long checks") and in
+Its supervision findings live in the `long-checks` skill (`.claude/skills/long-checks/`) and in
 `script/check.sh` plus `script/hooks/guard-long-checks.sh`, added after a verify run
 deadlocked and ran 9 h 40 m unnoticed — the cause being long-lived tasks that held
 their owner weakly but never exited when that upgrade failed.

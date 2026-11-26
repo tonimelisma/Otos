@@ -6,6 +6,7 @@ set -euo pipefail
 #
 #   script/lint-tools.sh swiftformat
 #   script/lint-tools.sh swiftlint
+#   script/lint-tools.sh cache-dir     the folder holding the tools and their lint caches
 #
 # This file is the one home for the lint tools' versions. Neither Homebrew nor a
 # runner image can pin them: `brew bundle` accepts whatever version is installed,
@@ -28,8 +29,9 @@ set -euo pipefail
 SWIFTFORMAT_VERSION="0.62.1"
 SWIFTLINT_VERSION="0.65.0"
 platform="$(uname -s)-$(uname -m)"
+CACHE_ROOT="${OTOS_LINT_TOOLS_CACHE:-$HOME/Library/Caches/net.melisma.Otos.lint-tools}"
 
-# `script/lint-tools.sh swiftformat-lint <path>`: the pinned SwiftFormat's lint of <path>,
+# `script/lint-tools.sh swiftformat-lint <path>...`: the pinned SwiftFormat's lint of the paths,
 # one file at a time, the one way `script/lint.sh` and `script/check.sh` run it.
 # SwiftFormat abandons a rule that runs past 1 s + tokens/1000 of wall-clock time, and its
 # CLI formats every file at once: on a 4-core CI runner the files starved each other, and a
@@ -37,9 +39,14 @@ platform="$(uname -s)-$(uname -m)"
 # the CLI's only serial mode; one file at a time, a rule's time is its own. Its per-file
 # lines are dropped; findings and the summary pass through
 # (docs/research/2026-11-25-swiftformat-rule-timeouts.md).
+# Its cache lives beside the tools, so CI keeps it with them: a file whose bytes, the
+# options and SwiftFormat's version are all unchanged is skipped. Without it a runner that
+# starts empty linted every file, 64 s of a CI run (ADR 0044).
 if [[ "${1:-}" == swiftformat-lint ]]; then
   binary="$("$0" swiftformat)"
-  "$binary" --lint --verbose "${2:?swiftformat-lint needs a path}" 2>&1 \
+  shift
+  [[ $# -gt 0 ]] || { echo "usage: script/lint-tools.sh swiftformat-lint <path>..." >&2; exit 2; }
+  "$binary" --lint --verbose --cache "$CACHE_ROOT/swiftformat-lint.cache" "$@" 2>&1 \
     | { grep -vE '^(Linting|Skipping|Reading config file at) |^-- (ignored|no changes( \(cached\))?)$|^Running SwiftFormat\.\.\.$|^\(lint mode' || true; }
   exit "${PIPESTATUS[0]}"
 fi
@@ -71,6 +78,9 @@ case "$tool:$platform" in
     version="$SWIFTLINT_VERSION" member=swiftlint-static
     url="https://github.com/realm/SwiftLint/releases/download/${version}/swiftlint_linux_arm64.zip"
     sha256="12d3b84bc5b69ae13a99a5a5c79904f9ce25867f099f6368d0037854f9ee6c26" ;;
+  cache-dir:*)
+    echo "$CACHE_ROOT"
+    exit 0 ;;
   swiftformat:* | swiftlint:*)
     echo "op=lint.tools phase=unsupportedPlatform tool=$tool platform=$platform" >&2
     exit 1 ;;
@@ -78,8 +88,6 @@ case "$tool:$platform" in
     echo "usage: script/lint-tools.sh swiftformat|swiftlint" >&2
     exit 2 ;;
 esac
-
-CACHE_ROOT="${OTOS_LINT_TOOLS_CACHE:-$HOME/Library/Caches/net.melisma.Otos.lint-tools}"
 
 tool_dir="$CACHE_ROOT/$tool-$version"
 binary="$tool_dir/$tool"

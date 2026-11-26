@@ -72,8 +72,26 @@ jobs:
       # itself (`script/lint-tools.sh`) and never uses whatever the image ships. The Linux
       # SwiftLint cannot load SourceKit, so the rules that need it (`op=lint.partial` names
       # them) are checked by build-and-test, whose check.sh lints again on macOS.
+      # The lint caches (SwiftFormat's and SwiftLint's per-file results) and the pinned tools,
+      # as main's newest run left them. Only a push to main saves, so every run reads one
+      # trusted copy; a cached result is reused only for a file whose bytes, options and tool
+      # version are unchanged (ADR 0044).
+      - name: Restore the lint caches
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/Library/Caches/net.melisma.Otos.lint-tools
+          key: lint-${{ runner.os }}-${{ github.sha }}
+          restore-keys: lint-${{ runner.os }}-
+
       - name: Run lint
         run: script/lint.sh
+
+      - name: Save the lint caches
+        if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ~/Library/Caches/net.melisma.Otos.lint-tools
+          key: lint-${{ runner.os }}-${{ github.sha }}
 
   # The build and the tests: the one run of script/check.sh that verifies a change made
   # where there is no Xcode, such as a Claude Code cloud session (AGENTS.md, "Cloud
@@ -91,17 +109,42 @@ jobs:
           fetch-depth: 0
 
       - name: Select the newest Xcode 27
+        id: xcode
         run: |
           set -euo pipefail
           xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
           sudo xcode-select --switch "$xcode/Contents/Developer"
           xcodebuild -version
+          echo "build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
+
+      # The compilation cache (ADR 0044) and the lint caches, as main's newest run left them.
+      # Every compile job is keyed by its inputs with the checkout path mapped away, so a
+      # restored store replays every job this tree shares with main and compiles only what
+      # changed. Only a push to main saves. The key names the Xcode build: another Xcode's
+      # entries could never be hits.
+      - name: Restore the build caches
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+            ~/Library/Caches/net.melisma.Otos.lint-tools
+          key: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-
 
       - name: Build and test
         # Below the job's limit, so a run that never ends still reaches the upload below;
         # check.sh reports its own hang long before this (op=check.hang).
         timeout-minutes: 100
         run: script/check.sh
+
+      - name: Save the build caches
+        if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+            ~/Library/Caches/net.melisma.Otos.lint-tools
+          key: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ github.sha }}
 
       # A failed run's diagnostics: the test log, and on a hang the `sample` and
       # `swift-inspect dump-concurrency` that check.sh writes (op=check.hang names them).

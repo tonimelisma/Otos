@@ -11,12 +11,24 @@ SWIFTLINT="$("$ROOT_DIR/script/lint-tools.sh" swiftlint)"
 echo "op=lint.toolVersion tool=swiftformat version=$("$SWIFTFORMAT" --version)"
 echo "op=lint.toolVersion tool=swiftlint version=$("$SWIFTLINT" version)"
 
+# `script/lint.sh` lints with both tools (the CI lint job); `script/lint.sh swiftlint` with
+# SwiftLint alone, for script/verify.sh, whose caller script/check.sh has already run
+# SwiftFormat in its fast gates. Each tool lints a tree once per check.
+mode="${1:-all}"
+case "$mode" in
+  all | swiftlint) ;;
+  *) echo "usage: script/lint.sh [swiftlint]" >&2; exit 2 ;;
+esac
 # One file at a time (`otos_swiftformat_lint`, script/lint-tools.sh): a rule's time limit
 # then measures the rule, not the machine (docs/research/2026-11-25-swiftformat-rule-timeouts.md).
-"$ROOT_DIR/script/lint-tools.sh" swiftformat-lint "$ROOT_DIR"
+if [[ "$mode" == all ]]; then
+  "$ROOT_DIR/script/lint-tools.sh" swiftformat-lint "$ROOT_DIR"
+fi
 # No --strict: warnings (e.g. the soft size limits) are informational and must not
-# fail the build; swiftlint still exits non-zero on any error-severity violation.
-"$SWIFTLINT" lint --config "$ROOT_DIR/.swiftlint.yml"
+# fail the build; swiftlint still exits non-zero on any error-severity violation. Its cache
+# lives beside the tools, which CI keeps between runs (ADR 0044).
+"$SWIFTLINT" lint --config "$ROOT_DIR/.swiftlint.yml" \
+  --cache-path "$("$ROOT_DIR/script/lint-tools.sh" cache-dir)/swiftlint-lint.cache"
 
 # The pinned Linux SwiftLint is the static build, which cannot load SourceKit
 # (script/lint-tools.sh), so in a cloud session or the Ubuntu CI job it skips every enabled
