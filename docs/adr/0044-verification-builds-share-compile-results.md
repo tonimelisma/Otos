@@ -242,7 +242,10 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     capture to read is the window as the screen composes it (`screencapture -l`, found by
     the app's pid): the app's own `cacheDisplay` rendering, its readiness signal, drew the
     grid blank and no toolbar on its first run (45857429826). It added 38 s to shard 3. The
-    workflow Capture The App builds and captures any branch on demand.
+    workflow Capture The App builds and captures any branch on demand. A launch that
+    outlives its TERM is killed after 20 s; one that outlives the KILL too is stuck in the
+    kernel (twice on the runner, both the second, dark launch), and is reported with its
+    state and a `sample` rather than waited on, so the captures already written stand.
 
 ## Alternatives Considered
 

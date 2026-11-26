@@ -52,24 +52,44 @@ mkdir -p "$(dirname "$HOME_DIR")"
 APP_PID=""
 
 # Ends a launch's process: a TERM, then a wait for the kernel to report it gone (a zombie
-# child counts as gone; `wait` reaps it). An app that has not exited after twenty seconds is
-# killed and reported: on 2026-11-26 a launch outlived its TERM on CI's runner and held the
-# job for 22 minutes with nothing said.
-end_app() {
-  local pid="$1" waited=0 state
-  kill -TERM "$pid" 2>/dev/null || true
-  while state="$(/bin/ps -o stat= -p "$pid" 2>/dev/null)" && [[ -n "$state" && "$state" != Z* ]]; do
-    if (( waited >= 200 )); then
-      echo "op=appCapture phase=killed pid=$pid reason=outlivedTerm waitedSeconds=20" >&2
-      kill -KILL "$pid" 2>/dev/null || true
-      break
-    fi
-    # time: deadline — the kernel reports the exit by the process being gone; twenty seconds
-    # bounds an app that does not act on its TERM.
+# child counts as gone; `wait` reaps it), then a KILL after twenty seconds. A process that
+# outlives even the KILL is stuck in the kernel; on CI's runner a dark launch did, twice
+# (runs 45859820816 and 45872381898), each time holding the job until its limit. Such a
+# process is never waited on: its state (`ps`, the kernel wait channel) and a short `sample`
+# of its threads are printed, so the next one says where it is stuck, and the capture,
+# already written, stands.
+gone() {
+  local state
+  state="$(/bin/ps -o stat= -p "$1" 2>/dev/null)"
+  [[ -z "$state" || "$state" == Z* ]]
+}
+
+# Waits up to <tenths> tenths of a second for <pid> to be gone; returns 1 if it is not.
+wait_gone() {
+  local pid="$1" tenths="$2" waited=0
+  until gone "$pid"; do
+    (( waited >= tenths )) && return 1
+    # time: deadline — the kernel reports the exit by the process being gone
     sleep 0.1
     waited=$((waited + 1))
   done
   wait "$pid" 2>/dev/null || true
+}
+
+end_app() {
+  local pid="$1"
+  kill -TERM "$pid" 2>/dev/null || true
+  wait_gone "$pid" 200 && return 0
+  echo "op=appCapture phase=killed pid=$pid reason=outlivedTerm waitedSeconds=20" >&2
+  kill -KILL "$pid" 2>/dev/null || true
+  wait_gone "$pid" 100 && return 0
+  echo "op=appCapture phase=unkillable pid=$pid state=\"$(/bin/ps -o stat=,wchan=,etime= -p "$pid" 2>/dev/null | tr -s ' ')\"" >&2
+  local sample_file="$OUT/unkillable-$pid.sample.txt"
+  /usr/bin/sample "$pid" 2 -file "$sample_file" > /dev/null 2>&1 &
+  local sampler="$!"
+  wait_gone "$sampler" 150 || kill -KILL "$sampler" 2>/dev/null || true
+  [[ -s "$sample_file" ]] && echo "op=appCapture phase=sampled pid=$pid file=$sample_file" >&2
+  return 0
 }
 
 cleanup() {

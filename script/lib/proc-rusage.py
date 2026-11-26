@@ -9,7 +9,7 @@ Usage:
 Each object: pid, command, cpu_user_ns, cpu_system_ns, diskio_read_bytes,
 diskio_written_bytes, logical_written_bytes, resident_bytes, phys_footprint_bytes,
 lifetime_max_phys_footprint_bytes, pageins, billed_energy_nj, interrupt_wakeups,
-pkg_idle_wakeups, instructions, cycles. The counters are cumulative since the process started, so a survey
+pkg_idle_wakeups. The counters are cumulative since the process started, so a survey
 takes the difference between two readings. CPU times arrive in Mach absolute time units
 and are converted with mach_timebase_info. The kernel reads another user's process only
 for root, so root daemons (mds, fileproviderd's root half, kernel_task) are unreadable
@@ -104,8 +104,6 @@ def reading(pid):
         "billed_energy_nj": info.ri_billed_energy,
         "interrupt_wakeups": info.ri_interrupt_wkups,
         "pkg_idle_wakeups": info.ri_pkg_idle_wkups,
-        "instructions": info.ri_instructions,
-        "cycles": info.ri_cycles,
     }
 
 

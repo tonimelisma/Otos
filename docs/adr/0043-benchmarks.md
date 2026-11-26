@@ -50,7 +50,9 @@ owner's catalog):
   (`otos_hold_lock`) on a file in the clone's git directory, so a second start reports
   `phase=skipped` and `status` reads `verdict=running`. The lock dies with the run.
   Rejected: a launchd agent, which is persistent configuration on the owner's Mac and owns a
-  run nobody watches; GitHub Actions, which has no runner with this repo's Xcode beta.
+  run nobody watches; GitHub Actions, whose `xcode-27` runner is a virtual Mac
+  (`VirtualMac2,1`) that reads zero instructions retired (`proc_pid_rusage`, run
+  45870604355, 2026-11-26), so it has nothing to count.
 - **What it measures, in order.**
   1. **The tour** of the installed app on the owner's library, read-only: a launch tour
      with a 120 s idle (`script/scorecard.sh --tour --idle 120`). The owner set two

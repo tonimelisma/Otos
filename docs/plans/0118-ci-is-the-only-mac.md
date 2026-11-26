@@ -35,14 +35,10 @@ Each step is one increment with its own PR, in this order.
 2. **The release launches what it ships.** Landed (ADR 0059, item 9).
 3. **One suite, many times, on CI.** Landed: the workflow Repeat A Suite (ADR 0044,
    item 19).
-4. **The weekly counts on CI.** The workflow Weekly Counts (Mondays, or by hand) first
-   reads this runner's instruction counter (`proc-rusage.py`); reading zero, it measures
-   nothing and says so. Otherwise it runs `script/bench.sh compare` of `main`'s head against
-   `bench.sh last-measured` and pushes the records as `refs/notes/benchmarks`.
-   - De-risk: its first run by hand. Counters that read zero end this step: the workflow
-     is removed and deterministic twin tests stay the only performance gate.
-   - Counters that read: `script/perf.sh run` keeps only the owner-library tour, for a
-     session on the Mac, and ADR 0043 is rewritten for the split.
+4. **The weekly counts on CI.** Closed: the runner's virtual Mac (`VirtualMac2,1`) reads zero
+   instructions retired (run 45870604355), so there is nothing to count there. The counts
+   stay in the weekly run on the owner's Mac (ADR 0043), and deterministic twin tests stay
+   the only performance gate on CI.
 5. **Diagnostics the owner can hand over.** Landed: Help ▸ Export Diagnostics… (ADR 0060,
    APP-098).
 6. **The instruction files rebuilt.** Landed first (below).

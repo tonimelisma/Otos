@@ -115,9 +115,9 @@ Mac-only steps can move there?
    The app must raise no TCC prompt in that tour.
 3. The release launches the exact archive it is about to publish and publishes nothing that
    does not reach its first window.
-4. The weekly benchmark counts move to a scheduled CI run once one run shows the counters are
-   readable on the runner; until then deterministic twin tests stay the only performance
-   gate.
+4. The weekly benchmark counts cannot move to CI: measured on 2026-11-26 (run 45870604355),
+   the `xcode-27` runner's virtual Mac (`VirtualMac2,1`) reads zero instructions retired
+   through `proc_pid_rusage`. Deterministic twin tests stay the only performance gate there.
 5. What the installed app experiences reaches a session only when the owner hands it over: a
    diagnostics bundle the app writes on request, never uploaded to CI or anywhere public.
 6. CI needs a way to run one suite many times, since a cloud session has no `--only`.
