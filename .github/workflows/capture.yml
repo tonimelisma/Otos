@@ -1,0 +1,64 @@
+# Builds the dev app of any branch and captures its window, light and dark, on a library of
+# generated media (script/app-capture.sh): the look a cloud session takes at a branch whose
+# CI run built no app (the static tier), or before it pushes a fix. Started by hand, outside
+# the five-minute budget of a commit's check. Its captures hold generated media only.
+name: Capture The App
+
+on:
+  workflow_dispatch:
+    inputs:
+      photos:
+        description: "How many generated photos the library holds"
+        required: true
+        default: "60"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    name: Capture The App
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Select the newest Xcode 27
+        id: xcode
+        run: |
+          set -euo pipefail
+          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+          xcodebuild -version
+          echo "build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the build caches
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+            ~/Library/Caches/net.melisma.Otos.lint-tools
+            build/DerivedData/SourcePackages
+          key: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-
+
+      # The input reaches the shell as an environment value, never as text in the script.
+      - name: Build and capture
+        env:
+          PHOTOS: ${{ inputs.photos }}
+        run: |
+          set -euo pipefail
+          [[ "$PHOTOS" =~ ^[1-9][0-9]*$ ]] || { echo "::error::not a count: $PHOTOS"; exit 2; }
+          script/build.sh
+          script/app-capture.sh build/DerivedData/Build/Products/Debug/Otos.app build/captures "$PHOTOS"
+
+      - name: Upload the captures
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-captures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/captures/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -64,7 +64,12 @@ them into the scratchpad and read the PNGs:
     gh api repos/tonimelisma/Otos/actions/runs/<run>/artifacts --jq '.artifacts[] | "\(.id) \(.name)"'
     gh api repos/tonimelisma/Otos/actions/artifacts/<id>/zip > <scratchpad>/captures.zip
 
-Name what each should show before reading it (`dod` skill).
+`window-<appearance>.png` is the window as the screen composes it (`screencapture`);
+`window-<appearance>-rendering.png` is the app's own `cacheDisplay` rendering, which leaves
+out the grid's layer-backed tiles and the toolbar. For a branch whose CI built no app (the
+static tier), start the workflow Capture The App on it (`actions_run_trigger`,
+`workflow_id` `capture.yml`, the branch as `ref`). Name what each should show before
+reading it (`dod` skill).
 
 ## A red `main`
 

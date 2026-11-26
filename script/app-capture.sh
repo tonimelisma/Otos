@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Launches an Otos build on a library of generated media and writes its main window's own
-# rendering, light and dark, as PNGs (plan 0118, ADR 0020's capture seam):
+# Launches an Otos build on a library of generated media and captures its main window, light
+# and dark, as PNGs (plan 0118):
 #
 #   script/app-capture.sh <Otos.app> <output folder> [photos]
 #
@@ -10,10 +10,14 @@
 #
 # For each appearance it launches the app in a sandbox home (script/sandbox-library.sh: a
 # library of generated photos on a disk image of its own), which the app registers through
-# its own Add Library intent (`OTOS_SANDBOX_LIBRARY`), and asks for a capture
-# (`OTOS_SMOKE_CAPTURE_PATH`). It waits on the app's reports: `op=launch.firstGrid`, then
-# `op=smoke.capture phase=finish` (or `failed`), from this launch's process only; then it
-# quits that process and waits for its exit. It writes nothing outside the sandbox home and
+# its own Add Library intent (`OTOS_SANDBOX_LIBRARY`), and asks for the app's own rendering
+# (`OTOS_SMOKE_CAPTURE_PATH`, ADR 0020). It waits on the app's reports: `op=launch.firstGrid`,
+# then `op=smoke.capture phase=finish` (or `failed`), from this launch's process only. That
+# rendering is drawn with `cacheDisplay`, which leaves out layer-backed content (the grid's
+# tiles) and everything outside the content view (the toolbar), so it is the readiness
+# signal and a fallback; the capture to read is the window as the screen composes it
+# (`screencapture -l`, the window found by the app's pid). Then it quits that process and
+# waits for its exit. It writes nothing outside the sandbox home and
 # the output folder, launches nothing beside the app, and removes the sandbox however it
 # ends. Lines: `op=appCapture phase=…`, one `op=appCapture phase=written` per PNG.
 set -euo pipefail
@@ -63,15 +67,35 @@ trap cleanup EXIT
 LIBRARY="$(/usr/bin/sed -n 's/^library=//p' "$HOME_DIR/.otos-sandbox-library")"
 [[ -n "$LIBRARY" ]] || { echo "op=appCapture phase=failed reason=noSandboxLibrary home=$HOME_DIR" >&2; exit 1; }
 
-# One launch: waits for the first grid and the capture, quits the app, waits for its exit.
+# The number of the largest on-screen, normal-level window the process owns, through
+# CoreGraphics from JavaScript for Automation: numbers, owners and bounds need no Screen
+# Recording grant, and nothing here scripts another app.
+window_number() {
+  /usr/bin/osascript -l JavaScript - "$1" <<'JXA'
+ObjC.import('CoreGraphics');
+function run(argv) {
+  const pid = parseInt(argv[0], 10);
+  const windows = ObjC.deepUnwrap(ObjC.castRefToObject(
+    $.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, $.kCGNullWindowID)));
+  const own = (windows || []).filter(w => w.kCGWindowOwnerPID === pid && w.kCGWindowLayer === 0);
+  own.sort((a, b) => b.kCGWindowBounds.Width * b.kCGWindowBounds.Height
+    - a.kCGWindowBounds.Width * a.kCGWindowBounds.Height);
+  return own.length ? String(own[0].kCGWindowNumber) : '';
+}
+JXA
+}
+
+# One launch: waits for the first grid and the app's own rendering, captures the window as
+# the screen shows it, quits the app, waits for its exit.
 capture_one() {
-  local appearance="$1" png="$OUT/all-media-$1.png" line="" status=0
-  rm -f "$png"
+  local appearance="$1" line="" status=0 scope="unknown" number=""
+  local png="$OUT/window-$appearance.png" rendering="$OUT/window-$appearance-rendering.png"
+  rm -f "$png" "$rendering"
   otos_log_stream_open "subsystem == \"$SUBSYSTEM\" AND processImagePath == \"$EXECUTABLE\" AND (eventMessage BEGINSWITH \"op=launch.firstGrid\" OR eventMessage BEGINSWITH \"op=smoke.capture\")"
   # -ApplePersistenceIgnoreState: AppKit keeps window state per bundle id in the account,
   # not the sandbox home; a session that last quit with no window would restore none.
   env HOME="$HOME_DIR" CFFIXED_USER_HOME="$HOME_DIR" OTOS_SANDBOX_LIBRARY="$LIBRARY" \
-    OTOS_SMOKE_CAPTURE_PATH="$png" OTOS_SMOKE_APPEARANCE="$appearance" \
+    OTOS_SMOKE_CAPTURE_PATH="$rendering" OTOS_SMOKE_APPEARANCE="$appearance" \
     "$EXECUTABLE" -ApplePersistenceIgnoreState YES > /dev/null 2>&1 3<&- &
   APP_PID="$!"
   echo "op=appCapture phase=launched appearance=$appearance pid=$APP_PID"
@@ -80,6 +104,7 @@ capture_one() {
   # with no line from it; the launch's measured time is the line's own ms= field.
   if line="$(otos_log_stream_await "$own.*op=launch.firstGrid" 120)"; then
     echo "op=appCapture phase=firstGrid appearance=$appearance ${line#*op=launch.firstGrid }"
+    scope="$(printf '%s' "$line" | /usr/bin/sed -n 's/.*scope=\([^ ]*\).*/\1/p')"
   else
     echo "op=appCapture phase=failed reason=noFirstGrid appearance=$appearance" >&2
     status=1
@@ -89,7 +114,15 @@ capture_one() {
     # never comes means the window never showed a photo.
     if line="$(otos_log_stream_await "$own.*op=smoke.capture phase=(finish|failed)" 120)"; then
       case "$line" in
-        *"phase=finish"*) ;;
+        *"phase=finish"*)
+          number="$(window_number "$APP_PID" || true)"
+          if [[ -n "$number" ]] && /usr/sbin/screencapture -x -o -l "$number" "$png"; then
+            :
+          else
+            echo "op=appCapture phase=failed reason=screenCapture appearance=$appearance window=${number:-none}" >&2
+            status=1
+          fi
+          ;;
         *) echo "op=appCapture phase=failed reason=captureFailed appearance=$appearance ${line#*op=smoke.capture }" >&2; status=1 ;;
       esac
     else
@@ -111,7 +144,7 @@ capture_one() {
       echo "op=appCapture phase=failed reason=noPNG path=$png" >&2
       return 1
     fi
-    echo "op=appCapture phase=written appearance=$appearance path=$png bytes=$(/usr/bin/stat -f %z "$png") $(/usr/bin/sips -g pixelWidth -g pixelHeight "$png" | /usr/bin/awk '/pixel/ { printf "%s=%s ", $1, $2 }')"
+    echo "op=appCapture phase=written appearance=$appearance firstGridScope=$scope path=$png bytes=$(/usr/bin/stat -f %z "$png") $(/usr/bin/sips -g pixelWidth -g pixelHeight "$png" | /usr/bin/awk '/pixel/ { sub(":", "", $1); printf "%s=%s ", $1, $2 }')"
   fi
   return "$status"
 }
