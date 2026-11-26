@@ -8,10 +8,13 @@ description: Read, watch and reproduce Otos's GitHub Actions CI from a cloud ses
 Every push runs `CI`:
 - the Ubuntu jobs: Checkout Sanity, Workflow YAML And Script Shape, Text Hygiene, and
   SwiftFormat And SwiftLint;
-- `Build And Test (Xcode 27)` on GitHub's `xcode-27` runner, which runs `script/check.sh`;
+- `Build And Test (Xcode 27) 1/3`, `2/3` and `3/3` on GitHub's `xcode-27` runners, each
+  running `script/check.sh` with its shard of the suite (`OTOS_TEST_SHARD`, ADR 0044
+  item 17);
 - `Required CI Gate`, which `main` requires.
 
-Build And Test's run on a PR's final commit is that PR's verification. A merge to `main`
+The three shards passing on a PR's final commit, read as `Required CI Gate`, is that PR's
+verification. A merge to `main`
 that changes the app is then published by `Release` (`release` skill).
 
 ## Reading it
@@ -29,7 +32,7 @@ Job step timings, for the five-minute budget (ADR 0044, item 13):
 ## Watching it
 
 Arm a `Monitor` that reads the check runs every 60 s. It must exit on every terminal fact:
-- all six runs completed;
+- all eight runs completed (`Required CI Gate` among them);
 - any run failed, was cancelled or timed out;
 - a job GitHub did not start (its annotation says why, for example a billing limit).
 

@@ -145,6 +145,21 @@ run_tests_with_footprint_guard() {
   for identifier in ${OTOS_ONLY_TESTING:-}; do
     args+=("-only-testing:$identifier")
   done
+  # OTOS_TEST_SHARD=<k>/<n> runs shard k of the suite (CI runs the n shards side by side,
+  # ADR 0044 item 17): script/lib/test-shards.py names its filters, and the last shard
+  # runs everything the others do not.
+  if [[ -n "${OTOS_TEST_SHARD:-}" ]]; then
+    local shard_filters filter
+    if ! shard_filters="$(/usr/bin/python3 -I "$ROOT_DIR/script/lib/test-shards.py" \
+      "$ROOT_DIR/OtosTests" "${OTOS_TEST_SHARD%/*}" "${OTOS_TEST_SHARD#*/}")"; then
+      echo "op=test.shard phase=failed shard=$OTOS_TEST_SHARD" >&2
+      return 1
+    fi
+    while IFS= read -r filter; do
+      [[ -n "$filter" ]] && args+=("$filter")
+    done <<< "$shard_filters"
+    echo "op=test.shard shard=$OTOS_TEST_SHARD filters=$(printf '%s\n' "$shard_filters" | grep -c .)"
+  fi
   if [[ -n "${OTOS_SCALE_TEST:-}" ]]; then
     echo "OTOS_SCALE_TEST set: including the on-disk projection scale test."
     args+=("OTOS_SCALE_TEST=$OTOS_SCALE_TEST")

@@ -97,10 +97,18 @@ jobs:
   # where there is no Xcode, such as a Claude Code cloud session (AGENTS.md, "Cloud
   # Sessions"). It runs the same gates first, then the full tier's build and suite, and
   # prints one `op=test.failure` line per failed test.
+  # Three shards side by side: the suite is about 420 CPU-seconds, four minutes on one
+  # 3-core runner, which alone broke the five-minute budget (ADR 0044 items 13 and 17).
+  # Each shard builds from the restored caches and runs a third of the suite; the last one
+  # runs everything the other two do not, so no test can fall between them.
   build-and-test:
-    name: Build And Test (Xcode 27)
+    name: Build And Test (Xcode 27) ${{ matrix.shard }}/3
     runs-on: xcode-27
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -128,6 +136,7 @@ jobs:
           path: |
             ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
             ~/Library/Caches/net.melisma.Otos.lint-tools
+            build/DerivedData/SourcePackages
           key: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ github.sha }}
           restore-keys: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-
 
@@ -135,15 +144,19 @@ jobs:
         # Below the job's limit, so a run that never ends still reaches the upload below;
         # check.sh reports its own hang long before this (op=check.hang).
         timeout-minutes: 100
+        env:
+          OTOS_TEST_SHARD: ${{ matrix.shard }}/3
         run: script/check.sh
 
+      # Every shard builds the same tree, so one shard's store is every shard's.
       - name: Save the build caches
-        if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ success() && matrix.shard == 1 && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v6
         with:
           path: |
             ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
             ~/Library/Caches/net.melisma.Otos.lint-tools
+            build/DerivedData/SourcePackages
           key: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ github.sha }}
 
       # A failed run's diagnostics: the test log, and on a hang the `sample` and
@@ -154,7 +167,7 @@ jobs:
         if: ${{ !success() }}
         uses: actions/upload-artifact@v7
         with:
-          name: check-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: check-logs-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}
           path: logs/
           if-no-files-found: warn
           retention-days: 14

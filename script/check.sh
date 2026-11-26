@@ -140,6 +140,12 @@ echo "op=check.host cpus=$(sysctl -n hw.activecpu 2> /dev/null || nproc 2> /dev/
 if [[ -n "$OTOS_ONLY_TESTING" ]]; then
   echo "op=check.scope tests=\"$OTOS_ONLY_TESTING\" evidence=no — a scoped run; the final tree needs script/check.sh with no arguments"
 fi
+# CI runs the suite as side-by-side shards (OTOS_TEST_SHARD=<k>/<n>, ADR 0044 item 17). One
+# shard is a part of the verification; the whole is every shard passing, which CI's
+# Required CI Gate reads.
+if [[ -n "${OTOS_TEST_SHARD:-}" ]]; then
+  echo "op=check.scope shard=$OTOS_TEST_SHARD evidence=withEveryShard"
+fi
 
 # ── Stage 1: the seconds-long gates, first, so a nit never costs a build ──────
 # Every run says how long each stage took: a commit's whole check, here and on CI, has a
@@ -229,6 +235,11 @@ fi
 # The weekly run's status and verdict rules, against stubbed inputs (ADR 0043).
 if ! "$ROOT_DIR/script/perf.sh" self-test; then
   echo "op=check.stage phase=fail stage=fast-gates reason=perfRules" >&2
+  fast_failed=1
+fi
+# How CI deals the suite into shards (ADR 0044 item 17), against fixed sources.
+if ! /usr/bin/python3 -I "$ROOT_DIR/script/lib/test-shards.py" self-test; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=testShards" >&2
   fast_failed=1
 fi
 # The release's rules that need no Mac: the update feed it writes (ADR 0059).
@@ -604,6 +615,8 @@ elif [[ "$verify_status" == "0" && "$VERIFY_TIER" != "$CHECK_TIER" ]]; then
   verify_status=1
 elif [[ "$verify_status" == "0" && "$CHECK_TIER" == "static" ]]; then
   echo "check: PASSED (tier=static: every gate, no build or tests, because the diff reaches nothing they read) — evidence is valid only for the tree as it stands right now"
+elif [[ "$verify_status" == "0" && -n "${OTOS_TEST_SHARD:-}" ]]; then
+  echo "check: PASSED (shard $OTOS_TEST_SHARD) — the tree is verified when every shard passes (Required CI Gate)"
 elif [[ "$verify_status" == "0" ]]; then
   echo "check: PASSED — evidence is valid only for the tree as it stands right now"
 else

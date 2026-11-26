@@ -163,9 +163,16 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     reports. Measured on 2026-11-26, before this item: `Build And Test (Xcode 27)` took
     7 min 45 s, of which SwiftFormat 64 s, the build 3.5 min (SwiftCompile 420 CPU-s on the
     runner's three cores, every job a miss) and the suite 2 min 20 s; a cloud VM's first
-    `check.sh` took 256 s, 245 of them SwiftFormat with no cache.
+    `check.sh` took 256 s, 245 of them SwiftFormat with no cache. With items 14–16, a run on
+    `main` that restored the cache (run 45785268709) took 7 min 44 s from trigger to gate:
+    no queue that time, setup and checkout 27 s, the cache's 198 MB restored in 5 s, the
+    gates 19 s, the Swift packages fetched afresh about 60 s, a build of cache hits about
+    90 s (SwiftCompile gone from Xcode's timing summary), and the suite about 4 min. The
+    suite is about 420 CPU-seconds on the runner's three cores, and a runner waits 0–3 min
+    for a Mac before it starts: these two are what item 17 and the queue note answer.
 14. **CI keeps its caches between runs, saved only by `main`.** `Build And Test` restores
-    the compilation cache and the lint caches with `actions/cache/restore`, keyed by the
+    the compilation cache, the resolved Swift packages and the lint caches with
+    `actions/cache/restore`, keyed by the
     Xcode build, and the lint job restores its lint caches the same way. Only a push to
     `main` that passed saves (`actions/cache/save`), so every pull request reads the store
     of the newest `main` it can see and no branch's entries reach another. A compile job's
@@ -184,6 +191,23 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     sends the output never decides what evidence survives. The guard hook therefore asks
     nothing about a log's path, and lets a run in the foreground on a machine with no
     Xcode, where `check.sh` builds nothing and ends in seconds.
+17. **CI runs the suite as three shards side by side.** `Build And Test (Xcode 27) <k>/3`
+    each restore the caches, run the gates, build, and run shard k
+    (`OTOS_TEST_SHARD=<k>/3`, `script/lib/test-shards.py`). A suite is a top-level test
+    type, as `--only` names one; suites are dealt into three groups by their number of
+    tests, largest first, each to the lightest group. Shards 1 and 2 run their groups
+    (`-only-testing:`), and shard 3 runs everything else (`-skip-testing:` of those two), so
+    a test the dealing does not see still runs. `Required CI Gate` passes only when every
+    shard did, which is the verification. Only shard 1 saves the caches on `main`.
+    - **The queue is GitHub's.** A hosted Mac took 0, 100 and 180 s to start on
+      2026-11-26, and three shards ask for three. Five macOS jobs run at once on the
+      owner's plan. No setting of a job removes that wait; it is reported beside the job's
+      own time, and a run that misses the budget only because of it says so.
+    - **Rejected: one larger runner** (`xcode-27-xlarge`): billed even for a public
+      repository, and its cores would still run the suite's CPU-seconds in series with the
+      build.
+    - **Rejected: one build shared by artifact.** The products hold about 500 MB of Core
+      ML models; uploading and downloading them costs what a cached build costs.
 
 ## Alternatives Considered
 

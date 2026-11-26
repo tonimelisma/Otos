@@ -179,9 +179,9 @@ Mac is optional, and nothing waits for one.
   - `script/hooks/guard-long-checks.sh` refuses `verify.sh`, `test.sh` and `build.sh`
     directly. Where Xcode is installed it also refuses a foreground `check.sh`; the
     `long-checks` skill says how to watch one.
-- **Verification is CI's `Build And Test (Xcode 27)` run on the PR's final commit,
-  wherever the session runs.** Any edit after a run, even a comment, needs a new one. The
-  `ci` skill reads, watches and reproduces CI.
+- **Verification is CI on the PR's final commit, wherever the session runs:** the three
+  `Build And Test (Xcode 27)` shards, read together as `Required CI Gate`. Any edit after
+  a run, even a comment, needs a new one. The `ci` skill reads, watches and reproduces CI.
 - **Format with** `"$(script/lint-tools.sh swiftformat)" .`. `script/lint-tools.sh` pins
   SwiftFormat and SwiftLint and checks their checksums.
 - **Signing.** The project reads `$(OTOS_DEVELOPMENT_TEAM)` from the environment or the
