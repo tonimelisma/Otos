@@ -927,6 +927,11 @@ actor CatalogStore {
     /// it lives as long as the undo stack that names the batch.
     private var carriedWorkByBatch: [MediaTrashBatchID: [DuplicateCarryRecord]] = [:]
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
+    /// Whether an import or a reorganization is in flight, as the journals say
+    /// (`CatalogStoreOperationalWork.swift`): nil until the open has read it. Set only in the
+    /// steps that commit a journal write, from that write's own transaction.
+    var operationalWork: Bool?
+    var operationalWorkContinuations: [UUID: AsyncStream<Bool>.Continuation] = [:]
     private var planningChangeContinuations: [UUID: AsyncStream<RootPlanningChange>.Continuation] = [:]
     private var changeDeliveries: [UUID: DeliveryCount] = [:]
     private var planningChangeDeliveries: [UUID: DeliveryCount] = [:]
@@ -7607,6 +7612,7 @@ private extension CatalogStore {
         do {
             // The open's own transactions are accounted to it: no caller names them.
             let dbWriter = try connectionActivity.naming("catalogOpen") { try openAndMigrateDatabase() }
+            readOperationalWorkAtOpen(dbWriter)
             // The load's own reads follow; the window says the catalog is opening until
             // its first state arrives.
             reportedOpening.phase = .opening
@@ -9787,7 +9793,7 @@ extension CatalogStore {
 
     func beginSourceEraseOperation(_ operation: ActiveSourceEraseOperation) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.insertActiveSourceErase(operation, db: db)
         }
     }
@@ -9801,7 +9807,7 @@ extension CatalogStore {
         let dbWriter = try database()
         let rootState = roots[operation.sourceRootPath]
         let derivedFolder = derivedFolder
-        let erased = try Self.writeWithJournalDurability(dbWriter) { db -> (paths: [String], removal: DerivedRemoval)? in
+        let erased = try writeJournal(dbWriter) { db -> (paths: [String], removal: DerivedRemoval)? in
             try Self.deleteActiveSourceErase(key: operation.key, db: db)
             guard let rootState else {
                 return nil
@@ -9844,7 +9850,7 @@ extension CatalogStore {
     func beginImportOperation(_ operation: ActiveFileOperation) async throws {
         try importJournalFailure?(.begin)
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.insertActiveFileOperation(operation, db: db)
         }
     }
@@ -9852,7 +9858,7 @@ extension CatalogStore {
     func recordImportOperationProgress(_ operation: ActiveFileOperation) async throws {
         try importJournalFailure?(.progress(operation.phase))
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.updateActiveFileOperation(operation, db: db)
         }
     }
@@ -9863,7 +9869,7 @@ extension CatalogStore {
     func markImportOperationAbandoned(key: ActiveFileOperationKey) async throws {
         try importJournalFailure?(.progress(.abandoned))
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try db.execute(
                 sql: ImportJournalSQL.setPhaseSQL,
                 arguments: [ActiveFileOperationPhase.abandoned.rawValue, Date().timeIntervalSince1970, key.rawValue]
@@ -9877,7 +9883,7 @@ extension CatalogStore {
     func abandonImportOperation(key: ActiveFileOperationKey) async throws {
         try importJournalFailure?(.abandon)
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.deleteActiveFileOperation(key: key, db: db)
         }
     }
@@ -9949,7 +9955,7 @@ extension CatalogStore {
         }
 
         let derivedFolder = derivedFolder
-        let upsert = try Self.writeWithJournalDurability(dbWriter) { db in
+        let upsert = try writeJournal(dbWriter) { db in
             var landedRendering: LandedRendering?
             if let rendering {
                 let staged = [rendering.thumbnail, rendering.preview].compactMap(\.self)
@@ -10287,7 +10293,7 @@ extension CatalogStore {
         _ component: ActiveReorganizationComponent
     ) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.insertActiveReorganizationComponent(component, db: db)
         }
     }
@@ -10297,7 +10303,7 @@ extension CatalogStore {
         stepIndex: Int
     ) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.updateStepPhase(key: key, stepIndex: stepIndex, phase: .willMove, db: db)
             try Self.updateComponentPhase(
                 key: key,
@@ -10315,7 +10321,7 @@ extension CatalogStore {
         nextStepIndex: Int
     ) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.updateStepPhase(key: key, stepIndex: step.stepIndex, phase: .didMove, db: db)
             try Self.updateMemberCurrentPath(
                 key: key,
@@ -10338,7 +10344,7 @@ extension CatalogStore {
         nextStepIndex: Int
     ) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.updateComponentPhase(
                 key: key,
                 phase: .filesystemComplete,
@@ -10356,7 +10362,7 @@ extension CatalogStore {
         relativePath: MediaRelativePath
     ) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.updateDirectoryPhase(key: key, relativePath: relativePath, phase: .created, db: db)
         }
     }
@@ -10364,7 +10370,7 @@ extension CatalogStore {
     /// The component will not finish: from here its completed steps are undone.
     func recordReorganizationRollbackStart(key: ReorganizationComponentKey, nextStepIndex: Int) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.updateComponentPhase(
                 key: key,
                 phase: .rollingBack,
@@ -10381,7 +10387,7 @@ extension CatalogStore {
         step: ActiveReorganizationStep
     ) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.updateStepPhase(key: key, stepIndex: step.stepIndex, phase: .rolledBack, db: db)
             try Self.updateMemberCurrentPath(
                 key: key,
@@ -10396,7 +10402,7 @@ extension CatalogStore {
     /// recovery tries the rollback again, and the root stays under the lease until then.
     func recordReorganizationBlocked(key: ReorganizationComponentKey) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             guard let component = try Self.fetchActiveReorganizationComponent(key: key, db: db) else {
                 throw CatalogStoreError.catalogUnavailable
             }
@@ -10414,7 +10420,7 @@ extension CatalogStore {
     /// component, so its journal goes and no catalog row changes.
     func discardRolledBackReorganizationComponent(key: ReorganizationComponentKey) async throws {
         let dbWriter = try database()
-        try Self.writeWithJournalDurability(dbWriter) { db in
+        try writeJournal(dbWriter) { db in
             try Self.deleteActiveReorganizationComponent(key: key, db: db)
         }
     }
@@ -10430,7 +10436,7 @@ extension CatalogStore {
             throw CatalogStoreError.catalogUnavailable
         }
         recordIndependentNamespaceMutation(root: component.libraryRootPath, scope: .root)
-        let settled: CatalogIdentityRemapBatch = try Self.writeWithJournalDurability(dbWriter) { db in
+        let settled: CatalogIdentityRemapBatch = try writeJournal(dbWriter) { db in
             guard let currentComponent = try Self.fetchActiveReorganizationComponent(key: key, db: db),
                   let rootRowID = try Int64.fetchOne(
                       db,

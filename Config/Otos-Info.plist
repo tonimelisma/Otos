@@ -25,5 +25,21 @@
 			</dict>
 		</dict>
 	</dict>
+	<!--
+	Sparkle (ADR 0059): only the installed identity, carrying the update key, starts it
+	(AppUpdater). The feed is the newest release's appcast on GitHub. Checks run every hour,
+	Sparkle's shortest interval; a newer build downloads in the background without asking and
+	installs once no import or reorganization is in flight (UpdateInstallGate).
+	-->
+	<key>SUFeedURL</key>
+	<string>https://github.com/tonimelisma/Otos/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>$(OTOS_SPARKLE_PUBLIC_ED_KEY)</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
 </dict>
 </plist>

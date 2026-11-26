@@ -19,10 +19,11 @@ schemas refuse to open instead of erasing.
 Otos.xcodeproj
 ├── OtosKit       (framework)          — OtosKit/: everything below (Models/Services/
 │                                         Stores/Support/Views/ViewModels/Resources);
-│                                         links GRDB, MediaMetadata; OtosApp is its
+│                                         links GRDB, MediaMetadata, Sparkle; OtosApp is its
 │                                         one public type
 ├── Otos          (app)                — Otos/: main.swift + Assets.xcassets +
 │                                         Otos.icon only; links and embeds OtosKit
+│                                         and Sparkle
 └── OtosTests     (unhosted bundle)    — OtosTests/: links OtosKit directly, no
                                           TEST_HOST
 ```
@@ -329,6 +330,12 @@ everything expensive happens on an actor off the main thread.
   semantic journal transitions and settles the catalog atomically. Blocked entries
   withhold cleanup and auto-eject. Imports
   sidebar scopes via `import_batch_unix_ms`. The grid is the plan view.
+- **Self-update** (ADR 0059): `AppUpdater` starts Sparkle only in the installed identity with
+  the update key; `UpdateInstallGate` holds a downloaded install while
+  `CatalogStore.operationalWorkChanges` (read inside every journal write, `writeJournal`) says
+  an import or reorganization is in flight. CI's `Release` workflow publishes each green
+  `main` commit (`script/release.sh`, `script/appcast.sh`), built by the recipe
+  `script/install.sh` shares (`script/lib/installed-build.sh`).
 - **Library reorganization**: `ReorganizationPlanner` builds physical-member
   recipes; `ReorganizationExecutor` owns directory/move mechanics;
   `LibraryReorganizationRunner` owns execution and recovery sequencing; the view model

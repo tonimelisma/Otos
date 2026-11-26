@@ -11,6 +11,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/xcode.sh"
 source "$ROOT_DIR/script/lib/installed-app.sh"
 source "$ROOT_DIR/script/lib/build-folder.sh"
+source "$ROOT_DIR/script/lib/installed-build.sh"
 
 BUNDLE_ID="net.melisma.Otos"
 INSTALLED_APP="$OTOS_INSTALLED_APP"
@@ -18,7 +19,7 @@ INSTALLED_APP="$OTOS_INSTALLED_APP"
 # files, so they must survive until the next install replaces both — and dev
 # builds in build/DerivedData use different settings.
 DERIVED_DATA="$ROOT_DIR/build/InstallDerivedData"
-BUILT_APP="$DERIVED_DATA/Build/Products/Debug/Otos.app"
+BUILT_APP="$(otos_installed_build_app "$DERIVED_DATA")"
 
 otos_require_full_xcode
 # One install at a time: a second waits for the first, then builds its own HEAD.
@@ -39,24 +40,7 @@ if [[ -e "$INSTALLED_APP" ]]; then
   fi
 fi
 
-# OTOS_BUNDLE_ID_SUFFIX empty = the product identity (dev builds use .dev).
-# Xcode 27 enables code coverage for Debug by default; an instrumented binary
-# writes default.profraw into its working directory on every quit.
-# Compiled with -O: still the Debug configuration, so get-task-allow and `#if DEBUG`
-# stay, and every phase of All Media's order read ran about ten times faster than
-# unoptimized on a generated owner-shaped catalog (ADR 0030).
-xcodebuild \
-  -project "$ROOT_DIR/Otos.xcodeproj" \
-  -scheme Otos \
-  -configuration Debug \
-  -destination "platform=macOS" \
-  -derivedDataPath "$DERIVED_DATA" \
-  OTOS_BUNDLE_ID_SUFFIX= \
-  ENABLE_CODE_COVERAGE=NO \
-  ENABLE_DEBUG_DYLIB=NO \
-  SWIFT_OPTIMIZATION_LEVEL=-O \
-  CURRENT_PROJECT_VERSION="$(git -C "$ROOT_DIR" rev-list --count HEAD)" \
-  build
+otos_build_installed_app "$ROOT_DIR" "$DERIVED_DATA"
 
 # A pull during the build leaves a binary that is neither commit; never install it.
 if [[ "$(otos_tree_identity "$ROOT_DIR")" != "$TREE" ]]; then
@@ -64,11 +48,7 @@ if [[ "$(otos_tree_identity "$ROOT_DIR")" != "$TREE" ]]; then
   exit 1
 fi
 
-built_id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$BUILT_APP/Contents/Info.plist")"
-[[ "$built_id" == "$BUNDLE_ID" ]] || { echo "Built bundle id is $built_id, expected $BUNDLE_ID" >&2; exit 1; }
-/usr/bin/codesign --verify --deep --strict "$BUILT_APP"
-/usr/bin/codesign -d --entitlements - --xml "$BUILT_APP" 2>/dev/null | grep -q "get-task-allow" \
-  || { echo "Built app lacks get-task-allow; debugger and Instruments could not attach." >&2; exit 1; }
+otos_check_installed_build "$BUILT_APP"
 
 quit_status=0
 otos_quit_installed_app || quit_status=$?

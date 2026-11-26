@@ -1,0 +1,118 @@
+# Publishes every main commit whose CI passed as an update of the installed app (ADR 0059):
+# script/release.sh builds it on GitHub's xcode-27 runner, signs it with the owner's Apple
+# Development certificate and with Otos's EdDSA update key, and publishes it as the release
+# build-<commit count> with Sparkle's feed. Installed copies find it within the hour.
+#
+# It runs after CI, and only for a push to main that CI passed: a pull request, whoever opened
+# it, never reaches this workflow or its secrets. The secrets live in the environment
+# "release" (repository settings, Environments), where the owner can also require an approval:
+#   OTOS_CERTIFICATE_P12        the "Apple Development" certificate and its private key,
+#                               exported from Keychain Access as .p12, base64
+#   OTOS_CERTIFICATE_PASSWORD   that export's password
+#   OTOS_DEVELOPMENT_TEAM       the team ID, kept out of the repository
+#   OTOS_SPARKLE_PRIVATE_KEY    the update key (Sparkle's generate_keys -x); its public half is
+#                               OTOS_SPARKLE_PUBLIC_ED_KEY in Otos.xcodeproj
+# Until they are set, the job says which are missing and publishes nothing.
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish Update
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: xcode-27
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: write # the release and its assets
+    steps:
+      - name: Is the release set up?
+        id: ready
+        env:
+          P12: ${{ secrets.OTOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.OTOS_CERTIFICATE_PASSWORD }}
+          TEAM: ${{ secrets.OTOS_DEVELOPMENT_TEAM }}
+          SPARKLE_KEY: ${{ secrets.OTOS_SPARKLE_PRIVATE_KEY }}
+        run: |
+          missing=""
+          [ -n "$P12" ] || missing="$missing OTOS_CERTIFICATE_P12"
+          [ -n "$P12_PASSWORD" ] || missing="$missing OTOS_CERTIFICATE_PASSWORD"
+          [ -n "$TEAM" ] || missing="$missing OTOS_DEVELOPMENT_TEAM"
+          [ -n "$SPARKLE_KEY" ] || missing="$missing OTOS_SPARKLE_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::warning::Updates aren't set up yet; missing secrets in the environment release:$missing. Nothing was published."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the commit CI passed
+        if: steps.ready.outputs.ready == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          # The build number is the commit count.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select the newest Xcode 27
+        if: steps.ready.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      - name: The signing certificate, in a keychain of this run's own
+        id: keychain
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          P12: ${{ secrets.OTOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.OTOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          kc="$RUNNER_TEMP/release.keychain-db"
+          pw="$(uuidgen)"
+          echo "::add-mask::$pw"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" "$HOME/Library/Keychains/login.keychain-db"
+          identity="$(security find-identity -v -p codesigning "$kc" | awk '/Apple Development/ { print $2; exit }')"
+          [ -n "$identity" ] || { echo "::error::no Apple Development identity in OTOS_CERTIFICATE_P12"; exit 1; }
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          echo "keychain=$kc" >> "$GITHUB_OUTPUT"
+
+      - name: Build, sign and publish (script/release.sh)
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          OTOS_DEVELOPMENT_TEAM: ${{ secrets.OTOS_DEVELOPMENT_TEAM }}
+          OTOS_SIGNING_IDENTITY: ${{ steps.keychain.outputs.identity }}
+          OTOS_SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.OTOS_SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: script/release.sh
+
+      - name: Remove the keychain
+        if: always()
+        env:
+          KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
+        run: |
+          [ -z "$KEYCHAIN" ] || security delete-keychain "$KEYCHAIN" || true
+          rm -f "$RUNNER_TEMP/cert.p12"

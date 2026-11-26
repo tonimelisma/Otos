@@ -41,36 +41,29 @@ catalog would also give one database two `CatalogStore` owners.
   the installed commit; the install refuses a dirty tree, and refuses a build whose
   tree changed during it. One install runs at a time: a second waits for the first to
   exit, then builds its own HEAD (ADR 0044's build-folder hold).
-- **Symbols live with the build.** The installed binary's debug map points at
-  object files in `build/InstallDerivedData`, which only the next install
-  overwrites — the same step that replaces the binary. No separate symbol store.
+- **Symbols live with the build.** A build made on the Mac (`script/install.sh`) keeps its
+  debug map, which points at object files in `build/InstallDerivedData`; only the next
+  install overwrites them. A build Sparkle installed was made on CI (ADR 0059), and its
+  release carries its dSYMs: `script/installed-symbols.sh` fetches the installed build's into
+  `build/InstalledSymbols/`, where lldb and Instruments find them by UUID.
 - **Logs persist.** `Config/Otos-Info.plist` carries an `OSLogPreferences` profile
   (`man 5 os_log`) enabling and persisting `.debug` and above for the subsystem.
-- **Installing never interrupts work.** If the installed app is running and the
-  operational journal shows an import or reorganization in flight (ADR 0020's busy
-  predicate), the install stops and reports `phase=pending`. Otherwise it sends a
-  normal Quit, waits for exit, swaps the bundle by rename, registers it with
-  LaunchServices, and relaunches it in the background. It never kills the app.
+- **Installing never interrupts work.** While an import or a reorganization is in flight
+  (ADR 0020's busy predicate), nothing replaces the running app: `script/install.sh` stops
+  and reports `phase=pending`, and a Sparkle update is held in the app until the catalog's
+  journals say none is (ADR 0059). Otherwise the app is quit normally, never killed, its
+  bundle replaced, and it is opened again.
 - **One bundle carries the product identity.** The install moves the built
   bundle into `/Applications` rather than copying it, and unregisters every other
   LaunchServices registration of `net.melisma.Otos`. Otherwise a launch by bundle
   id can start a stale build against the installed app's catalog: on 2026-10-01 a
   Sep 22 Xcode build did, and its import failed with `database is locked` beside
   the running installed app.
-- **The Mac installs `main` itself, once CI has proven it.** A per-user launchd agent,
-  `net.melisma.Otos.updater` (`script/auto-update.sh`, set up and removed with
-  `script/updater-setup.sh`), starts every 15 minutes, at login, and when a file appears in
-  its requests folder. It fast-forwards the primary checkout's `main` to `origin/main` when
-  that commit's `Required CI Gate` check run (read from GitHub's REST API, unauthenticated:
-  the repository is public) completed green, and runs `script/install.sh` there. It never
-  touches a checkout that is off `main`, dirty, or ahead of `origin/main`: that is a
-  session's work. It waits while a run in the checkout holds a build folder or the weekly
-  performance run holds its lock, since a pull fails a check mid-run and an install quits
-  the app a tour reads. A `phase=pending` install is tried on the next start; a failed one
-  after 6 hours or on a request. It runs as the user in the GUI session, so the install's
-  normal Quit (`osascript`) and the Keychain's signing identity work from it. It logs
-  `op=updater` lines to `~/Library/Logs/Otos Updater.log`. So no session installs by hand
-  after a merge, and a merge made from a cloud session reaches the installed app too.
+- **The installed app updates itself.** Every `main` commit whose CI passed is built by
+  the same recipe on CI, signed with the owner's development certificate, and installed by
+  Sparkle within the hour (ADR 0059). `script/install.sh` (one recipe with CI's,
+  `script/lib/installed-build.sh`) stays for an install made on the Mac: the first one, and a
+  build of a commit CI has not published.
 
 ## Rejected alternatives
 
@@ -82,18 +75,8 @@ catalog would also give one database two `CatalogStore` owners.
 - **One shared identity.** Schema lock-out and two catalog owners, above.
 - **Developer ID signing and notarization.** Needed only for other Macs; a locally
   built app carries no quarantine flag.
-- **A self-hosted Actions runner on the Mac that installs after CI.** The repository is
-  public and takes pull requests from anyone; a self-hosted runner would run their
-  workflows on the owner's Mac.
 - **Installing by hand after each merge.** A cloud session cannot, so every merge from one
-  became an owner step.
-- **An updater with its own clone.** Otos's install already builds from
-  the primary checkout, whose build folders hold the debug map of the installed binary; a
-  second clone would be a second `build/InstallDerivedData` and a second tree to keep
-  current. The checkout's own guards (on `main`, clean, not ahead) keep sessions' work
-  safe instead.
-- **Release tags as the trigger.** The cloud sessions' proxy refuses tag pushes, and every
-  green `main` commit is already the unit the owner wants installed.
+  became an owner step. How the app updates instead is ADR 0059's decision.
 
 ## Consequences
 
@@ -101,10 +84,9 @@ catalog would also give one database two `CatalogStore` owners.
   data with an APFS clone.
 - Dev scripts still refuse to launch while any process named `Otos` runs,
   including the installed app, because their log predicates match by process name.
-- A pending install leaves the previous build installed until the next run.
-- A primary checkout left off `main` or dirty stops installs until it is back on a clean
-  `main`; the updater logs that once, as `reason=notOnMain` or `reason=dirtyTree`.
+- A pending install leaves the previous build installed until it can run.
 
 ## Defers
 
 - Data locations and the smoke seam — ADR 0020. Logging levels and facade — ADR 0015.
+  Self-update, its signing and its release pipeline — ADR 0059.

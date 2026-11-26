@@ -411,9 +411,10 @@ are for diagnosis.
 
 Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
 Application Support data; `/Applications/Otos.app` is the installed
-`net.melisma.Otos`, built by `script/install.sh`, which the Mac's updater runs for each
-green `main` commit (ADR 0030). The installed app is
-a Debug build compiled with `-O`: attach with `lldb -p` or `xcrun xctrace record --attach <pid>`, and
+`net.melisma.Otos`, which updates itself with Sparkle to every `main` commit CI passed
+(ADR 0059); `script/install.sh` builds and installs one on the Mac (ADR 0030). The installed app is
+a Debug build compiled with `-O`: attach with `lldb -p` or `xcrun xctrace record --attach <pid>`
+(for a build Sparkle installed, `script/installed-symbols.sh` first fetches its dSYMs), and
 read its logs with `script/logs.sh` — `.info`/`.debug` persist for it.
 
 ### Supervising long checks
@@ -552,15 +553,23 @@ holds trivially, since nothing in the VM reaches the owner's Mac, library or Imm
   `script/description-eval.sh`, `script/scene-label-hierarchy.sh`). A cloud session's DoD
   report lists the ones its increment needs as owner steps, the non-blocking after-DoD notes
   the Definition Of Done allows, and completes the increment. The install is not among
-  them: the Mac's updater installs every merge once its `Required CI Gate` is green
-  (Definition Of Done).
+  them: the installed app updates itself to every merge CI passed (Definition Of Done).
 
 ### Owner setup
 
 Done on 2026-11-25: Otos and MediaMetadata are public (Otos's history was rewritten to
 drop private media and the team ID before it went public), and `main` requires the
-`Required CI Gate` check. Pending: the Mac's updater (ADR 0030), started once with
-`script/updater-setup.sh` in the primary checkout.
+`Required CI Gate` check. Pending, for the installed app's self-update (ADR 0059):
+1. Sparkle's update key: run Sparkle's `generate_keys` once on the Mac (after a build has
+   resolved the package, `build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/`).
+   It keeps the private key in the login keychain and prints the public key, which goes in
+   `Otos.xcodeproj` as `OTOS_SPARKLE_PUBLIC_ED_KEY` (public; a session commits it).
+2. In the repository's Environments, an environment `release` with the secrets
+   `OTOS_CERTIFICATE_P12` (the Apple Development certificate and key, exported from Keychain
+   Access as .p12, base64), `OTOS_CERTIFICATE_PASSWORD`, `OTOS_DEVELOPMENT_TEAM`, and
+   `OTOS_SPARKLE_PRIVATE_KEY` (`generate_keys -x`).
+3. One install from the Mac of a build that carries the key (`script/install.sh` on `main`);
+   from then on it updates itself.
 
 ## Documentation
 
@@ -672,17 +681,13 @@ work has landed on `main`, the branch/worktree/stashes are cleaned up, and the t
 is clean on the next-start branch.
 
 An increment that changes the app (`Otos/`, `OtosKit/`, `Otos.xcodeproj/`, `Config/`) reaches
-the installed app through the Mac's updater (ADR 0030): a per-user launchd agent
-(`script/auto-update.sh`, set up once with `script/updater-setup.sh`) that every 15 minutes
-fast-forwards the primary checkout's `main` to a new commit whose `Required CI Gate` is
-green and runs `script/install.sh`. The install quits a running installed Otos only when no
-import or reorganization is in flight, and relaunches it; `phase=pending` is tried again
-on the updater's next start, never retried around. Nobody installs by hand after a merge.
-A session on the Mac that needs the install before its look asks the updater for it at
-once (`touch ~/Library/Application\ Support/net.melisma.Otos.updater/requests/now`),
-reads the updater's `op=updater` lines in `~/Library/Logs/Otos Updater.log`
-(`script/auto-update.sh status`), and puts its `op=install` line in the DoD report. A cloud
-session's DoD report says the merge is installed by the updater.
+the installed app by Sparkle (ADR 0059): once its merge's CI passes, the `Release` workflow
+publishes the build `build-<commit count>`, and the installed app downloads it within the hour
+and installs it once no import or reorganization is in flight. Nobody installs by hand after a
+merge. A session on the Mac that needs the build before its look waits for that release (`gh
+release view build-<N>`), chooses App ▸ Check for Updates…, and confirms the installed
+`CFBundleVersion`; the DoD report names the release it looked at. A cloud session's DoD report
+says the merge is installed by Sparkle once its release is published, and links that release.
 The DoD report carries the `op=perf.status` line from the final `script/check.sh` run.
 
 **The agent looks at what it shipped** (owner, 2026-11-19: "do you do visual inspection of

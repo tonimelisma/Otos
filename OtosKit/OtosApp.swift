@@ -61,6 +61,10 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
         )
     }()
 
+    /// The installed app's self-update (ADR 0059): off in every other build. Made with the
+    /// app, so App ▸ Check for Updates… and the hourly check share one updater.
+    private(set) lazy var updater = AppUpdater(store: catalogViewModel.catalogStore)
+
     /// The platform's reports about room for background work (memory pressure, thermal state,
     /// Low Power Mode), delivered to the window's background room and
     /// checkpointed for the session.
@@ -77,6 +81,8 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
             storeUse: catalogViewModel.storeUse
         )
         ResourceCheckpoint.record("sessionStart")
+        // The updater starts with the app: its first check and every hourly one after.
+        _ = updater
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -505,6 +511,15 @@ public struct OtosApp: App {
                     catalogViewModel.playLivePhoto()
                 }
                 .disabled(!catalogViewModel.canPlayLivePhoto)
+            }
+            // App ▸ Check for Updates… (ADR 0059), where macOS apps put it, after About. Only a
+            // build that updates itself offers it.
+            CommandGroup(after: .appInfo) {
+                if lifecycle.updater.canCheckForUpdates {
+                    Button("Check for Updates…") {
+                        lifecycle.updater.checkForUpdates()
+                    }
+                }
             }
             CommandGroup(replacing: .help) {}
         }
