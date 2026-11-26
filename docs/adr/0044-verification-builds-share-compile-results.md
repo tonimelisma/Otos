@@ -222,8 +222,9 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     `OTOS_CHECK_FAST_GATES=ubuntuJobs` and skip that stage
     (`op=check.stage phase=skipped stage=fast-gates`): on the runner's Mac it took 30 s of
     every shard. The SourceKit SwiftLint rules and the guards still run on the Mac, beside
-    the build (`verify.sh`). The shards check out history without file contents
-    (`filter: blob:none`).
+    the build (`verify.sh`). The checkout fetches the full history with its files: one
+    without them (`filter: blob:none`) saved 4 s and failed `main`'s run 45859820816
+    when its on-demand fetch of file contents lost its connection.
 
 19. **A suite can be run many times on CI.** The workflow Repeat A Suite (`workflow_dispatch`
     with a suite name and a count) runs `check.sh --only <Suite>` with

@@ -125,11 +125,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
-          # check.sh picks its tier from the diff against origin/main's merge base, so it
-          # needs the history; without file contents, which git fetches only for the files a
-          # diff reads (26 s of every shard fetched them all).
+          # check.sh picks its tier from the diff against origin/main's merge base.
           fetch-depth: 0
-          filter: blob:none
 
       - name: Select the newest Xcode 27
         id: xcode
@@ -169,6 +166,9 @@ jobs:
       # Shard 3 finishes first, so the captures ride on it; a static-tier tree builds no app.
       - name: Capture the app's window
         if: ${{ success() && matrix.shard == 3 }}
+        # A backstop only: the script bounds each wait on the app itself and says which
+        # step it is in. Two launches took 38 s.
+        timeout-minutes: 6
         run: |
           set -euo pipefail
           app=build/DerivedData/Build/Products/Debug/Otos.app

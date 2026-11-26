@@ -71,15 +71,16 @@ otos_newly_launched_pid() {
   exit 1
 }
 
-# A live `log stream` on file descriptor 3. `otos_log_stream_open` returns once the
-# stream has printed its header, so a line logged after it returns is not missed;
-# `otos_log_stream_await` reads lines until one matches.
+# A live `log stream` on file descriptor 3. `otos_log_stream_open <predicate> [level]`
+# returns once the stream has printed its header, so a line logged after it returns is not
+# missed; `otos_log_stream_await` reads lines until one matches. The level is `info` unless
+# a caller needs a debug line.
 otos_log_stream_open() {
-  local predicate="$1"
+  local predicate="$1" level="${2:-info}"
   local fifo
   fifo="$(mktemp -u)"
   mkfifo "$fifo"
-  /usr/bin/log stream --style compact --level info --predicate "$predicate" > "$fifo" 2>&1 &
+  /usr/bin/log stream --style compact --level "$level" --predicate "$predicate" > "$fifo" 2>&1 &
   OTOS_LOG_STREAM_PID="$!"
   exec 3<"$fifo"
   rm -f "$fifo"

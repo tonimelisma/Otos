@@ -50,11 +50,32 @@ echo "op=appCapture phase=signature outcome=valid app=$APP"
 HOME_DIR="$ROOT_DIR/build/capture-homes/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$(dirname "$HOME_DIR")"
 APP_PID=""
+
+# Ends a launch's process: a TERM, then a wait for the kernel to report it gone (a zombie
+# child counts as gone; `wait` reaps it). An app that has not exited after twenty seconds is
+# killed and reported: on 2026-11-26 a launch outlived its TERM on CI's runner and held the
+# job for 22 minutes with nothing said.
+end_app() {
+  local pid="$1" waited=0 state
+  kill -TERM "$pid" 2>/dev/null || true
+  while state="$(/bin/ps -o stat= -p "$pid" 2>/dev/null)" && [[ -n "$state" && "$state" != Z* ]]; do
+    if (( waited >= 200 )); then
+      echo "op=appCapture phase=killed pid=$pid reason=outlivedTerm waitedSeconds=20" >&2
+      kill -KILL "$pid" 2>/dev/null || true
+      break
+    fi
+    # time: deadline — the kernel reports the exit by the process being gone; twenty seconds
+    # bounds an app that does not act on its TERM.
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  wait "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   otos_log_stream_close
   if [[ -n "$APP_PID" ]] && kill -0 "$APP_PID" 2>/dev/null; then
-    kill -TERM "$APP_PID" 2>/dev/null || true
-    wait "$APP_PID" 2>/dev/null || true
+    end_app "$APP_PID"
   fi
   if [[ -e "$HOME_DIR" ]]; then
     "$ROOT_DIR/script/sandbox-library.sh" check-trash --home "$HOME_DIR" || true
@@ -91,7 +112,7 @@ capture_one() {
   local appearance="$1" line="" status=0 scope="unknown" number=""
   local png="$OUT/window-$appearance.png" rendering="$OUT/window-$appearance-rendering.png"
   rm -f "$png" "$rendering"
-  otos_log_stream_open "subsystem == \"$SUBSYSTEM\" AND processImagePath == \"$EXECUTABLE\" AND (eventMessage BEGINSWITH \"op=launch.firstGrid\" OR eventMessage BEGINSWITH \"op=smoke.capture\")"
+  otos_log_stream_open "subsystem == \"$SUBSYSTEM\" AND processImagePath == \"$EXECUTABLE\" AND (eventMessage BEGINSWITH \"op=launch.firstGrid\" OR eventMessage BEGINSWITH \"op=smoke.capture\" OR eventMessage BEGINSWITH \"op=ui.mediaGrid.visibleThumbnails phase=complete\")" debug
   # -ApplePersistenceIgnoreState: AppKit keeps window state per bundle id in the account,
   # not the sandbox home; a session that last quit with no window would restore none.
   env HOME="$HOME_DIR" CFFIXED_USER_HOME="$HOME_DIR" OTOS_SANDBOX_LIBRARY="$LIBRARY" \
@@ -110,34 +131,40 @@ capture_one() {
     status=1
   fi
   if [[ "$status" == 0 ]]; then
-    # time: deadline — the grid fills as the library's first walk lands; a capture that
-    # never comes means the window never showed a photo.
-    if line="$(otos_log_stream_await "$own.*op=smoke.capture phase=(finish|failed)" 120)"; then
+    # Two reports, in either order: the app's own rendering, written once its state holds a
+    # photo (`op=smoke.capture`), and the grid's tiles drawn (`op=ui.mediaGrid.visibleThumbnails
+    # phase=complete`: every visible tile shows what the catalog holds for it). The state can
+    # hold photos a second before the grid draws them; a screen capture taken then shows an
+    # empty grid (run 45864653887, dark).
+    local rendered=0 tiles=""
+    # time: deadline — the grid fills as the library's first walk lands; reports that never
+    # come mean the window never showed a photo.
+    while [[ "$rendered" == 0 || -z "$tiles" ]]; do
+      if ! line="$(otos_log_stream_await "$own.*(op=smoke.capture phase=(finish|failed)|op=ui.mediaGrid.visibleThumbnails phase=complete)" 120)"; then
+        echo "op=appCapture phase=failed reason=noCapture appearance=$appearance rendered=$rendered tiles=${tiles:-none}" >&2
+        status=1
+        break
+      fi
       case "$line" in
-        *"phase=finish"*)
-          number="$(window_number "$APP_PID" || true)"
-          if [[ -n "$number" ]] && /usr/sbin/screencapture -x -o -l "$number" "$png"; then
-            :
-          else
-            echo "op=appCapture phase=failed reason=screenCapture appearance=$appearance window=${number:-none}" >&2
-            status=1
-          fi
-          ;;
-        *) echo "op=appCapture phase=failed reason=captureFailed appearance=$appearance ${line#*op=smoke.capture }" >&2; status=1 ;;
+        *"op=smoke.capture phase=finish"*) rendered=1; echo "op=appCapture phase=rendered appearance=$appearance" ;;
+        *"op=smoke.capture"*) echo "op=appCapture phase=failed reason=captureFailed appearance=$appearance ${line#*op=smoke.capture }" >&2; status=1; break ;;
+        *) tiles="${line#*phase=complete }"; echo "op=appCapture phase=tiles appearance=$appearance $tiles" ;;
       esac
-    else
-      echo "op=appCapture phase=failed reason=noCapture appearance=$appearance" >&2
+    done
+  fi
+  if [[ "$status" == 0 ]]; then
+    number="$(window_number "$APP_PID" || true)"
+    echo "op=appCapture phase=window appearance=$appearance number=${number:-none}"
+    if [[ -z "$number" ]] || ! /usr/sbin/screencapture -x -o -l "$number" "$png"; then
+      echo "op=appCapture phase=failed reason=screenCapture appearance=$appearance window=${number:-none}" >&2
       status=1
     fi
   fi
   otos_log_stream_close
   # Quit this launch's process only; another Otos on the machine is never touched.
-  kill -TERM "$APP_PID" 2>/dev/null || true
-  wait "$APP_PID" 2>/dev/null || true
-  if kill -0 "$APP_PID" 2>/dev/null; then
-    echo "op=appCapture phase=failed reason=stillRunning pid=$APP_PID" >&2
-    status=1
-  fi
+  echo "op=appCapture phase=quitting appearance=$appearance pid=$APP_PID"
+  end_app "$APP_PID"
+  echo "op=appCapture phase=quit appearance=$appearance pid=$APP_PID"
   APP_PID=""
   if [[ "$status" == 0 ]]; then
     if [[ ! -s "$png" ]]; then
