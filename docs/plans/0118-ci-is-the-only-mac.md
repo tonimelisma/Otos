@@ -27,24 +27,12 @@ Evidence: `docs/research/2026-11-26-ci-only-macos-development.md` and
 
 Each step is one increment with its own PR, in this order.
 
-1. **The tour on CI, with captures.** A CI job builds the dev app and runs the sandbox tour
-   (`script/scorecard.sh --tour --dev --seed <n>`). It captures every surface the tour visits
-   in light and dark (`SmokeWindowCapture`) and uploads the PNGs and the scorecard as
-   artifacts. It fails when the tour does not finish, a step reaches its deadline, or the
-   app logs a fault.
-   - De-risk first: on one `workflow_dispatch` run, the app raises no TCC prompt, the
-     sandbox disk image mounts on the runner, and a seed fits in 14 GB.
-   - Done when the job is required for any diff that takes the full tier.
-   - Also done when the Definition Of Done's look is "download this run's captures of the
-     surfaces the increment changed and read them". Gray-scale (DES-029) is made from the
-     PNG in the session.
-   - Stops if the runner cannot show the window. Then XCUITest `screenshot()` is the
-     fallback, and it is measured the same way.
-2. **The release launches what it ships.** `script/release.sh` verifies the archive's
-   signature (`codesign --verify --deep --strict`). It then launches the app from that
-   archive in a sandbox home, waits for its first grid (`op=launch.firstGrid`, never a
-   timer), quits it and confirms it is gone, all before publishing anything.
-   - Done when a release whose app cannot reach its window publishes nothing.
+1. **Captures on CI.** Landed for All Media: shard 3 of every full-tier run captures the
+   dev build's window, light and dark, on generated media (ADR 0044, item 20), and the DoD's
+   look reads them. Still open: a capture of each other surface (Places, People, On This
+   Day, Duplicates, the edit panel), each needing generated media that fills it (photos with
+   locations, faces, anniversaries, duplicate pairs) and a selection the capture waits on.
+2. **The release launches what it ships.** Landed (ADR 0059, item 9).
 3. **One suite, many times, on CI.** Landed: the workflow Repeat A Suite (ADR 0044,
    item 19).
 4. **The weekly counts on CI.** A scheduled workflow runs `script/bench.sh compare` of

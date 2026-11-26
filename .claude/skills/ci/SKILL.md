@@ -53,6 +53,19 @@ wait for a CI notification: a green run may never send one.
   to that many times and stops at the first failure (ADR 0044, item 19).
 - A job gets at most one re-run. "Flake" is not a root cause.
 
+## The captures
+
+Shard 3 of a full-tier run launches the dev build it tested on a library of generated
+media and writes its window, light and dark (`script/app-capture.sh`), as the artifact
+`app-captures-<run>-<attempt>`. A release does the same with the archive it is about to
+publish (`release-captures-<run>`) and publishes nothing whose window does not draw. Fetch
+them into the scratchpad and read the PNGs:
+
+    gh api repos/tonimelisma/Otos/actions/runs/<run>/artifacts --jq '.artifacts[] | "\(.id) \(.name)"'
+    gh api repos/tonimelisma/Otos/actions/artifacts/<id>/zip > <scratchpad>/captures.zip
+
+Name what each should show before reading it (`dod` skill).
+
 ## A red `main`
 
 A red `main` blocks merging anything that could change build or test results, except the

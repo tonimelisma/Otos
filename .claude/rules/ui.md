@@ -19,7 +19,8 @@ Run these five checks, in order, on any change to a user-facing surface:
 2. Assign every string on it to a level (DES-010–013).
 3. Check the zones and the fixed height across every state (DES-018, DES-053).
 4. Look at it in light and dark (DES-022), then in grayscale (DES-029). From a cloud
-   session that means CI's captures, once plan 0118's step 1 lands.
+   session that means CI's captures (`ci` skill), made gray in the session
+   (`convert <png> -colorspace Gray <gray.png>`).
 5. Tab through it with no mouse, and run it once with Reduce Motion on (DES-080,
    DES-075).
 

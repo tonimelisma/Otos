@@ -80,6 +80,14 @@ prove a commit to `.github/workflows/ci.yml`.
    one. The version is taken from the published releases, not committed to a file, so a release
    never needs a commit of its own.
 
+9. **A release launches what it ships.** Before publishing, `script/release.sh` unpacks the
+   zipped app it is about to publish and runs `script/app-capture.sh` on it: the seal must
+   verify (`codesign --verify --deep --strict`), and the app, in a sandbox home with a
+   library of generated media, must report its first grid (`op=launch.firstGrid`) and draw
+   its window, light and dark. A build that does not publishes nothing (`op=release
+   phase=failed reason=launchCheck`), and the installed app keeps the build it has. The
+   captures are kept as the run's artifact `release-captures-<run>` (plan 0118, step 2).
+
 ## Rejected alternatives
 
 - **The Mac's own updater: a launchd agent that pulls `main` and builds it.** It needed the

@@ -232,6 +232,13 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     pass. It is a cloud session's way to reproduce a failure that shows only sometimes, and
     a diagnosis run outside the five-minute budget.
 
+20. **Shard 3 captures the app it tested.** After its tests, shard 3 of a full-tier run
+    launches the dev build on a library of generated media and writes its window, light and
+    dark (`script/app-capture.sh`, ADR 0020's capture seam), as the artifact
+    `app-captures-<run>-<attempt>`. Shard 3 runs the complement of the dealt groups and
+    finished first in every sharded run measured, so the captures ride on it rather than on a
+    fourth runner, which would queue against the owner's five concurrent macOS jobs.
+
 ## Alternatives Considered
 
 ### Run the fast gates on CI's Mac as well as on Ubuntu

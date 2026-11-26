@@ -46,9 +46,9 @@ was green while half of All Media's tiles were blank.
   - a status that contradicts the logs.
 - **A finding the increment caused** is fixed in this increment. One it did not cause is
   diagnosed from logs and catalog, then fixed.
-- **From a cloud session:** read CI's captures of each changed surface, light and dark,
-  and of All Media's grid, once plan 0118's step 1 lands. Until then the look at the
-  owner's library is a non-blocking owner note.
+- **From a cloud session:** read CI's captures of All Media's grid, light and dark, on
+  generated media, from the PR's final run (`ci` skill). The look at the owner's own
+  library is a non-blocking owner note.
 - **From a session on the Mac:** look at the installed app as the `mac-session` skill
   says, and name the release it shows.
 - **The report says** which surfaces were looked at and what each showed.

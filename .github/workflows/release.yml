@@ -126,6 +126,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: script/release.sh
 
+      # The launch check's captures of the archive as it shipped (script/release.sh), from
+      # generated media only.
+      - name: Upload the launch check's captures
+        if: ${{ always() && steps.ready.outputs.ready == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-captures-${{ github.run_id }}
+          path: build/release-captures/
+          if-no-files-found: ignore
+          retention-days: 30
+
       - name: Remove the keychain
         if: always()
         env:

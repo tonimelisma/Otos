@@ -303,9 +303,10 @@ Each increment has **one** report, the final one, never a partial or pre-merge o
   is published by CI as the next `v<x.y.z>` release once its CI passes. The installed app
   installs it by Sparkle within the hour (`release` skill). The report links that release.
 - **The agent looks at what it shipped.** Tests prove the code; only a look proves what
-  the owner sees. A cloud session reads the captures CI makes of the changed surfaces once
-  plan 0118's step 1 lands. Until then, the look at his library is an owner note. A
-  session on the Mac also looks at the installed app, read-only (`mac-session` skill).
+  the owner sees. A cloud session reads the window captures CI makes of every full-tier
+  change, light and dark, on generated media (`app-captures-<run>`, `ci` skill); the look
+  at the owner's own library is an owner note. A session on the Mac also looks at the
+  installed app, read-only (`mac-session` skill).
 - **Verification is agent-owned.** Never make the owner launch the app, operate the UI or
   inspect visuals a condition of done. When a check cannot run where the agent is, record
   the limitation, the evidence gathered instead and the remaining risk as a non-blocking

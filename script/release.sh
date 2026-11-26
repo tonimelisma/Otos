@@ -136,6 +136,16 @@ length="$(stat -f %z "$archive")"
 url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Otos-$VERSION.zip"
 "$ROOT_DIR/script/appcast.sh" "$BUILD" "$VERSION" "$url" "$length" "$signature" > "$out/appcast.xml"
 
+# The archive as it ships, unpacked and launched on a library of generated media: a build
+# that cannot reach its first grid and draw its window is not published (plan 0118, step 2).
+# The captures stay in build/release-captures, which the Release workflow keeps.
+mkdir "$out/launch"
+ditto -x -k "$archive" "$out/launch"
+if ! "$ROOT_DIR/script/app-capture.sh" "$out/launch/Otos.app" "$ROOT_DIR/build/release-captures" 60; then
+  echo "op=release phase=failed reason=launchCheck detail=\"the archive as it ships did not reach its first grid and draw its window\"" >&2
+  exit 1
+fi
+
 gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" --latest \
   --title "Otos $VERSION" \
   --notes "$(release_notes)" \

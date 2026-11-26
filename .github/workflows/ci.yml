@@ -164,6 +164,29 @@ jobs:
           OTOS_CHECK_FAST_GATES: ubuntuJobs
         run: script/check.sh
 
+      # The look a session with no Mac reads: the dev build this shard tested, launched on a
+      # library of generated media, its window drawn light and dark (script/app-capture.sh).
+      # Shard 3 finishes first, so the captures ride on it; a static-tier tree builds no app.
+      - name: Capture the app's window
+        if: ${{ success() && matrix.shard == 3 }}
+        run: |
+          set -euo pipefail
+          app=build/DerivedData/Build/Products/Debug/Otos.app
+          if [[ -x "$app/Contents/MacOS/Otos" ]]; then
+            script/app-capture.sh "$app" build/captures 60
+          else
+            echo "op=appCapture phase=skipped reason=noBuild"
+          fi
+
+      - name: Upload the captures
+        if: ${{ always() && matrix.shard == 3 }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-captures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/captures/
+          if-no-files-found: ignore
+          retention-days: 14
+
       # Every shard builds the same tree, so one shard's store is every shard's.
       - name: Save the build caches
         if: ${{ success() && matrix.shard == 1 && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
