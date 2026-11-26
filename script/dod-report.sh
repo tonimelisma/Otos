@@ -66,6 +66,35 @@ elif [[ -n "$upstream_ref" ]]; then
   push_text="Branch ${branch:-<unknown branch>} has upstream $upstream_ref, but local HEAD differs from upstream."
 fi
 
+# Branch cleanup is read from GitHub, never described: done means origin holds only the
+# default branch and the head branches of open pull requests (AGENTS.md, "Git, CI, And Pull
+# Requests"). The listing is git's own; open pull requests are read through REST, which a
+# cloud session reaches too.
+default_branch="$(git_value symbolic-ref --short refs/remotes/origin/HEAD)"
+default_branch="${default_branch#origin/}"
+default_branch="${default_branch:-main}"
+remote_url="$(git_value remote get-url origin)"
+repo_slug="$(printf '%s\n' "${remote_url%.git}" | awk -F/ '{ print $(NF-1) "/" $NF }')"
+branches_status="red"
+branches_text="Could not list origin's branches."
+if remote_heads="$(git -C "$ROOT_DIR" ls-remote --heads origin 2>/dev/null)"; then
+  if open_heads="$(gh api --paginate "repos/$repo_slug/pulls?state=open&per_page=100" --jq '.[].head.ref' 2>/dev/null)"; then
+    leftovers="$(
+      comm -23 \
+        <(printf '%s\n' "$remote_heads" | awk '{ sub("refs/heads/", "", $2); print $2 }' | grep -vx "$default_branch" | sort -u) \
+        <(printf '%s\n' "$open_heads" | sort -u)
+    )"
+    if [[ -z "$leftovers" ]]; then
+      branches_status="green"
+      branches_text="origin holds only $default_branch and the branches of open pull requests."
+    else
+      branches_text="origin holds branches with no open pull request: $(printf '%s' "$leftovers" | paste -sd ' ' -). Each holding nothing $default_branch lacks is swept by Branch Sweep; one holding work is this increment's to land or the owner's to decide."
+    fi
+  else
+    branches_text="Could not read $repo_slug's open pull requests."
+  fi
+fi
+
 tree_status="red"
 tree_text="Working tree is dirty."
 if [[ -z "$worktree_status" ]]; then
@@ -101,7 +130,7 @@ row "$push_status" "Branch push" "$push_text"
 row_env DOD_MERGE_STATUS "PR merge" DOD_MERGE
 row_env DOD_LOCAL_MAIN_STATUS "Local main update" DOD_LOCAL_MAIN
 row_env DOD_POST_MERGE_STATUS "Post-merge verification" DOD_POST_MERGE
-row_env DOD_BRANCH_CLEANUP_STATUS "Branch cleanup" DOD_BRANCH_CLEANUP
+row "$branches_status" "Branch cleanup" "$branches_text"
 row_env DOD_WORKTREE_CLEANUP_STATUS "Worktree cleanup" DOD_WORKTREE_CLEANUP
 row_env DOD_STASH_STATUS "Increment stash cleanup" DOD_STASH
 row_env DOD_STALE_STATUS "Stale branch and worktree review" DOD_STALE

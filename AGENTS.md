@@ -209,7 +209,8 @@ by hand in a session with several repositories) installs what the gates call.
 - The VM's proxy refuses GraphQL (every `gh pr …` fails), tag pushes, remote branch
   deletion, and REST ref and release writes: read CI through REST (`ci` skill), open and
   merge PRs with the GitHub MCP tools. A full-tier change merges only on a green
-  `Build And Test` run.
+  `Build And Test` run. No session needs to delete a branch: GitHub and `Branch Sweep` do
+  ("Git, CI, And Pull Requests").
 - Steps that need the owner's Mac (the look at his library, the weekly run, profiling, his
   installed app's logs, the evaluations and Core ML conversions on his private data) never
   block an increment; the final report lists the ones it would benefit from as
@@ -271,6 +272,19 @@ workflow:
 - Use the branch the harness names; otherwise a conventional prefix (`feat/`, `fix/`,
   `refactor/`, `docs/`, `chore/`, `research/`). Never discard user work: remove a
   worktree, branch or stash only when it is proven merged or patch-equivalent to `main`.
+- **No branch outlives its work on GitHub.** A session never deletes a remote branch; it
+  keeps GitHub from holding one that has no open PR:
+  - GitHub deletes a PR's head branch when the PR merges (the repository's "Automatically
+    delete head branches", which stays on).
+  - A branch is pushed only when it holds a commit for a PR. After a branch's PR merges,
+    restart it from `main` locally and push it again only with the next PR's first commit,
+    whatever a harness says about pushing a restarted branch. A push after the merge
+    re-creates the branch GitHub just deleted.
+  - Nothing is pushed to a merged PR's branch except as the start of a new PR, opened in
+    the same turn.
+  - `Branch Sweep` (`.github/workflows/branch-sweep.yml`) deletes any branch holding no
+    commit `main` lacks, on every branch creation and every push to `main`. A branch with
+    work is never swept: it is landed through a PR, or named to the owner.
 - Changes go through PRs, with your own work held to the same review bar. Before opening
   one, scan the last five PRs for unresolved review comments, claim each and answer it
   (doc-only increments skip this).
@@ -298,7 +312,9 @@ suggest the owner run `/code-review ultra`; it is his to trigger.
 
 An increment is done only when:
 - its work has landed on `main`;
-- its branch, worktree and stashes are cleaned up;
+- its branch, worktree and stashes are cleaned up, and GitHub holds only `main` and the
+  branches of open PRs (`script/dod-report.sh` reads it; a cloud session lists it through
+  `git ls-remote`, never from memory);
 - the tree is clean on the next-start branch.
 
 Each increment has **one** report, the final one, never a partial or pre-merge one.

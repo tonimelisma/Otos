@@ -1,0 +1,46 @@
+# Deletes every branch that holds nothing `main` lacks: each of its commits is already in
+# `main` (`compare main...<branch>` is 0 ahead), so deleting it loses nothing. GitHub
+# deletes a pull request's head branch when it merges (the repository's "Automatically
+# delete head branches"); this sweeps what that cannot see — a branch pushed again after its
+# pull request merged, restarted from `main` with no commit of its own — which a cloud
+# session cannot delete itself (AGENTS.md, "Git, CI, And Pull Requests"). A branch with any
+# commit `main` lacks is work, and is never touched. Measured: one Ubuntu job of seconds,
+# outside a commit's check.
+name: Branch Sweep
+
+on:
+  create:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: branch-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Branch Sweep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Delete branches holding nothing main lacks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/branches?per_page=100" --jq '.[].name' | while read -r branch; do
+            [[ "$branch" == "$DEFAULT" ]] && continue
+            ahead="$(gh api "repos/$REPO/compare/$DEFAULT...$branch" --jq '.ahead_by')"
+            if [[ "$ahead" == "0" ]]; then
+              gh api -X DELETE "repos/$REPO/git/refs/heads/$branch" >/dev/null
+              echo "op=branch.sweep phase=deleted branch=$branch ahead=0"
+            else
+              echo "op=branch.sweep phase=kept branch=$branch ahead=$ahead"
+            fi
+          done
