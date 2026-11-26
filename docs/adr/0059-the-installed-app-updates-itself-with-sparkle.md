@@ -59,8 +59,7 @@ prove a commit to `.github/workflows/ci.yml`.
    key (on standard input), and publishes the release `build-<N>`, N the commit count and
    the build's `CFBundleVersion`, with the archive, its dSYMs, the feed
    (`script/appcast.sh`) and a disk image for installing by hand (`Otos.dmg`, signed with the
-   app's certificate: a Finder window laid out with the app beside a link to Applications;
-   the release notes say how to open an app that is not notarized).
+   app's certificate: the app beside a link to Applications, as latchkey's is; the release notes say how to open an app that is not notarized).
    It is marked latest, so `releases/latest/download/appcast.xml` and `…/Otos.dmg` always
    name the newest build. A build no newer than one published is skipped; the newest three
    releases are kept.
