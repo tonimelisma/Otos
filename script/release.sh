@@ -125,8 +125,11 @@ echo "op=release phase=published build=$BUILD tag=$TAG commit=$SHA"
 # Older builds go, their tags with them.
 builds="$(published_builds)"
 count="$(printf '%s\n' "$builds" | grep -c . || true)"
-printf '%s\n' "$builds" | head -n "$(( count > KEEP ? count - KEEP : 0 ))" | while read -r old; do
-  [[ -n "$old" ]] || continue
-  gh release delete "build-$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
-  echo "op=release phase=pruned build=$old"
-done
+# macOS's head refuses a count of 0, so nothing is listed when no build is past the newest three.
+if ((count > KEEP)); then
+  printf '%s\n' "$builds" | head -n "$((count - KEEP))" | while read -r old; do
+    [[ -n "$old" ]] || continue
+    gh release delete "build-$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+    echo "op=release phase=pruned build=$old"
+  done
+fi
