@@ -559,12 +559,13 @@ holds trivially, since nothing in the VM reaches the owner's Mac, library or Imm
 
 Done on 2026-11-25: Otos and MediaMetadata are public (Otos's history was rewritten to
 drop private media and the team ID before it went public), and `main` requires the
-`Required CI Gate` check. Pending, for the installed app's self-update (ADR 0059): one run of
-`script/release-setup.sh` on the Mac, in the primary checkout on a clean `main`, signed in to
-`gh`. It makes the Sparkle update key in the login keychain, creates the environment `release`
-with its four secrets (the key, the team's Apple Development certificate, its password, the
-team ID) without printing any of them, opens the pull request that commits the public key,
-and installs that build. From then on the app updates itself.
+`Required CI Gate` check. Done on 2026-11-26, for the installed app's self-update (ADR 0059):
+the owner's `script/release-setup.sh` made Otos's Sparkle update key (keychain account
+`net.melisma.Otos`) and set the environment `release`'s four secrets. Pending: one install
+by hand of the first release's disk image,
+`https://github.com/tonimelisma/Otos/releases/latest/download/Otos.dmg`; from then on the app
+updates itself. A session never builds, installs or develops on the owner's Mac (owner,
+2026-11-26).
 
 ## Documentation
 

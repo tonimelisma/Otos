@@ -2,15 +2,16 @@
 # The owner's one-time setup of the installed app's self-update (ADR 0059), on the Mac, in
 # the primary checkout on a clean `main`:
 #   script/release-setup.sh
-# 1. Resolves the Sparkle package and makes Otos's EdDSA update key in the login keychain
-#    (Sparkle's generate_keys), or uses the one already there.
+# 1. Makes Otos's EdDSA update key in the login keychain with Sparkle's generate_keys, from
+#    Sparkle's release archive, or uses the one already there.
 # 2. Creates the repository's environment `release` and sets its four secrets with the owner's
 #    own `gh` login: the update key, the Apple Development certificate of the team in
 #    ~/.config/otos/development-team (only that identity, exported from the login keychain;
 #    macOS asks to allow the export), a random password for that export, and the team ID.
 # 3. Commits the public key as OTOS_SPARKLE_PUBLIC_ED_KEY and opens its pull request, which
 #    merges once CI passes.
-# 4. Installs that build (script/install.sh); from then on the app updates itself.
+# It builds and installs nothing: CI builds every release, and the first install is the disk
+# image of the first release, https://github.com/tonimelisma/Otos/releases/latest/download/Otos.dmg.
 # Every secret value goes from a private temporary folder, removed however the script ends,
 # to `gh secret set` on standard input: nothing is printed, logged or committed. Safe to run
 # again: it reuses the key, sets the secrets anew and skips what is done.
@@ -22,8 +23,6 @@ REPO="${OTOS_SETUP_REPO:-tonimelisma/Otos}"
 GH="${OTOS_SETUP_GH:-gh}"
 SECURITY="${OTOS_SETUP_SECURITY:-/usr/bin/security}"
 OPENSSL="${OTOS_SETUP_OPENSSL:-/usr/bin/openssl}"
-XCODEBUILD="${OTOS_SETUP_XCODEBUILD:-xcodebuild}"
-INSTALL="${OTOS_SETUP_INSTALL:-$ROOT_DIR/script/install.sh}"
 TEAM_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/otos/development-team"
 PROJECT="$ROOT_DIR/Otos.xcodeproj/project.pbxproj"
 LOGIN_KEYCHAIN="${OTOS_SETUP_LOGIN_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
@@ -49,11 +48,19 @@ work="$(mktemp -d)"
 chmod 700 "$work"
 trap 'rm -rf "$work"; git -C "$ROOT_DIR" checkout -q main 2> /dev/null || true' EXIT
 
-# 1. The update key.
-"$XCODEBUILD" -resolvePackageDependencies -project "$ROOT_DIR/Otos.xcodeproj" -scheme Otos \
-  -derivedDataPath "$ROOT_DIR/build/DerivedData" > "$work/resolve.log" 2>&1 \
-  || { cat "$work/resolve.log" >&2; refuse "reason=packagesUnresolved"; }
-GENERATE_KEYS="${OTOS_SETUP_GENERATE_KEYS:-$ROOT_DIR/build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys}"
+# 1. The update key, with Sparkle's own generate_keys from its release archive (the version
+# the project pins, checked by its SHA-256): nothing is built here.
+SPARKLE_VERSION="2.10.1"
+SPARKLE_SHA256="1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27"
+if [[ -z "${OTOS_SETUP_GENERATE_KEYS:-}" ]]; then
+  curl -sSfL -o "$work/sparkle.tar.xz" \
+    "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz" \
+    || refuse "reason=sparkleDownloadFailed"
+  echo "$SPARKLE_SHA256  $work/sparkle.tar.xz" | shasum -a 256 -c - > /dev/null || refuse "reason=sparkleChecksumMismatch"
+  mkdir "$work/sparkle"
+  tar -xJf "$work/sparkle.tar.xz" -C "$work/sparkle" ./bin/generate_keys
+fi
+GENERATE_KEYS="${OTOS_SETUP_GENERATE_KEYS:-$work/sparkle/bin/generate_keys}"
 [[ -x "$GENERATE_KEYS" ]] || refuse "reason=noGenerateKeys path=\"$GENERATE_KEYS\""
 # Otos's own keychain account: without one, generate_keys uses a default account every app
 # signed this way shares, and two apps would then sign their updates with one key.
@@ -132,6 +139,6 @@ else
     || say "phase=publicKey state=awaitingMerge pr=$url"
 fi
 
-# 4. The first install, of the build that carries the key; Sparkle updates it from then on.
-"$INSTALL"
-say "phase=done"
+# Nothing is built or installed here: CI builds every release. Once the key's pull request is
+# merged, the first release's disk image is the one install made by hand.
+say "phase=done next=\"once the pull request above is merged, install from https://github.com/$REPO/releases/latest/download/Otos.dmg; it updates itself from then on\""

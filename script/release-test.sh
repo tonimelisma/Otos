@@ -54,9 +54,9 @@ pinned="$(awk '/XCRemoteSwiftPackageReference "Sparkle" \*\/ = \{/ { inside = 1 
 [[ -n "$resolved" && "$resolved" == "$pinned" ]] || fail sparklePinAgrees "Package.resolved=$resolved project=$pinned"
 
 # The owner's one-time setup (script/release-setup.sh), against a generated checkout and
-# fakes for gh, security, openssl, xcodebuild, generate_keys and the install: it sets the
-# four secrets, exports only the team's identity, commits the public key by pull request,
-# installs, and never prints a secret value.
+# fakes for gh, security, openssl and generate_keys: it sets the four secrets,
+# exports only the team's identity, commits the public key by pull request, builds and
+# installs nothing, and never prints a secret value.
 cases=$((cases + 1))
 setup_work="$(mktemp -d)"
 (
@@ -116,13 +116,11 @@ case "$1" in
   rand) [[ "$2" == -base64 ]] && echo "P12PASSWORDSECRETVALUE" || echo "0123abcd" ;;
 esac
 EOF
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$w/bin/xcodebuild"
-  printf '#!/usr/bin/env bash\ngit -C "$FAKE/checkout" rev-parse HEAD > "$FAKE/calls/installed"\n' > "$w/bin/install"
   chmod +x "$w/bin/"*
   FAKE="$w" XDG_CONFIG_HOME="$w/config" OTOS_SETUP_ROOT="$w/checkout" OTOS_SETUP_GH="$w/bin/gh" \
     OTOS_SETUP_SECURITY="$w/bin/security" OTOS_SETUP_OPENSSL="$w/bin/openssl" \
-    OTOS_SETUP_XCODEBUILD="$w/bin/xcodebuild" OTOS_SETUP_GENERATE_KEYS="$w/bin/generate_keys" \
-    OTOS_SETUP_INSTALL="$w/bin/install" OTOS_SETUP_LOGIN_KEYCHAIN="$w/login.keychain-db" \
+    OTOS_SETUP_GENERATE_KEYS="$w/bin/generate_keys" \
+    OTOS_SETUP_LOGIN_KEYCHAIN="$w/login.keychain-db" \
     "$ROOT_DIR/script/release-setup.sh" > "$w/out" 2>&1 || { cat "$w/out" >&2; exit 10; }
   export FAKE="$w"
   for name in OTOS_SPARKLE_PRIVATE_KEY OTOS_DEVELOPMENT_TEAM OTOS_CERTIFICATE_P12 OTOS_CERTIFICATE_PASSWORD; do
@@ -136,7 +134,7 @@ EOF
   grep -q "deleted AAAA1111" "$w/calls/deleted" && ! grep -q "deleted BBBB2222" "$w/calls/deleted" || exit 17
   grep -q 'phase=certificate identity=BBBB2222' "$w/out" || exit 18
   [[ "$(git -C "$w/remote.git" show chore/sparkle-update-key:Otos.xcodeproj/project.pbxproj | grep -c 'OTOS_SPARKLE_PUBLIC_ED_KEY = "PUBLICKEYPUBLICKEYPUBLICKEYPUBLICKEYPUBLICKEY=";')" == 2 ]] || exit 19
-  [[ "$(cat "$w/calls/installed")" == "$(git -C "$w/remote.git" rev-parse chore/sparkle-update-key)" ]] || exit 20
+  grep -q 'phase=done next=.*releases/latest/download/Otos.dmg' "$w/out" || exit 20
   [[ "$(git -C "$w/checkout" symbolic-ref --short HEAD)" == main ]] || exit 21
   grep -q "pr merge https://github.com/tonimelisma/Otos/pull/999 --squash --auto" "$w/calls/gh" || exit 22
 ) || fail setupDoesItAll "exit $?"

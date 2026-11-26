@@ -95,13 +95,43 @@ done
 symbols="$out/Otos-$BUILD.dSYM.zip"
 ditto -c -k --keepParent "$out/symbols" "$symbols"
 
-# The disk image a person downloads by hand: the app and a link to Applications.
-# `releases/latest/download/Otos.dmg` is always the newest build's.
+# The disk image a person installs from: opened, it shows Otos beside a link to Applications
+# in a window laid out for dragging one onto the other, and it is signed with the app's own
+# certificate. `releases/latest/download/Otos.dmg` is always the newest build's. The layout
+# is Finder's own, set on a writable image (the window's size, icon view, icon size and the
+# two positions) and kept in the volume's .DS_Store; the image is then compressed read-only.
+volume="Otos"
 mkdir "$out/image"
 ditto "$APP" "$out/image/Otos.app"
 ln -s /Applications "$out/image/Applications"
+hdiutil create -quiet -volname "$volume" -srcfolder "$out/image" -fs HFS+ -format UDRW -size 1g "$out/layout.dmg"
+mount_point="$out/mount"
+mkdir "$mount_point"
+hdiutil attach -quiet -nobrowse -noautoopen -mountpoint "$mount_point" "$out/layout.dmg"
+/usr/bin/osascript << LAYOUT
+tell application "Finder"
+  set volumeFolder to (POSIX file "$mount_point" as alias)
+  open volumeFolder
+  set theWindow to container window of volumeFolder
+  set current view of theWindow to icon view
+  set toolbar visible of theWindow to false
+  set statusbar visible of theWindow to false
+  set bounds of theWindow to {200, 120, 740, 460}
+  set theOptions to icon view options of theWindow
+  set arrangement of theOptions to not arranged
+  set icon size of theOptions to 128
+  set position of item "Otos.app" of volumeFolder to {140, 160}
+  set position of item "Applications" of volumeFolder to {400, 160}
+  update volumeFolder without registering applications
+  close theWindow
+end tell
+LAYOUT
+[[ -f "$mount_point/.DS_Store" ]] || { echo "op=release phase=failed reason=dmgLayoutNotWritten" >&2; exit 1; }
+hdiutil detach -quiet "$mount_point"
 image="$out/Otos.dmg"
-hdiutil create -quiet -volname "Otos $short ($BUILD)" -srcfolder "$out/image" -fs HFS+ -format UDZO "$image"
+hdiutil convert -quiet "$out/layout.dmg" -format UDZO -imagekey zlib-level=9 -o "$image"
+/usr/bin/codesign --sign "$OTOS_SIGNING_IDENTITY" --keychain "$OTOS_SIGNING_KEYCHAIN" --timestamp=none "$image"
+/usr/bin/codesign --verify "$image"
 hdiutil verify -quiet "$image"
 
 # The update key goes in on standard input, never to a file.

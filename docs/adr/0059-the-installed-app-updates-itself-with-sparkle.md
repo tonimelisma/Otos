@@ -56,8 +56,9 @@ prove a commit to `.github/workflows/ci.yml`.
    certificate imported into a keychain of the run's own, signs the zipped app with the update
    key (on standard input), and publishes the release `build-<N>`, N the commit count and
    the build's `CFBundleVersion`, with the archive, its dSYMs, the feed
-   (`script/appcast.sh`) and a disk image for installing by hand (`Otos.dmg`: the app and a
-   link to Applications; the release notes say how to open an app that is not notarized).
+   (`script/appcast.sh`) and a disk image for installing by hand (`Otos.dmg`, signed with the
+   app's certificate: a Finder window laid out with the app beside a link to Applications;
+   the release notes say how to open an app that is not notarized).
    It is marked latest, so `releases/latest/download/appcast.xml` and `…/Otos.dmg` always
    name the newest build. A build no newer than one published is skipped; the newest three
    releases are kept.
@@ -88,9 +89,10 @@ prove a commit to `.github/workflows/ci.yml`.
 
 - Updates start once the owner has run `script/release-setup.sh` on the Mac, which makes the
   update key, sets the environment's secrets from the login keychain with the owner's `gh`
-  login (no value printed or committed), opens the pull request that commits the public key
-  and installs that build. Until then the release job says what is missing and publishes
-  nothing, and a build without the public key never starts Sparkle.
+  login (no value printed or committed), and opens the pull request that commits the public
+  key; it builds and installs nothing. The first install is the first release's disk image,
+  dragged to Applications once. Until the secrets exist the release job says what is missing
+  and publishes nothing, and a build without the public key never starts Sparkle.
 - A build installed from the Mac (`script/install.sh`) is updated by the next published build
   with a higher commit count.
 - An update quits and reopens Otos when no import or reorganization is in flight, as an
