@@ -678,11 +678,13 @@ is clean on the next-start branch.
 
 An increment that changes the app (`Otos/`, `OtosKit/`, `Otos.xcodeproj/`, `Config/`) reaches
 the installed app by Sparkle (ADR 0059): once its merge's CI passes, the `Release` workflow
-publishes the build `build-<commit count>`, and the installed app downloads it within the hour
-and installs it once no import or reorganization is in flight. Nobody installs by hand after a
-merge. A session on the Mac that needs the build before its look waits for that release (`gh
-release view build-<N>`), chooses App ▸ Check for Updates…, and confirms the installed
-`CFBundleVersion`; the DoD report names the release it looked at. A cloud session's DoD report
+publishes it as the release `v<x.y.z>`, the next patch of the project's `MARKETING_VERSION`
+series, and the installed app downloads it within the hour and installs it once no import or
+reorganization is in flight. A merge that changes none of those paths publishes nothing. Nobody
+installs by hand after a merge. A session on the Mac that needs the build before its look waits
+for that release (`gh release view v<x.y.z>`), chooses App ▸ Check for Updates…, and confirms
+the installed `CFBundleShortVersionString`; the DoD report names the release it looked at. A new
+major or minor version is the owner's decision, made by changing `MARKETING_VERSION`. A cloud session's DoD report
 says the merge is installed by Sparkle once its release is published, and links that release.
 The DoD report carries the `op=perf.status` line from the final `script/check.sh` run.
 

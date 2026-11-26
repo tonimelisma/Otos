@@ -3,13 +3,14 @@
 # (ADR 0059): `.github/workflows/release.yml` runs it on GitHub's xcode-27 runner once that
 # commit's CI passed. It publishes to GitHub, so it is never run on the Mac.
 #
-# The release is `build-<N>`, N the commit count (CFBundleVersion), holding the disk image a
-# person installs from (`Otos.dmg`), the app's Sparkle archive, its symbols and the feed that
-# names it (`script/appcast.sh`). It is refused while the pinned Sparkle has known advisories
-# (`script/sparkle-advisories.sh`). It is marked latest,
-# so https://github.com/tonimelisma/Otos/releases/latest/download/appcast.xml is always the
-# newest build's feed. A build no newer than one already published is skipped; only the
-# newest three releases are kept.
+# A release is made only when the app changed since the newest release: something under Otos/,
+# OtosKit/, Otos.xcodeproj/ or Config/. It is `v<x.y.z>`, the next version of the project's
+# MARKETING_VERSION series (script/release-version.sh), with CFBundleVersion the commit count,
+# the number Sparkle compares. It holds the disk image a person installs from (`Otos.dmg`), the
+# app's Sparkle archive, its symbols and the feed that names it (`script/appcast.sh`). It is
+# refused while the pinned Sparkle has known advisories (`script/sparkle-advisories.sh`). It is
+# marked latest, so https://github.com/tonimelisma/Otos/releases/latest/download/appcast.xml is
+# always the newest build's feed. Only the newest three releases are kept.
 #
 # The environment the workflow gives it:
 #   OTOS_DEVELOPMENT_TEAM   the team ID; never in the repository
@@ -39,17 +40,34 @@ if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
 fi
 SHA="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 BUILD="$(git -C "$ROOT_DIR" rev-list --count HEAD)"
-TAG="build-$BUILD"
+APP_PATHS=(Otos OtosKit Otos.xcodeproj Config)
 
-published_builds() {
-  gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' \
-    | sed -n 's/^build-\([0-9][0-9]*\)$/\1/p' | sort -n
-}
-newest="$(published_builds | tail -1)"
-if [[ -n "$newest" ]] && (( newest >= BUILD )); then
-  echo "op=release phase=skipped build=$BUILD newest=$newest reason=notNewer"
-  exit 0
+# The newest release, and whether this commit changes the app it holds. The release workflow
+# runs one at a time, so no other release is made while this one decides.
+releases="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,isLatest,createdAt)"
+latest="$(printf '%s' "$releases" | jq -r '.[] | select(.isLatest) | .tagName')"
+if [[ -n "$latest" ]]; then
+  git -C "$ROOT_DIR" fetch -q origin "+refs/tags/$latest:refs/tags/$latest"
+  released="$(git -C "$ROOT_DIR" rev-parse "$latest^{commit}")"
+  if git -C "$ROOT_DIR" merge-base --is-ancestor "$SHA" "$released"; then
+    echo "op=release phase=skipped commit=$SHA latest=$latest reason=notNewer"
+    exit 0
+  fi
+  if git -C "$ROOT_DIR" diff --quiet "$released" "$SHA" -- "${APP_PATHS[@]}"; then
+    echo "op=release phase=skipped commit=$SHA latest=$latest reason=appUnchanged"
+    exit 0
+  fi
 fi
+
+# The version: the next of the project's MARKETING_VERSION series after the newest `v<x.y.z>`.
+series="$(sed -n 's/^[[:space:]]*MARKETING_VERSION = \([^;]*\);/\1/p' "$ROOT_DIR/Otos.xcodeproj/project.pbxproj" | sort -u)"
+[[ "$(printf '%s\n' "$series" | grep -c .)" == 1 ]] || {
+  echo "op=release phase=failed reason=marketingVersionsDiffer values=\"$(printf '%s' "$series" | tr '\n' ' ')\"" >&2
+  exit 1
+}
+newest_version="$(printf '%s' "$releases" | jq -r '.[].tagName' | sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' | sort -V | tail -1)"
+VERSION="$("$ROOT_DIR/script/release-version.sh" "$series" "$newest_version")"
+TAG="v$VERSION"
 
 # No build with an updater that has known advisories is published.
 "$ROOT_DIR/script/sparkle-advisories.sh"
@@ -58,7 +76,7 @@ DERIVED="$ROOT_DIR/build/ReleaseDerivedData"
 
 release_notes() {
   cat << NOTES
-Build $BUILD of main ($SHA). An installed Otos updates itself to it within the hour (ADR 0059).
+Otos $VERSION, build $BUILD of main ($SHA). An installed Otos updates itself to it within the hour (ADR 0059).
 
 To install by hand: download **Otos.dmg** below, open it, and drag Otos to Applications. It needs macOS 27 or later.
 
@@ -71,7 +89,8 @@ otos_build_installed_app "$ROOT_DIR" "$DERIVED" \
   CODE_SIGN_IDENTITY="$OTOS_SIGNING_IDENTITY" \
   PROVISIONING_PROFILE_SPECIFIER= \
   OTHER_CODE_SIGN_FLAGS="--keychain=$OTOS_SIGNING_KEYCHAIN" \
-  DEBUG_INFORMATION_FORMAT=dwarf-with-dsym
+  DEBUG_INFORMATION_FORMAT=dwarf-with-dsym \
+  MARKETING_VERSION="$VERSION"
 otos_check_installed_build "$APP"
 key="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP/Contents/Info.plist" 2> /dev/null || true)"
 [[ -n "$key" ]] || {
@@ -79,10 +98,11 @@ key="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP/Contents/Info.pli
   exit 1
 }
 short="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
+[[ "$short" == "$VERSION" ]] || { echo "op=release phase=failed reason=versionNotStamped built=$short expected=$VERSION" >&2; exit 1; }
 
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
-archive="$out/Otos-$BUILD.zip"
+archive="$out/Otos-$VERSION.zip"
 ditto -c -k --keepParent "$APP" "$archive"
 # The symbols of every image the build made: lldb reads them by UUID
 # (`script/installed-symbols.sh` fetches the installed build's).
@@ -92,7 +112,7 @@ for dsym in "$DERIVED/Build/Products/Debug"/*.dSYM; do
     ditto "$dsym" "$out/symbols/$(basename "$dsym")"
   fi
 done
-symbols="$out/Otos-$BUILD.dSYM.zip"
+symbols="$out/Otos-$VERSION.dSYM.zip"
 ditto -c -k --keepParent "$out/symbols" "$symbols"
 
 # The disk image a person installs from: Otos beside a link to Applications, to drag one onto
@@ -113,23 +133,19 @@ signed="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sign_update" --ed-key-file - "$
 signature="$(printf '%s' "$signed" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"
 [[ -n "$signature" ]] || { echo "op=release phase=failed reason=noSignature" >&2; exit 1; }
 length="$(stat -f %z "$archive")"
-url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Otos-$BUILD.zip"
-"$ROOT_DIR/script/appcast.sh" "$BUILD" "$short" "$url" "$length" "$signature" > "$out/appcast.xml"
+url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Otos-$VERSION.zip"
+"$ROOT_DIR/script/appcast.sh" "$BUILD" "$VERSION" "$url" "$length" "$signature" > "$out/appcast.xml"
 
 gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" --latest \
-  --title "Otos $short ($BUILD)" \
+  --title "Otos $VERSION" \
   --notes "$(release_notes)" \
   "$image" "$archive" "$symbols" "$out/appcast.xml"
-echo "op=release phase=published build=$BUILD tag=$TAG commit=$SHA"
+echo "op=release phase=published version=$VERSION build=$BUILD tag=$TAG commit=$SHA"
 
-# Older builds go, their tags with them.
-builds="$(published_builds)"
-count="$(printf '%s\n' "$builds" | grep -c . || true)"
-# macOS's head refuses a count of 0, so nothing is listed when no build is past the newest three.
-if ((count > KEEP)); then
-  printf '%s\n' "$builds" | head -n "$((count - KEEP))" | while read -r old; do
-    [[ -n "$old" ]] || continue
-    gh release delete "build-$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
-    echo "op=release phase=pruned build=$old"
-  done
-fi
+# Older releases go, their tags with them: all but the newest three, by when they were made.
+gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,createdAt \
+  --jq 'sort_by(.createdAt) | reverse | .[].tagName' | tail -n +"$((KEEP + 1))" | while read -r old; do
+  [[ "$old" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|build-[0-9]+)$ ]] || continue
+  gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+  echo "op=release phase=pruned tag=$old"
+done

@@ -1,7 +1,7 @@
-# Publishes every main commit whose CI passed as an update of the installed app (ADR 0059):
-# script/release.sh builds it on GitHub's xcode-27 runner, signs it with the owner's Apple
-# Development certificate and with Otos's EdDSA update key, and publishes it as the release
-# build-<commit count> with Sparkle's feed. Installed copies find it within the hour.
+# Publishes every main commit whose CI passed and that changes the app as an update of the
+# installed app (ADR 0059): script/release.sh builds it on GitHub's xcode-27 runner, signs it
+# with the owner's Apple Development certificate and with Otos's EdDSA update key, and publishes
+# it as the release v<x.y.z> with Sparkle's feed. Installed copies find it within the hour.
 #
 # It runs after CI, and only for a push to main that CI passed: a pull request, whoever opened
 # it, never reaches this workflow or its secrets. The secrets live in the environment

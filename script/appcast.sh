@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
 # Writes Sparkle's update feed for one build of the installed app (ADR 0059) to standard
 # output:
-#   script/appcast.sh <build> <short version> <archive URL> <archive length> <EdDSA signature>
-# <build> is CFBundleVersion, the commit count Sparkle compares; the feed holds only the
-# newest build, because Sparkle needs nothing older. The app reads it from
+#   script/appcast.sh <build> <version x.y.z> <archive URL> <archive length> <EdDSA signature>
+# <build> is CFBundleVersion, the commit count Sparkle compares; <version> is the release's
+# `v<x.y.z>` and CFBundleShortVersionString. The feed holds only the newest build, because
+# Sparkle needs nothing older. The app reads it from
 # https://github.com/tonimelisma/Otos/releases/latest/download/appcast.xml (SUFeedURL).
 # Tested by script/release-test.sh.
 set -euo pipefail
 
-BUILD="${1:?usage: appcast.sh <build> <short version> <url> <length> <signature>}"
-SHORT="${2:?short version}"
+BUILD="${1:?usage: appcast.sh <build> <version> <url> <length> <signature>}"
+SHORT="${2:?version}"
 URL="${3:?archive URL}"
 LENGTH="${4:?archive length}"
 SIGNATURE="${5:?EdDSA signature}"
 MINIMUM_SYSTEM="27.0"
 
 [[ "$BUILD" =~ ^[1-9][0-9]*$ ]] || { echo "appcast: build $BUILD isn't a positive number" >&2; exit 1; }
-[[ "$SHORT" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "appcast: short version $SHORT isn't dotted numbers" >&2; exit 1; }
+[[ "$SHORT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "appcast: version $SHORT isn't x.y.z" >&2; exit 1; }
 [[ "$LENGTH" =~ ^[1-9][0-9]*$ ]] || { echo "appcast: length $LENGTH isn't a positive number" >&2; exit 1; }
 case "$URL" in
-  "https://github.com/tonimelisma/Otos/releases/download/build-$BUILD/"*) ;;
-  *) echo "appcast: the archive isn't in the release build-$BUILD of tonimelisma/Otos" >&2; exit 1 ;;
+  "https://github.com/tonimelisma/Otos/releases/download/v$SHORT/"*) ;;
+  *) echo "appcast: the archive isn't in the release v$SHORT of tonimelisma/Otos" >&2; exit 1 ;;
 esac
 # A signature is base64 and the URL is checked above, so nothing written needs escaping in
 # XML; anything else is refused.
@@ -34,7 +35,7 @@ cat << EOF
   <channel>
     <title>Otos</title>
     <item>
-      <title>Otos $SHORT ($BUILD)</title>
+      <title>Otos $SHORT</title>
       <pubDate>$DATE</pubDate>
       <sparkle:version>$BUILD</sparkle:version>
       <sparkle:shortVersionString>$SHORT</sparkle:shortVersionString>

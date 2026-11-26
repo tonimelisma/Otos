@@ -51,23 +51,34 @@ prove a commit to `.github/workflows/ci.yml`.
    the Store's report, never on time (ADR 0033). The install runs from the main run loop's
    own callback, never inside a main-queue job, because quitting can wait on a reply that
    arrives as one. A quit before then installs the update as Otos quits, Sparkle's default.
-6. **CI builds and publishes every `main` commit CI passed.** `.github/workflows/release.yml`
-   runs after CI, only for a push to `main` that passed, in the environment `release` that
-   holds the certificate, its password, the team ID and the update key. `script/release.sh`
-   builds by the recipe `script/install.sh` uses (`script/lib/installed-build.sh`) with the
-   certificate imported into a keychain of the run's own, signs the zipped app with the update
-   key (on standard input), and publishes the release `build-<N>`, N the commit count and
-   the build's `CFBundleVersion`, with the archive, its dSYMs, the feed
-   (`script/appcast.sh`) and a disk image for installing by hand (`Otos.dmg`, signed with the
-   app's certificate: the app beside a link to Applications, as latchkey's is; the release notes say how to open an app that is not notarized).
-   It is marked latest, so `releases/latest/download/appcast.xml` and `…/Otos.dmg` always
-   name the newest build. A build no newer than one published is skipped; the newest three
-   releases are kept.
+6. **CI builds and publishes every `main` commit CI passed that changes the app.**
+   `.github/workflows/release.yml` runs after CI, only for a push to `main` that passed, in the
+   environment `release` that holds the certificate, its password, the team ID and the update
+   key. `script/release.sh` publishes only when something under `Otos/`, `OtosKit/`,
+   `Otos.xcodeproj/` or `Config/` changed since the newest release (owner, 2026-11-26: "no need
+   to release a new release with only a new versioning scheme"); a commit of docs or scripts
+   alone ships nothing. It builds by the recipe `script/install.sh` uses
+   (`script/lib/installed-build.sh`) with the certificate imported into a keychain of the run's
+   own, signs the zipped app with the update key (on standard input), and publishes the release
+   `v<x.y.z>` with the archive, its dSYMs, the feed (`script/appcast.sh`) and a disk image for
+   installing by hand (`Otos.dmg`, signed with the app's certificate: the app beside a link to
+   Applications, as latchkey's is; the release notes say how to open an app that is not
+   notarized). It is marked latest, so `releases/latest/download/appcast.xml` and
+   `…/Otos.dmg` always name the newest build. A commit no newer than the newest release is
+   skipped; the newest three releases are kept.
 7. **No updater with known advisories ships.** Before it builds, the release asks the OSV
    database about the Sparkle version `Package.resolved` pins (`script/sparkle-advisories.sh`)
    and stops on any advisory, or when OSV does not answer. A fix is a deliberate Sparkle bump.
-8. **The commit count is the version Sparkle compares.** `main` takes only squash merges, so
-   its commit count grows with every merge.
+8. **Semantic versions for people, the commit count for Sparkle.** Each release is the next
+   patch of the project's `MARKETING_VERSION` series, `x.y` (owner, 2026-11-26: "can we adopt
+   semver? bump on every commit"): `script/release-version.sh` takes the newest published
+   `v<x.y.z>` and adds one to its patch, or starts a newer series at `x.y.0`, and the build
+   carries it as `CFBundleShortVersionString`. A new major or minor version is a commit that
+   changes `MARKETING_VERSION`, the owner's decision. Sparkle compares `CFBundleVersion`, the
+   commit count: `main` takes only squash merges, so it grows with every merge, and builds
+   published before semantic versions (`build-1598`, `build-1599`) compare below every later
+   one. The version is taken from the published releases, not committed to a file, so a release
+   never needs a commit of its own.
 
 ## Rejected alternatives
 
@@ -83,6 +94,10 @@ prove a commit to `.github/workflows/ci.yml`.
 - **Hand-written update code (download, verify, swap).** Sparkle does each step, signature
   checks and the replace-and-relaunch included, and is maintained for exactly this.
 - **Installing on Sparkle's schedule.** It would quit Otos in the middle of an import.
+- **A version file bumped by each release.** It needs a commit on `main` per release, which the
+  release would then build again; the published tags already say which version is newest.
+- **The version from commit messages (feat → minor, fix → patch).** It makes every merge's title
+  decide what users see; the owner decides a new series by changing `MARKETING_VERSION`.
 - **GitHub Pages for the feed.** A release already holds the archive; its latest-release URL
   serves the feed with no second place to publish to.
 
