@@ -334,7 +334,8 @@ everything expensive happens on an actor off the main thread.
   the update key; `UpdateInstallGate` holds a downloaded install while
   `CatalogStore.operationalWorkChanges` (read inside every journal write, `writeJournal`) says
   an import or reorganization is in flight. CI's `Release` workflow publishes each green
-  `main` commit (`script/release.sh`, `script/appcast.sh`), built by the recipe
+  `main` commit with its disk image (`script/release.sh`, `script/appcast.sh`), refused while
+  the pinned Sparkle has known advisories (`script/sparkle-advisories.sh`), built by the recipe
   `script/install.sh` shares (`script/lib/installed-build.sh`).
 - **Library reorganization**: `ReorganizationPlanner` builds physical-member
   recipes; `ReorganizationExecutor` owns directory/move mechanics;

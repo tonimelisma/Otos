@@ -3,8 +3,10 @@
 # (ADR 0059): `.github/workflows/release.yml` runs it on GitHub's xcode-27 runner once that
 # commit's CI passed. It publishes to GitHub, so it is never run on the Mac.
 #
-# The release is `build-<N>`, N the commit count (CFBundleVersion), holding the app's Sparkle
-# archive, its symbols and the feed that names it (`script/appcast.sh`). It is marked latest,
+# The release is `build-<N>`, N the commit count (CFBundleVersion), holding the disk image a
+# person installs from (`Otos.dmg`), the app's Sparkle archive, its symbols and the feed that
+# names it (`script/appcast.sh`). It is refused while the pinned Sparkle has known advisories
+# (`script/sparkle-advisories.sh`). It is marked latest,
 # so https://github.com/tonimelisma/Otos/releases/latest/download/appcast.xml is always the
 # newest build's feed. A build no newer than one already published is skipped; only the
 # newest three releases are kept.
@@ -49,7 +51,20 @@ if [[ -n "$newest" ]] && (( newest >= BUILD )); then
   exit 0
 fi
 
+# No build with an updater that has known advisories is published.
+"$ROOT_DIR/script/sparkle-advisories.sh"
+
 DERIVED="$ROOT_DIR/build/ReleaseDerivedData"
+
+release_notes() {
+  cat << NOTES
+Build $BUILD of main ($SHA). An installed Otos updates itself to it within the hour (ADR 0059).
+
+To install by hand: download **Otos.dmg** below, open it, and drag Otos to Applications. It needs macOS 27 or later.
+
+Otos is signed for development, not notarized by Apple. The first time you open it, macOS says it can’t check Otos: click **Done**, open **System Settings → Privacy & Security**, click **Open Anyway** next to Otos, and confirm. After that it opens like any app, and updates itself.
+NOTES
+}
 APP="$(otos_installed_build_app "$DERIVED")"
 otos_build_installed_app "$ROOT_DIR" "$DERIVED" \
   CODE_SIGN_STYLE=Manual \
@@ -80,6 +95,15 @@ done
 symbols="$out/Otos-$BUILD.dSYM.zip"
 ditto -c -k --keepParent "$out/symbols" "$symbols"
 
+# The disk image a person downloads by hand: the app and a link to Applications.
+# `releases/latest/download/Otos.dmg` is always the newest build's.
+mkdir "$out/image"
+ditto "$APP" "$out/image/Otos.app"
+ln -s /Applications "$out/image/Applications"
+image="$out/Otos.dmg"
+hdiutil create -quiet -volname "Otos $short ($BUILD)" -srcfolder "$out/image" -fs HFS+ -format UDZO "$image"
+hdiutil verify -quiet "$image"
+
 # The update key goes in on standard input, never to a file.
 sign_update="$DERIVED/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update"
 signed="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sign_update" --ed-key-file - "$archive")"
@@ -91,8 +115,8 @@ url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Otos-$BUILD.zi
 
 gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" --latest \
   --title "Otos $short ($BUILD)" \
-  --notes "Build $BUILD of main ($SHA). The installed app updates itself to it (ADR 0059)." \
-  "$archive" "$symbols" "$out/appcast.xml"
+  --notes "$(release_notes)" \
+  "$image" "$archive" "$symbols" "$out/appcast.xml"
 echo "op=release phase=published build=$BUILD tag=$TAG commit=$SHA"
 
 # Older builds go, their tags with them.

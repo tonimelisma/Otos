@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The release's rules that need no Mac (ADR 0059): the feed script/appcast.sh writes for a
-# build, and the inputs it refuses. script/check.sh runs it with the fast gates.
+# build, the inputs it refuses, and that the advisory check asks about the Sparkle the project
+# pins. script/check.sh runs it with the fast gates.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -45,6 +46,12 @@ refuses archiveElsewhere 1234 1.0 "https://example.com/build-1234/Otos-1234.zip"
 refuses emptyArchive 1234 1.0 "$url" 0 "$signature"
 refuses signatureNotBase64 1234 1.0 "$url" 5678 'a"b<c'
 refuses urlNeedsEscaping 1234 1.0 "${url}?a=1&b=2" 5678 "$signature"
+
+# The advisory check asks about the version the project pins (ADR 0059).
+cases=$((cases + 1))
+resolved="$("$ROOT_DIR/script/sparkle-advisories.sh" version)"
+pinned="$(awk '/XCRemoteSwiftPackageReference "Sparkle" \*\/ = \{/ { inside = 1 } inside && /version = / { gsub(/[ \t;]/, ""); sub(/version=/, ""); print; exit }' "$ROOT_DIR/Otos.xcodeproj/project.pbxproj")"
+[[ -n "$resolved" && "$resolved" == "$pinned" ]] || fail sparklePinAgrees "Package.resolved=$resolved project=$pinned"
 
 if ((failures > 0)); then
   echo "op=release.test phase=fail cases=$cases failures=$failures" >&2

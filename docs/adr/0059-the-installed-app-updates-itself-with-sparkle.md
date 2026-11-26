@@ -53,11 +53,16 @@ prove a commit to `.github/workflows/ci.yml`.
    builds by the recipe `script/install.sh` uses (`script/lib/installed-build.sh`) with the
    certificate imported into a keychain of the run's own, signs the zipped app with the update
    key (on standard input), and publishes the release `build-<N>`, N the commit count and
-   the build's `CFBundleVersion`, with the archive, its dSYMs and the feed
-   (`script/appcast.sh`). It is marked latest, so the feed URL,
-   `releases/latest/download/appcast.xml`, always names the newest build. A build no newer
-   than one published is skipped; the newest three releases are kept.
-7. **The commit count is the version Sparkle compares.** `main` takes only squash merges, so
+   the build's `CFBundleVersion`, with the archive, its dSYMs, the feed
+   (`script/appcast.sh`) and a disk image for installing by hand (`Otos.dmg`: the app and a
+   link to Applications; the release notes say how to open an app that is not notarized).
+   It is marked latest, so `releases/latest/download/appcast.xml` and `…/Otos.dmg` always
+   name the newest build. A build no newer than one published is skipped; the newest three
+   releases are kept.
+7. **No updater with known advisories ships.** Before it builds, the release asks the OSV
+   database about the Sparkle version `Package.resolved` pins (`script/sparkle-advisories.sh`)
+   and stops on any advisory, or when OSV does not answer. A fix is a deliberate Sparkle bump.
+8. **The commit count is the version Sparkle compares.** `main` takes only squash merges, so
    its commit count grows with every merge.
 
 ## Rejected alternatives
