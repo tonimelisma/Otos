@@ -155,9 +155,15 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
       fences Xcode's own sandboxes.
     - **Rejected: a second entry point for the VM.** It would hold a second list of
       gates, which drifts from `check.sh`'s.
-13. **A commit is checked within five minutes, here and on CI together.** The owner
-    (2026-11-26): "just try to ensure each commit wraps up in 5 minutes of testing from
-    the moment dev works. local and CI together, everything." Every `check.sh` run prints
+13. **A commit is checked within five minutes, here and on CI together; one that changes
+    Swift within six to nine.** The owner (2026-11-26): "just try to ensure each commit
+    wraps up in 5 minutes of testing from the moment dev works. local and CI together,
+    everything." Measured after items 14–18: a script or doc change takes 4 min 35 s to
+    5 min 45 s from push to gate with no queue; a Swift change recompiles its module
+    (the test module's 555 CPU-seconds, about 4 min on the runner's three cores), about
+    8 min; and a wait of up to 12 min for a runner when the owner's five concurrent macOS
+    jobs are taken. The owner accepted six to nine minutes for a Swift change rather than
+    paying for larger runners or dropping `main`'s run after a merge ("6-9 is fine"). Every `check.sh` run prints
     its stages' durations (`op=check.stage … seconds=`, `op=check.duration`), and the
     budget counts from the moment a commit is ready to push until CI's `Required CI Gate`
     reports. Measured on 2026-11-26, before this item: `Build And Test (Xcode 27)` took

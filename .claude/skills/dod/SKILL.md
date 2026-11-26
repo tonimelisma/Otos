@@ -22,7 +22,7 @@ a short summary and the PR link.
   - the Xcode version;
   - the CI run on the final commit;
   - the cloud or Mac `script/check.sh` result;
-  - the measured durations against the five-minute budget;
+  - the measured durations against the budget (five minutes; six to nine for a Swift change);
   - the `op=perf.status` line;
 - remote CI status, with exact waiver evidence if a job could not run;
 - instrumentation and profiling evidence;

@@ -13,7 +13,8 @@ paths:
 - **Every CI job's checks also run in `check.sh`'s fast gates,** so a green check is a
   green CI. Every fast gate also runs in an Ubuntu CI job, so the Mac shards skip them
   (`OTOS_CHECK_FAST_GATES=ubuntuJobs`, ADR 0044 item 18). A new gate goes into both places.
-- **CI is held to the five-minute budget** (ADR 0044, items 13–16):
+- **CI is held to the budget** (ADR 0044, items 13–18): five minutes from push to gate, six
+  to nine for a change that recompiles a Swift module.
   - A new job states its measured duration.
   - A job that would push a commit's check past five minutes is redesigned: cached,
     narrowed to what changed, or parallel.

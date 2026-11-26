@@ -51,7 +51,9 @@ his `~/.claude/CLAUDE.md`.
 - **Time is not free.** This is the one exception to the rule above. Measure how long
   every check, build, test run and CI job takes.
   - A commit's whole check, local and CI together, finishes within five minutes of the
-    commit being ready (owner, 2026-11-26; ADR 0044 items 13–16).
+    commit being ready (owner, 2026-11-26; ADR 0044 items 13–18). A commit that changes
+    Swift may take six to nine, because its module recompiles on CI's three cores (owner,
+    2026-11-26: "6-9 is fine").
   - A change that would break that budget is redesigned until it fits.
   - When it cannot fit, the final report says why, with the measurements.
 - Keep the app as simple as possible. Prefer the smallest correct model, owner, schema,
