@@ -107,6 +107,20 @@ nonisolated enum PhotoDescriptionStorage {
         """
     }
 
+    /// How many stills of `rootCount` roots (bound in order) `candidatesSQL` walks: every
+    /// describable still whose description does not name its current facts.
+    static func leftSQL(rootCount: Int) -> String {
+        """
+        SELECT COUNT(*)
+        FROM media_asset AS a INDEXED BY \(CandidateWalk.captureIndex)
+        LEFT JOIN photo_description AS d INDEXED BY \(sourceIndexName)
+            ON d.library_root_id = a.library_root_id AND d.relative_path = a.relative_path
+        WHERE a.library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
+          AND \(describableStill)
+          AND d.source IS NOT \(currentSource("a"))
+        """
+    }
+
     /// One still, by its key (binds the root and the path), when it is owed a description by
     /// the walk's rule: a seek of its own row, for the stills a change named
     /// (`CatalogStore.photoDescriptionCandidatesByKey(of:excluding:lane:)`).

@@ -4,7 +4,8 @@ import SwiftUI
 // DES-124): the one place the window says the status of the background work — working,
 // waiting on something, or up to date. The line sits at the sidebar's foot at one fixed height
 // in every state (DES-053); a click, Space or Return opens a read-only popover (DES-041) listing
-// the work that runs or waits, each with what stops it, and one line for everything else.
+// the work that runs or waits, each with how far it is (an exact count and a determinate
+// bar), what stops it, and one line for everything else.
 // Passive: every string comes from `ActivityPresentation`.
 
 struct ActivityLine: View {
@@ -134,6 +135,15 @@ struct ActivityPopover: View {
                                     .foregroundStyle(DesignPalette.l3(for: colorScheme))
                                     .monospacedDigit()
                                     .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if let bar = row.bar {
+                                // Determinate: the stretch's exact count (DES-124). A row that
+                                // waits keeps its bar where it stopped, in the secondary tint.
+                                ProgressView(value: Double(bar.done), total: Double(bar.total))
+                                    .progressViewStyle(.linear)
+                                    .controlSize(.small)
+                                    .tint(row.status == .waiting ? DesignPalette.l3(for: colorScheme) : Color.accentColor)
+                                    .padding(.top, 2)
                             }
                         }
                         Spacer(minLength: 8)

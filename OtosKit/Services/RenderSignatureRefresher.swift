@@ -94,6 +94,18 @@ actor RenderSignatureRefresher: QuiescentOwner {
         request()
     }
 
+    /// The stills whose thumbnail has no current render signature: the count behind `Looking
+    /// for duplicates` (ADR 0058). The groups are built from these signatures, so they are its
+    /// measurable part.
+    func progress() async -> WorkProgress? {
+        do {
+            return try await WorkProgress.left(store.backgroundReads.renderSignaturesLeft())
+        } catch {
+            WorkProgress.logFailure(owner: "renderSignatures", error)
+            return nil
+        }
+    }
+
     private func pass() async {
         guard activity.isOwed else { return }
         let answering = activity.beginPass()

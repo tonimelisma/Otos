@@ -642,6 +642,18 @@ extension EnrichmentCoordinator {
         schedule.troubles(at: ContinuousClock.now)
     }
 
+    /// The rows its walk still owes, under the claims it claims them under now: the count
+    /// behind `Making thumbnails` (ADR 0058).
+    func progress() async -> WorkProgress? {
+        let videoFaces = schedule.videoFaces(at: ContinuousClock.now)
+        do {
+            return try await WorkProgress.left(store.backgroundReads.enrichmentLeft(videoFaces: videoFaces))
+        } catch {
+            WorkProgress.logFailure(owner: "enrichment", error)
+            return nil
+        }
+    }
+
     /// Asks the Store which of the rows to check it still offers, and ends the demands of rows
     /// it no longer has (`EnrichmentSchedule.reconcile`). A failed read leaves the rows to
     /// check for the next pass.

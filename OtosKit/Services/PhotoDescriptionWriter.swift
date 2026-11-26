@@ -425,6 +425,17 @@ actor PhotoDescriptionWriter: QuiescentOwner {
         return troubles
     }
 
+    /// The stills owed a description, those waiting out a failure included: the count behind
+    /// `Describing photos` (ADR 0058).
+    func progress() async -> WorkProgress? {
+        do {
+            return try await WorkProgress.left(store.backgroundReads.photoDescriptionsLeft())
+        } catch {
+            WorkProgress.logFailure(owner: "descriptions", error)
+            return nil
+        }
+    }
+
     private func announce() {
         for continuation in changeContinuations.values {
             continuation.yield()

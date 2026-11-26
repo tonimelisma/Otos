@@ -72,6 +72,19 @@ nonisolated enum EnrichmentClaimGateway {
         }
     }
 
+    /// How many rows of one root (bound) are owed under `claim`: the claim query's rows,
+    /// claimed or not, through the same root index, since a claimed row is still in flight
+    /// (`CatalogStore.enrichmentLeft`).
+    static func leftSQL(_ claim: EnrichmentClaim) -> String {
+        """
+        SELECT COUNT(*) FROM media_asset INDEXED BY \(rootIndexName(claim))
+        WHERE library_root_id = ?
+          AND (\(stalenessSQLPredicate(claim)))\(backgroundScope(claim))
+          AND trash_path IS NULL
+          AND awaiting_presence = 0
+        """
+    }
+
     static func unclaimedPriorityIDs(
         _ priorityIDs: [MediaAssetID],
         claimedIDs: inout Set<MediaAssetID>

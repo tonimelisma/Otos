@@ -275,6 +275,10 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
 
     private var inFlightCount = 0
     private var inFlightBytes: Int64 = 0
+    /// The current run of downloads (`TransferRun`): those finished since the last moment
+    /// nothing was pending or in flight, and their bytes, nil once one had no size on record.
+    private var finishedInRun = 0
+    private var finishedBytesInRun: Int64? = 0
     private var inFlightLargeVideos = 0
     /// Device transfers currently handed to ImageCaptureCore. Capped at one by
     /// `MaterializationAdmissionPolicy.deviceConcurrency` because the framework serialises
@@ -483,6 +487,33 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
         return breakerOpenUntilByRoot.values.contains { $0 > now } ? [OwnerTrouble(.providerNotAnswering)] : []
     }
 
+    /// The current run of downloads: how many finished of how many asked, their bytes, and
+    /// what the most pressing of them is for. The count behind `Downloading photos`
+    /// (ADR 0058); nil while nothing is pending or in flight.
+    func progress() async -> WorkProgress? {
+        let asked = pendingByID.values.map { ($0.request, $0.effectivePriority) }
+            + inFlightByID.values.map { ($0.request, $0.effectivePriority) }
+        guard !asked.isEmpty else { return nil }
+        let priorities = Set(asked.map(\.1))
+        let purpose: TransferRun.Purpose = if priorities.contains(.interactive) {
+            .openedItem
+        } else if priorities.contains(.command) {
+            .request
+        } else {
+            .background
+        }
+        let bytesAsked = asked.reduce(Int64?(0)) { sum, entry in
+            entry.0.sourceSize.flatMap { size in sum.map { $0 + size } }
+        }
+        return .transfers(TransferRun(
+            done: finishedInRun,
+            total: finishedInRun + asked.count,
+            bytesDone: bytesAsked == nil ? nil : finishedBytesInRun,
+            bytesTotal: finishedBytesInRun.flatMap { done in bytesAsked.map { done + $0 } },
+            purpose: purpose
+        ))
+    }
+
     /// Nothing outside a request rings admission: a wake with nothing pending admits nothing.
     func ringIdle() {
         wake()
@@ -530,6 +561,11 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
             return
         }
 
+        if pendingByID.isEmpty, inFlightByID.isEmpty {
+            // A request while nothing is pending or in flight starts a run of its own.
+            finishedInRun = 0
+            finishedBytesInRun = 0
+        }
         pendingByID[request.id] = PendingEntry(
             request: request,
             effectivePriority: request.priority,
@@ -880,6 +916,10 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
         )
         removeAccounting(for: entry)
         settleCommitment(of: entry, outcome: result.outcome)
+        if result.isMaterialized {
+            finishedInRun += 1
+            finishedBytesInRun = entry.request.sourceSize.flatMap { size in finishedBytesInRun.map { $0 + size } }
+        }
         let deliveredAt = clock.now
         let providerMs = DiagnosticsTiming.milliseconds(from: entry.dispatchedAt, to: providerFinishedAt)
         let completionDeliveryMs = DiagnosticsTiming.milliseconds(from: providerFinishedAt, to: deliveredAt)

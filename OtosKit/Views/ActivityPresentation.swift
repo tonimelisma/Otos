@@ -6,11 +6,12 @@ import Foundation
 // unchecked tally to the words the sidebar's Activity line and its popover draw. Every string
 // on those surfaces is composed here, so the views are passive and the words are tested
 // without a window. The popover lists only work that runs or waits, each row named by what
-// it does for the user (DES-035) and, when something stops it, saying what in a sentence:
-// the cause its owner reported (`OwnerTrouble`), never a bare "waiting". Everything else is
-// one line: up to date. It never says when work ran. A count appears only where Otos holds an
-// exact one — People's unchecked tally, the items a trouble stops — never an estimate
-// (DES-031).
+// it does for the user (DES-035), how far its current stretch is — `done of total` with a
+// determinate bar, from the exact count its owner keeps (`ActivityProgress`, DES-124) — and,
+// when something stops it, what, in a sentence: the cause its owner reported
+// (`OwnerTrouble`), never a bare "waiting". A download says what it is for. Everything else
+// is one line: up to date. It never says when work ran or how long is left, and never a
+// percentage: every number is an exact count (DES-031).
 
 /// One Immich account as the Activity surface reads it.
 nonisolated struct ActivityAccount: Equatable, Sendable {
@@ -26,14 +27,22 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
         case upToDate
     }
 
-    /// One row of the popover: what the work does (L2), what stops it or how much is left
-    /// under it (L3, each its own line), and its status's glyph at the trailing edge.
+    /// A row's determinate bar: `done` of `total`, both exact.
+    struct Bar: Equatable, Sendable {
+        let done: Int
+        let total: Int
+    }
+
+    /// One row of the popover: what the work does (L2); how far it is, what it is for and
+    /// what stops it under it (L3, each its own line); its bar; and its status's glyph at the
+    /// trailing edge.
     struct Row: Equatable, Sendable, Identifiable {
         let id: String
         let systemImage: String
         let title: String
         let details: [String]
         let status: Status
+        var bar: Bar?
     }
 
     /// The sidebar line's L2: the work that has run longest, else what waits, else
@@ -122,28 +131,75 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
         )
     }
 
-    /// A watched kind's row, or nil when it is up to date: what it does, then what pauses or
-    /// stops it, else how much is left where Otos holds that count.
+    /// A watched kind's row, or nil when it is up to date: what it does, how far it is and
+    /// what it is for, then what pauses or stops it.
     private static func row(_ entry: ActivityEntry, uncheckedFaces: MediaCount?) -> Row? {
         let troubles = entry.troubles.map(troubleText)
+        let progress = progressLines(entry, uncheckedFaces: uncheckedFaces)
         let (status, details): (Status, [String])
         switch entry.state {
         case .working:
             status = .working
-            details = troubles.isEmpty ? countText(entry.kind, uncheckedFaces: uncheckedFaces).map { [$0] } ?? [] : troubles
+            details = progress + troubles
         case let .paused(hold):
             status = .waiting
-            details = [holdText(hold)] + troubles
+            details = progress + [holdText(hold)] + troubles
         case .stuck:
             status = .waiting
-            details = troubles
+            details = progress + troubles
         case .upToDate:
             return nil
         }
         return Row(
             id: entry.kind.rawValue, systemImage: systemImage(entry.kind), title: title(entry.kind),
-            details: details, status: status
+            details: details, status: status, bar: bar(entry.progress)
         )
+    }
+
+    /// The bar for a stretch with something to count.
+    private static func bar(_ progress: ActivityProgress?) -> Bar? {
+        guard let progress, progress.total > 0 else { return nil }
+        return Bar(done: min(progress.done, progress.total), total: progress.total)
+    }
+
+    /// How far a kind's stretch is, in its own words, and, for downloads, what they are for;
+    /// before its first count, People's unchecked tally where Otos holds it.
+    private static func progressLines(_ entry: ActivityEntry, uncheckedFaces: MediaCount?) -> [String] {
+        guard let progress = entry.progress, progress.total > 0 else {
+            return countText(entry.kind, uncheckedFaces: uncheckedFaces).map { [$0] } ?? []
+        }
+        let of = "\(progress.done.formatted()) of \(progress.total.formatted())"
+        switch entry.kind {
+        case .downloadingOriginals:
+            var count = of
+            if let bytesDone = progress.bytesDone, let bytesTotal = progress.bytesTotal {
+                count += " · \(bytesText(bytesDone)) of \(bytesText(bytesTotal))"
+            }
+            return [count] + (progress.purpose.map { [purposeText($0)] } ?? [])
+        case .readingPhotos, .preparingSearch:
+            return ["\(of) \(progress.total == 1 ? "photo or video" : "photos and videos")"]
+        case .findingPeople:
+            return ["\(of) checked"]
+        case .namingPlaces:
+            return ["\(of) \(progress.total == 1 ? "place" : "places")"]
+        case .describingPhotos:
+            return ["\(of) \(progress.total == 1 ? "photo" : "photos")"]
+        case .findingDuplicates:
+            return ["\(of) \(progress.total == 1 ? "photo" : "photos") compared"]
+        }
+    }
+
+    /// What a run of downloads is for (HIG: say why work happens when it is not obvious).
+    static func purposeText(_ purpose: TransferRun.Purpose) -> String {
+        switch purpose {
+        case .openedItem: "For the photo you opened"
+        case .request: "For what you asked Otos to do"
+        case .background: "Needed to make thumbnails"
+        }
+    }
+
+    private static func bytesText(_ bytes: Int64) -> String {
+        bytes.formatted(.byteCount(style: .file))
     }
 
     /// An Immich account's row, or nil when it is up to date: syncing or connecting works,
@@ -162,7 +218,7 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             }
         }
         return Row(
-            id: "immich.\(account.name)", systemImage: "server.rack", title: "Syncing \(account.name)",
+            id: "immich.\(account.name)", systemImage: "server.rack", title: "Syncing Immich: \(account.name)",
             details: details, status: status
         )
     }
@@ -184,7 +240,7 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
     /// What the work does, in the user's words: the row's L2, and the line's while it works.
     static func title(_ kind: ActivityKind) -> String {
         switch kind {
-        case .readingPhotos: "Reading photos"
+        case .readingPhotos: "Making thumbnails"
         case .downloadingOriginals: "Downloading photos"
         case .findingPeople: "Finding people"
         case .namingPlaces: "Naming places"

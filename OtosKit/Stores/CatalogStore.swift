@@ -11486,3 +11486,95 @@ final nonisolated class ScanWriteTally: Sendable {
         counts.withLock { $0.written }
     }
 }
+
+// MARK: - Work left (ADR 0058)
+
+/// How many items each background owner still owes, each an exact COUNT over the very
+/// predicate its walk reads, through the same partial index, so the number the Activity
+/// popover shows is the walk's own backlog (`docs/design/activity.md`). Rows claimed or in
+/// flight still count: they are not done until their result is written.
+extension CatalogStore {
+    /// The rows enrichment still owes, each root under the claim its walk claims it under
+    /// (`claimedEnrichmentCandidates`): a fixed library's every product, an Immich account's
+    /// metadata and a video's faces, a camera's metadata, and a card's every product, its
+    /// metadata included.
+    func enrichmentLeft(videoFaces: VideoFacesAdmission, lane: CatalogReadLane) async throws -> Int {
+        let (library, account, metadataFirst) = roots.enrichableRootIDsByFirstClaim()
+        let cards = Set(roots.enrichableCardRootIDs())
+        let sources: [(rootID: Int64, claim: EnrichmentClaim)] =
+            library.sorted().map { ($0, EnrichmentClaim.library.admitting(videoFaces)) }
+                + account.sorted().map { ($0, EnrichmentClaim.account.admitting(videoFaces)) }
+                + metadataFirst.sorted().map { ($0, cards.contains($0) ? EnrichmentClaim.products : .metadata) }
+        guard !sources.isEmpty else { return 0 }
+        return try await reader(for: lane).readFreeingConnection { db in
+            var left = 0
+            for source in sources {
+                left += try Int.fetchOne(
+                    db,
+                    sql: EnrichmentClaimGateway.leftSQL(source.claim),
+                    arguments: [source.rootID]
+                ) ?? 0
+            }
+            return left
+        }
+    }
+
+    /// The photos and videos not yet checked for faces in the available roots whose faces
+    /// Otos reads: People's unchecked tally.
+    func facesLeft(lane: CatalogReadLane) async throws -> Int {
+        let available = Set(roots.values.filter { $0.availability == .available }.map(\.root.path))
+        return try await uncheckedForFaces(availableLibraryPaths: available, lane: lane).total
+    }
+
+    /// The map cells holding a located item with no name in `language`
+    /// (`unnamedPlaceCells`).
+    func unnamedPlaceCellCount(language: PlaceNameLanguage, lane: CatalogReadLane) async throws -> Int {
+        try await reader(for: lane).readFreeingConnection { db in
+            try Int.fetchOne(db, sql: CatalogQueryGateway.unnamedPlaceCellCountSQL, arguments: [language.identifier]) ?? 0
+        }
+    }
+
+    /// The assets owed a search embedding in the available roots
+    /// (`searchEmbeddingCandidates`).
+    func searchEmbeddingsLeft(lane: CatalogReadLane) async throws -> Int {
+        let rootIDs = availableRootRowIDs()
+        guard !rootIDs.isEmpty else { return 0 }
+        return try await reader(for: lane).readFreeingConnection { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) \(SearchEmbeddingStorage.owedFrom(rootCount: rootIDs.count))",
+                arguments: StatementArguments(rootIDs)
+            ) ?? 0
+        }
+    }
+
+    /// The stills owed a description in the roots whose faces Otos reads
+    /// (`photoDescriptionCandidates`).
+    func photoDescriptionsLeft(lane: CatalogReadLane) async throws -> Int {
+        let rootIDs = roots.values.filter(\.root.kind.readsFaces).map(\.rowID).sorted()
+        guard !rootIDs.isEmpty else { return 0 }
+        return try await reader(for: lane).readFreeingConnection { db in
+            try Int.fetchOne(
+                db,
+                sql: PhotoDescriptionStorage.leftSQL(rootCount: rootIDs.count),
+                arguments: StatementArguments(rootIDs)
+            ) ?? 0
+        }
+    }
+
+    /// The visible stills of the available libraries whose thumbnail has no current render
+    /// signature (`renderSignatureCandidates`).
+    func renderSignaturesLeft(lane: CatalogReadLane) async throws -> Int {
+        let rootIDs = roots.values
+            .filter { $0.root.kind.isMemberOfAllMedia && $0.availability == .available }
+            .map(\.rowID).sorted()
+        guard !rootIDs.isEmpty else { return 0 }
+        return try await reader(for: lane).readFreeingConnection { db in
+            try Int.fetchOne(
+                db,
+                sql: RenderSignatureSQL.leftSQL(rootCount: rootIDs.count),
+                arguments: StatementArguments(rootIDs)
+            ) ?? 0
+        }
+    }
+}

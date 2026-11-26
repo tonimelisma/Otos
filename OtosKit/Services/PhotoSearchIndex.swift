@@ -457,6 +457,16 @@ actor PhotoSearchIndex: QuiescentOwner {
         retry == nil ? [] : [OwnerTrouble(.searchFailed)]
     }
 
+    /// The items owed a search embedding: the count behind `Preparing search` (ADR 0058).
+    func progress() async -> WorkProgress? {
+        do {
+            return try await WorkProgress.left(store.backgroundReads.searchEmbeddingsLeft())
+        } catch {
+            WorkProgress.logFailure(owner: "searchIndex", error)
+            return nil
+        }
+    }
+
     func ringIdle() {
         request()
     }

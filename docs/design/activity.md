@@ -12,6 +12,9 @@ place: a line at the foot of the sidebar, and the popover it opens.
 
 The popover: `Working on 3 things`, else `Waiting on 2 things`, else `Up to date`.
 
+The sidebar's `Duplicates` count is the photos that have duplicates; hovering it, or
+VoiceOver, says so (`95 photos have duplicates`).
+
 ## The line
 
 At the sidebar's foot, under every section, behind a hairline, on the sidebar's own color,
@@ -37,14 +40,15 @@ Read-only inspection (DES-041), 320 pt wide, anchored to the line's trailing edg
 header, then one row for each piece of work that works, is paused or is stuck, in a fixed
 order, each Immich account after, then `Everything else is up to date` in L3 when anything
 watched is not listed. With nothing working or waiting, the header alone. A row is the work's
-glyph, what it does (L2), each thing that stops it as its own L3 line under it, and the
-status's glyph at the trailing edge, level with the name:
+glyph, what it does (L2), how far it is (L3), for a download what it is for (L3), each thing
+that stops it as its own L3 line, a determinate bar under them, and the status's glyph at the
+trailing edge, level with the name:
 
 | Status | L3 | Trailing glyph |
 | --- | --- | --- |
-| Working | what stops some of its items, if anything; else the one exact count Otos holds (`8,412 photos to check`); else nothing | small spinner |
-| Paused | the machine condition (`Paused while memory is low.`, `Paused while the Mac cools down.`, `Paused in Low Power Mode.`), then what stops it | `pause.circle` |
-| Stuck | what stops it | `pause.circle` |
+| Working | how far it is, then what stops some of its items, if anything | small spinner |
+| Paused | how far it is, the machine condition (`Paused while memory is low.`, `Paused while the Mac cools down.`, `Paused in Low Power Mode.`), then what stops it | `pause.circle` |
+| Stuck | how far it is, then what stops it | `pause.circle` |
 
 What stops work is said in sentences: what is wrong, then what happens next or what to do
 (HIG, Progress indicators: a stalled process says what the problem is and what people can do
@@ -72,9 +76,43 @@ about it). Its owner names the cause (`OwnerTrouble`, ADR 0058); nothing says on
 | Account signed out | `You’re signed out of this account.` |
 
 No row shows a time: the surface answers "is it done, working, or stuck", not "when"
-(owner, 2026-11-21). A count appears only where Otos holds an exact one (DES-031): People's
-unchecked tally, and the items a trouble stops. Nothing claims a percentage, a remaining time
-or a total.
+(owner, 2026-11-21).
+
+## Progress
+
+Every row says how far its work is (owner, 2026-11-26: "each should give the actual progress",
+"shouldn't each of these have a progress bar?"). A user looking at background work asks what
+it is doing, how far it has come, why it runs when that is not obvious, and what stops it;
+the row answers each, in that order.
+
+| Work | L3 | Counted from |
+| --- | --- | --- |
+| Making thumbnails | `12,408 of 52,310 photos and videos` | the rows enrichment's claims still owe |
+| Downloading photos | `214 of 1,020 · 3.2 GB of 9.8 GB`, then `Needed to make thumbnails`, `For the photo you opened` or `For what you asked Otos to do` | the current run of downloads and their catalog sizes; no bytes when one has no size on record |
+| Finding people | `40,112 of 52,310 checked` | People's unchecked tally |
+| Naming places | `310 of 1,204 places` | the map cells with no name in the user's language |
+| Preparing search | `30,002 of 52,310 photos and videos` | the items owed a search embedding |
+| Describing photos | `8,900 of 47,000 photos` | the stills owed a description |
+| Looking for duplicates | `21,000 of 52,310 photos compared` | the stills owed a render signature, which the groups are built from |
+
+HIG review (Progress indicators):
+
+- **Determinate wherever the amount is known.** Every count is an exact COUNT over the
+  predicate the work's own walk reads (ADR 0058), so every row has a bar. No row shows a
+  percentage, a remaining time or a rate.
+- **The numbers are the stretch's.** `done` is every fall of the count since the work began,
+  `total` is `done` plus what is left now. The bar moves only forward while work is done; when
+  new photos arrive the total steps up, which is the truth, and done stays.
+- **A stall is shown, not hidden.** A paused or stuck row keeps its count and its bar where it
+  stopped, in the secondary tint, with what stops it under the count.
+- **Say why when it is not obvious.** Downloads are a means, not an outcome: the row says
+  what they are for. A file still downloading cannot be measured from its provider, so the
+  bar moves as each one finishes.
+- **The line stays one line.** The sidebar's line keeps its fixed height and names the work;
+  the counts and bars are the popover's.
+
+VoiceOver reads each row as one element: its name, its count, its bar's value and what stops
+it.
 
 ## Names
 
@@ -84,14 +122,14 @@ so each pair is one row.
 
 | Work | Row and line |
 | --- | --- |
-| Thumbnails, previews, each item's details and its digest, read again after Otos learned to read more | `Reading photos` |
+| Thumbnails, previews, each item's details and its digest, read again after Otos learned to read more | `Making thumbnails`: what the user sees of it |
 | Originals from a cloud provider | `Downloading photos` |
 | Faces in stills and video frames, put together into people | `Finding people` |
 | Countries and towns | `Naming places` |
 | What search reads in each photo | `Preparing search` |
 | Descriptions | `Describing photos` |
 | Duplicate groups | `Looking for duplicates` |
-| An Immich account | `Syncing Home`; L3 `Connecting to the server` while it connects |
+| An Immich account | `Syncing Immich: Home`; L3 `Connecting to the server` while it connects |
 
 Not listed, because each has its own surface (one fact, one owner): an import (the import
 bar), Move to Trash (the trash status bar), export and reorganization (their sheets and
@@ -116,5 +154,5 @@ A scope whose result is still being built says so in its own bar (DES-125), so t
 | --- | --- |
 | `Working on N things` / `Waiting on N things` / `Up to date` | popover L1 |
 | what a piece of work does | L2 |
-| what stops it, a count, `and N more`, `Everything else is up to date` | L3 |
+| how far it is, what a download is for, what stops it, `and N more`, `Everything else is up to date` | L3 |
 | `Still looking for duplicates` | duplicates bar L3 |

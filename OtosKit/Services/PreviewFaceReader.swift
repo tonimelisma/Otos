@@ -112,6 +112,17 @@ actor PreviewFaceReader: QuiescentOwner {
         retries.troubles(at: ContinuousClock.now)
     }
 
+    /// The photos and videos not yet checked for faces: the count behind `Finding people`
+    /// (ADR 0058).
+    func progress() async -> WorkProgress? {
+        do {
+            return try await WorkProgress.left(store.backgroundReads.facesLeft())
+        } catch {
+            WorkProgress.logFailure(owner: "previewFaces", error)
+            return nil
+        }
+    }
+
     func ringIdle() {
         request()
     }

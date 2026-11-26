@@ -490,6 +490,47 @@ nonisolated struct OwnerMark: Equatable, Sendable {
     }
 }
 
+/// How much of an owner's work is left, as the owner counts it exactly (ADR 0058,
+/// `docs/design/activity.md`): never an estimate, and nil — not 0 — when the count could not be
+/// read (ADR 0032 rule 4).
+nonisolated enum WorkProgress: Equatable, Sendable {
+    /// The items its work still owes: a COUNT over the predicate its walk reads.
+    case left(Int)
+    /// A run of transfers counted as it goes.
+    case transfers(TransferRun)
+
+    /// Logs a count that failed under `owner`: the owner then reports no progress, never 0
+    /// (ADR 0032 rule 4).
+    static func logFailure(owner: String, _ error: any Error) {
+        OtosLog.performance.errorOperation("activity.progress", phase: "failed", fields: [
+            "owner": owner, "error": String(describing: error),
+        ])
+    }
+}
+
+/// A run of downloads, from the first asked while none was pending or in flight to the last
+/// finished: how many finished of how many asked, their bytes as the catalog sizes them, and
+/// what asked for them.
+nonisolated struct TransferRun: Equatable, Sendable {
+    /// What the run's transfers are for, the most pressing first.
+    enum Purpose: Equatable, Sendable {
+        /// A photo or video the user opened.
+        case openedItem
+        /// Something the user asked Otos to do with an item (export, Move to Trash).
+        case request
+        /// Work Otos does on its own: thumbnails and each item's details.
+        case background
+    }
+
+    var done = 0
+    var total = 0
+    /// The bytes finished and asked, or nil when any transfer of the run has no size on
+    /// record: a sum that left one out would not be the run's.
+    var bytesDone: Int64?
+    var bytesTotal: Int64?
+    var purpose = Purpose.background
+}
+
 /// A background owner that reports its quiescence (see the guide).
 nonisolated protocol QuiescentOwner: Actor {
     var activity: OwnerActivity { get }
@@ -516,11 +557,19 @@ nonisolated protocol QuiescentOwner: Actor {
     /// Whether a pass that succeeded has answered every request in `mark`, and nothing the
     /// owner holds beyond what its mark counts is in flight.
     func covers(_ mark: OwnerMark) -> Bool
+    /// What its work has left, read only while it works or something stops it: nil for an
+    /// owner whose kind another owner counts (`ActivityKind`'s owners), or when the count
+    /// fails.
+    func progress() async -> WorkProgress?
 }
 
 extension QuiescentOwner {
     var holdsWork: Bool {
         false
+    }
+
+    func progress() async -> WorkProgress? {
+        nil
     }
 
     var worksBacklog: Bool {

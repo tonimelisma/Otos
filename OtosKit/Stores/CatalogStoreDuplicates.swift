@@ -297,6 +297,16 @@ nonisolated enum RenderSignatureSQL {
     LIMIT ?
     """
 
+    /// How many stills of `rootCount` roots (bound in order) the candidate walk reads, through
+    /// the same owed index.
+    static func leftSQL(rootCount: Int) -> String {
+        """
+        SELECT COUNT(*) FROM media_asset INDEXED BY \(owedIndexName)
+        WHERE library_root_id IN (\(Array(repeating: "?", count: rootCount).joined(separator: ", ")))
+          AND \(owedPredicate)
+        """
+    }
+
     static let writeGraySQL = """
     INSERT INTO \(RenderSignatureSQL.grayTable) (library_root_id, relative_path, gray)
     VALUES (?, ?, ?)

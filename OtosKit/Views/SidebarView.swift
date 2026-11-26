@@ -157,10 +157,15 @@ struct SidebarView: View {
                     // Its count is the bar's L1 unit: photos with duplicates.
                     SidebarRow(systemImage: "square.on.square", title: "Duplicates") {
                         if let duplicatesCount {
+                            // The number says what it counts on hover and to VoiceOver: photos
+                            // that have a duplicate, not the copies.
+                            let meaning = duplicatesCount == 1 ? "1 photo has duplicates" : "\(duplicatesCount.formatted()) photos have duplicates"
                             Text("\(duplicatesCount)")
                                 .font(.subheadline)
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)
+                                .help(meaning)
+                                .accessibilityLabel(meaning)
                         }
                     }
                     .tag(SidebarSelection.duplicates)

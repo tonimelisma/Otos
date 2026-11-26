@@ -70,10 +70,19 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    tally and the derived folder's launch tidy are machinery and are not watched. Work that
    has its own surface — an import, Move to Trash, export, reorganization, a pane's download
    — is not listed (one fact, one owner).
-5. **Honest numbers, or none.** A count is shown only where Otos already holds an exact one:
-   People's unchecked tally under `Finding people`, and the items a trouble stops. No owner gains a count query for this
-   surface: the owed predicates are paged walks whose totals move as other owners write, and
-   a moving denominator is what DES-031 forbids.
+5. **Every row says how far it is, exactly** (owner, 2026-11-26: "each should give the actual
+   progress", "shouldn't each of these have a progress bar?"). Each kind has one owner that
+   counts its work (`QuiescentOwner.progress`): an exact COUNT over the very predicate its
+   walk reads, through the same partial index — enrichment's claims per root, People's
+   unchecked tally, unnamed place cells, owed search embeddings, owed descriptions, owed render
+   signatures — or, for downloads, the current run counted as it goes, with the bytes the
+   catalog sizes and what asked for them. The board asks again only when that owner's work has
+   moved (`OwnerWork`), so a round woken by anything else reads no count. A stretch of work
+   keeps its own tally: each fall of the count is items done, each rise items added, so the
+   row reads `done of total` for the stretch with a determinate bar that moves forward while
+   work is done and steps its total up when new items arrive — both true. A failed count
+   publishes nothing new (ADR 0032 rule 4). No row shows a percentage, a remaining time or a
+   rate: every number is a count Otos holds.
 6. **Only what runs or waits is listed.** The popover lists the kinds and accounts that work,
    are paused or are stuck, and says `Everything else is up to date` for the rest (owner,
    2026-11-21: "Only running or stuck"). Apple's Feedback guidance is that people expect a
@@ -98,8 +107,15 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
   HIG asks of a stalled process (Progress indicators), and it was inferred from a backoff
   wake that cannot say why it was armed.
 - **Every kind listed, `Up to date` included.** Shipped first; replaced by decision 6.
-- **A count for every kind.** Each would be a new query over a 2.5 GB catalog, and its total
-  moves while other owners write. Counting rows written instead mixes units across owners.
+- **Only the counts Otos already held** (People's tally, the items a trouble stops). Shipped
+  first and rejected by the owner: a spinner beside `Reading photos` said neither what the
+  work was nor how far it had come. Each count is one COUNT over a partial index that already
+  exists, read only when its owner's work moved.
+- **A total of the whole library per kind.** Its eligible set is a second predicate per kind
+  that would have to agree with the walk's exactly; the stretch's own tally needs only the
+  walk's count, and says what the user asks: how much of what is under way is done.
+- **Rows written as `done`.** Units differ across owners (a pass writes several rows for one
+  item), so a written count is not an item count.
 - **A toolbar indicator.** DES-040 keeps operation status out of the toolbar, and something
   is enriching nearly always, so it would be a permanently busy control in the chrome.
 - **Start and finish times per kind.** Shipped first and rejected by the owner: a list of

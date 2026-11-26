@@ -50,6 +50,19 @@ struct ActivityBoardTests {
         func backOff(_ wake: OwnerWake?) {
             activity.wake = wake
         }
+
+        /// What its work has left, which the board reads once its work moves.
+        private var left: Int?
+
+        /// Sets what is left as a pass that wrote a result would leave it.
+        func count(_ left: Int) {
+            self.left = left
+            activity.wrote(1)
+        }
+
+        func progress() async -> WorkProgress? {
+            left.map(WorkProgress.left)
+        }
     }
 
     /// The board's clock, which the test moves.
@@ -208,6 +221,44 @@ struct ActivityBoardTests {
     }
 }
 
+extension ActivityBoardTests {
+    /// A stretch's tally: every fall of the owner's exact count is items done, a rise is items
+    /// added, so the bar only moves forward while work is done; the tally ends with the stretch.
+    @Test func aStretchCountsEachFallAsDoneAndEachRiseAsAdded() async {
+        let board = ActivityBoard()
+        let enrichment = ScriptedOwner("enrichment")
+        let published = Published(board)
+        await board.watch([.init(kind: .readingPhotos, owner: enrichment)], room: nil)
+        _ = await published.newest { $0.watching }
+
+        await enrichment.count(100)
+        let request = await enrichment.begin()
+        let first = await published.newest { $0.entries.first?.progress != nil }
+        #expect(first.entries.first?.progress == ActivityProgress(done: 0, total: 100))
+
+        await enrichment.count(60)
+        board.ring()
+        let fell = await published.newest { $0.entries.first?.progress?.done == 40 }
+        #expect(fell.entries.first?.progress == ActivityProgress(done: 40, total: 100))
+
+        await enrichment.count(70)
+        board.ring()
+        let rose = await published.newest { $0.entries.first?.progress?.total == 110 }
+        #expect(rose.entries.first?.progress == ActivityProgress(done: 40, total: 110), "added items raise the total, done stays")
+
+        await enrichment.end(covering: request)
+        let settled = await published.newest { $0.entries.first?.state == .upToDate }
+        #expect(settled.entries.first?.progress == nil)
+
+        await enrichment.count(5)
+        let again = await enrichment.begin()
+        let next = await published.newest { $0.entries.first?.progress?.total == 5 }
+        #expect(next.entries.first?.progress == ActivityProgress(done: 0, total: 5), "the next stretch counts from its own start")
+        await enrichment.end(covering: again)
+        await board.shutdown()
+    }
+}
+
 struct ActivityPresentationTests {
     private let now = Date(timeIntervalSince1970: 1_795_262_400)
 
@@ -250,7 +301,7 @@ struct ActivityPresentationTests {
         #expect(presentation.lineDetail == "and 3 more")
         #expect(presentation.lineStatus == .working)
         #expect(presentation.header == "Working on 2 things")
-        #expect(presentation.rows.map(\.title) == ["Reading photos", "Finding people", "Preparing search", "Describing photos"])
+        #expect(presentation.rows.map(\.title) == ["Making thumbnails", "Finding people", "Preparing search", "Describing photos"])
         #expect(presentation.rows.map(\.details) == [
             [
                 "11 items didn’t download. Otos will try again.",
@@ -282,7 +333,7 @@ struct ActivityPresentationTests {
             ActivityEntry(kind: .readingPhotos, state: .paused(.thermal)),
             ActivityEntry(kind: .namingPlaces, state: .stuck, troubles: [OwnerTrouble(.placeNamesFailed)]),
         ]))
-        #expect(two.line == "Reading photos")
+        #expect(two.line == "Making thumbnails")
         #expect(two.lineDetail == "and 1 more")
         #expect(two.header == "Waiting on 2 things")
         #expect(two.rows.map(\.details) == [
@@ -310,12 +361,62 @@ struct ActivityPresentationTests {
             ActivityAccount(name: "Work", status: ImmichAccountStatus(reach: .online)),
         ]
         let presentation = ActivityPresentation.map(ActivitySnapshot(watching: true), accounts: accounts)
-        #expect(presentation.rows.map(\.title) == ["Syncing Home", "Syncing Cabin", "Syncing Old"])
+        #expect(presentation.rows.map(\.title) == ["Syncing Immich: Home", "Syncing Immich: Cabin", "Syncing Immich: Old"])
         #expect(presentation.rows.map(\.details) == [
             [], ["The server isn’t answering. Otos will try again."], ["You’re signed out of this account."],
         ])
-        #expect(presentation.line == "Syncing Home")
+        #expect(presentation.line == "Syncing Immich: Home")
         #expect(presentation.footer == "Everything else is up to date")
+    }
+
+    /// Each row says how far its stretch is in its own words, with an exact bar; a waiting row
+    /// keeps its count above what stops it; downloads say their bytes and what they are for.
+    @Test func eachRowSaysHowFarItIsWithAnExactBar() {
+        let snapshot = ActivitySnapshot(watching: true, entries: [
+            ActivityEntry(kind: .readingPhotos, state: .working(since: now), progress: ActivityProgress(done: 12408, total: 52310)),
+            ActivityEntry(kind: .downloadingOriginals, state: .working(since: now), progress: ActivityProgress(
+                done: 214, total: 1020, bytesDone: 3_200_000_000, bytesTotal: 9_800_000_000, purpose: .background
+            )),
+            ActivityEntry(kind: .findingPeople, state: .working(since: now), progress: ActivityProgress(done: 40112, total: 52310)),
+            ActivityEntry(kind: .namingPlaces, state: .working(since: now), progress: ActivityProgress(done: 310, total: 1204)),
+            ActivityEntry(kind: .preparingSearch, state: .working(since: now), progress: ActivityProgress(done: 0, total: 1)),
+            ActivityEntry(
+                kind: .describingPhotos, state: .stuck, troubles: [OwnerTrouble(.appleIntelligenceNotResponding)],
+                progress: ActivityProgress(done: 8900, total: 47000)
+            ),
+            ActivityEntry(kind: .findingDuplicates, state: .working(since: now), progress: ActivityProgress(done: 21000, total: 52310)),
+        ])
+        let presentation = ActivityPresentation.map(snapshot)
+        let gigabytes = { (value: Double) in Int64(value * 1_000_000_000).formatted(.byteCount(style: .file)) }
+        #expect(presentation.rows.map(\.details) == [
+            ["12,408 of 52,310 photos and videos"],
+            ["214 of 1,020 · \(gigabytes(3.2)) of \(gigabytes(9.8))", "Needed to make thumbnails"],
+            ["40,112 of 52,310 checked"],
+            ["310 of 1,204 places"],
+            ["0 of 1 photo or video"],
+            ["8,900 of 47,000 photos", "Apple Intelligence isn’t responding. Otos will try again."],
+            ["21,000 of 52,310 photos compared"],
+        ])
+        typealias Bar = ActivityPresentation.Bar
+        #expect(presentation.rows.map(\.bar) == [
+            Bar(done: 12408, total: 52310), Bar(done: 214, total: 1020), Bar(done: 40112, total: 52310), Bar(done: 310, total: 1204),
+            Bar(done: 0, total: 1), Bar(done: 8900, total: 47000), Bar(done: 21000, total: 52310),
+        ])
+        #expect(presentation.rows.allSatisfy { !$0.details.joined().contains("%") }, "no percentage, only counts")
+    }
+
+    /// A download says what it is for, the most pressing purpose first; a run whose sizes are
+    /// not all on record shows no bytes; a stretch with nothing counted shows no bar.
+    @Test func aDownloadSaysWhatItIsForAndNoBytesItCannotSum() {
+        let opened = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
+            ActivityEntry(kind: .downloadingOriginals, state: .working(since: now), progress: ActivityProgress(
+                done: 0, total: 1, purpose: .openedItem
+            )),
+            ActivityEntry(kind: .findingPeople, state: .working(since: now), progress: ActivityProgress(done: 0, total: 0)),
+        ]))
+        #expect(opened.rows.map(\.details) == [["0 of 1", "For the photo you opened"], []])
+        #expect(opened.rows.map(\.bar) == [ActivityPresentation.Bar(done: 0, total: 1), nil])
+        #expect(ActivityPresentation.purposeText(.request) == "For what you asked Otos to do")
     }
 
     @Test func theDuplicatesBarSaysItIsStillLookingOnlyWhileNothingWouldMove() {

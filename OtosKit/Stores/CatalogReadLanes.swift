@@ -413,6 +413,31 @@ extension CatalogReads where Lane == WindowLane {
 
 /// Reads only the background owners ask for.
 extension CatalogReads where Lane == BackgroundLane {
+    /// What each owner's work has left, for the Activity popover (ADR 0058).
+    func enrichmentLeft(videoFaces: VideoFacesAdmission) async throws -> Int {
+        try await store.enrichmentLeft(videoFaces: videoFaces, lane: lane)
+    }
+
+    func facesLeft() async throws -> Int {
+        try await store.facesLeft(lane: lane)
+    }
+
+    func unnamedPlaceCellCount(language: PlaceNameLanguage) async throws -> Int {
+        try await store.unnamedPlaceCellCount(language: language, lane: lane)
+    }
+
+    func searchEmbeddingsLeft() async throws -> Int {
+        try await store.searchEmbeddingsLeft(lane: lane)
+    }
+
+    func photoDescriptionsLeft() async throws -> Int {
+        try await store.photoDescriptionsLeft(lane: lane)
+    }
+
+    func renderSignaturesLeft() async throws -> Int {
+        try await store.renderSignaturesLeft(lane: lane)
+    }
+
     func enrichmentDemandSources(_ ids: [MediaAssetID]) async throws -> [MediaAssetID: Int64?] {
         try await store.enrichmentDemandSources(ids, lane: lane)
     }
