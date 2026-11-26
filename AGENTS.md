@@ -559,17 +559,12 @@ holds trivially, since nothing in the VM reaches the owner's Mac, library or Imm
 
 Done on 2026-11-25: Otos and MediaMetadata are public (Otos's history was rewritten to
 drop private media and the team ID before it went public), and `main` requires the
-`Required CI Gate` check. Pending, for the installed app's self-update (ADR 0059):
-1. Sparkle's update key: run Sparkle's `generate_keys` once on the Mac (after a build has
-   resolved the package, `build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/`).
-   It keeps the private key in the login keychain and prints the public key, which goes in
-   `Otos.xcodeproj` as `OTOS_SPARKLE_PUBLIC_ED_KEY` (public; a session commits it).
-2. In the repository's Environments, an environment `release` with the secrets
-   `OTOS_CERTIFICATE_P12` (the Apple Development certificate and key, exported from Keychain
-   Access as .p12, base64), `OTOS_CERTIFICATE_PASSWORD`, `OTOS_DEVELOPMENT_TEAM`, and
-   `OTOS_SPARKLE_PRIVATE_KEY` (`generate_keys -x`).
-3. One install from the Mac of a build that carries the key (`script/install.sh` on `main`);
-   from then on it updates itself.
+`Required CI Gate` check. Pending, for the installed app's self-update (ADR 0059): one run of
+`script/release-setup.sh` on the Mac, in the primary checkout on a clean `main`, signed in to
+`gh`. It makes the Sparkle update key in the login keychain, creates the environment `release`
+with its four secrets (the key, the team's Apple Development certificate, its password, the
+team ID) without printing any of them, opens the pull request that commits the public key,
+and installs that build. From then on the app updates itself.
 
 ## Documentation
 

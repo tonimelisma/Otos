@@ -84,9 +84,11 @@ prove a commit to `.github/workflows/ci.yml`.
 
 ## Consequences
 
-- Updates start once the owner has made the update key and set the environment's secrets;
-  until then the release job says what is missing and publishes nothing, and a build
-  without the public key never starts Sparkle.
+- Updates start once the owner has run `script/release-setup.sh` on the Mac, which makes the
+  update key, sets the environment's secrets from the login keychain with the owner's `gh`
+  login (no value printed or committed), opens the pull request that commits the public key
+  and installs that build. Until then the release job says what is missing and publishes
+  nothing, and a build without the public key never starts Sparkle.
 - A build installed from the Mac (`script/install.sh`) is updated by the next published build
   with a higher commit count.
 - An update quits and reopens Otos when no import or reorganization is in flight, as an
