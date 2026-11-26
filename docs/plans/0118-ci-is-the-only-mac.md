@@ -35,14 +35,14 @@ Each step is one increment with its own PR, in this order.
 2. **The release launches what it ships.** Landed (ADR 0059, item 9).
 3. **One suite, many times, on CI.** Landed: the workflow Repeat A Suite (ADR 0044,
    item 19).
-4. **The weekly counts on CI.** A scheduled workflow runs `script/bench.sh compare` of
-   `origin/main` against the last run's head on the runner. It then runs a sandbox tour at
-   `-O` whose scorecard is kept as an artifact for trend.
-   - De-risk first: one run shows the instruction counters are readable inside the runner's
-     VM. If they are not, the workflow is not built, and deterministic twin tests remain the
-     only performance gate.
-   - ADR 0043 is rewritten. `script/perf.sh` keeps only the owner-library tour, for a
-     session on the Mac.
+4. **The weekly counts on CI.** The workflow Weekly Counts (Mondays, or by hand) first
+   reads this runner's instruction counter (`proc-rusage.py`); reading zero, it measures
+   nothing and says so. Otherwise it runs `script/bench.sh compare` of `main`'s head against
+   `bench.sh last-measured` and pushes the records as `refs/notes/benchmarks`.
+   - De-risk: its first run by hand. Counters that read zero end this step: the workflow
+     is removed and deterministic twin tests stay the only performance gate.
+   - Counters that read: `script/perf.sh run` keeps only the owner-library tour, for a
+     session on the Mac, and ADR 0043 is rewritten for the split.
 5. **Diagnostics the owner can hand over.** Help ▸ Export Diagnostics… writes one folder
    (ADR, requirement row, design spec). It holds:
    - the app's own log lines read through `OSLogStore`;

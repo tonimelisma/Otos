@@ -13,6 +13,9 @@
 #                                   commit behind a felt miss, or when the owner asks.
 #   script/bench.sh history [case]  Every recorded result, newest first, with the change in
 #                                   instructions from the previous record on the same machine.
+#   script/bench.sh last-measured   The newest commit on HEAD's first-parent line with this
+#                                   harness's records on this machine, or nothing; the weekly
+#                                   CI run (Weekly Counts) compares main's head against it.
 #
 # Results are recorded as git notes on the commit they measured (refs/notes/benchmarks),
 # one JSON object per case and test process. Instructions retired is the number to compare:
@@ -378,8 +381,24 @@ judge_pair() {
   return "$status"
 }
 
+# The newest commit on HEAD's first-parent line that this harness has records of on this
+# machine, or nothing: the base the weekly CI run compares main's head against.
+last_measured() {
+  local measured commit
+  measured="$(records | /usr/bin/python3 -I -c 'import json, sys
+print("\n".join(sorted({json.loads(line)["commit"] for line in sys.stdin if line.strip()})))')"
+  [[ -n "$measured" ]] || return 0
+  for commit in $(git -C "$ROOT_DIR" rev-list --first-parent HEAD); do
+    if grep -qx "$commit" <<< "$measured"; then
+      echo "$commit"
+      return 0
+    fi
+  done
+}
+
 case "${1:-}" in
   history) history "${2:-}" ;;
   compare) compare "${2:-}" "${3:-}" ;;
+  last-measured) last_measured ;;
   *) usage; exit 2 ;;
 esac
