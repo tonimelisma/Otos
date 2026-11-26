@@ -79,12 +79,16 @@ echo "$*" >> "$FAKE/calls/gh"
 case "$1 $2" in
   "auth status") exit 0 ;;
   "secret set") cat > "$FAKE/secrets/$3" ;;
+  "pr list") ;;
   "pr create") echo "https://github.com/tonimelisma/Otos/pull/999" ;;
   "pr merge") exit 0 ;;
 esac
 EOF
   cat > "$w/bin/generate_keys" << 'EOF'
 #!/usr/bin/env bash
+# Otos's own keychain account, always: the shared default would sign with another app's key.
+[[ "${1:-}" == --account && "${2:-}" == net.melisma.Otos ]] || exit 9
+shift 2
 case "${1:-}" in
   -p) [[ -f "$FAKE/key" ]] && echo "PUBLICKEYPUBLICKEYPUBLICKEYPUBLICKEYPUBLICKEY=" || exit 1 ;;
   -x) printf 'PRIVATESEEDSECRETVALUE' > "$2" ;;

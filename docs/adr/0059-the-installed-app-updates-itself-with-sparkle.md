@@ -27,7 +27,9 @@ prove a commit to `.github/workflows/ci.yml`.
 2. **Signed by Otos's own update key and the owner's development certificate; not
    notarized.** Sparkle accepts an update only when its archive's EdDSA signature matches
    the public key the installed app carries (`SUPublicEDKey`, the build setting
-   `OTOS_SPARKLE_PUBLIC_ED_KEY`) and its code signature matches the installed app's. CI
+   `OTOS_SPARKLE_PUBLIC_ED_KEY`) and its code signature matches the installed app's. The key
+   is Otos's alone: it lives in the login keychain under the account `net.melisma.Otos`, not
+   `generate_keys`'s default account, which every app signed that way would share. CI
    signs with the same Apple Development certificate the Mac's own installs use, so an update
    keeps the app's privacy permissions and Keychain items, and the build keeps
    `get-task-allow` (ADR 0030): lldb and Instruments still attach.

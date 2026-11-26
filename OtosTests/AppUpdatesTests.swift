@@ -10,7 +10,7 @@ import Testing
 struct AppUpdatesTests {
     /// Only the installed identity carrying the update key, outside a test host, updates.
     @Test func onlyTheInstalledBuildWithTheKeyUpdatesItself() {
-        let key = "taGyPBum8bkweq78chQL0mQhqfMc9jrnXd564+e+adE="
+        let key = "q1Wd5xZ2b3cV9mN0pL7kJ8hG6fD4sA2eR5tY1uI3oP0="
         #expect(AppUpdater.updatesItself(bundleIdentifier: "net.melisma.Otos", publicKey: key, environment: [:]))
         #expect(!AppUpdater.updatesItself(bundleIdentifier: "net.melisma.Otos.dev", publicKey: key, environment: [:]))
         #expect(!AppUpdater.updatesItself(bundleIdentifier: "net.melisma.Otos", publicKey: "", environment: [:]))

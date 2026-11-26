@@ -28,6 +28,7 @@ TEAM_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/otos/development-team"
 PROJECT="$ROOT_DIR/Otos.xcodeproj/project.pbxproj"
 LOGIN_KEYCHAIN="${OTOS_SETUP_LOGIN_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
 BRANCH="chore/sparkle-update-key"
+KEY_ACCOUNT="net.melisma.Otos"
 
 say() { echo "op=release.setup $*"; }
 refuse() {
@@ -54,9 +55,11 @@ trap 'rm -rf "$work"; git -C "$ROOT_DIR" checkout -q main 2> /dev/null || true' 
   || { cat "$work/resolve.log" >&2; refuse "reason=packagesUnresolved"; }
 GENERATE_KEYS="${OTOS_SETUP_GENERATE_KEYS:-$ROOT_DIR/build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys}"
 [[ -x "$GENERATE_KEYS" ]] || refuse "reason=noGenerateKeys path=\"$GENERATE_KEYS\""
-if ! public_key="$("$GENERATE_KEYS" -p 2> /dev/null)" || [[ -z "$public_key" ]]; then
-  "$GENERATE_KEYS" > /dev/null
-  public_key="$("$GENERATE_KEYS" -p)"
+# Otos's own keychain account: without one, generate_keys uses a default account every app
+# signed this way shares, and two apps would then sign their updates with one key.
+if ! public_key="$("$GENERATE_KEYS" --account "$KEY_ACCOUNT" -p 2> /dev/null)" || [[ -z "$public_key" ]]; then
+  "$GENERATE_KEYS" --account "$KEY_ACCOUNT" > /dev/null
+  public_key="$("$GENERATE_KEYS" --account "$KEY_ACCOUNT" -p)"
 fi
 public_key="$(printf '%s' "$public_key" | tr -d '[:space:]')"
 [[ "$public_key" =~ ^[A-Za-z0-9+/=]{40,}$ ]] || refuse "reason=publicKeyUnreadable"
@@ -68,7 +71,7 @@ secret() { # <name> <file>
   "$GH" secret set "$1" --env release --repo "$REPO" < "$2" > /dev/null
   say "phase=secretSet name=$1"
 }
-"$GENERATE_KEYS" -x "$work/sparkle.key" > /dev/null
+"$GENERATE_KEYS" --account "$KEY_ACCOUNT" -x "$work/sparkle.key" > /dev/null
 secret OTOS_SPARKLE_PRIVATE_KEY "$work/sparkle.key"
 printf '%s' "$TEAM" > "$work/team"
 secret OTOS_DEVELOPMENT_TEAM "$work/team"
@@ -116,10 +119,14 @@ else
     || sed -i "s|OTOS_SPARKLE_PUBLIC_ED_KEY = \"[^\"]*\";|OTOS_SPARKLE_PUBLIC_ED_KEY = \"$public_key\";|" "$PROJECT"
   [[ "$(grep -c "OTOS_SPARKLE_PUBLIC_ED_KEY = \"$public_key\";" "$PROJECT")" == 2 ]] || refuse "reason=projectNotUpdated"
   git -C "$ROOT_DIR" commit -q -m "chore: the installed app carries Otos's Sparkle update key (ADR 0059)" -- "$PROJECT"
-  git -C "$ROOT_DIR" push -q -u origin "$BRANCH"
-  url="$("$GH" pr create --repo "$REPO" --head "$BRANCH" --base main \
-    --title "chore: the installed app carries Otos's Sparkle update key" \
-    --body "The public half of Otos's Sparkle update key (ADR 0059), made by script/release-setup.sh. The private half is in the owner's login keychain and the environment release.")"
+  # The branch is this script's own: a run again replaces what an earlier run pushed there.
+  git -C "$ROOT_DIR" push -q -u --force origin "$BRANCH"
+  url="$("$GH" pr list --repo "$REPO" --head "$BRANCH" --state open --json url --jq '.[0].url // empty')"
+  if [[ -z "$url" ]]; then
+    url="$("$GH" pr create --repo "$REPO" --head "$BRANCH" --base main \
+      --title "chore: the installed app carries Otos's Sparkle update key" \
+      --body "The public half of Otos's Sparkle update key (ADR 0059), made by script/release-setup.sh. The private half is in the owner's login keychain, under the account net.melisma.Otos, and the environment release.")"
+  fi
   "$GH" pr merge "$url" --squash --auto > /dev/null 2>&1 \
     && say "phase=publicKey state=mergesWhenCIPasses pr=$url" \
     || say "phase=publicKey state=awaitingMerge pr=$url"
