@@ -40,6 +40,18 @@ jobs:
       - name: Validate workflow YAML and script shape
         run: script/ci-repo-shape.sh
 
+      # The fast gates no other Ubuntu job runs. With these, the Ubuntu jobs run every gate
+      # of check.sh's first stage, so the Build And Test shards skip it (ADR 0044 item 18).
+      - name: Self-tests of the scripts' rules
+        run: |
+          set -euo pipefail
+          script/guard-app-folder.sh check
+          script/guard-app-folder.sh self-test
+          /usr/bin/python3 -I script/lib/scorecard_test.py
+          script/perf.sh self-test
+          /usr/bin/python3 -I script/lib/test-shards.py self-test
+          script/release-test.sh
+
   text-hygiene:
     name: Text Hygiene
     runs-on: ubuntu-24.04
@@ -113,8 +125,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
-          # check.sh picks its tier from the diff against origin/main's merge base.
+          # check.sh picks its tier from the diff against origin/main's merge base, so it
+          # needs the history; without file contents, which git fetches only for the files a
+          # diff reads (26 s of every shard fetched them all).
           fetch-depth: 0
+          filter: blob:none
 
       - name: Select the newest Xcode 27
         id: xcode
@@ -146,6 +161,7 @@ jobs:
         timeout-minutes: 100
         env:
           OTOS_TEST_SHARD: ${{ matrix.shard }}/3
+          OTOS_CHECK_FAST_GATES: ubuntuJobs
         run: script/check.sh
 
       # Every shard builds the same tree, so one shard's store is every shard's.

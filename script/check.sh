@@ -147,11 +147,22 @@ if [[ -n "${OTOS_TEST_SHARD:-}" ]]; then
   echo "op=check.scope shard=$OTOS_TEST_SHARD evidence=withEveryShard"
 fi
 
-# ── Stage 1: the seconds-long gates, first, so a nit never costs a build ──────
+# The tree as it stands, as a commit: the text checks and the tier read it. It is written
+# from a scratch index with untracked files added, which moves nothing in the checkout.
+snapshot_dir="$(mktemp -d)"
+GIT_INDEX_FILE="$snapshot_dir/index" git -C "$ROOT_DIR" read-tree HEAD
+GIT_INDEX_FILE="$snapshot_dir/index" git -C "$ROOT_DIR" add -A
+snapshot_tree="$(GIT_INDEX_FILE="$snapshot_dir/index" git -C "$ROOT_DIR" write-tree)"
+rm -rf "$snapshot_dir"
+snapshot="$(git -C "$ROOT_DIR" commit-tree "$snapshot_tree" -p HEAD -m "check snapshot")"
+
 # Every run says how long each stage took: a commit's whole check, here and on CI, has a
 # five-minute budget (AGENTS.md, ADR 0044), and only a measured stage can be held to it.
 # time: measurement — the durations this run reports
 check_started_at="$(date +%s)"
+
+# ── Stage 1: the seconds-long gates, first, so a nit never costs a build ──────
+run_fast_gates() {
 echo "op=check.stage phase=start stage=fast-gates"
 fast_failed=0
 # The pinned SwiftFormat by path, never from PATH (script/lint-tools.sh owns the pin).
@@ -208,15 +219,7 @@ if ! "$ROOT_DIR/script/guard-app-folder.sh" check \
   echo "op=check.stage phase=fail stage=fast-gates reason=appFolder" >&2
   fast_failed=1
 fi
-# Every CI job's checks run here too, so a passing check is a passing CI. The text checks
-# read a commit, so they read one of the tree as it stands: written from a scratch index
-# with untracked files added, which moves nothing in the checkout.
-snapshot_dir="$(mktemp -d)"
-GIT_INDEX_FILE="$snapshot_dir/index" git -C "$ROOT_DIR" read-tree HEAD
-GIT_INDEX_FILE="$snapshot_dir/index" git -C "$ROOT_DIR" add -A
-snapshot_tree="$(GIT_INDEX_FILE="$snapshot_dir/index" git -C "$ROOT_DIR" write-tree)"
-rm -rf "$snapshot_dir"
-snapshot="$(git -C "$ROOT_DIR" commit-tree "$snapshot_tree" -p HEAD -m "check snapshot")"
+# Every CI job's checks run here too, so a passing check is a passing CI.
 if ! (cd "$ROOT_DIR" && EVENT_NAME=pull_request BASE_SHA="$(git rev-parse origin/main)" HEAD_SHA="$snapshot" \
   script/ci-text-hygiene.sh check); then
   echo "op=check.stage phase=fail stage=fast-gates reason=textHygiene" >&2
@@ -252,6 +255,15 @@ if [[ "$fast_failed" != "0" ]]; then
   exit 1
 fi
 echo "op=check.stage phase=pass stage=fast-gates seconds=$(( $(date +%s) - check_started_at ))"
+}
+# CI's Build And Test shards set OTOS_CHECK_FAST_GATES=ubuntuJobs: on the runner's Mac these
+# gates took 30 s of every shard, and CI's Ubuntu jobs run every one of them beside it
+# (ADR 0044 item 18). Everywhere else they run first.
+if [[ "${OTOS_CHECK_FAST_GATES:-}" == ubuntuJobs ]]; then
+  echo "op=check.stage phase=skipped stage=fast-gates reason=ubuntuJobs"
+else
+  run_fast_gates
+fi
 # What the change can reach decides what proves it (ADR 0044). A tree whose diff from its
 # merge base touches only paths the app build and the test suite never read takes the
 # static tier: every gate, no build, no tests. Any other path, including one this list

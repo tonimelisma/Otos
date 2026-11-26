@@ -11,7 +11,8 @@ paths:
   proves them, so a diff touching them takes the full tier. Other scripts, `.github/` and
   `.claude/` take the static tier (ADR 0044, item 10).
 - **Every CI job's checks also run in `check.sh`'s fast gates,** so a green check is a
-  green CI. A new CI check is added to both.
+  green CI. Every fast gate also runs in an Ubuntu CI job, so the Mac shards skip them
+  (`OTOS_CHECK_FAST_GATES=ubuntuJobs`, ADR 0044 item 18). A new gate goes into both places.
 - **CI is held to the five-minute budget** (ADR 0044, items 13–16):
   - A new job states its measured duration.
   - A job that would push a commit's check past five minutes is redesigned: cached,

@@ -206,15 +206,28 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     - **Rejected: one larger runner** (`xcode-27-xlarge`): billed even for a public
       repository, and its cores would still run the suite's CPU-seconds in series with the
       build.
+    - Measured warm (run 45790357749, no queue): 5 min 54 s from trigger to gate; the
+      slowest shard 5 min 44 s, of which checkout 26 s, cache restore 20 s (710 MB), gates
+      33 s, build about 70 s, a 52 s start before the first test, and its tests about 2 min.
     - **Rejected: one build shared by artifact.** The products hold about 500 MB of Core
       ML models; uploading and downloading them costs what a cached build costs.
 
+18. **CI's Ubuntu jobs run the fast gates; the Mac shards do not.** Every gate of
+    `check.sh`'s first stage runs in an Ubuntu job: text hygiene, requirements and time in
+    Text Hygiene; shape and the scripts' self-tests in Workflow YAML And Script Shape;
+    SwiftFormat and SwiftLint in the lint job. The shards set
+    `OTOS_CHECK_FAST_GATES=ubuntuJobs` and skip that stage
+    (`op=check.stage phase=skipped stage=fast-gates`): on the runner's Mac it took 30 s of
+    every shard. The SourceKit SwiftLint rules and the guards still run on the Mac, beside
+    the build (`verify.sh`). The shards check out history without file contents
+    (`filter: blob:none`).
+
 ## Alternatives Considered
 
-### Skip the fast gates on CI's Mac, since the Ubuntu jobs run them
+### Run the fast gates on CI's Mac as well as on Ubuntu
 
-Rejected: the Mac's check would then differ from every other check, and its gates cost
-seconds once their caches are restored and SwiftFormat lints only what changed.
+Rejected by measurement: they cost 30 s of every shard on the runner's three cores, and
+the Ubuntu jobs, which run beside the shards, already run each of them (item 18).
 
 ### Larger runners
 
